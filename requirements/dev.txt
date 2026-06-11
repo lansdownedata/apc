@@ -1,0 +1,8 @@
+# Local development — install this one: pip install -r requirements/dev.txt
+-r base.txt
+
+django-debug-toolbar>=4.4
+ruff>=0.6                     # lint + format
+pytest>=8.0
+pytest-django>=4.9
+factory-boy>=3.3             # test fixtures

@@ -1,0 +1,18 @@
+[project]
+name = "apc-lead-manager"
+version = "0.1.0"
+description = "All Pro Charter — Lead Manager (Django + DRF)"
+requires-python = ">=3.13"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "DJ"]  # pycodestyle, pyflakes, isort, pyupgrade, bugbear, flake8-django
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["test_*.py", "tests.py", "*_test.py"]
+addopts = "--reuse-db"
