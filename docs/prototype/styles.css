@@ -1,0 +1,141 @@
+/* ==========================================================================
+   All Pro Charter — Lead Manager  ·  design system
+   "Executive chauffeur" — deep charcoal frame, champagne gold, warm paper.
+   Display: Fraunces (serif)  ·  UI: Hanken Grotesk  ·  Mono: Spline Sans Mono
+   ========================================================================== */
+
+:root {
+  --charcoal:    #14181f;
+  --charcoal-2:  #1b212b;
+  --charcoal-3:  #222b37;
+  --gold:        #c2a14e;
+  --gold-deep:   #8a6d1f;
+  --gold-light:  #fbf6e9;
+  --paper:       #f4f1ea;
+  --ink:         #1b212b;
+  --muted:       #6b727c;
+  --line:        #e8e3d8;
+  --shadow-card: 0 1px 2px rgba(20,24,31,.04), 0 8px 24px -12px rgba(20,24,31,.14);
+  --shadow-lift: 0 2px 4px rgba(20,24,31,.06), 0 18px 40px -16px rgba(20,24,31,.28);
+}
+
+/* ----------------------------------------------------------------- base */
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.font-display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
+.font-mono2   { font-family: 'Spline Sans Mono', ui-monospace, 'SFMono-Regular', monospace; }
+.num          { font-variant-numeric: tabular-nums; }
+
+[x-cloak] { display: none !important; }
+
+::selection { background: rgba(194,161,78,.28); }
+
+/* ------------------------------------------------------------ scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #cdc6b6; border-radius: 9px;
+  border: 3px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #b7af9c; background-clip: padding-box; border: 3px solid transparent; }
+.scroll-dark::-webkit-scrollbar-thumb { background: #2c3340; background-clip: padding-box; }
+
+/* --------------------------------------------------------------- surfaces */
+.sidebar {
+  background: linear-gradient(180deg, #171c24 0%, #11151c 100%);
+  border-right: 1px solid rgba(255,255,255,.04);
+}
+.brand-glow { background: radial-gradient(140px 70px at 26% 18%, rgba(194,161,78,.20), transparent 72%); }
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+.hairline { border-color: var(--line); }
+
+/* gold-tinted active row / hover wash */
+.wash-gold { background: linear-gradient(90deg, rgba(194,161,78,.10), rgba(194,161,78,.03)); }
+
+/* nav item */
+.nav-item { transition: background-color .15s ease, color .15s ease; }
+.nav-item:hover { background: rgba(255,255,255,.045); }
+.nav-active { background: #222b37; color: var(--gold); box-shadow: inset 2px 0 0 var(--gold); }
+
+/* primary gold button */
+.btn-gold {
+  background: linear-gradient(180deg, #cdaf5e, #bd9b45);
+  color: #1a1407;
+  box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 6px 16px -8px rgba(194,161,78,.7);
+  transition: filter .15s ease, transform .06s ease, box-shadow .15s ease;
+}
+.btn-gold:hover { filter: brightness(1.04); }
+.btn-gold:active { transform: translateY(.5px); }
+
+.btn-ghost { transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+
+/* refined focus ring */
+.focus-gold:focus { outline: none; box-shadow: 0 0 0 3px rgba(194,161,78,.28); border-color: var(--gold); }
+
+/* route connector (multi-stop) */
+.route-line { background: repeating-linear-gradient(to bottom, #c9d0d8 0 5px, transparent 5px 10px); }
+
+/* star rating */
+.stars i { color: #d8cfb8; }
+.stars .on { color: var(--gold); }
+
+/* =========================================================== animations */
+@keyframes fadeUp   { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes fadeIn   { from { opacity:0; } to { opacity:1; } }
+@keyframes pop      { 0% { opacity:0; transform: translateY(8px) scale(.98); } 100% { opacity:1; transform:none; } }
+@keyframes toastIn  { from { opacity:0; transform: translateY(12px) scale(.98); } to { opacity:1; transform:none; } }
+@keyframes spin     { to { transform: rotate(360deg); } }
+@keyframes shimmer  { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@keyframes checkPop { 0% { transform: scale(.4); opacity:0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity:1; } }
+@keyframes pulseGold{ 0%,100% { box-shadow: 0 0 0 0 rgba(194,161,78,.5);} 50% { box-shadow: 0 0 0 6px rgba(194,161,78,0);} }
+
+.reveal  { animation: fadeUp .5s cubic-bezier(.2,.7,.2,1) both; }
+.pop     { animation: pop .28s cubic-bezier(.2,.7,.2,1) both; }
+.spin    { animation: spin .8s linear infinite; }
+.check-pop { animation: checkPop .4s cubic-bezier(.2,.9,.3,1.2) both; }
+
+/* staggered children (nav, stat cards, table rows, cards) */
+.stagger > * { opacity: 0; animation: fadeUp .55s cubic-bezier(.2,.7,.2,1) forwards; }
+.stagger > *:nth-child(1)  { animation-delay: .03s; }
+.stagger > *:nth-child(2)  { animation-delay: .07s; }
+.stagger > *:nth-child(3)  { animation-delay: .11s; }
+.stagger > *:nth-child(4)  { animation-delay: .15s; }
+.stagger > *:nth-child(5)  { animation-delay: .19s; }
+.stagger > *:nth-child(6)  { animation-delay: .23s; }
+.stagger > *:nth-child(7)  { animation-delay: .27s; }
+.stagger > *:nth-child(8)  { animation-delay: .31s; }
+.stagger > *:nth-child(9)  { animation-delay: .35s; }
+.stagger > *:nth-child(10) { animation-delay: .39s; }
+.stagger > *:nth-child(11) { animation-delay: .43s; }
+.stagger > *:nth-child(12) { animation-delay: .47s; }
+.stagger > *:nth-child(n+13) { animation-delay: .5s; }
+
+.skeleton {
+  background: linear-gradient(90deg, #ece8df 25%, #f5f2ea 37%, #ece8df 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+}
+
+/* drag state for kanban */
+.drag-ghost { opacity: .4; }
+.drop-active { outline: 2px dashed rgba(194,161,78,.6); outline-offset: -4px; background: rgba(194,161,78,.05); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, .stagger > *, .reveal, .pop { animation: none !important; }
+}
