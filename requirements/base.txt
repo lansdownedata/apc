@@ -1,0 +1,17 @@
+# All Pro Charter — Lead Manager · base requirements
+# Shared by every environment. Pin to compatible-release ranges; lock for deploys.
+
+# --- Framework ---
+Django>=5.2,<5.3              # LTS, security-supported into 2028
+djangorestframework>=3.15,<3.17
+
+# --- Config ---
+django-environ>=0.11,<0.13
+
+# --- Async / scheduled jobs ---
+celery>=5.4,<5.6
+redis>=5.0,<6.0
+
+# --- Integrations ---
+requests>=2.32,<3.0          # Zapier / LimoAnywhere / Podium HTTP
+stripe>=10.0                 # deposits + off-session balance charges
