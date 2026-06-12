@@ -1,0 +1,79 @@
+import json
+
+import pytest
+
+from apps.contacts.factories import ContactFactory
+from apps.contacts.models import Contact
+from apps.integrations.models import PodiumEvent
+from apps.integrations.webhooks import process_podium_webhook
+from apps.leads.factories import LeadFactory
+from apps.leads.models import Lead
+from apps.messaging.factories import MessageFactory
+from apps.messaging.models import Message
+
+pytestmark = pytest.mark.django_db
+
+
+def _received(uid="m1", phone="+15551230000", body="Need a quote", name="Sarah", cuid="c1"):
+    return {
+        "eventType": "message.received",
+        "data": {
+            "uid": uid,
+            "body": body,
+            "contact": {"uid": cuid, "name": name, "phoneNumber": phone},
+            "conversation": {"uid": "conv1", "channel": {"type": "phone", "identifier": phone}},
+            "location": {"uid": "loc", "organizationUid": "org"},
+        },
+    }
+
+
+def test_received_creates_event_lead_and_inbound_message():
+    event = process_podium_webhook(_received())
+    assert event.event_type == "message.received"
+    assert event.processed is True
+    msg = Message.objects.get()
+    assert msg.is_inbound is True
+    assert msg.body == "Need a quote"
+    assert msg.podium_message_uid == "m1"
+    assert msg.delivery_status == Message.DeliveryStatus.RECEIVED
+    assert Contact.objects.filter(phone="+15551230000").exists()
+    assert event.lead == msg.lead
+
+
+def test_received_is_idempotent_on_message_uid():
+    process_podium_webhook(_received(uid="dup"))
+    process_podium_webhook(_received(uid="dup"))
+    assert Message.objects.filter(podium_message_uid="dup").count() == 1
+
+
+def test_received_attaches_to_existing_contacts_lead():
+    contact = ContactFactory(phone="+15559999999", podium_contact_uid="cX")
+    lead = LeadFactory(contact=contact)
+    process_podium_webhook(_received(uid="m2", phone="+15559999999", cuid="cX"))
+    assert Message.objects.get().lead == lead
+    assert Lead.objects.count() == 1
+
+
+def test_failed_marks_outbound_message_failed():
+    msg = MessageFactory(direction=Message.Direction.OUT, podium_message_uid="mf")
+    process_podium_webhook(
+        {"eventType": "message.failed", "data": {"uid": "mf", "failureReason": "landline"}}
+    )
+    msg.refresh_from_db()
+    assert msg.delivery_status == Message.DeliveryStatus.FAILED
+    assert msg.failure_reason == "landline"
+
+
+def test_webhook_view_accepts_post(client):
+    resp = client.post(
+        "/webhooks/podium/",
+        data=json.dumps(_received(uid="v1")),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert PodiumEvent.objects.filter(event_type="message.received").exists()
+
+
+def test_webhook_view_rejects_bad_json(client):
+    resp = client.post("/webhooks/podium/", data="not-json", content_type="application/json")
+    assert resp.status_code == 400

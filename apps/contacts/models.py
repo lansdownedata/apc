@@ -13,6 +13,7 @@ class Contact(TimeStampedModel):
     email = models.EmailField(blank=True)
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.WEBSITE)
     la_account_id = models.CharField("LimoAnywhere account", max_length=64, blank=True)
+    podium_contact_uid = models.CharField("Podium contact UID", max_length=64, blank=True)
     notes = models.TextField(blank=True)
 
     def __str__(self) -> str:
