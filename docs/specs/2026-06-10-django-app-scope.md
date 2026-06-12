@@ -177,7 +177,7 @@ A `Notification` is created on `balance_failed` (primary), `sync_failed`, option
 ## 12. Open items / decisions
 - **Hosting:** Heroku vs Azure (provision MySQL + Redis).
 - **Processor at scale:** Stripe for v1; revisit interchange-plus (Authorize.Net gateway-only / LA CardConnect) if monthly card volume clears ~$5–7k.
-- **Podium Developer access:** ✅ test **organization** + OAuth **app** (client_id/secret) in hand. Still to confirm: the **location UID(s)** under the org to scope calls, the redirect URI, and production-app approval. Scopes: `read_/write_messages`, `read_/write_contacts`, `read_/write_reviews`.
+- **Podium Developer access:** ✅ test **organization** (UID), OAuth **app** (client_id/secret), and **dev redirect URI** `https://<ngrok-subdomain>.ngrok-free.dev/integrations/podium/callback/` (ngrok HTTPS tunnel → `localhost:8000`, since Podium requires HTTPS). Still to confirm: the **location UID** under the org to scope calls, and production-app approval. Scopes: `read_/write_messages`, `read_/write_contacts`, `read_/write_reviews`.
 - **Deposit policy:** 50% confirmed; expose as a Setting (per-quote override?).
 - **Balance reference date:** earliest pickup across the quote (confirmed) vs per-reservation.
 
