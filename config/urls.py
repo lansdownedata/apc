@@ -13,6 +13,7 @@ def healthz(_request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("healthz/", healthz, name="health"),
+    path("integrations/", include("apps.integrations.urls")),
     # API routes are mounted here as apps expose routers, e.g.:
     # path("api/", include("config.api")),
 ]
