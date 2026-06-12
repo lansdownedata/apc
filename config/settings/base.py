@@ -8,6 +8,7 @@ Environment-specific overrides live in dev.py / prod.py.
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 
 # config/settings/base.py -> project root is three parents up.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -125,6 +126,12 @@ CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 CELERY_TASK_TRACK_STARTED = True
+CELERY_BEAT_SCHEDULE = {
+    "charge-due-balances": {
+        "task": "apps.payments.tasks.charge_due_balances",
+        "schedule": crontab(hour=6, minute=0),  # daily at 6am — balance charges due
+    },
+}
 
 # ---------------------------------------------------------------- integrations
 # Populated from env (.env); blank until real credentials are set.
