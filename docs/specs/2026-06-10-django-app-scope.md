@@ -31,7 +31,7 @@ apps/
   leads/                    # Lead/Quote, pipeline, Vehicle (reference)
   reservations/             # Reservation, Stop, pricing logic
   payments/                 # PaymentPlan, Charge, Stripe service, balance scheduler
-  messaging/                # Message, TouchPoint, Review — Podium service + poller
+  messaging/                # Message, TouchPoint, Review — Podium service (webhook in)
   integrations/             # ZapEvent, Zapier REST-Hook subscriptions, LA sync, webhooks
   notifications/            # Notification + bell feed
   core/                     # shared mixins, base models (TimeStamped), settings/config
@@ -44,12 +44,12 @@ Each app owns its models, serializers, services (external-API calls live in `ser
 ## 3. Data model (by app → ERD)
 
 - **accounts** — `User` (`role`: owner_admin / agent, `two_factor_enabled`), `AuditLog` (who changed what).
-- **contacts** — `Contact` (name, company, phone, email, channel, `la_account_id`).
+- **contacts** — `Contact` (name, company, phone, email, channel, `la_account_id`, `podium_contact_uid`).
 - **leads** — `Lead` (→ Contact, agent, `quote_no`, `status`, `notes`, `has_alert`), `Vehicle` (reference list).
 - **reservations** — `Reservation` (→ Lead, Vehicle, `trip_type`, schedule, pricing fields, **`trip_status` + `trip_phase`**), `Stop` (→ Reservation, `sequence`, address, note), `TripStatusEvent` (dispatch-status history).
 - **payments** — `PaymentPlan` (1↔1 Lead; deposit/balance amounts + statuses, `balance_due_date`, Stripe refs, card brand/last4), `Charge` (→ PaymentPlan; kind, amount, status, PaymentIntent, idempotency key, failure reason).
-- **messaging** — `Message` (→ Lead; direction, channel, body, Podium ids), `TouchPoint` (→ Lead; kind, schedule), `Review` (→ Lead/Contact; status, rating).
-- **integrations** — `ZapEvent` (→ Lead; action, payload, result, idempotency key — the sync log).
+- **messaging** — `Message` (→ Lead; direction, `channel` ∈ sms/email/facebook/whatsapp/apple, body, `podium_message_uid`, `podium_conversation_uid`, delivery state + failure reason), `TouchPoint` (→ Lead; kind, schedule), `Review` (→ Lead/Contact; `podium_review_invite_uid`, `delivery_status`, `link_clicked`, attributed rating/body/site).
+- **integrations** — `ZapEvent` (→ Lead; action, payload, result, idempotency key — the LimoAnywhere sync log) and `PodiumEvent` (inbound Podium webhook log: event type, payload, processed flag).
 - **notifications** — `Notification` (→ Lead, optional User; kind, title, detail, read).
 
 Full fields, enums, and relationships are in the [ERD](./2026-06-10-lead-manager-erd.md). Money/derived values (`Reservation.line_total`, `Lead.quote_total`) are computed; `PaymentPlan` snapshots the total at quote-send time.
@@ -76,14 +76,14 @@ All four normalise onto a `Lead` + `Contact` (dedupe Contact by phone/email), se
 - `GET/POST /api/leads/{id}/reservations/`, `PATCH/DELETE /api/reservations/{id}/`, nested `…/stops/`.
 - `POST /api/leads/{id}/send-quote/` — status→Quoted, create Stripe deposit Payment Link, send via Podium, `deposit_status=requested`.
 - `POST /api/leads/{id}/book/` — manual/offline book (auto path is the Stripe deposit webhook); runs the LA sync + schedules balance.
-- `GET /api/leads/{id}/messages/` (poll) · `POST /api/leads/{id}/messages/` (send via Podium).
+- `GET /api/leads/{id}/messages/` (thread) · `POST /api/leads/{id}/messages/` (send via Podium).
 - `GET /api/leads/{id}/payment/` · `POST /api/leads/{id}/payment/charge-balance/` (retry now) · `POST …/request-new-card/`.
 - `GET /api/notifications/` · `POST /api/notifications/{id}/read/` · `POST /api/notifications/read-all/`.
 - `GET /api/contacts/`, `GET /api/reviews/`, `POST /api/reviews/{id}/invite/`.
 
 **Capture & webhooks (no session):**
 - `POST /api/capture/website/`, `POST /api/capture/inbound/` (API key).
-- `POST /webhooks/stripe/` (signed), `POST /webhooks/podium/` (lead + inbound), `POST /webhooks/limoanywhere/` (status writeback via Zapier).
+- `POST /webhooks/stripe/` (signed), `POST /webhooks/podium/` (`message.received/sent/failed` + Wedding Pro lead), `POST /webhooks/limoanywhere/` (status writeback via Zapier).
 - `POST /api/zapier/subscribe/` · `DELETE /api/zapier/unsubscribe/` (Zapier REST-Hook subscription management).
 
 ---
@@ -101,10 +101,15 @@ LA status flows back via `POST /webhooks/limoanywhere/` → updates `Reservation
 **Trip status (operational, separate from the sales pipeline).** Each `Reservation` mirrors LimoAnywhere's exact dispatch status — *Unassigned → Offered → Assigned → Dispatched → On The Way → Circling → Arrived → Customer In Car → Done*, plus the *Cancelled / No Show* and *Affiliate / Farm-out* states — grouped by phase for display. It's read from the LA writeback above and is **manually editable in-portal for off-LA affiliate trips** (manual email handoff). Reaching **Done** fires the post-trip **review-request** TouchPoint. A booked quote may hold several trips at different statuses, and a trip can be Cancelled / No-show while the Lead stays Booked.
 
 ### 6b. Podium — REST API (OAuth 2.0), messaging backend
-- **Conversations**: polled (no inbound webhook) by a Celery task → upserts `Message`.
-- **Send message**: outbound replies, quote/deposit links, and `TouchPoint`s via send-message — on Podium's existing number.
-- **Review invites**: `Review` requests via Podium's review-invite endpoint after trip completion.
-- Wedding Pro leads arrive as a Podium webhook → `Lead`.
+*Verified against docs.podium.com (2026-06). Base host `api.podium.com`.*
+
+- **Auth:** OAuth 2.0 **authorization-code** grant (`/oauth/authorize` → `/oauth/token`). Access tokens last **10 hours** — store the **refresh token** and refresh on 401. Request only the scopes we use: `read_messages`, `write_messages`, `read_contacts`, `write_contacts`, `read_reviews`, `write_reviews`. Calls are scoped to a **location UID** under the **organization UID**.
+- **Inbound messages → webhook, not polling.** Podium's **Message Webhook API** posts `message.received` / `message.sent` / `message.failed` to `POST /webhooks/podium/`; we upsert `Message` and surface delivery failures (e.g. `failureReason: landline`). **This supersedes the earlier "poll conversations" plan** — Podium now offers message webhooks.
+- **Send message** (`write_messages`): outbound replies, the Stripe deposit link, and `TouchPoint`s. Multi-channel — `channel.type` ∈ {sms, email, facebook, whatsapp, apple}; default to SMS/email on Podium's number.
+- **Contacts** (`read_/write_contacts`): full CRUD — create without a conversation, get by phone/email, update/sync; mirror `podium_contact_uid` on `Contact`.
+- **Review invites** (`write_reviews`): **Create Review Invitation** on trip `Done`; the review-invite object returns `deliveryStatus` (pending/sent/delivered/failed), `linkClicked`, and `attributions[]` (resulting rating/body/site) → mirrored onto `Review`.
+- **Wedding Pro** leads surface as inbound Podium messages/events → captured into a `Lead`.
+- Every Podium object is a string **UID** (contact, conversation, message, location, org, review-invite) — store the relevant ones on our models.
 
 ### 6c. Stripe — deposits & balance
 - **Deposit**: on send-quote, create/reuse a Stripe **Customer**, generate a **Payment Link / Checkout Session** for `deposit_amount` with `setup_future_usage=off_session` (saves the card). The link is texted via Podium.
@@ -118,11 +123,12 @@ LA status flows back via `POST /webhooks/limoanywhere/` → updates `Reservation
 
 | Task | Cadence | What it does |
 |---|---|---|
-| `messaging.poll_podium` | ~1–2 min | Pull new inbound Podium messages → `Message`. |
 | `messaging.run_touchpoints` | ~15 min | Send due `TouchPoint`s (greeting, follow-up, pre-trip reminder, review request) via Podium. |
 | **`payments.charge_due_balances`** | **daily** | Find `PaymentPlan`s with `balance_status=scheduled` and `balance_due_date <= today`; create a `Charge` + off-session PaymentIntent. **Success → `paid`. Failure → `balance_status=failed`, `lead.has_alert=true`, create `Notification(balance_failed)`.** ← the core requirement. |
 | `integrations.retry_failed_syncs` | ~30 min | Retry `ZapEvent`s in `error` (idempotent). |
 
+> Inbound Podium messages are **webhook-driven** (`message.received` / `sent` / `failed`) — there is **no polling task**.
+>
 > Failure recovery is **notify + manual** (per decision): no auto-retry/dunning in v1 — ops gets the notification and uses **Retry charge** / **Request new card**. Hooks are left in place to add scheduled retries later.
 
 ---
@@ -157,7 +163,7 @@ A `Notification` is created on `balance_failed` (primary), `sync_failed`, option
 | B · Core application | Django models, auth/roles, lead inbox, contacts, pipeline | 30 |
 | C · Capture channels | Website form/widget, Wedding Pro (Podium webhook), intake, open API | 20 |
 | D · LimoAnywhere integration | Zapier REST Hooks, field mapping, sync log, retries, status writeback | 8 |
-| E · Podium messaging | OAuth, conversations poll, send, touch-point scheduler, review invites | 8 |
+| E · Podium messaging | OAuth, message-webhook receiver, send, touch-point scheduler, review invites | 8 |
 | F · Branding & UI polish | APC theme, responsive layout, templates | 15 |
 | **G · Payments & deposits (Stripe)** ⟵ new | Customer + saved card, deposit Payment Link + webhook (auto-book), **off-session balance scheduler (30-day rule)**, failure → Notification, retry/request-card actions, Settings, tests | **18** |
 | H · Testing, deploy, docs & handoff | E2E testing, deployment, documentation, training | 8 |
@@ -171,7 +177,7 @@ A `Notification` is created on `balance_failed` (primary), `sync_failed`, option
 ## 12. Open items / decisions
 - **Hosting:** Heroku vs Azure (provision MySQL + Redis).
 - **Processor at scale:** Stripe for v1; revisit interchange-plus (Authorize.Net gateway-only / LA CardConnect) if monthly card volume clears ~$5–7k.
-- **Podium Developer access:** OAuth app + Conversations/Messenger/Contacts/Review-Invite scopes (gates phase E).
+- **Podium Developer access:** ✅ test **organization** + OAuth **app** (client_id/secret) in hand. Still to confirm: the **location UID(s)** under the org to scope calls, the redirect URI, and production-app approval. Scopes: `read_/write_messages`, `read_/write_contacts`, `read_/write_reviews`.
 - **Deposit policy:** 50% confirmed; expose as a Setting (per-quote override?).
 - **Balance reference date:** earliest pickup across the quote (confirmed) vs per-reservation.
 
