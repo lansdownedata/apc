@@ -22,6 +22,7 @@ erDiagram
     LEAD         ||--o{ NOTIFICATION  : "raises"
     USER         ||--o{ NOTIFICATION  : "receives"
     LEAD         ||--o{ ZAP_EVENT     : "syncs via"
+    LEAD         ||--o{ PODIUM_EVENT  : "inbound webhook"
     LEAD         ||--o{ AUDIT_LOG     : "tracked by"
     USER         ||--o{ AUDIT_LOG     : "acts in"
 
@@ -33,6 +34,7 @@ erDiagram
         string email
         string channel "website,wedding_pro,phone,api"
         string la_account_id "LimoAnywhere Account"
+        string podium_contact_uid "Podium contact UID"
         datetime created_at
     }
     USER {
@@ -131,10 +133,12 @@ erDiagram
         bigint id PK
         bigint lead_id FK
         string direction "in,out"
-        string channel "sms,email"
+        string channel "sms,email,facebook,whatsapp,apple"
         text body
-        string podium_conversation_id
-        string podium_message_id
+        string podium_conversation_uid
+        string podium_message_uid
+        string delivery_status "sent,received,failed"
+        string failure_reason "e.g. landline"
         datetime sent_at
     }
     TOUCHPOINT {
@@ -150,10 +154,12 @@ erDiagram
         bigint id PK
         bigint lead_id FK
         bigint contact_id FK
-        string status "pending,completed"
-        int rating "1-5, nullable"
-        text body "nullable"
-        string podium_review_id
+        string podium_review_invite_uid
+        string delivery_status "pending,sent,delivered,failed"
+        bool link_clicked
+        int rating "1-5, from attribution"
+        text body "from attribution"
+        string review_site "attributed site"
         datetime requested_at
     }
     NOTIFICATION {
@@ -174,6 +180,14 @@ erDiagram
         string result "pending,success,error"
         string idempotency_key
         text response
+        datetime created_at
+    }
+    PODIUM_EVENT {
+        bigint id PK
+        bigint lead_id FK "nullable"
+        string event_type "message.received,message.sent,message.failed"
+        json payload
+        bool processed
         datetime created_at
     }
     AUDIT_LOG {
@@ -198,11 +212,12 @@ erDiagram
 | **Vehicle** | Reference list of vehicle types + capacity. | 1 → many Reservation |
 | **PaymentPlan** | The deposit + balance plan for a quote; holds Stripe customer + card on file. | 1 ↔ 1 Lead; 1 → many Charge |
 | **Charge** | A single Stripe attempt (deposit or balance), with idempotency + failure reason. | → PaymentPlan |
-| **Message** | Inbound/outbound Podium thread item. | → Lead |
+| **Message** | Inbound/outbound Podium thread item — multi-channel (sms/email/facebook/whatsapp/apple) with Podium UIDs + delivery state; **inbound arrives via webhook**. | → Lead |
 | **TouchPoint** | Scheduled automated message (greeting, follow-up, reminder, review request) via Podium. | → Lead |
-| **Review** | Podium review invite + resulting rating. | → Lead, Contact |
+| **Review** | Podium review **invite** — delivery status, link-click, and the attributed rating/body/site. | → Lead, Contact |
 | **Notification** | In-app alert (drives the bell); created on **balance_failed**, deposit_paid, sync_failed, etc. | → Lead, optional User |
 | **ZapEvent** | Sync log — every Zapier/LimoAnywhere push, payload + result, idempotency key, for traceability + retries. | → Lead |
+| **PodiumEvent** | Inbound Podium webhook log (`message.received/sent/failed`) — payload + processed flag. | → Lead (nullable) |
 | **AuditLog** | Change trail for security/compliance. | → User, Lead |
 
 ## Design notes
@@ -212,6 +227,7 @@ erDiagram
 - **Idempotency everywhere it touches money or external systems:** `Charge.idempotency_key` (Stripe) and `ZapEvent.idempotency_key` (Zapier/LA) guarantee retries never double-charge or duplicate reservations.
 - **No card data on our servers:** only Stripe references (`stripe_customer_id`, `stripe_payment_method_id`) + display `card_brand`/`card_last4`. Keeps PCI scope at **SAQ-A**.
 - **Status enums** mirror the prototype exactly: Lead `new→quoted→booked→lost`; deposit `unsent→requested→paid`; balance `na→scheduled→paid→failed`.
+- **Podium (verified against docs.podium.com, 2026-06):** OAuth 2.0 authorization-code, **10-hour** access tokens (refresh stored); scopes `read_/write_messages`, `read_/write_contacts`, `read_/write_reviews`. **Inbound messages arrive by webhook** (`message.received` / `sent` / `failed`) — *not* polling. Every Podium object is a string **UID**, mirrored on `Contact` / `Message` / `Review`; inbound webhooks are logged as `PodiumEvent`.
 - **Two independent statuses.** The **Lead** carries the *sales* status (`new→quoted→booked→lost`); each **Reservation** carries its own *operational* `trip_status` — a booked quote can have several trips at different dispatch stages, and a trip can go No-show / Cancelled while the lead stays Booked.
 - **`trip_status` = the exact LimoAnywhere taxonomy**, grouped by `trip_phase` for display: *Created* (Unassigned · Farm-out Unassigned · Pending) → *Offered to Driver* → *Driver is Assigned* (Assigned · Dispatched - Driver Assigned) → *En Route* (On The Way) → *Circling* → *Waiting at Pickup* (Arrived) → *Driving Passenger* (Customer In Car) → *Completing* (Done); plus *Cancelled* (Cancelled · Cancelled by Affiliate · Late Cancel · No Show · COVID-19 Cancellation), *Offered to Affiliate*, *Affiliate is Assigned*, and *Other* (Dispatched - Driver Assigned NON LA). Sourced from the **LA status-writeback webhook**; editable in-portal for **off-LA affiliate** trips (manual handoff). **Done** fires the post-trip **review request** TouchPoint.
 - **Round trips** are two Reservations (e.g., wedding outbound + return), matching the prototype.
