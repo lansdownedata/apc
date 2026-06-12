@@ -127,17 +127,39 @@ CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 CELERY_TASK_TRACK_STARTED = True
 
 # ---------------------------------------------------------------- integrations
-# Populated from env; blank in dev until real credentials are issued.
+# Populated from env (.env); blank until real credentials are set.
+
+# Stripe — deposits + balance
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 STRIPE_DEPOSIT_PCT = env.int("STRIPE_DEPOSIT_PCT", default=50)
 BALANCE_CHARGE_DAYS_BEFORE = env.int("BALANCE_CHARGE_DAYS_BEFORE", default=30)
 
+# Podium — messaging (OAuth 2.0 authorization-code; base host api.podium.com)
+PODIUM_API_BASE = env("PODIUM_API_BASE", default="https://api.podium.com")
 PODIUM_CLIENT_ID = env("PODIUM_CLIENT_ID", default="")
 PODIUM_CLIENT_SECRET = env("PODIUM_CLIENT_SECRET", default="")
-PODIUM_LOCATION_ID = env("PODIUM_LOCATION_ID", default="")
+PODIUM_REDIRECT_URI = env("PODIUM_REDIRECT_URI", default="")
+PODIUM_ORGANIZATION_UID = env("PODIUM_ORGANIZATION_UID", default="")
+PODIUM_LOCATION_UID = env("PODIUM_LOCATION_UID", default="")
+PODIUM_WEBHOOK_SECRET = env("PODIUM_WEBHOOK_SECRET", default="")
+PODIUM_SCOPES = env.list(
+    "PODIUM_SCOPES",
+    default=[
+        "read_messages",
+        "write_messages",
+        "read_contacts",
+        "write_contacts",
+        "read_reviews",
+        "write_reviews",
+    ],
+)
 
+# Zapier → LimoAnywhere
 ZAPIER_LEAD_HOOK_URL = env("ZAPIER_LEAD_HOOK_URL", default="")
+
+# Inbound capture API
 LEAD_INBOUND_API_KEY = env("LEAD_INBOUND_API_KEY", default="")
 
 # ---------------------------------------------------------------- logging

@@ -3,7 +3,12 @@
 from .base import *  # noqa: F401,F403
 
 DEBUG = True
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
+
+# Allow the ngrok tunnel host (set NGROK_HOST in .env) so Podium OAuth callbacks
+# and webhooks reach the local server over HTTPS.
+NGROK_HOST = env("NGROK_HOST", default="")  # noqa: F405
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", *([NGROK_HOST] if NGROK_HOST else [])]
+CSRF_TRUSTED_ORIGINS = [f"https://{NGROK_HOST}"] if NGROK_HOST else []
 
 # django-debug-toolbar
 INSTALLED_APPS += ["debug_toolbar"]  # noqa: F405
