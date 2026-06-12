@@ -66,3 +66,31 @@ def send_message(
             "locationUid": location_uid or settings.PODIUM_LOCATION_UID,
         },
     )
+
+
+def create_webhook(
+    *,
+    url: str,
+    event_types: list[str],
+    secret: str = "",
+    organization_uid: str | None = None,
+    location_uid: str | None = None,
+) -> dict:
+    """Register a Podium webhook. One of organization_uid / location_uid is required
+    (org wins if both are given). `secret` is what Podium signs events with."""
+    body: dict = {"eventTypes": event_types, "url": url}
+    if secret:
+        body["secret"] = secret
+    if organization_uid:
+        body["organizationUid"] = organization_uid
+    elif location_uid:
+        body["locationUid"] = location_uid
+    return _request("POST", "/webhooks", json=body)
+
+
+def list_webhooks() -> dict:
+    return _request("GET", "/webhooks")
+
+
+def delete_webhook(uid: str) -> dict:
+    return _request("DELETE", f"/webhooks/{uid}")
