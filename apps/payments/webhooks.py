@@ -4,6 +4,7 @@ import stripe
 from django.conf import settings
 
 from apps.leads.models import Lead
+from apps.notifications.models import Notification
 
 from .models import Charge, PaymentPlan
 
@@ -93,4 +94,6 @@ def _balance_failed(intent) -> None:
         plan.charges.filter(stripe_payment_intent_id=pi_id).update(
             status=Charge.Status.FAILED, failure_reason=reason
         )
-    # TODO: create Notification(balance_failed) once the notifications model exists.
+    Notification.notify(
+        plan.lead, Notification.Kind.BALANCE_FAILED, title="Balance charge failed", detail=reason
+    )

@@ -25,3 +25,6 @@ db.sqlite3-journal
 .DS_Store
 .idea/
 .vscode/
+
+# Local Claude context (personal; committed conventions live in CLAUDE.md)
+CLAUDE.local.md

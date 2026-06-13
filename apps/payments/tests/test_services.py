@@ -82,3 +82,8 @@ def test_charge_balance_card_error_fails_and_alerts():
     assert plan.balance_status == PaymentPlan.BalanceStatus.FAILED
     assert plan.fail_reason
     assert plan.lead.has_alert is True
+    from apps.notifications.models import Notification
+
+    assert Notification.objects.filter(
+        lead=plan.lead, kind=Notification.Kind.BALANCE_FAILED
+    ).exists()
