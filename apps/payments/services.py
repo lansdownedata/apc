@@ -4,6 +4,8 @@ balance charge. Card data never touches our servers (Checkout + tokens)."""
 import stripe
 from django.conf import settings
 
+from apps.notifications.models import Notification
+
 from .models import Charge, PaymentPlan
 
 
@@ -99,5 +101,7 @@ def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge
     lead = plan.lead
     lead.has_alert = True
     lead.save(update_fields=["has_alert", "updated_at"])
-    # TODO: create Notification(balance_failed) once the notifications model exists.
+    Notification.notify(
+        lead, Notification.Kind.BALANCE_FAILED, title="Balance charge failed", detail=reason
+    )
     return charge

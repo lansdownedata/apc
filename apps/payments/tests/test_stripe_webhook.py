@@ -65,6 +65,11 @@ def test_balance_failed_marks_failed_and_alerts():
     assert "declined" in plan.fail_reason.lower()
     plan.lead.refresh_from_db()
     assert plan.lead.has_alert is True
+    from apps.notifications.models import Notification
+
+    assert Notification.objects.filter(
+        lead=plan.lead, kind=Notification.Kind.BALANCE_FAILED
+    ).exists()
 
 
 def test_view_returns_200_on_valid_signature(client):
