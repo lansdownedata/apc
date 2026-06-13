@@ -160,6 +160,7 @@ PODIUM_SCOPES = env.list(
         "write_contacts",
         "read_reviews",
         "write_reviews",
+        "read_locations",
     ],
 )
 

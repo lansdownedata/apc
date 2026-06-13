@@ -19,6 +19,10 @@ class PodiumNotConnected(Exception):
     """Raised when no Podium credential is stored (authorize first)."""
 
 
+class PodiumAPIError(Exception):
+    """A non-2xx response from the Podium API (carries status + body)."""
+
+
 def get_credential() -> PodiumCredential:
     """The active credential, refreshed if it's at/near expiry."""
     cred = PodiumCredential.current()
@@ -44,7 +48,12 @@ def _request(method: str, path: str, *, json=None, params=None) -> dict:
         params=params,
         timeout=TIMEOUT,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        raise PodiumAPIError(
+            f"{resp.status_code} {method} {resp.url} → {(resp.text or '')[:600]}"
+        ) from exc
     return resp.json() if resp.content else {}
 
 

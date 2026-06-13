@@ -30,16 +30,26 @@ class Command(BaseCommand):
 
         secret = options["secret"] or settings.PODIUM_WEBHOOK_SECRET or secrets.token_urlsafe(24)
 
+        org_uid = settings.PODIUM_ORGANIZATION_UID or None
+        location_uid = settings.PODIUM_LOCATION_UID or None
+        # Podium uses organizationUid when both are sent — prefer a location-scoped
+        # webhook whenever we have a location UID.
+        if location_uid:
+            org_uid = None
+
         try:
             result = podium.create_webhook(
                 url=url,
                 event_types=EVENT_TYPES,
                 secret=secret,
-                organization_uid=settings.PODIUM_ORGANIZATION_UID or None,
-                location_uid=settings.PODIUM_LOCATION_UID or None,
+                organization_uid=org_uid,
+                location_uid=location_uid,
             )
         except podium.PodiumNotConnected as exc:
             self.stderr.write(self.style.ERROR(str(exc)))
+            return
+        except podium.PodiumAPIError as exc:
+            self.stderr.write(self.style.ERROR(f"Podium API error: {exc}"))
             return
 
         self.stdout.write(self.style.SUCCESS(f"Webhook created: {result}"))
