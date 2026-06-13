@@ -1,0 +1,45 @@
+{# ==========================================================================
+   Reusable modal — driven entirely by $store.modal.
+   This is the ONLY modal in the app. Open it from anywhere with:
+     $store.modal.confirm({ title, message, variant, confirmText, onConfirm })
+     $store.modal.alert({ title, message, variant })
+   NEVER use the native window.confirm/alert or <dialog>.
+   ========================================================================== #}
+<div x-data x-show="$store.modal.open" x-cloak
+     class="fixed inset-0 z-[60] flex items-center justify-center p-4"
+     x-transition.opacity
+     @keydown.escape.window="$store.modal.open && $store.modal.cancel()">
+  <div class="modal-overlay absolute inset-0" @click="$store.modal.cancel()"></div>
+
+  <div class="modal-panel relative bg-white rounded-2xl w-full max-w-md overflow-hidden pop">
+    <div class="p-6">
+      <div class="flex items-start gap-4">
+        <span class="w-11 h-11 rounded-xl grid place-items-center shrink-0"
+              :class="{
+                'bg-sky-50 text-sky-600': $store.modal.variant==='info',
+                'bg-emerald-50 text-emerald-600': $store.modal.variant==='success',
+                'bg-rose-50 text-rose-600': $store.modal.variant==='danger',
+                'bg-goldl text-goldd': $store.modal.variant==='gold'
+              }">
+          <i class="ti text-[22px]" :class="$store.modal._icon()"></i>
+        </span>
+        <div class="min-w-0 flex-1 pt-0.5">
+          <h3 class="font-display text-[18px] font-semibold text-ink leading-snug" x-text="$store.modal.title"></h3>
+          <p class="text-[13.5px] text-muted mt-1.5 leading-relaxed" x-show="$store.modal.message" x-text="$store.modal.message"></p>
+          <div class="text-[13.5px] text-muted mt-1.5 leading-relaxed" x-show="$store.modal.html" x-html="$store.modal.html"></div>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-2.5 px-6 py-4 bg-[#faf8f3] border-t border-line">
+      <button x-show="$store.modal.showCancel" @click="$store.modal.cancel()"
+              class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-white"
+              x-text="$store.modal.cancelText"></button>
+      <button @click="$store.modal.accept()" :disabled="$store.modal.busy"
+              class="text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-70"
+              :class="$store.modal.variant==='danger' ? 'bg-rose-600 text-white hover:bg-rose-700' : 'btn-gold'">
+        <i x-show="$store.modal.busy" class="ti ti-loader-2 spin text-[15px]"></i>
+        <span x-text="$store.modal.confirmText"></span>
+      </button>
+    </div>
+  </div>
+</div>

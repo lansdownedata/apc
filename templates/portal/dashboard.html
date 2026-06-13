@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
+
+  <!-- greeting -->
+  <div class="flex flex-wrap items-end justify-between gap-3 mb-5">
+    <div>
+      <h1 class="font-display text-[26px] font-semibold text-ink tracking-tight">
+        Welcome back, {{ user.get_short_name|default:user.first_name|default:user.username }}
+      </h1>
+      <p class="text-[13px] text-muted mt-1">Here's where the pipeline stands today.</p>
+    </div>
+    <a href="{% url 'lead_list' %}" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2">
+      <i class="ti ti-files text-[15px]"></i> View leads &amp; quotes
+    </a>
+  </div>
+
+  <!-- stat cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6 stagger">
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">New</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-sky-50 text-sky-600"><i class="ti ti-sparkles text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.new }}</div>
+      <div class="text-[11px] text-muted mt-1.5">awaiting quote</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Quoted</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-amber-50 text-amber-600"><i class="ti ti-send text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.quoted }}</div>
+      <div class="text-[11px] text-muted mt-1.5">awaiting booking</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Booked</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-emerald-50 text-emerald-600"><i class="ti ti-circle-check text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.booked }}</div>
+      <div class="text-[11px] text-muted mt-1.5">synced to LimoAnywhere</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Open pipeline</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-goldl text-goldd"><i class="ti ti-coin text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-goldd leading-none mt-2 num">${{ open_pipeline|floatformat:0|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">New + Quoted value</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <!-- recent leads -->
+    <div class="card lg:col-span-2 overflow-hidden">
+      <div class="flex items-center px-5 py-3.5 border-b border-line">
+        <span class="font-display text-[15px] font-semibold text-ink">Recent leads</span>
+        <a href="{% url 'lead_list' %}" class="ml-auto text-[12px] text-goldd hover:underline">View all</a>
+      </div>
+      <div class="divide-y divide-line/70">
+        {% for lead in recent_leads %}
+        <a href="{% url 'lead_detail' lead.pk %}" class="flex items-center gap-3 px-5 py-3 hover:wash-gold transition-colors">
+          <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ lead.contact.name|slice:":2" }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="font-semibold text-ink text-[13px] leading-tight truncate">{{ lead.contact.name }}</div>
+            <div class="text-[11.5px] text-muted font-mono2">{{ lead.quote_no }} · {{ lead.reservation_count }} res.</div>
+          </div>
+          {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
+          <div class="text-right num text-[13px] font-semibold text-ink w-20">${{ lead.quote_total|floatformat:0|intcomma }}</div>
+        </a>
+        {% empty %}
+        <div class="px-5 py-12 text-center text-[13px] text-muted">
+          <i class="ti ti-inbox text-[26px] text-slate-300"></i>
+          <div class="mt-2">No leads yet.</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- alerts -->
+    <div class="card overflow-hidden">
+      <div class="flex items-center px-5 py-3.5 border-b border-line">
+        <span class="font-display text-[15px] font-semibold text-ink">Needs attention</span>
+        {% if unread_count %}<span class="ml-auto text-[10px] font-semibold text-white bg-rose-500 rounded-full px-1.5">{{ unread_count }}</span>{% endif %}
+      </div>
+      <div class="divide-y divide-line/70">
+        {% for n in alerts %}
+        <a href="{% url 'lead_detail' n.lead_id %}" class="flex gap-3 px-5 py-3 hover:bg-[#faf8f3] transition-colors">
+          <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
+            <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-bell{% endif %} text-[15px]"></i>
+          </span>
+          <div class="min-w-0 flex-1">
+            <div class="text-[12.5px] font-semibold text-ink leading-tight">{{ n.title }}</div>
+            <div class="text-[11.5px] text-muted truncate">{{ n.detail }}</div>
+          </div>
+        </a>
+        {% empty %}
+        <div class="px-5 py-12 text-center text-[13px] text-muted">
+          <i class="ti ti-checks text-[26px] text-emerald-400"></i>
+          <div class="mt-2">All caught up.</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

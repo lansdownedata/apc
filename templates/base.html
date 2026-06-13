@@ -1,0 +1,182 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}{{ page_title|default:"Lead Manager" }} · All Pro Charter{% endblock %}</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      fontFamily: {
+        sans: ['Hanken Grotesk','system-ui','sans-serif'],
+        display: ['Fraunces','Georgia','serif'],
+        mono: ['Spline Sans Mono','ui-monospace','monospace'],
+      },
+      colors: {
+        charcoal:'#14181f', charcoal2:'#1b212b', charcoal3:'#222b37',
+        gold:'#c2a14e', goldd:'#8a6d1f', goldl:'#fbf6e9',
+        ink:'#1b212b', muted:'#6b727c', paper:'#f4f1ea', line:'#e8e3d8',
+      },
+    }}
+  }
+</script>
+<link rel="stylesheet" href="{% static 'css/app.css' %}">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<script src="{% static 'js/app.js' %}"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+{% block head_extra %}{% endblock %}
+</head>
+
+<body x-data="shell()" x-cloak>
+<div class="flex h-screen overflow-hidden">
+
+  <!-- ============================================================ SIDEBAR -->
+  <aside class="sidebar text-slate-300 flex flex-col shrink-0 z-30 transition-all duration-300 fixed lg:static inset-y-0 left-0"
+         :class="navOpen ? 'w-[214px]' : 'w-[214px] -translate-x-full lg:translate-x-0 lg:w-[72px]'">
+
+    <!-- brand -->
+    <div class="relative px-4 pt-5 pb-4">
+      <div class="brand-glow absolute inset-0 pointer-events-none"></div>
+      <a href="{% url 'dashboard' %}" class="relative flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-lg grid place-items-center font-display text-[15px] font-bold text-charcoal shrink-0"
+             style="background:linear-gradient(180deg,#cdaf5e,#bd9b45);box-shadow:0 6px 16px -8px rgba(194,161,78,.7)">APC</div>
+        <div x-show="navOpen" x-transition.opacity class="leading-none">
+          <div class="font-display text-[15px] font-semibold text-white tracking-tight">All Pro Charter</div>
+          <div class="text-[10px] tracking-[0.22em] text-gold/80 mt-1">LEAD MANAGER</div>
+        </div>
+      </a>
+    </div>
+
+    <!-- nav -->
+    <nav class="flex-1 px-2.5 mt-1 flex flex-col gap-0.5 text-[13px] stagger">
+      <a href="{% url 'dashboard' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'dashboard' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-layout-dashboard text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Dashboard</span>
+      </a>
+      <a href="{% url 'lead_list' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'leads' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-files text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Leads &amp; Quotes</span>
+      </a>
+
+      {% for label, icon in nav_soon %}
+      <span class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-slate-600 cursor-not-allowed select-none"
+            title="Coming soon">
+        <i class="ti {{ icon }} text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">{{ label }}</span>
+        <span x-show="navOpen" class="text-[9px] tracking-wide uppercase text-slate-500 ring-1 ring-white/10 rounded px-1 py-0.5">Soon</span>
+      </span>
+      {% endfor %}
+    </nav>
+
+    <!-- integrations status -->
+    <div x-show="navOpen" x-transition.opacity class="px-4 py-3 mx-2.5 mb-1 rounded-lg bg-white/[0.03]">
+      <div class="text-[9.5px] tracking-[0.18em] text-slate-500 mb-2">CONNECTED</div>
+      <div class="flex flex-col gap-1.5 text-[11px] text-slate-400">
+        <div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Podium API</div>
+        <div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> Zapier</div>
+        <div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> LimoAnywhere</div>
+      </div>
+    </div>
+
+    <!-- user -->
+    <div class="px-3 py-3 border-t border-white/5 flex items-center gap-2.5">
+      <span class="w-8 h-8 rounded-full bg-gold text-charcoal grid place-items-center text-[12px] font-semibold shrink-0 uppercase">
+        {{ user.get_full_name|default:user.username|slice:":2" }}
+      </span>
+      <div x-show="navOpen" x-transition.opacity class="min-w-0 flex-1">
+        <div class="text-[12.5px] text-slate-200 font-medium leading-tight truncate">{{ user.get_full_name|default:user.username }}</div>
+        <div class="text-[10.5px] text-slate-500">{{ user.get_role_display|default:"Agent" }}</div>
+      </div>
+      <form method="post" action="{% url 'logout' %}" x-show="navOpen">
+        {% csrf_token %}
+        <button type="submit" title="Sign out" class="text-slate-500 hover:text-gold transition-colors">
+          <i class="ti ti-logout text-[16px]"></i>
+        </button>
+      </form>
+    </div>
+  </aside>
+
+  <!-- backdrop for mobile nav -->
+  <div x-show="navOpen" x-transition.opacity @click="navOpen=false" class="fixed inset-0 bg-black/40 z-20 lg:hidden"></div>
+
+  <!-- =============================================================== MAIN -->
+  <div class="flex-1 flex flex-col min-w-0">
+
+    <!-- top bar -->
+    <header class="h-14 shrink-0 flex items-center gap-3 px-4 sm:px-6 border-b border-line bg-paper/80 backdrop-blur z-10">
+      <button @click="toggleNav()" class="btn-ghost w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5">
+        <i class="ti ti-menu-2 text-[19px]"></i>
+      </button>
+      <div class="min-w-0">
+        <div class="font-display text-[17px] font-semibold text-ink leading-none tracking-tight truncate">{{ page_title|default:"Lead Manager" }}</div>
+      </div>
+
+      <div class="ml-auto flex items-center gap-2 sm:gap-3">
+        <div class="hidden md:flex items-center gap-2 text-[11.5px] px-2.5 py-1.5 rounded-full bg-amber-50 ring-1 ring-inset ring-amber-600/15 text-amber-700">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+          Test environment
+        </div>
+
+        <!-- notifications -->
+        <div class="relative">
+          <button @click="notifOpen=!notifOpen" class="btn-ghost relative w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5">
+            <i class="ti ti-bell text-[18px]"></i>
+            {% if unread_count %}
+            <span class="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9.5px] font-bold grid place-items-center ring-2 ring-paper">{{ unread_count }}</span>
+            {% endif %}
+          </button>
+          <div x-show="notifOpen" x-cloak @click.outside="notifOpen=false" x-transition
+               class="absolute right-0 mt-2 w-[330px] bg-white rounded-xl shadow-2xl ring-1 ring-line overflow-hidden z-50">
+            <div class="flex items-center px-4 py-3 border-b border-line">
+              <span class="font-display text-[14px] font-semibold text-ink">Notifications</span>
+              {% if unread_count %}<span class="ml-1.5 text-[10px] font-semibold text-white bg-rose-500 rounded-full px-1.5">{{ unread_count }}</span>{% endif %}
+            </div>
+            <div class="max-h-[340px] overflow-y-auto">
+              {% for n in unread_notifications %}
+              <a href="{% url 'lead_detail' n.lead_id %}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-[#faf8f3] transition-colors bg-goldl/40">
+                <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
+                  <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-circle-check{% endif %} text-[16px]"></i>
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-[12.5px] font-semibold text-ink">{{ n.title }}</div>
+                  <div class="text-[11.5px] text-muted truncate">{{ n.detail }}</div>
+                  <div class="text-[10px] text-slate-400 mt-0.5">{{ n.created_at|timesince }} ago</div>
+                </div>
+              </a>
+              {% empty %}
+              <div class="px-4 py-10 text-center">
+                <i class="ti ti-bell-z text-[26px] text-slate-300"></i>
+                <div class="text-[12px] text-muted mt-1.5">You're all caught up</div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="hidden sm:block text-[12px] text-muted num pl-1">{% now "M j, Y" %}</div>
+      </div>
+    </header>
+
+    <!-- view container -->
+    <main class="flex-1 relative overflow-y-auto">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+{% include "components/modal.html" %}
+{% include "components/toasts.html" %}
+{% block body_extra %}{% endblock %}
+</body>
+</html>
