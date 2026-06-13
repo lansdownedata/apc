@@ -1,0 +1,19 @@
+{# ==========================================================================
+   Reusable searchable dropdown (Tom Select). NEVER a native <select> UI.
+   Usage:
+     {% include "components/searchable_select.html" with name="channel"
+        field_id="f-channel" options=channels selected=channel_filter
+        empty_label="All channels" placeholder="All channels" autosubmit=1 %}
+   `options` is an iterable of (value, label) pairs (e.g. Django .choices).
+   ========================================================================== #}
+<select name="{{ name }}" id="{{ field_id|default:name }}" data-tom
+        {% if placeholder %}data-placeholder="{{ placeholder }}"{% endif %}
+        {% if autosubmit %}data-autosubmit{% endif %}
+        {% if search == 'off' %}data-search="off"{% endif %}
+        {% if multiple %}multiple{% endif %}
+        class="field">
+  {% if empty_label %}<option value="">{{ empty_label }}</option>{% endif %}
+  {% for value, label in options %}
+    <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" %} selected{% endif %}>{{ label }}</option>
+  {% endfor %}
+</select>

@@ -1,0 +1,5 @@
+{# Lead pipeline status pill. Usage: {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %} #}
+<span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset {% if status == 'new' %}bg-sky-50 text-sky-700 ring-sky-600/20{% elif status == 'quoted' %}bg-amber-50 text-amber-700 ring-amber-600/20{% elif status == 'booked' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% else %}bg-slate-100 text-slate-500 ring-slate-500/20{% endif %}">
+  <span class="w-1.5 h-1.5 rounded-full {% if status == 'new' %}bg-sky-500{% elif status == 'quoted' %}bg-amber-500{% elif status == 'booked' %}bg-emerald-500{% else %}bg-slate-400{% endif %}"></span>
+  {{ label|default:status|capfirst }}
+</span>

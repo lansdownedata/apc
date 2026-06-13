@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
+
+  <!-- stat cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5 stagger">
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">New</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-sky-50 text-sky-600"><i class="ti ti-sparkles text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.new }}</div>
+      <div class="text-[11px] text-muted mt-1.5">awaiting quote</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Quoted</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-amber-50 text-amber-600"><i class="ti ti-send text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.quoted }}</div>
+      <div class="text-[11px] text-muted mt-1.5">awaiting booking</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Booked</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-emerald-50 text-emerald-600"><i class="ti ti-circle-check text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-ink leading-none mt-2 num">{{ counts.booked }}</div>
+      <div class="text-[11px] text-muted mt-1.5">synced to LimoAnywhere</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Open pipeline</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-goldl text-goldd"><i class="ti ti-coin text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[30px] font-semibold text-goldd leading-none mt-2 num">${{ open_pipeline|floatformat:0|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">New + Quoted value</div>
+    </div>
+  </div>
+
+  <!-- toolbar -->
+  <form method="get" x-data="{ status: '{{ status_filter }}' }" class="flex flex-wrap items-center gap-2.5 mb-4">
+    <input type="hidden" name="status" :value="status === 'all' ? '' : status">
+
+    <div class="flex items-center gap-0.5 bg-white rounded-full p-1 ring-1 ring-line shadow-sm">
+      <button type="button" @click="status='all'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='all' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">All</button>
+      <button type="button" @click="status='new'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='new' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">New <span class="text-[10.5px] opacity-70">· {{ counts.new }}</span></button>
+      <button type="button" @click="status='quoted'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='quoted' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">Quoted <span class="text-[10.5px] opacity-70">· {{ counts.quoted }}</span></button>
+      <button type="button" @click="status='booked'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='booked' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">Booked <span class="text-[10.5px] opacity-70">· {{ counts.booked }}</span></button>
+      <button type="button" @click="status='lost'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='lost' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">Lost <span class="text-[10.5px] opacity-70">· {{ counts.lost }}</span></button>
+    </div>
+
+    <div class="w-40">
+      {% include "components/searchable_select.html" with name="channel" field_id="f-channel" options=channels selected=channel_filter empty_label="All channels" placeholder="All channels" autosubmit=1 search="off" %}
+    </div>
+
+    <div class="flex items-center gap-2 bg-white ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 focus-within:ring-gold transition">
+      <i class="ti ti-search text-[15px] text-muted"></i>
+      <input name="q" value="{{ q }}" placeholder="Search name, company, service…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
+    </div>
+
+    <button type="button" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
+            @click="$store.modal.alert({ title: 'New lead', variant: 'gold', message: 'Manual lead creation is coming soon. For now, leads arrive automatically from Podium messages and the website capture API.' })">
+      <i class="ti ti-plus text-[15px]"></i> New lead
+    </button>
+  </form>
+
+  <!-- table -->
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[820px]">
+        <thead>
+          <tr class="text-muted text-left bg-[#faf8f3] border-b border-line">
+            <th class="font-medium px-5 py-3">Customer</th>
+            <th class="font-medium px-3 py-3">Quote</th>
+            <th class="font-medium px-3 py-3">Service · next trip</th>
+            <th class="font-medium px-3 py-3">Date</th>
+            <th class="font-medium px-3 py-3 text-center">Res.</th>
+            <th class="font-medium px-3 py-3">Status</th>
+            <th class="font-medium px-5 py-3 text-right">Quote total</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for lead in leads %}
+          {% with res=lead.reservations.all|first %}
+          <tr onclick="window.location='{% url 'lead_detail' lead.pk %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
+            <td class="px-5 py-3.5">
+              <div class="flex items-center gap-3">
+                <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ lead.contact.name|slice:":2" }}</span>
+                <div class="min-w-0">
+                  <div class="font-semibold text-ink leading-tight truncate">{{ lead.contact.name }}</div>
+                  <div class="text-[11px] text-muted truncate">{{ lead.get_channel_display }}{% if lead.contact.company %} · {{ lead.contact.company }}{% endif %}</div>
+                </div>
+              </div>
+            </td>
+            <td class="px-3 py-3.5 font-mono2 text-muted">{{ lead.quote_no }}</td>
+            <td class="px-3 py-3.5">
+              {% if res %}<span class="text-ink">{{ res.service|default:res.get_trip_type_display }}</span>{% else %}<span class="text-slate-400">—</span>{% endif %}
+            </td>
+            <td class="px-3 py-3.5 num text-muted">{% if res.pickup_date %}{{ res.pickup_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+            <td class="px-3 py-3.5 text-center num">{{ lead.reservation_count }}</td>
+            <td class="px-3 py-3.5">{% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}</td>
+            <td class="px-5 py-3.5 text-right num font-semibold text-ink">${{ lead.quote_total|floatformat:0|intcomma }}</td>
+          </tr>
+          {% endwith %}
+          {% empty %}
+          <tr><td colspan="7" class="px-5 py-16 text-center text-muted">
+            <i class="ti ti-files-off text-[28px] text-slate-300"></i>
+            <div class="mt-2 text-[13px]">No leads match these filters.</div>
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
