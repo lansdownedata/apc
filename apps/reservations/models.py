@@ -86,6 +86,17 @@ class Reservation(TimeStampedModel):
     )
     sort_order = models.PositiveIntegerField(default=0)
 
+    class RevenueStatus(models.TextChoices):
+        DEFERRED = "deferred", "Deferred"
+        RECOGNIZED = "recognized", "Recognized"
+        REVERSED = "reversed", "Reversed"
+
+    revenue_status = models.CharField(
+        max_length=20, choices=RevenueStatus.choices, default=RevenueStatus.DEFERRED
+    )
+    recognized_at = models.DateTimeField(null=True, blank=True)
+    recognized_amount = MoneyField()
+
     class Meta:
         ordering = ["sort_order", "id"]
 
@@ -169,3 +180,10 @@ class TripStatusEvent(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.reservation_id} → {self.get_status_display()}"
+
+
+# Trip statuses that count as earned revenue (the vehicle was provided), per spec §5.1.
+EARNED_TERMINAL_STATUSES = (
+    Reservation.TripStatus.DONE,
+    Reservation.TripStatus.NO_SHOW,
+)

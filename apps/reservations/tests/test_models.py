@@ -7,7 +7,7 @@ from apps.reservations.factories import (
     StopFactory,
     TransferReservationFactory,
 )
-from apps.reservations.models import Reservation, TripStatusEvent
+from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
 
 pytestmark = pytest.mark.django_db
 
@@ -71,3 +71,18 @@ def test_trip_status_event_records_change():
     )
     assert event.reservation == res
     assert str(event)
+
+
+# --- revenue fields --------------------------------------------------------
+def test_reservation_defaults_to_deferred_revenue(db):
+    from apps.reservations.factories import TransferReservationFactory
+
+    res = TransferReservationFactory()
+    assert res.revenue_status == Reservation.RevenueStatus.DEFERRED
+    assert res.recognized_at is None
+
+
+def test_earned_terminal_statuses():
+    assert Reservation.TripStatus.DONE in EARNED_TERMINAL_STATUSES
+    assert Reservation.TripStatus.NO_SHOW in EARNED_TERMINAL_STATUSES
+    assert Reservation.TripStatus.CANCELLED not in EARNED_TERMINAL_STATUSES
