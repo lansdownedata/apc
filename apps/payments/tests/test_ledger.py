@@ -101,3 +101,35 @@ def test_capture_clears_ar_before_deferred():
     bals = ledger.order_balances(lead)
     assert bals["ar"] == Decimal("0.00")
     assert bals["deferred"] == Decimal("1170.00")  # 1335 − 165 cleared from A/R
+
+
+def test_refund_reverses_deferred_then_revenue():
+    lead = LeadFactory()
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("1000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
+    )
+    ledger.post_refund(lead=lead, amount=Decimal("400.00"), idempotency_key="ref1")
+    bals = ledger.order_balances(lead)
+    assert bals["deferred"] == Decimal("600.00")
+    assert bals["collected"] == Decimal("600.00")  # cash credited back
+    assert bals["refunded"] == Decimal("0.00")  # all came from deferred
+
+
+def test_forfeit_moves_deferred_to_cancellation_revenue():
+    lead = LeadFactory()
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("500.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
+    )
+    entry = ledger.post_forfeit(lead=lead, amount=Decimal("500.00"), idempotency_key="forf1")
+    assert entry.is_balanced
+    bals = ledger.order_balances(lead)
+    assert bals["deferred"] == Decimal("0.00")
+    from apps.core.choices import Account as _A
+
+    assert -ledger.account_balance(lead, _A.CANCELLATION_REVENUE) == Decimal("500.00")
