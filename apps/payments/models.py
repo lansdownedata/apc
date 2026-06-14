@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 
+from apps.core.choices import Account
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 
@@ -129,3 +130,71 @@ class Charge(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()} {self.amount} · {self.get_status_display()}"
+
+
+class JournalEntry(TimeStampedModel):
+    """One balanced, immutable accounting event (debits == credits)."""
+
+    class Kind(models.TextChoices):
+        DEPOSIT_CAPTURED = "deposit_captured", "Deposit captured"
+        BALANCE_CAPTURED = "balance_captured", "Balance captured"
+        REVENUE_RECOGNIZED = "revenue_recognized", "Revenue recognized"
+        REFUND_ISSUED = "refund_issued", "Refund issued"
+        DEPOSIT_FORFEITED = "deposit_forfeited", "Deposit forfeited"
+        REVERSAL = "reversal", "Reversal"
+        ADJUSTMENT = "adjustment", "Adjustment"
+
+    class Source(models.TextChoices):
+        STRIPE = "stripe", "Stripe"
+        SYSTEM = "system", "System"
+        MANUAL = "manual", "Manual"
+
+    lead = models.ForeignKey(
+        "leads.Lead", related_name="journal_entries", on_delete=models.PROTECT
+    )
+    reservation = models.ForeignKey(
+        "reservations.Reservation",
+        related_name="journal_entries",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.SYSTEM)
+    memo = models.CharField(max_length=255, blank=True)
+    charge = models.ForeignKey(
+        "payments.Charge", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    stripe_ref = models.CharField(max_length=64, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    idempotency_key = models.CharField(max_length=120, unique=True)
+    posted_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def total_debit(self) -> Decimal:
+        return sum((line.debit for line in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def total_credit(self) -> Decimal:
+        return sum((line.credit for line in self.lines.all()), Decimal("0.00"))
+
+    @property
+    def is_balanced(self) -> bool:
+        return self.total_debit == self.total_credit
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} · {self.lead.quote_no}"
+
+
+class JournalLine(TimeStampedModel):
+    """One debit-or-credit posting against an account, inside a JournalEntry."""
+
+    entry = models.ForeignKey(JournalEntry, related_name="lines", on_delete=models.CASCADE)
+    account = models.CharField(max_length=32, choices=Account.choices)
+    debit = MoneyField()
+    credit = MoneyField()
+
+    def __str__(self) -> str:
+        return f"{self.get_account_display()} D{self.debit}/C{self.credit}"
