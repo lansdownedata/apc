@@ -108,7 +108,9 @@ def recognize_reservation(reservation):
     from apps.reservations.models import Reservation
 
     lead = reservation.lead
-    amount = Decimal(reservation.line_total)
+    amount = reservation.line_total
+    if amount <= ZERO:
+        return None  # nothing to recognize (e.g. a comped $0 trip) — post no entry
     deferred = order_balances(lead)["deferred"]
     from_deferred = min(amount, deferred) if deferred > ZERO else ZERO
     to_ar = amount - from_deferred

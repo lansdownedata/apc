@@ -58,3 +58,11 @@ def test_recognition_is_idempotent():
         ).count()
         == 1
     )
+
+
+def test_recognition_skips_zero_value_trip():
+    lead = LeadFactory()
+    res = TransferReservationFactory(lead=lead, base_rate=Decimal("0.00"))
+    result = ledger.recognize_reservation(res)
+    assert result is None
+    assert JournalEntry.objects.filter(reservation=res).count() == 0
