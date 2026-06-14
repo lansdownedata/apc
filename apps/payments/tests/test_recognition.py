@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from apps.leads.factories import LeadFactory
 from apps.payments import ledger
 from apps.payments.models import JournalEntry
+from apps.payments.tasks import recognize_due_revenue
 from apps.reservations.factories import TransferReservationFactory
 from apps.reservations.models import Reservation
 
@@ -66,3 +68,40 @@ def test_recognition_skips_zero_value_trip():
     result = ledger.recognize_reservation(res)
     assert result is None
     assert JournalEntry.objects.filter(reservation=res).count() == 0
+
+
+def test_recognize_due_revenue_only_earned_past_trips():
+    lead = LeadFactory()
+    ledger.post_capture(
+        lead=lead, amount=Decimal("3000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap1",
+    )
+    past = date.today() - timedelta(days=1)
+    future = date.today() + timedelta(days=10)
+    done_past = TransferReservationFactory(
+        lead=lead, base_rate=Decimal("1000.00"),
+        pickup_date=past, trip_status=Reservation.TripStatus.DONE,
+    )
+    noshow_past = TransferReservationFactory(
+        lead=lead, base_rate=Decimal("500.00"),
+        pickup_date=past, trip_status=Reservation.TripStatus.NO_SHOW,
+    )
+    done_future = TransferReservationFactory(
+        lead=lead, base_rate=Decimal("700.00"),
+        pickup_date=future, trip_status=Reservation.TripStatus.DONE,
+    )
+    cancelled_past = TransferReservationFactory(
+        lead=lead, base_rate=Decimal("400.00"),
+        pickup_date=past, trip_status=Reservation.TripStatus.CANCELLED,
+    )
+
+    assert recognize_due_revenue() == 2  # done_past + noshow_past only
+
+    for res in (done_past, noshow_past):
+        res.refresh_from_db()
+        assert res.revenue_status == Reservation.RevenueStatus.RECOGNIZED
+    for res in (done_future, cancelled_past):
+        res.refresh_from_db()
+        assert res.revenue_status == Reservation.RevenueStatus.DEFERRED
+
+    assert recognize_due_revenue() == 0  # idempotent second run
