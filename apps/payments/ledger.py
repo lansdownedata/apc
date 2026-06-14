@@ -86,8 +86,17 @@ def order_balances(lead) -> dict:
     }
 
 
-def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
-                 source=JournalEntry.Source.STRIPE, stripe_ref="", memo=""):
+def post_capture(
+    *,
+    lead,
+    amount,
+    kind,
+    idempotency_key,
+    charge=None,
+    source=JournalEntry.Source.STRIPE,
+    stripe_ref="",
+    memo="",
+):
     """Cash in. Clears any outstanding A/R first, then adds to deferred revenue."""
     amount = Decimal(amount)
     to_ar = min(amount, order_balances(lead)["ar"])
@@ -98,8 +107,55 @@ def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
     if to_deferred > ZERO:
         lines.append((Account.CUSTOMER_DEPOSITS, ZERO, to_deferred))
     return post_entry(
-        lead=lead, kind=kind, lines=lines, idempotency_key=idempotency_key,
-        charge=charge, source=source, stripe_ref=stripe_ref, memo=memo,
+        lead=lead,
+        kind=kind,
+        lines=lines,
+        idempotency_key=idempotency_key,
+        charge=charge,
+        source=source,
+        stripe_ref=stripe_ref,
+        memo=memo,
+    )
+
+
+def post_refund(*, lead, amount, idempotency_key, charge=None, created_by=None, memo="Refund"):
+    """Cash out. Reverses deferred first; any excess reverses recognized revenue (Refunds)."""
+    amount = Decimal(amount)
+    deferred = order_balances(lead)["deferred"]
+    from_deferred = min(amount, deferred) if deferred > ZERO else ZERO
+    from_refunds = amount - from_deferred
+    lines = [(Account.CASH, ZERO, amount)]
+    if from_deferred > ZERO:
+        lines.append((Account.CUSTOMER_DEPOSITS, from_deferred, ZERO))
+    if from_refunds > ZERO:
+        lines.append((Account.REFUNDS, from_refunds, ZERO))
+    return post_entry(
+        lead=lead,
+        kind=JournalEntry.Kind.REFUND_ISSUED,
+        lines=lines,
+        idempotency_key=idempotency_key,
+        charge=charge,
+        created_by=created_by,
+        source=JournalEntry.Source.MANUAL,
+        memo=memo,
+    )
+
+
+def post_forfeit(*, lead, amount, idempotency_key, created_by=None, memo="Deposit forfeited"):
+    """Cancellation: reclassify deferred cash to cancellation revenue. No cash moves."""
+    amount = Decimal(amount)
+    lines = [
+        (Account.CUSTOMER_DEPOSITS, amount, ZERO),
+        (Account.CANCELLATION_REVENUE, ZERO, amount),
+    ]
+    return post_entry(
+        lead=lead,
+        kind=JournalEntry.Kind.DEPOSIT_FORFEITED,
+        lines=lines,
+        idempotency_key=idempotency_key,
+        created_by=created_by,
+        source=JournalEntry.Source.MANUAL,
+        memo=memo,
     )
 
 
