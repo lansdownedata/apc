@@ -6,7 +6,8 @@ from django.conf import settings
 
 from apps.notifications.models import Notification
 
-from .models import Charge, PaymentPlan
+from . import ledger
+from .models import Charge, JournalEntry, PaymentPlan
 
 
 def _stripe():
@@ -85,6 +86,14 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     charge.save(update_fields=["stripe_payment_intent_id", "status", "updated_at"])
     plan.balance_status = PaymentPlan.BalanceStatus.PAID
     plan.save(update_fields=["balance_status", "updated_at"])
+    ledger.post_capture(
+        lead=plan.lead,
+        amount=plan.balance_amount,
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key=f"capture-charge{charge.pk}",
+        charge=charge,
+        memo="Balance captured",
+    )
     return charge
 
 
