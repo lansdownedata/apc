@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Sum
 
 from apps.core.choices import Account
@@ -41,24 +41,28 @@ def post_entry(
             f"Unbalanced entry {idempotency_key!r}: debit {total_debit} != credit {total_credit}"
         )
 
-    with transaction.atomic():
-        entry = JournalEntry.objects.create(
-            lead=lead,
-            reservation=reservation,
-            kind=kind,
-            source=source,
-            memo=memo,
-            charge=charge,
-            created_by=created_by,
-            stripe_ref=stripe_ref,
-            idempotency_key=idempotency_key,
-        )
-        JournalLine.objects.bulk_create(
-            [
-                JournalLine(entry=entry, account=account, debit=debit, credit=credit)
-                for account, debit, credit in lines
-            ]
-        )
+    try:
+        with transaction.atomic():
+            entry = JournalEntry.objects.create(
+                lead=lead,
+                reservation=reservation,
+                kind=kind,
+                source=source,
+                memo=memo,
+                charge=charge,
+                created_by=created_by,
+                stripe_ref=stripe_ref,
+                idempotency_key=idempotency_key,
+            )
+            JournalLine.objects.bulk_create(
+                [
+                    JournalLine(entry=entry, account=account, debit=debit, credit=credit)
+                    for account, debit, credit in lines
+                ]
+            )
+    except IntegrityError:
+        # Lost a race on idempotency_key — return the entry that won.
+        return JournalEntry.objects.get(idempotency_key=idempotency_key)
     return entry
 
 
