@@ -39,9 +39,7 @@ def test_balance_charge_posts_capture():
         stripe_payment_method_id="pm_1",
         balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
     )
-    with patch.object(
-        services.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_bal")
-    ):
+    with patch.object(services.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_bal")):
         services.charge_balance(plan)
     bals = ledger.order_balances(plan.lead)
     assert bals["collected"] == Decimal("1335.00")
@@ -56,9 +54,7 @@ def test_deposit_webhook_replay_is_idempotent():
         webhooks.process_stripe_event(_session_event(plan.lead_id))
         webhooks.process_stripe_event(_session_event(plan.lead_id))
     assert (
-        JournalEntry.objects.filter(
-            lead=plan.lead, kind=JournalEntry.Kind.DEPOSIT_CAPTURED
-        ).count()
+        JournalEntry.objects.filter(lead=plan.lead, kind=JournalEntry.Kind.DEPOSIT_CAPTURED).count()
         == 1
     )
     bals = ledger.order_balances(plan.lead)

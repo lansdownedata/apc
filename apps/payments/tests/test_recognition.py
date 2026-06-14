@@ -17,8 +17,10 @@ def test_recognition_draws_from_deferred():
     lead = LeadFactory()
     res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
     ledger.post_capture(
-        lead=lead, amount=Decimal("2670.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap1",
+        lead=lead,
+        amount=Decimal("2670.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
     )
     ledger.recognize_reservation(res)
     bals = ledger.order_balances(lead)
@@ -35,8 +37,10 @@ def test_recognition_overflows_to_ar_when_underpaid():
     lead = LeadFactory()
     res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
     ledger.post_capture(
-        lead=lead, amount=Decimal("1335.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap1",
+        lead=lead,
+        amount=Decimal("1335.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
     )
     ledger.recognize_reservation(res)
     bals = ledger.order_balances(lead)
@@ -49,8 +53,10 @@ def test_recognition_is_idempotent():
     lead = LeadFactory()
     res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
     ledger.post_capture(
-        lead=lead, amount=Decimal("1500.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap1",
+        lead=lead,
+        amount=Decimal("1500.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
     )
     ledger.recognize_reservation(res)
     ledger.recognize_reservation(res)
@@ -73,26 +79,36 @@ def test_recognition_skips_zero_value_trip():
 def test_recognize_due_revenue_only_earned_past_trips():
     lead = LeadFactory()
     ledger.post_capture(
-        lead=lead, amount=Decimal("3000.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap1",
+        lead=lead,
+        amount=Decimal("3000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
     )
     past = date.today() - timedelta(days=1)
     future = date.today() + timedelta(days=10)
     done_past = TransferReservationFactory(
-        lead=lead, base_rate=Decimal("1000.00"),
-        pickup_date=past, trip_status=Reservation.TripStatus.DONE,
+        lead=lead,
+        base_rate=Decimal("1000.00"),
+        pickup_date=past,
+        trip_status=Reservation.TripStatus.DONE,
     )
     noshow_past = TransferReservationFactory(
-        lead=lead, base_rate=Decimal("500.00"),
-        pickup_date=past, trip_status=Reservation.TripStatus.NO_SHOW,
+        lead=lead,
+        base_rate=Decimal("500.00"),
+        pickup_date=past,
+        trip_status=Reservation.TripStatus.NO_SHOW,
     )
     done_future = TransferReservationFactory(
-        lead=lead, base_rate=Decimal("700.00"),
-        pickup_date=future, trip_status=Reservation.TripStatus.DONE,
+        lead=lead,
+        base_rate=Decimal("700.00"),
+        pickup_date=future,
+        trip_status=Reservation.TripStatus.DONE,
     )
     cancelled_past = TransferReservationFactory(
-        lead=lead, base_rate=Decimal("400.00"),
-        pickup_date=past, trip_status=Reservation.TripStatus.CANCELLED,
+        lead=lead,
+        base_rate=Decimal("400.00"),
+        pickup_date=past,
+        trip_status=Reservation.TripStatus.CANCELLED,
     )
 
     assert recognize_due_revenue() == 2  # done_past + noshow_past only
