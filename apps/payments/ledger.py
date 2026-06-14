@@ -83,3 +83,20 @@ def order_balances(lead) -> dict:
         "recognized": -account_balance(lead, Account.RECOGNIZED_REVENUE),
         "refunded": account_balance(lead, Account.REFUNDS),
     }
+
+
+def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
+                 source=JournalEntry.Source.STRIPE, memo=""):
+    """Cash in. Clears any outstanding A/R first, then adds to deferred revenue."""
+    amount = Decimal(amount)
+    to_ar = min(amount, order_balances(lead)["ar"])
+    to_deferred = amount - to_ar
+    lines = [(Account.CASH, amount, ZERO)]
+    if to_ar > ZERO:
+        lines.append((Account.ACCOUNTS_RECEIVABLE, ZERO, to_ar))
+    if to_deferred > ZERO:
+        lines.append((Account.CUSTOMER_DEPOSITS, ZERO, to_deferred))
+    return post_entry(
+        lead=lead, kind=kind, lines=lines, idempotency_key=idempotency_key,
+        charge=charge, source=source, memo=memo,
+    )

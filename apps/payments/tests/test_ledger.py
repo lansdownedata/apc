@@ -64,3 +64,40 @@ def test_post_entry_is_idempotent():
     )
     assert first.pk == second.pk
     assert JournalEntry.objects.filter(idempotency_key="dup").count() == 1
+
+
+def test_capture_credits_deferred():
+    lead = LeadFactory()
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("1335.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap-dep",
+    )
+    bals = ledger.order_balances(lead)
+    assert bals["collected"] == Decimal("1335.00")
+    assert bals["deferred"] == Decimal("1335.00")
+    assert bals["ar"] == Decimal("0.00")
+
+
+def test_capture_clears_ar_before_deferred():
+    lead = LeadFactory()
+    # Manually create $165 of A/R (Dr A/R / Cr Recognized Revenue).
+    ledger.post_entry(
+        lead=lead,
+        kind=JournalEntry.Kind.ADJUSTMENT,
+        lines=[
+            (Account.ACCOUNTS_RECEIVABLE, Decimal("165.00"), Decimal("0.00")),
+            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("165.00")),
+        ],
+        idempotency_key="seed-ar",
+    )
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("1335.00"),
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="cap-bal",
+    )
+    bals = ledger.order_balances(lead)
+    assert bals["ar"] == Decimal("0.00")
+    assert bals["deferred"] == Decimal("1170.00")  # 1335 − 165 cleared from A/R
