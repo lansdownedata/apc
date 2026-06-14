@@ -46,3 +46,20 @@ def test_balance_charge_posts_capture():
     bals = ledger.order_balances(plan.lead)
     assert bals["collected"] == Decimal("1335.00")
     assert bals["deferred"] == Decimal("1335.00")
+
+
+def test_deposit_webhook_replay_is_idempotent():
+    from apps.payments.models import JournalEntry
+
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    with patch.object(webhooks.stripe.PaymentIntent, "retrieve", return_value=_saved_pm()):
+        webhooks.process_stripe_event(_session_event(plan.lead_id))
+        webhooks.process_stripe_event(_session_event(plan.lead_id))
+    assert (
+        JournalEntry.objects.filter(
+            lead=plan.lead, kind=JournalEntry.Kind.DEPOSIT_CAPTURED
+        ).count()
+        == 1
+    )
+    bals = ledger.order_balances(plan.lead)
+    assert bals["collected"] == Decimal("1335.00")

@@ -66,6 +66,7 @@ def _deposit_completed(session) -> None:
         kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
         idempotency_key=f"capture-charge{charge.pk}",
         charge=charge,
+        stripe_ref=session.get("payment_intent") or "",
         memo="Deposit captured",
     )
 

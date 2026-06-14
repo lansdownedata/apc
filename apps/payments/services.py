@@ -3,6 +3,7 @@ balance charge. Card data never touches our servers (Checkout + tokens)."""
 
 import stripe
 from django.conf import settings
+from django.db import transaction
 
 from apps.notifications.models import Notification
 
@@ -81,19 +82,21 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     except stripe.error.CardError as exc:
         return _record_failure(plan, charge, exc)
 
-    charge.stripe_payment_intent_id = intent.id
-    charge.status = Charge.Status.SUCCEEDED
-    charge.save(update_fields=["stripe_payment_intent_id", "status", "updated_at"])
-    plan.balance_status = PaymentPlan.BalanceStatus.PAID
-    plan.save(update_fields=["balance_status", "updated_at"])
-    ledger.post_capture(
-        lead=plan.lead,
-        amount=plan.balance_amount,
-        kind=JournalEntry.Kind.BALANCE_CAPTURED,
-        idempotency_key=f"capture-charge{charge.pk}",
-        charge=charge,
-        memo="Balance captured",
-    )
+    with transaction.atomic():
+        charge.stripe_payment_intent_id = intent.id
+        charge.status = Charge.Status.SUCCEEDED
+        charge.save(update_fields=["stripe_payment_intent_id", "status", "updated_at"])
+        plan.balance_status = PaymentPlan.BalanceStatus.PAID
+        plan.save(update_fields=["balance_status", "updated_at"])
+        ledger.post_capture(
+            lead=plan.lead,
+            amount=plan.balance_amount,
+            kind=JournalEntry.Kind.BALANCE_CAPTURED,
+            idempotency_key=f"capture-charge{charge.pk}",
+            charge=charge,
+            stripe_ref=intent.id,
+            memo="Balance captured",
+        )
     return charge
 
 
