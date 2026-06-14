@@ -1,10 +1,8 @@
-{# ==========================================================================
-   Reusable modal — driven entirely by $store.modal.
-   This is the ONLY modal in the app. Open it from anywhere with:
-     $store.modal.confirm({ title, message, variant, confirmText, onConfirm })
-     $store.modal.alert({ title, message, variant })
-   NEVER use the native window.confirm/alert or <dialog>.
-   ========================================================================== #}
+{% comment %}
+  Reusable modal — driven entirely by $store.modal. The ONLY modal in the app.
+  Open from anywhere: $store.modal.confirm({title, message, variant, confirmText, onConfirm})
+  or $store.modal.alert({title, message, variant}). Never use native window.confirm/alert.
+{% endcomment %}
 <div x-data x-show="$store.modal.open" x-cloak
      class="fixed inset-0 z-[60] flex items-center justify-center p-4"
      x-transition.opacity
