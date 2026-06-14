@@ -139,6 +139,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.payments.tasks.charge_due_balances",
         "schedule": crontab(hour=6, minute=0),  # daily at 6am — balance charges due
     },
+    "recognize-due-revenue": {
+        "task": "apps.payments.tasks.recognize_due_revenue",
+        "schedule": crontab(hour=2, minute=0),  # nightly — recognize completed trips
+    },
 }
 
 # ---------------------------------------------------------------- integrations
