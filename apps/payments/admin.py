@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Charge, PaymentPlan
+from .models import Charge, JournalEntry, JournalLine, PaymentPlan
 
 
 class ChargeInline(admin.TabularInline):
@@ -29,3 +29,17 @@ class ChargeAdmin(admin.ModelAdmin):
     list_display = ("plan", "kind", "amount", "status", "attempt_no", "attempted_at")
     list_filter = ("kind", "status")
     search_fields = ("idempotency_key", "stripe_payment_intent_id")
+
+
+class JournalLineInline(admin.TabularInline):
+    model = JournalLine
+    extra = 0
+    readonly_fields = ("created_at",)
+
+
+@admin.register(JournalEntry)
+class JournalEntryAdmin(admin.ModelAdmin):
+    list_display = ("kind", "lead", "reservation", "source", "memo", "posted_at")
+    list_filter = ("kind", "source")
+    search_fields = ("idempotency_key", "lead__contact__name", "memo")
+    inlines = [JournalLineInline]
