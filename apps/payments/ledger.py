@@ -1,0 +1,81 @@
+"""Double-entry posting service — the only writer of the ledger (spec §3–§4)."""
+
+from decimal import Decimal
+
+from django.db import transaction
+from django.db.models import Sum
+
+from apps.core.choices import Account
+
+from .models import JournalEntry, JournalLine
+
+ZERO = Decimal("0.00")
+
+
+class LedgerError(Exception):
+    """Raised when an entry would be unbalanced."""
+
+
+def post_entry(
+    *,
+    lead,
+    kind,
+    lines,
+    idempotency_key,
+    reservation=None,
+    charge=None,
+    source=JournalEntry.Source.SYSTEM,
+    memo="",
+    created_by=None,
+    stripe_ref="",
+):
+    """Post one balanced entry. `lines` = list of (account, debit, credit). Idempotent."""
+    existing = JournalEntry.objects.filter(idempotency_key=idempotency_key).first()
+    if existing is not None:
+        return existing
+
+    total_debit = sum((debit for _, debit, _ in lines), ZERO)
+    total_credit = sum((credit for _, _, credit in lines), ZERO)
+    if total_debit != total_credit:
+        raise LedgerError(
+            f"Unbalanced entry {idempotency_key!r}: debit {total_debit} != credit {total_credit}"
+        )
+
+    with transaction.atomic():
+        entry = JournalEntry.objects.create(
+            lead=lead,
+            reservation=reservation,
+            kind=kind,
+            source=source,
+            memo=memo,
+            charge=charge,
+            created_by=created_by,
+            stripe_ref=stripe_ref,
+            idempotency_key=idempotency_key,
+        )
+        JournalLine.objects.bulk_create(
+            [
+                JournalLine(entry=entry, account=account, debit=debit, credit=credit)
+                for account, debit, credit in lines
+            ]
+        )
+    return entry
+
+
+def account_balance(lead, account) -> Decimal:
+    """Σ debit − Σ credit for one account on one order."""
+    agg = JournalLine.objects.filter(entry__lead=lead, account=account).aggregate(
+        d=Sum("debit"), c=Sum("credit")
+    )
+    return (agg["d"] or ZERO) - (agg["c"] or ZERO)
+
+
+def order_balances(lead) -> dict:
+    """Business-meaningful positive balances for an order."""
+    return {
+        "collected": account_balance(lead, Account.CASH),
+        "deferred": -account_balance(lead, Account.CUSTOMER_DEPOSITS),
+        "ar": account_balance(lead, Account.ACCOUNTS_RECEIVABLE),
+        "recognized": -account_balance(lead, Account.RECOGNIZED_REVENUE),
+        "refunded": account_balance(lead, Account.REFUNDS),
+    }
