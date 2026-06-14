@@ -22,24 +22,31 @@ These are hard rules. Build the reusable component once; use it everywhere.
 - **Never** use `window.alert` / `confirm` / `prompt`, the native `<dialog>` element, or a
   one-off modal. **Every** modal — notifications, confirmations, option pickers, forms —
   uses the single reusable modal component: **`templates/components/modal.html`** (Alpine.js).
-- Driven by a global Alpine store (`$store.modal`) so any view can open one:
-  `$store.modal.open({ title, body, variant, actions })`. Variants: `notify`, `confirm`,
-  `form`, `danger`. Brand-styled (charcoal frame, gold accent, Fraunces headings) to match
-  the prototype's reservation editor / sync overlay.
-- Accessible: focus-trap, `Esc` to close, backdrop click, `role="dialog"`, `aria-modal`.
+- **Built** as a global Alpine store (`$store.modal`) — open from any view:
+  - `$store.modal.confirm({ title, message, variant, confirmText, onConfirm, onCancel })`
+  - `$store.modal.alert({ title, message, variant })` — single acknowledge button
+  - `$store.modal.show({ …, html, cancelText, showCancel })` — full control
+  - Variants: `info` · `success` · `danger` · `gold`. `onConfirm` may return a promise — the
+    confirm button shows a spinner / disables until it resolves.
+- Brand-styled (charcoal/gold, Fraunces heading). Closes on `Esc` + backdrop click.
+  **TODO:** focus-trap + `role="dialog"`/`aria-modal` for full a11y.
 
 ### 2. Dropdowns — never use native `<select>`
-- **Never** use a bare `<select>` for an option input. Use the reusable searchable select
-  built on **Tom Select** (vanilla JS, no jQuery, accessible): **`templates/components/searchable_select.html`**
-  + the Django widget **`apps/core/widgets.py::SearchableSelect`** + the initializer in
-  `static/js/components.js` that auto-enhances any `[data-select]`.
-- Searchable by default; supports single / multi / grouped / remote options. Themed to the
-  brand (charcoal/gold, `.card` ring styles). One include, one widget — used for vehicle
-  pickers, trip-status (the LA taxonomy), channel, agent assignment, filters, etc.
-- Tom Select is loaded via the base template (CDN in dev, vendored/bundled for prod).
+- **Never** use a bare `<select>` for an option input. Use the reusable searchable select on
+  **Tom Select**: include **`templates/components/searchable_select.html`** (renders a
+  `<select data-tom>`), auto-enhanced by `initTomSelects()` in **`static/js/app.js`** and
+  themed in `static/css/app.css` (`.ts-*`). Example:
+  ```django
+  {% include "components/searchable_select.html" with name="channel" field_id="f-channel"
+     options=channels selected=channel_filter empty_label="All channels" autosubmit=1 search="off" %}
+  ```
+  `options` = any iterable of `(value, label)` (e.g. a `TextChoices.choices`). Hooks:
+  `data-autosubmit` (submit the form on change), `data-search="off"`, `multiple`.
+- **TODO before prod:** a Django form-widget wrapper for model forms, and a real asset build —
+  Tailwind / Alpine / Tom Select currently load via **CDN** in `base.html`.
 
-> Until the template layer is built these live as documented intent; implement them as the
-> **first** reusable components when we start templates, before any screen ships.
+> ✅ These are now **built** (`templates/components/`) and used by the live screens —
+> see the **Web portal** section below. Use them; don't reintroduce native modals/selects.
 
 ### 3. Reuse everything else too
 - **Templates:** factor shared markup into `templates/components/` partials (`{% include %}`)
@@ -50,6 +57,23 @@ These are hard rules. Build the reusable component once; use it everywhere.
   shared pagination, permission mixins) — don't repeat per app.
 - **Models:** abstract bases + mixins in `apps/core` (`TimeStampedModel`, `MoneyField`),
   `TextChoices` enums, and `QuerySet`/`Manager` methods over ad-hoc filtering.
+
+---
+
+## 🖥 Web portal (server-rendered) — built
+The authenticated UI is Django templates + Alpine + Tom Select, "executive chauffeur" theme.
+- **Shell:** `templates/base.html` (`x-data="shell()"` → sidebar + notification tray).
+  Blocks: `title`, `head_extra`, `content`, `body_extra`. Login page
+  `templates/registration/login.html` is standalone (no shell).
+- **Design system:** `static/css/app.css` (charcoal/gold tokens, `.card`, `.btn-gold`,
+  `.field`, animations, Tom Select theme). Behaviour + Alpine stores: `static/js/app.js`.
+- **App:** `apps.portal` owns the dashboard (`/`, name `dashboard`) and the `chrome` context
+  processor (nav + notification bell on every page). Leads UI is in `apps.leads`:
+  `lead_list` (`/leads/`) and `lead_detail` (`/leads/<pk>/`). All views `@login_required`.
+- **Auth:** `django.contrib.auth.urls`; `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` set.
+- **Components:** `templates/components/` — `modal.html`, `toasts.html`,
+  `searchable_select.html`, `status_badge.html`.
+- **Demo data:** `python manage.py seed_demo [--fresh]`.
 
 ---
 
@@ -70,10 +94,12 @@ These are hard rules. Build the reusable component once; use it everywhere.
 
 ## 🗂 Structure
 ```
-config/   settings/{base,dev,prod} · celery.py · urls.py
-apps/     core accounts contacts leads reservations payments
-          messaging integrations notifications     (name = "apps.<x>")
-docs/     specs (design · ERD · scope) + prototype (clickable HTML)
+config/     settings/{base,dev,prod} · celery.py · urls.py
+apps/       core accounts contacts leads reservations payments
+            messaging integrations notifications portal   (name = "apps.<x>")
+templates/  base.html · registration/ · components/ · portal/ · leads/
+static/     css/app.css · js/app.js
+docs/       specs (design · ERD · scope) + prototype (clickable HTML)
 ```
 
 ## ⚙️ Settings & env
