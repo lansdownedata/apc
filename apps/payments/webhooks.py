@@ -6,7 +6,8 @@ from django.conf import settings
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
-from .models import Charge, PaymentPlan
+from . import ledger
+from .models import Charge, JournalEntry, PaymentPlan
 
 
 def _stripe():
@@ -52,10 +53,21 @@ def _deposit_completed(session) -> None:
         ]
     )
 
-    # Record the deposit as captured.
-    if plan.charges.filter(kind=Charge.Kind.DEPOSIT).update(status=Charge.Status.SUCCEEDED) == 0:
+    # Record the deposit Charge as captured and post the ledger entry.
+    charge = plan.charges.filter(kind=Charge.Kind.DEPOSIT).first()
+    if charge is None:
         charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
-        Charge.objects.filter(pk=charge.pk).update(status=Charge.Status.SUCCEEDED)
+    if charge.status != Charge.Status.SUCCEEDED:
+        charge.status = Charge.Status.SUCCEEDED
+        charge.save(update_fields=["status", "updated_at"])
+    ledger.post_capture(
+        lead=plan.lead,
+        amount=plan.deposit_amount,
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key=f"capture-charge{charge.pk}",
+        charge=charge,
+        memo="Deposit captured",
+    )
 
     # Auto-book on deposit.
     lead = plan.lead
