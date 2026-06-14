@@ -44,6 +44,14 @@ layer** on top of them so the business can track every dollar professionally:
   (no automated failed-charge follow-up).
 - **`no_show` is earned revenue** (the vehicle was provided).
 - **Orders console is visible to all authenticated users.**
+- **Itemized rates:** customer charges and vendor (farm-out) costs are both broken into
+  **categorized line items** (mirroring LA's rate tabs); each `Reservation.line_total` and each
+  `VendorBill.total_cost` is the sum of its lines (see §7, §14).
+- **Vendor (farm-out) costs are tracked as accounts payable** — an itemized vendor total plus
+  **multiple payments over time** (card/check/ACH/cash; see §14).
+- **LimoAnywhere write-back is parked** (per decision) — we are *not* pushing vendor cost to LA
+  for now. It isn't possible via Zapier anyway (no Update Reservation action); a future LA-API
+  path is noted in §15.
 
 ---
 
@@ -56,6 +64,10 @@ level; **revenue is earned at the trip level**. That split drives everything bel
 - **Order identifier:** the existing `Lead.quote_no` (`Q-####`) doubles as the order number.
 - **Order total:** `Lead.quote_total` = Σ `Reservation.line_total`.
 - **Trip revenue:** each `Reservation.line_total` is that trip's share of revenue.
+- **Itemized charges:** a `Reservation.line_total` is itself the **sum of categorized charge
+  lines** (Flat Rate, Tolls, Gratuity, Per Hour, …), and a vendor cost is the sum of farm-out
+  cost lines. Itemization sits *under* these totals — the ledger and recognition use only the
+  totals, so §3–§6 are unaffected.
 
 ---
 
@@ -72,6 +84,8 @@ level; **revenue is earned at the trip level**. That split drives everything bel
 | `cancellation_revenue` | Cancellation Revenue | Income | Credit | Forfeited deposits |
 | `refunds` | Refunds | Contra-income | Debit | Cash returned after revenue was earned |
 | `processing_fees` | Processing Fees | Expense | Debit | Stripe fees (Phase 4 — needs balance-txn fetch) |
+| `vendor_cost` | Vendor Cost | Expense (COGS) | Debit | Cost of farm-out trips (see §14) |
+| `vendor_payable` | Vendor Payable | Liability | Credit | Amount owed to vendors, net of payments made |
 
 ### 3.2 Entries and immutability
 
@@ -194,12 +208,43 @@ refund/forfeit split automatically and call the same posting services — **no m
 - **`JournalLine`** (`TimeStampedModel`)
   - `entry` FK, `account` (the §3.1 enum), `debit` `MoneyField` (default 0),
     `credit` `MoneyField` (default 0). Exactly one of debit/credit is non-zero.
+- **`ReservationCharge`** (`TimeStampedModel`) — an **itemized customer charge line** on a
+  reservation (mirrors LA's rate tab and the inbound `Charges[]`): `reservation` FK,
+  `category` (`flat_rate` · `tolls` · `ot_wait` · `parking` · `discount` · `garage_time` ·
+  `gratuity` · `per_hour` · `per_mile` · `service_fee` · `additional` · `fuel` · `custom`),
+  `label` (for `custom`), `group` (`base_rate` · `miscellaneous` · `gratuities` · `discount`),
+  `amount` `MoneyField` (negative for discounts), optional `unit_value` + `unit_count`
+  (e.g. Per Hour rate × hours). **`Reservation.line_total = Σ ReservationCharge.amount`** — so
+  this is exactly what recognition earns; §3–§6 are unchanged.
+- **`Vendor`** (`TimeStampedModel`) — recurring farm-out affiliate: `name`, `phone`/`email`,
+  `la_affiliate_id` (blank). (Optional in v1; a `vendor_name` string would do, but affiliates
+  recur, so a model is preferred.)
+- **`VendorBill`** (`TimeStampedModel`) — one per farmed-out reservation: `reservation`
+  (OneToOne), `vendor` FK, `status` (`draft` → `confirmed` → `paid`), `la_synced` (bool),
+  `notes`. **`total_cost = Σ VendorCharge.amount`** (the "Affiliate Total"). Confirming the
+  bill posts the cost accrual (§14).
+- **`VendorCharge`** (`TimeStampedModel`) — an **itemized farm-out cost line** on a bill
+  (mirrors LA's Farm-out Costs tab): `bill` FK, `category` (`rate` · `gratuity` · `stc` ·
+  `stops` · `tolls` · `parking` · `waiting` · `airport_fee` · `fuel_surcharge` · `meet_greet`
+  · `phone` · `discount` · `holiday` · `late_early` · `custom`), `label` (for `custom`),
+  `amount` `MoneyField`.
+- **`VendorPayment`** (`TimeStampedModel`) — many per bill (a vendor may be paid in
+  installments): `bill` FK, `amount` `MoneyField`, `paid_at`, `method`
+  (`card` · `check` · `ach` · `cash`), `card_brand` + `card_last4` (when paid by card),
+  `reference`, `created_by` FK. Each posts a payable-drawdown entry (§14).
+  `paid_to_date = Σ amount`; `remaining = total_cost − paid_to_date`.
 
 ### Extended
 - **`Charge`** — add `REFUND` to `Kind`; add `stripe_refund_id`. Every successful
   `Charge`/refund posts a `JournalEntry` (capture or refund).
 - **`Reservation`** — add `revenue_status` (`deferred` → `recognized` → `reversed`),
-  `recognized_at` (datetime, null), `recognized_amount` (`MoneyField`, default 0).
+  `recognized_at` (datetime, null), `recognized_amount` (`MoneyField`, default 0), and
+  `vendor_cost_needed` (bool — set when an inbound LA status change shows the trip was
+  farmed out; see §15). The vendor cost itself lives on `VendorBill`.
+  - **Pricing refactor:** `line_total` now derives from `ReservationCharge` lines. The current
+    flat `base_rate` / `hourly_rate` / `hours` / `min_hours` fields are **superseded** —
+    migrated into a `flat_rate` line and a `per_hour` line (`unit_value` × `unit_count`, with
+    the hourly minimum applied when the line is built). A focused pricing migration in Phase 1.
 - **`PaymentPlan`** — unchanged in shape; remains the per-order money **summary/config**
   (deposit %, card on file, cached deposit/balance statuses). **The ledger is the source of
   truth**; plan balances are derived. (Optional later: cached `deferred`/`recognized`/`ar`.)
@@ -229,12 +274,15 @@ can be gated to `owner_admin` later via a single decorator/flag.)
   components.
 - **Order-payments detail** — `/orders/<lead_id>/`. The money view for one order:
   payment-plan summary; the **ledger** (entries with debit/credit lines + running deferred
-  balance); charges & refunds; per-trip recognition status; and **actions** (retry balance,
-  issue refund, forfeit deposit, mark paid, recognize/reverse a trip) — all through the
-  reusable **modal**, all posting journal entries, with a **toast** on success.
+  balance); charges & refunds; per-trip recognition status; **per farmed-out trip: vendor ·
+  vendor total · paid-to-date · remaining owed · margin**; and **actions** (retry balance,
+  issue refund, forfeit deposit, mark paid, recognize/reverse a trip, **set vendor cost,
+  record vendor payment**) — all through the reusable **modal**, all posting journal entries,
+  with a **toast** on success.
 - **Finance summary** — a dashboard widget: total **deferred liability**, **recognized
-  revenue** (month-to-date), **A/R outstanding**, **refunds**. This is the at-a-glance "track
-  all deposits professionally" view.
+  revenue** (month-to-date), **A/R outstanding**, **refunds**, **vendor payable outstanding**,
+  and **gross margin** (recognized revenue − vendor cost, MTD). This is the at-a-glance
+  "track all deposits professionally" view.
 
 ---
 
@@ -315,3 +363,72 @@ admin registered where useful.
 - Period **close/lock**: do we ever freeze a month so entries can't post into it? (Future.)
 - **Cancellation fee schedule**: exact tiers by days-to-pickup, when the business defines them.
 - **Role-gating**: whether refund/forfeit should later require `owner_admin`.
+- **LA API access** for reservation write-back (affiliate cost; mark-paid) — pending a request
+  to LimoAnywhere; not possible via Zapier (§15).
+- **Push customer "paid" to LA** once Stripe collects, so LA dispatch isn't shown as
+  outstanding — also needs the LA API.
+
+---
+
+## 14. Vendor costs (farm-out) — accounts payable
+
+When a trip is **farmed out** to a vendor/affiliate, we incur a cost. It is tracked as A/P —
+the mirror of the customer side — because the cost is a **total** that may be paid in
+**multiple installments**.
+
+- **Detection:** an inbound LA "Updated Reservation" status change to a farm-out/affiliate
+  state sets `Reservation.vendor_cost_needed` (§15). Staff then create a `VendorBill`
+  (vendor + `total_cost`) and record `VendorPayment`s over time.
+- **Postings:**
+  - Confirm bill (cost incurred, matched to the trip):
+    `Dr Vendor Cost (COGS) total_cost  |  Cr Vendor Payable total_cost`
+  - Each vendor payment:
+    `Dr Vendor Payable amount  |  Cr Cash amount`
+- **Balances:** `vendor_payable = Σ confirmed bills − Σ vendor payments`; per bill,
+  `paid_to_date` / `remaining`. Idempotency keys: `vendorbill-{id}`, `vendorpay-{id}`.
+- **Margin:** trip gross margin = `recognized_revenue − vendor_cost`; order and finance
+  totals roll up from there.
+- **Cash note:** vendor payments are real cash **out** (separate from customer cash in via
+  Stripe). Recording a vendor payment does not touch Stripe; it can be check/ACH/card/cash.
+
+---
+
+## 15. Integration — Zapier ↔ LimoAnywhere
+
+**Principle:** our app speaks HTTP webhooks; **Zapier holds the LA connection**. We do not call
+LA directly unless/until LA grants API access.
+
+**LA Zapier app capabilities** (verified against the Zapier integration listing, 2026-06-14):
+- **Triggers (10):** New Account · New Finalized Invoice · New Paid Bill · New Driver Pay Log ·
+  New Payment · New Quote Request · New Reservation · New Paid Reservation · Updated Account ·
+  **Updated Reservation**.
+- **Actions (3 — all Create):** Create Account · Create Quote Request · **Create Reservation**.
+- ⚠️ **No "Update Reservation" action, and no affiliate/farm-out cost write.** Write-back to an
+  existing LA reservation is therefore **not possible via a native Zapier action**.
+
+### Inbound (LA → us)
+```
+LA "Updated Reservation" (+ "New Reservation") → Code by Zapier (map) → POST /integrations/la/reservation/
+```
+- Endpoint authenticated with `LEAD_INBOUND_API_KEY`. Match on **Conf #** → `la_reservation_id`.
+- Map LA **Trip State / Trip Status → our trip-status taxonomy**; write a `TripStatusEvent`
+  (`source=limoanywhere`); on a farm-out state, set `Reservation.vendor_cost_needed`.
+- **Field map** (from the live trigger payload): `Conf #`→`la_reservation_id`;
+  `Trip State/Status`→`trip_status`; `Formatted Scheduled Pickup/Dropoff At`→pickup;
+  `Trip Routing (PU/DO)`→`Stop`s; `primary_passenger`→contact; `Group Name`,
+  `Company Alias Id (12043)`→scope check. `Total Paid/Outstanding`, `Payment Method/Status`,
+  `Charges[]` are **informational** (LA customer side; we collect via Stripe).
+  The **affiliate/vendor cost is not in the payload** → captured in our app (§14).
+
+### Outbound (us → LA)
+- **Booking:** app → Zapier **Catch Hook** (`ZAPIER_LEAD_HOOK_URL`) → **Create Reservation** ×N.
+- **Vendor-cost write-back:** **parked** (per decision) — we are not pushing vendor cost to LA
+  for now. It has no native Zapier action regardless; a future path would be Code by Zapier →
+  LA API (pending API access) or a manual update of the LA Affiliate tab. `VendorBill.la_synced`
+  is reserved for that day.
+
+### Verification checklist
+1. Inbound Zap (Updated Reservation → Code → our endpoint) — in progress. ✔ trigger confirmed.
+2. Booking: confirm `Create Reservation` action field mapping (needed for the booking sync).
+3. Write-back: **ask LimoAnywhere for API access**; if none, vendor cost stays in-app and the
+   LA affiliate amount is set manually.
