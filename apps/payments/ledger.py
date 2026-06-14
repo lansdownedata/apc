@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
+from django.utils import timezone
 
 from apps.core.choices import Account
 
@@ -100,3 +101,37 @@ def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
         lead=lead, kind=kind, lines=lines, idempotency_key=idempotency_key,
         charge=charge, source=source, memo=memo,
     )
+
+
+def recognize_reservation(reservation):
+    """Recognize one trip's revenue: draw deferred first, overflow to A/R. Idempotent."""
+    from apps.reservations.models import Reservation
+
+    lead = reservation.lead
+    amount = Decimal(reservation.line_total)
+    deferred = order_balances(lead)["deferred"]
+    from_deferred = min(amount, deferred) if deferred > ZERO else ZERO
+    to_ar = amount - from_deferred
+
+    lines = [(Account.RECOGNIZED_REVENUE, ZERO, amount)]
+    if from_deferred > ZERO:
+        lines.append((Account.CUSTOMER_DEPOSITS, from_deferred, ZERO))
+    if to_ar > ZERO:
+        lines.append((Account.ACCOUNTS_RECEIVABLE, to_ar, ZERO))
+
+    entry = post_entry(
+        lead=lead,
+        reservation=reservation,
+        kind=JournalEntry.Kind.REVENUE_RECOGNIZED,
+        lines=lines,
+        idempotency_key=f"recognize-res{reservation.pk}",
+        memo=f"Recognize {reservation}",
+    )
+    if reservation.revenue_status != Reservation.RevenueStatus.RECOGNIZED:
+        reservation.revenue_status = Reservation.RevenueStatus.RECOGNIZED
+        reservation.recognized_at = timezone.now()
+        reservation.recognized_amount = amount
+        reservation.save(
+            update_fields=["revenue_status", "recognized_at", "recognized_amount", "updated_at"]
+        )
+    return entry
