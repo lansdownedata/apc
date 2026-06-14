@@ -87,7 +87,7 @@ def order_balances(lead) -> dict:
 
 
 def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
-                 source=JournalEntry.Source.STRIPE, memo=""):
+                 source=JournalEntry.Source.STRIPE, stripe_ref="", memo=""):
     """Cash in. Clears any outstanding A/R first, then adds to deferred revenue."""
     amount = Decimal(amount)
     to_ar = min(amount, order_balances(lead)["ar"])
@@ -99,7 +99,7 @@ def post_capture(*, lead, amount, kind, idempotency_key, charge=None,
         lines.append((Account.CUSTOMER_DEPOSITS, ZERO, to_deferred))
     return post_entry(
         lead=lead, kind=kind, lines=lines, idempotency_key=idempotency_key,
-        charge=charge, source=source, memo=memo,
+        charge=charge, source=source, stripe_ref=stripe_ref, memo=memo,
     )
 
 
