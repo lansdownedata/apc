@@ -34,7 +34,11 @@ class ChargeAdmin(admin.ModelAdmin):
 class JournalLineInline(admin.TabularInline):
     model = JournalLine
     extra = 0
-    readonly_fields = ("created_at",)
+    readonly_fields = ("account", "debit", "credit", "created_at")
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(JournalEntry)
@@ -43,3 +47,21 @@ class JournalEntryAdmin(admin.ModelAdmin):
     list_filter = ("kind", "source")
     search_fields = ("idempotency_key", "lead__contact__name", "memo")
     inlines = [JournalLineInline]
+    readonly_fields = (
+        "kind",
+        "lead",
+        "reservation",
+        "source",
+        "memo",
+        "charge",
+        "stripe_ref",
+        "created_by",
+        "idempotency_key",
+        "posted_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

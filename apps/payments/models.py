@@ -149,9 +149,7 @@ class JournalEntry(TimeStampedModel):
         SYSTEM = "system", "System"
         MANUAL = "manual", "Manual"
 
-    lead = models.ForeignKey(
-        "leads.Lead", related_name="journal_entries", on_delete=models.PROTECT
-    )
+    lead = models.ForeignKey("leads.Lead", related_name="journal_entries", on_delete=models.PROTECT)
     reservation = models.ForeignKey(
         "reservations.Reservation",
         related_name="journal_entries",
@@ -162,9 +160,7 @@ class JournalEntry(TimeStampedModel):
     kind = models.CharField(max_length=32, choices=Kind.choices)
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.SYSTEM)
     memo = models.CharField(max_length=255, blank=True)
-    charge = models.ForeignKey(
-        "payments.Charge", null=True, blank=True, on_delete=models.SET_NULL
-    )
+    charge = models.ForeignKey("payments.Charge", null=True, blank=True, on_delete=models.SET_NULL)
     stripe_ref = models.CharField(max_length=64, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
@@ -182,7 +178,10 @@ class JournalEntry(TimeStampedModel):
 
     @property
     def is_balanced(self) -> bool:
-        return self.total_debit == self.total_credit
+        agg = self.lines.aggregate(d=models.Sum("debit"), c=models.Sum("credit"))
+        if agg["d"] is None:  # no lines yet
+            return False
+        return agg["d"] == (agg["c"] or Decimal("0.00"))
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()} · {self.lead.quote_no}"
@@ -195,6 +194,9 @@ class JournalLine(TimeStampedModel):
     account = models.CharField(max_length=32, choices=Account.choices)
     debit = MoneyField()
     credit = MoneyField()
+
+    class Meta:
+        ordering = ["id"]
 
     def __str__(self) -> str:
         return f"{self.get_account_display()} D{self.debit}/C{self.credit}"
