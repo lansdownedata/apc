@@ -189,5 +189,87 @@
       </div>
     </div>
   </div>
+
+  <!-- Payments & Ledger -->
+  <div class="card overflow-hidden mt-4">
+    <div class="flex items-center px-5 py-3.5 border-b border-line">
+      <i class="ti ti-report-money text-[17px] text-gold mr-2"></i>
+      <span class="font-display text-[15px] font-semibold text-ink">Payments &amp; Ledger</span>
+    </div>
+
+    <!-- Money summary row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
+      <div class="px-5 py-3.5">
+        <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Collected</div>
+        <div class="num font-semibold text-ink text-[15px]">${{ balances.collected|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="px-5 py-3.5">
+        <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Deferred</div>
+        <div class="num font-semibold text-ink text-[15px]">${{ balances.deferred|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="px-5 py-3.5">
+        <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Recognized</div>
+        <div class="num font-semibold text-emerald-700 text-[15px]">${{ balances.recognized|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="px-5 py-3.5">
+        <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">A/R</div>
+        <div class="num font-semibold {% if balances.ar %}text-amber-600{% else %}text-ink{% endif %} text-[15px]">${{ balances.ar|floatformat:2|intcomma }}</div>
+      </div>
+    </div>
+
+    <!-- Ledger entries table -->
+    <div class="px-5 py-4">
+      <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
+        <i class="ti ti-list-details text-[14px] text-muted"></i> Journal entries
+      </div>
+      {% include "payments/_ledger.html" %}
+    </div>
+
+    {% if reservations %}
+    <!-- Per-trip revenue recognition -->
+    <div class="border-t border-line px-5 py-4">
+      <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
+        <i class="ti ti-route text-[14px] text-muted"></i> Trip recognition
+      </div>
+      <div class="space-y-2">
+        {% for res in reservations %}
+        <div class="flex items-center gap-3 text-[12px]">
+          <span class="text-ink font-medium min-w-0 flex-1 truncate">{{ res.service|default:res.get_trip_type_display }}</span>
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold
+            {% if res.revenue_status == 'recognized' %}bg-emerald-50 text-emerald-700{% elif res.revenue_status == 'pending' %}bg-amber-50 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">
+            {{ res.get_revenue_status_display }}
+          </span>
+          <span class="num text-ink shrink-0">${{ res.recognized_amount|floatformat:2|intcomma }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if charges %}
+    <!-- Charges -->
+    <div class="border-t border-line px-5 py-4">
+      <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
+        <i class="ti ti-credit-card text-[14px] text-muted"></i> Charges
+      </div>
+      <div class="space-y-2">
+        {% for charge in charges %}
+        <div class="flex items-center gap-3 text-[12px]">
+          <span class="text-ink font-medium">{{ charge.get_kind_display }}</span>
+          <span class="num text-ink">${{ charge.amount|floatformat:2|intcomma }}</span>
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold
+            {% if charge.status == 'succeeded' %}bg-emerald-50 text-emerald-700{% elif charge.status == 'failed' %}bg-rose-50 text-rose-600{% else %}bg-slate-100 text-slate-500{% endif %}">
+            {{ charge.get_status_display }}
+          </span>
+          {% if charge.stripe_payment_intent_id %}
+          <span class="font-mono2 text-[10.5px] text-muted truncate ml-auto">{{ charge.stripe_payment_intent_id }}</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
 </div>
 {% endblock %}

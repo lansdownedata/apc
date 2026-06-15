@@ -1,0 +1,46 @@
+{% load humanize %}
+{% if ledger_entries %}
+<div class="overflow-x-auto">
+  <table class="w-full text-[11.5px]">
+    <thead>
+      <tr class="border-b border-line">
+        <th class="text-left text-muted font-medium pb-2 pr-3">Date</th>
+        <th class="text-left text-muted font-medium pb-2 pr-3">Type</th>
+        <th class="text-left text-muted font-medium pb-2 pr-3">Memo</th>
+        <th class="text-left text-muted font-medium pb-2 pr-3">Account</th>
+        <th class="text-right text-muted font-medium pb-2 pr-3">Debit</th>
+        <th class="text-right text-muted font-medium pb-2">Credit</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-line/60">
+      {% for entry in ledger_entries %}
+        {% for line in entry.lines.all %}
+        <tr class="{% if not forloop.first %}opacity-70{% endif %}">
+          {% if forloop.first %}
+          <td class="py-2 pr-3 num text-muted align-top whitespace-nowrap">{{ entry.posted_at|date:"M j" }}</td>
+          <td class="py-2 pr-3 text-ink font-medium align-top whitespace-nowrap">{{ entry.get_kind_display }}</td>
+          <td class="py-2 pr-3 text-muted align-top">{{ entry.memo|default:"—" }}</td>
+          {% else %}
+          <td class="py-2 pr-3"></td>
+          <td class="py-2 pr-3"></td>
+          <td class="py-2 pr-3"></td>
+          {% endif %}
+          <td class="py-2 pr-3 text-muted align-top whitespace-nowrap">{{ line.get_account_display }}</td>
+          <td class="py-2 pr-3 num text-right align-top whitespace-nowrap">
+            {% if line.debit %}<span class="text-ink">${{ line.debit|floatformat:2 }}</span>{% else %}<span class="text-muted/50">—</span>{% endif %}
+          </td>
+          <td class="py-2 num text-right align-top whitespace-nowrap">
+            {% if line.credit %}<span class="text-ink">${{ line.credit|floatformat:2 }}</span>{% else %}<span class="text-muted/50">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="py-6 text-center text-[12.5px] text-muted">
+  <i class="ti ti-file-invoice text-[22px] text-slate-300"></i>
+  <div class="mt-1.5">No ledger activity yet.</div>
+</div>
+{% endif %}

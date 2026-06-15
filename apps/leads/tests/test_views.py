@@ -62,3 +62,21 @@ def test_lead_detail_404_for_missing(client, agent):
     client.force_login(agent)
     resp = client.get(reverse("lead_detail", args=[999999]))
     assert resp.status_code == 404
+
+
+def test_lead_detail_shows_ledger_and_balances(client, agent):
+    from decimal import Decimal
+
+    from apps.payments import ledger
+    from apps.payments.models import JournalEntry
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    ledger.post_capture(
+        lead=lead, amount=Decimal("1000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap-x",
+    )
+    client.force_login(agent)
+    resp = client.get(reverse("lead_detail", args=[lead.pk]))
+    assert resp.status_code == 200
+    assert resp.context["balances"]["collected"] == Decimal("1000.00")
+    assert len(resp.context["ledger_entries"]) == 1
