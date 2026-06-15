@@ -1,13 +1,19 @@
+from decimal import Decimal
+
 import stripe
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseBadRequest
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
+from apps.accounts.permissions import payment_access_required
 from apps.leads.models import Lead
+from apps.reservations.models import Reservation
 
-from . import ledger, webhooks
+from . import ledger, services, webhooks
 
 
 @csrf_exempt
@@ -49,3 +55,59 @@ def orders_list(request):
         "orders/order_list.html",
         {"orders": orders, "filter": status_filter, "nav": "orders", "page_title": "Orders"},
     )
+
+
+def _plan(lead_id):
+    lead = get_object_or_404(Lead, pk=lead_id)
+    return lead, getattr(lead, "payment", None)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_refund(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan:
+        amount = Decimal(request.POST.get("amount") or plan.quote_total)
+        services.refund_payment(plan, amount)
+        messages.success(request, f"Refunded ${amount}.")
+    return redirect("lead_detail", pk=lead_id)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_cancel_refund(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan:
+        services.refund_payment(plan, plan.quote_total)
+    lead.reservations.update(
+        trip_status=Reservation.TripStatus.CANCELLED,
+        revenue_status=Reservation.RevenueStatus.REVERSED,
+    )
+    lead.status = Lead.Status.LOST
+    lead.lost_reason = "Cancelled"
+    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    messages.success(request, "Order cancelled and refunded.")
+    return redirect("lead_detail", pk=lead_id)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_retry_balance(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan:
+        services.charge_balance(plan)
+    return redirect("lead_detail", pk=lead_id)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_mark_paid(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan and request.POST.get("amount"):
+        services.mark_paid_offline(plan, Decimal(request.POST["amount"]))
+        messages.success(request, "Offline payment recorded.")
+    return redirect("lead_detail", pk=lead_id)
