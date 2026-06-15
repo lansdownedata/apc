@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, render
 
 from apps.core.choices import Channel
+from apps.payments import ledger
 
 from .models import Lead
 
@@ -73,5 +74,10 @@ def lead_detail(request, pk):
         "lead": lead,
         "reservations": lead.reservations.all(),
         "payment": getattr(lead, "payment", None),
+        "balances": ledger.order_balances(lead),
+        "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
+            "posted_at", "id"
+        ),
+        "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
     }
     return render(request, "leads/lead_detail.html", context)
