@@ -20,6 +20,7 @@ urlpatterns = [
     path("", include("django.contrib.auth.urls")),  # login/, logout/, password_*
     path("", include("apps.portal.urls")),  # dashboard (home)
     path("leads/", include("apps.leads.urls")),
+    path("users/", include("apps.accounts.urls")),
     # --- integrations + webhooks ---
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),

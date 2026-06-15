@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+
+  <!-- page header -->
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Users</h1>
+      <p class="text-[12.5px] text-muted mt-0.5">Manage team access and capabilities.</p>
+    </div>
+  </div>
+
+  <!-- table card -->
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[640px]">
+        <thead>
+          <tr class="text-muted text-left bg-[#faf8f3] border-b border-line">
+            <th class="font-medium px-5 py-3">Name</th>
+            <th class="font-medium px-3 py-3">Username / Email</th>
+            <th class="font-medium px-3 py-3">Role</th>
+            {% for cap_key, cap_label, cap_help in capabilities %}
+            <th class="font-medium px-3 py-3 text-center">{{ cap_label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for u in users %}
+          <tr onclick="window.location='{% url 'user_detail' u.pk %}'"
+              class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
+            <td class="px-5 py-3.5">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">
+                  {{ u.get_full_name|default:u.username|slice:":2" }}
+                </span>
+                <div class="font-semibold text-ink leading-tight truncate">
+                  {{ u.get_full_name|default:u.username }}
+                </div>
+              </div>
+            </td>
+            <td class="px-3 py-3.5 text-muted">
+              <div>{{ u.username }}</div>
+              {% if u.email %}<div class="text-[11px] text-slate-400 truncate">{{ u.email }}</div>{% endif %}
+            </td>
+            <td class="px-3 py-3.5">
+              {% if u.is_owner_admin %}
+              <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-goldl text-goldd ring-1 ring-inset ring-gold/30">
+                <i class="ti ti-crown text-[11px]"></i> {{ u.get_role_display }}
+              </span>
+              {% else %}
+              <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">
+                {{ u.get_role_display }}
+              </span>
+              {% endif %}
+            </td>
+            {% for cap_key, cap_label, cap_help in capabilities %}
+            <td class="px-3 py-3.5 text-center">
+              {% if u.is_owner_admin %}
+              <i class="ti ti-check text-[15px] text-gold" title="Always allowed (Owner / Admin)"></i>
+              {% elif u.can_manage_payments and cap_key == 'can_manage_payments' %}
+              <i class="ti ti-check text-[15px] text-emerald-500" title="Granted"></i>
+              {% else %}
+              <span class="text-slate-300">—</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="10" class="px-5 py-16 text-center text-muted">
+              <i class="ti ti-users-off text-[28px] text-slate-300"></i>
+              <div class="mt-2 text-[13px]">No users found.</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

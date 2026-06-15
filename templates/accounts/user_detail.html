@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-[760px] mx-auto px-4 sm:px-6 py-6">
+
+  <a href="{% url 'user_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
+    <i class="ti ti-arrow-left text-[15px]"></i> Users
+  </a>
+
+  <!-- identity header -->
+  <div class="card p-5 sm:p-6 mb-4">
+    <div class="flex items-start gap-4">
+      <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0 uppercase">
+        {{ target.get_full_name|default:target.username|slice:":2" }}
+      </span>
+      <div class="min-w-0 flex-1">
+        <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight leading-tight">
+          {{ target.get_full_name|default:target.username }}
+        </h1>
+        <div class="flex items-center gap-x-4 gap-y-1 flex-wrap text-[12.5px] text-muted mt-1.5">
+          <span class="flex items-center gap-1"><i class="ti ti-at text-[14px]"></i> {{ target.username }}</span>
+          {% if target.email %}
+          <span class="flex items-center gap-1"><i class="ti ti-mail text-[14px]"></i> {{ target.email }}</span>
+          {% endif %}
+          <span class="flex items-center gap-1">
+            <i class="ti ti-shield text-[14px]"></i>
+            {% if target.is_owner_admin %}
+            <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-goldl text-goldd ring-1 ring-inset ring-gold/30">
+              <i class="ti ti-crown text-[11px]"></i> {{ target.get_role_display }}
+            </span>
+            {% else %}
+            <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">
+              {{ target.get_role_display }}
+            </span>
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- access capabilities -->
+  <div class="card overflow-hidden">
+    <div class="flex items-center px-5 py-3.5 border-b border-line">
+      <i class="ti ti-lock text-[16px] text-muted mr-2"></i>
+      <span class="font-display text-[15px] font-semibold text-ink">Access</span>
+    </div>
+
+    <div class="divide-y divide-line/70">
+      {% for cap_key, cap_label, cap_help in capabilities %}
+      <div class="flex items-center gap-4 px-5 py-4">
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-semibold text-ink">{{ cap_label }}</div>
+          <div class="text-[12px] text-muted mt-0.5">{{ cap_help }}</div>
+        </div>
+        <div class="shrink-0">
+          {% if target.is_owner_admin %}
+          <div class="flex items-center gap-2">
+            <label class="relative inline-flex items-center">
+              <input type="checkbox" class="sr-only peer" checked disabled>
+              <div class="w-9 h-5 rounded-full bg-gold/50 peer-checked:bg-gold/50 cursor-not-allowed opacity-60"></div>
+              <div class="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all translate-x-4"></div>
+            </label>
+            <span class="text-[11px] text-muted">Owner / Admin — always allowed.</span>
+          </div>
+          {% else %}
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="capability" value="{{ cap_key }}">
+            <label class="relative inline-flex items-center cursor-pointer group" title="{{ cap_label }}">
+              <input type="checkbox" name="enabled" value="on"
+                     {% if target.can_manage_payments and cap_key == 'can_manage_payments' %}checked{% endif %}
+                     class="sr-only peer"
+                     onchange="this.form.submit()">
+              <div class="w-9 h-5 rounded-full bg-slate-200 peer-checked:bg-gold transition-colors
+                          group-hover:bg-slate-300 peer-checked:group-hover:bg-goldd"></div>
+              <div class="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all
+                          peer-checked:translate-x-4"></div>
+            </label>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% empty %}
+      <div class="px-5 py-8 text-center text-[12.5px] text-muted">No configurable capabilities.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- django messages (shown after redirect) -->
+  {% if messages %}
+  <div class="mt-4 space-y-2">
+    {% for msg in messages %}
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20 text-[12.5px] font-medium">
+      <i class="ti ti-circle-check text-[16px]"></i>
+      {{ msg }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
