@@ -108,6 +108,7 @@ class Charge(TimeStampedModel):
     class Kind(models.TextChoices):
         DEPOSIT = "deposit", "Deposit"
         BALANCE = "balance", "Balance"
+        REFUND = "refund", "Refund"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -119,6 +120,7 @@ class Charge(TimeStampedModel):
     amount = MoneyField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     stripe_payment_intent_id = models.CharField(max_length=64, blank=True)
+    stripe_refund_id = models.CharField(max_length=64, blank=True)
     idempotency_key = models.CharField(max_length=120, unique=True)
     failure_reason = models.CharField(max_length=255, blank=True)
     attempt_no = models.PositiveSmallIntegerField(default=1)
