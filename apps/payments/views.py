@@ -93,6 +93,9 @@ def order_refund(request, lead_id):
 @require_POST
 def order_cancel_refund(request, lead_id):
     lead, plan = _plan(lead_id)
+    if lead.status != Lead.Status.BOOKED:
+        messages.error(request, "Only booked orders can be cancelled.")
+        return redirect("lead_detail", pk=lead_id)
     if plan:
         services.refund_payment(plan, plan.quote_total)
     lead.reservations.update(

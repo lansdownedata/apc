@@ -3,7 +3,7 @@ balance charge. Card data never touches our servers (Checkout + tokens)."""
 
 import stripe
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.notifications.models import Notification
 
@@ -109,7 +109,6 @@ def refund_payment(plan, amount):
     """
     from decimal import Decimal
 
-    from django.db import transaction
     from django.db.models import Sum
 
     amount = Decimal(amount)
@@ -137,18 +136,24 @@ def refund_payment(plan, amount):
             continue
         portion = min(remaining, refundable)
         refund = _stripe().Refund.create(
-            payment_intent=src.stripe_payment_intent_id, amount=_cents(portion)
+            payment_intent=src.stripe_payment_intent_id,
+            amount=_cents(portion),
+            idempotency_key=f"refund-{src.pk}-{_cents(already)}-{_cents(portion)}",
         )
-        with transaction.atomic():
-            charge = plan.charges.create(
-                kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
-                stripe_payment_intent_id=src.stripe_payment_intent_id,
-                stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
-            )
-            ledger.post_refund(
-                lead=plan.lead, amount=portion, charge=charge,
-                idempotency_key=f"refund-{refund.id}", memo="Refund",
-            )
+        try:
+            with transaction.atomic():
+                charge = plan.charges.create(
+                    kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
+                    stripe_payment_intent_id=src.stripe_payment_intent_id,
+                    stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
+                )
+                ledger.post_refund(
+                    lead=plan.lead, amount=portion, charge=charge,
+                    idempotency_key=f"refund-{refund.id}", memo="Refund",
+                )
+        except IntegrityError:
+            # A concurrent request already recorded this exact Stripe refund — don't double-count.
+            continue
         total_refunded += portion
         remaining -= portion
     return total_refunded
@@ -166,6 +171,12 @@ def mark_paid_offline(plan, amount, *, memo="Offline payment"):
         idempotency_key=f"capture-charge{charge.pk}", charge=charge,
         source=JournalEntry.Source.MANUAL, memo=memo,
     )
+    if plan.balance_status != PaymentPlan.BalanceStatus.PAID:
+        plan.balance_status = PaymentPlan.BalanceStatus.PAID
+        plan.save(update_fields=["balance_status", "updated_at"])
+    if plan.lead.has_alert:
+        plan.lead.has_alert = False
+        plan.lead.save(update_fields=["has_alert", "updated_at"])
     return charge
 
 
