@@ -101,12 +101,20 @@ def charge_balance(plan: PaymentPlan) -> Charge:
 
 
 def refund_payment(plan, amount):
-    """Refund `amount` to the card — balance PI first, then deposit PI. Real Stripe refund."""
+    """Refund `amount` to the card — balance PI first, then deposit PI. Real Stripe refund.
+
+    Caps each charge at its remaining refundable amount (captured − already refunded) so a
+    repeated/duplicate call cannot over-refund, and records each Stripe refund + its ledger
+    entry atomically so the books never desync from a recorded refund.
+    """
     from decimal import Decimal
+
+    from django.db import transaction
+    from django.db.models import Sum
 
     amount = Decimal(amount)
     remaining = amount
-    first_refund_id = ""
+    total_refunded = Decimal("0.00")
     succeeded = {
         c.kind: c
         for c in plan.charges.filter(
@@ -120,24 +128,30 @@ def refund_payment(plan, amount):
         src = succeeded.get(kind)
         if not src or not src.stripe_payment_intent_id:
             continue
-        portion = min(remaining, src.amount)
+        already = plan.charges.filter(
+            kind=Charge.Kind.REFUND,
+            stripe_payment_intent_id=src.stripe_payment_intent_id,
+        ).aggregate(s=Sum("amount"))["s"] or Decimal("0.00")
+        refundable = src.amount - already
+        if refundable <= Decimal("0.00"):
+            continue
+        portion = min(remaining, refundable)
         refund = _stripe().Refund.create(
             payment_intent=src.stripe_payment_intent_id, amount=_cents(portion)
         )
-        plan.charges.create(
-            kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
-            stripe_payment_intent_id=src.stripe_payment_intent_id,
-            stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
-        )
-        first_refund_id = first_refund_id or refund.id
+        with transaction.atomic():
+            charge = plan.charges.create(
+                kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
+                stripe_payment_intent_id=src.stripe_payment_intent_id,
+                stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
+            )
+            ledger.post_refund(
+                lead=plan.lead, amount=portion, charge=charge,
+                idempotency_key=f"refund-{refund.id}", memo="Refund",
+            )
+        total_refunded += portion
         remaining -= portion
-    refunded = amount - remaining
-    if refunded > Decimal("0.00"):
-        ledger.post_refund(
-            lead=plan.lead, amount=refunded,
-            idempotency_key=f"refund-{first_refund_id}", memo="Refund",
-        )
-    return refunded
+    return total_refunded
 
 
 def mark_paid_offline(plan, amount, *, memo="Offline payment"):
