@@ -1,0 +1,106 @@
+{% load humanize %}
+{% if user.has_payments_access %}
+<div class="border-t border-line px-5 py-4">
+  <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
+    <i class="ti ti-settings-2 text-[14px] text-muted"></i> Actions
+  </div>
+  <div class="flex flex-wrap gap-2">
+
+    <!-- Refund -->
+    <form method="post" action="{% url 'order_refund' lead.pk %}" class="contents">
+      {% csrf_token %}
+      <div class="flex items-center gap-1.5">
+        <input
+          type="number"
+          name="amount"
+          step="0.01"
+          min="0.01"
+          value="{{ balances.collected|floatformat:2 }}"
+          class="w-28 text-[12px] num border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-gold/40"
+          placeholder="Amount"
+        >
+        <button
+          type="button"
+          class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-white hover:bg-black/5"
+          @click="$store.modal.confirm({
+            title: 'Issue a refund?',
+            variant: 'danger',
+            confirmText: 'Refund',
+            message: 'This issues a real Stripe refund to the card on file. The amount cannot be undone.',
+            onConfirm: () => $el.closest('form').submit()
+          })"
+        >
+          <i class="ti ti-arrow-back-up text-[14px]"></i> Refund
+        </button>
+      </div>
+    </form>
+
+    <!-- Cancel & refund -->
+    <form method="post" action="{% url 'order_cancel_refund' lead.pk %}" class="contents">
+      {% csrf_token %}
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-rose-600 rounded-lg px-3 py-1.5 ring-1 ring-rose-200 bg-white hover:bg-rose-50"
+        @click="$store.modal.confirm({
+          title: 'Cancel order and refund?',
+          variant: 'danger',
+          confirmText: 'Cancel &amp; Refund',
+          message: 'This will cancel all reservations, mark the lead as lost, and issue a full Stripe refund. This cannot be undone.',
+          onConfirm: () => $el.closest('form').submit()
+        })"
+      >
+        <i class="ti ti-circle-x text-[14px]"></i> Cancel &amp; refund
+      </button>
+    </form>
+
+    <!-- Retry balance (only when last attempt failed) -->
+    {% if payment.balance_status == 'failed' %}
+    <form method="post" action="{% url 'order_retry_balance' lead.pk %}" class="contents">
+      {% csrf_token %}
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-amber-700 rounded-lg px-3 py-1.5 ring-1 ring-amber-300 bg-white hover:bg-amber-50"
+        @click="$store.modal.confirm({
+          title: 'Retry balance charge?',
+          variant: 'warning',
+          confirmText: 'Retry',
+          message: 'This attempts to charge the saved card again for the outstanding balance.',
+          onConfirm: () => $el.closest('form').submit()
+        })"
+      >
+        <i class="ti ti-refresh-alert text-[14px]"></i> Retry balance
+      </button>
+    </form>
+    {% endif %}
+
+    <!-- Mark paid offline -->
+    <form method="post" action="{% url 'order_mark_paid' lead.pk %}" class="contents">
+      {% csrf_token %}
+      <div class="flex items-center gap-1.5">
+        <input
+          type="number"
+          name="amount"
+          step="0.01"
+          min="0.01"
+          class="w-28 text-[12px] num border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink focus:outline-none focus:ring-2 focus:ring-gold/40"
+          placeholder="Amount"
+        >
+        <button
+          type="button"
+          class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 rounded-lg px-3 py-1.5 ring-1 ring-emerald-200 bg-white hover:bg-emerald-50"
+          @click="$store.modal.confirm({
+            title: 'Record offline payment?',
+            variant: 'info',
+            confirmText: 'Record',
+            message: 'This records a cash or check payment on the ledger without charging Stripe.',
+            onConfirm: () => $el.closest('form').submit()
+          })"
+        >
+          <i class="ti ti-cash text-[14px]"></i> Mark paid (offline)
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endif %}

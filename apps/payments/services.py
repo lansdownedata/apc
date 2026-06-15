@@ -100,6 +100,61 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     return charge
 
 
+def refund_payment(plan, amount):
+    """Refund `amount` to the card — balance PI first, then deposit PI. Real Stripe refund."""
+    from decimal import Decimal
+
+    amount = Decimal(amount)
+    remaining = amount
+    first_refund_id = ""
+    succeeded = {
+        c.kind: c
+        for c in plan.charges.filter(
+            kind__in=[Charge.Kind.DEPOSIT, Charge.Kind.BALANCE],
+            status=Charge.Status.SUCCEEDED,
+        )
+    }
+    for kind in (Charge.Kind.BALANCE, Charge.Kind.DEPOSIT):
+        if remaining <= Decimal("0.00"):
+            break
+        src = succeeded.get(kind)
+        if not src or not src.stripe_payment_intent_id:
+            continue
+        portion = min(remaining, src.amount)
+        refund = _stripe().Refund.create(
+            payment_intent=src.stripe_payment_intent_id, amount=_cents(portion)
+        )
+        plan.charges.create(
+            kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
+            stripe_payment_intent_id=src.stripe_payment_intent_id,
+            stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
+        )
+        first_refund_id = first_refund_id or refund.id
+        remaining -= portion
+    refunded = amount - remaining
+    if refunded > Decimal("0.00"):
+        ledger.post_refund(
+            lead=plan.lead, amount=refunded,
+            idempotency_key=f"refund-{first_refund_id}", memo="Refund",
+        )
+    return refunded
+
+
+def mark_paid_offline(plan, amount, *, memo="Offline payment"):
+    """Record a non-Stripe payment (cash/check) as a capture entry."""
+    from decimal import Decimal
+
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal(amount))
+    charge.status = Charge.Status.SUCCEEDED
+    charge.save(update_fields=["status", "updated_at"])
+    ledger.post_capture(
+        lead=plan.lead, amount=Decimal(amount), kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key=f"capture-charge{charge.pk}", charge=charge,
+        source=JournalEntry.Source.MANUAL, memo=memo,
+    )
+    return charge
+
+
 def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:
     reason = (getattr(exc, "user_message", None) or str(exc))[:255]
     charge.status = Charge.Status.FAILED
