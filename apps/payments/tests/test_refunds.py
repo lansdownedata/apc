@@ -9,7 +9,7 @@ from apps.accounts.models import User
 from apps.leads.models import Lead
 from apps.payments import ledger, services
 from apps.payments.factories import PaymentPlanFactory
-from apps.payments.models import Charge, JournalEntry
+from apps.payments.models import Charge, JournalEntry, PaymentPlan
 from apps.reservations.factories import TransferReservationFactory
 
 pytestmark = pytest.mark.django_db
@@ -53,6 +53,8 @@ def test_refund_endpoint_requires_payment_access(client):
 
 def test_cancel_and_refund_cancels_and_reverses(client):
     plan = _paid_plan()
+    plan.lead.status = Lead.Status.BOOKED
+    plan.lead.save(update_fields=["status", "updated_at"])
     res = TransferReservationFactory(lead=plan.lead, base_rate=Decimal("1335.00"))
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     with patch.object(services.stripe.Refund, "create", return_value=MagicMock(id="re_2")):
@@ -82,3 +84,36 @@ def test_refund_endpoint_rejects_bad_amount(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     resp = client.post(reverse("order_refund", args=[plan.lead_id]), {"amount": "abc"})
     assert resp.status_code in (200, 302)  # graceful, not a 500
+
+
+def test_refund_passes_stripe_idempotency_key():
+    plan = _paid_plan()
+    mock_create = MagicMock(return_value=MagicMock(id="re_k"))
+    with patch.object(services.stripe.Refund, "create", mock_create):
+        services.refund_payment(plan, Decimal("400.00"))
+    assert "idempotency_key" in mock_create.call_args.kwargs
+    assert mock_create.call_args.kwargs["idempotency_key"].startswith("refund-")
+
+
+def test_mark_paid_offline_clears_failed_status():
+    plan = PaymentPlanFactory(
+        quote_total=Decimal("2670.00"), balance_status=PaymentPlan.BalanceStatus.FAILED
+    )
+    plan.lead.has_alert = True
+    plan.lead.save(update_fields=["has_alert"])
+    services.mark_paid_offline(plan, Decimal("1335.00"))
+    plan.refresh_from_db()
+    plan.lead.refresh_from_db()
+    assert plan.balance_status == PaymentPlan.BalanceStatus.PAID
+    assert plan.lead.has_alert is False
+
+
+def test_cancel_refund_only_booked(client):
+    from apps.leads.models import Lead
+
+    plan = PaymentPlanFactory(quote_total=Decimal("100.00"))  # lead defaults to NEW
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    resp = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+    assert resp.status_code in (200, 302)
+    plan.lead.refresh_from_db()
+    assert plan.lead.status != Lead.Status.LOST  # not booked → no cancel
