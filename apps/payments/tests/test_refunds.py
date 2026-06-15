@@ -62,3 +62,23 @@ def test_cancel_and_refund_cancels_and_reverses(client):
     res.refresh_from_db()
     assert plan.lead.status == Lead.Status.LOST
     assert res.revenue_status == res.RevenueStatus.REVERSED
+
+
+def test_refund_caps_at_captured_no_double_refund():
+    plan = _paid_plan()  # one succeeded balance charge of 1335 on pi_bal
+    with patch.object(
+        services.stripe.Refund, "create",
+        side_effect=[MagicMock(id="re_a"), MagicMock(id="re_b")],
+    ):
+        first = services.refund_payment(plan, Decimal("1335.00"))
+        second = services.refund_payment(plan, Decimal("1335.00"))
+    assert first == Decimal("1335.00")
+    assert second == Decimal("0.00")  # already fully refunded — no second Stripe refund
+    assert ledger.order_balances(plan.lead)["collected"] == Decimal("0.00")  # never negative
+
+
+def test_refund_endpoint_rejects_bad_amount(client):
+    plan = _paid_plan()
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    resp = client.post(reverse("order_refund", args=[plan.lead_id]), {"amount": "abc"})
+    assert resp.status_code in (200, 302)  # graceful, not a 500

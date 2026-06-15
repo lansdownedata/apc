@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import stripe
 from django.conf import settings
@@ -68,9 +68,13 @@ def _plan(lead_id):
 def order_refund(request, lead_id):
     lead, plan = _plan(lead_id)
     if plan:
-        amount = Decimal(request.POST.get("amount") or plan.quote_total)
-        services.refund_payment(plan, amount)
-        messages.success(request, f"Refunded ${amount}.")
+        try:
+            amount = Decimal(request.POST.get("amount") or plan.quote_total)
+        except (InvalidOperation, TypeError):
+            messages.error(request, "Enter a valid refund amount.")
+            return redirect("lead_detail", pk=lead_id)
+        refunded = services.refund_payment(plan, amount)
+        messages.success(request, f"Refunded ${refunded}.")
     return redirect("lead_detail", pk=lead_id)
 
 
@@ -87,7 +91,8 @@ def order_cancel_refund(request, lead_id):
     )
     lead.status = Lead.Status.LOST
     lead.lost_reason = "Cancelled"
-    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    lead.has_alert = False
+    lead.save(update_fields=["status", "lost_reason", "has_alert", "updated_at"])
     messages.success(request, "Order cancelled and refunded.")
     return redirect("lead_detail", pk=lead_id)
 
@@ -108,6 +113,11 @@ def order_retry_balance(request, lead_id):
 def order_mark_paid(request, lead_id):
     lead, plan = _plan(lead_id)
     if plan and request.POST.get("amount"):
-        services.mark_paid_offline(plan, Decimal(request.POST["amount"]))
+        try:
+            amount = Decimal(request.POST["amount"])
+        except (InvalidOperation, TypeError):
+            messages.error(request, "Enter a valid amount.")
+            return redirect("lead_detail", pk=lead_id)
+        services.mark_paid_offline(plan, amount)
         messages.success(request, "Offline payment recorded.")
     return redirect("lead_detail", pk=lead_id)
