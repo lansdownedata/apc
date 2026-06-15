@@ -50,10 +50,20 @@ def orders_list(request):
         orders = [
             o for o in orders if o["balances"]["deferred"] == 0 and o["balances"]["recognized"] > 0
         ]
+    summary = {
+        key: sum((o["balances"][key] for o in orders), Decimal("0.00"))
+        for key in ("collected", "deferred", "recognized", "ar", "refunded")
+    }
     return render(
         request,
         "orders/order_list.html",
-        {"orders": orders, "filter": status_filter, "nav": "orders", "page_title": "Orders"},
+        {
+            "orders": orders,
+            "filter": status_filter,
+            "nav": "orders",
+            "page_title": "Orders",
+            "summary": summary,
+        },
     )
 
 
