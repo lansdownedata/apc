@@ -4,6 +4,42 @@
 {% block content %}
 <div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6">
 
+  <!-- finance summary strip -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5 stagger">
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Deferred liability</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-amber-50 text-amber-600"><i class="ti ti-clock-dollar text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[26px] font-semibold text-ink leading-none mt-2 num">${{ summary.deferred|floatformat:2|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">not yet recognized</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Recognized</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-emerald-50 text-emerald-600"><i class="ti ti-circle-check text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[26px] font-semibold text-ink leading-none mt-2 num">${{ summary.recognized|floatformat:2|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">earned revenue</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">A/R outstanding</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-rose-50 text-rose-600"><i class="ti ti-alert-circle text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[26px] font-semibold {% if summary.ar %}text-rose-600{% else %}text-ink{% endif %} leading-none mt-2 num">${{ summary.ar|floatformat:2|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">balance owed</div>
+    </div>
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-[11.5px] text-muted font-medium">Refunds</span>
+        <span class="w-7 h-7 rounded-lg grid place-items-center bg-slate-100 text-slate-500"><i class="ti ti-receipt-refund text-[15px]"></i></span>
+      </div>
+      <div class="font-display text-[26px] font-semibold text-ink leading-none mt-2 num">${{ summary.refunded|floatformat:2|intcomma }}</div>
+      <div class="text-[11px] text-muted mt-1.5">total refunded</div>
+    </div>
+  </div>
+
   <!-- filter pills -->
   <div class="flex items-center gap-0.5 bg-white rounded-full p-1 ring-1 ring-line shadow-sm mb-4 w-fit">
     <a href="?filter=all"
