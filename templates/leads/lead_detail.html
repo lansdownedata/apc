@@ -2,10 +2,15 @@
 {% load humanize json_filters %}
 
 {% block content %}
+{{ reservations_json|json_script:"ws-reservations" }}
+{{ vehicles_json|json_script:"ws-vehicles" }}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="quoteWorkspace({
        leadId: {{ lead.pk }},
        updateUrl: '{% url 'lead_update' lead.pk %}',
+       saveUrl: '{% url 'reservation_save' %}',
+       reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
+       vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {
          name: {{ lead.contact.name|json_string }},
          phone: {{ lead.contact.phone|json_string }},
@@ -119,6 +124,10 @@
         <div class="flex items-center px-5 py-3.5 border-b border-line">
           <span class="font-display text-[15px] font-semibold text-ink">Reservations</span>
           <span class="ml-2 text-[11px] text-muted">{{ reservations|length }} trip{{ reservations|length|pluralize }} on this quote</span>
+          <button @click="newReservation()"
+                  class="ml-auto btn-gold flex items-center gap-1.5 text-[12px] font-semibold rounded-lg px-3 py-1.5">
+            <i class="ti ti-plus text-[14px]"></i> Add reservation
+          </button>
         </div>
         <div class="divide-y divide-line/70">
           {% for res in reservations %}
@@ -157,9 +166,16 @@
                   {% if res.trip_type == 'hourly' %}<span class="flex items-center gap-1 num"><i class="ti ti-clock text-[13px]"></i> {{ res.billed_hours|floatformat:"-2" }} hrs{% if res.min_applied %} (min){% endif %}</span>{% endif %}
                 </div>
               </div>
-              <div class="text-right shrink-0">
+              <div class="text-right shrink-0 flex flex-col items-end gap-1.5">
                 <div class="num font-semibold text-ink text-[14px]">${{ res.line_total|floatformat:2|intcomma }}</div>
                 {% if res.trip_type == 'hourly' %}<div class="text-[10.5px] text-muted num mt-0.5">${{ res.hourly_rate|floatformat:0 }}/hr</div>{% endif %}
+                <div class="flex items-center gap-1 mt-1">
+                  <button @click="editReservation({{ res.pk }})"
+                          class="p-1 text-muted hover:text-ink transition-colors" title="Edit reservation">
+                    <i class="ti ti-pencil text-[15px]"></i>
+                  </button>
+                  {# copy/trash — Task 8 #}
+                </div>
               </div>
             </div>
           </div>
@@ -338,6 +354,8 @@
 
     {% include "payments/_money_actions.html" %}
   </div>
+
+  {% include "leads/_reservation_editor.html" %}
 
 </div>
 {% endblock %}

@@ -13,7 +13,24 @@ from apps.core.choices import Channel
 from apps.payments import ledger
 
 from .forms import NewLeadForm
-from .models import Lead
+from .models import Lead, Vehicle
+
+
+def _reservation_draft(r) -> dict:
+    return {
+        "id": r.pk,
+        "tripType": r.trip_type,
+        "service": r.service,
+        "date": r.pickup_date.isoformat() if r.pickup_date else "",
+        "time": r.pickup_time.strftime("%H:%M") if r.pickup_time else "",
+        "vehicle": r.vehicle_id or "",
+        "pax": r.passengers,
+        "baseRate": float(r.base_rate),
+        "hours": float(r.hours),
+        "hourlyRate": float(r.hourly_rate),
+        "minHours": float(r.min_hours),
+        "stops": [{"address": s.address, "note": s.note} for s in r.ordered_stops],
+    }
 
 
 @login_required
@@ -94,6 +111,13 @@ def lead_detail(request, pk):
             (u.pk, u.get_full_name() or u.username)
             for u in User.objects.order_by("first_name", "username")
         ],
+        "reservations_json": [_reservation_draft(r) for r in lead.reservations.all()],
+        "vehicles_json": list(
+            Vehicle.objects.filter(active=True).order_by("name").values("id", "name")
+        ),
+        "vehicle_options": list(
+            Vehicle.objects.filter(active=True).order_by("name").values_list("id", "name")
+        ),
     }
     return render(request, "leads/lead_detail.html", context)
 
