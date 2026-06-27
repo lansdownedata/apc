@@ -174,7 +174,30 @@
                           class="p-1 text-muted hover:text-ink transition-colors" title="Edit reservation">
                     <i class="ti ti-pencil text-[15px]"></i>
                   </button>
-                  {# copy/trash — Task 8 #}
+
+                  {# duplicate form #}
+                  <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}">
+                    {% csrf_token %}
+                    <button type="submit" class="p-1 text-muted hover:text-ink transition-colors" title="Duplicate reservation">
+                      <i class="ti ti-copy text-[15px]"></i>
+                    </button>
+                  </form>
+
+                  {# delete form (gated by modal) #}
+                  <form method="post" action="{% url 'reservation_delete' res.pk %}" id="form-del-{{ res.pk }}" class="hidden">
+                    {% csrf_token %}
+                  </form>
+                  <button type="button"
+                          class="p-1 text-muted hover:text-rose-600 transition-colors" title="Remove reservation"
+                          @click="$store.modal.confirm({
+                            variant: 'danger',
+                            title: 'Remove reservation',
+                            message: 'This will permanently delete this reservation and its stops. This cannot be undone.',
+                            confirmText: 'Remove',
+                            onConfirm: () => document.getElementById('form-del-{{ res.pk }}').submit()
+                          })">
+                    <i class="ti ti-trash text-[15px]"></i>
+                  </button>
                 </div>
               </div>
             </div>
