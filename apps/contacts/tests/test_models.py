@@ -22,3 +22,38 @@ def test_defaults():
     assert contact.company == ""
     assert contact.la_account_id == ""
     assert contact.created_at is not None
+
+
+def test_find_match_by_phone():
+    c = ContactFactory(phone="(202) 555-0100", email="a@example.com")
+    assert Contact.objects.find_match(phone="(202) 555-0100", email="") == c
+
+
+def test_find_match_by_email_case_insensitive():
+    c = ContactFactory(phone="", email="Bride@Example.com")
+    assert Contact.objects.find_match(phone="", email="bride@example.com") == c
+
+
+def test_find_match_none_when_blank_or_no_hit():
+    ContactFactory(phone="(202) 555-0100", email="a@example.com")
+    assert Contact.objects.find_match(phone="", email="") is None
+    assert Contact.objects.find_match(phone="(202) 555-9999", email="") is None
+
+
+def test_match_or_create_reuses_existing():
+    c = ContactFactory(phone="(202) 555-0100", email="a@example.com")
+    got = Contact.objects.match_or_create(
+        name="Someone Else", phone="(202) 555-0100", email="new@example.com"
+    )
+    assert got == c
+    assert Contact.objects.count() == 1
+
+
+def test_match_or_create_creates_when_no_match():
+    got = Contact.objects.match_or_create(
+        name="Sarah Boyne", phone="(703) 555-0148", email="sarah@example.com",
+        channel=Channel.PHONE,
+    )
+    assert got.pk is not None
+    assert got.channel == Channel.PHONE
+    assert Contact.objects.count() == 1
