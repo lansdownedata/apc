@@ -121,3 +121,37 @@ def test_lead_create_requires_login(client):
     resp = client.post(reverse("lead_create"), {"name": "X"})
     assert resp.status_code == 302
     assert "/login" in resp.url
+
+
+def test_lead_update_writes_contact_and_lead(client):
+    lead = LeadFactory(channel="website")
+    agent = UserFactory()
+    client.force_login(UserFactory())
+    resp = client.post(
+        reverse("lead_update", args=[lead.pk]),
+        {"name": "New Name", "phone": "(202) 555-0001", "email": "n@example.com",
+         "company": "Acme", "channel": "phone", "agent": str(agent.pk)},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    lead.refresh_from_db()
+    lead.contact.refresh_from_db()
+    assert lead.contact.name == "New Name"
+    assert lead.contact.company == "Acme"
+    assert lead.channel == "phone"
+    assert lead.assigned_agent_id == agent.pk
+
+
+def test_lead_update_clears_agent_when_blank(client):
+    agent = UserFactory()
+    lead = LeadFactory(assigned_agent=agent)
+    client.force_login(UserFactory())
+    client.post(reverse("lead_update", args=[lead.pk]), {"agent": ""})
+    lead.refresh_from_db()
+    assert lead.assigned_agent_id is None
+
+
+def test_lead_update_requires_login(client):
+    lead = LeadFactory()
+    resp = client.post(reverse("lead_update", args=[lead.pk]), {"name": "x"})
+    assert resp.status_code == 302
