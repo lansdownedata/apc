@@ -1,0 +1,164 @@
+{% comment %}
+Reservation editor modal — used inside quoteWorkspace() x-data scope.
+Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMContentLoaded.
+{% endcomment %}
+<div x-cloak x-show="editorOpen" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="closeEditor()">
+  <div x-show="editorOpen" x-transition.opacity class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="closeEditor()"></div>
+  <div x-show="editorOpen" class="pop relative w-full sm:max-w-[620px] max-h-[94vh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div class="flex flex-col min-h-0">
+      <!-- header -->
+      <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
+        <span class="w-9 h-9 rounded-lg grid place-items-center"
+              :class="draft.tripType === 'hourly' ? 'bg-violet-50 text-violet-600' : 'bg-sky-50 text-sky-600'">
+          <i class="ti text-[18px]" :class="draft.tripType === 'hourly' ? 'ti-clock-hour-4' : 'ti-arrow-narrow-right'"></i>
+        </span>
+        <div>
+          <div class="font-display text-[16px] font-semibold text-ink" x-text="draftIsNew ? 'Add reservation' : 'Edit reservation'"></div>
+          <div class="text-[11.5px] text-muted">One reservation = one LimoAnywhere trip on booking</div>
+        </div>
+        <button @click="closeEditor()" class="ml-auto text-muted hover:text-ink"><i class="ti ti-x text-xl"></i></button>
+      </div>
+
+      <div class="overflow-y-auto px-6 py-5 space-y-5">
+        <!-- trip type -->
+        <div>
+          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Trip type</label>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <button @click="setDraftType('transfer')" type="button"
+              class="flex items-center gap-2.5 px-3.5 py-3 rounded-xl ring-1 text-left transition"
+              :class="draft.tripType === 'transfer' ? 'ring-2 ring-gold bg-goldl' : 'ring-line hover:ring-slate-300'">
+              <i class="ti ti-arrow-narrow-right text-[20px]" :class="draft.tripType === 'transfer' ? 'text-goldd' : 'text-muted'"></i>
+              <div><div class="text-[13px] font-semibold text-ink">Transfer</div><div class="text-[11px] text-muted">Point-to-point, flat rate</div></div>
+            </button>
+            <button @click="setDraftType('hourly')" type="button"
+              class="flex items-center gap-2.5 px-3.5 py-3 rounded-xl ring-1 text-left transition"
+              :class="draft.tripType === 'hourly' ? 'ring-2 ring-gold bg-goldl' : 'ring-line hover:ring-slate-300'">
+              <i class="ti ti-clock-hour-4 text-[20px]" :class="draft.tripType === 'hourly' ? 'text-goldd' : 'text-muted'"></i>
+              <div><div class="text-[13px] font-semibold text-ink">Hourly</div><div class="text-[11px] text-muted">As-directed, by the hour</div></div>
+            </button>
+          </div>
+        </div>
+
+        <!-- service + schedule -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2">
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Service name</label>
+            <input x-model="draft.service" placeholder="e.g. Wedding — as-directed"
+              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Date</label>
+            <input type="date" x-model="draft.date"
+              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Time</label>
+            <input type="time" x-model="draft.time"
+              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Vehicle</label>
+            {# delegation — Tom Select fires change on the <select> which bubbles to this wrapper #}
+            <div class="mt-1.5" @change="draft.vehicle = $event.target.value">
+              {% include "components/searchable_select.html" with name="vehicle" field_id="f-res-vehicle" options=vehicle_options empty_label="Select vehicle" search="off" %}
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Passengers</label>
+            <input x-model.number="draft.pax" type="number" min="1"
+              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold num">
+          </div>
+        </div>
+
+        <!-- route / stops -->
+        <div>
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Route</label>
+            <span x-show="draft.stops.length > 2" class="text-[10.5px] font-medium text-goldd bg-goldl px-1.5 py-0.5 rounded">
+              Multi-stop · <span x-text="draft.stops.length - 2"></span> stop(s)
+            </span>
+          </div>
+          <div class="mt-2 space-y-2">
+            <template x-for="(s, i) in draft.stops" :key="i">
+              <div class="flex items-start gap-2.5">
+                <div class="flex flex-col items-center pt-2.5">
+                  <span class="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow"
+                        :class="i === 0 ? 'bg-gold' : (i === draft.stops.length - 1 ? 'bg-charcoal' : 'bg-slate-300')"></span>
+                  <span x-show="i < draft.stops.length - 1" class="route-line w-[2px] h-7 mt-1"></span>
+                </div>
+                <div class="flex-1">
+                  <div class="text-[10px] font-medium uppercase tracking-wide mb-0.5"
+                       :class="i === 0 ? 'text-goldd' : (i === draft.stops.length - 1 ? 'text-ink' : 'text-muted')"
+                       x-text="stopLabel(i, draft.stops.length)"></div>
+                  <div class="flex items-center gap-1.5">
+                    <input x-model="s.address"
+                      :placeholder="i === 0 ? 'Pickup address' : (i === draft.stops.length - 1 ? 'Drop-off address' : 'Stop address')"
+                      class="flex-1 text-[12.5px] ring-1 ring-line rounded-lg px-3 py-2 focus:outline-none focus:ring-gold">
+                    <button x-show="i !== 0 && i !== draft.stops.length - 1" @click="removeStop(i)" class="text-muted hover:text-rose-600 p-1">
+                      <i class="ti ti-trash text-[16px]"></i>
+                    </button>
+                  </div>
+                  <input x-show="i !== 0 && i !== draft.stops.length - 1" x-model="s.note"
+                    placeholder="Note (e.g. 20-min photo stop)"
+                    class="mt-1 w-full text-[11.5px] ring-1 ring-line rounded-lg px-3 py-1.5 focus:outline-none focus:ring-gold text-muted">
+                </div>
+              </div>
+            </template>
+          </div>
+          <button @click="addStop()" class="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-goldd hover:underline">
+            <i class="ti ti-map-pin-plus text-[15px]"></i> Add stop
+          </button>
+        </div>
+
+        <!-- pricing -->
+        <div class="rounded-xl bg-[#faf8f3] ring-1 ring-line p-4">
+          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Pricing</label>
+          <!-- transfer -->
+          <div x-show="draft.tripType === 'transfer'" class="mt-2 flex items-center gap-3">
+            <div class="flex-1">
+              <div class="text-[12px] text-muted mb-1">Base rate (flat)</div>
+              <div class="flex items-center ring-1 ring-line rounded-lg bg-white px-3 focus-within:ring-gold">
+                <span class="text-muted text-[13px]">$</span>
+                <input x-model.number="draft.baseRate" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num">
+              </div>
+            </div>
+          </div>
+          <!-- hourly -->
+          <div x-show="draft.tripType === 'hourly'" class="mt-2 grid grid-cols-3 gap-3">
+            <div>
+              <div class="text-[12px] text-muted mb-1">Hours</div>
+              <input x-model.number="draft.hours" type="number" min="0" class="w-full text-[13px] ring-1 ring-line rounded-lg bg-white px-3 py-2.5 focus:outline-none focus:ring-gold num">
+            </div>
+            <div>
+              <div class="text-[12px] text-muted mb-1">Hourly rate</div>
+              <div class="flex items-center ring-1 ring-line rounded-lg bg-white px-3 focus-within:ring-gold">
+                <span class="text-muted text-[13px]">$</span>
+                <input x-model.number="draft.hourlyRate" type="number" min="0" class="w-full text-[13px] px-1.5 py-2.5 outline-none num">
+              </div>
+            </div>
+            <div>
+              <div class="text-[12px] text-muted mb-1">Min hours</div>
+              <input x-model.number="draft.minHours" type="number" min="0" class="w-full text-[13px] ring-1 ring-line rounded-lg bg-white px-3 py-2.5 focus:outline-none focus:ring-gold num">
+            </div>
+          </div>
+          <div x-show="draft.tripType === 'hourly' && minApplied(draft)"
+               class="mt-2 flex items-center gap-1.5 text-[11.5px] text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/15 rounded-lg px-2.5 py-1.5">
+            <i class="ti ti-info-circle text-[14px]"></i> Minimum applied — billing <span class="font-semibold" x-text="billedHours(draft)"></span> hrs
+          </div>
+          <div class="mt-3 pt-3 border-t border-line flex items-center justify-between">
+            <span class="text-[12.5px] text-muted">Line total</span>
+            <span class="font-display text-[20px] font-semibold text-ink num" x-text="money(resTotal(draft))"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- footer -->
+      <div class="px-6 py-4 border-t border-line bg-[#faf8f3] flex items-center gap-2">
+        <button @click="closeEditor()" class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2.5 rounded-lg ring-1 ring-line bg-white">Cancel</button>
+        <button @click="saveReservation()" class="btn-gold ml-auto flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-5 py-2.5">
+          <i class="ti ti-check text-[16px]"></i> <span x-text="draftIsNew ? 'Add to quote' : 'Save changes'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

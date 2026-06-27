@@ -141,7 +141,6 @@ function quoteWorkspace(opts = {}) {
       });
     },
 
-    // ---- reservation editor (Task 7 fills these in) ----
     blankReservation() {
       return {
         tripType: "transfer", service: "", date: "", time: "",
@@ -152,6 +151,46 @@ function quoteWorkspace(opts = {}) {
     },
     money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
     init() { this.draft = this.blankReservation(); },
+
+    // ---- reservation editor ----
+    newReservation() { this.draft = this.blankReservation(); this.draftIsNew = true; this.editorOpen = true; },
+    editReservation(id) {
+      const r = this.reservations.find((x) => x.id === id);
+      this.draft = JSON.parse(JSON.stringify(r));
+      this.draftIsNew = false;
+      this.editorOpen = true;
+    },
+    closeEditor() { this.editorOpen = false; },
+    setDraftType(t) {
+      this.draft.tripType = t;
+      if (t === "hourly") {
+        this.draft.hours = this.draft.hours || 4;
+        this.draft.hourlyRate = this.draft.hourlyRate || 295;
+        this.draft.minHours = this.draft.minHours || 4;
+      } else { this.draft.baseRate = this.draft.baseRate || 0; }
+    },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "" }); },
+    removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
+    stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
+    billedHours(r) { return Math.max(r.hours || 0, r.minHours || 0); },
+    minApplied(r) { return r.tripType === "hourly" && (r.hours || 0) < (r.minHours || 0); },
+    resTotal(r) {
+      return r.tripType === "hourly" ? this.billedHours(r) * (r.hourlyRate || 0) : (r.baseRate || 0);
+    },
+    saveReservation() {
+      const d = JSON.parse(JSON.stringify(this.draft));
+      d.lead_id = this.leadId;
+      if (this.draftIsNew) delete d.id;
+      fetch(this.saveUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: JSON.stringify(d),
+      }).then((r) => {
+        if (r.redirected) window.location = r.url;
+        else if (r.ok) window.location.reload();
+        else Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
+      });
+    },
   };
 }
 window.quoteWorkspace = quoteWorkspace;
