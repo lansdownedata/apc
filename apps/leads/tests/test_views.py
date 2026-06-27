@@ -1,7 +1,9 @@
 import pytest
 from django.urls import reverse
 
+from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
+from apps.contacts.models import Contact
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import TransferReservationFactory
@@ -80,3 +82,42 @@ def test_lead_detail_shows_ledger_and_balances(client, agent):
     assert resp.status_code == 200
     assert resp.context["balances"]["collected"] == Decimal("1000.00")
     assert len(resp.context["ledger_entries"]) == 1
+
+
+def test_lead_create_makes_lead_and_contact(client):
+    client.force_login(UserFactory())
+    resp = client.post(
+        reverse("lead_create"),
+        {"name": "Sarah Boyne", "company": "", "phone": "(703) 555-0148",
+         "email": "sarah@example.com", "channel": "phone", "agent": ""},
+    )
+    assert resp.status_code == 302
+    lead = Lead.objects.get()
+    assert lead.contact.name == "Sarah Boyne"
+    assert lead.channel == "phone"
+    assert resp.url == reverse("lead_detail", args=[lead.pk])
+
+
+def test_lead_create_dedupes_contact(client):
+    existing = ContactFactory(phone="(703) 555-0148", email="old@example.com")
+    client.force_login(UserFactory())
+    client.post(
+        reverse("lead_create"),
+        {"name": "Sarah B", "phone": "(703) 555-0148", "email": "new@example.com",
+         "channel": "website", "agent": ""},
+    )
+    assert Contact.objects.count() == 1
+    assert Lead.objects.get().contact == existing
+
+
+def test_lead_create_requires_name(client):
+    client.force_login(UserFactory())
+    resp = client.post(reverse("lead_create"), {"name": "", "channel": "website"})
+    assert resp.status_code == 302
+    assert Lead.objects.count() == 0
+
+
+def test_lead_create_requires_login(client):
+    resp = client.post(reverse("lead_create"), {"name": "X"})
+    assert resp.status_code == 302
+    assert "/login" in resp.url
