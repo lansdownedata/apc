@@ -155,3 +155,30 @@ def test_lead_update_requires_login(client):
     lead = LeadFactory()
     resp = client.post(reverse("lead_update", args=[lead.pk]), {"name": "x"})
     assert resp.status_code == 302
+
+
+def test_mark_lost_sets_status_and_reason(client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    client.force_login(UserFactory())
+    resp = client.post(reverse("lead_mark_lost", args=[lead.pk]), {"reason": "Booked elsewhere"})
+    assert resp.status_code == 302
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.LOST
+    assert lead.lost_reason == "Booked elsewhere"
+
+
+def test_mark_lost_defaults_reason(client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    client.force_login(UserFactory())
+    client.post(reverse("lead_mark_lost", args=[lead.pk]), {})
+    lead.refresh_from_db()
+    assert lead.lost_reason == "Marked lost"
+
+
+def test_reopen_resets_to_new(client):
+    lead = LeadFactory(status=Lead.Status.LOST, lost_reason="x")
+    client.force_login(UserFactory())
+    client.post(reverse("lead_reopen", args=[lead.pk]))
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.NEW
+    assert lead.lost_reason == ""

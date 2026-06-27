@@ -74,10 +74,41 @@
               @click="$store.modal.alert({ title: 'Request deposit', variant: 'info', message: 'A Stripe Checkout link for the 50% deposit will be generated here. Payments are not wired up yet in this preview.' })">
         <i class="ti ti-credit-card text-[15px]"></i> Request deposit
       </button>
+
+      <!-- Mark lost — hidden form + modal to collect reason -->
+      <form id="form-mark-lost" method="post" action="{% url 'lead_mark_lost' lead.pk %}" class="hidden">
+        {% csrf_token %}
+        <input type="hidden" name="reason" id="mark-lost-reason">
+      </form>
+      {% if lead.status != 'lost' %}
       <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-white hover:bg-rose-50 ml-auto"
-              @click="$store.modal.confirm({ title: 'Mark this lead as lost?', variant: 'danger', confirmText: 'Mark lost', message: 'This moves the quote out of the open pipeline. You can reopen it later.', onConfirm: () => $store.toast.push({ type: 'info', title: 'Lead marked lost' }) })">
+              @click="$store.modal.show({
+                title: 'Mark lead as lost',
+                variant: 'danger',
+                html: '<label class=\'block text-[12.5px] font-medium text-ink mb-1\'>Reason (optional)</label><input type=\'text\' id=\'lost-reason-input\' class=\'w-full border border-line rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-rose-300\' placeholder=\'e.g. Booked elsewhere\'>',
+                confirmText: 'Mark lost',
+                showCancel: true,
+                cancelText: 'Cancel',
+                onConfirm: () => {
+                  const el = document.getElementById('lost-reason-input');
+                  document.getElementById('mark-lost-reason').value = el ? el.value : '';
+                  document.getElementById('form-mark-lost').submit();
+                }
+              })">
         <i class="ti ti-circle-x text-[15px]"></i> Mark lost
       </button>
+      {% endif %}
+
+      <!-- Re-open lead — shown only when status is lost -->
+      {% if lead.status == 'lost' %}
+      <form method="post" action="{% url 'lead_reopen' lead.pk %}" class="ml-auto">
+        {% csrf_token %}
+        <button type="submit"
+                class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-white hover:bg-emerald-50">
+          <i class="ti ti-arrow-back-up text-[15px]"></i> Re-open lead
+        </button>
+      </form>
+      {% endif %}
     </div>
   </div>
 
