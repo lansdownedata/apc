@@ -86,3 +86,11 @@ def test_earned_terminal_statuses():
     assert Reservation.TripStatus.DONE in EARNED_TERMINAL_STATUSES
     assert Reservation.TripStatus.NO_SHOW in EARNED_TERMINAL_STATUSES
     assert Reservation.TripStatus.CANCELLED not in EARNED_TERMINAL_STATUSES
+
+
+# --- vehicle reference list ------------------------------------------------
+def test_vehicle_reference_list_seeded(db):
+    from apps.leads.models import Vehicle
+
+    names = set(Vehicle.objects.filter(active=True).values_list("name", flat=True))
+    assert {"Luxury Sedan", "Luxury SUV", "Sprinter Van", "Mini Coach", "Motor Coach"} <= names
