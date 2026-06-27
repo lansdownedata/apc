@@ -2,7 +2,7 @@
 {% load humanize %}
 
 {% block content %}
-<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6" x-data="{ newLeadOpen: false }">
 
   <!-- stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5 stagger">
@@ -62,10 +62,12 @@
     </div>
 
     <button type="button" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
-            @click="$store.modal.alert({ title: 'New lead', variant: 'gold', message: 'Manual lead creation is coming soon. For now, leads arrive automatically from Podium messages and the website capture API.' })">
+            @click="newLeadOpen = true">
       <i class="ti ti-plus text-[15px]"></i> New lead
     </button>
   </form>
+
+  {% include "leads/_new_lead_modal.html" %}
 
   <!-- table -->
   <div class="card overflow-hidden">

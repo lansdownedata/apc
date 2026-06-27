@@ -1,12 +1,17 @@
 """Leads & Quotes — list, filter, and the quote/reservations detail view."""
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
 
+from apps.accounts.models import User
+from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.payments import ledger
 
+from .forms import NewLeadForm
 from .models import Lead
 
 
@@ -54,6 +59,10 @@ def lead_list(request):
         "channel_filter": channel or "",
         "q": query,
         "channels": Channel.choices,
+        "agent_options": [
+            (u.pk, u.get_full_name() or u.username)
+            for u in User.objects.order_by("first_name", "username")
+        ],
     }
     return render(request, "leads/lead_list.html", context)
 
@@ -81,3 +90,22 @@ def lead_detail(request, pk):
         "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
     }
     return render(request, "leads/lead_detail.html", context)
+
+
+@login_required
+@require_POST
+def lead_create(request):
+    form = NewLeadForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "A customer name is required to create a lead.")
+        return redirect("lead_list")
+    cd = form.cleaned_data
+    contact = Contact.objects.match_or_create(
+        name=cd["name"], company=cd["company"], phone=cd["phone"],
+        email=cd["email"], channel=cd["channel"],
+    )
+    lead = Lead.objects.create(
+        contact=contact, channel=cd["channel"],
+        assigned_agent=cd["agent"], status=Lead.Status.NEW,
+    )
+    return redirect("lead_detail", pk=lead.pk)
