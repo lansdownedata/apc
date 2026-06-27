@@ -8,15 +8,24 @@ from apps.accounts.factories import UserFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import TransferReservationFactory
+from apps.reservations.models import Reservation, Stop
 
 pytestmark = pytest.mark.django_db
 
 
 def _draft(lead, **over):
     base = {
-        "lead_id": lead.pk, "tripType": "transfer", "service": "Transfer",
-        "date": "2026-07-04", "time": "15:00", "vehicle": "", "pax": 2,
-        "baseRate": 200, "hours": 0, "hourlyRate": 0, "minHours": 0,
+        "lead_id": lead.pk,
+        "tripType": "transfer",
+        "service": "Transfer",
+        "date": "2026-07-04",
+        "time": "15:00",
+        "vehicle": "",
+        "pax": 2,
+        "baseRate": 200,
+        "hours": 0,
+        "hourlyRate": 0,
+        "minHours": 0,
         "stops": [{"address": "A"}, {"address": "B"}],
     }
     base.update(over)
@@ -25,7 +34,8 @@ def _draft(lead, **over):
 
 def _post(client, payload):
     return client.post(
-        reverse("reservation_save"), data=json.dumps(payload),
+        reverse("reservation_save"),
+        data=json.dumps(payload),
         content_type="application/json",
     )
 
@@ -43,8 +53,7 @@ def test_save_creates_transfer(client):
 def test_save_creates_hourly_with_minimum(client):
     lead = LeadFactory()
     client.force_login(UserFactory())
-    _post(client, _draft(lead, tripType="hourly", baseRate=0, hours=3,
-                         hourlyRate=295, minHours=5))
+    _post(client, _draft(lead, tripType="hourly", baseRate=0, hours=3, hourlyRate=295, minHours=5))
     assert lead.reservations.get().line_total == Decimal("1475.00")
 
 
@@ -82,3 +91,34 @@ def test_save_requires_login(client):
     lead = LeadFactory()
     resp = _post(client, _draft(lead))
     assert resp.status_code == 302
+
+
+def test_duplicate_clones_reservation_and_stops(client):
+    res = TransferReservationFactory(service="Wedding", la_reservation_id="LA-1")
+    Stop.objects.filter(reservation=res).delete()
+    Stop.objects.create(reservation=res, sequence=0, address="A")
+    Stop.objects.create(reservation=res, sequence=1, address="B", note="wait")
+    client.force_login(UserFactory())
+    resp = client.post(reverse("reservation_duplicate", args=[res.pk]))
+    assert resp.status_code == 302
+    clone = res.lead.reservations.exclude(pk=res.pk).get()
+    assert clone.service == "Wedding (copy)"
+    assert clone.la_reservation_id == ""
+    assert [s.address for s in clone.ordered_stops] == ["A", "B"]
+    assert clone.ordered_stops[1].note == "wait"
+
+
+def test_delete_removes_reservation_and_stops(client):
+    res = TransferReservationFactory()
+    client.force_login(UserFactory())
+    resp = client.post(reverse("reservation_delete", args=[res.pk]))
+    assert resp.status_code == 302
+    assert not Reservation.objects.filter(pk=res.pk).exists()
+    assert not Stop.objects.filter(reservation_id=res.pk).exists()
+
+
+def test_duplicate_requires_login(client):
+    res = TransferReservationFactory()
+    resp = client.post(reverse("reservation_duplicate", args=[res.pk]))
+    assert resp.status_code == 302
+    assert "/login" in resp.url
