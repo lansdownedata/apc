@@ -105,6 +105,57 @@ function shell() {
 }
 window.shell = shell;
 
+/* -------------------------------------------------- CSRF helper */
+function getCookie(name) {
+  const m = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
+  return m ? decodeURIComponent(m.pop()) : "";
+}
+window.getCookie = getCookie;
+
+/* -------------------------------------------------- quoteWorkspace */
+function quoteWorkspace(opts = {}) {
+  return {
+    leadId: opts.leadId,
+    updateUrl: opts.updateUrl,
+    saveUrl: opts.saveUrl,
+    reservations: opts.reservations || [],
+    vehicles: opts.vehicles || [],
+    header: opts.header || {},
+    depositPct: 50,
+    editorOpen: false,
+    draftIsNew: false,
+    draft: null,
+
+    saveHeader() {
+      const body = new URLSearchParams(this.header);
+      fetch(this.updateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        body,
+      }).then((r) => {
+        if (r.ok) Alpine.store("toast").push({ type: "success", title: "Saved" });
+        else Alpine.store("toast").push({ type: "danger", title: "Could not save" });
+      });
+    },
+
+    // ---- reservation editor (Task 7 fills these in) ----
+    blankReservation() {
+      return {
+        tripType: "transfer", service: "", date: "", time: "",
+        vehicle: this.vehicles.length ? this.vehicles[0].id : "",
+        pax: 1, baseRate: 0, hours: 4, hourlyRate: 295, minHours: 4,
+        stops: [{ address: "", note: "" }, { address: "", note: "" }],
+      };
+    },
+    money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
+    init() { this.draft = this.blankReservation(); },
+  };
+}
+window.quoteWorkspace = quoteWorkspace;
+
 /* -------------------------------------------------- Tom Select auto-init */
 function initTomSelects(root = document) {
   if (typeof TomSelect === "undefined") return;

@@ -3,6 +3,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -88,8 +89,40 @@ def lead_detail(request, pk):
             "posted_at", "id"
         ),
         "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
+        "channels": Channel.choices,
+        "agents": [
+            (u.pk, u.get_full_name() or u.username)
+            for u in User.objects.order_by("first_name", "username")
+        ],
     }
     return render(request, "leads/lead_detail.html", context)
+
+
+@login_required
+@require_POST
+def lead_update(request, pk):
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
+    contact = lead.contact
+    contact_fields = []
+    for field in ("name", "phone", "email", "company"):
+        if field in request.POST:
+            setattr(contact, field, request.POST.get(field, "").strip())
+            contact_fields.append(field)
+    if contact_fields:
+        contact.save(update_fields=contact_fields + ["updated_at"])
+
+    lead_fields = []
+    channel = request.POST.get("channel")
+    if channel in Channel.values:
+        lead.channel = channel
+        lead_fields.append("channel")
+    if "agent" in request.POST:
+        agent_id = request.POST.get("agent") or None
+        lead.assigned_agent_id = int(agent_id) if agent_id else None
+        lead_fields.append("assigned_agent")
+    if lead_fields:
+        lead.save(update_fields=lead_fields + ["updated_at"])
+    return JsonResponse({"ok": True})
 
 
 @login_required
