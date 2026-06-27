@@ -153,12 +153,24 @@ function quoteWorkspace(opts = {}) {
     init() { this.draft = this.blankReservation(); },
 
     // ---- reservation editor ----
-    newReservation() { this.draft = this.blankReservation(); this.draftIsNew = true; this.editorOpen = true; },
+    syncVehicleSelect() {
+      this.$nextTick(() => {
+        const el = document.getElementById("f-res-vehicle");
+        if (el && el.tomselect) el.tomselect.setValue(this.draft.vehicle || "", true);
+      });
+    },
+    newReservation() {
+      this.draft = this.blankReservation();
+      this.draftIsNew = true;
+      this.editorOpen = true;
+      this.syncVehicleSelect();
+    },
     editReservation(id) {
       const r = this.reservations.find((x) => x.id === id);
       this.draft = JSON.parse(JSON.stringify(r));
       this.draftIsNew = false;
       this.editorOpen = true;
+      this.syncVehicleSelect();
     },
     closeEditor() { this.editorOpen = false; },
     setDraftType(t) {
