@@ -127,6 +127,26 @@ def lead_update(request, pk):
 
 @login_required
 @require_POST
+def lead_mark_lost(request, pk: int):
+    lead = get_object_or_404(Lead, pk=pk)
+    lead.status = Lead.Status.LOST
+    lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
+    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    return redirect("lead_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def lead_reopen(request, pk: int):
+    lead = get_object_or_404(Lead, pk=pk)
+    lead.status = Lead.Status.NEW
+    lead.lost_reason = ""
+    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    return redirect("lead_detail", pk=pk)
+
+
+@login_required
+@require_POST
 def lead_create(request):
     form = NewLeadForm(request.POST)
     if not form.is_valid():
