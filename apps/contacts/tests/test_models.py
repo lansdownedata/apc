@@ -51,7 +51,9 @@ def test_match_or_create_reuses_existing():
 
 def test_match_or_create_creates_when_no_match():
     got = Contact.objects.match_or_create(
-        name="Sarah Boyne", phone="(703) 555-0148", email="sarah@example.com",
+        name="Sarah Boyne",
+        phone="(703) 555-0148",
+        email="sarah@example.com",
         channel=Channel.PHONE,
     )
     assert got.pk is not None

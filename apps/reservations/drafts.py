@@ -1,5 +1,7 @@
 """Parse + persist the Alpine reservation 'draft' payload (leads/quotes spec §4)."""
 
+from __future__ import annotations
+
 from datetime import date, time
 from decimal import Decimal, InvalidOperation
 
@@ -22,7 +24,7 @@ def _money(value) -> Decimal:
     return amount
 
 
-def _date(value):
+def _date(value) -> date | None:
     if not value:
         return None
     try:
@@ -31,7 +33,7 @@ def _date(value):
         raise DraftError(f"invalid date: {value!r}") from exc
 
 
-def _time(value):
+def _time(value) -> time | None:
     if not value:
         return None
     try:
@@ -40,7 +42,7 @@ def _time(value):
         raise DraftError(f"invalid time: {value!r}") from exc
 
 
-def _vehicle_id(value):
+def _vehicle_id(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
     except (ValueError, TypeError):
@@ -84,7 +86,9 @@ def parse_draft(payload: dict) -> dict:
 
 
 @transaction.atomic
-def save_reservation_from_draft(lead, payload: dict, instance=None) -> Reservation:
+def save_reservation_from_draft(
+    lead, payload: dict, instance: Reservation | None = None
+) -> Reservation:
     """Create or update one reservation (+ its ordered stops) from a draft."""
     data = parse_draft(payload)
     stops = data.pop("stops")

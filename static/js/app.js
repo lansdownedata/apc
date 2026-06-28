@@ -138,7 +138,7 @@ function quoteWorkspace(opts = {}) {
       }).then((r) => {
         if (r.ok) Alpine.store("toast").push({ type: "success", title: "Saved" });
         else Alpine.store("toast").push({ type: "danger", title: "Could not save" });
-      });
+      }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
     },
 
     blankReservation() {
@@ -167,6 +167,7 @@ function quoteWorkspace(opts = {}) {
     },
     editReservation(id) {
       const r = this.reservations.find((x) => x.id === id);
+      if (!r) return;
       this.draft = JSON.parse(JSON.stringify(r));
       this.draftIsNew = false;
       this.editorOpen = true;
@@ -201,7 +202,7 @@ function quoteWorkspace(opts = {}) {
         if (r.redirected) window.location = r.url;
         else if (r.ok) window.location.reload();
         else Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
-      });
+      }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
     },
   };
 }

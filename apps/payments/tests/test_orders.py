@@ -33,8 +33,10 @@ def test_orders_finance_summary_totals(client):
 
     lead = LeadFactory(status=Lead.Status.BOOKED)
     ledger.post_capture(
-        lead=lead, amount=Decimal("1000.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap-s",
+        lead=lead,
+        amount=Decimal("1000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap-s",
     )
     client.force_login(UserFactory())
     summary = client.get(reverse("orders_list")).context["summary"]
