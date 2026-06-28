@@ -1,9 +1,13 @@
 """Leads & Quotes — list, filter, and the quote/reservations detail view."""
 
+from __future__ import annotations
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db.models import Q
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -29,7 +33,7 @@ def _reservation_draft(r) -> dict:
         "hours": float(r.hours),
         "hourlyRate": float(r.hourly_rate),
         "minHours": float(r.min_hours),
-        "stops": [{"address": s.address, "note": s.note} for s in r.ordered_stops],
+        "stops": [{"address": s.address, "note": s.note} for s in r.stops.all()],
     }
 
 
@@ -95,6 +99,7 @@ def lead_detail(request, pk):
         ),
         pk=pk,
     )
+    _vehicles = list(Vehicle.objects.filter(active=True).order_by("name").values("id", "name"))
     context = {
         "nav": "leads",
         "page_title": lead.quote_no,
@@ -112,20 +117,30 @@ def lead_detail(request, pk):
             for u in User.objects.order_by("first_name", "username")
         ],
         "reservations_json": [_reservation_draft(r) for r in lead.reservations.all()],
-        "vehicles_json": list(
-            Vehicle.objects.filter(active=True).order_by("name").values("id", "name")
-        ),
-        "vehicle_options": list(
-            Vehicle.objects.filter(active=True).order_by("name").values_list("id", "name")
-        ),
+        "vehicles_json": _vehicles,
+        "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
     }
     return render(request, "leads/lead_detail.html", context)
 
 
 @login_required
 @require_POST
-def lead_update(request, pk):
+def lead_update(request, pk: int) -> JsonResponse:
     lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
+
+    # Validate before writing anything.
+    if "name" in request.POST and not request.POST.get("name", "").strip():
+        return JsonResponse({"ok": False, "error": "Name cannot be blank."}, status=400)
+    if "email" in request.POST:
+        email_val = request.POST.get("email", "").strip()
+        if email_val:
+            try:
+                validate_email(email_val)
+            except ValidationError:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid email address."}, status=400
+                )
+
     contact = lead.contact
     contact_fields = []
     for field in ("name", "phone", "email", "company"):
@@ -151,7 +166,7 @@ def lead_update(request, pk):
 
 @login_required
 @require_POST
-def lead_mark_lost(request, pk: int):
+def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
     lead.status = Lead.Status.LOST
     lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
@@ -161,7 +176,7 @@ def lead_mark_lost(request, pk: int):
 
 @login_required
 @require_POST
-def lead_reopen(request, pk: int):
+def lead_reopen(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
     lead.status = Lead.Status.NEW
     lead.lost_reason = ""
@@ -171,18 +186,26 @@ def lead_reopen(request, pk: int):
 
 @login_required
 @require_POST
-def lead_create(request):
+def lead_create(request) -> HttpResponse:
     form = NewLeadForm(request.POST)
     if not form.is_valid():
-        messages.error(request, "A customer name is required to create a lead.")
+        messages.error(
+            request,
+            "; ".join(f"{k}: {e[0]}" for k, e in form.errors.items()) or "Could not create lead.",
+        )
         return redirect("lead_list")
     cd = form.cleaned_data
     contact = Contact.objects.match_or_create(
-        name=cd["name"], company=cd["company"], phone=cd["phone"],
-        email=cd["email"], channel=cd["channel"],
+        name=cd["name"],
+        company=cd["company"],
+        phone=cd["phone"],
+        email=cd["email"],
+        channel=cd["channel"],
     )
     lead = Lead.objects.create(
-        contact=contact, channel=cd["channel"],
-        assigned_agent=cd["agent"], status=Lead.Status.NEW,
+        contact=contact,
+        channel=cd["channel"],
+        assigned_agent=cd["agent"],
+        status=Lead.Status.NEW,
     )
     return redirect("lead_detail", pk=lead.pk)

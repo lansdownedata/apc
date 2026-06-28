@@ -143,13 +143,19 @@ def refund_payment(plan, amount):
         try:
             with transaction.atomic():
                 charge = plan.charges.create(
-                    kind=Charge.Kind.REFUND, amount=portion, status=Charge.Status.SUCCEEDED,
+                    kind=Charge.Kind.REFUND,
+                    amount=portion,
+                    status=Charge.Status.SUCCEEDED,
                     stripe_payment_intent_id=src.stripe_payment_intent_id,
-                    stripe_refund_id=refund.id, idempotency_key=f"refund-{refund.id}",
+                    stripe_refund_id=refund.id,
+                    idempotency_key=f"refund-{refund.id}",
                 )
                 ledger.post_refund(
-                    lead=plan.lead, amount=portion, charge=charge,
-                    idempotency_key=f"refund-{refund.id}", memo="Refund",
+                    lead=plan.lead,
+                    amount=portion,
+                    charge=charge,
+                    idempotency_key=f"refund-{refund.id}",
+                    memo="Refund",
                 )
         except IntegrityError:
             # A concurrent request already recorded this exact Stripe refund — don't double-count.
@@ -167,9 +173,13 @@ def mark_paid_offline(plan, amount, *, memo="Offline payment"):
     charge.status = Charge.Status.SUCCEEDED
     charge.save(update_fields=["status", "updated_at"])
     ledger.post_capture(
-        lead=plan.lead, amount=Decimal(amount), kind=JournalEntry.Kind.BALANCE_CAPTURED,
-        idempotency_key=f"capture-charge{charge.pk}", charge=charge,
-        source=JournalEntry.Source.MANUAL, memo=memo,
+        lead=plan.lead,
+        amount=Decimal(amount),
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key=f"capture-charge{charge.pk}",
+        charge=charge,
+        source=JournalEntry.Source.MANUAL,
+        memo=memo,
     )
     if plan.balance_status != PaymentPlan.BalanceStatus.PAID:
         plan.balance_status = PaymentPlan.BalanceStatus.PAID

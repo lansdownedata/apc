@@ -18,13 +18,17 @@ pytestmark = pytest.mark.django_db
 def _paid_plan():
     plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
     plan.charges.create(
-        kind=Charge.Kind.BALANCE, amount=Decimal("1335.00"),
-        status=Charge.Status.SUCCEEDED, stripe_payment_intent_id="pi_bal",
+        kind=Charge.Kind.BALANCE,
+        amount=Decimal("1335.00"),
+        status=Charge.Status.SUCCEEDED,
+        stripe_payment_intent_id="pi_bal",
         idempotency_key="seed-bal",
     )
     ledger.post_capture(
-        lead=plan.lead, amount=Decimal("1335.00"),
-        kind=JournalEntry.Kind.BALANCE_CAPTURED, idempotency_key="cap-bal",
+        lead=plan.lead,
+        amount=Decimal("1335.00"),
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="cap-bal",
     )
     return plan
 
@@ -69,7 +73,8 @@ def test_cancel_and_refund_cancels_and_reverses(client):
 def test_refund_caps_at_captured_no_double_refund():
     plan = _paid_plan()  # one succeeded balance charge of 1335 on pi_bal
     with patch.object(
-        services.stripe.Refund, "create",
+        services.stripe.Refund,
+        "create",
         side_effect=[MagicMock(id="re_a"), MagicMock(id="re_b")],
     ):
         first = services.refund_payment(plan, Decimal("1335.00"))

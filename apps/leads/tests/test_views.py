@@ -74,8 +74,10 @@ def test_lead_detail_shows_ledger_and_balances(client, agent):
 
     lead = LeadFactory(status=Lead.Status.BOOKED)
     ledger.post_capture(
-        lead=lead, amount=Decimal("1000.00"),
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED, idempotency_key="cap-x",
+        lead=lead,
+        amount=Decimal("1000.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap-x",
     )
     client.force_login(agent)
     resp = client.get(reverse("lead_detail", args=[lead.pk]))
@@ -88,8 +90,14 @@ def test_lead_create_makes_lead_and_contact(client):
     client.force_login(UserFactory())
     resp = client.post(
         reverse("lead_create"),
-        {"name": "Sarah Boyne", "company": "", "phone": "(703) 555-0148",
-         "email": "sarah@example.com", "channel": "phone", "agent": ""},
+        {
+            "name": "Sarah Boyne",
+            "company": "",
+            "phone": "(703) 555-0148",
+            "email": "sarah@example.com",
+            "channel": "phone",
+            "agent": "",
+        },
     )
     assert resp.status_code == 302
     lead = Lead.objects.get()
@@ -103,8 +111,13 @@ def test_lead_create_dedupes_contact(client):
     client.force_login(UserFactory())
     client.post(
         reverse("lead_create"),
-        {"name": "Sarah B", "phone": "(703) 555-0148", "email": "new@example.com",
-         "channel": "website", "agent": ""},
+        {
+            "name": "Sarah B",
+            "phone": "(703) 555-0148",
+            "email": "new@example.com",
+            "channel": "website",
+            "agent": "",
+        },
     )
     assert Contact.objects.count() == 1
     assert Lead.objects.get().contact == existing
@@ -129,8 +142,14 @@ def test_lead_update_writes_contact_and_lead(client):
     client.force_login(UserFactory())
     resp = client.post(
         reverse("lead_update", args=[lead.pk]),
-        {"name": "New Name", "phone": "(202) 555-0001", "email": "n@example.com",
-         "company": "Acme", "channel": "phone", "agent": str(agent.pk)},
+        {
+            "name": "New Name",
+            "phone": "(202) 555-0001",
+            "email": "n@example.com",
+            "company": "Acme",
+            "channel": "phone",
+            "agent": str(agent.pk),
+        },
     )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
@@ -182,3 +201,25 @@ def test_reopen_resets_to_new(client):
     lead.refresh_from_db()
     assert lead.status == Lead.Status.NEW
     assert lead.lost_reason == ""
+
+
+def test_lead_update_rejects_blank_name(client):
+    lead = LeadFactory()
+    original_name = lead.contact.name
+    client.force_login(UserFactory())
+    resp = client.post(reverse("lead_update", args=[lead.pk]), {"name": ""})
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    lead.contact.refresh_from_db()
+    assert lead.contact.name == original_name
+
+
+def test_lead_update_rejects_invalid_email(client):
+    lead = LeadFactory()
+    original_email = lead.contact.email
+    client.force_login(UserFactory())
+    resp = client.post(reverse("lead_update", args=[lead.pk]), {"email": "nope"})
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    lead.contact.refresh_from_db()
+    assert lead.contact.email == original_email

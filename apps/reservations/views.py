@@ -1,9 +1,11 @@
 """Reservation editor endpoints — JSON-draft save, duplicate, delete."""
 
+from __future__ import annotations
+
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 
@@ -15,7 +17,7 @@ from .models import Reservation, Stop
 
 @login_required
 @require_POST
-def reservation_save(request):
+def reservation_save(request) -> HttpResponse:
     try:
         payload = json.loads(request.body)
     except (ValueError, TypeError):
@@ -36,7 +38,7 @@ def reservation_save(request):
 
 @login_required
 @require_POST
-def reservation_duplicate(request, pk):
+def reservation_duplicate(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
     stops = list(res.stops.order_by("sequence"))
     last = res.lead.reservations.order_by("-sort_order").first()
@@ -61,7 +63,7 @@ def reservation_duplicate(request, pk):
 
 @login_required
 @require_POST
-def reservation_delete(request, pk):
+def reservation_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
     res.delete()

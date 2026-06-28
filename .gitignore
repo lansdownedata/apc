@@ -29,3 +29,7 @@ db.sqlite3-journal
 
 # Local Claude context (personal; committed conventions live in CLAUDE.md)
 CLAUDE.local.md
+
+# SDD / agent scratch (session-local, never commit)
+.superpowers/
+.claude/

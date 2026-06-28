@@ -20,15 +20,23 @@ class ContactManager(models.Manager):
         return self.filter(lookup).order_by("-created_at").first()
 
     def match_or_create(
-        self, *, name: str, company: str = "", phone: str = "", email: str = "",
+        self,
+        *,
+        name: str,
+        company: str = "",
+        phone: str = "",
+        email: str = "",
         channel: str = Channel.WEBSITE,
     ) -> "Contact":
         existing = self.find_match(phone=phone, email=email)
         if existing is not None:
             return existing
         return self.create(
-            name=name, company=company, phone=(phone or "").strip(),
-            email=(email or "").strip(), channel=channel,
+            name=name,
+            company=company,
+            phone=(phone or "").strip(),
+            email=(email or "").strip(),
+            channel=channel,
         )
 
 
