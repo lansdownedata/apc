@@ -88,7 +88,7 @@
       </div>
       <div class="divide-y divide-line/70">
         {% for n in alerts %}
-        <a href="{% url 'lead_detail' n.lead_id %}" class="flex gap-3 px-5 py-3 hover:bg-[#faf8f3] transition-colors">
+        <a href="{% url 'lead_detail' n.lead_id %}" class="flex gap-3 px-5 py-3 hover:bg-surface2 transition-colors">
           <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
             <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-bell{% endif %} text-[15px]"></i>
           </span>

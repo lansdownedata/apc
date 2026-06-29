@@ -9,7 +9,7 @@
      @keydown.escape.window="$store.modal.open && $store.modal.cancel()">
   <div class="modal-overlay absolute inset-0" @click="$store.modal.cancel()"></div>
 
-  <div class="modal-panel relative bg-white rounded-2xl w-full max-w-md overflow-hidden pop">
+  <div class="modal-panel relative bg-surface rounded-2xl w-full max-w-md overflow-hidden pop">
     <div class="p-6">
       <div class="flex items-start gap-4">
         <span class="w-11 h-11 rounded-xl grid place-items-center shrink-0"
@@ -28,9 +28,9 @@
         </div>
       </div>
     </div>
-    <div class="flex items-center justify-end gap-2.5 px-6 py-4 bg-[#faf8f3] border-t border-line">
+    <div class="flex items-center justify-end gap-2.5 px-6 py-4 bg-surface2 border-t border-line">
       <button x-show="$store.modal.showCancel" @click="$store.modal.cancel()"
-              class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-white"
+              class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface"
               x-text="$store.modal.cancelText"></button>
       <button @click="$store.modal.accept()" :disabled="$store.modal.busy"
               class="text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-70"

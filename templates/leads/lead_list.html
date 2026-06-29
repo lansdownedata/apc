@@ -44,7 +44,7 @@
   <form method="get" x-data="{ status: '{{ status_filter }}' }" class="flex flex-wrap items-center gap-2.5 mb-4">
     <input type="hidden" name="status" :value="status === 'all' ? '' : status">
 
-    <div class="flex items-center gap-0.5 bg-white rounded-full p-1 ring-1 ring-line shadow-sm">
+    <div class="flex items-center gap-0.5 bg-surface rounded-full p-1 ring-1 ring-line shadow-sm">
       <button type="button" @click="status='all'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='all' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">All</button>
       <button type="button" @click="status='new'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='new' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">New <span class="text-[10.5px] opacity-70">· {{ counts.new }}</span></button>
       <button type="button" @click="status='quoted'; $root.submit()" class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition" :class="status==='quoted' ? 'bg-charcoal text-white' : 'text-muted hover:text-ink'">Quoted <span class="text-[10.5px] opacity-70">· {{ counts.quoted }}</span></button>
@@ -56,7 +56,7 @@
       {% include "components/searchable_select.html" with name="channel" field_id="f-channel" options=channels selected=channel_filter empty_label="All channels" placeholder="All channels" autosubmit=1 search="off" %}
     </div>
 
-    <div class="flex items-center gap-2 bg-white ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 focus-within:ring-gold transition">
+    <div class="flex items-center gap-2 bg-surface ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 focus-within:ring-gold transition">
       <i class="ti ti-search text-[15px] text-muted"></i>
       <input name="q" value="{{ q }}" placeholder="Search name, company, service…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
     </div>
@@ -74,7 +74,7 @@
     <div class="overflow-x-auto">
       <table class="w-full text-[12.5px] min-w-[820px]">
         <thead>
-          <tr class="text-muted text-left bg-[#faf8f3] border-b border-line">
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
             <th class="font-medium px-5 py-3">Customer</th>
             <th class="font-medium px-3 py-3">Quote</th>
             <th class="font-medium px-3 py-3">Service · next trip</th>

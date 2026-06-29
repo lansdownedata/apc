@@ -6,6 +6,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}{{ page_title|default:"Lead Manager" }} · All Pro Charter{% endblock %}</title>
 
+{# ---- theme: set data-theme before paint to avoid a flash (no-FOUC) ---- #}
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('apc-theme');
+      if (t !== 'light' && t !== 'dark') {
+        t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+  })();
+</script>
+
+{# ---- favicons (the crest) ---- #}
+<link rel="icon" href="{% static 'brand/favicon.svg' %}" type="image/svg+xml">
+<link rel="icon" href="{% static 'brand/favicon-dark.svg' %}" type="image/svg+xml" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="{% static 'brand/favicon-32.png' %}" sizes="32x32" type="image/png">
+<link rel="icon" href="{% static 'brand/favicon-16.png' %}" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="{% static 'brand/apple-touch-icon.png' %}">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -15,6 +35,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
+    darkMode: ['selector', '[data-theme="dark"]'],
     theme: { extend: {
       fontFamily: {
         sans: ['Hanken Grotesk','system-ui','sans-serif'],
@@ -22,9 +43,19 @@
         mono: ['Spline Sans Mono','ui-monospace','monospace'],
       },
       colors: {
+        /* sidebar frame — always dark, both themes */
         charcoal:'#14181f', charcoal2:'#1b212b', charcoal3:'#222b37',
-        gold:'#c2a14e', goldd:'#8a6d1f', goldl:'#fbf6e9',
-        ink:'#1b212b', muted:'#6b727c', paper:'#f4f1ea', line:'#e8e3d8',
+        onyx:'#17191D', silver:'#B9B4B7',
+        /* theme-aware tokens (flip with <html data-theme>); channels live in app.css */
+        gold:    'rgb(var(--gold) / <alpha-value>)',
+        goldd:   'rgb(var(--gold-deep) / <alpha-value>)',
+        goldl:   'rgb(var(--gold-soft) / <alpha-value>)',
+        ink:     'rgb(var(--text) / <alpha-value>)',
+        muted:   'rgb(var(--muted) / <alpha-value>)',
+        paper:   'rgb(var(--bg) / <alpha-value>)',
+        surface: 'rgb(var(--surface) / <alpha-value>)',
+        surface2:'rgb(var(--surface-2) / <alpha-value>)',
+        line:    'rgb(var(--border) / <alpha-value>)',
       },
     }}
   }
@@ -47,8 +78,8 @@
     <div class="relative px-4 pt-5 pb-4">
       <div class="brand-glow absolute inset-0 pointer-events-none"></div>
       <a href="{% url 'dashboard' %}" class="relative flex items-center gap-2.5">
-        <div class="w-9 h-9 rounded-lg grid place-items-center font-display text-[15px] font-bold text-charcoal shrink-0"
-             style="background:linear-gradient(180deg,#cdaf5e,#bd9b45);box-shadow:0 6px 16px -8px rgba(194,161,78,.7)">APC</div>
+        <img src="{% static 'brand/apc-logo-ondark.svg' %}" alt="All Pro Charter"
+             class="h-9 w-auto shrink-0 drop-shadow-[0_6px_16px_rgba(199,162,78,.35)]">
         <div x-show="navOpen" x-transition.opacity class="leading-none">
           <div class="font-display text-[15px] font-semibold text-white tracking-tight">All Pro Charter</div>
           <div class="text-[10px] tracking-[0.22em] text-gold/80 mt-1">LEAD MANAGER</div>
@@ -140,6 +171,14 @@
           Test environment
         </div>
 
+        <!-- theme toggle -->
+        <button @click="$store.theme.toggle()"
+                class="btn-ghost w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5"
+                :title="$store.theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+                :aria-label="$store.theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+          <i class="ti text-[18px]" :class="$store.theme.mode === 'dark' ? 'ti-sun' : 'ti-moon-stars'"></i>
+        </button>
+
         <!-- notifications -->
         <div class="relative">
           <button @click="notifOpen=!notifOpen" class="btn-ghost relative w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5">
@@ -149,14 +188,14 @@
             {% endif %}
           </button>
           <div x-show="notifOpen" x-cloak @click.outside="notifOpen=false" x-transition
-               class="absolute right-0 mt-2 w-[330px] bg-white rounded-xl shadow-2xl ring-1 ring-line overflow-hidden z-50">
+               class="absolute right-0 mt-2 w-[330px] bg-surface rounded-xl shadow-2xl ring-1 ring-line overflow-hidden z-50">
             <div class="flex items-center px-4 py-3 border-b border-line">
               <span class="font-display text-[14px] font-semibold text-ink">Notifications</span>
               {% if unread_count %}<span class="ml-1.5 text-[10px] font-semibold text-white bg-rose-500 rounded-full px-1.5">{{ unread_count }}</span>{% endif %}
             </div>
             <div class="max-h-[340px] overflow-y-auto">
               {% for n in unread_notifications %}
-              <a href="{% url 'lead_detail' n.lead_id %}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-[#faf8f3] transition-colors bg-goldl/40">
+              <a href="{% url 'lead_detail' n.lead_id %}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-surface2 transition-colors bg-goldl/40">
                 <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
                   <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-circle-check{% endif %} text-[16px]"></i>
                 </span>

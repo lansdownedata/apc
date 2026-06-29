@@ -79,6 +79,19 @@ document.addEventListener("alpine:init", () => {
     },
   });
 
+  /* ---- theme (light / dark) -------------------------------------------- */
+  /* The no-flash <head> script already set <html data-theme>; mirror it here
+     so the topbar toggle is reactive, and persist the user's choice. */
+  Alpine.store("theme", {
+    mode: document.documentElement.getAttribute("data-theme") || "light",
+    toggle() { this.set(this.mode === "dark" ? "light" : "dark"); },
+    set(m) {
+      this.mode = m;
+      document.documentElement.setAttribute("data-theme", m);
+      try { localStorage.setItem("apc-theme", m); } catch (e) { /* private mode */ }
+    },
+  });
+
   /* ---- toasts ---------------------------------------------------------- */
   Alpine.store("toast", {
     items: [],
