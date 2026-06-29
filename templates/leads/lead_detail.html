@@ -32,7 +32,7 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2.5 flex-wrap">
           <input type="text" x-model="header.name" @blur="saveHeader()"
-                 class="font-display text-[22px] font-semibold text-ink tracking-tight bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-white/60 rounded px-1 -mx-1 w-full max-w-xs transition-colors"
+                 class="font-display text-[22px] font-semibold text-ink tracking-tight bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-full max-w-xs transition-colors"
                  placeholder="Customer name">
           {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
         </div>
@@ -41,19 +41,19 @@
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-building text-[14px]"></i>
             <input type="text" x-model="header.company" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-white/60 rounded px-1 -mx-1 w-32 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-32 transition-colors text-[12.5px] text-muted placeholder-muted/60"
                    placeholder="Company">
           </span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-phone text-[14px]"></i>
             <input type="text" x-model="header.phone" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-white/60 rounded px-1 -mx-1 w-36 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-36 transition-colors text-[12.5px] text-muted placeholder-muted/60"
                    placeholder="Phone">
           </span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-mail text-[14px]"></i>
             <input type="email" x-model="header.email" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-white/60 rounded px-1 -mx-1 w-44 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-44 transition-colors text-[12.5px] text-muted placeholder-muted/60"
                    placeholder="Email">
           </span>
           <span class="flex items-center gap-1 shrink-0"
@@ -75,7 +75,7 @@
               @click="$store.modal.confirm({ title: 'Send quote to customer', variant: 'gold', confirmText: 'Send quote', message: 'This emails the quote with a 50% deposit request. Sending is not wired up yet in this preview.', onConfirm: () => $store.toast.push({ type: 'success', title: 'Quote sent', message: 'Deposit request delivered to {{ lead.contact.name|escapejs }}.' }) })">
         <i class="ti ti-send text-[15px]"></i> Send quote
       </button>
-      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3.5 py-2 ring-1 ring-line bg-white hover:bg-black/5"
+      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-black/5"
               @click="$store.modal.alert({ title: 'Request deposit', variant: 'info', message: 'A Stripe Checkout link for the 50% deposit will be generated here. Payments are not wired up yet in this preview.' })">
         <i class="ti ti-credit-card text-[15px]"></i> Request deposit
       </button>
@@ -86,7 +86,7 @@
         {% csrf_token %}
         <input type="hidden" name="reason" id="mark-lost-reason">
       </form>
-      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-white hover:bg-rose-50 ml-auto"
+      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50 ml-auto"
               @click="$store.modal.show({
                 title: 'Mark lead as lost',
                 variant: 'danger',
@@ -109,7 +109,7 @@
       <form method="post" action="{% url 'lead_reopen' lead.pk %}" class="ml-auto">
         {% csrf_token %}
         <button type="submit"
-                class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-white hover:bg-emerald-50">
+                class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50">
           <i class="ti ti-arrow-back-up text-[15px]"></i> Re-open lead
         </button>
       </form>
@@ -210,7 +210,7 @@
           {% endfor %}
         </div>
         {% if reservations %}
-        <div class="flex items-center justify-end gap-6 px-5 py-3.5 bg-[#faf8f3] border-t border-line">
+        <div class="flex items-center justify-end gap-6 px-5 py-3.5 bg-surface2 border-t border-line">
           <span class="text-[12px] text-muted">Quote total</span>
           <span class="num font-display text-[18px] font-semibold text-ink">${{ lead.quote_total|floatformat:2|intcomma }}</span>
         </div>

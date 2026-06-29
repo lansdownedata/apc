@@ -1,22 +1,74 @@
 /* ==========================================================================
    All Pro Charter — Lead Manager  ·  design system
-   "Executive chauffeur" — deep charcoal frame, champagne gold, warm paper.
-   Display: Fraunces (serif)  ·  UI: Hanken Grotesk  ·  Mono: Spline Sans Mono
+   "Executive chauffeur" — onyx frame, concierge gold, warm paper.
+   Brand kit: Concierge Gold #C7A24E · Onyx #17191D · Silver #B9B4B7
+   Display: Fraunces (serif) · UI: Hanken Grotesk · Mono: Spline Sans Mono
+
+   Theming model
+   -------------
+   All colours live as space-separated RGB *channels* in CSS variables, so they
+   are consumed two ways and stay theme-aware:
+     • Tailwind utilities  → colour: 'rgb(var(--text) / <alpha-value>)'  (base.html)
+       …which keeps alpha modifiers working:  text-ink/80, bg-paper/80, …
+     • Plain CSS below      → rgb(var(--text)) / rgb(var(--gold) / .28)
+   Flip the whole app by toggling  <html data-theme="dark">.
    ========================================================================== */
 
 :root {
-  --charcoal:    #14181f;
-  --charcoal-2:  #1b212b;
-  --charcoal-3:  #222b37;
-  --gold:        #c2a14e;
-  --gold-deep:   #8a6d1f;
-  --gold-light:  #fbf6e9;
-  --paper:       #f4f1ea;
-  --ink:         #1b212b;
-  --muted:       #6b727c;
-  --line:        #e8e3d8;
-  --shadow-card: 0 1px 2px rgba(20,24,31,.04), 0 8px 24px -12px rgba(20,24,31,.14);
-  --shadow-lift: 0 2px 4px rgba(20,24,31,.06), 0 18px 40px -16px rgba(20,24,31,.28);
+  /* —— surfaces & ink (LIGHT, default) —————————————————————————— */
+  --bg:          239 237 232;   /* #EFEDE8  warm paper page             */
+  --surface:     255 255 255;   /* #FFFFFF  cards, panels, menus        */
+  --surface-2:   250 248 243;   /* #FAF8F3  hover / subtle raise        */
+  --text:         23  25  29;   /* #17191D  onyx — primary text         */
+  --muted:       107 114 124;   /* #6B727C  secondary text              */
+  --border:      229 226 217;   /* #E5E2D9  hairlines, dividers         */
+
+  /* —— brand —————————————————————————————————————————————————— */
+  --gold:        199 162  78;   /* #C7A24E  Concierge Gold              */
+  --gold-deep:   138 109  31;   /* #8A6D1F  gold text on light fields   */
+  --gold-soft:   245 240 226;   /* #F5F0E2  pale gold chip background    */
+  --silver:      185 180 183;   /* #B9B4B7                              */
+
+  /* —— status (text + tint pairs) ——————————————————————————————— */
+  --ok:           4 120  87;    --ok-soft:      209 240 226;
+  --warn:       180 116  16;    --warn-soft:    250 238 205;
+  --danger:     190  44  56;    --danger-soft:  250 222 224;
+  --info:         2 132 199;    --info-soft:    224 242 254;
+
+  /* —— sidebar frame (always dark, both themes) ————————————————— */
+  --side-1:       23  28  36;   /* #171C24 */
+  --side-2:       15  19  24;   /* #0F1318 */
+
+  /* —— effects ———————————————————————————————————————————————— */
+  --ring:        rgb(var(--gold) / .30);
+  --shadow-card: 0 1px 2px rgb(20 24 31 / .04), 0 8px 24px -12px rgb(20 24 31 / .14);
+  --shadow-lift: 0 2px 4px rgb(20 24 31 / .06), 0 18px 40px -16px rgb(20 24 31 / .28);
+  --noise:       .04;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg:           17  19  24;   /* #111318  near-onyx page              */
+  --surface:      26  29  36;   /* #1A1D24  cards                       */
+  --surface-2:    33  37  46;   /* #21252E  hover / raise               */
+  --text:        235 233 227;   /* #EBE9E3  warm white                 */
+  --muted:       150 157 167;   /* #969DA7                              */
+  --border:       42  47  56;   /* #2A2F38  subtle dark hairline        */
+
+  --gold:        205 170  90;   /* slightly lifted gold for dark        */
+  --gold-deep:   228 199 126;   /* #E4C77E  gold accent text on dark    */
+  --gold-soft:    47  42  28;   /* #2F2A1C  dark gold chip background    */
+
+  --ok:          52 199 142;    --ok-soft:       22  46  38;
+  --warn:       226 178  74;    --warn-soft:     52  44  22;
+  --danger:     244 113 124;    --danger-soft:   54  28  32;
+  --info:        96 165 250;    --info-soft:     23  37  56;
+
+  --ring:        rgb(var(--gold) / .38);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .35), 0 10px 28px -14px rgb(0 0 0 / .6);
+  --shadow-lift: 0 2px 6px rgb(0 0 0 / .4), 0 24px 50px -18px rgb(0 0 0 / .7);
+  --noise:       .03;
+  color-scheme: dark;
 }
 
 /* ----------------------------------------------------------------- base */
@@ -24,11 +76,16 @@ html, body { height: 100%; }
 body {
   margin: 0;
   font-family: 'Hanken Grotesk', system-ui, sans-serif;
-  color: var(--ink);
-  background-color: var(--paper);
+  color: rgb(var(--text));
+  background-color: rgb(var(--bg));
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+/* smooth, contained theme cross-fade (not on transforms, to avoid jank) */
+body, .card, .field, .sidebar, .modal-panel, .ts-control, .ts-dropdown,
+header, aside, main, .wash-gold {
+  transition: background-color .25s ease, border-color .25s ease, color .25s ease;
 }
 
 .font-display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
@@ -37,77 +94,108 @@ body {
 
 [x-cloak] { display: none !important; }
 
-::selection { background: rgba(194,161,78,.28); }
+::selection { background: rgb(var(--gold) / .28); }
 
 /* ------------------------------------------------------------ scrollbars */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #cdc6b6; border-radius: 9px;
+  background: rgb(var(--muted) / .42); border-radius: 9px;
   border: 3px solid transparent; background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: #b7af9c; background-clip: padding-box; border: 3px solid transparent; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted) / .6); background-clip: padding-box; border: 3px solid transparent; }
 .scroll-dark::-webkit-scrollbar-thumb { background: #2c3340; background-clip: padding-box; }
 
 /* --------------------------------------------------------------- surfaces */
 .sidebar {
-  background: linear-gradient(180deg, #171c24 0%, #11151c 100%);
-  border-right: 1px solid rgba(255,255,255,.04);
+  background: linear-gradient(180deg, rgb(var(--side-1)) 0%, rgb(var(--side-2)) 100%);
+  border-right: 1px solid rgb(255 255 255 / .04);
 }
-.brand-glow { background: radial-gradient(140px 70px at 26% 18%, rgba(194,161,78,.20), transparent 72%); }
+.brand-glow { background: radial-gradient(140px 70px at 26% 18%, rgb(var(--gold) / .20), transparent 72%); }
 
 .card {
-  background: #fff;
-  border: 1px solid var(--line);
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
   border-radius: 16px;
   box-shadow: var(--shadow-card);
 }
-.hairline { border-color: var(--line); }
+.hairline { border-color: rgb(var(--border)); }
 
 /* gold-tinted active row / hover wash */
-.wash-gold { background: linear-gradient(90deg, rgba(194,161,78,.10), rgba(194,161,78,.03)); }
+.wash-gold { background: linear-gradient(90deg, rgb(var(--gold) / .10), rgb(var(--gold) / .03)); }
 
-/* nav item */
+/* nav item (sidebar is always dark) */
 .nav-item { transition: background-color .15s ease, color .15s ease; }
-.nav-item:hover { background: rgba(255,255,255,.045); }
-.nav-active { background: #222b37; color: var(--gold); box-shadow: inset 2px 0 0 var(--gold); }
+.nav-item:hover { background: rgb(255 255 255 / .045); }
+.nav-active { background: #222b37; color: rgb(var(--gold)); box-shadow: inset 2px 0 0 rgb(var(--gold)); }
 
 /* primary gold button */
 .btn-gold {
-  background: linear-gradient(180deg, #cdaf5e, #bd9b45);
+  background: linear-gradient(180deg, rgb(var(--gold) / 1), rgb(var(--gold-deep) / .92));
   color: #1a1407;
-  box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 6px 16px -8px rgba(194,161,78,.7);
+  box-shadow: 0 1px 0 rgb(255 255 255 / .25) inset, 0 6px 16px -8px rgb(var(--gold) / .7);
   transition: filter .15s ease, transform .06s ease, box-shadow .15s ease;
 }
-.btn-gold:hover { filter: brightness(1.04); }
+.btn-gold:hover { filter: brightness(1.05); }
 .btn-gold:active { transform: translateY(.5px); }
 .btn-gold:disabled { filter: grayscale(.4) brightness(.96); cursor: not-allowed; opacity: .7; }
 
 .btn-ghost { transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+/* dark mode: faint *dark* hover washes have no contrast on dark — lift them */
+[data-theme="dark"] .hover\:bg-black\/5:hover,
+[data-theme="dark"] .hover\:bg-black\/10:hover,
+[data-theme="dark"] .hover\:bg-black\/\[0\.03\]:hover { background-color: rgb(255 255 255 / .06) !important; }
 
 /* refined focus ring */
-.focus-gold:focus { outline: none; box-shadow: 0 0 0 3px rgba(194,161,78,.28); border-color: var(--gold); }
+.focus-gold:focus { outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
 
 /* generic form field */
 .field {
   width: 100%;
-  background: #fff;
-  border: 1px solid var(--line);
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
   border-radius: 12px;
   padding: .6rem .85rem;
   font-size: 13.5px;
-  color: var(--ink);
+  color: rgb(var(--text));
   transition: box-shadow .15s ease, border-color .15s ease;
 }
-.field::placeholder { color: rgba(107,114,124,.7); }
-.field:focus { outline: none; box-shadow: 0 0 0 3px rgba(194,161,78,.28); border-color: var(--gold); }
+.field::placeholder { color: rgb(var(--muted) / .7); }
+.field:focus { outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
 
 /* route connector (multi-stop) */
-.route-line { background: repeating-linear-gradient(to bottom, #c9d0d8 0 5px, transparent 5px 10px); }
+.route-line { background: repeating-linear-gradient(to bottom, rgb(var(--border)) 0 5px, transparent 5px 10px); }
 
 /* star rating */
-.stars i { color: #d8cfb8; }
-.stars .on { color: var(--gold); }
+.stars i { color: rgb(var(--muted) / .5); }
+.stars .on { color: rgb(var(--gold)); }
+
+/* --------------------------------------------- status chips (theme-aware) */
+/* Use in place of bare bg-emerald-50/text-emerald-600 etc. so alerts read in
+   both themes.  .chip = icon/tag swatch · .chip-ok / -warn / -danger / -info  */
+.chip-ok     { background: rgb(var(--ok-soft));     color: rgb(var(--ok)); }
+.chip-warn   { background: rgb(var(--warn-soft));   color: rgb(var(--warn)); }
+.chip-danger { background: rgb(var(--danger-soft)); color: rgb(var(--danger)); }
+.chip-gold   { background: rgb(var(--gold-soft));   color: rgb(var(--gold-deep)); }
+
+/* Dark mode: re-tint the Tailwind status pastels centrally, so the dozens of
+   bg-emerald-50 / text-emerald-600 status chips & badges read on dark surfaces
+   without editing every call site. Light mode keeps the stock pastels. */
+[data-theme="dark"] .bg-emerald-50 { background-color: rgb(var(--ok-soft)) !important; }
+[data-theme="dark"] .bg-rose-50    { background-color: rgb(var(--danger-soft)) !important; }
+[data-theme="dark"] .bg-amber-50   { background-color: rgb(var(--warn-soft)) !important; }
+[data-theme="dark"] .bg-sky-50     { background-color: rgb(var(--info-soft)) !important; }
+[data-theme="dark"] .text-emerald-600, [data-theme="dark"] .text-emerald-700 { color: rgb(var(--ok)) !important; }
+[data-theme="dark"] .text-rose-600,    [data-theme="dark"] .text-rose-700    { color: rgb(var(--danger)) !important; }
+[data-theme="dark"] .text-amber-600,   [data-theme="dark"] .text-amber-700   { color: rgb(var(--warn)) !important; }
+[data-theme="dark"] .text-sky-600,     [data-theme="dark"] .text-sky-700     { color: rgb(var(--info)) !important; }
+/* matching ring tints used alongside the chips */
+[data-theme="dark"] .ring-emerald-600\/15 { --tw-ring-color: rgb(var(--ok) / .25) !important; }
+[data-theme="dark"] .ring-rose-600\/15,
+[data-theme="dark"] .ring-rose-500\/20    { --tw-ring-color: rgb(var(--danger) / .3) !important; }
+[data-theme="dark"] .ring-amber-600\/15,
+[data-theme="dark"] .ring-amber-600\/20   { --tw-ring-color: rgb(var(--warn) / .3) !important; }
+[data-theme="dark"] .ring-sky-600\/15     { --tw-ring-color: rgb(var(--info) / .25) !important; }
 
 /* =========================================================== animations */
 @keyframes fadeUp   { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform:none; } }
@@ -117,7 +205,7 @@ body {
 @keyframes spin     { to { transform: rotate(360deg); } }
 @keyframes shimmer  { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes checkPop { 0% { transform: scale(.4); opacity:0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity:1; } }
-@keyframes pulseGold{ 0%,100% { box-shadow: 0 0 0 0 rgba(194,161,78,.5);} 50% { box-shadow: 0 0 0 6px rgba(194,161,78,0);} }
+@keyframes pulseGold{ 0%,100% { box-shadow: 0 0 0 0 rgb(var(--gold) / .5);} 50% { box-shadow: 0 0 0 6px rgb(var(--gold) / 0);} }
 
 .reveal  { animation: fadeUp .5s cubic-bezier(.2,.7,.2,1) both; }
 .pop     { animation: pop .28s cubic-bezier(.2,.7,.2,1) both; }
@@ -141,7 +229,7 @@ body {
 .stagger > *:nth-child(n+13) { animation-delay: .5s; }
 
 .skeleton {
-  background: linear-gradient(90deg, #ece8df 25%, #f5f2ea 37%, #ece8df 63%);
+  background: linear-gradient(90deg, rgb(var(--surface-2)) 25%, rgb(var(--surface)) 37%, rgb(var(--surface-2)) 63%);
   background-size: 400% 100%;
   animation: shimmer 1.4s ease infinite;
   border-radius: 8px;
@@ -149,11 +237,12 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   *, .stagger > *, .reveal, .pop { animation: none !important; }
+  body, .card, .field, .sidebar { transition: none !important; }
 }
 
 /* =================================================== reusable modal ===== */
-.modal-overlay { background: rgba(15,18,24,.55); backdrop-filter: blur(3px); }
-.modal-panel   { box-shadow: var(--shadow-lift); }
+.modal-overlay { background: rgb(8 10 14 / .55); backdrop-filter: blur(3px); }
+.modal-panel   { background: rgb(var(--surface)); box-shadow: var(--shadow-lift); }
 
 /* ============================================ Tom Select — gold theming === */
 /* Make the searchable dropdown feel native to the design system, never the
@@ -161,30 +250,32 @@ body {
 .ts-wrapper { font-family: 'Hanken Grotesk', system-ui, sans-serif; }
 .ts-wrapper.single .ts-control,
 .ts-wrapper.multi  .ts-control {
-  background: #fff;
-  border: 1px solid var(--line);
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
   border-radius: 12px;
   padding: .55rem .85rem;
   min-height: 0;
   font-size: 13.5px;
-  color: var(--ink);
+  color: rgb(var(--text));
   box-shadow: none;
   transition: box-shadow .15s ease, border-color .15s ease;
 }
 .ts-wrapper.single .ts-control { padding-right: 2rem; }
 .ts-wrapper.focus .ts-control {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px rgba(194,161,78,.28);
+  border-color: rgb(var(--gold));
+  box-shadow: 0 0 0 3px var(--ring);
 }
-.ts-control input::placeholder { color: rgba(107,114,124,.7); }
+.ts-control input { color: rgb(var(--text)); }
+.ts-control input::placeholder { color: rgb(var(--muted) / .7); }
 .ts-wrapper.single .ts-control:after {
-  border-color: var(--muted) transparent transparent transparent;
+  border-color: rgb(var(--muted)) transparent transparent transparent;
   border-width: 5px 4px 0 4px;
   right: 14px;
 }
-.ts-wrapper.single.dropdown-active .ts-control:after { border-color: transparent transparent var(--muted) transparent; }
+.ts-wrapper.single.dropdown-active .ts-control:after { border-color: transparent transparent rgb(var(--muted)) transparent; }
 .ts-dropdown {
-  border: 1px solid var(--line);
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
   border-radius: 12px;
   box-shadow: var(--shadow-lift);
   margin-top: 6px;
@@ -193,19 +284,19 @@ body {
 }
 .ts-dropdown .option {
   padding: .5rem .85rem;
-  color: var(--ink);
+  color: rgb(var(--text));
 }
 .ts-dropdown .option.active {
-  background: linear-gradient(90deg, rgba(194,161,78,.16), rgba(194,161,78,.06));
-  color: var(--gold-deep);
+  background: linear-gradient(90deg, rgb(var(--gold) / .16), rgb(var(--gold) / .06));
+  color: rgb(var(--gold-deep));
 }
-.ts-dropdown .option:hover { background: #faf8f3; }
-.ts-dropdown .no-results { padding: .6rem .85rem; color: var(--muted); }
+.ts-dropdown .option:hover { background: rgb(var(--surface-2)); }
+.ts-dropdown .no-results { padding: .6rem .85rem; color: rgb(var(--muted)); }
 .ts-wrapper.multi .ts-control > .item {
-  background: var(--gold-light);
-  border: 1px solid rgba(194,161,78,.4);
-  color: var(--gold-deep);
+  background: rgb(var(--gold-soft));
+  border: 1px solid rgb(var(--gold) / .4);
+  color: rgb(var(--gold-deep));
   border-radius: 8px;
   font-weight: 500;
 }
-.ts-wrapper .ts-control .item .remove { border-left-color: rgba(194,161,78,.3); }
+.ts-wrapper .ts-control .item .remove { border-left-color: rgb(var(--gold) / .3); }

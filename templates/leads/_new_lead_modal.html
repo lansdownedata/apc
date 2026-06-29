@@ -13,10 +13,10 @@
   <div class="modal-overlay absolute inset-0" @click.self="newLeadOpen = false"></div>
 
   <!-- panel -->
-  <div class="relative bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl pop">
+  <div class="relative bg-surface rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl pop">
 
     <!-- header -->
-    <div class="flex items-center gap-3 px-6 py-5 border-b border-line bg-[#faf8f3]">
+    <div class="flex items-center gap-3 px-6 py-5 border-b border-line bg-surface2">
       <span class="w-9 h-9 rounded-xl grid place-items-center bg-goldl text-goldd shrink-0">
         <i class="ti ti-user-plus text-[18px]"></i>
       </span>
@@ -82,7 +82,7 @@
       <!-- footer -->
       <div class="flex items-center justify-end gap-2.5 pt-2">
         <button type="button"
-                class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-white transition-colors"
+                class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors"
                 @click="newLeadOpen = false">
           Cancel
         </button>
