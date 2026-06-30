@@ -7,8 +7,9 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db.models import Q
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import User
@@ -16,6 +17,7 @@ from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.payments import ledger
 
+from . import services
 from .forms import NewLeadForm
 from .models import Lead, Vehicle
 
@@ -182,6 +184,27 @@ def lead_reopen(request, pk: int) -> HttpResponse:
     lead.lost_reason = ""
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
     return redirect("lead_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def lead_send_quote(request, pk: int) -> JsonResponse:
+    """Create/refresh the deposit plan, build the Stripe link, transition the lead,
+    and email it over Podium. Returns the send result as JSON."""
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
+    token = services.make_deposit_token(lead)
+    success_url = request.build_absolute_uri(reverse("quote_deposit_success", args=[token]))
+    cancel_url = request.build_absolute_uri(reverse("quote_deposit_cancel", args=[token]))
+    result = services.send_quote(lead, success_url=success_url, cancel_url=cancel_url)
+    return JsonResponse(result.as_dict(), status=result.http_status)
+
+
+def quote_deposit_success(request, token: str):  # implemented in Task 4
+    raise Http404
+
+
+def quote_deposit_cancel(request, token: str):  # implemented in Task 4
+    raise Http404
 
 
 @login_required
