@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.core.signing import BadSignature
 from django.core.validators import validate_email
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
@@ -199,12 +200,25 @@ def lead_send_quote(request, pk: int) -> JsonResponse:
     return JsonResponse(result.as_dict(), status=result.http_status)
 
 
-def quote_deposit_success(request, token: str):  # implemented in Task 4
-    raise Http404
+def quote_deposit_success(request, token: str) -> HttpResponse:
+    try:
+        lead = services.read_deposit_token(token)
+    except (BadSignature, Lead.DoesNotExist):
+        raise Http404 from None
+    plan = getattr(lead, "payment", None)
+    return render(
+        request,
+        "public/deposit_success.html",
+        {"quote_no": lead.quote_no, "deposit_amount": plan.deposit_amount if plan else None},
+    )
 
 
-def quote_deposit_cancel(request, token: str):  # implemented in Task 4
-    raise Http404
+def quote_deposit_cancel(request, token: str) -> HttpResponse:
+    try:
+        lead = services.read_deposit_token(token)
+    except (BadSignature, Lead.DoesNotExist):
+        raise Http404 from None
+    return render(request, "public/deposit_cancel.html", {"quote_no": lead.quote_no})
 
 
 @login_required

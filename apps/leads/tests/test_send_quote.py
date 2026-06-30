@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import stripe
 from django.core.signing import BadSignature
+from django.urls import reverse
 
 from apps.contacts.factories import ContactFactory
 from apps.integrations.podium import PodiumAPIError
@@ -147,7 +148,6 @@ def test_send_quote_degrades_when_podium_fails():
 # ---------------------------------------------------------------------------
 # View tests (Task 3)
 # ---------------------------------------------------------------------------
-from django.urls import reverse  # noqa: E402
 
 
 @pytest.fixture
@@ -196,3 +196,34 @@ def test_send_quote_view_stripe_failure_returns_502(client, agent):
         resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 502
     assert "No such price" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Public deposit success/cancel pages
+# ---------------------------------------------------------------------------
+
+
+def test_deposit_success_page_public_no_pii(client):
+    lead = _quotable_lead()
+    lead.contact.name = "Jane Privatename"
+    lead.contact.save()
+    PaymentPlan.objects.create(lead=lead, quote_total=Decimal("185.00"))
+    token = services.make_deposit_token(lead)
+    resp = client.get(reverse("quote_deposit_success", args=[token]))  # no login
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert lead.quote_no in body
+    assert "Jane Privatename" not in body
+    assert (lead.contact.email or "x@x") not in body
+
+
+def test_deposit_cancel_page_public(client):
+    lead = _quotable_lead()
+    token = services.make_deposit_token(lead)
+    resp = client.get(reverse("quote_deposit_cancel", args=[token]))
+    assert resp.status_code == 200
+
+
+def test_deposit_page_rejects_bad_token(client):
+    resp = client.get(reverse("quote_deposit_success", args=["not-a-real-token"]))
+    assert resp.status_code == 404

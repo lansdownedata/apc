@@ -1,0 +1,36 @@
+{# templates/public/deposit_cancel.html #}
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkout canceled · All Pro Charter</title>
+<link rel="icon" href="{% static 'brand/favicon.svg' %}" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
+<style>
+  :root{--gold:199 162 78;--text:23 25 29;--muted:107 114 124;--surface:255 255 255;--border:229 226 217}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+       font-family:'Hanken Grotesk',system-ui,sans-serif;color:rgb(var(--text));
+       background:radial-gradient(900px 520px at 50% -8%,#20262f 0%,#14181f 58%,#0e1117 100%)}
+  .card{width:100%;max-width:440px;background:rgb(var(--surface));border:1px solid rgb(var(--border));
+        border-radius:20px;padding:40px 36px;text-align:center;box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
+  .logo{height:64px;margin:0 auto 18px;display:block}
+  .badge{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px;
+         background:rgb(var(--gold)/.14);color:rgb(var(--gold))}
+  h1{font-family:'Fraunces',Georgia,serif;font-size:24px;font-weight:600;margin:.2rem 0 .4rem}
+  p{color:rgb(var(--muted));font-size:14px;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter">
+    <div class="badge"><i class="ti ti-clock-pause" style="font-size:28px"></i></div>
+    <h1>Checkout canceled</h1>
+    <p>No problem — your deposit link for quote {{ quote_no }} is still active. You can complete it anytime from the email we sent.</p>
+  </div>
+</body>
+</html>
