@@ -9,6 +9,7 @@
        leadId: {{ lead.pk }},
        updateUrl: '{% url 'lead_update' lead.pk %}',
        saveUrl: '{% url 'reservation_save' %}',
+       sendQuoteUrl: '{% url 'lead_send_quote' lead.pk %}',
        reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
        vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {
@@ -71,14 +72,13 @@
 
     <!-- actions -->
     <div class="flex flex-wrap items-center gap-2.5 mt-5 pt-4 border-t border-line">
+      {% if lead.status == 'new' or lead.status == 'quoted' %}
       <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
-              @click="$store.modal.confirm({ title: 'Send quote to customer', variant: 'gold', confirmText: 'Send quote', message: 'This emails the quote with a 50% deposit request. Sending is not wired up yet in this preview.', onConfirm: () => $store.toast.push({ type: 'success', title: 'Quote sent', message: 'Deposit request delivered to {{ lead.contact.name|escapejs }}.' }) })">
-        <i class="ti ti-send text-[15px]"></i> Send quote
+              @click="sendQuote()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
+        <i class="ti ti-send text-[15px]"></i>
+        {% if lead.status == 'new' %}Send quote{% else %}Resend deposit request{% endif %}
       </button>
-      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-black/5"
-              @click="$store.modal.alert({ title: 'Request deposit', variant: 'info', message: 'A Stripe Checkout link for the 50% deposit will be generated here. Payments are not wired up yet in this preview.' })">
-        <i class="ti ti-credit-card text-[15px]"></i> Request deposit
-      </button>
+      {% endif %}
 
       {% if lead.status != 'lost' %}
       <!-- Mark lost — hidden form + modal to collect reason -->

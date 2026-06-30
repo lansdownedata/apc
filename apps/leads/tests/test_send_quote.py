@@ -222,8 +222,36 @@ def test_deposit_cancel_page_public(client):
     token = services.make_deposit_token(lead)
     resp = client.get(reverse("quote_deposit_cancel", args=[token]))
     assert resp.status_code == 200
+    assert lead.quote_no in resp.content.decode()
 
 
 def test_deposit_page_rejects_bad_token(client):
     resp = client.get(reverse("quote_deposit_success", args=["not-a-real-token"]))
     assert resp.status_code == 404
+
+
+def test_deposit_cancel_page_rejects_bad_token(client):
+    resp = client.get(reverse("quote_deposit_cancel", args=["not-a-real-token"]))
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Render tests — status-aware Send quote button
+# ---------------------------------------------------------------------------
+
+
+def test_detail_shows_send_quote_for_new(client, agent):
+    lead = _quotable_lead()
+    client.force_login(agent)
+    body = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "Send quote" in body
+    assert "not wired up yet" not in body  # old preview copy is gone
+
+
+def test_detail_shows_resend_for_quoted(client, agent):
+    lead = _quotable_lead()
+    lead.status = Lead.Status.QUOTED
+    lead.save(update_fields=["status"])
+    client.force_login(agent)
+    body = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "Resend deposit request" in body

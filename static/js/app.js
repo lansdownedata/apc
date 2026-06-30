@@ -131,10 +131,12 @@ function quoteWorkspace(opts = {}) {
     leadId: opts.leadId,
     updateUrl: opts.updateUrl,
     saveUrl: opts.saveUrl,
+    sendQuoteUrl: opts.sendQuoteUrl,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
     depositPct: 50,
+    sending: false,
     editorOpen: false,
     draftIsNew: false,
     draft: null,
@@ -152,6 +154,53 @@ function quoteWorkspace(opts = {}) {
         if (r.ok) Alpine.store("toast").push({ type: "success", title: "Saved" });
         else Alpine.store("toast").push({ type: "danger", title: "Could not save" });
       }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
+    },
+
+    sendQuote() {
+      if (this.sending) return;
+      this.sending = true;
+      fetch(this.sendQuoteUrl, {
+        method: "POST",
+        headers: { "X-CSRFToken": getCookie("csrftoken") },
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!data.ok) {
+            Alpine.store("toast").push({
+              type: "danger", title: "Couldn't send quote",
+              message: data.error || "Please try again.",
+            });
+            return;
+          }
+          if (data.delivery && data.delivery.sent) {
+            Alpine.store("toast").push({
+              type: "success", title: "Quote sent",
+              message: "Emailed to " + (data.delivery.recipient || "the customer") + ".",
+            });
+            setTimeout(() => window.location.reload(), 800);
+          } else {
+            const err = (data.delivery && data.delivery.error) || "the Podium send failed";
+            Alpine.store("modal").show({
+              title: "Quote saved — but not delivered",
+              variant: "danger",
+              html:
+                "<p class='text-[13px] text-muted'>The deposit link is ready, but sending over Podium failed:</p>" +
+                "<p class='text-[12px] text-rose-600 mt-1'>" + err.replace(/</g, "&lt;") + "</p>" +
+                "<p class='text-[12px] text-muted mt-3'>Copy the link to send manually:</p>" +
+                "<p class='text-[12px] text-ink break-all mt-1'>" + (data.link || "") + "</p>",
+              confirmText: "Copy link", cancelText: "Close",
+              onConfirm: () => {
+                if (navigator.clipboard) navigator.clipboard.writeText(data.link || "");
+                window.location.reload();
+              },
+              onCancel: () => window.location.reload(),
+            });
+          }
+        })
+        .catch(() =>
+          Alpine.store("toast").push({ type: "danger", title: "Network error — could not send quote" })
+        )
+        .finally(() => { this.sending = false; });
     },
 
     blankReservation() {
