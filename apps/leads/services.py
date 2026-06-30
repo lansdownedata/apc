@@ -7,8 +7,12 @@ the view stays thin.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import stripe
+
+if TYPE_CHECKING:
+    from .models import Lead
 from django.core import signing
 
 from apps.integrations import podium
@@ -19,12 +23,12 @@ from apps.payments.services import create_deposit_checkout
 _DEPOSIT_SALT = "quote-deposit"
 
 
-def make_deposit_token(lead) -> str:
+def make_deposit_token(lead: Lead) -> str:
     """An opaque, signed token encoding the lead id for the public deposit pages."""
     return signing.dumps({"lead": lead.pk}, salt=_DEPOSIT_SALT)
 
 
-def read_deposit_token(token: str):
+def read_deposit_token(token: str) -> Lead:
     """Return the Lead for a signed token. Raises BadSignature if forged/tampered."""
     from .models import Lead
 
@@ -51,7 +55,7 @@ class SendQuoteResult:
         }
 
 
-def _quote_message(lead, plan, link: str) -> str:
+def _quote_message(lead: Lead, plan: PaymentPlan, link: str) -> str:
     contact = lead.contact
     return (
         f"Hi {contact.name}, here's your All Pro Charter quote {lead.quote_no} "
@@ -60,7 +64,7 @@ def _quote_message(lead, plan, link: str) -> str:
     )
 
 
-def send_quote(lead, *, success_url: str, cancel_url: str) -> SendQuoteResult:
+def send_quote(lead: Lead, *, success_url: str, cancel_url: str) -> SendQuoteResult:
     """Create/refresh the deposit plan, build the Stripe link, transition the lead, and
     email the link over Podium (best-effort). The transition + link commit even if the
     Podium send fails, so a missing write_messages scope degrades gracefully."""
