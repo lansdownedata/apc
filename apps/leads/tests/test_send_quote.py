@@ -142,3 +142,57 @@ def test_send_quote_degrades_when_podium_fails():
     assert "403" in result.delivery["error"]
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
+
+
+# ---------------------------------------------------------------------------
+# View tests (Task 3)
+# ---------------------------------------------------------------------------
+from django.urls import reverse  # noqa: E402
+
+
+@pytest.fixture
+def agent(django_user_model):
+    return django_user_model.objects.create_user(username="agent", password="pw")
+
+
+def test_send_quote_view_requires_login(client):
+    lead = _quotable_lead()
+    resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
+    assert resp.status_code == 302
+    assert "/login" in resp.url
+
+
+def test_send_quote_view_happy_path(client, agent):
+    lead = _quotable_lead()
+    client.force_login(agent)
+    cust, sess = _stripe_ok()
+    with cust, sess, patch.object(services.podium, "send_message", return_value={}):
+        resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] and data["link"] == "https://checkout.stripe/abc"
+    assert data["delivery"]["sent"] is True
+
+
+def test_send_quote_view_precondition_returns_400(client, agent):
+    lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email=""))
+    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    client.force_login(agent)
+    resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
+    assert resp.status_code == 400
+    assert "email" in resp.json()["error"].lower()
+
+
+def test_send_quote_view_stripe_failure_returns_502(client, agent):
+    lead = _quotable_lead()
+    client.force_login(agent)
+    cust = patch.object(payment_services.stripe.Customer, "create", return_value=MagicMock(id="c"))
+    sess = patch.object(
+        payment_services.stripe.checkout.Session,
+        "create",
+        side_effect=stripe.error.StripeError("No such price"),
+    )
+    with cust, sess:
+        resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
+    assert resp.status_code == 502
+    assert "No such price" in resp.json()["error"]
