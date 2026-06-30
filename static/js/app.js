@@ -125,6 +125,14 @@ function getCookie(name) {
 }
 window.getCookie = getCookie;
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+window.escapeHtml = escapeHtml;
+
 /* -------------------------------------------------- quoteWorkspace */
 function quoteWorkspace(opts = {}) {
   return {
@@ -185,9 +193,9 @@ function quoteWorkspace(opts = {}) {
               variant: "danger",
               html:
                 "<p class='text-[13px] text-muted'>The deposit link is ready, but sending over Podium failed:</p>" +
-                "<p class='text-[12px] text-rose-600 mt-1'>" + err.replace(/</g, "&lt;") + "</p>" +
+                "<p class='text-[12px] text-rose-600 mt-1'>" + escapeHtml(err) + "</p>" +
                 "<p class='text-[12px] text-muted mt-3'>Copy the link to send manually:</p>" +
-                "<p class='text-[12px] text-ink break-all mt-1'>" + (data.link || "") + "</p>",
+                "<p class='text-[12px] text-ink break-all mt-1'>" + escapeHtml(data.link) + "</p>",
               confirmText: "Copy link", cancelText: "Close",
               onConfirm: () => {
                 if (navigator.clipboard) navigator.clipboard.writeText(data.link || "");
