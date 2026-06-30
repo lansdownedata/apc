@@ -93,6 +93,23 @@ def test_send_quote_blocks_when_booked():
     assert not result.ok and result.http_status == 400
 
 
+def test_send_quote_blocks_when_lost():
+    lead = LeadFactory(status=Lead.Status.LOST, contact=ContactFactory(email="a@b.com"))
+    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    assert not result.ok and result.http_status == 400
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.LOST
+
+
+def test_read_deposit_token_missing_lead_raises():
+    lead = LeadFactory()
+    token = services.make_deposit_token(lead)
+    lead.delete()
+    with pytest.raises(Lead.DoesNotExist):
+        services.read_deposit_token(token)
+
+
 def test_send_quote_resend_keeps_quoted():
     lead = _quotable_lead()
     lead.status = Lead.Status.QUOTED
