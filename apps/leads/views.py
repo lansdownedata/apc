@@ -123,8 +123,14 @@ def lead_detail(request, pk):
         }
         for res in reservations
     ]
-    has_la_error = any(
-        row["event"] and row["event"].result == ZapEvent.Result.ERROR for row in la_sync_rows
+    la_configured = la_sync.limoanywhere.is_configured()
+    can_resend_la = any(
+        row["event"]
+        and (
+            row["event"].result == ZapEvent.Result.ERROR
+            or (row["event"].result == ZapEvent.Result.PREVIEW and la_configured)
+        )
+        for row in la_sync_rows
     )
 
     context = {
@@ -133,7 +139,7 @@ def lead_detail(request, pk):
         "lead": lead,
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
-        "has_la_error": has_la_error,
+        "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
         "balances": ledger.order_balances(lead),
         "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(

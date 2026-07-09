@@ -156,6 +156,8 @@ def _build_preview_payloads(reservation) -> dict:
         rate_payload = build_rate_lookup_payload(reservation)
     except geocoding.GeocodeError as exc:
         rate_payload = {"geocode_error": str(exc)}
+    except LASyncError as exc:
+        rate_payload = {"error": str(exc)}
     return {
         "registration": registration,
         "rate_lookup": rate_payload,
@@ -247,16 +249,25 @@ LA_EVENT_TO_TRIP_STATUS: dict[str, str] = {
 
 
 def retry_failed_pushes() -> int:
-    """Cron job: re-run every ERROR push. Returns how many now succeed."""
-    from apps.reservations.models import Reservation as ReservationModel
+    """Cron job: re-run every ERROR push (plus PREVIEW ones once LA is configured).
+
+    PREVIEW events are only stale, not failed — retrying them when LA isn't configured
+    would just regenerate the same preview payload, so they're only picked up once
+    credentials land (the credential-day switchover).
+    """
+    results = [ZapEvent.Result.ERROR]
+    if limoanywhere.is_configured():
+        results.append(ZapEvent.Result.PREVIEW)
 
     count = 0
-    errors = ZapEvent.objects.filter(
-        action=ZapEvent.Action.CREATE_RESERVATION, result=ZapEvent.Result.ERROR
+    candidates = ZapEvent.objects.filter(
+        action=ZapEvent.Action.CREATE_RESERVATION, result__in=results
     )
-    for event in errors:
+    for event in candidates:
         pk_text = event.idempotency_key.removeprefix(IDEMPOTENCY_PREFIX)
-        reservation = ReservationModel.objects.filter(pk=int(pk_text)).first()
+        if not pk_text.isdigit():
+            continue
+        reservation = Reservation.objects.filter(pk=int(pk_text)).first()
         if reservation is None:
             continue
         if push_reservation(reservation).result == ZapEvent.Result.SUCCESS:
