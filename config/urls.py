@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 
 from apps.core.cron import run_job
-from apps.integrations.views import podium_webhook
+from apps.integrations.views import la_webhook, podium_webhook
 from apps.payments.views import stripe_webhook
 
 
@@ -27,6 +27,7 @@ urlpatterns = [
     # --- integrations + webhooks ---
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),
+    path("webhooks/limoanywhere/<str:token>/", la_webhook, name="la_webhook"),
     path("webhooks/stripe/", stripe_webhook, name="stripe_webhook"),
     path("cron/<slug:job>/", run_job, name="cron_job"),
     # API routes are mounted here as apps expose routers, e.g.:

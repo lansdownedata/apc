@@ -229,6 +229,23 @@ def push_lead_bookings(lead) -> list[ZapEvent]:
     return events
 
 
+LA_EVENT_TO_TRIP_STATUS: dict[str, str] = {
+    "reservation.created": Reservation.TripStatus.PENDING,
+    "reservation.booked": Reservation.TripStatus.UNASSIGNED,
+    "reservation.accepted": Reservation.TripStatus.UNASSIGNED,
+    "reservation.driver_was_assigned": Reservation.TripStatus.ASSIGNED,
+    "reservation.driver_was_unassigned": Reservation.TripStatus.UNASSIGNED,
+    "reservation.driver_departed_to_pickup": Reservation.TripStatus.ON_THE_WAY,
+    "reservation.driver_arrived_at_pickup_and_waiting": Reservation.TripStatus.ARRIVED,
+    "reservation.driver_arrived_at_pickup_and_circling": Reservation.TripStatus.CIRCLING,
+    "reservation.departed_from_pickup": Reservation.TripStatus.CUSTOMER_IN_CAR,
+    "reservation.arrived_at_dropoff": Reservation.TripStatus.DONE,
+    "reservation.completed": Reservation.TripStatus.DONE,
+    "reservation.closed": Reservation.TripStatus.DONE,
+    "reservation.cancelled": Reservation.TripStatus.CANCELLED,
+}
+
+
 def retry_failed_pushes() -> int:
     """Cron job: re-run every ERROR push. Returns how many now succeed."""
     from apps.reservations.models import Reservation as ReservationModel
