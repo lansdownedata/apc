@@ -42,4 +42,12 @@ def test_valid_call_runs_job_and_returns_count(client, settings):
 
 
 def test_registry_contains_both_jobs():
-    assert set(cron.JOBS) == {"charge-due-balances", "recognize-due-revenue"}
+    assert set(cron.JOBS) == {
+        "charge-due-balances",
+        "recognize-due-revenue",
+        "retry-la-sync",
+    }
+
+
+def test_registry_contains_retry_la_sync():
+    assert "retry-la-sync" in cron.JOBS
