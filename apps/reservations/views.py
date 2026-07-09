@@ -10,9 +10,22 @@ from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 
 from apps.leads.models import Lead
+from apps.notifications.models import Notification
 
 from .drafts import DraftError, save_reservation_from_draft
 from .models import Reservation, Stop
+
+
+def _alert_la_stale(reservation: Reservation) -> None:
+    """The trip was already pushed to LA — flag that LA needs a manual update."""
+    if not reservation.la_reservation_id:
+        return
+    Notification.notify(
+        reservation.lead,
+        Notification.Kind.LA_CHANGED,
+        title="Update LimoAnywhere",
+        detail=f"Trip #{reservation.pk} changed after LA sync — edit it in LimoAnywhere.",
+    )
 
 
 @login_required
@@ -29,10 +42,13 @@ def reservation_save(request) -> HttpResponse:
     rid = payload.get("id")
     if rid not in (None, "") and str(rid).isdigit():
         instance = lead.reservations.filter(pk=rid).first()
+    editing_existing = instance is not None
     try:
         save_reservation_from_draft(lead, payload, instance=instance)
     except DraftError as exc:
         return HttpResponseBadRequest(str(exc))
+    if editing_existing:
+        _alert_la_stale(instance)
     return redirect("lead_detail", pk=lead.pk)
 
 
@@ -66,5 +82,6 @@ def reservation_duplicate(request, pk) -> HttpResponse:
 def reservation_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
+    _alert_la_stale(res)
     res.delete()
     return redirect("lead_detail", pk=lead_id)

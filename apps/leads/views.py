@@ -14,8 +14,10 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import User
+from apps.accounts.permissions import payment_access_required
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.integrations import la_sync
 from apps.payments import ledger
 
 from . import services
@@ -184,6 +186,16 @@ def lead_reopen(request, pk: int) -> HttpResponse:
     lead.status = Lead.Status.NEW
     lead.lost_reason = ""
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    return redirect("lead_detail", pk=pk)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def lead_resend_la(request, pk: int) -> HttpResponse:
+    """Manually re-push every reservation on the lead to LimoAnywhere."""
+    lead = get_object_or_404(Lead, pk=pk)
+    la_sync.push_lead_bookings(lead)
     return redirect("lead_detail", pk=pk)
 
 
