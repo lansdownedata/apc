@@ -179,6 +179,9 @@ PODIUM_SCOPES = env.list(
 # Zapier → LimoAnywhere
 ZAPIER_LEAD_HOOK_URL = env("ZAPIER_LEAD_HOOK_URL", default="")
 
+# Cron — HTTP-triggered scheduled jobs (cron-job.org)
+CRON_SECRET = env("CRON_SECRET", default="")  # X-Cron-Key header for /cron/<job>/ endpoints
+
 # Inbound capture API
 LEAD_INBOUND_API_KEY = env("LEAD_INBOUND_API_KEY", default="")
 
