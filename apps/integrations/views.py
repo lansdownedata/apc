@@ -2,11 +2,17 @@ import json
 import secrets
 
 from django.conf import settings
-from django.http import HttpResponse, HttpResponseBadRequest
+from django.core import signing
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
-from . import services, webhooks
+from apps.notifications.models import Notification
+from apps.reservations.models import Reservation, TripStatusEvent
+
+from . import la_sync, services, webhooks
+from .models import LACustomer, LAEvent
 
 STATE_SESSION_KEY = "podium_oauth_state"
 
@@ -50,3 +56,43 @@ def podium_webhook(request):
         return HttpResponseBadRequest("Invalid JSON.")
     webhooks.process_podium_webhook(payload)
     return HttpResponse(status=200)
+
+
+@csrf_exempt
+@require_POST
+def la_webhook(request, token: str):
+    """Inbound LimoAnywhere reservation events (per-customer signed-token URL)."""
+    try:
+        la_customer_pk = signing.loads(token, salt=la_sync.WEBHOOK_SALT)
+    except signing.BadSignature:
+        raise Http404 from None
+    la_customer = LACustomer.objects.filter(pk=la_customer_pk).first()
+    if la_customer is None:
+        raise Http404
+
+    data = json.loads(request.body or b"{}")
+    event_name = str(data.get("reservation_event") or "")
+    reservation = Reservation.objects.filter(la_reservation_id=str(data.get("id") or "")).first()
+    LAEvent.objects.create(
+        la_customer=la_customer, reservation=reservation, event=event_name, payload=data
+    )
+    if reservation is None:
+        return JsonResponse({"status": "ignored"})
+
+    new_status = la_sync.LA_EVENT_TO_TRIP_STATUS.get(event_name)
+    if new_status and new_status != reservation.trip_status:
+        reservation.trip_status = new_status
+        reservation.save(update_fields=["trip_status", "updated_at"])
+        TripStatusEvent.objects.create(
+            reservation=reservation,
+            status=new_status,
+            source=TripStatusEvent.Source.LIMOANYWHERE,
+        )
+    if event_name in {"reservation.cancelled", "reservation.updated"}:
+        Notification.notify(
+            reservation.lead,
+            Notification.Kind.LA_CHANGED,
+            title="Changed in LimoAnywhere",
+            detail=f"Trip #{reservation.pk}: {event_name.removeprefix('reservation.')}",
+        )
+    return JsonResponse({"status": "ok"})
