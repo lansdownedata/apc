@@ -81,6 +81,7 @@ class Reservation(TimeStampedModel):
     min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
     la_reservation_id = models.CharField(max_length=64, blank=True)
+    la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)
     trip_status = models.CharField(
         max_length=32, choices=TripStatus.choices, blank=True, default=""
     )
@@ -154,6 +155,8 @@ class Stop(TimeStampedModel):
     sequence = models.PositiveIntegerField(default=0)
     address = models.CharField(max_length=255, blank=True)
     note = models.CharField(max_length=255, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
 
     class Meta:
         ordering = ["sequence"]
