@@ -135,3 +135,34 @@ def test_detail_shows_sent_confirmation(logged_in_client):
     )
     resp = logged_in_client.get(f"/leads/{res.lead.pk}/")
     assert "ABC123" in resp.content.decode()
+
+
+def test_resend_button_hidden_for_preview_when_unconfigured(client):
+    res = ReservationFactory(lead=LeadFactory())
+    ZapEvent.objects.create(
+        lead=res.lead,
+        action=ZapEvent.Action.CREATE_RESERVATION,
+        idempotency_key=f"create_reservation-res{res.pk}",
+        result=ZapEvent.Result.PREVIEW,
+    )
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    resp = client.get(f"/leads/{res.lead.pk}/")
+    assert resp.context["can_resend_la"] is False
+    assert "Resend to LA" not in resp.content.decode()
+
+
+def test_resend_button_shown_for_preview_once_configured(client, settings):
+    settings.LA_CLIENT_ID = "cid"
+    settings.LA_CLIENT_SECRET = "cs"
+    settings.LA_COMPANY_ALIAS = "allpro"
+    res = ReservationFactory(lead=LeadFactory())
+    ZapEvent.objects.create(
+        lead=res.lead,
+        action=ZapEvent.Action.CREATE_RESERVATION,
+        idempotency_key=f"create_reservation-res{res.pk}",
+        result=ZapEvent.Result.PREVIEW,
+    )
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    resp = client.get(f"/leads/{res.lead.pk}/")
+    assert resp.context["can_resend_la"] is True
+    assert "Resend to LA" in resp.content.decode()

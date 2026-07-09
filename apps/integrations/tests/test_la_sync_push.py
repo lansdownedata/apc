@@ -42,7 +42,8 @@ def test_preview_records_payloads_without_sending():
     res = _reservation(_lead())
     with patch.object(la_sync.limoanywhere, "requests", create=True) as req:
         event = la_sync.push_reservation(res)
-    req.assert_not_called()
+    req.post.assert_not_called()
+    req.request.assert_not_called()
     assert event.result == ZapEvent.Result.PREVIEW
     assert "registration" in event.payload
     assert "rate_lookup" in event.payload
@@ -166,3 +167,87 @@ def test_push_lead_bookings_pushes_every_reservation():
     events = la_sync.push_lead_bookings(lead)
     assert len(events) == 2
     assert ZapEvent.objects.count() == 2
+
+
+# --- credential-day switchover (PREVIEW -> retry once LA is configured) ---
+
+
+def test_retry_picks_up_preview_events_once_configured(settings):
+    res = _reservation(_lead())
+    event = la_sync.push_reservation(res)
+    assert event.result == ZapEvent.Result.PREVIEW
+
+    settings.LA_CLIENT_ID = "cid"
+    settings.LA_CLIENT_SECRET = "cs"
+    settings.LA_COMPANY_ALIAS = "allpro"
+    settings.LA_PAYMENT_TYPE_ID = 7
+    la_sync.limoanywhere._token_cache.clear()
+    with (
+        patch.object(
+            la_sync.limoanywhere, "register_customer", return_value={"id": 1, "number": "2"}
+        ),
+        patch.object(la_sync.limoanywhere, "get_token", return_value="tok"),
+        patch.object(la_sync.limoanywhere, "subscribe_webhook"),
+        patch.object(la_sync.limoanywhere, "rate_lookup", return_value={"results": [{"id": 9}]}),
+        patch.object(
+            la_sync.limoanywhere,
+            "create_booking",
+            return_value={"id": 42, "confirmation_number": "Z9"},
+        ),
+    ):
+        assert la_sync.retry_failed_pushes() == 1
+    assert ZapEvent.objects.get().result == ZapEvent.Result.SUCCESS
+
+
+def test_retry_leaves_preview_events_alone_when_unconfigured():
+    res = _reservation(_lead())
+    event = la_sync.push_reservation(res)
+    assert event.result == ZapEvent.Result.PREVIEW
+
+    assert la_sync.retry_failed_pushes() == 0
+    event.refresh_from_db()
+    assert event.result == ZapEvent.Result.PREVIEW
+
+
+# --- retry parsing hardening ---
+
+
+def test_retry_skips_non_conforming_idempotency_keys(live):
+    ZapEvent.objects.create(
+        lead=_lead(),
+        action=ZapEvent.Action.CREATE_RESERVATION,
+        idempotency_key=f"{la_sync.IDEMPOTENCY_PREFIX}bogus",
+        result=ZapEvent.Result.ERROR,
+    )
+    res = _reservation(_lead("other@example.com"))
+    ZapEvent.objects.create(
+        lead=res.lead,
+        action=ZapEvent.Action.CREATE_RESERVATION,
+        idempotency_key=f"{la_sync.IDEMPOTENCY_PREFIX}{res.pk}",
+        result=ZapEvent.Result.ERROR,
+    )
+    with (
+        patch.object(
+            la_sync.limoanywhere, "register_customer", return_value={"id": 1, "number": "2"}
+        ),
+        patch.object(la_sync.limoanywhere, "get_token", return_value="tok"),
+        patch.object(la_sync.limoanywhere, "subscribe_webhook"),
+        patch.object(la_sync.limoanywhere, "rate_lookup", return_value={"results": [{"id": 9}]}),
+        patch.object(
+            la_sync.limoanywhere,
+            "create_booking",
+            return_value={"id": 42, "confirmation_number": "Z9"},
+        ),
+    ):
+        assert la_sync.retry_failed_pushes() == 1
+
+
+# --- preview branch parity for LASyncError ---
+
+
+def test_preview_records_rate_lookup_error_without_raising():
+    lead = _lead()
+    res = ReservationFactory(lead=lead, stops=[])  # no stops -> build_rate_lookup_payload raises
+    event = la_sync.push_reservation(res)
+    assert event.result == ZapEvent.Result.PREVIEW
+    assert "error" in event.payload["rate_lookup"]

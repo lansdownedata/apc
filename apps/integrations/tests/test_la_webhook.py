@@ -91,6 +91,26 @@ def test_payload_without_id_ignores_unpushed_reservation(client):
     assert LAEvent.objects.filter(reservation=None).exists()
 
 
+def test_token_cannot_write_another_customers_reservation(client):
+    """A customer's signed token must not let it match a reservation belonging to
+    a different customer that happens to share the same la_reservation_id id space."""
+    lac_a = LACustomerFactory()
+    lac_b = LACustomerFactory()
+    res_b = ReservationFactory(lead=LeadFactory(contact=lac_b.contact), la_reservation_id="55")
+    before_status = res_b.trip_status
+
+    resp = _post(
+        client, _url(lac_a), {"id": 55, "reservation_event": "reservation.driver_was_assigned"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ignored"}
+    res_b.refresh_from_db()
+    assert res_b.trip_status == before_status
+    event = LAEvent.objects.filter(la_customer=lac_a, reservation=None).first()
+    assert event is not None
+    assert event.payload["id"] == 55
+
+
 def test_invalid_json_returns_400(client):
     """Malformed JSON body should return 400 Bad Request."""
     lac = LACustomerFactory()

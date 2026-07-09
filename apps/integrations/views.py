@@ -79,7 +79,9 @@ def la_webhook(request, token: str):
     # Only look up reservation if id is truthy; falsy ids should not match un-pushed reservations.
     id_value = data.get("id")
     if id_value:
-        reservation = Reservation.objects.filter(la_reservation_id=str(id_value)).first()
+        reservation = Reservation.objects.filter(
+            la_reservation_id=str(id_value), lead__contact=la_customer.contact
+        ).first()
     else:
         reservation = None
     LAEvent.objects.create(
