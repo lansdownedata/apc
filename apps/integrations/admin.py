@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import PodiumCredential, PodiumEvent, ZapEvent
+from .models import LACustomer, LAEvent, PodiumCredential, PodiumEvent, ZapEvent
 
 
 @admin.register(PodiumCredential)
@@ -20,3 +20,15 @@ class ZapEventAdmin(admin.ModelAdmin):
 class PodiumEventAdmin(admin.ModelAdmin):
     list_display = ("event_type", "lead", "processed", "created_at")
     list_filter = ("event_type", "processed")
+
+
+@admin.register(LACustomer)
+class LACustomerAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "contact", "la_customer_id", "created_at")
+    readonly_fields = ("password_encrypted", "created_at", "updated_at")
+
+
+@admin.register(LAEvent)
+class LAEventAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "event", "la_customer", "reservation", "created_at")
+    list_filter = ("event",)
