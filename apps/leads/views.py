@@ -18,6 +18,8 @@ from apps.accounts.permissions import payment_access_required
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.integrations import la_sync
+from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
+from apps.integrations.models import ZapEvent
 from apps.payments import ledger
 
 from . import services
@@ -105,11 +107,33 @@ def lead_detail(request, pk):
         pk=pk,
     )
     _vehicles = list(Vehicle.objects.filter(active=True).order_by("name").values("id", "name"))
+    reservations = lead.reservations.all()
+
+    la_events: dict[int, ZapEvent] = {}
+    events = ZapEvent.objects.filter(lead=lead, action=ZapEvent.Action.CREATE_RESERVATION)
+    for event in events:
+        key = event.idempotency_key.removeprefix(IDEMPOTENCY_PREFIX)
+        if key.isdigit():
+            la_events[int(key)] = event
+    la_sync_rows = [
+        {
+            "reservation": res,
+            "event": la_events.get(res.pk),
+            "payload_dom_id": f"la-payload-{res.pk}",
+        }
+        for res in reservations
+    ]
+    has_la_error = any(
+        row["event"] and row["event"].result == ZapEvent.Result.ERROR for row in la_sync_rows
+    )
+
     context = {
         "nav": "leads",
         "page_title": lead.quote_no,
         "lead": lead,
-        "reservations": lead.reservations.all(),
+        "reservations": reservations,
+        "la_sync_rows": la_sync_rows,
+        "has_la_error": has_la_error,
         "payment": getattr(lead, "payment", None),
         "balances": ledger.order_balances(lead),
         "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
