@@ -49,6 +49,7 @@ class ZapEvent(TimeStampedModel):
         PENDING = "pending", "Pending"
         SUCCESS = "success", "Success"
         ERROR = "error", "Error"
+        PREVIEW = "preview", "Preview (not sent)"
 
     lead = models.ForeignKey("leads.Lead", related_name="zap_events", on_delete=models.CASCADE)
     action = models.CharField(max_length=30, choices=Action.choices)
@@ -90,3 +91,53 @@ class PodiumEvent(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.event_type} · {'processed' if self.processed else 'pending'}"
+
+
+class LACustomer(TimeStampedModel):
+    """Our Contact's customer record in LimoAnywhere (backend-proxy pattern).
+
+    LA's Customer API acts *as* a customer, so we hold a generated password
+    (encrypted at rest) to obtain per-customer tokens.
+    """
+
+    contact = models.OneToOneField(
+        "contacts.Contact", related_name="la_customer", on_delete=models.CASCADE
+    )
+    la_customer_id = models.CharField(max_length=64)
+    la_account_number = models.CharField(max_length=64, blank=True)
+    email_used = models.EmailField()
+    password_encrypted = models.TextField()
+
+    @property
+    def password(self) -> str:
+        from . import crypto
+
+        return crypto.decrypt(self.password_encrypted)
+
+    def token(self) -> str:
+        from . import limoanywhere
+
+        return limoanywhere.get_token(username=self.email_used, password=self.password)
+
+    def __str__(self) -> str:
+        return f"LA customer {self.la_customer_id} · {self.email_used}"
+
+
+class LAEvent(TimeStampedModel):
+    """Inbound LimoAnywhere webhook log (reservation lifecycle events)."""
+
+    la_customer = models.ForeignKey(
+        LACustomer, related_name="events", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    reservation = models.ForeignKey(
+        "reservations.Reservation",
+        related_name="la_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    event = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.event} · res {self.reservation_id or '—'}"

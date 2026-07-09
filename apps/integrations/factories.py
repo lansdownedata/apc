@@ -1,8 +1,10 @@
 import factory
 
+from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 
-from .models import PodiumCredential, PodiumEvent, ZapEvent
+from . import crypto
+from .models import LACustomer, PodiumCredential, PodiumEvent, ZapEvent
 
 
 class PodiumCredentialFactory(factory.django.DjangoModelFactory):
@@ -29,3 +31,14 @@ class PodiumEventFactory(factory.django.DjangoModelFactory):
 
     event_type = PodiumEvent.EventType.MESSAGE_RECEIVED
     payload = factory.LazyFunction(dict)
+
+
+class LACustomerFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = LACustomer
+
+    contact = factory.SubFactory(ContactFactory)
+    la_customer_id = factory.Sequence(lambda n: str(10000 + n))
+    la_account_number = factory.Sequence(lambda n: f"9911{n:04d}")
+    email_used = factory.LazyAttribute(lambda o: o.contact.email or "la@example.com")
+    password_encrypted = factory.LazyFunction(lambda: crypto.encrypt("factory-pw"))

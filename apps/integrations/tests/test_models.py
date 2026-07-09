@@ -4,12 +4,14 @@ import pytest
 from django.db import IntegrityError
 from django.utils import timezone
 
+from apps.contacts.factories import ContactFactory
+from apps.integrations import crypto
 from apps.integrations.factories import (
     PodiumCredentialFactory,
     PodiumEventFactory,
     ZapEventFactory,
 )
-from apps.integrations.models import PodiumCredential, ZapEvent
+from apps.integrations.models import LACustomer, LAEvent, PodiumCredential, ZapEvent
 
 pytestmark = pytest.mark.django_db
 
@@ -57,3 +59,27 @@ def test_podium_event_mark_processed():
     event.mark_processed()
     event.refresh_from_db()
     assert event.processed is True
+
+
+# --- LACustomer -----------------------------------------------------------
+def test_la_customer_password_round_trip():
+    lac = LACustomer.objects.create(
+        contact=ContactFactory(),
+        la_customer_id="12345",
+        la_account_number="99119924",
+        email_used="jane@example.com",
+        password_encrypted=crypto.encrypt("s3cret-pw"),
+    )
+    assert lac.password == "s3cret-pw"
+    assert "s3cret-pw" not in lac.password_encrypted
+
+
+# --- ZapEvent (extended) ---------------------------------------------------
+def test_zap_event_preview_result_exists():
+    assert ZapEvent.Result.PREVIEW == "preview"
+
+
+# --- LAEvent ---------------------------------------------------------------
+def test_la_event_str():
+    event = LAEvent.objects.create(event="reservation.booked", payload={"id": 1})
+    assert "reservation.booked" in str(event)

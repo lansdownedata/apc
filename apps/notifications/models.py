@@ -18,6 +18,7 @@ class Notification(TimeStampedModel):
         DEPOSIT_PAID = "deposit_paid", "Deposit received"
         SYNC_FAILED = "sync_failed", "Sync failed"
         NEW_LEAD = "new_lead", "New lead"
+        LA_CHANGED = "la_changed", "Update LimoAnywhere"
 
     lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
     user = models.ForeignKey(
