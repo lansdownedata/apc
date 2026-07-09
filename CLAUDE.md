@@ -9,7 +9,7 @@ Reservations; 50% deposit (Stripe) → auto-book to LimoAnywhere (Zapier) → ba
 of record. Full design in **`docs/`** (specs, ERD, and the clickable prototype).
 
 ## Stack
-Python 3.13 · Django 5.2 LTS · DRF · Celery + Redis · MySQL (prod) / SQLite (dev) ·
+Python 3.13 · Django 5.2 LTS · DRF · HTTP cron endpoints (cron-job.org) · MySQL (prod) / SQLite (dev) ·
 Stripe · Podium · Zapier. Front end: Django templates + **Tailwind + Alpine.js**.
 
 ---
@@ -94,7 +94,7 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
 
 ## 🗂 Structure
 ```
-config/     settings/{base,dev,prod} · celery.py · urls.py
+config/     settings/{base,dev,prod} · urls.py
 apps/       core accounts contacts leads reservations payments
             messaging integrations notifications portal   (name = "apps.<x>")
 templates/  base.html · registration/ · components/ · portal/ · leads/
@@ -113,7 +113,6 @@ source .venv/bin/activate
 python manage.py check | makemigrations | migrate | runserver
 pytest                       # tests
 ruff check . && ruff format .
-celery -A config worker -l info   # + `beat` for the scheduler (needs Redis)
 ```
 
 ## ✅ Definition of done (per feature)

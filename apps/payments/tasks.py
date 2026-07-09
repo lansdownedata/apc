@@ -1,4 +1,3 @@
-from celery import shared_task
 from django.utils import timezone
 
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation
@@ -7,7 +6,6 @@ from . import ledger, services
 from .models import PaymentPlan
 
 
-@shared_task
 def charge_due_balances() -> int:
     """Charge every scheduled balance whose due date (30 days before pickup) has arrived.
 
@@ -25,7 +23,6 @@ def charge_due_balances() -> int:
     return count
 
 
-@shared_task
 def recognize_due_revenue() -> int:
     """Recognize each earned, past-pickup, still-deferred trip's revenue (spec §5)."""
     today = timezone.localdate()

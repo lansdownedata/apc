@@ -8,7 +8,6 @@ Environment-specific overrides live in dev.py / prod.py.
 from pathlib import Path
 
 import environ
-from celery.schedules import crontab
 
 # config/settings/base.py -> project root is three parents up.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -126,23 +125,6 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 25,
-}
-
-# ---------------------------------------------------------------- Celery
-CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/1")
-CELERY_TIMEZONE = TIME_ZONE
-CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
-CELERY_TASK_TRACK_STARTED = True
-CELERY_BEAT_SCHEDULE = {
-    "charge-due-balances": {
-        "task": "apps.payments.tasks.charge_due_balances",
-        "schedule": crontab(hour=6, minute=0),  # daily at 6am — balance charges due
-    },
-    "recognize-due-revenue": {
-        "task": "apps.payments.tasks.recognize_due_revenue",
-        "schedule": crontab(hour=2, minute=0),  # nightly — recognize completed trips
-    },
 }
 
 # ---------------------------------------------------------------- integrations
