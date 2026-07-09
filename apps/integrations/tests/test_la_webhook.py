@@ -73,3 +73,26 @@ def test_unknown_reservation_logged_and_ignored(client):
     resp = _post(client, _url(lac), {"id": 999, "reservation_event": "reservation.booked"})
     assert resp.status_code == 200
     assert LAEvent.objects.filter(reservation=None).exists()
+
+
+def test_payload_without_id_ignores_unpushed_reservation(client):
+    """Payload without id should NOT match un-pushed reservation (la_reservation_id="")."""
+    lac = LACustomerFactory()
+    res = ReservationFactory(
+        lead=LeadFactory(contact=lac.contact)
+    )  # la_reservation_id="" by default
+    before_status = res.trip_status
+    resp = _post(client, _url(lac), {"reservation_event": "reservation.driver_was_assigned"})
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ignored"}
+    res.refresh_from_db()
+    assert res.trip_status == before_status  # unchanged
+    # logged with reservation=None
+    assert LAEvent.objects.filter(reservation=None).exists()
+
+
+def test_invalid_json_returns_400(client):
+    """Malformed JSON body should return 400 Bad Request."""
+    lac = LACustomerFactory()
+    resp = client.post(_url(lac), data=b"not-json", content_type="application/json")
+    assert resp.status_code == 400
