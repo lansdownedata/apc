@@ -158,8 +158,14 @@ PODIUM_SCOPES = env.list(
     ],
 )
 
-# Zapier → LimoAnywhere
-ZAPIER_LEAD_HOOK_URL = env("ZAPIER_LEAD_HOOK_URL", default="")
+# LimoAnywhere Customer API (docs/la-api/). Unset LA_CLIENT_ID => preview mode (no sends).
+LA_BASE_URL = env("LA_BASE_URL", default="https://api.mylimobiz.com")
+LA_CLIENT_ID = env("LA_CLIENT_ID", default="")
+LA_CLIENT_SECRET = env("LA_CLIENT_SECRET", default="")
+LA_COMPANY_ALIAS = env("LA_COMPANY_ALIAS", default="")
+LA_PAYMENT_TYPE_ID = env.int("LA_PAYMENT_TYPE_ID", default=0)  # non-charging type; see smoke test
+LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NGROK_HOST>
+LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 
 # Cron — HTTP-triggered scheduled jobs (cron-job.org)
 CRON_SECRET = env("CRON_SECRET", default="")  # X-Cron-Key header for /cron/<job>/ endpoints
