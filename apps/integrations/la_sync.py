@@ -5,18 +5,26 @@ functions (later tasks) drive the LA client and log ZapEvents.
 Reference shapes: docs/la-api/la-api.txt.
 """
 
+import json
 import logging
+import secrets
 from datetime import datetime
 from datetime import time as dtime
 
 from django.conf import settings
+from django.core import signing
 from django.utils import timezone
 
+from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 
-from . import geocoding
+from . import crypto, geocoding, limoanywhere
+from .models import LACustomer, ZapEvent
 
 logger = logging.getLogger(__name__)
+
+IDEMPOTENCY_PREFIX = "create_reservation-res"
+WEBHOOK_SALT = "la-webhook"
 
 
 class LASyncError(Exception):
@@ -80,9 +88,7 @@ def build_rate_lookup_payload(reservation: Reservation) -> dict:
     return payload
 
 
-def build_booking_payload(
-    reservation: Reservation, search_result_id: int | None
-) -> dict:
+def build_booking_payload(reservation: Reservation, search_result_id: int | None) -> dict:
     contact = reservation.lead.contact
     first, last = _split_name(contact.name)
     passenger: dict = {"first_name": first, "last_name": last}
@@ -104,3 +110,138 @@ def build_booking_payload(
         "payment_type_id": settings.LA_PAYMENT_TYPE_ID,
         "notes": "\n".join(line for line in note_lines if line),
     }
+
+
+def webhook_uri(la_customer: LACustomer) -> str:
+    """Public inbound-webhook URL for this customer ('' when no public base is set)."""
+    base = (settings.LA_WEBHOOK_BASE_URL or "").rstrip("/")
+    if not base:
+        return ""
+    token = signing.dumps(la_customer.pk, salt=WEBHOOK_SALT)
+    return f"{base}/webhooks/limoanywhere/{token}/"
+
+
+def ensure_la_customer(contact) -> LACustomer:
+    """Register the contact in LA once (generated password, encrypted at rest)."""
+    existing = LACustomer.objects.filter(contact=contact).first()
+    if existing is not None:
+        return existing
+    email = (contact.email or "").strip()
+    if not email:
+        raise LASyncError("Contact has no email — add one before LimoAnywhere sync.")
+    password = secrets.token_urlsafe(16)
+    result = limoanywhere.register_customer(build_registration_payload(contact, password=password))
+    la_customer = LACustomer.objects.create(
+        contact=contact,
+        la_customer_id=str(result["id"]),
+        la_account_number=str(result.get("number") or ""),
+        email_used=email,
+        password_encrypted=crypto.encrypt(password),
+    )
+    contact.la_account_id = str(result.get("number") or result["id"])
+    contact.save(update_fields=["la_account_id", "updated_at"])
+    uri = webhook_uri(la_customer)
+    if uri:
+        try:
+            limoanywhere.subscribe_webhook(uri, token=la_customer.token())
+        except limoanywhere.LAAPIError:
+            logger.warning("LA webhook subscribe failed for customer %s", la_customer.pk)
+    return la_customer
+
+
+def _build_preview_payloads(reservation) -> dict:
+    contact = reservation.lead.contact
+    registration = build_registration_payload(contact, password="(generated at send time)")
+    try:
+        rate_payload = build_rate_lookup_payload(reservation)
+    except geocoding.GeocodeError as exc:
+        rate_payload = {"geocode_error": str(exc)}
+    return {
+        "registration": registration,
+        "rate_lookup": rate_payload,
+        "booking": build_booking_payload(reservation, None),
+    }
+
+
+def _fail(event: ZapEvent, reservation, message: str) -> ZapEvent:
+    event.result = ZapEvent.Result.ERROR
+    event.response = message
+    event.save(update_fields=["result", "response", "updated_at"])
+    Notification.notify(
+        reservation.lead,
+        Notification.Kind.SYNC_FAILED,
+        title="LimoAnywhere sync failed",
+        detail=f"Trip #{reservation.pk}: {message}"[:255],
+    )
+    return event
+
+
+def push_reservation(reservation) -> ZapEvent:
+    """Create this trip in LA (or record a preview). Idempotent per reservation."""
+    event, _ = ZapEvent.objects.get_or_create(
+        lead=reservation.lead,
+        action=ZapEvent.Action.CREATE_RESERVATION,
+        idempotency_key=f"{IDEMPOTENCY_PREFIX}{reservation.pk}",
+    )
+    if event.result == ZapEvent.Result.SUCCESS:
+        return event
+
+    if not limoanywhere.is_configured():
+        event.payload = _build_preview_payloads(reservation)
+        event.result = ZapEvent.Result.PREVIEW
+        event.response = "Preview — nothing sent to LimoAnywhere."
+        event.save(update_fields=["payload", "result", "response", "updated_at"])
+        return event
+
+    try:
+        la_customer = ensure_la_customer(reservation.lead.contact)
+        token = la_customer.token()
+        rate_payload = build_rate_lookup_payload(reservation)
+        rate = limoanywhere.rate_lookup(rate_payload, token=token)
+        results = rate.get("results") or []
+        if not results:
+            raise LASyncError(
+                "rate_lookup returned no results — add a $0 rate per vehicle type in LA."
+            )
+        booking_payload = build_booking_payload(reservation, results[0]["id"])
+        booked = limoanywhere.create_booking(booking_payload, token=token)
+    except (LASyncError, geocoding.GeocodeError, limoanywhere.LAAPIError) as exc:
+        return _fail(event, reservation, str(exc))
+
+    reservation.la_reservation_id = str(booked.get("id") or "")
+    reservation.la_confirmation = str(booked.get("confirmation_number") or "")
+    reservation.save(update_fields=["la_reservation_id", "la_confirmation", "updated_at"])
+    event.payload = {"rate_lookup": rate_payload, "booking": booking_payload}
+    event.result = ZapEvent.Result.SUCCESS
+    event.response = json.dumps(booked)
+    event.save(update_fields=["payload", "result", "response", "updated_at"])
+    return event
+
+
+def push_lead_bookings(lead) -> list[ZapEvent]:
+    """Push every trip on the lead. Best-effort: one failure never blocks the rest."""
+    events = []
+    for reservation in lead.reservations.all():
+        try:
+            events.append(push_reservation(reservation))
+        except Exception:
+            logger.exception("Unexpected LA push failure for reservation %s", reservation.pk)
+    return events
+
+
+def retry_failed_pushes() -> int:
+    """Cron job: re-run every ERROR push. Returns how many now succeed."""
+    from apps.reservations.models import Reservation as ReservationModel
+
+    count = 0
+    errors = ZapEvent.objects.filter(
+        action=ZapEvent.Action.CREATE_RESERVATION, result=ZapEvent.Result.ERROR
+    )
+    for event in errors:
+        pk_text = event.idempotency_key.removeprefix(IDEMPOTENCY_PREFIX)
+        reservation = ReservationModel.objects.filter(pk=int(pk_text)).first()
+        if reservation is None:
+            continue
+        if push_reservation(reservation).result == ZapEvent.Result.SUCCESS:
+            count += 1
+    return count
