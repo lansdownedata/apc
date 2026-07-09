@@ -70,9 +70,18 @@ def la_webhook(request, token: str):
     if la_customer is None:
         raise Http404
 
-    data = json.loads(request.body or b"{}")
+    try:
+        data = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON.")
+
     event_name = str(data.get("reservation_event") or "")
-    reservation = Reservation.objects.filter(la_reservation_id=str(data.get("id") or "")).first()
+    # Only look up reservation if id is truthy; falsy ids should not match un-pushed reservations.
+    id_value = data.get("id")
+    if id_value:
+        reservation = Reservation.objects.filter(la_reservation_id=str(id_value)).first()
+    else:
+        reservation = None
     LAEvent.objects.create(
         la_customer=la_customer, reservation=reservation, event=event_name, payload=data
     )
