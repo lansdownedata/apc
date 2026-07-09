@@ -1,13 +1,18 @@
 """Stripe webhook processing — reconcile deposit + balance outcomes."""
 
+import logging
+
 import stripe
 from django.conf import settings
 
+from apps.integrations import la_sync
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
 from . import ledger
 from .models import Charge, JournalEntry, PaymentPlan
+
+logger = logging.getLogger(__name__)
 
 
 def _stripe():
@@ -74,7 +79,12 @@ def _deposit_completed(session) -> None:
     lead = plan.lead
     lead.status = Lead.Status.BOOKED
     lead.save(update_fields=["status", "updated_at"])
-    # TODO: trigger the Zapier -> LimoAnywhere sync (one Create Reservation per trip).
+
+    # Auto-book to LimoAnywhere (best-effort — never fail the Stripe 200).
+    try:
+        la_sync.push_lead_bookings(lead)
+    except Exception:
+        logger.exception("LimoAnywhere push failed for lead %s", lead.pk)
 
 
 def _saved_card(payment_intent_id):

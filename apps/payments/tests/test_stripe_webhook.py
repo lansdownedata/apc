@@ -90,6 +90,39 @@ def test_view_returns_200_on_valid_signature(client):
     assert resp.status_code == 200
 
 
+def test_deposit_capture_pushes_lead_to_la():
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    with (
+        patch.object(webhooks.stripe.PaymentIntent, "retrieve", return_value=_saved_pm()),
+        patch("apps.payments.webhooks.la_sync.push_lead_bookings") as push,
+    ):
+        webhooks.process_stripe_event(_session_event(plan.lead_id))
+    push.assert_called_once()
+    assert push.call_args.args[0].pk == plan.lead_id
+
+
+def test_la_push_crash_never_breaks_stripe_200(client):
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    with (
+        patch(
+            "apps.payments.views.stripe.Webhook.construct_event",
+            return_value=_session_event(plan.lead_id),
+        ),
+        patch.object(webhooks.stripe.PaymentIntent, "retrieve", return_value=_saved_pm()),
+        patch(
+            "apps.payments.webhooks.la_sync.push_lead_bookings",
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        resp = client.post(
+            "/webhooks/stripe/",
+            data=b"{}",
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=abc",
+        )
+    assert resp.status_code == 200
+
+
 def test_view_returns_400_on_bad_signature(client):
     err = stripe.error.SignatureVerificationError("bad sig", "sig")
     with patch("apps.payments.views.stripe.Webhook.construct_event", side_effect=err):
