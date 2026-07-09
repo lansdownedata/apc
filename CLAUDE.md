@@ -10,7 +10,7 @@ of record. Full design in **`docs/`** (specs, ERD, and the clickable prototype).
 
 ## Stack
 Python 3.13 · Django 5.2 LTS · DRF · HTTP cron endpoints (cron-job.org) · MySQL (prod) / SQLite (dev) ·
-Stripe · Podium · Zapier. Front end: Django templates + **Tailwind + Alpine.js**.
+Stripe · Podium · LimoAnywhere API · LocationIQ. Front end: Django templates + **Tailwind + Alpine.js**.
 
 ---
 
