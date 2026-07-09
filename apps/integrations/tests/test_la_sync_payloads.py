@@ -23,15 +23,21 @@ def _geocoded_reservation(trip_type=Reservation.TripType.TRANSFER, **kwargs):
         pickup_date=date(2026, 7, 15),
         pickup_time=time(10, 0),
         stops=[],
-        **kwargs
+        **kwargs,
     )
     StopFactory(
-        reservation=res, sequence=0, address="JFK Airport",
-        latitude=Decimal("40.641300"), longitude=Decimal("-73.778100"),
+        reservation=res,
+        sequence=0,
+        address="JFK Airport",
+        latitude=Decimal("40.641300"),
+        longitude=Decimal("-73.778100"),
     )
     StopFactory(
-        reservation=res, sequence=1, address="Times Square",
-        latitude=Decimal("40.758000"), longitude=Decimal("-73.985500"),
+        reservation=res,
+        sequence=1,
+        address="Times Square",
+        latitude=Decimal("40.758000"),
+        longitude=Decimal("-73.985500"),
     )
     return res
 
@@ -79,8 +85,13 @@ def test_hourly_rate_lookup_payload_has_duration_no_dropoff():
 
 def test_transfer_without_two_stops_raises():
     res = ReservationFactory(lead=LeadFactory())
-    StopFactory(reservation=res, sequence=0, address="Only stop",
-                latitude=Decimal("1"), longitude=Decimal("1"))
+    StopFactory(
+        reservation=res,
+        sequence=0,
+        address="Only stop",
+        latitude=Decimal("1"),
+        longitude=Decimal("1"),
+    )
     with pytest.raises(la_sync.LASyncError):
         la_sync.build_rate_lookup_payload(res)
 
