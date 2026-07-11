@@ -14,12 +14,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.integrations import la_sync
+from apps.messaging import touchpoints
 from apps.payments import tasks
 
 JOBS: dict[str, Callable[[], int]] = {
     "charge-due-balances": tasks.charge_due_balances,
     "recognize-due-revenue": tasks.recognize_due_revenue,
     "retry-la-sync": la_sync.retry_failed_pushes,
+    "run-touchpoints": touchpoints.run_touchpoints,
 }
 
 
