@@ -64,7 +64,8 @@ def test_failed_marks_outbound_message_failed():
     assert msg.failure_reason == "landline"
 
 
-def test_webhook_view_accepts_post(client):
+def test_webhook_view_accepts_post(client, settings):
+    settings.PODIUM_WEBHOOK_SECRET = ""
     resp = client.post(
         "/webhooks/podium/",
         data=json.dumps(_received(uid="v1")),
@@ -74,6 +75,7 @@ def test_webhook_view_accepts_post(client):
     assert PodiumEvent.objects.filter(event_type="message.received").exists()
 
 
-def test_webhook_view_rejects_bad_json(client):
+def test_webhook_view_rejects_bad_json(client, settings):
+    settings.PODIUM_WEBHOOK_SECRET = ""
     resp = client.post("/webhooks/podium/", data="not-json", content_type="application/json")
     assert resp.status_code == 400
