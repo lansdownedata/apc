@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
@@ -61,6 +62,9 @@ class Lead(TimeStampedModel):
     notes = models.TextField(blank=True)
     lost_reason = models.CharField(max_length=255, blank=True)
     has_alert = models.BooleanField(default=False)
+    quote_sent_at = models.DateTimeField(null=True, blank=True)
+    quote_viewed_at = models.DateTimeField(null=True, blank=True)
+    quote_expires_at = models.DateTimeField(null=True, blank=True)
 
     objects = LeadQuerySet.as_manager()
 
@@ -75,6 +79,10 @@ class Lead(TimeStampedModel):
     @property
     def reservation_count(self) -> int:
         return self.reservations.count()
+
+    @property
+    def quote_expired(self) -> bool:
+        return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
 
     def __str__(self) -> str:
         return f"{self.quote_no} · {self.contact.name}"

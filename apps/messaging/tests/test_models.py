@@ -59,3 +59,67 @@ def test_review_defaults():
 def test_review_with_rating():
     review = ReviewFactory(rating=5, delivery_status=Review.DeliveryStatus.DELIVERED)
     assert review.has_rating is True
+
+
+# --- New Touch-point taxonomy (TP1-8) ------------------------------------------
+def test_touchpoint_new_taxonomy():
+    """TP1-8 kinds are available in TouchPoint.Kind."""
+    assert TouchPoint.Kind.TP1_WELCOME == "tp1_welcome"
+    assert TouchPoint.Kind.TP2_LEAD_FOLLOWUP == "tp2_lead_followup"
+    assert TouchPoint.Kind.TP3_QUOTE_SENT_SMS == "tp3_quote_sent_sms"
+    assert TouchPoint.Kind.TP4_VIEWED_SMS == "tp4_viewed_sms"
+    assert TouchPoint.Kind.TP5_VIEWED_EMAIL == "tp5_viewed_email"
+    assert TouchPoint.Kind.TP6_QUOTE_FOLLOWUP == "tp6_quote_followup"
+    assert TouchPoint.Kind.TP7_EXPIRING == "tp7_expiring"
+    assert TouchPoint.Kind.TP8_EXPIRED == "tp8_expired"
+    assert TouchPoint.Kind.REVIEW_REQUEST == "review_request"
+
+
+def test_touchpoint_status_has_cancelled_and_failed():
+    """TouchPoint.Status now has CANCELLED and FAILED."""
+    assert TouchPoint.Status.CANCELLED == "cancelled"
+    assert TouchPoint.Status.FAILED == "failed"
+
+
+def test_touchpoint_error_field():
+    """TouchPoint has an error field for failure details."""
+    tp = TouchPointFactory(error="Email service timeout")
+    assert tp.error == "Email service timeout"
+
+
+def test_message_read_at_defaults_null():
+    """Message.read_at defaults to None (unread)."""
+    msg = Message.objects.create(lead=LeadFactory(), direction=Message.Direction.IN)
+    assert msg.read_at is None
+
+
+# --- Lead quote lifecycle fields -----------------------------------------------
+def test_lead_quote_lifecycle_fields():
+    """Lead has quote_sent_at, quote_viewed_at, and quote_expires_at."""
+    now = timezone.now()
+    lead = LeadFactory(
+        quote_sent_at=now,
+        quote_viewed_at=now + timedelta(hours=1),
+        quote_expires_at=now + timedelta(days=14),
+    )
+    assert lead.quote_sent_at == now
+    assert lead.quote_viewed_at == now + timedelta(hours=1)
+    assert lead.quote_expires_at == now + timedelta(days=14)
+
+
+def test_lead_quote_expired_property_true_when_past():
+    """Lead.quote_expired is True if quote_expires_at is in the past."""
+    lead = LeadFactory(quote_expires_at=timezone.now() - timedelta(hours=1))
+    assert lead.quote_expired is True
+
+
+def test_lead_quote_expired_property_false_when_future():
+    """Lead.quote_expired is False if quote_expires_at is in the future."""
+    lead = LeadFactory(quote_expires_at=timezone.now() + timedelta(days=1))
+    assert lead.quote_expired is False
+
+
+def test_lead_quote_expired_property_false_when_null():
+    """Lead.quote_expired is False if quote_expires_at is not set."""
+    lead = LeadFactory(quote_expires_at=None)
+    assert lead.quote_expired is False

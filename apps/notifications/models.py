@@ -19,6 +19,7 @@ class Notification(TimeStampedModel):
         SYNC_FAILED = "sync_failed", "Sync failed"
         NEW_LEAD = "new_lead", "New lead"
         LA_CHANGED = "la_changed", "Update LimoAnywhere"
+        QUOTE_EXPIRED = "quote_expired", "Quote expired"
 
     lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
     user = models.ForeignKey(
