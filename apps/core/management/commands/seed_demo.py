@@ -10,10 +10,12 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, Vehicle
+from apps.messaging.models import Message
 from apps.notifications.models import Notification
 from apps.payments.models import Charge, PaymentPlan
 from apps.reservations.models import Reservation, Stop
@@ -32,7 +34,16 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, **opts):
         if opts["fresh"]:
-            for model in (Notification, Charge, PaymentPlan, Stop, Reservation, Lead, Contact):
+            for model in (
+                Notification,
+                Message,
+                Charge,
+                PaymentPlan,
+                Stop,
+                Reservation,
+                Lead,
+                Contact,
+            ):
                 model.objects.all().delete()
             self.stdout.write("Wiped existing demo data.")
         elif Lead.objects.exists():
@@ -111,6 +122,20 @@ class Command(BaseCommand):
             )
             return p
 
+        def message(lead, direction, body, channel=Message.Channel.SMS, unread=False):
+            """A Podium conversation message. `unread` only applies to inbound messages."""
+            return Message.objects.create(
+                lead=lead,
+                direction=direction,
+                channel=channel,
+                body=body,
+                sent_at=timezone.now() if direction == Message.Direction.OUT else None,
+                read_at=None if (unread and direction == Message.Direction.IN) else timezone.now(),
+                delivery_status=Message.DeliveryStatus.SENT
+                if direction == Message.Direction.OUT
+                else Message.DeliveryStatus.RECEIVED,
+            )
+
         TS = Reservation.TripStatus
 
         # 1) NEW — website — single airport transfer, no quote sent yet.
@@ -132,6 +157,12 @@ class Command(BaseCommand):
             2,
             165,
             ["Boston Logan Intl (BOS), Terminal E", "The Newbury, 15 Arlington St, Boston"],
+        )
+        message(
+            lead1,
+            Message.Direction.IN,
+            "Hi, I filled out the form for an airport pickup on the 25th — can you send a quote?",
+            unread=True,
         )
 
         # 2) QUOTED — wedding pro — hourly as-directed + a transfer, deposit requested.
@@ -167,6 +198,22 @@ class Command(BaseCommand):
             ["Roger Williams Park Casino", "Providence Biltmore"],
         )
         plan(lead2, PaymentPlan.DepositStatus.REQUESTED, PaymentPlan.BalanceStatus.NA)
+        message(
+            lead2,
+            Message.Direction.OUT,
+            "Hi Priya! Here's your quote for the wedding shuttle + getaway car.",
+        )
+        message(
+            lead2,
+            Message.Direction.IN,
+            "This looks great — sending the deposit link to Daniel now.",
+        )
+        message(
+            lead2,
+            Message.Direction.IN,
+            "One more question — can the SUV wait outside the reception until 11pm?",
+            unread=True,
+        )
 
         # 3) BOOKED — phone — multi-stop wine tour, deposit paid, balance scheduled.
         lead3 = new_lead(
@@ -213,6 +260,13 @@ class Command(BaseCommand):
             status=Charge.Status.SUCCEEDED,
             idempotency_key="seed-plan3-deposit-1",
         )
+        message(
+            lead3,
+            Message.Direction.OUT,
+            "Thanks for booking again this year, Eleanor! Deposit received — you're all set.",
+            channel=Message.Channel.EMAIL,
+        )
+        message(lead3, Message.Direction.IN, "Wonderful, thank you! Same pickup spot as last year.")
 
         # 4) BOOKED — api — corporate roadshow, deposit paid, BALANCE FAILED (alert).
         lead4 = new_lead(

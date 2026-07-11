@@ -321,6 +321,47 @@ def test_inbox_send_requires_login(client):
 # --- chrome context ---------------------------------------------------------------------
 
 
+# --- rendering --------------------------------------------------------------------------
+
+
+def test_inbox_page_renders_conversation_and_thread(client, agent):
+    lead = LeadFactory(contact=ContactFactory(name="Wedding Wanda"))
+    MessageFactory(lead=lead, direction=Message.Direction.IN, body="Hi there, are you free?")
+    MessageFactory(lead=lead, direction=Message.Direction.OUT, body="Yes! Sending a quote.")
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"lead": lead.pk})
+
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    assert "Inbox" in html
+    assert "Wedding Wanda" in html
+    assert "Hi there, are you free?" in html
+    assert "Yes! Sending a quote." in html
+    assert "<form" in html
+    assert f'action="{reverse("inbox_send", args=[lead.pk])}"' in html
+
+
+def test_inbox_page_shows_unread_badge(client, agent):
+    lead = LeadFactory(contact=ContactFactory(name="Unread Umberto"))
+    MessageFactory(lead=lead, direction=Message.Direction.IN, read_at=None)
+    MessageFactory(lead=lead, direction=Message.Direction.IN, read_at=None)
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"))
+
+    html = resp.content.decode()
+    assert "Unread Umberto" in html
+    assert ">2<" in html
+
+
+def test_inbox_nav_link_present_on_authed_page(client, agent):
+    client.force_login(agent)
+    resp = client.get(reverse("dashboard"))
+    html = resp.content.decode()
+    assert reverse("inbox") in html
+
+
 def test_chrome_context_includes_inbox_unread_count(client, agent):
     lead = LeadFactory()
     MessageFactory(lead=lead, direction=Message.Direction.IN, read_at=None)

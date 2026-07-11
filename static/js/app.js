@@ -295,6 +295,61 @@ function quoteWorkspace(opts = {}) {
 }
 window.quoteWorkspace = quoteWorkspace;
 
+/* -------------------------------------------------- inbox */
+function inbox(opts = {}) {
+  return {
+    convoId: opts.selectedId || null,
+    channel: "sms",
+    body: "",
+    sending: false,
+
+    send() {
+      const text = this.body.trim();
+      if (!text || this.sending) return;
+      const form = document.getElementById("composer-form");
+      const url = form.action;
+      this.sending = true;
+
+      // optimistic append
+      const thread = document.getElementById("thread-messages");
+      let bubble = null;
+      if (thread) {
+        bubble = document.createElement("div");
+        bubble.className = "flex flex-col items-end";
+        bubble.innerHTML =
+          '<div class="max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug bg-charcoal text-slate-100 rounded-br-sm">' +
+          escapeHtml(text) + "</div>";
+        thread.appendChild(bubble);
+        thread.scrollTop = thread.scrollHeight;
+      }
+
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: JSON.stringify({ body: text, channel: this.channel }),
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!data.ok) {
+            if (bubble) bubble.remove();
+            Alpine.store("toast").push({
+              type: "danger", title: "Couldn't send message",
+              message: data.error || "Please try again.",
+            });
+            return;
+          }
+          this.body = "";
+        })
+        .catch(() => {
+          if (bubble) bubble.remove();
+          Alpine.store("toast").push({ type: "danger", title: "Network error — could not send" });
+        })
+        .finally(() => { this.sending = false; });
+    },
+  };
+}
+window.inbox = inbox;
+
 /* -------------------------------------------------- Tom Select auto-init */
 function initTomSelects(root = document) {
   if (typeof TomSelect === "undefined") return;
