@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
-from apps.integrations.podium import PodiumAPIError
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.factories import LeadFactory
 from apps.messaging.factories import MessageFactory
 from apps.messaging.models import Message
@@ -304,6 +304,27 @@ def test_inbox_send_podium_error_returns_502_with_message(client, agent):
     payload = resp.json()
     assert payload["ok"] is False
     assert "boom" in payload["error"]
+    assert not Message.objects.filter(lead=lead).exists()
+
+
+def test_inbox_send_podium_not_connected_returns_502_with_message(client, agent):
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch(
+        "apps.messaging.views.podium.send_message",
+        side_effect=PodiumNotConnected("no credential"),
+    ):
+        resp = client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "Hi", "channel": "sms"}),
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 502
+    payload = resp.json()
+    assert payload["ok"] is False
+    assert "no credential" in payload["error"]
     assert not Message.objects.filter(lead=lead).exists()
 
 

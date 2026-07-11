@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.integrations import podium
-from apps.integrations.podium import PodiumAPIError
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
 from .models import Message
@@ -128,7 +128,7 @@ def inbox_send(request, pk: int) -> JsonResponse:
         response = podium.send_message(
             identifier=identifier, body=body, channel_type=CHANNEL_TYPE[channel]
         )
-    except PodiumAPIError as exc:
+    except (PodiumAPIError, PodiumNotConnected) as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
 
     uid = ""

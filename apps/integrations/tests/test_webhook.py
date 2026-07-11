@@ -64,6 +64,70 @@ def test_failed_marks_outbound_message_failed():
     assert msg.failure_reason == "landline"
 
 
+def _sent(uid="s1", phone="+15551230000", body="On our way!", contact_uid="c1", conv_uid="conv1"):
+    return {
+        "eventType": "message.sent",
+        "data": {
+            "uid": uid,
+            "body": body,
+            "contact": {"uid": contact_uid, "phoneNumber": phone},
+            "conversation": {"uid": conv_uid, "channel": {"type": "phone", "identifier": phone}},
+        },
+    }
+
+
+def test_sent_updates_existing_message_by_uid_no_duplicate():
+    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    lead = LeadFactory(contact=contact)
+    msg = MessageFactory(
+        lead=lead,
+        direction=Message.Direction.OUT,
+        podium_message_uid="s1",
+        delivery_status="",
+        sent_at=None,
+    )
+
+    event = process_podium_webhook(_sent(uid="s1"))
+
+    msg.refresh_from_db()
+    assert msg.delivery_status == Message.DeliveryStatus.SENT
+    assert msg.sent_at is not None
+    assert Message.objects.filter(podium_message_uid="s1").count() == 1
+    assert event.lead == lead
+
+
+def test_sent_unknown_uid_creates_outbound_message_on_matched_lead():
+    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    lead = LeadFactory(contact=contact)
+
+    event = process_podium_webhook(_sent(uid="new-sent-uid"))
+
+    msg = Message.objects.get(podium_message_uid="new-sent-uid")
+    assert msg.direction == Message.Direction.OUT
+    assert msg.lead == lead
+    assert msg.delivery_status == Message.DeliveryStatus.SENT
+    assert event.lead == lead
+
+
+def test_sent_replay_of_same_event_stays_one_row():
+    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    LeadFactory(contact=contact)
+
+    process_podium_webhook(_sent(uid="dup-sent"))
+    process_podium_webhook(_sent(uid="dup-sent"))
+
+    assert Message.objects.filter(podium_message_uid="dup-sent").count() == 1
+
+
+def test_sent_with_no_matching_lead_is_skipped_no_orphan_contact():
+    before = Contact.objects.count()
+    event = process_podium_webhook(_sent(uid="orphan", phone="+15550000000", contact_uid="unknown"))
+
+    assert not Message.objects.filter(podium_message_uid="orphan").exists()
+    assert Contact.objects.count() == before
+    assert event.lead is None
+
+
 def test_webhook_view_accepts_post(client, settings):
     settings.PODIUM_WEBHOOK_SECRET = ""
     resp = client.post(

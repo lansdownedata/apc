@@ -41,7 +41,7 @@ def test_valid_call_runs_job_and_returns_count(client, settings):
     assert resp.json() == {"job": "charge-due-balances", "processed": 5}
 
 
-def test_registry_contains_both_jobs():
+def test_registry_contains_all_jobs():
     assert set(cron.JOBS) == {
         "charge-due-balances",
         "recognize-due-revenue",

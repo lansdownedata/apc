@@ -16,6 +16,7 @@
           <i class="ti ti-search text-[15px] text-muted"></i>
           <input type="text" name="q" value="{{ q }}" placeholder="Search conversations"
                  class="flex-1 text-[12.5px] outline-none bg-transparent placeholder:text-muted/70">
+          {% if selected %}<input type="hidden" name="lead" value="{{ selected.pk }}">{% endif %}
         </form>
       </div>
       <div class="flex-1 overflow-y-auto divide-y divide-line/70">
