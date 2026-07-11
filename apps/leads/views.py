@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stripe
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
@@ -10,7 +11,9 @@ from django.core.validators import validate_email
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_POST
+from django.urls import reverse
+from django.utils import timezone
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.models import User
 from apps.accounts.permissions import payment_access_required
@@ -21,7 +24,9 @@ from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
 from apps.messaging import touchpoints
 from apps.messaging.models import TouchPoint
+from apps.notifications.models import Notification
 from apps.payments import ledger
+from apps.payments import services as payment_services
 
 from . import services
 from .forms import NewLeadForm
@@ -261,6 +266,86 @@ def quote_deposit_cancel(request, token: str) -> HttpResponse:
     except (BadSignature, Lead.DoesNotExist):
         raise Http404 from None
     return render(request, "public/deposit_cancel.html", {"quote_no": lead.quote_no})
+
+
+def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
+    plan = getattr(lead, "payment", None)
+    is_expired = lead.status == Lead.Status.QUOTED and lead.quote_expired
+    is_active = lead.status == Lead.Status.QUOTED and not lead.quote_expired
+    return {
+        "lead": lead,
+        "token": token,
+        "quote_no": lead.quote_no,
+        "reservations": lead.reservations.prefetch_related("stops", "vehicle").all(),
+        "plan": plan,
+        "deposit_pct": plan.deposit_pct if plan else None,
+        "deposit_amount": plan.deposit_amount if plan else None,
+        "quote_total": plan.quote_total if plan else lead.quote_total,
+        "is_active": is_active,
+        "is_expired": is_expired,
+        "is_booked": lead.status == Lead.Status.BOOKED,
+        "error": error,
+    }
+
+
+@require_GET
+def quote_page(request, token: str) -> HttpResponse:
+    """The customer-facing quote page a `send_quote` link points to. Forged/stale
+    tokens 404; NEW/LOST leads (never quoted / dead) 404 too — only QUOTED and
+    BOOKED are shown."""
+    try:
+        lead = services.read_deposit_token(token)
+    except (BadSignature, Lead.DoesNotExist):
+        raise Http404 from None
+    if lead.status not in (Lead.Status.QUOTED, Lead.Status.BOOKED):
+        raise Http404
+
+    if lead.status == Lead.Status.QUOTED:
+        if lead.quote_expired:
+            already_notified = Notification.objects.filter(
+                lead=lead, kind=Notification.Kind.QUOTE_EXPIRED
+            ).exists()
+            if not already_notified:
+                Notification.notify(
+                    lead,
+                    Notification.Kind.QUOTE_EXPIRED,
+                    title=f"Quote {lead.quote_no} expired",
+                    detail="The customer opened an expired quote link.",
+                )
+        elif lead.quote_viewed_at is None:
+            lead.quote_viewed_at = timezone.now()
+            lead.save(update_fields=["quote_viewed_at", "updated_at"])
+            touchpoints.schedule_quote_viewed(lead)
+
+    return render(request, "public/quote.html", _quote_page_context(lead, token))
+
+
+@require_POST
+def quote_book(request, token: str) -> HttpResponse:
+    """Book-now: kick off the Stripe deposit Checkout for an active QUOTED lead."""
+    try:
+        lead = services.read_deposit_token(token)
+    except (BadSignature, Lead.DoesNotExist):
+        raise Http404 from None
+
+    if lead.status != Lead.Status.QUOTED or lead.quote_expired:
+        return redirect("quote_page", token=token)
+
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        return redirect("quote_page", token=token)
+
+    success_url = request.build_absolute_uri(reverse("quote_deposit_success", args=[token]))
+    cancel_url = request.build_absolute_uri(reverse("quote_deposit_cancel", args=[token]))
+    try:
+        checkout_url = payment_services.create_deposit_checkout(
+            plan, success_url=success_url, cancel_url=cancel_url
+        )
+    except stripe.error.StripeError as exc:
+        message = getattr(exc, "user_message", None) or str(exc)
+        return render(request, "public/quote.html", _quote_page_context(lead, token, error=message))
+
+    return redirect(checkout_url)
 
 
 @login_required
