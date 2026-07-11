@@ -251,6 +251,23 @@ def test_inbox_send_missing_channel_returns_400(client, agent):
     assert not Message.objects.filter(lead=lead).exists()
 
 
+def test_inbox_send_null_channel_returns_400(client, agent):
+    """An explicit null channel must 400, not crash on None.strip()."""
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch("apps.messaging.views.podium.send_message") as send:
+        resp = client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "Hi", "channel": None}),
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    send.assert_not_called()
+
+
 def test_inbox_send_invalid_channel_returns_400(client, agent):
     """Invalid channel value should return 400."""
     lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
