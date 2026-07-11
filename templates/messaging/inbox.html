@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
+  <h1 class="font-display text-[22px] font-semibold text-ink mb-4">Inbox</h1>
+
+  <form method="get" class="mb-4">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search conversations…"
+           class="field w-full max-w-sm">
+  </form>
+
+  <div class="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-4">
+    <div class="card divide-y divide-line">
+      {% for conversation in conversations %}
+      <a href="?lead={{ conversation.pk }}{% if q %}&q={{ q }}{% endif %}"
+         class="block px-3 py-3 hover:bg-surface2 {% if selected.pk == conversation.pk %}bg-surface2{% endif %}">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[13px] font-medium text-ink truncate">{{ conversation.contact.name }}</span>
+          {% if conversation.unread_count %}
+          <span class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ conversation.unread_count }}</span>
+          {% endif %}
+        </div>
+      </a>
+      {% empty %}
+      <div class="px-3 py-6 text-[13px] text-muted">No conversations yet.</div>
+      {% endfor %}
+    </div>
+
+    <div class="card p-4">
+      {% if selected %}
+      <div class="mb-3 font-display text-[15px] font-semibold text-ink">{{ selected.contact.name }}</div>
+      <div class="flex flex-col gap-2">
+        {% for message in thread_messages %}
+        <div class="text-[13px] {% if message.is_inbound %}text-ink{% else %}text-muted text-right{% endif %}">
+          {{ message.body }}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-[13px] text-muted">Select a conversation to view the thread.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

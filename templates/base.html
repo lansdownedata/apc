@@ -104,6 +104,14 @@
         <i class="ti ti-receipt-2 text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Orders</span>
       </a>
+      <a href="{% url 'inbox' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'inbox' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-inbox text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Inbox</span>
+        {% if inbox_unread %}
+        <span x-show="navOpen" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ inbox_unread }}</span>
+        {% endif %}
+      </a>
       {% if user.is_owner_admin %}
       <a href="{% url 'user_list' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'users' %}nav-active{% else %}text-slate-400{% endif %}">
