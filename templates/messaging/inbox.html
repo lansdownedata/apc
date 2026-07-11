@@ -1,43 +1,117 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block content %}
-<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
-  <h1 class="font-display text-[22px] font-semibold text-ink mb-4">Inbox</h1>
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6 h-[calc(100vh-3rem)] flex flex-col"
+     x-data="inbox({ selectedId: {{ selected.pk|default:'null' }} })">
+  <h1 class="font-display text-[22px] font-semibold text-ink mb-4 shrink-0">Inbox</h1>
 
-  <form method="get" class="mb-4">
-    <input type="text" name="q" value="{{ q }}" placeholder="Search conversations…"
-           class="field w-full max-w-sm">
-  </form>
+  <div class="card flex-1 min-h-0 overflow-hidden flex">
 
-  <div class="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-4">
-    <div class="card divide-y divide-line">
-      {% for conversation in conversations %}
-      <a href="?lead={{ conversation.pk }}{% if q %}&q={{ q }}{% endif %}"
-         class="block px-3 py-3 hover:bg-surface2 {% if selected.pk == conversation.pk %}bg-surface2{% endif %}">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[13px] font-medium text-ink truncate">{{ conversation.contact.name }}</span>
-          {% if conversation.unread_count %}
-          <span class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ conversation.unread_count }}</span>
-          {% endif %}
-        </div>
-      </a>
-      {% empty %}
-      <div class="px-3 py-6 text-[13px] text-muted">No conversations yet.</div>
-      {% endfor %}
-    </div>
-
-    <div class="card p-4">
-      {% if selected %}
-      <div class="mb-3 font-display text-[15px] font-semibold text-ink">{{ selected.contact.name }}</div>
-      <div class="flex flex-col gap-2">
-        {% for message in thread_messages %}
-        <div class="text-[13px] {% if message.is_inbound %}text-ink{% else %}text-muted text-right{% endif %}">
-          {{ message.body }}
-        </div>
+    <!-- list pane -->
+    <div class="w-full sm:w-[300px] shrink-0 border-r border-line flex flex-col"
+         :class="convoId ? 'hidden sm:flex' : 'flex'">
+      <div class="p-3 border-b border-line">
+        <form method="get" class="flex items-center gap-2 ring-1 ring-line rounded-lg px-3 py-2 focus-within:ring-gold transition">
+          <i class="ti ti-search text-[15px] text-muted"></i>
+          <input type="text" name="q" value="{{ q }}" placeholder="Search conversations"
+                 class="flex-1 text-[12.5px] outline-none bg-transparent placeholder:text-muted/70">
+        </form>
+      </div>
+      <div class="flex-1 overflow-y-auto divide-y divide-line/70">
+        {% for conversation in conversations %}
+        <a href="?lead={{ conversation.pk }}{% if q %}&q={{ q }}{% endif %}"
+           @click="convoId = {{ conversation.pk }}"
+           class="flex gap-3 px-4 py-3 cursor-pointer transition-colors {% if selected.pk == conversation.pk %}bg-goldl/60{% else %}hover:bg-surface2{% endif %}">
+          <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ conversation.contact.name|slice:":2" }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[13px] font-semibold text-ink truncate">{{ conversation.contact.name }}</span>
+              <span class="ml-auto text-[10px] text-muted shrink-0 num">{{ conversation.last_message_at|date:"M j" }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 mt-0.5">
+              {% include "components/status_badge.html" with status=conversation.status label=conversation.get_status_display %}
+              {% if conversation.unread_count %}
+              <span class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ conversation.unread_count }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </a>
+        {% empty %}
+        <div class="px-4 py-6 text-[13px] text-muted">No conversations yet.</div>
         {% endfor %}
       </div>
+    </div>
+
+    <!-- thread pane -->
+    <div class="flex-1 flex flex-col min-w-0" :class="convoId ? 'flex' : 'hidden sm:flex'">
+      {% if selected %}
+      <div class="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-line shrink-0">
+        <button @click="convoId = null" class="sm:hidden btn-ghost text-muted"><i class="ti ti-arrow-left text-[18px]"></i></button>
+        <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ selected.contact.name|slice:":2" }}</span>
+        <div class="min-w-0">
+          <div class="text-[14px] font-semibold text-ink leading-tight truncate">{{ selected.contact.name }}</div>
+          <div class="text-[11px] text-muted num truncate">{{ selected.contact.phone }}{% if selected.contact.company %} · {{ selected.contact.company }}{% endif %}</div>
+        </div>
+        <a href="{% url 'lead_detail' selected.pk %}" class="btn-ghost ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-goldd hover:bg-goldl px-2.5 py-1.5 rounded-lg ring-1 ring-line shrink-0">
+          <i class="ti ti-file-text text-[14px]"></i> Open quote
+        </a>
+      </div>
+
+      <div id="thread-messages" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-2.5 bg-surface2/40">
+        {% for message in thread_messages %}
+        <div class="flex flex-col {% if message.direction == 'out' %}items-end{% else %}items-start{% endif %}">
+          <div class="max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.direction == 'out' %}bg-charcoal text-slate-100 rounded-br-sm{% else %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% endif %}">{{ message.body }}</div>
+          <span class="text-[10px] text-muted mt-1 px-1 num">{{ message.created_at|date:"M j, g:i A" }}</span>
+        </div>
+        {% empty %}
+        <div class="text-[13px] text-muted text-center">No messages yet.</div>
+        {% endfor %}
+      </div>
+
+      <!-- LA sync strip -->
+      <div class="mx-4 sm:mx-6 mb-3 shrink-0">
+        {% if la_confirmation %}
+        <div class="border border-emerald-200 bg-emerald-50 rounded-xl px-3.5 py-2.5">
+          <div class="flex items-center gap-2 text-[12px] font-semibold text-emerald-800">
+            <i class="ti ti-circle-check text-[16px]"></i> Synced to LimoAnywhere · #{{ la_confirmation }}
+          </div>
+        </div>
+        {% else %}
+        <div class="border border-line bg-surface2 rounded-xl px-3.5 py-2.5 flex items-center gap-2 flex-wrap">
+          <i class="ti ti-file-invoice text-[16px] text-goldd"></i>
+          <span class="text-[12px] text-ink"><span class="font-semibold font-display num">${{ selected.quote_total|floatformat:2|intcomma }}</span> quote · {{ selected.reservations.count }} reservation(s)</span>
+          {% include "components/status_badge.html" with status=selected.status label=selected.get_status_display %}
+          <a href="{% url 'lead_detail' selected.pk %}" class="ml-auto text-[11.5px] font-semibold text-goldd hover:underline">Build / send quote →</a>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- composer -->
+      <div class="px-4 sm:px-6 pb-4 shrink-0">
+        <form id="composer-form" action="{% url 'inbox_send' selected.pk %}" method="post"
+              @submit.prevent="send()" class="flex flex-col gap-2">
+          {% csrf_token %}
+          <div class="flex items-center gap-1.5">
+            <button type="button" @click="channel = 'sms'"
+                    class="text-[11px] font-semibold px-2 py-1 rounded-full ring-1 ring-inset transition-colors"
+                    :class="channel === 'sms' ? 'bg-charcoal text-gold ring-charcoal' : 'text-muted ring-line hover:bg-surface2'">SMS</button>
+            <button type="button" @click="channel = 'email'"
+                    class="text-[11px] font-semibold px-2 py-1 rounded-full ring-1 ring-inset transition-colors"
+                    :class="channel === 'email' ? 'bg-charcoal text-gold ring-charcoal' : 'text-muted ring-line hover:bg-surface2'">Email</button>
+          </div>
+          <div class="flex items-center gap-2 ring-1 ring-line rounded-xl px-3 py-2 bg-surface focus-within:ring-gold transition">
+            <textarea x-model="body" name="body" rows="1" placeholder="Reply — sends via Podium"
+                      class="flex-1 text-[12.5px] outline-none bg-transparent placeholder:text-muted/70 resize-none"></textarea>
+            <button type="submit" :disabled="sending"
+                    class="btn-gold flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold shrink-0 disabled:opacity-60">
+              <i class="ti ti-send text-[14px]"></i> Send
+            </button>
+          </div>
+        </form>
+      </div>
       {% else %}
-      <div class="text-[13px] text-muted">Select a conversation to view the thread.</div>
+      <div class="flex-1 grid place-items-center text-[13px] text-muted">Select a conversation to view the thread.</div>
       {% endif %}
     </div>
   </div>

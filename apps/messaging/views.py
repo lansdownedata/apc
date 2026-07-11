@@ -60,6 +60,7 @@ def inbox(request):
 
     selected = None
     thread_messages: list[Message] = []
+    la_confirmation = ""
     lead_pk = request.GET.get("lead")
     if lead_pk:
         # Validate that lead_pk is numeric to avoid ValueError → 500.
@@ -74,6 +75,10 @@ def inbox(request):
             lead=selected, direction=Message.Direction.IN, read_at__isnull=True
         ).update(read_at=timezone.now())
         thread_messages = list(selected.messages.all())
+        for reservation in selected.reservations.all():
+            if reservation.la_confirmation:
+                la_confirmation = reservation.la_confirmation
+                break
 
     conversations = list(_conversations(q))
 
@@ -86,6 +91,7 @@ def inbox(request):
             "conversations": conversations,
             "selected": selected,
             "thread_messages": thread_messages,
+            "la_confirmation": la_confirmation,
             "q": q,
         },
     )
