@@ -1,0 +1,197 @@
+{# templates/public/quote.html #}
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quote {{ quote_no }} · All Pro Charter</title>
+<link rel="icon" href="{% static 'brand/favicon.svg' %}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{% static 'brand/apple-touch-icon.png' %}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
+<style>
+  :root{--gold:199 162 78;--text:23 25 29;--muted:107 114 124;--surface:255 255 255;--border:229 226 217}
+  body{margin:0;min-height:100vh;padding:40px 20px;
+       font-family:'Hanken Grotesk',system-ui,sans-serif;color:rgb(var(--text));
+       background:radial-gradient(900px 520px at 50% -8%,#20262f 0%,#14181f 58%,#0e1117 100%)}
+  .wrap{width:100%;max-width:640px;margin:0 auto}
+  .card{background:rgb(var(--surface));border:1px solid rgb(var(--border));
+        border-radius:20px;padding:36px;box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
+  .card + .card{margin-top:20px}
+  .logo{height:56px;display:block;margin:0 auto 18px}
+  h1{font-family:'Fraunces',Georgia,serif;font-size:24px;font-weight:600;margin:.2rem 0 .4rem;text-align:center}
+  h2{font-family:'Fraunces',Georgia,serif;font-size:16px;font-weight:600;margin:0 0 12px}
+  p{color:rgb(var(--muted));font-size:14px;line-height:1.6;margin:.2rem 0}
+  .sub{text-align:center;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:rgb(var(--muted));font-weight:500;padding:8px 6px;border-bottom:1px solid rgb(var(--border))}
+  td{padding:10px 6px;border-bottom:1px solid rgb(var(--border));vertical-align:top}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .totals{margin-top:16px;padding-top:16px;border-top:1px solid rgb(var(--border))}
+  .totals .row{display:flex;justify-content:space-between;font-size:14px;padding:4px 0}
+  .totals .row.deposit{font-weight:600;color:rgb(var(--text))}
+  .badge{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px;
+         background:rgb(var(--gold)/.14);color:rgb(var(--gold))}
+  .btn-gold{display:block;width:100%;text-align:center;background:rgb(var(--gold));color:#151515;
+            border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;
+            font-family:inherit;margin-top:20px}
+  .expiry{text-align:center;font-size:12px;color:rgb(var(--muted));margin-top:12px}
+  .alert{background:#fde8e8;border:1px solid #f3b4b4;color:#8a1f1f;border-radius:10px;
+         padding:12px 14px;font-size:13px;margin-bottom:16px}
+  .note{text-align:center;background:rgb(var(--gold)/.1);border:1px solid rgb(var(--gold)/.3);
+        border-radius:10px;padding:14px;font-size:14px;color:rgb(var(--text))}
+  details{margin-top:8px}
+  summary{cursor:pointer;font-family:'Fraunces',Georgia,serif;font-size:16px;font-weight:600;
+          padding:4px 0;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";float:right;color:rgb(var(--gold))}
+  details[open] summary::after{content:"–"}
+  .tc p, .tc h3{margin:.6rem 0}
+  .tc h3{font-size:13px;color:rgb(var(--text));font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+  .tc p{font-size:12.5px;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <img class="logo" src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter">
+      <h1>Quote {{ quote_no }}</h1>
+
+      {% if error %}
+        <div class="alert">{{ error }}</div>
+      {% endif %}
+
+      {% if is_booked %}
+        <div class="note">This quote is already booked — we're all set for your trip.</div>
+      {% elif is_expired %}
+        <div class="note">This quote has expired. Please contact us for an updated quote.</div>
+      {% endif %}
+
+      <table>
+        <thead>
+          <tr>
+            <th>Trip</th>
+            <th>Route</th>
+            <th>Vehicle</th>
+            <th>Pax</th>
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reservations %}
+          <tr>
+            <td>
+              {{ r.service|default:r.get_trip_type_display }}<br>
+              <span style="color:rgb(var(--muted))">
+                {% if r.pickup_date %}{{ r.pickup_date }}{% if r.pickup_time %} · {{ r.pickup_time }}{% endif %}{% endif %}
+              </span>
+            </td>
+            <td>{% for s in r.stops.all %}{{ s.address }}{% if not forloop.last %} → {% endif %}{% endfor %}</td>
+            <td>{{ r.vehicle.name|default:"—" }}</td>
+            <td>{{ r.passengers }}</td>
+            <td class="num">${{ r.line_total|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="totals">
+        <div class="row"><span>Quote total</span><span class="num">${{ quote_total|floatformat:2|intcomma }}</span></div>
+        {% if deposit_pct %}
+        <div class="row deposit"><span>{{ deposit_pct }}% deposit</span><span class="num">${{ deposit_amount|floatformat:2|intcomma }}</span></div>
+        {% endif %}
+      </div>
+
+      {% if is_active %}
+        <form method="post" action="{% url 'quote_book' token %}">
+          {% csrf_token %}
+          <button type="submit" class="btn-gold">Book Now</button>
+        </form>
+        {% if lead.quote_expires_at %}
+        <div class="expiry">This quote is valid until {{ lead.quote_expires_at|date:"M j, Y g:i A" }}.</div>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <div class="card tc">
+      <details>
+        <summary>Terms &amp; Conditions</summary>
+        <p>This document contains the terms and conditions between All Pro Charter, Inc. (the
+        service provider) and client. This document, when signed by the client, will constitute
+        a legally binding contract. This contract shall be deemed to be fully in force if the
+        customer has made any payments to secure the dates or to reserve the equipment. You are
+        therefore requested to carefully read the entire contract document before you sign it.
+        If you find any errors or omissions, you should return the contract unsigned and make
+        annotation of all errors or omissions on this document. If the service provider agrees
+        that the original document is in error, a new document will be prepared and sent to the
+        client.</p>
+
+        <h3>Itinerary</h3>
+        <p>Driver will be furnished a copy of the work order and itinerary, and he/she will be
+        instructed to strictly follow it. The driver has no authority to make changes to the
+        trip schedule without prior approval from service provider and contracted client. If
+        agreed upon, client shall be responsible for all additional hourly charges plus any
+        additional fees that may be incurred.</p>
+        <p>All Itineraries are subject to review and approval by service provider prior to
+        departure and must comply with local, state, and federal law. The Department of
+        Transportation prohibits drivers to be on duty for more than 15 hours per day, 10 of
+        which are driving hours. The driver must be given 8 consecutive hours off duty before
+        returning to "on duty".</p>
+
+        <h3>Service</h3>
+        <p>It is understood and agreed that the performance of the service detailed in this work
+        order is subject to tariff regulations and is contingent upon the service provider's
+        ability to furnish the equipment and perform the service. The service provider reserves
+        the right to lease equipment from other service providers in order to fulfill this
+        charter agreement.</p>
+
+        <h3>Additional Charges</h3>
+        <p>Client is responsible for all agreed upon fees, including but not limited to tolls,
+        parking, park entrance fees, driver lodging and/or attractions. Groups are to provide
+        each driver with a single, nonsmoking room (when applicable).</p>
+
+        <h3>Payments</h3>
+        <p>50% deposit is required upon booking to secure the reservation. Remaining balance due
+        30 days prior to the service. If reservation is made within 30 days of the reservation
+        full payment is due upon booking.</p>
+
+        <h3>Cancellation Policy</h3>
+        <p>Sedans/SUVs must be cancelled 72 hours prior to service date.</p>
+        <p>Luxury Vans must be cancelled 14 days prior to service date.</p>
+        <p>Buses, Stretch Limos, and Speciality Vehicles must be cancelled 30 days prior to the
+        service.</p>
+
+        <h3>Liability</h3>
+        <p>The service provider does not guarantee to arrive or depart from any point at a
+        specific time but will endeavor to maintain the schedule submitted by its agent,
+        employee or the customer. Service provider guarantees that they will do everything
+        within reason to ensure that passengers are transported per the customer's itinerary.
+        Additionally, the service provider shall not be responsible for any damages that result
+        from the cancellation or delay.</p>
+
+        <h3>Repairs or Damage</h3>
+        <p>It is understood and agreed upon that the customer as well as passengers are liable
+        for all beyond normal repairs or cleaning to the charged vehicle caused by the
+        chartering party's passengers. It is also understood that the chartering party is
+        liable for any damages caused by the chartering party's passengers, to the equipment,
+        employees or visited location during the duration of the charter or as a result of the
+        charter.</p>
+
+        <h3>Motor Coach Equipment and Accessories</h3>
+        <p>Accessories such as video equipment, restrooms and stereos are for the use of the
+        passengers and while the service provider will endeavor to maintain this equipment, the
+        service provider will not guarantee its availability or operation at any point during
+        the charter. Service provider reserves the right to refuse to transport a person or
+        persons under the influence or whose conduct is objectionable to other passengers or
+        the safe operation of the coach. Smoking is prohibited while on the coach. These
+        conditions are designed to achieve maximum safety and comfort for customer and
+        operator. We appreciate your business and look forward to providing you with excellent
+        service.</p>
+      </details>
+    </div>
+  </div>
+</body>
+</html>

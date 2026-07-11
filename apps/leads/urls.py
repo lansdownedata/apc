@@ -22,4 +22,7 @@ urlpatterns = [
         views.quote_deposit_cancel,
         name="quote_deposit_cancel",
     ),
+    # public (no login) — the customer-facing quote page + book-now action
+    path("quote/<str:token>/", views.quote_page, name="quote_page"),
+    path("quote/<str:token>/book/", views.quote_book, name="quote_book"),
 ]
