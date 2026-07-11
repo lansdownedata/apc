@@ -6,9 +6,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.integrations import podium
+from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 
-from .models import TouchPoint
+from .models import Review, TouchPoint
 from .touchpoint_templates import TEMPLATES, build_context, render
 
 logger = logging.getLogger(__name__)
@@ -135,20 +136,60 @@ def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
     return False
 
 
+def _send_review_invite(tp: TouchPoint) -> bool:
+    """Create the Podium review invitation, log a Review row, and SMS the link."""
+    lead = tp.lead
+    contact = lead.contact
+    phone = (contact.phone or "").strip()
+    if not phone:
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="no phone for review invite")
+        return False
+
+    first, last = _split_name(contact.name)
+    try:
+        invite = podium.create_review_invitation(phone=phone, first_name=first, last_name=last)
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        _mark(tp, status=TouchPoint.Status.FAILED, error=str(exc))
+        return False
+
+    link = invite.get("url") or invite.get("link") or ""
+    uid = invite.get("uid", "")
+    Review.objects.create(
+        lead=lead,
+        contact=contact,
+        podium_review_invite_uid=uid,
+        delivery_status=Review.DeliveryStatus.SENT,
+        requested_at=timezone.now(),
+    )
+
+    template = TEMPLATES[tp.kind]
+    ctx = build_context(lead)
+    ctx["review_link"] = link
+    body = render(template.sms_body, ctx)
+    try:
+        resp = podium.send_message(identifier=phone, channel_type="sms", body=body)
+        tp.status = TouchPoint.Status.SENT
+        tp.sent_at = timezone.now()
+        tp.podium_message_uid = resp.get("uid") or resp.get("data", {}).get("uid", "")
+        tp.error = ""
+        tp.save(update_fields=["status", "sent_at", "podium_message_uid", "error", "updated_at"])
+        return True
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        _mark(tp, status=TouchPoint.Status.FAILED, error=str(exc))
+        return False
+
+
 def _process(tp: TouchPoint) -> bool:
     """Evaluate skip conditions at send time and send. Returns True iff SENT."""
     lead = tp.lead
     kind = tp.kind
 
-    if kind == TouchPoint.Kind.REVIEW_REQUEST:
-        # Task 8 wires the real Podium review-invitation send; keep the two tasks
-        # independent by skipping here regardless of lead status.
-        _mark(tp, status=TouchPoint.Status.SKIPPED, error="review sender not wired")
-        return False
-
     if lead.status == lead.Status.LOST:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead LOST")
         return False
+
+    if kind == TouchPoint.Kind.REVIEW_REQUEST:
+        return _send_review_invite(tp)
 
     if lead.status == lead.Status.BOOKED:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead BOOKED")

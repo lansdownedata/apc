@@ -10,13 +10,24 @@ from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from apps.messaging import touchpoints
 from apps.notifications.models import Notification
-from apps.reservations.models import Reservation, TripStatusEvent
+from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
 
 from . import la_sync, services, webhooks
 from .models import LACustomer, LAEvent
 
 STATE_SESSION_KEY = "podium_oauth_state"
+
+# Cancelled-family statuses, per apps/reservations/models.py TRIP_PHASE_BY_STATUS. A trip
+# in one of these will never be "done" but is finished from a review-invite standpoint.
+_CANCELLED_STATUSES = (
+    Reservation.TripStatus.CANCELLED,
+    Reservation.TripStatus.CANCELLED_BY_AFFILIATE,
+    Reservation.TripStatus.LATE_CANCEL,
+    Reservation.TripStatus.COVID_CANCELLATION,
+)
+_TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + _CANCELLED_STATUSES
 
 
 def _podium_signature_ok(request) -> bool:
@@ -119,6 +130,10 @@ def la_webhook(request, token: str):
             status=new_status,
             source=TripStatusEvent.Source.LIMOANYWHERE,
         )
+        if new_status in EARNED_TERMINAL_STATUSES:
+            lead = reservation.lead
+            if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
+                touchpoints.schedule_review_request(lead)
     if event_name in {"reservation.cancelled", "reservation.updated"}:
         Notification.notify(
             reservation.lead,

@@ -77,6 +77,30 @@ def send_message(
     )
 
 
+def create_review_invitation(
+    *, phone: str, first_name: str, last_name: str, location_uid: str | None = None
+) -> dict:
+    """Send a Podium review-invitation SMS to a customer.
+
+    VERIFY-LIVE: the `/review_invitations` path and request/response shape below are a
+    documented best-guess (Podium's `review_invitecreate` reference page isn't
+    machine-readable) — probe this against the connected test account before relying on
+    it in prod and correct path/body/response keys if the guess is off.
+    """
+    return _request(
+        "POST",
+        "/review_invitations",
+        json={
+            "locationUid": location_uid or settings.PODIUM_LOCATION_UID,
+            "contact": {
+                "phoneNumber": phone,
+                "firstName": first_name,
+                "lastName": last_name,
+            },
+        },
+    )
+
+
 def create_webhook(
     *,
     url: str,
