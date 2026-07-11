@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import secrets
 
@@ -15,6 +17,24 @@ from . import la_sync, services, webhooks
 from .models import LACustomer, LAEvent
 
 STATE_SESSION_KEY = "podium_oauth_state"
+
+
+def _podium_signature_ok(request) -> bool:
+    """HMAC-SHA256 over '{podium-timestamp}.{raw_body}' with PODIUM_WEBHOOK_SECRET.
+
+    Blank secret => accept (dev); set secret => fail closed.
+    """
+    secret = settings.PODIUM_WEBHOOK_SECRET
+    if not secret:
+        return True
+    timestamp = request.headers.get("Podium-Timestamp", "")
+    signature = request.headers.get("Podium-Signature", "")
+    if not timestamp or not signature:
+        return False
+    expected = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + request.body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 def podium_authorize(request):
@@ -46,10 +66,10 @@ def podium_callback(request):
 @csrf_exempt
 def podium_webhook(request):
     """Receive Podium message webhooks (message.received / sent / failed)."""
-    # TODO: verify the Podium signature against PODIUM_WEBHOOK_SECRET once the
-    # signing scheme is confirmed from the Developer Portal.
     if request.method != "POST":
         return HttpResponseBadRequest("POST only.")
+    if not _podium_signature_ok(request):
+        return HttpResponse(status=403)
     try:
         payload = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
