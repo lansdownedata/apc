@@ -20,6 +20,8 @@ from apps.core.choices import Channel
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
+from apps.messaging import touchpoints
+from apps.messaging.models import TouchPoint
 from apps.payments import ledger
 
 from . import services
@@ -206,6 +208,7 @@ def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead.status = Lead.Status.LOST
     lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
     return redirect("lead_detail", pk=pk)
 
 
@@ -287,4 +290,5 @@ def lead_create(request) -> HttpResponse:
         assigned_agent=cd["agent"],
         status=Lead.Status.NEW,
     )
+    touchpoints.schedule_lead_created(lead)
     return redirect("lead_detail", pk=lead.pk)

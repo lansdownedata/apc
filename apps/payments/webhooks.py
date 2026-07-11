@@ -7,6 +7,7 @@ from django.conf import settings
 
 from apps.integrations import la_sync
 from apps.leads.models import Lead
+from apps.messaging import touchpoints
 from apps.notifications.models import Notification
 
 from . import ledger
@@ -79,6 +80,7 @@ def _deposit_completed(session) -> None:
     lead = plan.lead
     lead.status = Lead.Status.BOOKED
     lead.save(update_fields=["status", "updated_at"])
+    touchpoints.cancel_pending(lead)
 
     # Auto-book to LimoAnywhere (best-effort — never fail the Stripe 200).
     try:

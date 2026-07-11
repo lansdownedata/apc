@@ -7,6 +7,7 @@ raw payload is always stored on PodiumEvent so we can refine against real traffi
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead
+from apps.messaging import touchpoints
 from apps.messaging.models import Message
 
 from .models import PodiumEvent
@@ -82,6 +83,7 @@ def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
     lead = contact.leads.order_by("-id").first()
     if lead is None:
         lead = Lead.objects.create(contact=contact, channel=Channel.PHONE)
+        touchpoints.schedule_lead_created(lead)
     return lead
 
 
