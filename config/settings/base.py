@@ -179,6 +179,9 @@ TOUCHPOINTS_ENABLED = env.bool("TOUCHPOINTS_ENABLED", default=False)  # dev safe
 COMPANY_NAME = env("COMPANY_NAME", default="All Pro Charter")
 COMPANY_PHONE = env("COMPANY_PHONE", default="")
 COMPANY_EMAIL = env("COMPANY_EMAIL", default="")
+# Public https base of the portal, e.g. https://<NGROK_HOST> in dev; required for touch-point
+# quote links (distinct from LA_WEBHOOK_BASE_URL, which is LimoAnywhere-specific).
+PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")
 
 # ---------------------------------------------------------------- logging
 LOGGING = {

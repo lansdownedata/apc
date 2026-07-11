@@ -99,6 +99,38 @@ def test_schedule_quote_viewed_creates_tp4_tp5_once():
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL).count() == 1
 
 
+def test_schedule_quote_viewed_reschedules_after_cancellation():
+    lead = LeadFactory()
+    touchpoints.schedule_quote_viewed(lead)
+    old_tp4 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP4_VIEWED_SMS)
+    old_tp5 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL)
+
+    # A quote re-send cancels the pending viewed nudges (among others).
+    touchpoints.schedule_quote_sent(lead)
+    old_tp4.refresh_from_db()
+    old_tp5.refresh_from_db()
+    assert old_tp4.status == TouchPoint.Status.CANCELLED
+    assert old_tp5.status == TouchPoint.Status.CANCELLED
+
+    touchpoints.schedule_quote_viewed(lead)
+
+    fresh_tp4 = (
+        TouchPoint.objects.filter(
+            lead=lead, kind=TouchPoint.Kind.TP4_VIEWED_SMS, status=TouchPoint.Status.SCHEDULED
+        )
+        .exclude(pk=old_tp4.pk)
+        .get()
+    )
+    fresh_tp5 = (
+        TouchPoint.objects.filter(
+            lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL, status=TouchPoint.Status.SCHEDULED
+        )
+        .exclude(pk=old_tp5.pk)
+        .get()
+    )
+    assert fresh_tp4 and fresh_tp5
+
+
 def test_schedule_review_request_idempotent():
     lead = LeadFactory()
     touchpoints.schedule_review_request(lead)

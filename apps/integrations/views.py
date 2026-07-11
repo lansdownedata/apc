@@ -5,7 +5,13 @@ import secrets
 
 from django.conf import settings
 from django.core import signing
-from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import (
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBadRequest,
+    JsonResponse,
+)
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -30,7 +36,7 @@ _CANCELLED_STATUSES = (
 _TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + _CANCELLED_STATUSES
 
 
-def _podium_signature_ok(request) -> bool:
+def _podium_signature_ok(request: HttpRequest) -> bool:
     """HMAC-SHA256 over '{podium-timestamp}.{raw_body}' with PODIUM_WEBHOOK_SECRET.
 
     Blank secret => accept (dev); set secret => fail closed.

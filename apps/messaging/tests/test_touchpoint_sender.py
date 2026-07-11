@@ -238,6 +238,49 @@ def test_not_due_rows_are_untouched(settings):
     mock_send.assert_not_called()
 
 
+def test_quote_link_uses_public_base_url(settings):
+    settings.TOUCHPOINTS_ENABLED = True
+    settings.PUBLIC_BASE_URL = "https://apc.example"
+    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
+
+    with patch(
+        "apps.messaging.touchpoints.podium.send_message",
+        return_value={"uid": "msg-1"},
+    ) as mock_send:
+        result = touchpoints.run_touchpoints()
+
+    assert result == 1
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SENT
+    sms_call = next(c for c in mock_send.call_args_list if c.kwargs["channel_type"] == "sms")
+    assert "https://apc.example/quote/" in sms_call.kwargs["body"]
+
+
+def test_blank_public_base_url_leaves_quote_link_row_scheduled_but_still_sends_tp1(settings):
+    settings.TOUCHPOINTS_ENABLED = True
+    settings.PUBLIC_BASE_URL = ""
+    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    tp3 = _due_tp(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
+    tp1 = _due_tp(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
+
+    with patch(
+        "apps.messaging.touchpoints.podium.send_message",
+        return_value={"uid": "msg-1"},
+    ) as mock_send:
+        result = touchpoints.run_touchpoints()
+
+    assert result == 1
+    tp3.refresh_from_db()
+    tp1.refresh_from_db()
+    assert tp3.status == TouchPoint.Status.SCHEDULED
+    assert tp1.status == TouchPoint.Status.SENT
+    calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
+    assert calls == {("email", "a@example.com"), ("sms", "5551234567")}
+
+
 def test_run_touchpoints_returns_sent_count(settings):
     settings.TOUCHPOINTS_ENABLED = True
     contact1 = ContactFactory(email="a@example.com", phone="5551234567")

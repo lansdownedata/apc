@@ -51,9 +51,19 @@ def schedule_quote_sent(lead) -> None:
 
 
 def schedule_quote_viewed(lead) -> None:
-    """Schedule the quote-viewed nudges (TP4/TP5) once per lead."""
+    """Schedule the quote-viewed nudges (TP4/TP5) once per lead.
+
+    CANCELLED rows (e.g. superseded by a quote re-send) don't count as "already
+    scheduled" — otherwise a re-sent quote could never get its viewed nudges again.
+    SENT/SCHEDULED/SKIPPED/FAILED still block: a customer who already got the nudge
+    shouldn't be re-nudged.
+    """
     viewed_kinds = (TouchPoint.Kind.TP4_VIEWED_SMS, TouchPoint.Kind.TP5_VIEWED_EMAIL)
-    if TouchPoint.objects.filter(lead=lead, kind__in=viewed_kinds).exists():
+    if (
+        TouchPoint.objects.filter(lead=lead, kind__in=viewed_kinds)
+        .exclude(status=TouchPoint.Status.CANCELLED)
+        .exists()
+    ):
         return
     now = timezone.now()
     for kind in viewed_kinds:
@@ -110,7 +120,7 @@ def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
     from apps.leads.services import make_quote_page_url
 
     ctx = build_context(tp.lead)
-    ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=settings.LA_WEBHOOK_BASE_URL or "")
+    ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=settings.PUBLIC_BASE_URL or "")
 
     first_uid = ""
     any_success = False
@@ -199,6 +209,11 @@ def _process(tp: TouchPoint) -> bool:
         plan = getattr(lead, "payment", None)
         if plan is not None and plan.deposit_status == plan.DepositStatus.PAID:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="deposit already PAID")
+            return False
+        if not settings.PUBLIC_BASE_URL:
+            # Config isn't ready yet — leave the row SCHEDULED so it sends once
+            # PUBLIC_BASE_URL is set, instead of silently SKIPPED/FAILED.
+            logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
 
     template = TEMPLATES[kind]
