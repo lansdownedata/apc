@@ -10,7 +10,6 @@ from django.core.validators import validate_email
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import User
@@ -235,13 +234,11 @@ def lead_resend_la(request, pk: int) -> HttpResponse:
 @login_required
 @require_POST
 def lead_send_quote(request, pk: int) -> JsonResponse:
-    """Create/refresh the deposit plan, build the Stripe link, transition the lead,
-    and email it over Podium. Returns the send result as JSON."""
+    """Create/refresh the deposit plan, transition the lead, stamp the send/expiry, and
+    email the public quote-page link over Podium. Returns the send result as JSON."""
     lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
-    token = services.make_deposit_token(lead)
-    success_url = request.build_absolute_uri(reverse("quote_deposit_success", args=[token]))
-    cancel_url = request.build_absolute_uri(reverse("quote_deposit_cancel", args=[token]))
-    result = services.send_quote(lead, success_url=success_url, cancel_url=cancel_url)
+    base_url = request.build_absolute_uri("/")[:-1]
+    result = services.send_quote(lead, base_url=base_url)
     return JsonResponse(result.as_dict(), status=result.http_status)
 
 

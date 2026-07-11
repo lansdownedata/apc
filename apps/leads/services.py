@@ -7,18 +7,20 @@ the view stays thin.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
-import stripe
+from django.conf import settings
+from django.core import signing
+from django.utils import timezone
 
 if TYPE_CHECKING:
     from .models import Lead
-from django.core import signing
 
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+from apps.messaging import touchpoints
 from apps.payments.models import PaymentPlan
-from apps.payments.services import create_deposit_checkout
 
 _DEPOSIT_SALT = "quote-deposit"
 
@@ -34,6 +36,28 @@ def read_deposit_token(token: str) -> Lead:
 
     data = signing.loads(token, salt=_DEPOSIT_SALT)
     return Lead.objects.get(pk=data["lead"])
+
+
+def compute_quote_expiry(lead: Lead) -> datetime:
+    """Client rule: 14 days before first pickup; late lead => the pickup itself;
+    no pickup date => 14 days from now."""
+    days = settings.QUOTE_EXPIRY_DAYS_BEFORE_PICKUP
+    first = (
+        lead.reservations.filter(pickup_date__isnull=False)
+        .order_by("pickup_date", "pickup_time")
+        .first()
+    )
+    if first is None:
+        return timezone.now() + timedelta(days=days)
+    pickup = timezone.make_aware(
+        datetime.combine(first.pickup_date, first.pickup_time or time(0, 0))
+    )
+    cutoff = pickup - timedelta(days=days)
+    return cutoff if cutoff > timezone.now() else pickup
+
+
+def make_quote_page_url(lead: Lead, *, base_url: str) -> str:
+    return f"{base_url}/quote/{make_deposit_token(lead)}/"
 
 
 @dataclass
@@ -64,10 +88,11 @@ def _quote_message(lead: Lead, plan: PaymentPlan, link: str) -> str:
     )
 
 
-def send_quote(lead: Lead, *, success_url: str, cancel_url: str) -> SendQuoteResult:
-    """Create/refresh the deposit plan, build the Stripe link, transition the lead, and
-    email the link over Podium (best-effort). The transition + link commit even if the
-    Podium send fails, so a missing write_messages scope degrades gracefully."""
+def send_quote(lead: Lead, *, base_url: str) -> SendQuoteResult:
+    """Create/refresh the deposit plan, transition the lead, stamp the send/expiry, and
+    email the public quote-page link over Podium (best-effort). The transition + stamps
+    commit even if the Podium send fails, so a missing write_messages scope degrades
+    gracefully. The Stripe deposit Checkout itself happens later, on the quote page."""
     # 1. preconditions — nothing is written on failure
     if lead.status in (lead.Status.BOOKED, lead.Status.LOST):
         return SendQuoteResult(
@@ -93,25 +118,22 @@ def send_quote(lead: Lead, *, success_url: str, cancel_url: str) -> SendQuoteRes
     plan, _ = PaymentPlan.objects.get_or_create(lead=lead)
     plan.snapshot_total()
 
-    # 3. Stripe deposit Checkout link (sets deposit_status=REQUESTED)
-    try:
-        link = create_deposit_checkout(plan, success_url=success_url, cancel_url=cancel_url)
-    except stripe.error.StripeError as exc:
-        msg = (
-            getattr(exc, "user_message", None)
-            or getattr(getattr(exc, "error", None), "message", None)
-            or str(exc)
-        )
-        return SendQuoteResult(
-            ok=False, http_status=502, error=f"Could not create the deposit link: {msg}"
-        )
+    # 3. quote-page link (no Stripe call here — that happens at book-time)
+    link = make_quote_page_url(lead, base_url=base_url)
 
     # 4. transition NEW -> QUOTED (idempotent; a QUOTED re-send stays QUOTED)
     if lead.status == lead.Status.NEW:
         lead.status = lead.Status.QUOTED
         lead.save(update_fields=["status", "updated_at"])
 
-    # 5. deliver over Podium email — best-effort
+    # 5. stamp the send + expiry, reset the viewed flag, and (re)schedule touch-points
+    lead.quote_sent_at = timezone.now()
+    lead.quote_expires_at = compute_quote_expiry(lead)
+    lead.quote_viewed_at = None
+    lead.save(update_fields=["quote_sent_at", "quote_expires_at", "quote_viewed_at", "updated_at"])
+    touchpoints.schedule_quote_sent(lead)
+
+    # 6. deliver over Podium email — best-effort
     delivery: dict = {"sent": False, "recipient": email, "error": None}
     try:
         podium.send_message(
