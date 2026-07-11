@@ -103,7 +103,7 @@ def inbox_send(request, pk: int) -> JsonResponse:
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Invalid payload."}, status=400)
 
-    channel = payload.get("channel", "").strip()
+    channel = (payload.get("channel") or "").strip()
     if not channel or channel not in CHANNEL_TYPE:
         return JsonResponse({"ok": False, "error": "Channel must be 'sms' or 'email'."}, status=400)
 
