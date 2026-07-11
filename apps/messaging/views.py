@@ -10,7 +10,7 @@ import json
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Max, Q, QuerySet
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -57,20 +57,25 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
 def inbox(request):
     """Conversation list + (optionally) the selected thread, marking it read."""
     q = request.GET.get("q", "").strip()
-    conversations = list(_conversations(q))
 
     selected = None
     thread_messages: list[Message] = []
     lead_pk = request.GET.get("lead")
     if lead_pk:
+        # Validate that lead_pk is numeric to avoid ValueError → 500.
+        if not lead_pk.isdigit():
+            raise Http404
         selected = get_object_or_404(
             Lead.objects.filter(messages__isnull=False).select_related("contact").distinct(),
             pk=lead_pk,
         )
+        # Mark read before building list so response reflects cleared unread count.
         Message.objects.filter(
             lead=selected, direction=Message.Direction.IN, read_at__isnull=True
         ).update(read_at=timezone.now())
         thread_messages = list(selected.messages.all())
+
+    conversations = list(_conversations(q))
 
     return render(
         request,
@@ -98,9 +103,9 @@ def inbox_send(request, pk: int) -> JsonResponse:
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Invalid payload."}, status=400)
 
-    channel = payload.get("channel") or "sms"
-    if channel not in CHANNEL_TYPE:
-        return JsonResponse({"ok": False, "error": "Unsupported channel."}, status=400)
+    channel = payload.get("channel", "").strip()
+    if not channel or channel not in CHANNEL_TYPE:
+        return JsonResponse({"ok": False, "error": "Channel must be 'sms' or 'email'."}, status=400)
 
     body = (payload.get("body") or "").strip()
     if not body:

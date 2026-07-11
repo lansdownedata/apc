@@ -130,10 +130,34 @@ def test_opening_thread_marks_inbound_messages_read(client, agent):
     assert conversations[0].unread_count == 0
 
 
+def test_opening_thread_shows_cleared_unread_in_same_response(client, agent):
+    """Opening a thread should mark messages read BEFORE building the conversation list,
+    so the sidebar reflects the cleared unread count in the same response."""
+    lead = LeadFactory()
+    MessageFactory(lead=lead, direction=Message.Direction.IN, read_at=None)
+    MessageFactory(lead=lead, direction=Message.Direction.IN, read_at=None)
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"lead": lead.pk})
+
+    assert resp.status_code == 200
+    # The selected thread's unread_count should be 0 in the same response
+    conversations = list(resp.context["conversations"])
+    assert len(conversations) == 1
+    assert conversations[0].unread_count == 0
+
+
 def test_opening_thread_for_lead_without_messages_404s(client, agent):
     lead = LeadFactory()
     client.force_login(agent)
     resp = client.get(reverse("inbox"), {"lead": lead.pk})
+    assert resp.status_code == 404
+
+
+def test_inbox_with_non_numeric_lead_param_returns_404(client, agent):
+    """Non-numeric lead parameter should return 404, not 500."""
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"lead": "abc"})
     assert resp.status_code == 404
 
 
@@ -200,6 +224,42 @@ def test_inbox_send_missing_phone_returns_400(client, agent):
         resp = client.post(
             reverse("inbox_send", args=[lead.pk]),
             data=json.dumps({"body": "Hi", "channel": "sms"}),
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    send.assert_not_called()
+    assert not Message.objects.filter(lead=lead).exists()
+
+
+def test_inbox_send_missing_channel_returns_400(client, agent):
+    """Missing channel key should return 400, not silently default to SMS."""
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch("apps.messaging.views.podium.send_message") as send:
+        resp = client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "Hi"}),
+            content_type="application/json",
+        )
+
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    send.assert_not_called()
+    assert not Message.objects.filter(lead=lead).exists()
+
+
+def test_inbox_send_invalid_channel_returns_400(client, agent):
+    """Invalid channel value should return 400."""
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch("apps.messaging.views.podium.send_message") as send:
+        resp = client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "Hi", "channel": "telegram"}),
             content_type="application/json",
         )
 
