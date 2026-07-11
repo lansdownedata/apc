@@ -1,9 +1,17 @@
 """Touch-point scheduling + sending (spec 2026-07-11, client cadence TP1-TP8)."""
 
+import logging
+
+from django.conf import settings
 from django.utils import timezone
 
+from apps.integrations import podium
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+
 from .models import TouchPoint
-from .touchpoint_templates import TEMPLATES
+from .touchpoint_templates import TEMPLATES, build_context, render
+
+logger = logging.getLogger(__name__)
 
 _QUOTE_KINDS = (
     TouchPoint.Kind.TP3_QUOTE_SENT_SMS,
@@ -72,3 +80,115 @@ def cancel_pending(lead, *, kinds=None) -> int:
     else:
         qs = qs.filter(kind__in=kinds)
     return qs.update(status=TouchPoint.Status.CANCELLED)
+
+
+def _mark(tp: TouchPoint, *, status: str, error: str = "") -> None:
+    tp.status = status
+    tp.error = error[:255]
+    tp.save(update_fields=["status", "error", "updated_at"])
+
+
+def _channel_identifier(contact, channel: str) -> str:
+    if channel == "email":
+        return (contact.email or "").strip()
+    if channel == "sms":
+        return (contact.phone or "").strip()
+    return ""
+
+
+def _render_body(template, channel: str, ctx: dict) -> str:
+    if channel == "email":
+        subject = render(template.subject, ctx) if template.subject else ""
+        body = render(template.email_body, ctx) if template.email_body else ""
+        return f"{subject}\n\n{body}" if subject else body
+    return render(template.sms_body, ctx)
+
+
+def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
+    """Send over each available channel; SENT on any success, else FAILED."""
+    from apps.leads.services import make_quote_page_url
+
+    ctx = build_context(tp.lead)
+    ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=settings.LA_WEBHOOK_BASE_URL or "")
+
+    first_uid = ""
+    any_success = False
+    errors: list[str] = []
+    for channel, identifier in available.items():
+        body = _render_body(template, channel, ctx)
+        try:
+            resp = podium.send_message(identifier=identifier, channel_type=channel, body=body)
+            if not first_uid:
+                first_uid = resp.get("uid") or resp.get("data", {}).get("uid", "")
+            any_success = True
+        except (PodiumAPIError, PodiumNotConnected) as exc:
+            errors.append(f"{channel}: {exc}")
+
+    if any_success:
+        tp.status = TouchPoint.Status.SENT
+        tp.sent_at = timezone.now()
+        tp.podium_message_uid = first_uid
+        tp.error = ""
+        tp.save(update_fields=["status", "sent_at", "podium_message_uid", "error", "updated_at"])
+        return True
+    _mark(tp, status=TouchPoint.Status.FAILED, error="; ".join(errors))
+    return False
+
+
+def _process(tp: TouchPoint) -> bool:
+    """Evaluate skip conditions at send time and send. Returns True iff SENT."""
+    lead = tp.lead
+    kind = tp.kind
+
+    if kind == TouchPoint.Kind.REVIEW_REQUEST:
+        # Task 8 wires the real Podium review-invitation send; keep the two tasks
+        # independent by skipping here regardless of lead status.
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="review sender not wired")
+        return False
+
+    if lead.status == lead.Status.LOST:
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead LOST")
+        return False
+
+    if lead.status == lead.Status.BOOKED:
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead BOOKED")
+        return False
+
+    if kind in _QUOTE_KINDS:
+        plan = getattr(lead, "payment", None)
+        if plan is not None and plan.deposit_status == plan.DepositStatus.PAID:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="deposit already PAID")
+            return False
+
+    template = TEMPLATES[kind]
+    contact = lead.contact
+    available = {
+        channel: identifier
+        for channel in template.channels
+        if (identifier := _channel_identifier(contact, channel))
+    }
+    if not available:
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="contact has no usable channel")
+        return False
+
+    return _send(tp, template, available)
+
+
+def run_touchpoints() -> int:
+    """Send every due SCHEDULED touch-point. Returns the count SENT."""
+    if not settings.TOUCHPOINTS_ENABLED:
+        return 0
+
+    due = TouchPoint.objects.filter(
+        status=TouchPoint.Status.SCHEDULED, scheduled_for__lte=timezone.now()
+    ).select_related("lead", "lead__contact")
+
+    sent = 0
+    for tp in due:
+        try:
+            if _process(tp):
+                sent += 1
+        except Exception:  # noqa: BLE001 - one bad row must not kill the run
+            logger.exception("touch-point %s failed to send", tp.pk)
+            _mark(tp, status=TouchPoint.Status.FAILED, error="unexpected error")
+    return sent

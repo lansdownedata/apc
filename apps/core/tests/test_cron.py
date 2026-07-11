@@ -46,6 +46,7 @@ def test_registry_contains_both_jobs():
         "charge-due-balances",
         "recognize-due-revenue",
         "retry-la-sync",
+        "run-touchpoints",
     }
 
 
