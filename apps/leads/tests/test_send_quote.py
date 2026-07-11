@@ -1,21 +1,24 @@
+from datetime import datetime, time, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import stripe
 from django.core.signing import BadSignature
+from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
 from apps.integrations.podium import PodiumAPIError
 from apps.leads import services
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.payments import services as payment_services
 from apps.payments.models import PaymentPlan
 from apps.reservations.factories import TransferReservationFactory
 
 pytestmark = pytest.mark.django_db
+
+BASE_URL = "https://portal.example.com"
 
 
 def test_deposit_token_round_trips():
@@ -38,41 +41,50 @@ def _quotable_lead():
     return lead
 
 
-def _stripe_ok():
-    """Patch the Stripe SDK calls create_deposit_checkout makes (customer + session)."""
-    return [
-        patch.object(
-            payment_services.stripe.Customer, "create", return_value=MagicMock(id="cus_1")
-        ),
-        patch.object(
-            payment_services.stripe.checkout.Session,
-            "create",
-            return_value=MagicMock(url="https://checkout.stripe/abc"),
-        ),
-    ]
-
-
 def test_send_quote_happy_path():
     lead = _quotable_lead()
-    cust, sess = _stripe_ok()
-    with cust, sess, patch.object(services.podium, "send_message", return_value={}) as send:
-        result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    with patch.object(services.podium, "send_message", return_value={}) as send:
+        result = services.send_quote(lead, base_url=BASE_URL)
 
     assert result.ok and result.http_status == 200
-    assert result.link == "https://checkout.stripe/abc"
+    token = services.make_deposit_token(lead)
+    assert result.link == f"{BASE_URL}/quote/{token}/"
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
     plan = PaymentPlan.objects.get(lead=lead)
     assert plan.quote_total == Decimal("185.00")
-    assert plan.deposit_status == PaymentPlan.DepositStatus.REQUESTED
     assert result.delivery == {"sent": True, "recipient": "rider@example.com", "error": None}
     assert send.call_args.kwargs["channel_type"] == "email"
     assert send.call_args.kwargs["identifier"] == "rider@example.com"
 
 
+def test_send_quote_message_links_quote_page_not_stripe():
+    lead = _quotable_lead()
+    with patch.object(services.podium, "send_message", return_value={}) as send:
+        services.send_quote(lead, base_url=BASE_URL)
+    body = send.call_args.kwargs["body"]
+    assert "/quote/" in body
+    assert "checkout.stripe.com" not in body
+
+
+def test_send_quote_stamps_sent_and_expiry_and_schedules_touchpoints():
+    lead = _quotable_lead()
+    with (
+        patch.object(services.podium, "send_message", return_value={}),
+        patch.object(services.touchpoints, "schedule_quote_sent") as scheduled,
+    ):
+        result = services.send_quote(lead, base_url=BASE_URL)
+    assert result.ok
+    lead.refresh_from_db()
+    assert lead.quote_sent_at is not None
+    assert lead.quote_expires_at is not None
+    assert lead.quote_viewed_at is None
+    scheduled.assert_called_once_with(lead)
+
+
 def test_send_quote_blocks_when_no_reservations():
     lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email="a@b.com"))
-    result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
     lead.refresh_from_db()
     assert lead.status == Lead.Status.NEW
@@ -81,7 +93,7 @@ def test_send_quote_blocks_when_no_reservations():
 def test_send_quote_blocks_when_no_email():
     lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email=""))
     TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
-    result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
     assert "email" in result.error.lower()
 
@@ -89,14 +101,14 @@ def test_send_quote_blocks_when_no_email():
 def test_send_quote_blocks_when_booked():
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=ContactFactory(email="a@b.com"))
     TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
-    result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
 
 
 def test_send_quote_blocks_when_lost():
     lead = LeadFactory(status=Lead.Status.LOST, contact=ContactFactory(email="a@b.com"))
     TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
-    result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
     lead.refresh_from_db()
     assert lead.status == Lead.Status.LOST
@@ -114,52 +126,74 @@ def test_send_quote_resend_keeps_quoted():
     lead = _quotable_lead()
     lead.status = Lead.Status.QUOTED
     lead.save(update_fields=["status"])
-    cust, sess = _stripe_ok()
-    with cust, sess, patch.object(services.podium, "send_message", return_value={}):
-        result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+    with patch.object(services.podium, "send_message", return_value={}):
+        result = services.send_quote(lead, base_url=BASE_URL)
     assert result.ok
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
 
 
-def test_send_quote_surfaces_stripe_message_and_stays_new():
+def test_send_quote_resend_clears_viewed_and_recomputes_expiry():
     lead = _quotable_lead()
-    cust = patch.object(
-        payment_services.stripe.Customer, "create", return_value=MagicMock(id="cus_1")
-    )
-    sess = patch.object(
-        payment_services.stripe.checkout.Session,
-        "create",
-        side_effect=stripe.error.StripeError("Your card was declined."),
-    )
-    with cust, sess:
-        result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
-    assert not result.ok and result.http_status == 502
-    assert "Your card was declined." in result.error
+    lead.status = Lead.Status.QUOTED
+    lead.quote_viewed_at = timezone.now()
+    lead.save(update_fields=["status", "quote_viewed_at"])
+    with patch.object(services.podium, "send_message", return_value={}):
+        result = services.send_quote(lead, base_url=BASE_URL)
+    assert result.ok
     lead.refresh_from_db()
-    assert lead.status == Lead.Status.NEW
+    assert lead.quote_viewed_at is None
+    assert lead.quote_expires_at is not None
 
 
 def test_send_quote_degrades_when_podium_fails():
     lead = _quotable_lead()
-    cust, sess = _stripe_ok()
-    with (
-        cust,
-        sess,
-        patch.object(
-            services.podium,
-            "send_message",
-            side_effect=PodiumAPIError("403 missing write_messages"),
-        ),
+    with patch.object(
+        services.podium,
+        "send_message",
+        side_effect=PodiumAPIError("403 missing write_messages"),
     ):
-        result = services.send_quote(lead, success_url="https://ok", cancel_url="https://no")
+        result = services.send_quote(lead, base_url=BASE_URL)
     # quote still went through; only delivery failed
     assert result.ok and result.http_status == 200
-    assert result.link == "https://checkout.stripe/abc"
     assert result.delivery["sent"] is False
     assert "403" in result.delivery["error"]
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
+
+
+# ---------------------------------------------------------------------------
+# compute_quote_expiry
+# ---------------------------------------------------------------------------
+
+
+@override_settings(QUOTE_EXPIRY_DAYS_BEFORE_PICKUP=14)
+def test_compute_quote_expiry_pickup_far_out_returns_cutoff():
+    lead = _quotable_lead()
+    pickup_date = (timezone.now() + timedelta(days=30)).date()
+    TransferReservationFactory(lead=lead, pickup_date=pickup_date, pickup_time=time(9, 0))
+    expiry = services.compute_quote_expiry(lead)
+    expected = timezone.make_aware(datetime.combine(pickup_date, time(9, 0))) - timedelta(days=14)
+    assert expiry == expected
+
+
+@override_settings(QUOTE_EXPIRY_DAYS_BEFORE_PICKUP=14)
+def test_compute_quote_expiry_late_pickup_returns_pickup_itself():
+    lead = _quotable_lead()
+    pickup_date = (timezone.now() + timedelta(days=5)).date()
+    TransferReservationFactory(lead=lead, pickup_date=pickup_date, pickup_time=time(9, 0))
+    expiry = services.compute_quote_expiry(lead)
+    expected = timezone.make_aware(datetime.combine(pickup_date, time(9, 0)))
+    assert expiry == expected
+
+
+@override_settings(QUOTE_EXPIRY_DAYS_BEFORE_PICKUP=14)
+def test_compute_quote_expiry_no_pickup_date_returns_now_plus_days():
+    lead = _quotable_lead()
+    before = timezone.now()
+    expiry = services.compute_quote_expiry(lead)
+    after = timezone.now()
+    assert before + timedelta(days=14) <= expiry <= after + timedelta(days=14)
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +216,13 @@ def test_send_quote_view_requires_login(client):
 def test_send_quote_view_happy_path(client, agent):
     lead = _quotable_lead()
     client.force_login(agent)
-    cust, sess = _stripe_ok()
-    with cust, sess, patch.object(services.podium, "send_message", return_value={}):
+    with patch.object(services.podium, "send_message", return_value={}):
         resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 200
     data = resp.json()
-    assert data["ok"] and data["link"] == "https://checkout.stripe/abc"
+    token = services.make_deposit_token(lead)
+    assert data["ok"]
+    assert data["link"].endswith(f"/quote/{token}/")
     assert data["delivery"]["sent"] is True
 
 
@@ -198,21 +233,6 @@ def test_send_quote_view_precondition_returns_400(client, agent):
     resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 400
     assert "email" in resp.json()["error"].lower()
-
-
-def test_send_quote_view_stripe_failure_returns_502(client, agent):
-    lead = _quotable_lead()
-    client.force_login(agent)
-    cust = patch.object(payment_services.stripe.Customer, "create", return_value=MagicMock(id="c"))
-    sess = patch.object(
-        payment_services.stripe.checkout.Session,
-        "create",
-        side_effect=stripe.error.StripeError("No such price"),
-    )
-    with cust, sess:
-        resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
-    assert resp.status_code == 502
-    assert "No such price" in resp.json()["error"]
 
 
 # ---------------------------------------------------------------------------
