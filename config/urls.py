@@ -24,6 +24,7 @@ urlpatterns = [
     path("users/", include("apps.accounts.urls")),
     path("orders/", include("apps.payments.urls")),
     path("reservations/", include("apps.reservations.urls")),
+    path("inbox/", include("apps.messaging.urls")),
     # --- integrations + webhooks ---
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),
