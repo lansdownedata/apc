@@ -173,6 +173,13 @@ CRON_SECRET = env("CRON_SECRET", default="")  # X-Cron-Key header for /cron/<job
 # Inbound capture API
 LEAD_INBOUND_API_KEY = env("LEAD_INBOUND_API_KEY", default="")
 
+# ---------------------------------------------------------------- touch-points / messaging
+QUOTE_EXPIRY_DAYS_BEFORE_PICKUP = env.int("QUOTE_EXPIRY_DAYS_BEFORE_PICKUP", default=14)
+TOUCHPOINTS_ENABLED = env.bool("TOUCHPOINTS_ENABLED", default=False)  # dev safety: off by default
+COMPANY_NAME = env("COMPANY_NAME", default="All Pro Charter")
+COMPANY_PHONE = env("COMPANY_PHONE", default="")
+COMPANY_EMAIL = env("COMPANY_EMAIL", default="")
+
 # ---------------------------------------------------------------- logging
 LOGGING = {
     "version": 1,

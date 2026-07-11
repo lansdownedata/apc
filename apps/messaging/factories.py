@@ -21,7 +21,7 @@ class TouchPointFactory(factory.django.DjangoModelFactory):
         model = TouchPoint
 
     lead = factory.SubFactory(LeadFactory)
-    kind = TouchPoint.Kind.GREETING
+    kind = TouchPoint.Kind.TP1_WELCOME
 
 
 class ReviewFactory(factory.django.DjangoModelFactory):

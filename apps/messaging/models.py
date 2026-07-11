@@ -32,6 +32,7 @@ class Message(TimeStampedModel):
     delivery_status = models.CharField(max_length=20, choices=DeliveryStatus.choices, blank=True)
     failure_reason = models.CharField(max_length=255, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["created_at", "id"]  # chronological thread
@@ -48,15 +49,22 @@ class TouchPoint(TimeStampedModel):
     """A scheduled automated message sent through Podium."""
 
     class Kind(models.TextChoices):
-        GREETING = "greeting", "Greeting"
-        QUOTE_FOLLOWUP = "quote_followup", "Quote follow-up"
-        PRETRIP_REMINDER = "pretrip_reminder", "Pre-trip reminder"
+        TP1_WELCOME = "tp1_welcome", "Welcome message"
+        TP2_LEAD_FOLLOWUP = "tp2_lead_followup", "Lead follow-up"
+        TP3_QUOTE_SENT_SMS = "tp3_quote_sent_sms", "Quote sent (SMS)"
+        TP4_VIEWED_SMS = "tp4_viewed_sms", "Quote viewed (SMS)"
+        TP5_VIEWED_EMAIL = "tp5_viewed_email", "Quote viewed (Email)"
+        TP6_QUOTE_FOLLOWUP = "tp6_quote_followup", "Quote follow-up"
+        TP7_EXPIRING = "tp7_expiring", "Quote expiring"
+        TP8_EXPIRED = "tp8_expired", "Quote expired"
         REVIEW_REQUEST = "review_request", "Review request"
 
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", "Scheduled"
         SENT = "sent", "Sent"
         SKIPPED = "skipped", "Skipped"
+        CANCELLED = "cancelled", "Cancelled"
+        FAILED = "failed", "Failed"
 
     lead = models.ForeignKey("leads.Lead", related_name="touchpoints", on_delete=models.CASCADE)
     kind = models.CharField(max_length=30, choices=Kind.choices)
@@ -64,6 +72,7 @@ class TouchPoint(TimeStampedModel):
     scheduled_for = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     podium_message_uid = models.CharField(max_length=64, blank=True)
+    error = models.CharField(max_length=255, blank=True)
 
     @property
     def is_due(self) -> bool:
