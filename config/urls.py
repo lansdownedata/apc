@@ -8,6 +8,7 @@ from django.urls import include, path
 from apps.core.cron import run_job
 from apps.integrations.views import la_webhook, podium_webhook
 from apps.leads.views import pipeline, quote_book, quote_page
+from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
 
 
@@ -28,6 +29,7 @@ urlpatterns = [
     path("orders/", include("apps.payments.urls")),
     path("reservations/", include("apps.reservations.urls")),
     path("inbox/", include("apps.messaging.urls")),
+    path("reviews/", review_list, name="review_list"),
     # --- public customer-facing quote page (token-keyed, no login) ---
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/book/", quote_book, name="quote_book"),
