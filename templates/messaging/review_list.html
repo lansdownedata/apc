@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+
+  <!-- summary -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mb-5">
+    <div class="card p-5 flex items-center gap-4">
+      <div class="font-display text-[40px] font-600 text-ink leading-none num">{% if stats.avg %}{{ stats.avg|floatformat:1 }}{% else %}—{% endif %}</div>
+      <div>
+        <div class="stars flex gap-0.5 text-[16px]">
+          {% for n in "12345" %}
+          <i class="ti ti-star-filled {% if forloop.counter <= avg_stars %}on{% endif %}"></i>
+          {% endfor %}
+        </div>
+        <div class="text-[11.5px] text-muted mt-1">{{ stats.responses }} review{{ stats.responses|pluralize }} via Podium</div>
+      </div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[11.5px] text-muted">Review invites sent</div>
+      <div class="font-display text-[30px] font-600 text-ink num mt-1.5">{{ reviews|length }}</div>
+      <div class="text-[11px] text-muted mt-1">automated post-trip</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[11.5px] text-muted">Pending</div>
+      <div class="font-display text-[30px] font-600 text-amber-600 num mt-1.5">{{ stats.pending }}</div>
+      <div class="text-[11px] text-muted mt-1">scheduled to send</div>
+    </div>
+  </div>
+
+  <!-- list -->
+  <div class="space-y-3">
+    {% for review in reviews %}
+    <div class="card p-4">
+      <div class="flex items-center gap-3">
+        <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ review.lead.contact.name|slice:":2" }}</span>
+        <div class="min-w-0">
+          <div class="font-semibold text-ink text-[13.5px] leading-tight">{{ review.lead.contact.name }}</div>
+          <div class="text-[11.5px] text-muted truncate">
+            <a href="{% url 'lead_detail' review.lead.pk %}" class="hover:underline">{{ review.lead.quote_no }}</a>
+            {% if review.link_clicked %}
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 ml-1 align-middle" title="Link clicked"></span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="ml-auto text-right">
+          {% include "components/status_badge.html" with status=review.delivery_status label=review.get_delivery_status_display %}
+          <div class="text-[10.5px] text-muted mt-1 num">{{ review.requested_at|date:"M j, Y"|default:"—" }}</div>
+        </div>
+      </div>
+      {% if review.has_rating %}
+      <div class="pl-12 mt-3">
+        <div class="stars flex gap-0.5 text-[14px]">
+          {% for n in "12345" %}
+          <i class="ti ti-star-filled {% if forloop.counter <= review.rating %}on{% endif %}"></i>
+          {% endfor %}
+        </div>
+        {% if review.body %}
+        <blockquote class="text-[12.5px] text-slate-600 leading-relaxed mt-2">&ldquo;{{ review.body }}&rdquo;</blockquote>
+        {% endif %}
+        {% if review.review_site %}
+        <div class="text-[11px] text-muted mt-1.5">via {{ review.review_site }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% empty %}
+    <div class="card p-16 text-center text-muted">
+      <i class="ti ti-star-off text-[28px] text-slate-300"></i>
+      <div class="mt-2 text-[13px]">Review invites go out automatically when a trip completes.</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

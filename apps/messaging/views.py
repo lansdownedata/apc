@@ -7,9 +7,10 @@ The Podium API call itself lives in `apps.integrations.podium`; these views stay
 from __future__ import annotations
 
 import json
+from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Max, Q, QuerySet
+from django.db.models import Avg, Count, DecimalField, Max, Q, QuerySet
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -19,7 +20,7 @@ from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
-from .models import Message
+from .models import Message, Review
 
 CHANNEL_TYPE = {"sms": "phone", "email": "email"}
 CHANNEL_MODEL = {"sms": Message.Channel.SMS, "email": Message.Channel.EMAIL}
@@ -155,4 +156,46 @@ def inbox_send(request, pk: int) -> JsonResponse:
                 "sent_at": message.sent_at.isoformat(),
             },
         }
+    )
+
+
+@login_required
+def review_list(request):
+    """Review invites — delivery status + incoming ratings, newest first.
+
+    One aggregate query: average + response count over rated reviews, plus a count of
+    invites still outstanding (sent/pending, no rating yet).
+    """
+    reviews = Review.objects.select_related("lead", "lead__contact").order_by("-created_at")
+
+    rated = Q(rating__isnull=False)
+    outstanding = Q(
+        rating__isnull=True,
+        delivery_status__in=[Review.DeliveryStatus.PENDING, Review.DeliveryStatus.SENT],
+    )
+    agg = reviews.aggregate(
+        avg=Avg(
+            "rating",
+            filter=rated,
+            output_field=DecimalField(max_digits=4, decimal_places=2),
+        ),
+        responses=Count("id", filter=rated),
+        pending=Count("id", filter=outstanding),
+    )
+    stats = {"avg": agg["avg"], "responses": agg["responses"], "pending": agg["pending"]}
+
+    avg_stars = 0
+    if stats["avg"] is not None:
+        avg_stars = int(stats["avg"].to_integral_value(rounding=ROUND_HALF_UP))
+
+    return render(
+        request,
+        "messaging/review_list.html",
+        {
+            "nav": "reviews",
+            "page_title": "Reviews",
+            "reviews": reviews,
+            "stats": stats,
+            "avg_stars": avg_stars,
+        },
     )

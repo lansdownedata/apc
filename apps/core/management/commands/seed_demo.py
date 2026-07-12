@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, Vehicle
-from apps.messaging.models import Message
+from apps.messaging.models import Message, Review
 from apps.notifications.models import Notification
 from apps.payments.models import Charge, PaymentPlan
 from apps.reservations.models import Reservation, Stop
@@ -36,6 +36,7 @@ class Command(BaseCommand):
         if opts["fresh"]:
             for model in (
                 Notification,
+                Review,
                 Message,
                 Charge,
                 PaymentPlan,
@@ -269,6 +270,17 @@ class Command(BaseCommand):
             channel=Message.Channel.EMAIL,
         )
         message(lead3, Message.Direction.IN, "Wonderful, thank you! Same pickup spot as last year.")
+        Review.objects.create(
+            lead=lead3,
+            contact=lead3.contact,
+            delivery_status=Review.DeliveryStatus.DELIVERED,
+            rating=5,
+            body="Every year the driver is early, the van is spotless, and the tour itself "
+            "was perfectly paced. Wouldn't book our wine country trip with anyone else.",
+            review_site="Google",
+            link_clicked=True,
+            requested_at=timezone.now() - timedelta(days=2),
+        )
 
         # 4) BOOKED — api — corporate roadshow, deposit paid, BALANCE FAILED (alert).
         lead4 = new_lead(
@@ -335,6 +347,12 @@ class Command(BaseCommand):
             title="Balance charge failed",
             detail="Theo Nakamura · Your card was declined.",
             user=agent,
+        )
+        Review.objects.create(
+            lead=lead4,
+            contact=lead4.contact,
+            delivery_status=Review.DeliveryStatus.SENT,
+            requested_at=timezone.now() - timedelta(hours=6),
         )
 
         # 5) QUOTED — website — prom night stretch, deposit requested.
@@ -421,6 +439,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"Seeded {leads} leads, {res} reservations, "
                 f"{PaymentPlan.objects.count()} payment plans, "
-                f"{Notification.objects.count()} notification(s)."
+                f"{Notification.objects.count()} notification(s), "
+                f"{Review.objects.count()} review invite(s)."
             )
         )
