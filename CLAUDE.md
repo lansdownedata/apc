@@ -69,8 +69,11 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
   `.field`, animations, Tom Select theme). Behaviour + Alpine stores: `static/js/app.js`.
 - **App:** `apps.portal` owns the dashboard (`/`, name `dashboard`) and the `chrome` context
   processor (nav + notification bell on every page). Leads UI is in `apps.leads`:
-  `lead_list` (`/leads/`) and `lead_detail` (`/leads/<pk>/`). Messaging inbox is in
-  `apps.messaging` (`/inbox/`, Podium conversations + composer). All views `@login_required`.
+  `lead_list` (`/leads/`), `lead_detail` (`/leads/<pk>/`), and the `pipeline` kanban
+  (`/pipeline/`, per-column value + payment chips + guarded drag). Contacts directory
+  (`/contacts/`, LTV/trips/last-activity/search) is `apps.contacts`. Messaging inbox
+  (`/inbox/`, Podium conversations + composer) and the reviews board (`/reviews/`, invite
+  statuses + incoming ratings) are both in `apps.messaging`. All views `@login_required`.
 - **Auth:** `django.contrib.auth.urls`; `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` set.
 - **Components:** `templates/components/` — `modal.html`, `toasts.html`,
   `searchable_select.html`, `status_badge.html`.
