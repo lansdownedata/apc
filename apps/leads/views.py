@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
 from django.db.models import Q
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -205,14 +205,33 @@ def lead_update(request, pk: int) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
+def _wants_json(request: HttpRequest) -> bool:
+    return "application/json" in request.headers.get("Accept", "")
+
+
+def _transition_refused(request: HttpRequest, message: str) -> HttpResponse:
+    if _wants_json(request):
+        return JsonResponse({"ok": False, "error": message}, status=400)
+    return HttpResponse(message, status=400)
+
+
 @login_required
 @require_POST
 def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
+    if not lead.can_transition(Lead.Status.LOST):
+        message = (
+            "Booked orders are cancelled from the Orders console."
+            if lead.status == Lead.Status.BOOKED
+            else "Already marked lost."
+        )
+        return _transition_refused(request, message)
     lead.status = Lead.Status.LOST
     lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
     touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
+    if _wants_json(request):
+        return JsonResponse({"ok": True, "status": lead.status})
     return redirect("lead_detail", pk=pk)
 
 
@@ -220,9 +239,13 @@ def lead_mark_lost(request, pk: int) -> HttpResponse:
 @require_POST
 def lead_reopen(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
+    if not lead.can_transition(Lead.Status.NEW):
+        return _transition_refused(request, "Only lost leads can be reopened.")
     lead.status = Lead.Status.NEW
     lead.lost_reason = ""
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    if _wants_json(request):
+        return JsonResponse({"ok": True, "status": lead.status})
     return redirect("lead_detail", pk=pk)
 
 

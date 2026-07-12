@@ -84,5 +84,17 @@ class Lead(TimeStampedModel):
     def quote_expired(self) -> bool:
         return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
 
+    def can_transition(self, to_status: str) -> bool:
+        return to_status in ALLOWED_TRANSITIONS.get(self.status, set())
+
     def __str__(self) -> str:
         return f"{self.quote_no} · {self.contact.name}"
+
+
+# Legal manual + system transitions (spec 2026-07-12 §0). Server-authoritative.
+ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    Lead.Status.NEW: {Lead.Status.QUOTED, Lead.Status.LOST},
+    Lead.Status.QUOTED: {Lead.Status.LOST, Lead.Status.BOOKED},
+    Lead.Status.LOST: {Lead.Status.NEW},
+    Lead.Status.BOOKED: set(),
+}
