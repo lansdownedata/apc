@@ -56,7 +56,9 @@ class Command(BaseCommand):
         today = date.today()
 
         vehicles = {
-            name: Vehicle.objects.create(name=name, capacity=cap, klass=klass)
+            name: Vehicle.objects.get_or_create(
+                name=name, defaults={"capacity": cap, "klass": klass}
+            )[0]
             for name, cap, klass in [
                 ("Executive Sedan", 3, Vehicle.Klass.SEDAN),
                 ("Luxury SUV", 6, Vehicle.Klass.SUV),
