@@ -109,7 +109,7 @@ def pipeline(request: HttpRequest) -> HttpResponse:
     """Kanban of leads by status with per-column value (spec 2026-07-12 §1)."""
     leads = (
         Lead.objects.select_related("contact", "payment")
-        .prefetch_related("reservations__stops", "reservations__vehicle")
+        .prefetch_related("reservations")
         .order_by("-created_at")
     )
     by_status: dict[str, list[Lead]] = {s: [] for s in Lead.Status.values}

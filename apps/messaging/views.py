@@ -11,7 +11,7 @@ from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Avg, Count, DecimalField, Max, Q, QuerySet
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -160,7 +160,7 @@ def inbox_send(request, pk: int) -> JsonResponse:
 
 
 @login_required
-def review_list(request):
+def review_list(request: HttpRequest) -> HttpResponse:
     """Review invites — delivery status + incoming ratings, newest first.
 
     One aggregate query: average + response count over rated reviews, plus a count of
