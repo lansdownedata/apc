@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.core import signing
+from django.urls import reverse
 from django.utils import timezone
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def compute_quote_expiry(lead: Lead) -> datetime:
 
 
 def make_quote_page_url(lead: Lead, *, base_url: str) -> str:
-    return f"{base_url}/quote/{make_deposit_token(lead)}/"
+    return f"{base_url}{reverse('quote_page', args=[make_deposit_token(lead)])}"
 
 
 @dataclass
