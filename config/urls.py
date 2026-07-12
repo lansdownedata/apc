@@ -23,6 +23,7 @@ urlpatterns = [
     path("", include("apps.portal.urls")),  # dashboard (home)
     path("pipeline/", pipeline, name="pipeline"),
     path("leads/", include("apps.leads.urls")),
+    path("contacts/", include("apps.contacts.urls")),
     path("users/", include("apps.accounts.urls")),
     path("orders/", include("apps.payments.urls")),
     path("reservations/", include("apps.reservations.urls")),

@@ -6,7 +6,6 @@ from apps.notifications.models import Notification
 
 # Screens lifted from the prototype that aren't wired up yet — shown dimmed.
 NAV_SOON = [
-    ("Contacts", "ti-address-book"),
     ("Reviews", "ti-star"),
     ("Settings", "ti-settings"),
 ]
