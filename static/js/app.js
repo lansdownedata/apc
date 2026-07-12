@@ -370,10 +370,13 @@ function pipelineBoard() {
       if (to === "lost" && (from === "new" || from === "quoted")) return this.markLost(id);
       if (to === "new" && from === "lost") return this.post(`/leads/${id}/reopen/`);
       const why = {
+        new: "Leads return to New only by reopening a lost lead.",
         quoted: "Quoted happens when a quote is sent from the workspace.",
         booked: "Booked happens when the deposit is paid.",
-      }[to] || "Booked orders are cancelled from the Orders console.";
-      Alpine.store("toast").push({ type: "info", title: "Can't move quote", message: why });
+      }[to];
+      const message =
+        from === "booked" ? "Booked orders are cancelled from the Orders console." : why;
+      Alpine.store("toast").push({ type: "info", title: "Can't move quote", message });
     },
 
     // Reuses the same $store.modal reason-prompt flow as the lead-detail "Mark lost" button.

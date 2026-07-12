@@ -93,11 +93,13 @@ class Lead(TimeStampedModel):
         plan = getattr(self, "payment", None)
         if plan is None:
             return ""
-        if plan.balance_status == "failed":
+        deposit_paid = plan.deposit_status == plan.DepositStatus.PAID
+        balance_paid = plan.balance_status == plan.BalanceStatus.PAID
+        if plan.balance_status == plan.BalanceStatus.FAILED:
             return "Balance failed"
-        if plan.deposit_status == "paid" and plan.balance_status == "paid":
+        if deposit_paid and balance_paid:
             return "Paid in full"
-        if plan.deposit_status == "paid":
+        if deposit_paid:
             return "Deposit paid"
         return ""
 
@@ -106,6 +108,11 @@ class Lead(TimeStampedModel):
 
 
 # Legal manual + system transitions (spec 2026-07-12 §0). Server-authoritative.
+# NOTE: BOOKED: set() here is deliberate for the manual `can_transition` gate — the Orders
+# console's cancel+refund flow (`order_cancel_refund` in apps/payments/views.py) performs
+# BOOKED→LOST directly as a system path (with refund handling) and does NOT consult
+# `can_transition`. Don't "fix" this table to allow it; that would let the plain
+# lead-mark-lost path bypass the refund flow.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     Lead.Status.NEW: {Lead.Status.QUOTED, Lead.Status.LOST},
     Lead.Status.QUOTED: {Lead.Status.LOST, Lead.Status.BOOKED},
