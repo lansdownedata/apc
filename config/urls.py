@@ -7,7 +7,7 @@ from django.urls import include, path
 
 from apps.core.cron import run_job
 from apps.integrations.views import la_webhook, podium_webhook
-from apps.leads.views import quote_book, quote_page
+from apps.leads.views import pipeline, quote_book, quote_page
 from apps.payments.views import stripe_webhook
 
 
@@ -21,6 +21,7 @@ urlpatterns = [
     # --- web portal (session auth) ---
     path("", include("django.contrib.auth.urls")),  # login/, logout/, password_*
     path("", include("apps.portal.urls")),  # dashboard (home)
+    path("pipeline/", pipeline, name="pipeline"),
     path("leads/", include("apps.leads.urls")),
     path("users/", include("apps.accounts.urls")),
     path("orders/", include("apps.payments.urls")),

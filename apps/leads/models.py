@@ -87,6 +87,20 @@ class Lead(TimeStampedModel):
     def can_transition(self, to_status: str) -> bool:
         return to_status in ALLOWED_TRANSITIONS.get(self.status, set())
 
+    @property
+    def payment_chip(self) -> str:
+        """Short payment-status label for pipeline/list cards (pipeline spec 2026-07-12 §1)."""
+        plan = getattr(self, "payment", None)
+        if plan is None:
+            return ""
+        if plan.balance_status == "failed":
+            return "Balance failed"
+        if plan.deposit_status == "paid" and plan.balance_status == "paid":
+            return "Paid in full"
+        if plan.deposit_status == "paid":
+            return "Deposit paid"
+        return ""
+
     def __str__(self) -> str:
         return f"{self.quote_no} · {self.contact.name}"
 

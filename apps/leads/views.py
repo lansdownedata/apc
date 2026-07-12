@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import stripe
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -100,6 +102,38 @@ def lead_list(request):
         ],
     }
     return render(request, "leads/lead_list.html", context)
+
+
+@login_required
+def pipeline(request: HttpRequest) -> HttpResponse:
+    """Kanban of leads by status with per-column value (spec 2026-07-12 §1)."""
+    leads = (
+        Lead.objects.select_related("contact", "payment")
+        .prefetch_related("reservations__stops", "reservations__vehicle")
+        .order_by("-created_at")
+    )
+    by_status: dict[str, list[Lead]] = {s: [] for s in Lead.Status.values}
+    for lead in leads:
+        by_status[lead.status].append(lead)
+    columns = [
+        {
+            "status": status,
+            "label": label,
+            "leads": by_status[status],
+            "value": sum((lead.quote_total for lead in by_status[status]), Decimal("0")),
+        }
+        for status, label in Lead.Status.choices
+    ]
+    return render(
+        request,
+        "leads/pipeline.html",
+        {
+            "nav": "pipeline",
+            "page_title": "Pipeline",
+            "columns": columns,
+            "open_value": Lead.objects.open_pipeline_value(),
+        },
+    )
 
 
 @login_required

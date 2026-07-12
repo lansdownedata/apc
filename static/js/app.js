@@ -350,6 +350,73 @@ function inbox(opts = {}) {
 }
 window.inbox = inbox;
 
+/* -------------------------------------------------- pipeline (kanban) */
+function pipelineBoard() {
+  return {
+    dragId: null,
+    dragFrom: null,
+    dragOver: null,
+
+    onDrag(id, from) {
+      this.dragId = id;
+      this.dragFrom = from;
+    },
+
+    onDrop(to) {
+      const id = this.dragId;
+      const from = this.dragFrom;
+      this.dragId = this.dragFrom = null;
+      if (!id || from === to) return;
+      if (to === "lost" && (from === "new" || from === "quoted")) return this.markLost(id);
+      if (to === "new" && from === "lost") return this.post(`/leads/${id}/reopen/`);
+      const why = {
+        quoted: "Quoted happens when a quote is sent from the workspace.",
+        booked: "Booked happens when the deposit is paid.",
+      }[to] || "Booked orders are cancelled from the Orders console.";
+      Alpine.store("toast").push({ type: "info", title: "Can't move quote", message: why });
+    },
+
+    // Reuses the same $store.modal reason-prompt flow as the lead-detail "Mark lost" button.
+    markLost(id) {
+      Alpine.store("modal").show({
+        title: "Mark lead as lost",
+        variant: "danger",
+        html:
+          "<label class='block text-[12.5px] font-medium text-ink mb-1'>Reason (optional)</label>" +
+          "<input type='text' id='pipeline-lost-reason' class='w-full border border-line rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-rose-300' placeholder='e.g. Booked elsewhere'>",
+        confirmText: "Mark lost",
+        showCancel: true,
+        cancelText: "Cancel",
+        onConfirm: () => {
+          const el = document.getElementById("pipeline-lost-reason");
+          return this.post(`/leads/${id}/mark-lost/`, { reason: el ? el.value : "" });
+        },
+      });
+    },
+
+    async post(url, data = {}) {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCookie("csrftoken"),
+          Accept: "application/json",
+        },
+        body: new URLSearchParams(data),
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (resp.ok && json.ok) {
+        window.location.reload();
+        return;
+      }
+      Alpine.store("toast").push({
+        type: "danger", title: "Could not update", message: json.error || "Please try again.",
+      });
+    },
+  };
+}
+window.pipelineBoard = pipelineBoard;
+
 /* -------------------------------------------------- Tom Select auto-init */
 function initTomSelects(root = document) {
   if (typeof TomSelect === "undefined") return;
