@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+
+  <!-- header: totals + search -->
+  <form method="get" class="flex flex-wrap items-center gap-2.5 mb-4">
+    <div class="text-[12.5px] text-muted">
+      <span class="font-display text-[15px] font-semibold text-ink num">{{ total_contacts }}</span> contacts ·
+      lifetime value
+      <span class="font-display text-[15px] font-semibold text-goldd num">${{ total_ltv|floatformat:0|intcomma }}</span>
+    </div>
+    <div class="flex items-center gap-2 bg-surface ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 ml-auto focus-within:ring-gold transition">
+      <i class="ti ti-search text-[15px] text-muted"></i>
+      <input name="q" value="{{ q }}" placeholder="Search name, company, phone, email…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
+    </div>
+  </form>
+
+  <!-- table -->
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[760px]">
+        <thead>
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-5 py-3">Contact</th>
+            <th class="font-medium px-3 py-3">Channel</th>
+            <th class="font-medium px-3 py-3">Phone</th>
+            <th class="font-medium px-3 py-3 text-center">Trips</th>
+            <th class="font-medium px-3 py-3 text-right">Lifetime value</th>
+            <th class="font-medium px-5 py-3">Last activity</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for c in contacts %}
+          <tr {% if c.latest_lead_id %}onclick="window.location='{% url 'lead_detail' c.latest_lead_id %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors"{% else %}class="border-b border-line/70 last:border-0"{% endif %}>
+            <td class="px-5 py-3.5">
+              <div class="flex items-center gap-3">
+                <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ c.name|slice:":2" }}</span>
+                <div class="min-w-0">
+                  <div class="font-semibold text-ink leading-tight truncate">{{ c.name }}</div>
+                  <div class="text-[11px] text-muted truncate">{{ c.company|default:c.email }}</div>
+                </div>
+              </div>
+            </td>
+            <td class="px-3 py-3.5">
+              <span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted">{{ c.get_channel_display }}</span>
+            </td>
+            <td class="px-3 py-3.5 text-muted num">{{ c.phone|default:"—" }}</td>
+            <td class="px-3 py-3.5 text-center num font-medium text-ink">{{ c.trips }}</td>
+            <td class="px-3 py-3.5 text-right num font-display text-[14px] font-semibold text-ink">${{ c.lifetime_value|floatformat:0|intcomma }}</td>
+            <td class="px-5 py-3.5 text-muted">
+              {% if c.last_activity %}
+                {{ c.last_activity|date:"M j, Y" }}
+              {% else %}
+                <a href="{% url 'lead_list' %}" onclick="event.stopPropagation()" class="inline-flex items-center gap-1 text-[11.5px] font-medium text-goldd hover:underline">
+                  <i class="ti ti-plus text-[13px]"></i> New lead
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="px-5 py-16 text-center text-muted">
+            <i class="ti ti-address-book-off text-[28px] text-slate-300"></i>
+            <div class="mt-2 text-[13px]">No contacts match your search.</div>
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

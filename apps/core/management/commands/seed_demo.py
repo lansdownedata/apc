@@ -405,6 +405,16 @@ class Command(BaseCommand):
             ["Hotel Viking, Newport", "Castle Hill Inn"],
         )
 
+        # 8) A contact with no leads yet — shows the Contacts directory's lead-less row
+        #    (LTV $0, "New lead" affordance).
+        Contact.objects.create(
+            name="Priya Anand",
+            company="Anand Family Office",
+            phone="(617) 555-0207",
+            email="priya.anand@example.com",
+            channel=Channel.PHONE,
+        )
+
         leads = Lead.objects.count()
         res = Reservation.objects.count()
         self.stdout.write(
