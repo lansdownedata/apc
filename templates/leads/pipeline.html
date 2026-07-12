@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="h-full flex flex-col" x-data="pipelineBoard()">
+
+  <div class="px-4 sm:px-6 pt-5 pb-3 flex items-center gap-2 flex-wrap">
+    <p class="text-[12.5px] text-muted">
+      <i class="ti ti-hand-finger text-[14px]"></i>
+      Drag a quote between stages to update its status — the same New &rarr; Quoted &rarr; Booked &rarr; Lost flow as the workspace.
+    </p>
+    <div class="ml-auto text-[12px] text-muted">
+      Open pipeline value
+      <span class="font-display text-[15px] font-semibold text-goldd num">${{ open_value|floatformat:2|intcomma }}</span>
+    </div>
+  </div>
+
+  <div class="flex-1 overflow-x-auto overflow-y-hidden px-4 sm:px-6 pb-6">
+    <div class="flex gap-4 h-full min-w-[820px]">
+      {% for column in columns %}
+      <div class="w-1/4 min-w-[240px] flex flex-col rounded-2xl transition"
+           :class="dragOver==='{{ column.status }}' ? 'ring-2 ring-gold bg-goldl/30' : ''"
+           @dragover.prevent="dragOver='{{ column.status }}'"
+           @dragleave="dragOver=(dragOver==='{{ column.status }}'?null:dragOver)"
+           @drop.prevent="dragOver=null; onDrop('{{ column.status }}')">
+        <!-- column header -->
+        <div class="flex items-center gap-2 px-3 py-2.5 mb-1">
+          <span class="w-2 h-2 rounded-full {% if column.status == 'new' %}bg-sky-500{% elif column.status == 'quoted' %}bg-amber-500{% elif column.status == 'booked' %}bg-emerald-500{% else %}bg-slate-400{% endif %}"></span>
+          <span class="font-display text-[14px] font-semibold text-ink">{{ column.label }}</span>
+          <span class="text-[11px] font-semibold text-muted bg-surface ring-1 ring-line rounded-full px-1.5 num">{{ column.leads|length }}</span>
+          <span class="ml-auto text-[11.5px] text-muted num">${{ column.value|floatformat:2|intcomma }}</span>
+        </div>
+        <!-- cards -->
+        <div class="flex-1 overflow-y-auto px-1 space-y-2.5 pb-2">
+          {% for lead in column.leads %}
+          {% with res=lead.reservations.all|first %}
+          <div onclick="window.location='{% url 'lead_detail' lead.pk %}'"
+               draggable="true"
+               @dragstart="onDrag({{ lead.pk }}, '{{ lead.status }}')"
+               @dragend="dragOver=null"
+               class="card p-3 cursor-grab active:cursor-grabbing hover:shadow-[var(--shadow-lift)] transition-shadow">
+            <div class="flex items-center gap-2">
+              <span class="w-7 h-7 rounded-full bg-charcoal2 text-gold grid place-items-center text-[10px] font-semibold shrink-0 uppercase">{{ lead.contact.name|slice:":2" }}</span>
+              <span class="text-[12.5px] font-semibold text-ink truncate">{{ lead.contact.name }}</span>
+              <span class="ml-auto font-display text-[13px] font-semibold text-ink num">${{ lead.quote_total|floatformat:2|intcomma }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 mt-2 text-[10px] text-muted">
+              <span class="inline-flex items-center gap-1"><i class="ti ti-route text-[12px]"></i>{{ lead.get_channel_display }}</span>
+              <span class="inline-flex items-center gap-1"><i class="ti ti-car text-[12px]"></i><span class="num">{{ lead.reservation_count }}</span></span>
+              {% if res.pickup_date %}<span class="ml-auto num">{{ res.pickup_date|date:"M j, Y" }}</span>{% endif %}
+            </div>
+            {% if res %}
+            <div class="text-[11px] text-muted mt-1.5 truncate">{{ res.service|default:res.get_trip_type_display }}</div>
+            {% endif %}
+            {% if lead.payment_chip %}
+            <span class="mt-2 inline-flex items-center gap-1 text-[9.5px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset
+              {% if lead.payment_chip == 'Balance failed' %}bg-rose-50 text-rose-600 ring-rose-600/20
+              {% elif lead.payment_chip == 'Paid in full' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20
+              {% else %}bg-amber-50 text-amber-700 ring-amber-600/20{% endif %}">
+              <i class="ti text-[10px] {% if lead.payment_chip == 'Balance failed' %}ti-alert-triangle{% else %}ti-credit-card{% endif %}"></i>
+              {{ lead.payment_chip }}
+            </span>
+            {% endif %}
+          </div>
+          {% endwith %}
+          {% empty %}
+          <div class="text-center text-[11.5px] text-muted/70 py-8 ring-1 ring-dashed ring-line rounded-xl">Drop quotes here</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
