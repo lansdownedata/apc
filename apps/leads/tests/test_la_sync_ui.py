@@ -16,12 +16,6 @@ from apps.reservations.factories import ReservationFactory, TransferReservationF
 pytestmark = pytest.mark.django_db
 
 
-@pytest.fixture
-def logged_in_client(client):
-    client.force_login(UserFactory())
-    return client
-
-
 def _draft(lead, **over):
     base = {
         "lead_id": lead.pk,
