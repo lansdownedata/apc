@@ -1,5 +1,7 @@
 """Vehicle Types CRUD — owner-admin only, guarded delete."""
 
+import re
+
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
@@ -24,10 +26,13 @@ def test_list_requires_owner_admin(client):
 
 def test_owner_admin_sees_the_list(client):
     client.force_login(UserFactory(role="owner_admin"))
-    VehicleTypeFactory(name="Luxury SUV")
+    # "Vintage Trolley" is deliberately NOT one of the six names seeded by
+    # reservations/0003_seed_vehicles, so this only passes if the created row
+    # actually renders (a seeded name would pass even with the factory line deleted).
+    VehicleTypeFactory(name="Vintage Trolley")
     response = client.get(reverse("vehicle_type_list"))
     assert response.status_code == 200
-    assert b"Luxury SUV" in response.content
+    assert b"Vintage Trolley" in response.content
 
 
 def test_create_with_an_image(client, settings, tmp_path):
@@ -75,3 +80,47 @@ def test_delete_removes_when_unused(client):
     vt = VehicleTypeFactory(name="Never Booked")
     client.post(reverse("vehicle_type_delete", args=[vt.pk]))
     assert not VehicleType.objects.filter(pk=vt.pk).exists()
+
+
+def test_edit_page_delete_form_is_not_nested(client):
+    """A <form> start tag encountered while another form is still open is a parse
+    error under the HTML5 spec — a spec-compliant (browser) parser drops the token
+    and no delete-form element is created in the DOM. That silently kills the Delete
+    button (`getElementById('delete-form')` returns null), and a POST-directly test
+    against the delete view can't catch it because it never renders the template.
+
+    The page also carries an unrelated, already-closed <form> (base.html's logout
+    form in the nav), so we can't just count "<form " tags — instead we walk the
+    open/close tags in document order and check how many are still open at the
+    point the delete form's own start tag appears.
+    """
+    client.force_login(UserFactory(role="owner_admin"))
+    vt = VehicleTypeFactory(name="Vintage Trolley")
+    html = client.get(reverse("vehicle_type_edit", args=[vt.pk])).content.decode()
+
+    tags = re.finditer(r"<form\b[^>]*>|</form>", html)
+    depth = 0
+    depth_at_delete_form_open = None
+    for match in tags:
+        tag = match.group()
+        if tag.startswith("</form"):
+            depth -= 1
+        else:
+            if 'id="delete-form"' in tag:
+                depth_at_delete_form_open = depth
+            depth += 1
+
+    assert depth_at_delete_form_open is not None, "delete form was not found in the response"
+    assert depth_at_delete_form_open == 0, (
+        "the delete form's <form> tag opens while another form is still open — "
+        "a real browser drops it, so #delete-form never exists in the DOM"
+    )
+
+
+def test_form_carries_multipart_enctype(client):
+    """django.test.Client encodes multipart itself whenever a file is in the data
+    dict, so a POST-only test never proves the template emits the attribute. Without
+    it a real browser posts urlencoded and the file vanishes with no error."""
+    client.force_login(UserFactory(role="owner_admin"))
+    response = client.get(reverse("vehicle_type_create"))
+    assert b'enctype="multipart/form-data"' in response.content

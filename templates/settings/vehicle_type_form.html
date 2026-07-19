@@ -14,26 +14,11 @@
     <form method="post" enctype="multipart/form-data" class="space-y-4">
       {% csrf_token %}
 
-      <div>
-        <label for="{{ form.name.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Name</label>
-        {{ form.name }}
-        {% if form.name.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.name.help_text }}</p>{% endif %}
-        {% for error in form.name.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-      </div>
+      {% include "components/form_field.html" with field=form.name %}
 
-      <div>
-        <label for="{{ form.capacity.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Capacity</label>
-        {{ form.capacity }}
-        {% if form.capacity.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.capacity.help_text }}</p>{% endif %}
-        {% for error in form.capacity.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-      </div>
+      {% include "components/form_field.html" with field=form.capacity %}
 
-      <div>
-        <label for="{{ form.description.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Description</label>
-        {{ form.description }}
-        {% if form.description.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.description.help_text }}</p>{% endif %}
-        {% for error in form.description.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-      </div>
+      {% include "components/form_field.html" with field=form.description %}
 
       <div>
         <label for="{{ form.image.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Photo</label>
@@ -46,12 +31,7 @@
         {% for error in form.image.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
       </div>
 
-      <div>
-        <label for="{{ form.sort_order.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Sort order</label>
-        {{ form.sort_order }}
-        {% if form.sort_order.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.sort_order.help_text }}</p>{% endif %}
-        {% for error in form.sort_order.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-      </div>
+      {% include "components/form_field.html" with field=form.sort_order %}
 
       <div class="flex items-center gap-2">
         {{ form.active }}
@@ -71,9 +51,6 @@
                 })">
           <i class="ti ti-trash text-[14px]"></i> Delete
         </button>
-        <form id="delete-form" method="post" action="{% url 'vehicle_type_delete' target.pk %}" class="hidden">
-          {% csrf_token %}
-        </form>
         {% else %}
         <span></span>
         {% endif %}
@@ -91,6 +68,12 @@
       </div>
     </form>
   </div>
+
+  {% if target %}
+  <form id="delete-form" method="post" action="{% url 'vehicle_type_delete' target.pk %}" class="hidden">
+    {% csrf_token %}
+  </form>
+  {% endif %}
 
 </div>
 {% endblock %}
