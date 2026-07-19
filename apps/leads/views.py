@@ -48,7 +48,15 @@ def _reservation_draft(r) -> dict:
         "hours": float(r.hours),
         "hourlyRate": float(r.hourly_rate),
         "minHours": float(r.min_hours),
-        "stops": [{"address": s.address, "note": s.note} for s in r.stops.all()],
+        "stops": [
+            {
+                "address": s.address,
+                "note": s.note,
+                "name": s.name,
+                "time": s.scheduled_time.strftime("%H:%M") if s.scheduled_time else "",
+            }
+            for s in r.stops.all()
+        ],
     }
 
 

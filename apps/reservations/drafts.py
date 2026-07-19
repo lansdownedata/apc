@@ -79,6 +79,8 @@ def parse_draft(payload: dict) -> dict:
             {
                 "address": (s.get("address") or "").strip()[:255],
                 "note": (s.get("note") or "").strip()[:255],
+                "name": (s.get("name") or "").strip()[:160],
+                "scheduled_time": _time(s.get("time")),
             }
             for s in raw_stops
         ],
@@ -102,7 +104,14 @@ def save_reservation_from_draft(
     instance.stops.all().delete()
     Stop.objects.bulk_create(
         [
-            Stop(reservation=instance, sequence=i, address=s["address"], note=s["note"])
+            Stop(
+                reservation=instance,
+                sequence=i,
+                address=s["address"],
+                note=s["note"],
+                name=s["name"],
+                scheduled_time=s["scheduled_time"],
+            )
             for i, s in enumerate(stops)
         ]
     )
