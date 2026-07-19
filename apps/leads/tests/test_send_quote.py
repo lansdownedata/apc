@@ -43,6 +43,7 @@ def _quotable_lead():
 
 def test_send_quote_happy_path():
     lead = _quotable_lead()
+    phone = lead.contact.phone
     with patch.object(services.podium, "send_message", return_value={}) as send:
         result = services.send_quote(lead, base_url=BASE_URL)
 
@@ -58,9 +59,14 @@ def test_send_quote_happy_path():
     assert lead.status == Lead.Status.QUOTED
     plan = PaymentPlan.objects.get(lead=lead)
     assert plan.quote_total == Decimal("185.00")
-    assert result.delivery == {"sent": True, "recipient": "rider@example.com", "error": None}
-    assert send.call_args.kwargs["channel_type"] == "email"
-    assert send.call_args.kwargs["identifier"] == "rider@example.com"
+    # Default channels = both: email goes through send_html_email (not Podium), SMS
+    # through Podium with channel_type="phone" (Podium's own name for SMS).
+    assert result.delivery == {
+        "email": {"sent": True, "recipient": "rider@example.com", "error": None},
+        "sms": {"sent": True, "recipient": phone, "error": None},
+    }
+    assert send.call_args.kwargs["channel_type"] == "phone"
+    assert send.call_args.kwargs["identifier"] == phone
 
 
 def test_send_quote_message_links_quote_page_not_stripe():
@@ -161,8 +167,8 @@ def test_send_quote_degrades_when_podium_fails():
         result = services.send_quote(lead, base_url=BASE_URL)
     # quote still went through; only delivery failed
     assert result.ok and result.http_status == 200
-    assert result.delivery["sent"] is False
-    assert "403" in result.delivery["error"]
+    assert result.delivery["sms"]["sent"] is False
+    assert "403" in result.delivery["sms"]["error"]
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
 
@@ -228,7 +234,8 @@ def test_send_quote_view_happy_path(client, agent):
     token = services.make_deposit_token(lead)
     assert data["ok"]
     assert data["link"].endswith(f"/quote/{token}/")
-    assert data["delivery"]["sent"] is True
+    assert data["delivery"]["email"]["sent"] is True
+    assert data["delivery"]["sms"]["sent"] is True
 
 
 def test_send_quote_view_precondition_returns_400(client, agent):

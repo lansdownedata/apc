@@ -305,10 +305,13 @@ def lead_resend_la(request, pk: int) -> HttpResponse:
 @require_POST
 def lead_send_quote(request, pk: int) -> JsonResponse:
     """Create/refresh the deposit plan, transition the lead, stamp the send/expiry, and
-    email the public quote-page link over Podium. Returns the send result as JSON."""
+    deliver the public quote-page link on the requested channels. Returns the send result
+    as JSON. ``channels`` (repeated POST field) selects "email"/"sms"; defaults to both."""
     lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
     base_url = request.build_absolute_uri("/")[:-1]
-    result = services.send_quote(lead, base_url=base_url)
+    raw = request.POST.getlist("channels") or ["email", "sms"]
+    channels = {c for c in raw if c in {"email", "sms"}} or {"email", "sms"}
+    result = services.send_quote(lead, base_url=base_url, channels=channels)
     return JsonResponse(result.as_dict(), status=result.http_status)
 
 

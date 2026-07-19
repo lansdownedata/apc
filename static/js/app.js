@@ -181,12 +181,55 @@ function quoteWorkspace(opts = {}) {
       }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
     },
 
-    sendQuote() {
+    // Channel picker — never window.confirm. Options reflect whichever contact fields are
+    // currently on file (booleans only; no contact PII is interpolated into the html string).
+    openSendQuoteModal() {
       if (this.sending) return;
+      const hasEmail = !!(this.header.email && this.header.email.trim());
+      const hasPhone = !!(this.header.phone && this.header.phone.trim());
+      const row = (id, label, available) =>
+        '<label class="flex items-center gap-2 py-1' + (available ? "" : " opacity-50") + '">' +
+        '<input type="checkbox" id="' + id + '"' + (available ? " checked" : " disabled") + '> ' +
+        label + (available ? "" : ' <span class="text-[11px] text-muted">(none on file)</span>') +
+        "</label>";
+      Alpine.store("modal").show({
+        title: "Send quote",
+        variant: "gold",
+        html:
+          '<p class="text-[13px] text-muted mb-2">Choose how to send this quote to the customer.</p>' +
+          row("sq-channel-email", "Email", hasEmail) +
+          row("sq-channel-sms", "Text message", hasPhone),
+        confirmText: "Send",
+        showCancel: true,
+        cancelText: "Cancel",
+        onConfirm: () => {
+          const channels = [];
+          const emailEl = document.getElementById("sq-channel-email");
+          const smsEl = document.getElementById("sq-channel-sms");
+          if (emailEl && emailEl.checked) channels.push("email");
+          if (smsEl && smsEl.checked) channels.push("sms");
+          if (!channels.length) {
+            Alpine.store("toast").push({ type: "danger", title: "Choose at least one channel" });
+            return;
+          }
+          return this.sendQuote(channels);
+        },
+      });
+    },
+
+    sendQuote(channels) {
+      if (this.sending) return;
+      channels = channels && channels.length ? channels : ["email", "sms"];
       this.sending = true;
-      fetch(this.sendQuoteUrl, {
+      const body = new URLSearchParams();
+      channels.forEach((c) => body.append("channels", c));
+      return fetch(this.sendQuoteUrl, {
         method: "POST",
-        headers: { "X-CSRFToken": getCookie("csrftoken") },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        body,
       })
         .then(async (r) => {
           const data = await r.json().catch(() => ({}));
@@ -197,30 +240,42 @@ function quoteWorkspace(opts = {}) {
             });
             return;
           }
-          if (data.delivery && data.delivery.sent) {
+          const delivery = data.delivery || {};
+          const attempted = Object.keys(delivery);
+          const sent = attempted.filter((c) => delivery[c] && delivery[c].sent);
+          const failed = attempted.filter((c) => !(delivery[c] && delivery[c].sent));
+
+          if (failed.length === 0) {
             Alpine.store("toast").push({
               type: "success", title: "Quote sent",
-              message: "Emailed to " + (data.delivery.recipient || "the customer") + ".",
+              message: "Sent via " + sent.join(" and ") + ".",
             });
             setTimeout(() => window.location.reload(), 800);
-          } else {
-            const err = (data.delivery && data.delivery.error) || "the Podium send failed";
-            Alpine.store("modal").show({
-              title: "Quote saved — but not delivered",
-              variant: "danger",
-              html:
-                "<p class='text-[13px] text-muted'>The deposit link is ready, but sending over Podium failed:</p>" +
-                "<p class='text-[12px] text-rose-600 mt-1'>" + escapeHtml(err) + "</p>" +
-                "<p class='text-[12px] text-muted mt-3'>Copy the link to send manually:</p>" +
-                "<p class='text-[12px] text-ink break-all mt-1'>" + escapeHtml(data.link) + "</p>",
-              confirmText: "Copy link", cancelText: "Close",
-              onConfirm: () => {
-                if (navigator.clipboard) navigator.clipboard.writeText(data.link || "");
-                window.location.reload();
-              },
-              onCancel: () => window.location.reload(),
-            });
+            return;
           }
+
+          const failLines = failed
+            .map((c) => (
+              "<p class='text-[12px] text-rose-600 mt-1'>" + escapeHtml(c) + ": " +
+              escapeHtml((delivery[c] && delivery[c].error) || "delivery failed") + "</p>"
+            ))
+            .join("");
+          Alpine.store("modal").show({
+            title: sent.length ? "Quote saved — partially delivered" : "Quote saved — but not delivered",
+            variant: "danger",
+            html:
+              "<p class='text-[13px] text-muted'>The deposit link is ready" +
+              (sent.length ? ", and sent via " + escapeHtml(sent.join(" and ")) + ", but " : ", but ") +
+              "the following didn't go out:</p>" + failLines +
+              "<p class='text-[12px] text-muted mt-3'>Copy the link to send manually:</p>" +
+              "<p class='text-[12px] text-ink break-all mt-1'>" + escapeHtml(data.link) + "</p>",
+            confirmText: "Copy link", cancelText: "Close",
+            onConfirm: () => {
+              if (navigator.clipboard) navigator.clipboard.writeText(data.link || "");
+              window.location.reload();
+            },
+            onCancel: () => window.location.reload(),
+          });
         })
         .catch(() =>
           Alpine.store("toast").push({ type: "danger", title: "Network error — could not send quote" })

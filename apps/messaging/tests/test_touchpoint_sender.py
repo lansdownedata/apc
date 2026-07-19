@@ -52,7 +52,55 @@ def test_tp1_sends_on_both_channels_and_marks_sent(settings):
     assert tp.podium_message_uid == "msg-1"
     assert mock_send.call_count == 2
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    assert calls == {("email", "a@example.com"), ("sms", "5551234567")}
+    # Podium's own name for the SMS channel is "phone", not "sms" — see _PODIUM_CHANNEL.
+    assert calls == {("email", "a@example.com"), ("phone", "5551234567")}
+
+
+def test_sms_touchpoint_uses_podiums_phone_channel_type(settings):
+    """Regression: touchpoints.py used to pass channel_type="sms" straight through from
+    TouchPointTemplate.channels, but Podium's API expects "phone" — every SMS touch-point
+    was being rejected. apps/messaging/views.py already did this translation; touchpoints.py
+    now shares the same mapping."""
+    settings.TOUCHPOINTS_ENABLED = True
+    settings.PUBLIC_BASE_URL = "https://apc.example"
+    contact = ContactFactory(email="", phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
+
+    with patch(
+        "apps.messaging.touchpoints.podium.send_message",
+        return_value={"uid": "msg-1"},
+    ) as mock_send:
+        result = touchpoints.run_touchpoints()
+
+    assert result == 1
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SENT
+    mock_send.assert_called_once()
+    assert mock_send.call_args.kwargs["channel_type"] == "phone"
+    assert mock_send.call_args.kwargs["identifier"] == "5551234567"
+
+
+def test_review_invite_sms_uses_podiums_phone_channel_type(settings):
+    """Same bug, second call site: _send_review_invite hardcoded channel_type="sms"."""
+    settings.TOUCHPOINTS_ENABLED = True
+    contact = ContactFactory(name="Jane Doe", phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
+
+    with (
+        patch(
+            "apps.messaging.touchpoints.podium.send_message", return_value={"uid": "msg-1"}
+        ) as mock_send,
+        patch(
+            "apps.messaging.touchpoints.podium.create_review_invitation",
+            return_value={"uid": "inv-1", "url": "https://podium.example/r/inv-1"},
+        ),
+    ):
+        touchpoints.run_touchpoints()
+
+    mock_send.assert_called_once()
+    assert mock_send.call_args.kwargs["channel_type"] == "phone"
 
 
 def test_lost_lead_is_skipped(settings):
@@ -254,7 +302,7 @@ def test_quote_link_uses_public_base_url(settings):
     assert result == 1
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SENT
-    sms_call = next(c for c in mock_send.call_args_list if c.kwargs["channel_type"] == "sms")
+    sms_call = next(c for c in mock_send.call_args_list if c.kwargs["channel_type"] == "phone")
     assert "https://apc.example/quote/" in sms_call.kwargs["body"]
 
 
@@ -278,7 +326,7 @@ def test_blank_public_base_url_leaves_quote_link_row_scheduled_but_still_sends_t
     assert tp3.status == TouchPoint.Status.SCHEDULED
     assert tp1.status == TouchPoint.Status.SENT
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    assert calls == {("email", "a@example.com"), ("sms", "5551234567")}
+    assert calls == {("email", "a@example.com"), ("phone", "5551234567")}
 
 
 def test_run_touchpoints_returns_sent_count(settings):

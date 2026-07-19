@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from .models import Lead
 
 from apps.integrations import podium
-from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.messaging import touchpoints
+from apps.notifications.email import send_html_email
 from apps.payments.models import PaymentPlan
 
 _DEPOSIT_SALT = "quote-deposit"
@@ -89,11 +89,38 @@ def _quote_message(lead: Lead, plan: PaymentPlan, link: str) -> str:
     )
 
 
-def send_quote(lead: Lead, *, base_url: str) -> SendQuoteResult:
+def _quote_email_context(lead: Lead, plan: PaymentPlan, link: str) -> dict:
+    """Template context for templates/email/quote_sent.{html,txt}."""
+    return {
+        "contact_name": lead.contact.name,
+        "quote_no": lead.quote_no,
+        "quote_total": f"{plan.quote_total:,.2f}",
+        "deposit_pct": plan.deposit_pct,
+        "deposit_amount": f"{plan.deposit_amount:,.2f}",
+        "quote_url": link,
+        "trip_count": lead.reservations.count(),
+        "expires_at": lead.quote_expires_at,
+        "company_name": settings.COMPANY_NAME,
+        "company_phone": settings.COMPANY_PHONE,
+        "company_email": settings.COMPANY_EMAIL,
+    }
+
+
+def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -> SendQuoteResult:
     """Create/refresh the deposit plan, transition the lead, stamp the send/expiry, and
-    email the public quote-page link over Podium (best-effort). The transition + stamps
-    commit even if the Podium send fails, so a missing write_messages scope degrades
-    gracefully. The Stripe deposit Checkout itself happens later, on the quote page."""
+    deliver the public quote-page link on the selected channels.
+
+    ``channels`` is any non-empty subset of {"email", "sms"}; ``None`` (the default) means
+    both. Email goes out as the branded HTML/text pair via
+    ``apps.notifications.email.send_html_email``; SMS keeps the short Podium text message.
+    Delivery is per-channel best-effort — the NEW->QUOTED transition, the
+    quote_sent_at/quote_expires_at stamps, the quote_viewed_at reset, the PaymentPlan
+    snapshot, and touch-point scheduling all commit even if every channel fails to send, so a
+    missing Podium scope or a broken mail relay degrades gracefully. The Stripe deposit
+    Checkout itself happens later, on the quote page.
+    """
+    selected = channels or {"email", "sms"}
+
     # 1. preconditions — nothing is written on failure
     if lead.status in (lead.Status.BOOKED, lead.Status.LOST):
         return SendQuoteResult(
@@ -108,11 +135,18 @@ def send_quote(lead: Lead, *, base_url: str) -> SendQuoteResult:
             error="Add at least one reservation before sending the quote.",
         )
     email = (lead.contact.email or "").strip()
-    if not email:
+    phone = (lead.contact.phone or "").strip()
+    if "email" in selected and not email:
         return SendQuoteResult(
             ok=False,
             http_status=400,
-            error="Add a customer email before sending the quote.",
+            error="Add a customer email before sending the quote by email.",
+        )
+    if "sms" in selected and not phone:
+        return SendQuoteResult(
+            ok=False,
+            http_status=400,
+            error="Add a customer phone number before sending the quote by text.",
         )
 
     # 2. plan + frozen total
@@ -134,15 +168,30 @@ def send_quote(lead: Lead, *, base_url: str) -> SendQuoteResult:
     lead.save(update_fields=["quote_sent_at", "quote_expires_at", "quote_viewed_at", "updated_at"])
     touchpoints.schedule_quote_sent(lead)
 
-    # 6. deliver over Podium email — best-effort
-    delivery: dict = {"sent": False, "recipient": email, "error": None}
-    try:
-        podium.send_message(
-            identifier=email, channel_type="email", body=_quote_message(lead, plan, link)
+    # 6. deliver on each selected channel — best-effort, never rolls back the transition
+    delivery: dict = {}
+    if "email" in selected:
+        sent = send_html_email(
+            to=email,
+            subject=f"Your {settings.COMPANY_NAME} quote {lead.quote_no}",
+            template="quote_sent",
+            context=_quote_email_context(lead, plan, link),
         )
-        delivery["sent"] = True
-    except (PodiumAPIError, PodiumNotConnected) as exc:
-        delivery["error"] = str(exc)
+        delivery["email"] = {
+            "sent": sent,
+            "recipient": email,
+            "error": None if sent else "Email delivery failed — see the server log.",
+        }
+    if "sms" in selected:
+        result = {"sent": False, "recipient": phone, "error": None}
+        try:
+            podium.send_message(
+                identifier=phone, channel_type="phone", body=_quote_message(lead, plan, link)
+            )
+            result["sent"] = True
+        except Exception as exc:  # noqa: BLE001 — delivery must never break the send
+            result["error"] = str(exc)
+        delivery["sms"] = result
 
     return SendQuoteResult(
         ok=True, http_status=200, link=link, status=lead.status, delivery=delivery
