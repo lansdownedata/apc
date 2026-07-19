@@ -377,10 +377,17 @@ def quote_page(request, token: str) -> HttpResponse:
                     title=f"Quote {lead.quote_no} expired",
                     detail="The customer opened an expired quote link.",
                 )
-        elif lead.quote_viewed_at is None:
-            lead.quote_viewed_at = timezone.now()
-            lead.save(update_fields=["quote_viewed_at", "updated_at"])
-            touchpoints.schedule_quote_viewed(lead)
+        else:
+            first_view = lead.quote_viewed_at is None
+            lead.quote_view_count += 1
+            lead.quote_last_viewed_at = timezone.now()
+            fields = ["quote_view_count", "quote_last_viewed_at", "updated_at"]
+            if first_view:
+                lead.quote_viewed_at = lead.quote_last_viewed_at
+                fields.append("quote_viewed_at")
+            lead.save(update_fields=fields)
+            if first_view:
+                touchpoints.schedule_quote_viewed(lead)
 
     return render(request, "public/quote.html", _quote_page_context(lead, token))
 
