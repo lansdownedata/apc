@@ -32,7 +32,7 @@ from apps.payments import services as payment_services
 
 from . import services
 from .forms import NewLeadForm
-from .models import Lead, Vehicle
+from .models import Lead, VehicleType
 
 
 def _reservation_draft(r) -> dict:
@@ -146,7 +146,7 @@ def lead_detail(request, pk):
         ),
         pk=pk,
     )
-    _vehicles = list(Vehicle.objects.filter(active=True).order_by("name").values("id", "name"))
+    _vehicles = list(VehicleType.objects.filter(active=True).values("id", "name"))
     reservations = lead.reservations.all()
 
     la_events: dict[int, ZapEvent] = {}

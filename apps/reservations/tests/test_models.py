@@ -90,7 +90,7 @@ def test_earned_terminal_statuses():
 
 # --- vehicle reference list ------------------------------------------------
 def test_vehicle_reference_list_seeded(db):
-    from apps.leads.models import Vehicle
+    from apps.leads.models import VehicleType
 
-    names = set(Vehicle.objects.filter(active=True).values_list("name", flat=True))
+    names = set(VehicleType.objects.filter(active=True).values_list("name", flat=True))
     assert {"Luxury Sedan", "Luxury SUV", "Sprinter Van", "Mini Coach", "Motor Coach"} <= names

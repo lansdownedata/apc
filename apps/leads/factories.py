@@ -2,17 +2,18 @@ import factory
 
 from apps.contacts.factories import ContactFactory
 
-from .models import Lead, Vehicle
+from .models import Lead, VehicleType
 
 
-class VehicleFactory(factory.django.DjangoModelFactory):
+class VehicleTypeFactory(factory.django.DjangoModelFactory):
     class Meta:
-        model = Vehicle
+        model = VehicleType
         django_get_or_create = ("name",)
 
     name = "Luxury SUV"
     capacity = 6
-    klass = Vehicle.Klass.SUV
+    description = ""
+    sort_order = 0
 
 
 class LeadFactory(factory.django.DjangoModelFactory):

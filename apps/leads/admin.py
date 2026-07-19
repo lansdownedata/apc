@@ -1,13 +1,12 @@
 from django.contrib import admin
 
-from .models import Lead, Vehicle
+from .models import Lead, VehicleType
 
 
-@admin.register(Vehicle)
-class VehicleAdmin(admin.ModelAdmin):
-    list_display = ("name", "klass", "capacity", "active")
-    list_filter = ("klass", "active")
-    search_fields = ("name",)
+@admin.register(VehicleType)
+class VehicleTypeAdmin(admin.ModelAdmin):
+    list_display = ("name", "capacity", "sort_order", "active")
+    list_editable = ("sort_order", "active")
 
 
 @admin.register(Lead)
