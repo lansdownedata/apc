@@ -57,17 +57,20 @@ class Command(BaseCommand):
         today = date.today()
 
         vehicle_specs = [
-            ("Luxury Sedan", 3),
-            ("Luxury SUV", 6),
-            ("Sprinter Van", 14),
-            ("Mini Coach", 24),
-            ("Motor Coach", 56),
-            ("Stretch Limousine", 10),
+            ("Luxury Sedan", 3, "Executive sedan for airport runs and small parties."),
+            ("Luxury SUV", 6, "Leather seating, chilled water, room for luggage."),
+            ("Sprinter Van", 14, "Group travel with a high roof and easy step-in."),
+            ("Mini Coach", 24, "Wedding parties and corporate shuttles."),
+            ("Motor Coach", 56, "Full-size coach with luggage bays and restroom."),
+            ("Stretch Limousine", 10, "Classic stretch for milestone celebrations."),
         ]
-        vehicles = {
-            name: VehicleType.objects.get_or_create(name=name, defaults={"capacity": cap})[0]
-            for name, cap in vehicle_specs
-        }
+        vehicles = {}
+        for i, (name, cap, description) in enumerate(vehicle_specs):
+            vt, _ = VehicleType.objects.update_or_create(
+                name=name,
+                defaults={"capacity": cap, "description": description, "sort_order": i},
+            )
+            vehicles[name] = vt
 
         def new_lead(name, company, phone, email, channel, status, notes=""):
             contact = Contact.objects.create(
@@ -229,7 +232,7 @@ class Command(BaseCommand):
             Lead.Status.BOOKED,
             notes="Annual wine country tour. Repeat client.",
         )
-        hourly(
+        res3 = hourly(
             lead3,
             "Napa wine tour — as directed",
             "Sprinter Van",
@@ -248,6 +251,21 @@ class Command(BaseCommand):
             ],
             status=TS.ASSIGNED,
         )
+        # Venue names + per-stop times so the redesigned quote page has a real itinerary
+        # to render instead of bare addresses (task 3 fields).
+        stop_details = [
+            ("Fairmont Sonoma Mission Inn — pickup", time(10, 0)),
+            ("Domaine Carneros", time(10, 45)),
+            ("Castello di Amorosa", time(12, 30)),
+            ("Frog's Leap Winery", time(14, 15)),
+            ("Fairmont Sonoma Mission Inn — drop-off", time(16, 30)),
+        ]
+        for stop, (name, stop_time) in zip(
+            res3.stops.order_by("sequence"), stop_details, strict=True
+        ):
+            stop.name = name
+            stop.scheduled_time = stop_time
+            stop.save(update_fields=["name", "scheduled_time"])
         p3 = plan(
             lead3,
             PaymentPlan.DepositStatus.PAID,

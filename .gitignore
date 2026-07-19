@@ -15,7 +15,11 @@ docs/
 db.sqlite3
 db.sqlite3-journal
 /staticfiles/
-/media/
+media/*
+!media/.gitkeep
+!media/vehicle-types/
+media/vehicle-types/*
+!media/vehicle-types/.gitkeep
 
 # Environment / secrets
 .env
