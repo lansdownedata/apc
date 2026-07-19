@@ -12,6 +12,14 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
+# WhiteNoise serves STATIC_ROOT only, so without this nothing serves MEDIA_URL in prod and
+# every uploaded vehicle photo 404s on the customer-facing quote page. SERVE_MEDIA lets the
+# app serve MEDIA_ROOT itself (see config/urls.py) — correct at this volume (a handful of
+# vehicle photos), but set SERVE_MEDIA=False and add an nginx/CDN alias for /media/ if
+# traffic grows. Either way MEDIA_ROOT needs a persistent volume: an ephemeral filesystem
+# loses every upload on redeploy.
+SERVE_MEDIA = env.bool("SERVE_MEDIA", default=True)  # noqa: F405
+
 # Security hardening (served behind HTTPS / a proxy)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True
