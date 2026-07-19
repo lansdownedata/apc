@@ -289,7 +289,7 @@ header, aside, main, .wash-gold {
 /* Tom Select copies the source <select>'s classes onto .ts-wrapper, so the
    `.field` class from searchable_select.html would paint a second border +
    padding *around* .ts-control (a double box that reads as clipped).  The
-   wrapper is a plain shell; .ts-control carries the whole look. */
+   wrapper is a plain shell; .ts-control carries the whole look.
    Width stays 100% — the wrapper still owns layout sizing, and the modal /
    reservation-editor selects are full-bleed fields. */
 .ts-wrapper.field {
