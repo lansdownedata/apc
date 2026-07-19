@@ -171,17 +171,20 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     # 6. deliver on each selected channel — best-effort, never rolls back the transition
     delivery: dict = {}
     if "email" in selected:
-        sent = send_html_email(
-            to=email,
-            subject=f"Your {settings.COMPANY_NAME} quote {lead.quote_no}",
-            template="quote_sent",
-            context=_quote_email_context(lead, plan, link),
-        )
-        delivery["email"] = {
-            "sent": sent,
-            "recipient": email,
-            "error": None if sent else "Email delivery failed — see the server log.",
-        }
+        result = {"sent": False, "recipient": email, "error": None}
+        try:
+            sent = send_html_email(
+                to=email,
+                subject=f"Your {settings.COMPANY_NAME} quote {lead.quote_no}",
+                template="quote_sent",
+                context=_quote_email_context(lead, plan, link),
+            )
+            result["sent"] = sent
+            if not sent:
+                result["error"] = "Email delivery failed — see the server log."
+        except Exception as exc:  # noqa: BLE001 — delivery must never break the send
+            result["error"] = str(exc)
+        delivery["email"] = result
     if "sms" in selected:
         result = {"sent": False, "recipient": phone, "error": None}
         try:

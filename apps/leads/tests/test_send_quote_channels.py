@@ -113,3 +113,15 @@ def test_sms_still_works_without_an_email_address():
     with patch("apps.leads.services.podium.send_message"):
         result = services.send_quote(lead, base_url="https://x.test", channels={"sms"})
     assert result.ok
+
+
+def test_email_still_works_without_a_phone_number():
+    from apps.contacts.factories import ContactFactory
+
+    lead = LeadFactory(
+        status=Lead.Status.NEW, contact=ContactFactory(email="customer@example.com", phone="")
+    )
+    ReservationFactory(lead=lead, base_rate="500.00")
+    with patch("apps.leads.services.send_html_email", return_value=True):
+        result = services.send_quote(lead, base_url="https://x.test", channels={"email"})
+    assert result.ok
