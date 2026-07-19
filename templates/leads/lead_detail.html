@@ -33,40 +33,42 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2.5 flex-wrap">
           <input type="text" x-model="header.name" @blur="saveHeader()"
-                 class="font-display text-[22px] font-semibold text-ink tracking-tight bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-full max-w-xs transition-colors"
+                 class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 -ml-2 w-full max-w-xs"
                  placeholder="Customer name">
-          {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
         </div>
         <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
           <span class="font-mono2 shrink-0">{{ lead.quote_no }}</span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-building text-[14px]"></i>
             <input type="text" x-model="header.company" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-32 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="inline-edit px-2 py-1 w-32 text-[12.5px] text-ink"
                    placeholder="Company">
           </span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-phone text-[14px]"></i>
             <input type="text" x-model="header.phone" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-36 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="inline-edit px-2 py-1 w-36 text-[12.5px] text-ink"
                    placeholder="Phone">
           </span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-mail text-[14px]"></i>
             <input type="email" x-model="header.email" @blur="saveHeader()"
-                   class="bg-transparent border-0 border-b border-transparent focus:border-gold focus:outline-none focus:bg-surface2 rounded px-1 -mx-1 w-44 transition-colors text-[12.5px] text-muted placeholder-muted/60"
+                   class="inline-edit px-2 py-1 w-44 text-[12.5px] text-ink"
                    placeholder="Email">
           </span>
-          <span class="flex items-center gap-1 shrink-0"
+          <span class="flex items-center gap-1.5 shrink-0 ts-compact ts-inline"
                 @change="header.channel = $event.target.value; saveHeader()">
-            <i class="ti ti-route text-[14px]"></i>
+            <span class="text-[11px] uppercase tracking-wide text-muted/80">Source</span>
             {% include "components/searchable_select.html" with name="channel" field_id="hdr-channel" options=channels selected=lead.channel search="off" %}
           </span>
         </div>
       </div>
-      <div class="text-right">
-        <div class="text-[11px] text-muted">Quote total</div>
-        <div class="font-display text-[28px] font-semibold text-ink leading-none num mt-0.5">${{ lead.quote_total|floatformat:2|intcomma }}</div>
+      <div class="flex flex-col items-end gap-2.5">
+        {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
+        <div class="text-right">
+          <div class="text-[11px] text-muted">Quote total</div>
+          <div class="font-display text-[28px] font-semibold text-ink leading-none num mt-0.5">${{ lead.quote_total|floatformat:2|intcomma }}</div>
+        </div>
       </div>
     </div>
 
@@ -320,7 +322,8 @@
         <div class="font-display text-[14px] font-semibold text-ink mb-3">Assignment</div>
         <div class="flex items-center justify-between gap-2 text-[12.5px]">
           <span class="text-muted shrink-0">Agent</span>
-          <div @change="header.agent = $event.target.value; saveHeader()">
+          <div class="flex-1 min-w-0 max-w-[68%] ts-compact ts-drop-end"
+               @change="header.agent = $event.target.value; saveHeader()">
             {% include "components/searchable_select.html" with name="agent" field_id="hdr-agent" options=agents selected=lead.assigned_agent_id empty_label="Unassigned" search="off" %}
           </div>
         </div>

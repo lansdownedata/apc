@@ -163,6 +163,44 @@ header, aside, main, .wash-gold {
 .field::placeholder { color: rgb(var(--muted) / .7); }
 .field:focus { outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
 
+/* Inline-editable text (quote header).  Must read as an input *at rest* — a
+   fully transparent field is indistinguishable from static label text. */
+.inline-edit {
+  background: rgb(var(--surface-2) / .55);
+  border: 1px solid transparent;
+  border-bottom-color: rgb(var(--border));
+  border-radius: 8px;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.inline-edit:hover  { background: rgb(var(--surface-2)); border-color: rgb(var(--border)); }
+.inline-edit:focus  {
+  outline: none;
+  background: rgb(var(--surface));
+  border-color: rgb(var(--gold));
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.inline-edit::placeholder { color: rgb(var(--muted) / .65); }
+
+/* Header-scale Tom Select — matches the 12.5px meta row it sits in. */
+.ts-compact .ts-wrapper.single .ts-control,
+.ts-compact .ts-wrapper.multi  .ts-control { padding: .3rem .7rem; font-size: 12.5px; }
+.ts-compact .ts-wrapper.single .ts-control { padding-right: 1.7rem; }
+.ts-compact .ts-wrapper.single .ts-control:after { right: 10px; }
+/* Stock TS truncates the selected item to make room for the sizing input. */
+.ts-compact .ts-wrapper.single .ts-control > .item { overflow: visible; }
+
+/* Sits inline among running text (not as a form field), so it sizes to its
+   widest option instead of filling the row. */
+.ts-inline .ts-wrapper.field { width: max-content; min-width: 8.5rem; }
+
+/* The dropdown is absolutely positioned at the wrapper's width, so a narrow
+   control clips its own options.  Let it grow past the control, and ellipsize
+   rather than hard-clip whatever still doesn't fit (long agent emails). */
+.ts-dropdown { min-width: 100%; width: max-content; max-width: 17rem; }
+.ts-dropdown .option { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Right-aligned variant — keeps a right-hand dropdown inside its card. */
+.ts-drop-end .ts-dropdown { left: auto; right: 0; }
+
 /* route connector (multi-stop) */
 .route-line { background: repeating-linear-gradient(to bottom, rgb(var(--border)) 0 5px, transparent 5px 10px); }
 
@@ -248,6 +286,18 @@ header, aside, main, .wash-gold {
 /* Make the searchable dropdown feel native to the design system, never the
    stock blue-on-white look. */
 .ts-wrapper { font-family: 'Hanken Grotesk', system-ui, sans-serif; }
+/* Tom Select copies the source <select>'s classes onto .ts-wrapper, so the
+   `.field` class from searchable_select.html would paint a second border +
+   padding *around* .ts-control (a double box that reads as clipped).  The
+   wrapper is a plain shell; .ts-control carries the whole look. */
+   Width stays 100% — the wrapper still owns layout sizing, and the modal /
+   reservation-editor selects are full-bleed fields. */
+.ts-wrapper.field {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
 .ts-wrapper.single .ts-control,
 .ts-wrapper.multi  .ts-control {
   background: rgb(var(--surface));
