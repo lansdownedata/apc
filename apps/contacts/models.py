@@ -75,16 +75,39 @@ class Contact(TimeStampedModel):
         self._pending_phone = raw or ""
 
     def save(self, *args, **kwargs) -> None:
+        """Save, then flush any phone buffered by the `phone` setter.
+
+        The `phone` setter can't create a `ContactPhone` row inline because it may run
+        before this `Contact` has a PK (e.g. `Contact(phone=...)` then `.save()`) — there
+        is no FK target yet. It stashes the raw value in `_pending_phone` instead; once
+        `super().save()` guarantees a PK, we flush it through `set_primary_phone`.
+        """
         super().save(*args, **kwargs)
         pending = getattr(self, "_pending_phone", None)
         if pending is not None:
             self._pending_phone = None
             self.set_primary_phone(pending)
 
+    def _owned_or_unclaimed(self, e164: str) -> bool:
+        """True unless `e164` is already attached to a *different* contact.
+
+        `ContactPhone.e164` is globally unique, so a naive lookup-by-number would let
+        `set_primary_phone`/`add_phone` silently reassign another contact's row to
+        `self`. Product decision: refuse, never steal — no error, no reassignment.
+        """
+        owner = ContactPhone.objects.filter(e164=e164).values_list("contact_id", flat=True).first()
+        return owner is None or owner == self.pk
+
     def set_primary_phone(self, raw: str) -> "ContactPhone | None":
-        """Make `raw` this contact's primary number, demoting any current primary."""
+        """Make `raw` this contact's primary number, demoting any current primary.
+
+        Returns None (no-op) if `raw` cannot be normalized or already belongs to
+        another contact.
+        """
         e164 = to_e164(raw)
         if e164 is None:
+            return None
+        if not self._owned_or_unclaimed(e164):
             return None
         self.phones.exclude(e164=e164).update(is_primary=False)
         phone, _ = ContactPhone.objects.update_or_create(
@@ -94,7 +117,11 @@ class Contact(TimeStampedModel):
         return phone
 
     def add_phone(self, raw: str, label: str = "", primary: bool = False) -> "ContactPhone | None":
-        """Attach another number. Returns None if it cannot be normalized."""
+        """Attach another number.
+
+        Returns None if it cannot be normalized, or if it already belongs to another
+        contact (refuse, never steal — see `_owned_or_unclaimed`).
+        """
         if primary:
             phone = self.set_primary_phone(raw)
             if phone is not None and label:
@@ -103,6 +130,8 @@ class Contact(TimeStampedModel):
             return phone
         e164 = to_e164(raw)
         if e164 is None:
+            return None
+        if not self._owned_or_unclaimed(e164):
             return None
         phone, created = ContactPhone.objects.get_or_create(
             e164=e164,

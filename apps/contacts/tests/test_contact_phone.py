@@ -70,3 +70,53 @@ def test_phones_ordered_primary_first():
     contact = ContactFactory(phone="(202) 555-0100")
     contact.add_phone("(305) 555-0199", label="work")
     assert [p.is_primary for p in contact.phones.all()] == [True, False]
+
+
+def test_add_phone_owned_by_another_contact_returns_none_and_does_not_steal():
+    owner = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0199")
+
+    result = other.add_phone("(202) 555-0100")
+
+    assert result is None
+    assert owner.phones.count() == 1
+    owned = owner.phones.get()
+    assert owned.contact_id == owner.pk
+    assert owned.e164 == "+12025550100"
+    assert other.phones.count() == 1
+    assert not other.phones.filter(e164="+12025550100").exists()
+
+
+def test_set_primary_phone_owned_by_another_contact_returns_none_and_does_not_steal():
+    owner = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0199")
+
+    result = other.set_primary_phone("(202) 555-0100")
+
+    assert result is None
+    owned = owner.phones.get(e164="+12025550100")
+    assert owned.contact_id == owner.pk
+    assert owned.is_primary is True
+    assert not other.phones.filter(e164="+12025550100").exists()
+
+
+def test_set_primary_phone_on_number_self_already_owns_still_works():
+    contact = ContactFactory(phone="(202) 555-0100")
+    contact.add_phone("(305) 555-0199", label="work")
+
+    result = contact.set_primary_phone("(305) 555-0199")
+
+    assert result is not None
+    assert result.contact_id == contact.pk
+    assert contact.phone == "+13055550199"
+    assert contact.phones.filter(is_primary=True).count() == 1
+
+
+def test_add_phone_for_number_self_already_owns_is_idempotent():
+    contact = ContactFactory(phone="(202) 555-0100")
+
+    result = contact.add_phone("(202) 555-0100")
+
+    assert result is not None
+    assert result.contact_id == contact.pk
+    assert contact.phones.count() == 1
