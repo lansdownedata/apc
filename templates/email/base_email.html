@@ -3,18 +3,21 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
 <title>{% block subject %}{% endblock %}</title></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:Helvetica,Arial,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">{% block preheader %}{% endblock %}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
        style="background:#f4f4f5;padding:24px 12px;">
   <tr><td align="center">
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
            style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;">
-      <tr><td align="center" style="background:#1c1c1e;padding:26px;">
+      <tr><td align="center" style="background:#17191D;padding:26px;">
         <span style="display:inline-block;font-family:Helvetica,Arial,sans-serif;
-              font-size:20px;font-weight:bold;letter-spacing:3px;color:#c9a227;">{{ company_name }}</span>
+              font-size:20px;font-weight:bold;letter-spacing:3px;color:#C7A24E;">{{ company_name }}</span>
       </td></tr>
-      <tr><td style="padding:32px 28px;color:#1c1c1e;font-size:15px;line-height:1.55;">
+      <tr><td style="padding:32px 28px;color:#17191D;font-size:15px;line-height:1.55;">
         {% block content %}{% endblock %}
       </td></tr>
       <tr><td style="background:#fafafa;padding:18px 28px;border-top:1px solid #e5e5e5;
