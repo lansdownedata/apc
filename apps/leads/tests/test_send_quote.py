@@ -47,8 +47,13 @@ def test_send_quote_happy_path():
         result = services.send_quote(lead, base_url=BASE_URL)
 
     assert result.ok and result.http_status == 200
-    token = services.make_deposit_token(lead)
-    assert result.link == f"{BASE_URL}/quote/{token}/"
+    # Assert the link ROUND-TRIPS rather than byte-matching a freshly minted token:
+    # signing.dumps embeds a second-resolution timestamp, so regenerating the token here
+    # produces a different signature whenever this line and send_quote straddle a second
+    # boundary. That made this test intermittently fail.
+    assert result.link.startswith(f"{BASE_URL}/quote/")
+    round_tripped = services.read_deposit_token(result.link.rsplit("/quote/", 1)[1].rstrip("/"))
+    assert round_tripped.pk == lead.pk
     lead.refresh_from_db()
     assert lead.status == Lead.Status.QUOTED
     plan = PaymentPlan.objects.get(lead=lead)
