@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
 
@@ -57,8 +58,20 @@ class Lead(TimeStampedModel):
     lost_reason = models.CharField(max_length=255, blank=True)
     has_alert = models.BooleanField(default=False)
     quote_sent_at = models.DateTimeField(null=True, blank=True)
+    # First time the public quote page was opened (not every view — see quote_view_count).
     quote_viewed_at = models.DateTimeField(null=True, blank=True)
     quote_expires_at = models.DateTimeField(null=True, blank=True)
+    billing_contact = models.ForeignKey(
+        "contacts.Contact",
+        related_name="billing_leads",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Leave blank when the booking contact is also billed.",
+    )
+    passenger_names = models.CharField(max_length=255, blank=True)
+    quote_view_count = models.PositiveIntegerField(default=0)
+    quote_last_viewed_at = models.DateTimeField(null=True, blank=True)
 
     objects = LeadQuerySet.as_manager()
 
@@ -77,6 +90,11 @@ class Lead(TimeStampedModel):
     @property
     def quote_expired(self) -> bool:
         return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
+
+    @property
+    def effective_billing_contact(self) -> Contact:
+        """The billing contact, falling back to the booking contact when unset."""
+        return self.billing_contact or self.contact
 
     def can_transition(self, to_status: str) -> bool:
         return to_status in ALLOWED_TRANSITIONS.get(self.status, set())

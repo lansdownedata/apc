@@ -97,7 +97,13 @@
                 </div>
               </div>
             </td>
-            <td class="px-3 py-3.5 font-mono2 text-muted">{{ lead.quote_no }}</td>
+            <td class="px-3 py-3.5 font-mono2 text-muted">
+              {{ lead.quote_no }}
+              <div class="flex items-center gap-1 font-sans text-[11px] text-muted/80 mt-0.5">
+                <i class="ti ti-eye text-[12px]"></i>
+                {% if lead.quote_view_count %}Viewed {{ lead.quote_view_count }}&times;{% else %}Not viewed{% endif %}
+              </div>
+            </td>
             <td class="px-3 py-3.5">
               {% if res %}<span class="text-ink">{{ res.service|default:res.get_trip_type_display }}</span>{% else %}<span class="text-slate-400">—</span>{% endif %}
             </td>
