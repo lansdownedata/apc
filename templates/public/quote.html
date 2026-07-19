@@ -26,9 +26,6 @@
   h2{font-family:'Fraunces',Georgia,serif;font-size:16px;font-weight:600;margin:0 0 12px}
   p{color:rgb(var(--muted));font-size:14px;line-height:1.6;margin:.2rem 0}
   .sub{text-align:center;margin-bottom:8px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:rgb(var(--muted));font-weight:500;padding:8px 6px;border-bottom:1px solid rgb(var(--border))}
-  td{padding:10px 6px;border-bottom:1px solid rgb(var(--border));vertical-align:top}
   .num{text-align:right;font-variant-numeric:tabular-nums}
   .totals{margin-top:16px;padding-top:16px;border-top:1px solid rgb(var(--border))}
   .totals .row{display:flex;justify-content:space-between;font-size:14px;padding:4px 0}
@@ -69,8 +66,9 @@
     border:2px solid #9ca3af;border-radius:50%;background:#fff}
   .itinerary li:not(:last-child):after{content:'';position:absolute;left:7px;top:16px;
     bottom:0;width:1px;background:repeating-linear-gradient(to bottom,#d4d4d8 0 4px,transparent 4px 8px)}
-  .itinerary .venue{font-weight:600}
-  .itinerary .addr, .itinerary .when{font-size:13px;color:rgb(var(--muted))}
+  .itinerary .venue{font-weight:600;overflow-wrap:anywhere}
+  .itinerary .addr{font-size:13px;color:rgb(var(--muted));overflow-wrap:anywhere}
+  .itinerary .when{font-size:13px;color:rgb(var(--muted))}
   .trip-subtotal{text-align:right;font-size:13px;color:rgb(var(--muted));padding:6px 0 0}
   @media (max-width:640px){
     .trip-card{flex-direction:column}
@@ -96,7 +94,9 @@
 
       <div class="contact-strip">
         <div><div class="label">Booking Contact</div><div>{{ lead.contact.name }}</div></div>
+        {% if lead.billing_contact %}
         <div><div class="label">Billing Contact</div><div>{{ billing_contact.name }}</div></div>
+        {% endif %}
         {% if passenger_names %}
         <div><div class="label">Passengers</div><div>{{ passenger_names }}</div></div>
         {% endif %}
@@ -120,17 +120,16 @@
         </div>
         <div class="trip-detail">
           <h3>
-            Trip {{ forloop.counter }}{% if r.service %} &middot; {{ r.service }}{% endif %}
+            Trip {{ forloop.counter }}{% if r.service %} &middot; {{ r.service }}{% endif %}{% if r.pickup_date %} &mdash; {{ r.pickup_date|date:"M j, Y" }}{% endif %}
           </h3>
           <ul class="itinerary">
             {% for stop in r.stops.all %}
             <li>
               {% if stop.name %}<div class="venue">{{ stop.name }}</div>{% endif %}
               <div class="addr">{{ stop.address }}</div>
-              <div class="when">
-                {% if stop.scheduled_time %}{{ stop.scheduled_time|time:"g:i A" }}{% endif %}
-                {% if r.pickup_date %}{{ r.pickup_date|date:"M j, Y" }}{% endif %}
-              </div>
+              {% if stop.scheduled_time %}
+              <div class="when">{{ stop.scheduled_time|time:"g:i A" }}</div>
+              {% endif %}
             </li>
             {% endfor %}
           </ul>
