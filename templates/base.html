@@ -133,6 +133,11 @@
         <i class="ti ti-users text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Users</span>
       </a>
+      <a href="{% url 'settings_index' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'settings' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-settings text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Settings</span>
+      </a>
       {% endif %}
 
       {% for label, icon in nav_soon %}
