@@ -44,7 +44,7 @@ def _geocoded_reservation(trip_type=Reservation.TripType.TRANSFER, **kwargs):
 
 def test_registration_payload():
     contact = ContactFactory(
-        name="Jane Doe", email="jane@example.com", phone="+15551234567", company="Acme"
+        name="Jane Doe", email="jane@example.com", phone="+12025550134", company="Acme"
     )
     payload = la_sync.build_registration_payload(contact, password="pw123")
     assert payload == {
@@ -53,7 +53,7 @@ def test_registration_payload():
         "email": "jane@example.com",
         "password": "pw123",
         "company": "Acme",
-        "cellular_phone1": "+15551234567",
+        "cellular_phone1": "+12025550134",
     }
 
 

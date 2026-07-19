@@ -98,8 +98,8 @@ def test_inbox_search_matches_company(client, agent):
 
 
 def test_inbox_search_matches_phone(client, agent):
-    match = LeadFactory(contact=ContactFactory(phone="555-123-9999"))
-    other = LeadFactory(contact=ContactFactory(phone="555-000-0000"))
+    match = LeadFactory(contact=ContactFactory(phone="202-555-9999"))
+    other = LeadFactory(contact=ContactFactory(phone="202-555-0100"))
     MessageFactory(lead=match)
     MessageFactory(lead=other)
 
@@ -165,7 +165,7 @@ def test_inbox_with_non_numeric_lead_param_returns_404(client, agent):
 
 
 def test_inbox_send_sms_happy_path(client, agent):
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch("apps.messaging.views.podium.send_message", return_value={"uid": "msg-123"}) as send:
@@ -180,7 +180,7 @@ def test_inbox_send_sms_happy_path(client, agent):
     assert payload["ok"] is True
 
     send.assert_called_once()
-    assert send.call_args.kwargs["identifier"] == "555-123-4567"
+    assert send.call_args.kwargs["identifier"] == "+12025550134"
     assert send.call_args.kwargs["channel_type"] == "phone"
     assert send.call_args.kwargs["body"] == "On our way!"
 
@@ -235,7 +235,7 @@ def test_inbox_send_missing_phone_returns_400(client, agent):
 
 def test_inbox_send_missing_channel_returns_400(client, agent):
     """Missing channel key should return 400, not silently default to SMS."""
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch("apps.messaging.views.podium.send_message") as send:
@@ -253,7 +253,7 @@ def test_inbox_send_missing_channel_returns_400(client, agent):
 
 def test_inbox_send_null_channel_returns_400(client, agent):
     """An explicit null channel must 400, not crash on None.strip()."""
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch("apps.messaging.views.podium.send_message") as send:
@@ -270,7 +270,7 @@ def test_inbox_send_null_channel_returns_400(client, agent):
 
 def test_inbox_send_invalid_channel_returns_400(client, agent):
     """Invalid channel value should return 400."""
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch("apps.messaging.views.podium.send_message") as send:
@@ -287,7 +287,7 @@ def test_inbox_send_invalid_channel_returns_400(client, agent):
 
 
 def test_inbox_send_podium_error_returns_502_with_message(client, agent):
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch(
@@ -308,7 +308,7 @@ def test_inbox_send_podium_error_returns_502_with_message(client, agent):
 
 
 def test_inbox_send_podium_not_connected_returns_502_with_message(client, agent):
-    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    lead = LeadFactory(contact=ContactFactory(phone="202-555-0134"))
     client.force_login(agent)
 
     with patch(

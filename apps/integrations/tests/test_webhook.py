@@ -14,7 +14,7 @@ from apps.messaging.models import Message
 pytestmark = pytest.mark.django_db
 
 
-def _received(uid="m1", phone="+15551230000", body="Need a quote", name="Sarah", cuid="c1"):
+def _received(uid="m1", phone="+12025550100", body="Need a quote", name="Sarah", cuid="c1"):
     return {
         "eventType": "message.received",
         "data": {
@@ -36,7 +36,7 @@ def test_received_creates_event_lead_and_inbound_message():
     assert msg.body == "Need a quote"
     assert msg.podium_message_uid == "m1"
     assert msg.delivery_status == Message.DeliveryStatus.RECEIVED
-    assert Contact.objects.filter(phone="+15551230000").exists()
+    assert Contact.objects.filter(phones__e164="+12025550100").exists()
     assert event.lead == msg.lead
 
 
@@ -47,9 +47,9 @@ def test_received_is_idempotent_on_message_uid():
 
 
 def test_received_attaches_to_existing_contacts_lead():
-    contact = ContactFactory(phone="+15559999999", podium_contact_uid="cX")
+    contact = ContactFactory(phone="+12025550199", podium_contact_uid="cX")
     lead = LeadFactory(contact=contact)
-    process_podium_webhook(_received(uid="m2", phone="+15559999999", cuid="cX"))
+    process_podium_webhook(_received(uid="m2", phone="+12025550199", cuid="cX"))
     assert Message.objects.get().lead == lead
     assert Lead.objects.count() == 1
 
@@ -64,7 +64,7 @@ def test_failed_marks_outbound_message_failed():
     assert msg.failure_reason == "landline"
 
 
-def _sent(uid="s1", phone="+15551230000", body="On our way!", contact_uid="c1", conv_uid="conv1"):
+def _sent(uid="s1", phone="+12025550100", body="On our way!", contact_uid="c1", conv_uid="conv1"):
     return {
         "eventType": "message.sent",
         "data": {
@@ -77,7 +77,7 @@ def _sent(uid="s1", phone="+15551230000", body="On our way!", contact_uid="c1", 
 
 
 def test_sent_updates_existing_message_by_uid_no_duplicate():
-    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    contact = ContactFactory(phone="+12025550100", podium_contact_uid="c1")
     lead = LeadFactory(contact=contact)
     msg = MessageFactory(
         lead=lead,
@@ -97,7 +97,7 @@ def test_sent_updates_existing_message_by_uid_no_duplicate():
 
 
 def test_sent_unknown_uid_creates_outbound_message_on_matched_lead():
-    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    contact = ContactFactory(phone="+12025550100", podium_contact_uid="c1")
     lead = LeadFactory(contact=contact)
 
     event = process_podium_webhook(_sent(uid="new-sent-uid"))
@@ -110,7 +110,7 @@ def test_sent_unknown_uid_creates_outbound_message_on_matched_lead():
 
 
 def test_sent_replay_of_same_event_stays_one_row():
-    contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
+    contact = ContactFactory(phone="+12025550100", podium_contact_uid="c1")
     LeadFactory(contact=contact)
 
     process_podium_webhook(_sent(uid="dup-sent"))
@@ -121,7 +121,7 @@ def test_sent_replay_of_same_event_stays_one_row():
 
 def test_sent_with_no_matching_lead_is_skipped_no_orphan_contact():
     before = Contact.objects.count()
-    event = process_podium_webhook(_sent(uid="orphan", phone="+15550000000", contact_uid="unknown"))
+    event = process_podium_webhook(_sent(uid="orphan", phone="+12025550111", contact_uid="unknown"))
 
     assert not Message.objects.filter(podium_message_uid="orphan").exists()
     assert Contact.objects.count() == before

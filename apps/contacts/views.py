@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -14,7 +15,7 @@ from django.shortcuts import render
 from apps.leads.models import Lead
 from apps.payments.models import PaymentPlan
 
-from .models import Contact
+from .models import Contact, ContactPhone
 
 # Sentinel so contacts with no activity sort last (None isn't orderable against datetimes).
 _NO_ACTIVITY = datetime.min.replace(tzinfo=UTC)
@@ -46,10 +47,19 @@ def contact_list(request: HttpRequest) -> HttpResponse:
 
     query = request.GET.get("q", "").strip()
     if query:
+        # `phone` isn't a concrete field anymore (ContactPhone table) — match against
+        # the digits of any of the contact's numbers via a pk subquery, so this OR
+        # can't fan out the `contacts` queryset's own aggregate annotations.
+        digits = re.sub(r"\D", "", query)
+        phone_matches = (
+            ContactPhone.objects.filter(e164__icontains=digits).values("contact_id")
+            if digits
+            else ContactPhone.objects.none().values("contact_id")
+        )
         contacts = contacts.filter(
             Q(name__icontains=query)
             | Q(company__icontains=query)
-            | Q(phone__icontains=query)
+            | Q(pk__in=phone_matches)
             | Q(email__icontains=query)
         )
 

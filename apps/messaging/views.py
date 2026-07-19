@@ -7,6 +7,7 @@ The Podium API call itself lives in `apps.integrations.podium`; these views stay
 from __future__ import annotations
 
 import json
+import re
 from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
@@ -16,6 +17,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.contacts.models import ContactPhone
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
@@ -46,10 +48,18 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
         .order_by("-last_message_at")
     )
     if q:
+        # `contact__phone` isn't a concrete field anymore (ContactPhone table) — match
+        # against the digits of any of the contact's numbers via a pk subquery.
+        digits = re.sub(r"\D", "", q)
+        phone_matches = (
+            ContactPhone.objects.filter(e164__icontains=digits).values("contact_id")
+            if digits
+            else ContactPhone.objects.none().values("contact_id")
+        )
         qs = qs.filter(
             Q(contact__name__icontains=q)
             | Q(contact__company__icontains=q)
-            | Q(contact__phone__icontains=q)
+            | Q(contact_id__in=phone_matches)
         )
     return qs
 

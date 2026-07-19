@@ -35,7 +35,7 @@ def test_disabled_flag_returns_zero_and_leaves_rows_untouched(settings):
 
 def test_tp1_sends_on_both_channels_and_marks_sent(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    contact = ContactFactory(email="a@example.com", phone="2025550134")
     lead = LeadFactory(contact=contact)
     tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
 
@@ -52,7 +52,7 @@ def test_tp1_sends_on_both_channels_and_marks_sent(settings):
     assert tp.podium_message_uid == "msg-1"
     assert mock_send.call_count == 2
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    assert calls == {("email", "a@example.com"), ("sms", "5551234567")}
+    assert calls == {("email", "a@example.com"), ("sms", "+12025550134")}
 
 
 def test_lost_lead_is_skipped(settings):
@@ -72,7 +72,7 @@ def test_lost_lead_is_skipped(settings):
 
 def test_booked_lead_skips_tp6_but_sends_review_request(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact = ContactFactory(name="Jane Doe", phone="5551234567")
+    contact = ContactFactory(name="Jane Doe", phone="2025550134")
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=contact)
     tp6 = _due_tp(lead=lead, kind=TouchPoint.Kind.TP6_QUOTE_FOLLOWUP)
     review = _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
@@ -95,7 +95,7 @@ def test_booked_lead_skips_tp6_but_sends_review_request(settings):
     assert "booked" in tp6.error.lower()
     # review_request is NOT skipped on BOOKED — it's the whole point of the touch-point.
     assert review.status == TouchPoint.Status.SENT
-    mock_invite.assert_called_once_with(phone="5551234567", first_name="Jane", last_name="Doe")
+    mock_invite.assert_called_once_with(phone="+12025550134", first_name="Jane", last_name="Doe")
     mock_send.assert_called_once()
     assert "https://podium.example/r/inv-1" in mock_send.call_args.kwargs["body"]
 
@@ -118,7 +118,7 @@ def test_lost_lead_skips_review_request(settings):
 
 def test_review_request_creates_review_row_with_invite_uid(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact = ContactFactory(name="Jane Doe", phone="5551234567")
+    contact = ContactFactory(name="Jane Doe", phone="2025550134")
     lead = LeadFactory(contact=contact)
     _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
 
@@ -157,7 +157,7 @@ def test_review_request_no_phone_is_skipped(settings):
 
 def test_review_request_invite_failure_marks_failed_no_review_row(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact = ContactFactory(phone="5551234567")
+    contact = ContactFactory(phone="2025550134")
     lead = LeadFactory(contact=contact)
     tp = _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
 
@@ -207,7 +207,7 @@ def test_contact_with_no_channels_is_skipped(settings):
 
 def test_all_channels_failing_marks_failed_with_error(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    contact = ContactFactory(email="a@example.com", phone="2025550134")
     lead = LeadFactory(contact=contact)
     tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
 
@@ -241,7 +241,7 @@ def test_not_due_rows_are_untouched(settings):
 def test_quote_link_uses_public_base_url(settings):
     settings.TOUCHPOINTS_ENABLED = True
     settings.PUBLIC_BASE_URL = "https://apc.example"
-    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    contact = ContactFactory(email="a@example.com", phone="2025550134")
     lead = LeadFactory(contact=contact)
     tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
 
@@ -261,7 +261,7 @@ def test_quote_link_uses_public_base_url(settings):
 def test_blank_public_base_url_leaves_quote_link_row_scheduled_but_still_sends_tp1(settings):
     settings.TOUCHPOINTS_ENABLED = True
     settings.PUBLIC_BASE_URL = ""
-    contact = ContactFactory(email="a@example.com", phone="5551234567")
+    contact = ContactFactory(email="a@example.com", phone="2025550134")
     lead = LeadFactory(contact=contact)
     tp3 = _due_tp(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
     tp1 = _due_tp(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
@@ -278,13 +278,13 @@ def test_blank_public_base_url_leaves_quote_link_row_scheduled_but_still_sends_t
     assert tp3.status == TouchPoint.Status.SCHEDULED
     assert tp1.status == TouchPoint.Status.SENT
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    assert calls == {("email", "a@example.com"), ("sms", "5551234567")}
+    assert calls == {("email", "a@example.com"), ("sms", "+12025550134")}
 
 
 def test_run_touchpoints_returns_sent_count(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    contact1 = ContactFactory(email="a@example.com", phone="5551234567")
-    contact2 = ContactFactory(email="b@example.com", phone="5559876543")
+    contact1 = ContactFactory(email="a@example.com", phone="2025550134")
+    contact2 = ContactFactory(email="b@example.com", phone="3055550187")
     lead1 = LeadFactory(contact=contact1)
     lead2 = LeadFactory(contact=contact2)
     _due_tp(lead=lead1, kind=TouchPoint.Kind.TP1_WELCOME)

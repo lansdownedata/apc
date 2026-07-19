@@ -217,8 +217,19 @@ def lead_update(request, pk: int) -> JsonResponse:
                 )
 
     contact = lead.contact
+    # `phone` is a property backed by ContactPhone — it cannot go through update_fields.
+    if "phone" in request.POST:
+        raw = request.POST.get("phone", "").strip()
+        if raw:
+            if contact.set_primary_phone(raw) is None:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid phone number."}, status=400
+                )
+        else:
+            contact.phones.filter(is_primary=True).delete()
+
     contact_fields = []
-    for field in ("name", "phone", "email", "company"):
+    for field in ("name", "email", "company"):
         if field in request.POST:
             setattr(contact, field, request.POST.get(field, "").strip())
             contact_fields.append(field)

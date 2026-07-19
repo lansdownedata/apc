@@ -71,23 +71,17 @@ def _ingest_inbound(data: dict) -> Lead:
 
 
 def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
-    uid = contact_data.get("uid", "")
-    contact = None
-    if uid:
-        contact = Contact.objects.filter(podium_contact_uid=uid).first()
-    if contact is None and identifier:
-        contact = Contact.objects.filter(phone=identifier).first()
-    if contact is None:
-        contact = Contact.objects.create(
-            name=contact_data.get("name") or identifier or "Podium contact",
-            phone=identifier or "",
-            podium_contact_uid=uid,
-            channel=Channel.PHONE,
-        )
-    elif uid and not contact.podium_contact_uid:
-        contact.podium_contact_uid = uid
-        contact.save(update_fields=["podium_contact_uid"])
+    """Match-or-create the Contact for an inbound message, then its most recent Lead.
 
+    Routed through `ContactManager.match_or_create` so the dedupe order (Podium uid,
+    then normalized phone, then email) is the same one every other write path uses.
+    """
+    contact = Contact.objects.match_or_create(
+        name=contact_data.get("name") or identifier or "Podium contact",
+        phone=identifier or "",
+        podium_uid=contact_data.get("uid", ""),
+        channel=Channel.PHONE,
+    )
     lead = contact.leads.order_by("-id").first()
     if lead is None:
         lead = Lead.objects.create(contact=contact, channel=Channel.PHONE)
@@ -144,12 +138,9 @@ def _ingest_outbound(data: dict) -> Lead | None:
 
 def _resolve_lead_readonly(contact_data: dict, identifier: str) -> Lead | None:
     """Like `_resolve_lead` but never creates a Contact/Lead — for outbound mirroring."""
-    uid = contact_data.get("uid", "")
-    contact = None
-    if uid:
-        contact = Contact.objects.filter(podium_contact_uid=uid).first()
-    if contact is None and identifier:
-        contact = Contact.objects.filter(phone=identifier).first()
+    contact = Contact.objects.find_match(
+        phone=identifier or "", podium_uid=contact_data.get("uid", "")
+    )
     if contact is None:
         return None
     return contact.leads.order_by("-id").first()
