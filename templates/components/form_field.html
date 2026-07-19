@@ -1,0 +1,11 @@
+{% comment %}
+Labeled form field: label + widget + help text + errors.
+Usage: {% include "components/form_field.html" with field=form.name %}
+For fields with genuinely different markup (image previews, checkboxes) render inline instead.
+{% endcomment %}
+<div>
+  <label for="{{ field.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">{{ field.label }}</label>
+  {{ field }}
+  {% if field.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ field.help_text }}</p>{% endif %}
+  {% for error in field.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+</div>
