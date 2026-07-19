@@ -189,9 +189,13 @@ def test_quote_book_bad_token_404s(client):
 
 @pytest.fixture
 def lead_with_itinerary():
-    lead = LeadFactory(status=Lead.Status.QUOTED, passenger_names="Shane Thomas")
+    lead = LeadFactory(
+        status=Lead.Status.QUOTED,
+        passenger_names="Shane Thomas",
+        billing_contact=ContactFactory(name="Dana Ledger"),
+    )
     vt = VehicleTypeFactory(name="Signature SUV", capacity=6, description="Leather, chilled water.")
-    res = ReservationFactory(lead=lead, vehicle=vt, base_rate="594.71")
+    res = ReservationFactory(lead=lead, vehicle=vt, base_rate="594.71", stops=[])
     Stop.objects.create(
         reservation=res,
         sequence=0,
@@ -227,7 +231,8 @@ def test_renders_the_vehicle_type(client, lead_with_itinerary):
 def test_renders_passengers_and_billing_contact(client, lead_with_itinerary):
     content = _get_quote(client, lead_with_itinerary).content.decode()
     assert "Shane Thomas" in content
-    assert lead_with_itinerary.contact.name in content
+    assert "Dana Ledger" in content  # billing contact
+    assert lead_with_itinerary.contact.name in content  # booking contact
 
 
 def test_survives_a_reservation_with_no_vehicle(client):
@@ -270,5 +275,5 @@ def test_vehicle_with_image_renders_img_tag(client, tmp_path, settings):
     ReservationFactory(lead=lead, vehicle=vt, base_rate="200.00")
 
     content = _get_quote(client, lead).content.decode()
-    assert "<img" in content
+    assert 'alt="Panorama Coach"' in content
     assert "No photo" not in content
