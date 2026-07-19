@@ -8,9 +8,11 @@ from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
 
+from apps.core.phone import to_e164
 from apps.leads.models import Lead
 from apps.payments.models import PaymentPlan
 
@@ -19,6 +21,9 @@ from .models import Contact, ContactPhone
 # Sentinel so contacts with no activity sort last (None isn't orderable against datetimes).
 _NO_ACTIVITY = datetime.min.replace(tzinfo=UTC)
 _LTV_FIELD = DecimalField(max_digits=12, decimal_places=2)
+
+# Label choices for the phone-numbers block's searchable select (never a bare <select>).
+PHONE_LABELS = [("mobile", "Mobile"), ("work", "Work"), ("home", "Home")]
 
 
 @login_required
@@ -79,3 +84,71 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "q": query,
         },
     )
+
+
+@login_required
+def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """Contact record page. Skeleton + phones only — see the scope boundary in the plan.
+
+    LTV/order-history/inline-edit/contact_create belong to the (approved but not yet
+    built) record-pages work; adding them here would be rework, not a bonus.
+    """
+    contact = get_object_or_404(Contact.objects.prefetch_related("phones"), pk=pk)
+    return render(
+        request,
+        "contacts/contact_detail.html",
+        {
+            "nav": "contacts",
+            "page_title": contact.name,
+            "contact": contact,
+            "phone_labels": PHONE_LABELS,
+        },
+    )
+
+
+@login_required
+@require_POST
+def contact_phone_add(request: HttpRequest, pk: int) -> HttpResponse:
+    """Attach a new number to a contact.
+
+    Distinguishes the two reasons `add_phone` can return None — reusing the
+    two-message pattern from `apps.leads.views.lead_update` — so an agent isn't told
+    a number is malformed when it's really just claimed by another contact.
+    """
+    contact = get_object_or_404(Contact, pk=pk)
+    phone_raw = request.POST.get("phone", "")
+    label = request.POST.get("label", "").strip()
+
+    if to_e164(phone_raw) is None:
+        return JsonResponse({"ok": False, "error": "Enter a valid phone number."}, status=400)
+
+    phone = contact.add_phone(phone_raw, label=label)
+    if phone is None:
+        return JsonResponse(
+            {"ok": False, "error": "That number is already assigned to another contact."},
+            status=400,
+        )
+    return redirect("contact_detail", pk=contact.pk)
+
+
+@login_required
+@require_POST
+def contact_phone_primary(request: HttpRequest, pk: int, phone_pk: int) -> HttpResponse:
+    """Promote one of a contact's existing numbers to primary, demoting the current one."""
+    contact = get_object_or_404(Contact, pk=pk)
+    phone = get_object_or_404(ContactPhone, pk=phone_pk, contact=contact)
+    contact.set_primary_phone(phone.e164)
+    return redirect("contact_detail", pk=contact.pk)
+
+
+@login_required
+@require_POST
+def contact_phone_delete(request: HttpRequest, pk: int, phone_pk: int) -> HttpResponse:
+    """Remove a number from a contact.
+
+    Scoped by `contact=contact` so acting on another contact's phone 404s instead of
+    silently succeeding (object-level authz — see the plan's note on this).
+    """
+    contact = get_object_or_404(Contact, pk=pk)
+    get_object_or_404(ContactPhone, pk=phone_pk, contact=contact).delete()
+    return redirect("contact_detail", pk=contact.pk)

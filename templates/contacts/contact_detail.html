@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6">
+
+  <a href="{% url 'contact_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
+    <i class="ti ti-arrow-left text-[15px]"></i> Contacts
+  </a>
+
+  <!-- header -->
+  <div class="card p-5 sm:p-6 mb-4">
+    <div class="flex flex-wrap items-start gap-4">
+      <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0 uppercase">{{ contact.name|slice:":2" }}</span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <span class="font-display text-[22px] font-semibold text-ink tracking-tight">{{ contact.name }}</span>
+        </div>
+        <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
+          {% if contact.company %}
+          <span class="flex items-center gap-1 shrink-0">
+            <i class="ti ti-building text-[14px]"></i> {{ contact.company }}
+          </span>
+          {% endif %}
+          {% if contact.email %}
+          <span class="flex items-center gap-1 shrink-0">
+            <i class="ti ti-mail text-[14px]"></i> {{ contact.email }}
+          </span>
+          {% endif %}
+          {% include "components/status_badge.html" with status=contact.channel label=contact.get_channel_display %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2 space-y-4">
+      <!-- phone numbers -->
+      <div class="card p-5">
+        <div class="text-[11px] uppercase tracking-wide text-muted mb-2">Phone numbers</div>
+        <ul class="space-y-1.5">
+          {% for p in contact.phones.all %}
+            <li class="flex items-center gap-2 text-[13px]">
+              <span class="num">{{ p.e164 }}</span>
+              {% if p.label %}<span class="text-muted text-[11px]">{{ p.label }}</span>{% endif %}
+              {% if p.is_primary %}
+                <span class="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-goldl text-goldd ring-1 ring-inset ring-gold/20">Primary</span>
+              {% else %}
+                <form method="post" action="{% url 'contact_phone_primary' contact.pk p.pk %}">
+                  {% csrf_token %}
+                  <button class="text-[11px] text-muted hover:text-gold">Make primary</button>
+                </form>
+              {% endif %}
+              {% if p.opted_out %}
+                <span class="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600 ring-1 ring-inset ring-rose-600/20">Opted out</span>
+              {% endif %}
+              <button type="button" class="text-[11px] text-muted hover:text-rose-600 ml-auto"
+                      @click="$store.modal.confirm({
+                        title: 'Remove number',
+                        message: 'Remove {{ p.e164 }} from {{ contact.name|escapejs }}?',
+                        variant: 'danger',
+                        confirmText: 'Remove',
+                        onConfirm: () => $refs.del{{ p.pk }}.submit()
+                      })">Remove</button>
+              <form method="post" x-ref="del{{ p.pk }}" class="hidden"
+                    action="{% url 'contact_phone_delete' contact.pk p.pk %}">{% csrf_token %}</form>
+            </li>
+          {% empty %}
+            <li class="text-muted text-[13px]">No numbers on file.</li>
+          {% endfor %}
+        </ul>
+
+        <form method="post" action="{% url 'contact_phone_add' contact.pk %}"
+              class="flex items-end gap-2 mt-3">
+          {% csrf_token %}
+          <input type="tel" name="phone" class="field text-[13px] w-40" placeholder="Add a number">
+          {% include "components/searchable_select.html" with name="label" field_id="f-phone-label" options=phone_labels search="off" empty_label="Label" %}
+          <button class="btn-gold text-[12px]">Add</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

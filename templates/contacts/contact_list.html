@@ -33,7 +33,7 @@
         </thead>
         <tbody class="stagger">
           {% for c in contacts %}
-          <tr {% if c.latest_lead_id %}onclick="window.location='{% url 'lead_detail' c.latest_lead_id %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors"{% else %}class="border-b border-line/70 last:border-0"{% endif %}>
+          <tr onclick="window.location='{% url 'contact_detail' c.pk %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
             <td class="px-5 py-3.5">
               <div class="flex items-center gap-3">
                 <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ c.name|slice:":2" }}</span>
