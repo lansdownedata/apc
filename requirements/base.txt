@@ -12,3 +12,4 @@ django-environ>=0.11,<0.13
 requests>=2.32,<3.0          # Zapier / LimoAnywhere / Podium HTTP
 stripe>=10.0                 # deposits + off-session balance charges
 cryptography>=43,<46         # encrypt LA customer passwords at rest
+phonenumbers>=8.13,<10       # E.164 normalization for contact dedupe
