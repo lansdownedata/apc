@@ -3,7 +3,7 @@
 from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
-from django.urls import include, path
+from django.urls import include, path, re_path
 
 from apps.core.cron import run_job
 from apps.integrations.views import la_webhook, podium_webhook
@@ -44,11 +44,22 @@ urlpatterns = [
     # path("api/", include("config.api")),
 ]
 
+# Uploaded media (vehicle-type photos). django.conf.urls.static.static() is a no-op when
+# DEBUG is False, and WhiteNoise serves STATIC_ROOT only — so prod needs an explicit route or
+# every photo 404s on the customer-facing quote page. prod.py sets SERVE_MEDIA; turn it off
+# once a real file server or CDN fronts /media/.
+if settings.DEBUG or getattr(settings, "SERVE_MEDIA", False):
+    from django.views.static import serve as _serve_media
+
+    urlpatterns += [
+        re_path(
+            rf"^{settings.MEDIA_URL.lstrip('/')}(?P<path>.*)$",
+            _serve_media,
+            {"document_root": settings.MEDIA_ROOT},
+        )
+    ]
+
 if settings.DEBUG:
-    from django.conf.urls.static import static
-
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
     try:
         import debug_toolbar  # noqa: F401
 

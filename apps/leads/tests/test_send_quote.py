@@ -231,9 +231,13 @@ def test_send_quote_view_happy_path(client, agent):
         resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 200
     data = resp.json()
-    token = services.make_deposit_token(lead)
     assert data["ok"]
-    assert data["link"].endswith(f"/quote/{token}/")
+    # Round-trip rather than byte-match: signing.dumps embeds a second-resolution
+    # timestamp, so regenerating the token here races across second boundaries.
+    # (Same defect as 98e9e5f, which fixed only the service-level twin of this test.)
+    assert "/quote/" in data["link"]
+    round_tripped = services.read_deposit_token(data["link"].rsplit("/quote/", 1)[1].rstrip("/"))
+    assert round_tripped.pk == lead.pk
     assert data["delivery"]["email"]["sent"] is True
     assert data["delivery"]["sms"]["sent"] is True
 
