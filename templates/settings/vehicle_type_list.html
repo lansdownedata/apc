@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
+    <i class="ti ti-arrow-left text-[15px]"></i> Settings
+  </a>
+
+  <!-- page header -->
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Vehicle Types</h1>
+      <p class="text-[12.5px] text-muted mt-0.5">Photos, capacity, and descriptions shown on every quote.</p>
+    </div>
+    <a href="{% url 'vehicle_type_create' %}"
+       class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2">
+      <i class="ti ti-plus text-[15px]"></i> New vehicle type
+    </a>
+  </div>
+
+  <!-- table card -->
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[640px]">
+        <thead>
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-5 py-3">Photo</th>
+            <th class="font-medium px-3 py-3">Name</th>
+            <th class="font-medium px-3 py-3 text-center">Capacity</th>
+            <th class="font-medium px-3 py-3 text-center">Sort order</th>
+            <th class="font-medium px-3 py-3 text-center">Active</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for vt in vehicle_types %}
+          <tr onclick="window.location='{% url 'vehicle_type_edit' vt.pk %}'"
+              class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
+            <td class="px-5 py-3.5">
+              {% if vt.image %}
+              <img src="{{ vt.image.url }}" alt="{{ vt.name }}"
+                   class="w-14 h-14 rounded-lg object-cover ring-1 ring-line">
+              {% else %}
+              <span class="w-14 h-14 rounded-lg bg-charcoal2 text-gold grid place-items-center shrink-0">
+                <i class="ti ti-car text-[20px]"></i>
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-3.5">
+              <div class="font-semibold text-ink leading-tight">{{ vt.name }}</div>
+              {% if vt.description %}
+              <div class="text-[11px] text-slate-400 truncate">{{ vt.description }}</div>
+              {% endif %}
+            </td>
+            <td class="px-3 py-3.5 text-center text-muted">{{ vt.capacity }}</td>
+            <td class="px-3 py-3.5 text-center text-muted">{{ vt.sort_order }}</td>
+            <td class="px-3 py-3.5 text-center">
+              {% if vt.active %}
+              <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                <i class="ti ti-check text-[11px]"></i> Active
+              </span>
+              {% else %}
+              <span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">
+                Inactive
+              </span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5" class="px-5 py-16 text-center text-muted">
+              <i class="ti ti-car-off text-[28px] text-slate-300"></i>
+              <div class="mt-2 text-[13px]">No vehicle types yet.</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

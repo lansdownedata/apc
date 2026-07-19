@@ -5,9 +5,7 @@ from apps.messaging.models import Message
 from apps.notifications.models import Notification
 
 # Screens lifted from the prototype that aren't wired up yet — shown dimmed.
-NAV_SOON = [
-    ("Settings", "ti-settings"),
-]
+NAV_SOON = []
 
 
 def _inbox_unread_count() -> int:

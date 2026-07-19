@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+  <header class="mb-5">
+    <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Settings</h1>
+    <p class="text-[12.5px] text-muted mt-0.5">Configure what your customers see.</p>
+  </header>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <a href="{% url 'vehicle_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-car text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Vehicle Types</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        Photos, capacity, and descriptions shown on every quote.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">{{ vehicle_type_count }} active</p>
+    </a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+
+  <a href="{% url 'vehicle_type_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
+    <i class="ti ti-arrow-left text-[15px]"></i> Vehicle Types
+  </a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-5">
+      {{ page_title }}
+    </h1>
+
+    <form method="post" enctype="multipart/form-data" class="space-y-4">
+      {% csrf_token %}
+
+      <div>
+        <label for="{{ form.name.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Name</label>
+        {{ form.name }}
+        {% if form.name.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.name.help_text }}</p>{% endif %}
+        {% for error in form.name.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <div>
+        <label for="{{ form.capacity.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Capacity</label>
+        {{ form.capacity }}
+        {% if form.capacity.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.capacity.help_text }}</p>{% endif %}
+        {% for error in form.capacity.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <div>
+        <label for="{{ form.description.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Description</label>
+        {{ form.description }}
+        {% if form.description.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.description.help_text }}</p>{% endif %}
+        {% for error in form.description.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <div>
+        <label for="{{ form.image.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Photo</label>
+        {% if target and target.image %}
+        <img src="{{ target.image.url }}" alt="{{ target.name }}"
+             class="w-full max-w-[280px] h-auto rounded-lg ring-1 ring-line mb-2.5 object-cover">
+        {% endif %}
+        {{ form.image }}
+        {% if form.image.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.image.help_text }}</p>{% endif %}
+        {% for error in form.image.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <div>
+        <label for="{{ form.sort_order.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1.5">Sort order</label>
+        {{ form.sort_order }}
+        {% if form.sort_order.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ form.sort_order.help_text }}</p>{% endif %}
+        {% for error in form.sort_order.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <div class="flex items-center gap-2">
+        {{ form.active }}
+        <label for="{{ form.active.id_for_label }}" class="text-[12.5px] text-ink">Active — offered on new quotes</label>
+        {% for error in form.active.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
+      <!-- footer -->
+      <div class="flex items-center justify-between gap-2.5 pt-2">
+        {% if target %}
+        <button type="button" class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
+                @click="$store.modal.confirm({
+                  title: 'Delete {{ target.name|escapejs }}?',
+                  message: 'Trips already using this type will keep it — it will just be hidden from new quotes.',
+                  variant: 'danger', confirmText: 'Delete',
+                  onConfirm: () => document.getElementById('delete-form').submit()
+                })">
+          <i class="ti ti-trash text-[14px]"></i> Delete
+        </button>
+        <form id="delete-form" method="post" action="{% url 'vehicle_type_delete' target.pk %}" class="hidden">
+          {% csrf_token %}
+        </form>
+        {% else %}
+        <span></span>
+        {% endif %}
+
+        <div class="flex items-center gap-2.5">
+          <a href="{% url 'vehicle_type_list' %}"
+             class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">
+            Cancel
+          </a>
+          <button type="submit"
+                  class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2">
+            <i class="ti ti-check text-[15px]"></i> Save
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
