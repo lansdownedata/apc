@@ -68,3 +68,27 @@ def test_cannot_touch_another_contacts_phone(agent_client):
     resp = agent_client.post(reverse("contact_phone_delete", args=[contact.pk, foreign.pk]))
     assert resp.status_code == 404
     assert other.phones.count() == 1
+
+
+def test_cannot_promote_another_contacts_phone(agent_client):
+    contact = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0199")
+    foreign = other.phones.first()
+    resp = agent_client.post(reverse("contact_phone_primary", args=[contact.pk, foreign.pk]))
+    assert resp.status_code == 404
+    foreign.refresh_from_db()
+    assert foreign.contact_id == other.pk
+    assert foreign.is_primary is True
+
+
+def test_add_phone_already_claimed_by_another_contact(agent_client):
+    contact = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0299")
+    resp = agent_client.post(
+        reverse("contact_phone_add", args=[other.pk]),
+        {"phone": "202.555.0100", "label": ""},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "That number is already assigned to another contact."
+    assert other.phones.count() == 1
+    assert contact.phones.filter(e164="+12025550100").exists()
