@@ -193,6 +193,8 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="All Pro Charter <noreply@localhost>")
+# seconds; unset (None) means a hung SMTP host hangs the worker forever
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 
 # ---------------------------------------------------------------- logging
 LOGGING = {

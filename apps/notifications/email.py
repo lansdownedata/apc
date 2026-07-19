@@ -35,6 +35,7 @@ def send_html_email(*, to: str, subject: str, template: str, context: dict) -> b
             body=text_body,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[recipient],
+            reply_to=[settings.COMPANY_EMAIL] if settings.COMPANY_EMAIL else None,
         )
         message.attach_alternative(html_body, "text/html")
         message.send()
