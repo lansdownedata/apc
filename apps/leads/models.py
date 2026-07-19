@@ -8,24 +8,18 @@ from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
 
 
-class Vehicle(TimeStampedModel):
-    """Reference list of vehicle types."""
-
-    class Klass(models.TextChoices):
-        SEDAN = "sedan", "Sedan"
-        SUV = "suv", "SUV"
-        VAN = "van", "Van"
-        MINI_COACH = "mini_coach", "Mini Coach"
-        COACH = "coach", "Motor Coach"
-        LIMO = "limo", "Limousine"
+class VehicleType(TimeStampedModel):
+    """A bookable class of vehicle (the client assigns types, not individual units)."""
 
     name = models.CharField(max_length=80, unique=True)
     capacity = models.PositiveIntegerField(default=1)
-    klass = models.CharField(max_length=20, choices=Klass.choices, default=Klass.SEDAN)
     active = models.BooleanField(default=True)
+    image = models.ImageField(upload_to="vehicle-types/", blank=True)
+    description = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["sort_order", "name"]
 
     def __str__(self) -> str:
         return self.name

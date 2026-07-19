@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.leads.factories import LeadFactory, VehicleFactory
+from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.reservations import drafts
 from apps.reservations.models import Reservation
 
@@ -76,7 +76,7 @@ def test_save_multi_stop_orders_stops():
 
 def test_save_assigns_vehicle_and_updates_in_place():
     lead = LeadFactory()
-    veh = VehicleFactory(name="Sprinter Van")
+    veh = VehicleTypeFactory(name="Sprinter Van")
     res = drafts.save_reservation_from_draft(lead, _payload(vehicle=veh.pk))
     assert res.vehicle == veh
     again = drafts.save_reservation_from_draft(

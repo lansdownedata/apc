@@ -1,6 +1,6 @@
 import factory
 
-from apps.leads.factories import LeadFactory, VehicleFactory
+from apps.leads.factories import LeadFactory, VehicleTypeFactory
 
 from .models import Reservation, Stop
 
@@ -11,7 +11,7 @@ class ReservationFactory(factory.django.DjangoModelFactory):
         skip_postgeneration_save = True
 
     lead = factory.SubFactory(LeadFactory)
-    vehicle = factory.SubFactory(VehicleFactory)
+    vehicle = factory.SubFactory(VehicleTypeFactory)
     trip_type = Reservation.TripType.TRANSFER
     service = "Transfer"
     passengers = 2

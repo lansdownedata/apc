@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
-from apps.leads.models import Lead, Vehicle
+from apps.leads.models import Lead, VehicleType
 from apps.messaging.models import Message, Review
 from apps.notifications.models import Notification
 from apps.payments.models import Charge, PaymentPlan
@@ -56,16 +56,17 @@ class Command(BaseCommand):
         agent = User.objects.filter(is_superuser=True).order_by("id").first()
         today = date.today()
 
+        vehicle_specs = [
+            ("Luxury Sedan", 3),
+            ("Luxury SUV", 6),
+            ("Sprinter Van", 14),
+            ("Mini Coach", 24),
+            ("Motor Coach", 56),
+            ("Stretch Limousine", 10),
+        ]
         vehicles = {
-            name: Vehicle.objects.get_or_create(
-                name=name, defaults={"capacity": cap, "klass": klass}
-            )[0]
-            for name, cap, klass in [
-                ("Executive Sedan", 3, Vehicle.Klass.SEDAN),
-                ("Luxury SUV", 6, Vehicle.Klass.SUV),
-                ("Sprinter Van", 12, Vehicle.Klass.VAN),
-                ("Mini Coach", 24, Vehicle.Klass.MINI_COACH),
-            ]
+            name: VehicleType.objects.get_or_create(name=name, defaults={"capacity": cap})[0]
+            for name, cap in vehicle_specs
         }
 
         def new_lead(name, company, phone, email, channel, status, notes=""):
@@ -154,7 +155,7 @@ class Command(BaseCommand):
         transfer(
             lead1,
             "Airport transfer — BOS arrivals",
-            "Executive Sedan",
+            "Luxury Sedan",
             21,
             time(14, 30),
             2,
@@ -295,7 +296,7 @@ class Command(BaseCommand):
         transfer(
             lead4,
             "Investor roadshow — day 1",
-            "Executive Sedan",
+            "Luxury Sedan",
             18,
             time(8, 0),
             3,
