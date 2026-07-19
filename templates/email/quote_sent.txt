@@ -1,0 +1,15 @@
+Hi {{ contact_name }},
+
+Your {{ company_name }} quote {{ quote_no }} is ready — {{ trip_count }} trip{{ trip_count|pluralize }}.
+
+Total: ${{ quote_total }}
+{{ deposit_pct }}% deposit to confirm: ${{ deposit_amount }}
+
+View your full itinerary and book:
+{{ quote_url }}
+{% if expires_at %}
+This quote is valid through {{ expires_at|date:"F j, Y" }}.
+{% endif %}
+Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+
+{{ company_name }}
