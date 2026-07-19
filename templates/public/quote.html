@@ -52,6 +52,30 @@
   .tc p, .tc h3{margin:.6rem 0}
   .tc h3{font-size:13px;color:rgb(var(--text));font-weight:600;text-transform:uppercase;letter-spacing:.02em}
   .tc p{font-size:12.5px;line-height:1.6}
+  .contact-strip{display:flex;gap:32px;flex-wrap:wrap;font-size:13px;padding-bottom:16px}
+  .contact-strip .label{color:rgb(var(--muted))}
+  .trip-card{display:flex;gap:22px;padding:22px 0;border-top:1px solid rgb(var(--border))}
+  .trip-vehicle{width:210px;flex:0 0 210px;text-align:center}
+  .trip-vehicle img{width:100%;height:auto;border-radius:10px}
+  .trip-vehicle .placeholder{width:100%;aspect-ratio:16/10;border-radius:10px;
+    background:#f4f4f5;display:flex;align-items:center;justify-content:center;color:#9ca3af}
+  .trip-vehicle .name{font-weight:600;margin-top:10px}
+  .trip-vehicle .meta{font-size:12.5px;color:rgb(var(--muted))}
+  .trip-detail{flex:1 1 auto;min-width:0}
+  .trip-detail h3{margin:0 0 14px;font-size:15px}
+  .itinerary{flex:1 1 auto;min-width:0;list-style:none;margin:0;padding:0}
+  .itinerary li{position:relative;padding:0 0 20px 26px}
+  .itinerary li:before{content:'';position:absolute;left:3px;top:5px;width:9px;height:9px;
+    border:2px solid #9ca3af;border-radius:50%;background:#fff}
+  .itinerary li:not(:last-child):after{content:'';position:absolute;left:7px;top:16px;
+    bottom:0;width:1px;background:repeating-linear-gradient(to bottom,#d4d4d8 0 4px,transparent 4px 8px)}
+  .itinerary .venue{font-weight:600}
+  .itinerary .addr, .itinerary .when{font-size:13px;color:rgb(var(--muted))}
+  .trip-subtotal{text-align:right;font-size:13px;color:rgb(var(--muted));padding:6px 0 0}
+  @media (max-width:640px){
+    .trip-card{flex-direction:column}
+    .trip-vehicle{width:100%;flex:0 0 auto}
+  }
 </style>
 </head>
 <body>
@@ -70,33 +94,53 @@
         <div class="note">This quote has expired. Please contact us for an updated quote.</div>
       {% endif %}
 
-      <table>
-        <thead>
-          <tr>
-            <th>Trip</th>
-            <th>Route</th>
-            <th>Vehicle</th>
-            <th>Pax</th>
-            <th class="num">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in reservations %}
-          <tr>
-            <td>
-              {{ r.service|default:r.get_trip_type_display }}<br>
-              <span style="color:rgb(var(--muted))">
-                {% if r.pickup_date %}{{ r.pickup_date }}{% if r.pickup_time %} · {{ r.pickup_time }}{% endif %}{% endif %}
-              </span>
-            </td>
-            <td>{% for s in r.stops.all %}{{ s.address }}{% if not forloop.last %} → {% endif %}{% endfor %}</td>
-            <td>{{ r.vehicle.name|default:"—" }}</td>
-            <td>{{ r.passengers }}</td>
-            <td class="num">${{ r.line_total|floatformat:2|intcomma }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="contact-strip">
+        <div><div class="label">Booking Contact</div><div>{{ lead.contact.name }}</div></div>
+        <div><div class="label">Billing Contact</div><div>{{ billing_contact.name }}</div></div>
+        {% if passenger_names %}
+        <div><div class="label">Passengers</div><div>{{ passenger_names }}</div></div>
+        {% endif %}
+      </div>
+
+      {% for r in reservations %}
+      <div class="trip-card">
+        <div class="trip-vehicle">
+          {% if r.vehicle.image %}
+            <img src="{{ r.vehicle.image.url }}" alt="{{ r.vehicle.name }}">
+          {% else %}
+            <div class="placeholder">No photo</div>
+          {% endif %}
+          <div class="name">{{ r.vehicle.name|default:"Vehicle to be assigned" }}</div>
+          {% if r.vehicle.capacity %}
+            <div class="meta">Seats up to {{ r.vehicle.capacity }}</div>
+          {% endif %}
+          {% if r.vehicle.description %}
+            <div class="meta">{{ r.vehicle.description }}</div>
+          {% endif %}
+        </div>
+        <div class="trip-detail">
+          <h3>
+            Trip {{ forloop.counter }}{% if r.service %} &middot; {{ r.service }}{% endif %}
+          </h3>
+          <ul class="itinerary">
+            {% for stop in r.stops.all %}
+            <li>
+              {% if stop.name %}<div class="venue">{{ stop.name }}</div>{% endif %}
+              <div class="addr">{{ stop.address }}</div>
+              <div class="when">
+                {% if stop.scheduled_time %}{{ stop.scheduled_time|time:"g:i A" }}{% endif %}
+                {% if r.pickup_date %}{{ r.pickup_date|date:"M j, Y" }}{% endif %}
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          <div class="trip-subtotal">
+            Vehicle Subtotal
+            <strong style="color:rgb(var(--text));">${{ r.line_total|floatformat:2|intcomma }}</strong>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
 
       <div class="totals">
         <div class="row"><span>Quote total</span><span class="num">${{ quote_total|floatformat:2|intcomma }}</span></div>
