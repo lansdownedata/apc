@@ -24,38 +24,57 @@ def test_defaults():
     assert contact.created_at is not None
 
 
-def test_find_match_by_phone():
-    c = ContactFactory(phone="(202) 555-0100", email="a@example.com")
-    assert Contact.objects.find_match(phone="(202) 555-0100", email="") == c
+def test_find_match_by_phone_across_formats():
+    """The headline regression: agent-typed and Podium-supplied formats must match."""
+    c = ContactFactory(phone="(202) 555-0100")
+    assert Contact.objects.find_match(phone="+12025550100") == c
+    assert Contact.objects.find_match(phone="202-555-0100") == c
+    assert Contact.objects.find_match(phone="2025550100") == c
+
+
+def test_find_match_by_secondary_number():
+    c = ContactFactory(phone="(202) 555-0100")
+    c.add_phone("(305) 555-0199", label="work")
+    assert Contact.objects.find_match(phone="+13055550199") == c
 
 
 def test_find_match_by_email_case_insensitive():
     c = ContactFactory(phone="", email="Bride@Example.com")
-    assert Contact.objects.find_match(phone="", email="bride@example.com") == c
+    assert Contact.objects.find_match(email="bride@example.com") == c
+
+
+def test_find_match_by_podium_uid_wins_over_phone():
+    by_uid = ContactFactory(phone="(202) 555-0100", podium_contact_uid="pod-1")
+    ContactFactory(phone="(305) 555-0199")
+    assert Contact.objects.find_match(phone="+13055550199", podium_uid="pod-1") == by_uid
 
 
 def test_find_match_none_when_blank_or_no_hit():
-    ContactFactory(phone="(202) 555-0100", email="a@example.com")
-    assert Contact.objects.find_match(phone="", email="") is None
-    assert Contact.objects.find_match(phone="(202) 555-9999", email="") is None
+    ContactFactory(phone="(202) 555-0100")
+    assert Contact.objects.find_match() is None
+    assert Contact.objects.find_match(phone="+12025559999") is None
 
 
-def test_match_or_create_reuses_existing():
-    c = ContactFactory(phone="(202) 555-0100", email="a@example.com")
-    got = Contact.objects.match_or_create(
-        name="Someone Else", phone="(202) 555-0100", email="new@example.com"
-    )
-    assert got == c
+def test_find_match_ignores_unparseable_phone():
+    ContactFactory(phone="(202) 555-0100")
+    assert Contact.objects.find_match(phone="not a phone") is None
+
+
+def test_match_or_create_returns_existing_on_phone_format_difference():
+    existing = ContactFactory(phone="(202) 555-0100")
+    got = Contact.objects.match_or_create(name="Someone Else", phone="+12025550100")
+    assert got == existing
     assert Contact.objects.count() == 1
 
 
-def test_match_or_create_creates_when_no_match():
-    got = Contact.objects.match_or_create(
-        name="Sarah Boyne",
-        phone="(703) 555-0148",
-        email="sarah@example.com",
-        channel=Channel.PHONE,
-    )
-    assert got.pk is not None
-    assert got.channel == Channel.PHONE
-    assert Contact.objects.count() == 1
+def test_match_or_create_creates_with_normalized_phone():
+    contact = Contact.objects.match_or_create(name="New Person", phone="(305) 555-0199")
+    assert contact.phone == "+13055550199"
+
+
+def test_match_or_create_adopts_podium_uid_on_existing_contact():
+    existing = ContactFactory(phone="(202) 555-0100", podium_contact_uid="")
+    got = Contact.objects.match_or_create(name="Sarah", phone="+12025550100", podium_uid="pod-9")
+    got.refresh_from_db()
+    assert got == existing
+    assert got.podium_contact_uid == "pod-9"

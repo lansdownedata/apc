@@ -1,5 +1,4 @@
 from django.db import models
-from django.db.models import Q
 
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
@@ -7,18 +6,32 @@ from apps.core.phone import to_e164
 
 
 class ContactManager(models.Manager):
-    """Dedupe helpers — a Contact mirrors one LimoAnywhere Account."""
+    """Dedupe helpers — a Contact mirrors one LimoAnywhere Account.
 
-    def find_match(self, *, phone: str = "", email: str = "") -> "Contact | None":
-        phone, email = (phone or "").strip(), (email or "").strip()
-        lookup = Q()
-        if phone:
-            lookup |= Q(phone__iexact=phone)
+    Single canonical match order for the whole system: Podium uid, then any of the
+    contact's phone numbers (normalized), then email. Both the New-lead modal and the
+    Podium webhook go through here — they used to disagree about what "same person" means.
+    """
+
+    def find_match(
+        self, *, phone: str = "", email: str = "", podium_uid: str = ""
+    ) -> "Contact | None":
+        """Find the contact identified by `podium_uid`, then `phone`, then `email`."""
+        if podium_uid:
+            match = self.filter(podium_contact_uid=podium_uid).first()
+            if match is not None:
+                return match
+
+        e164 = to_e164(phone)
+        if e164:
+            match = self.filter(phones__e164=e164).first()
+            if match is not None:
+                return match
+
+        email = (email or "").strip()
         if email:
-            lookup |= Q(email__iexact=email)
-        if not lookup:
-            return None
-        return self.filter(lookup).order_by("-created_at").first()
+            return self.filter(email__iexact=email).order_by("-created_at").first()
+        return None
 
     def match_or_create(
         self,
@@ -28,17 +41,30 @@ class ContactManager(models.Manager):
         phone: str = "",
         email: str = "",
         channel: str = Channel.WEBSITE,
+        podium_uid: str = "",
     ) -> "Contact":
-        existing = self.find_match(phone=phone, email=email)
+        """Return the matching contact (enriched with any new phone/uid), or create one."""
+        existing = self.find_match(phone=phone, email=email, podium_uid=podium_uid)
         if existing is not None:
+            self._enrich(existing, phone=phone, podium_uid=podium_uid)
             return existing
         return self.create(
             name=name,
             company=company,
-            phone=(phone or "").strip(),
+            phone=phone,
             email=(email or "").strip(),
             channel=channel,
+            podium_contact_uid=podium_uid,
         )
+
+    def _enrich(self, contact: "Contact", *, phone: str, podium_uid: str) -> None:
+        """Backfill what we just learned onto a matched contact, without overwriting."""
+        if podium_uid and not contact.podium_contact_uid:
+            contact.podium_contact_uid = podium_uid
+            contact.save(update_fields=["podium_contact_uid", "updated_at"])
+        e164 = to_e164(phone)
+        if e164 and not contact.phones.filter(e164=e164).exists():
+            contact.add_phone(e164)
 
 
 class Contact(TimeStampedModel):
