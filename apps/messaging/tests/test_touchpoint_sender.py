@@ -52,7 +52,7 @@ def test_tp1_sends_on_both_channels_and_marks_sent(settings):
     assert tp.podium_message_uid == "msg-1"
     assert mock_send.call_count == 2
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    # Podium's own name for the SMS channel is "phone", not "sms" — see _PODIUM_CHANNEL.
+    # Podium's own name for the SMS channel is "phone", not "sms" — see PODIUM_CHANNEL.
     assert calls == {("email", "a@example.com"), ("phone", "5551234567")}
 
 

@@ -260,7 +260,11 @@ function quoteWorkspace(opts = {}) {
               escapeHtml((delivery[c] && delivery[c].error) || "delivery failed") + "</p>"
             ))
             .join("");
-          Alpine.store("modal").show({
+          // This runs inside the promise chain that openSendQuoteModal's onConfirm returns,
+          // which the modal store's accept() awaits before calling close(). Opening a second
+          // modal here directly would be immediately clobbered by that close() — schedule it
+          // for the next macrotask so it lands after accept() is done closing the first one.
+          const showFailureModal = () => Alpine.store("modal").show({
             title: sent.length ? "Quote saved — partially delivered" : "Quote saved — but not delivered",
             variant: "danger",
             html:
@@ -276,6 +280,7 @@ function quoteWorkspace(opts = {}) {
             },
             onCancel: () => window.location.reload(),
           });
+          setTimeout(showFailureModal, 0);
         })
         .catch(() =>
           Alpine.store("toast").push({ type: "danger", title: "Network error — could not send quote" })
