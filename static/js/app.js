@@ -233,7 +233,10 @@ function quoteWorkspace(opts = {}) {
         tripType: "transfer", service: "", date: "", time: "",
         vehicle: this.vehicles.length ? this.vehicles[0].id : "",
         pax: 1, baseRate: 0, hours: 4, hourlyRate: 295, minHours: 4,
-        stops: [{ address: "", note: "" }, { address: "", note: "" }],
+        stops: [
+          { address: "", note: "", name: "", time: "" },
+          { address: "", note: "", name: "", time: "" },
+        ],
       };
     },
     money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
@@ -269,7 +272,7 @@ function quoteWorkspace(opts = {}) {
         this.draft.minHours = this.draft.minHours || 4;
       } else { this.draft.baseRate = this.draft.baseRate || 0; }
     },
-    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "" }); },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
     billedHours(r) { return Math.max(r.hours || 0, r.minHours || 0); },

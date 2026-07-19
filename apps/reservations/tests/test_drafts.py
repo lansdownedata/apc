@@ -1,9 +1,11 @@
+from datetime import time
 from decimal import Decimal
 
 import pytest
 
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.reservations import drafts
+from apps.reservations.drafts import DraftError, save_reservation_from_draft
 from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
@@ -85,3 +87,58 @@ def test_save_assigns_vehicle_and_updates_in_place():
     assert again.pk == res.pk
     assert again.service == "Renamed"
     assert again.stops.count() == 2  # replaced, not duplicated
+
+
+def test_stop_name_and_time_round_trip():
+    lead = LeadFactory()
+    payload = {
+        "tripType": "transfer",
+        "pax": 4,
+        "baseRate": "250.00",
+        "stops": [
+            {
+                "address": "111 Byte Drive, Frederick, MD 21702",
+                "name": "SpringHill Suites by Marriott Frederick",
+                "time": "11:00",
+                "note": "",
+            },
+            {
+                "address": "8529 Liberty Road, Frederick, MD 21701",
+                "name": "Ceresville Mansion",
+                "time": "11:30",
+                "note": "",
+            },
+        ],
+    }
+    res = save_reservation_from_draft(lead, payload)
+    stops = list(res.stops.all())
+    assert stops[0].name == "SpringHill Suites by Marriott Frederick"
+    assert stops[0].scheduled_time == time(11, 0)
+    assert stops[1].name == "Ceresville Mansion"
+    assert stops[1].scheduled_time == time(11, 30)
+
+
+def test_stop_without_name_or_time_is_fine():
+    lead = LeadFactory()
+    payload = {
+        "tripType": "transfer",
+        "pax": 2,
+        "baseRate": "100.00",
+        "stops": [{"address": "A St"}, {"address": "B St"}],
+    }
+    res = save_reservation_from_draft(lead, payload)
+    stops = list(res.stops.all())
+    assert stops[0].name == ""
+    assert stops[0].scheduled_time is None
+
+
+def test_a_bad_stop_time_is_rejected():
+    lead = LeadFactory()
+    payload = {
+        "tripType": "transfer",
+        "pax": 2,
+        "baseRate": "100.00",
+        "stops": [{"address": "A St", "time": "25:99"}, {"address": "B St"}],
+    }
+    with pytest.raises(DraftError):
+        save_reservation_from_draft(lead, payload)

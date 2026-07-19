@@ -98,6 +98,12 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
                       <i class="ti ti-trash text-[16px]"></i>
                     </button>
                   </div>
+                  <div class="mt-1 flex items-center gap-1.5">
+                    <input x-model="s.name" placeholder="Venue name (optional)"
+                      class="field w-full">
+                    <input x-model="s.time" type="time"
+                      class="field w-full">
+                  </div>
                   <input x-show="i !== 0 && i !== draft.stops.length - 1" x-model="s.note"
                     placeholder="Note (e.g. 20-min photo stop)"
                     class="mt-1 w-full text-[11.5px] ring-1 ring-line rounded-lg px-3 py-1.5 focus:outline-none focus:ring-gold text-muted">
