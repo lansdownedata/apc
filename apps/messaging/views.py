@@ -21,8 +21,12 @@ from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
 from .models import Message, Review
+from .touchpoints import _PODIUM_CHANNEL
 
-CHANNEL_TYPE = {"sms": "phone", "email": "email"}
+# Podium calls the SMS channel "phone" — shared with apps.messaging.touchpoints so the
+# mapping isn't duplicated (a divergent copy here is what caused SMS touch-points to be
+# silently rejected).
+CHANNEL_TYPE = _PODIUM_CHANNEL
 CHANNEL_MODEL = {"sms": Message.Channel.SMS, "email": Message.Channel.EMAIL}
 
 

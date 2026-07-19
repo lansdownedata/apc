@@ -14,6 +14,9 @@ from .touchpoint_templates import TEMPLATES, build_context, render
 
 logger = logging.getLogger(__name__)
 
+# Podium calls the SMS channel "phone" (apps/messaging/views.py does the same mapping).
+_PODIUM_CHANNEL = {"sms": "phone", "email": "email"}
+
 _QUOTE_KINDS = (
     TouchPoint.Kind.TP3_QUOTE_SENT_SMS,
     TouchPoint.Kind.TP4_VIEWED_SMS,
@@ -128,7 +131,11 @@ def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
     for channel, identifier in available.items():
         body = _render_body(template, channel, ctx)
         try:
-            resp = podium.send_message(identifier=identifier, channel_type=channel, body=body)
+            resp = podium.send_message(
+                identifier=identifier,
+                channel_type=_PODIUM_CHANNEL.get(channel, channel),
+                body=body,
+            )
             if not first_uid:
                 first_uid = resp.get("uid") or resp.get("data", {}).get("uid", "")
             any_success = True
@@ -177,7 +184,7 @@ def _send_review_invite(tp: TouchPoint) -> bool:
     ctx["review_link"] = link
     body = render(template.sms_body, ctx)
     try:
-        resp = podium.send_message(identifier=phone, channel_type="sms", body=body)
+        resp = podium.send_message(identifier=phone, channel_type=_PODIUM_CHANNEL["sms"], body=body)
         tp.status = TouchPoint.Status.SENT
         tp.sent_at = timezone.now()
         tp.podium_message_uid = resp.get("uid") or resp.get("data", {}).get("uid", "")
