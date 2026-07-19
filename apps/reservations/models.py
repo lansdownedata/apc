@@ -158,16 +158,15 @@ class Stop(TimeStampedModel):
     address = models.CharField(max_length=255, blank=True)
     note = models.CharField(max_length=255, blank=True)
     name = models.CharField(max_length=160, blank=True)
+    # Known limitation: scheduled_time has no date of its own — it's rendered against the
+    # parent reservation's pickup_date, so an overnight charter shows every stop under the
+    # same calendar date. Promote to DateTimeField if the client ever books multi-day trips.
     scheduled_time = models.TimeField(null=True, blank=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
 
     class Meta:
         ordering = ["sequence"]
-
-    # Known limitation: scheduled_time has no date of its own — it's rendered against the
-    # parent reservation's pickup_date, so an overnight charter shows every stop under the
-    # same calendar date. Promote to DateTimeField if the client ever books multi-day trips.
 
     def __str__(self) -> str:
         return self.name or self.address or f"Stop {self.sequence}"

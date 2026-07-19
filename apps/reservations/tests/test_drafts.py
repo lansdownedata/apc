@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
+from apps.leads.views import _reservation_draft
 from apps.reservations import drafts
 from apps.reservations.drafts import DraftError, save_reservation_from_draft
 from apps.reservations.models import Reservation
@@ -89,7 +90,7 @@ def test_save_assigns_vehicle_and_updates_in_place():
     assert again.stops.count() == 2  # replaced, not duplicated
 
 
-def test_stop_name_and_time_round_trip():
+def test_stop_name_and_time_are_parsed_and_saved():
     lead = LeadFactory()
     payload = {
         "tripType": "transfer",
@@ -142,3 +143,28 @@ def test_a_bad_stop_time_is_rejected():
     }
     with pytest.raises(DraftError):
         save_reservation_from_draft(lead, payload)
+
+
+def test_reservation_draft_serializes_stop_name_and_time():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        {
+            "tripType": "transfer",
+            "pax": 2,
+            "baseRate": "100.00",
+            "stops": [
+                {"address": "A St", "name": "Ceresville Mansion", "time": "11:30"},
+                {"address": "B St"},
+            ],
+        },
+    )
+    draft = _reservation_draft(res)
+    assert draft["stops"][0]["name"] == "Ceresville Mansion"
+    assert draft["stops"][0]["time"] == "11:30"
+    assert draft["stops"][1]["time"] == "", "a missing time must serialize as '', not None"
+
+    # the actual round trip: feed the serialized draft straight back in
+    again = save_reservation_from_draft(lead, {**draft, "tripType": "transfer"}, instance=res)
+    assert again.stops.first().name == "Ceresville Mansion"
+    assert again.stops.first().scheduled_time == time(11, 30)
