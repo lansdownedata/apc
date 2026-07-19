@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -48,14 +47,11 @@ def contact_list(request: HttpRequest) -> HttpResponse:
     query = request.GET.get("q", "").strip()
     if query:
         # `phone` isn't a concrete field anymore (ContactPhone table) — match against
-        # the digits of any of the contact's numbers via a pk subquery, so this OR
-        # can't fan out the `contacts` queryset's own aggregate annotations.
-        digits = re.sub(r"\D", "", query)
-        phone_matches = (
-            ContactPhone.objects.filter(e164__icontains=digits).values("contact_id")
-            if digits
-            else ContactPhone.objects.none().values("contact_id")
-        )
+        # the digits of any of the contact's numbers via a pk subquery (see
+        # `ContactPhone.objects.matching`), so this OR can't fan out the `contacts`
+        # queryset's own aggregate annotations, and non-phone-like queries ("Suite 5")
+        # don't collapse to a digit and over-match.
+        phone_matches = ContactPhone.objects.matching(query).values("contact_id")
         contacts = contacts.filter(
             Q(name__icontains=query)
             | Q(company__icontains=query)

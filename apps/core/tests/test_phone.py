@@ -1,6 +1,6 @@
 import pytest
 
-from apps.core.phone import to_e164
+from apps.core.phone import is_phone_like, to_e164
 
 
 @pytest.mark.parametrize(
@@ -32,3 +32,23 @@ def test_respects_region_for_national_format():
 
 def test_already_e164_ignores_region():
     assert to_e164("+12025550100", region="GB") == "+12025550100"
+
+
+@pytest.mark.parametrize(
+    "term,expected",
+    [
+        ("5550100", True),
+        ("(202) 555-0100", True),
+        ("202-555-0100", True),
+        ("+1 202 555 0100", True),
+        ("123", True),
+        ("Suite 5", False),
+        ("3rd Ave Limo", False),
+        ("12", False),  # fewer than 3 digits — too ambiguous to be a phone search
+        ("", False),
+        ("   ", False),
+        ("needle@haystack.example", False),
+    ],
+)
+def test_is_phone_like(term, expected):
+    assert is_phone_like(term) is expected

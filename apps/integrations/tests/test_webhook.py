@@ -128,6 +128,74 @@ def test_sent_with_no_matching_lead_is_skipped_no_orphan_contact():
     assert event.lead is None
 
 
+def _received_email(
+    uid="e1", email="sarah@example.com", body="Need a quote", name="Sarah", cuid="cE1"
+):
+    return {
+        "eventType": "message.received",
+        "data": {
+            "uid": uid,
+            "body": body,
+            "contact": {"uid": cuid, "name": name},
+            "conversation": {"uid": "convE", "channel": {"type": "email", "identifier": email}},
+            "location": {"uid": "loc", "organizationUid": "org"},
+        },
+    }
+
+
+def test_received_email_dedupes_on_email_identifier():
+    """Two inbound emails from the same address must resolve to ONE contact and ONE
+    lead — the identifier is an email address, not a phone number, so it must be
+    routed to `match_or_create(email=...)` rather than `phone=...` (which would
+    silently fail to normalize and create a fresh contact every time)."""
+    process_podium_webhook(_received_email(uid="e1", cuid="cE1"))
+    process_podium_webhook(_received_email(uid="e2", cuid="cE2"))
+
+    assert Contact.objects.filter(email="sarah@example.com").count() == 1
+    assert Lead.objects.count() == 1
+    assert Message.objects.count() == 2
+
+
+def test_received_email_contact_has_no_phone_row():
+    process_podium_webhook(_received_email(uid="e3", cuid="cE3"))
+    contact = Contact.objects.get(email="sarah@example.com")
+    assert contact.phones.count() == 0
+
+
+def _sent_email(uid="se1", email="sarah@example.com", contact_uid="cE1", conv_uid="convE"):
+    return {
+        "eventType": "message.sent",
+        "data": {
+            "uid": uid,
+            "body": "On our way!",
+            "contact": {"uid": contact_uid},
+            "conversation": {"uid": conv_uid, "channel": {"type": "email", "identifier": email}},
+        },
+    }
+
+
+def test_sent_email_matches_existing_contact_by_email_readonly():
+    contact = ContactFactory(email="sarah@example.com")
+    lead = LeadFactory(contact=contact)
+
+    event = process_podium_webhook(_sent_email(uid="se-new", contact_uid="unknown-uid"))
+
+    msg = Message.objects.get(podium_message_uid="se-new")
+    assert msg.lead == lead
+    assert event.lead == lead
+
+
+def test_sent_email_with_no_matching_contact_is_skipped_no_orphan_contact():
+    before = Contact.objects.count()
+    event = process_podium_webhook(
+        _sent_email(uid="orphan-email", email="nobody@example.com", contact_uid="unknown")
+    )
+
+    assert not Message.objects.filter(podium_message_uid="orphan-email").exists()
+    assert Contact.objects.count() == before
+    assert event.lead is None
+
+
 def test_webhook_view_accepts_post(client, settings):
     settings.PODIUM_WEBHOOK_SECRET = ""
     resp = client.post(

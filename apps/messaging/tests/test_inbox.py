@@ -109,6 +109,20 @@ def test_inbox_search_matches_phone(client, agent):
     assert list(resp.context["conversations"]) == [match]
 
 
+def test_inbox_search_alphanumeric_text_does_not_over_match_via_digit_collapse(client, agent):
+    """ "Suite 5" must not collapse to digit "5" and match any contact whose number
+    contains a 5 — it should only match on the name/company fields."""
+    match = LeadFactory(contact=ContactFactory(name="Suite 5 Events", phone="202-555-0187"))
+    other = LeadFactory(contact=ContactFactory(name="Random Corp", phone="202-555-0155"))
+    MessageFactory(lead=match)
+    MessageFactory(lead=other)
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"q": "Suite 5"})
+
+    assert list(resp.context["conversations"]) == [match]
+
+
 # --- opening a thread marks read -------------------------------------------------------
 
 

@@ -1,8 +1,10 @@
+import re
+
 from django.db import models
 
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
-from apps.core.phone import to_e164
+from apps.core.phone import is_phone_like, to_e164
 
 
 class ContactManager(models.Manager):
@@ -170,12 +172,37 @@ class Contact(TimeStampedModel):
         return phone
 
 
+class ContactPhoneQuerySet(models.QuerySet):
+    """QuerySet-level helpers for `ContactPhone` — shared search entry point."""
+
+    def matching(self, term: str) -> "ContactPhoneQuerySet":
+        """Numbers whose E.164 contains the digits of a free-text search `term`.
+
+        Returns `.none()` when `term` isn't phone-like (see `is_phone_like`) — e.g. a
+        search like "Suite 5" or "3rd Ave Limo" must NOT collapse to digit "5" / "3"
+        and match nearly every phone number in the system via `icontains`. This is the
+        single canonical implementation of "is this search term a phone search" so the
+        contacts directory and inbox search can't drift on the rule.
+
+        Returns a queryset of `ContactPhone` (not `.values()`) — callers that need a
+        `contact_id__in=...` / `pk__in=...` subquery (to avoid multiplying aggregate
+        annotations on the outer queryset) should call `.values("contact_id")` on the
+        result themselves.
+        """
+        if not is_phone_like(term):
+            return self.none()
+        digits = re.sub(r"\D", "", term)
+        return self.filter(e164__icontains=digits)
+
+
 class ContactPhone(TimeStampedModel):
     """One phone number. Mirrors Podium's `phoneNumbers[]` array.
 
     `e164` is globally unique — "one number belongs to one contact" is a database
     invariant, which makes dedupe a single indexed lookup.
     """
+
+    objects = ContactPhoneQuerySet.as_manager()
 
     contact = models.ForeignKey(Contact, related_name="phones", on_delete=models.CASCADE)
     e164 = models.CharField(max_length=20, unique=True, db_index=True)

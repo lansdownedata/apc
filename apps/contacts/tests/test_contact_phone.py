@@ -120,3 +120,28 @@ def test_add_phone_for_number_self_already_owns_is_idempotent():
     assert result is not None
     assert result.contact_id == contact.pk
     assert contact.phones.count() == 1
+
+
+# --- ContactPhone.objects.matching() — shared search entry point ----------------------
+
+
+def test_matching_finds_by_digit_substring():
+    owner = ContactFactory(phone="(202) 555-0187")
+    matches = ContactPhone.objects.matching("555-0187")
+    assert list(matches.values_list("contact_id", flat=True)) == [owner.pk]
+
+
+def test_matching_returns_empty_for_non_phone_text():
+    ContactFactory(phone="(202) 555-0005")
+    # "Suite 5" collapses to digit "5" if naively stripped — must not match via that.
+    assert ContactPhone.objects.matching("Suite 5").count() == 0
+
+
+def test_matching_returns_empty_for_blank_term():
+    ContactFactory(phone="(202) 555-0100")
+    assert ContactPhone.objects.matching("").count() == 0
+
+
+def test_matching_returns_empty_for_short_digit_run():
+    ContactFactory(phone="(202) 555-0100")
+    assert ContactPhone.objects.matching("10").count() == 0

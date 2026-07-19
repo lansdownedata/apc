@@ -98,6 +98,17 @@ def test_search_matches_each_field(logged_in_client, field, value, term):
     assert other.pk not in pks
 
 
+def test_search_alphanumeric_text_does_not_over_match_via_digit_collapse(logged_in_client):
+    """ "Suite 5" must not collapse to digit "5" and match any contact whose number
+    contains a 5 — it should only match on the name/company/email fields."""
+    match = ContactFactory(name="Suite 5 Events", phone="(202) 555-0187")
+    other = ContactFactory(name="Random Corp", phone="(202) 555-0155")
+    resp = logged_in_client.get("/contacts/", {"q": "Suite 5"})
+    pks = {c.pk for c in resp.context["contacts"]}
+    assert match.pk in pks
+    assert other.pk not in pks
+
+
 def test_header_totals(logged_in_client):
     c1 = ContactFactory()
     booked = LeadFactory(contact=c1, status=Lead.Status.BOOKED)

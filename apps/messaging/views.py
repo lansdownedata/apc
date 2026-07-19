@@ -7,7 +7,6 @@ The Podium API call itself lives in `apps.integrations.podium`; these views stay
 from __future__ import annotations
 
 import json
-import re
 from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
@@ -49,13 +48,10 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
     )
     if q:
         # `contact__phone` isn't a concrete field anymore (ContactPhone table) — match
-        # against the digits of any of the contact's numbers via a pk subquery.
-        digits = re.sub(r"\D", "", q)
-        phone_matches = (
-            ContactPhone.objects.filter(e164__icontains=digits).values("contact_id")
-            if digits
-            else ContactPhone.objects.none().values("contact_id")
-        )
+        # against the digits of any of the contact's numbers via a pk subquery (see
+        # `ContactPhone.objects.matching`); non-phone-like queries ("Suite 5") don't
+        # collapse to a digit and over-match.
+        phone_matches = ContactPhone.objects.matching(q).values("contact_id")
         qs = qs.filter(
             Q(contact__name__icontains=q)
             | Q(contact__company__icontains=q)

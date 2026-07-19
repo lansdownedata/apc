@@ -10,6 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
+from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -21,6 +22,7 @@ from apps.accounts.models import User
 from apps.accounts.permissions import payment_access_required
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.core.phone import to_e164
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
@@ -217,24 +219,61 @@ def lead_update(request, pk: int) -> JsonResponse:
                 )
 
     contact = lead.contact
-    # `phone` is a property backed by ContactPhone — it cannot go through update_fields.
-    if "phone" in request.POST:
-        raw = request.POST.get("phone", "").strip()
-        if raw:
-            if contact.set_primary_phone(raw) is None:
+    has_phone = "phone" in request.POST
+    phone_raw = request.POST.get("phone", "").strip() if has_phone else ""
+
+    # Phone validation only — no writes yet, so it's safe outside the atomic block.
+    if has_phone:
+        if phone_raw:
+            # `set_primary_phone` returns None for two distinct reasons — tell them
+            # apart so a number that's merely owned by another contact isn't
+            # misreported to the agent as malformed.
+            if to_e164(phone_raw) is None:
                 return JsonResponse(
                     {"ok": False, "error": "Enter a valid phone number."}, status=400
                 )
-        else:
-            contact.phones.filter(is_primary=True).delete()
+        elif contact.phones.count() > 1:
+            # More than one number on file and the agent submitted blank: refuse
+            # rather than silently delete the primary and let a hidden secondary
+            # number get promoted underneath them (data loss they can't see/undo).
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": ("This contact has other numbers — manage them on the contact page."),
+                },
+                status=400,
+            )
 
     contact_fields = []
     for field in ("name", "email", "company"):
         if field in request.POST:
             setattr(contact, field, request.POST.get(field, "").strip())
             contact_fields.append(field)
-    if contact_fields:
-        contact.save(update_fields=contact_fields + ["updated_at"])
+
+    # The phone write (ContactPhone rows) and the Contact field save must land together
+    # — an agent must never see a 200 with only half the edit applied.
+    with transaction.atomic():
+        if has_phone:
+            # `phone` is a property backed by ContactPhone — it can't go through
+            # update_fields, so it's handled here rather than via setattr() above.
+            if phone_raw:
+                if contact.set_primary_phone(phone_raw) is None:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "That number is already assigned to another contact.",
+                        },
+                        status=400,
+                    )
+            else:
+                contact.phones.filter(is_primary=True).delete()
+
+        if contact_fields:
+            contact.save(update_fields=contact_fields + ["updated_at"])
+        elif has_phone:
+            # A phone-only edit doesn't touch any Contact model field (phone lives in
+            # ContactPhone), so without this, `updated_at` would never bump.
+            contact.save(update_fields=["updated_at"])
 
     lead_fields = []
     channel = request.POST.get("channel")

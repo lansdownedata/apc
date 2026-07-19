@@ -28,6 +28,21 @@ CHANNEL_MAP = {
 }
 
 
+def _identifier_kwarg(channel_type: str, identifier: str) -> dict[str, str]:
+    """Route a Podium `channel.identifier` to the right dedupe kwarg.
+
+    `identifier` means different things depending on `channel_type`: for "email" it's
+    an email address, for everything else (phone/sms/whatsapp/...) it's a phone
+    number. Passing an email address in as `phone=` silently fails to normalize
+    (`to_e164` returns None) and the caller can never match or store it — every
+    inbound email would create a fresh, identifier-less Contact + Lead. Fall back to
+    sniffing "@" when `channel_type` is missing/unrecognized.
+    """
+    if channel_type == "email" or (channel_type not in CHANNEL_MAP and "@" in identifier):
+        return {"email": identifier}
+    return {"phone": identifier}
+
+
 def process_podium_webhook(payload: dict) -> PodiumEvent:
     event_type = payload.get("eventType") or payload.get("type") or "message.received"
     data = payload.get("data", payload)
@@ -57,7 +72,7 @@ def _ingest_inbound(data: dict) -> Lead:
     identifier = channel.get("identifier") or contact_data.get("phoneNumber") or ""
     channel_type = channel.get("type", "phone")
 
-    lead = _resolve_lead(contact_data, identifier)
+    lead = _resolve_lead(contact_data, identifier, channel_type)
     Message.objects.create(
         lead=lead,
         direction=Message.Direction.IN,
@@ -70,17 +85,20 @@ def _ingest_inbound(data: dict) -> Lead:
     return lead
 
 
-def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
+def _resolve_lead(contact_data: dict, identifier: str, channel_type: str = "phone") -> Lead:
     """Match-or-create the Contact for an inbound message, then its most recent Lead.
 
     Routed through `ContactManager.match_or_create` so the dedupe order (Podium uid,
     then normalized phone, then email) is the same one every other write path uses.
+    `identifier` is an email address when `channel_type == "email"`, a phone number
+    otherwise (see `_identifier_kwarg`) — passing it under the wrong kwarg means it
+    silently fails to dedupe.
     """
     contact = Contact.objects.match_or_create(
         name=contact_data.get("name") or identifier or "Podium contact",
-        phone=identifier or "",
         podium_uid=contact_data.get("uid", ""),
         channel=Channel.PHONE,
+        **_identifier_kwarg(channel_type, identifier or ""),
     )
     lead = contact.leads.order_by("-id").first()
     if lead is None:
@@ -118,7 +136,7 @@ def _ingest_outbound(data: dict) -> Lead | None:
     identifier = channel.get("identifier") or contact_data.get("phoneNumber") or ""
     channel_type = channel.get("type", "phone")
 
-    lead = _resolve_lead_readonly(contact_data, identifier)
+    lead = _resolve_lead_readonly(contact_data, identifier, channel_type)
     if lead is None:
         logger.warning("message.sent uid=%s: no matching contact/lead, skipping", msg_uid)
         return None
@@ -136,10 +154,17 @@ def _ingest_outbound(data: dict) -> Lead | None:
     return lead
 
 
-def _resolve_lead_readonly(contact_data: dict, identifier: str) -> Lead | None:
-    """Like `_resolve_lead` but never creates a Contact/Lead — for outbound mirroring."""
+def _resolve_lead_readonly(
+    contact_data: dict, identifier: str, channel_type: str = "phone"
+) -> Lead | None:
+    """Like `_resolve_lead` but never creates a Contact/Lead — for outbound mirroring.
+
+    Must stay strictly read-only: `find_match` only reads, never writes, so this
+    function can never create a Contact or a Lead under any input.
+    """
     contact = Contact.objects.find_match(
-        phone=identifier or "", podium_uid=contact_data.get("uid", "")
+        podium_uid=contact_data.get("uid", ""),
+        **_identifier_kwarg(channel_type, identifier or ""),
     )
     if contact is None:
         return None
