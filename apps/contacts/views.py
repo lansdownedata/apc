@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -38,7 +39,7 @@ def contact_list(request: HttpRequest) -> HttpResponse:
         .values("total")
     )
 
-    contacts = Contact.objects.annotate(
+    contacts = Contact.objects.prefetch_related("phones").annotate(
         trips=Count("leads__reservations", distinct=True),
         lifetime_value=Coalesce(
             Subquery(booked_ltv, output_field=_LTV_FIELD),
@@ -114,20 +115,24 @@ def contact_phone_add(request: HttpRequest, pk: int) -> HttpResponse:
     Distinguishes the two reasons `add_phone` can return None — reusing the
     two-message pattern from `apps.leads.views.lead_update` — so an agent isn't told
     a number is malformed when it's really just claimed by another contact.
+
+    This view is posted by a plain HTML form on `contact_detail.html` (no fetch
+    interception), so failure must redirect back with a `messages` error like the
+    success path does — not return raw JSON, which would dump as text in the browser
+    and lose the page.
     """
     contact = get_object_or_404(Contact, pk=pk)
     phone_raw = request.POST.get("phone", "")
     label = request.POST.get("label", "").strip()
 
     if to_e164(phone_raw) is None:
-        return JsonResponse({"ok": False, "error": "Enter a valid phone number."}, status=400)
+        messages.error(request, "Enter a valid phone number.")
+        return redirect("contact_detail", pk=contact.pk)
 
     phone = contact.add_phone(phone_raw, label=label)
     if phone is None:
-        return JsonResponse(
-            {"ok": False, "error": "That number is already assigned to another contact."},
-            status=400,
-        )
+        messages.error(request, "That number is already assigned to another contact.")
+        return redirect("contact_detail", pk=contact.pk)
     return redirect("contact_detail", pk=contact.pk)
 
 
@@ -148,7 +153,19 @@ def contact_phone_delete(request: HttpRequest, pk: int, phone_pk: int) -> HttpRe
 
     Scoped by `contact=contact` so acting on another contact's phone 404s instead of
     silently succeeding (object-level authz — see the plan's note on this).
+
+    If the deleted number was primary, promotes the next remaining number (by the
+    model's `["-is_primary", "created_at"]` ordering) so the contact never ends up
+    with phones but no primary — a state that made `lead_update`'s
+    `phones.filter(is_primary=True)` silently match nothing.
     """
     contact = get_object_or_404(Contact, pk=pk)
-    get_object_or_404(ContactPhone, pk=phone_pk, contact=contact).delete()
+    phone = get_object_or_404(ContactPhone, pk=phone_pk, contact=contact)
+    was_primary = phone.is_primary
+    phone.delete()
+    if was_primary:
+        successor = contact.phones.first()
+        if successor is not None:
+            successor.is_primary = True
+            successor.save(update_fields=["is_primary", "updated_at"])
     return redirect("contact_detail", pk=contact.pk)

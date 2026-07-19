@@ -112,6 +112,45 @@ def test_set_primary_phone_on_number_self_already_owns_still_works():
     assert contact.phones.filter(is_primary=True).count() == 1
 
 
+def test_add_phone_refusal_is_logged(caplog):
+    """The webhook path (`_enrich` → `add_phone`) drops refused numbers silently
+    otherwise — nothing to grep for when a Podium contact's number turns out to
+    already belong to someone else."""
+    owner = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0199")
+
+    with caplog.at_level("INFO", logger="apps.contacts.models"):
+        other.add_phone("(202) 555-0100")
+
+    assert any(
+        str(owner.pk) in r.message and str(other.pk) in r.message and "+12025550100" in r.message
+        for r in caplog.records
+    )
+
+
+def test_set_primary_phone_refusal_is_logged(caplog):
+    owner = ContactFactory(phone="(202) 555-0100")
+    other = ContactFactory(phone="(305) 555-0199")
+
+    with caplog.at_level("INFO", logger="apps.contacts.models"):
+        other.set_primary_phone("(202) 555-0100")
+
+    assert any(
+        str(owner.pk) in r.message and str(other.pk) in r.message and "+12025550100" in r.message
+        for r in caplog.records
+    )
+
+
+def test_malformed_phone_does_not_log(caplog):
+    contact = ContactFactory(phone="(202) 555-0100")
+
+    with caplog.at_level("INFO", logger="apps.contacts.models"):
+        assert contact.add_phone("junk") is None
+        assert contact.set_primary_phone("junk") is None
+
+    assert caplog.records == []
+
+
 def test_add_phone_for_number_self_already_owns_is_idempotent():
     contact = ContactFactory(phone="(202) 555-0100")
 

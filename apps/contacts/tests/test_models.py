@@ -72,6 +72,16 @@ def test_match_or_create_creates_with_normalized_phone():
     assert contact.phone == "+13055550199"
 
 
+def test_match_or_create_persists_channel_on_create_path():
+    """The `channel=` kwarg must land on a freshly-created contact, not just the
+    default — this assertion was lost during an earlier test-file replacement."""
+    contact = Contact.objects.match_or_create(
+        name="Phone Lead", phone="(305) 555-0177", channel=Channel.PHONE
+    )
+    contact.refresh_from_db()
+    assert contact.channel == Channel.PHONE
+
+
 def test_match_or_create_adopts_podium_uid_on_existing_contact():
     existing = ContactFactory(phone="(202) 555-0100", podium_contact_uid="")
     got = Contact.objects.match_or_create(name="Sarah", phone="+12025550100", podium_uid="pod-9")

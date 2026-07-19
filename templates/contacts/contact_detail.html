@@ -7,6 +7,20 @@
     <i class="ti ti-arrow-left text-[15px]"></i> Contacts
   </a>
 
+  <!-- django messages (e.g. rejected phone-number edits, shown after redirect) -->
+  {% if messages %}
+  <div class="mb-4 space-y-2">
+    {% for msg in messages %}
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg text-[12.5px] font-medium
+                {% if msg.tags == 'error' %}bg-rose-50 text-rose-600 ring-1 ring-inset ring-rose-600/20
+                {% else %}bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20{% endif %}">
+      <i class="ti {% if msg.tags == 'error' %}ti-alert-triangle{% else %}ti-circle-check{% endif %} text-[16px]"></i>
+      {{ msg }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- header -->
   <div class="card p-5 sm:p-6 mb-4">
     <div class="flex flex-wrap items-start gap-4">

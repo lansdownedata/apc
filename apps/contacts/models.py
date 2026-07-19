@@ -1,3 +1,4 @@
+import logging
 import re
 
 from django.db import models
@@ -5,6 +6,8 @@ from django.db import models
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
 from apps.core.phone import is_phone_like, to_e164
+
+logger = logging.getLogger(__name__)
 
 
 class ContactManager(models.Manager):
@@ -89,7 +92,17 @@ class Contact(TimeStampedModel):
 
     @property
     def primary_phone(self) -> "ContactPhone | None":
-        return self.phones.filter(is_primary=True).first() or self.phones.first()
+        """Primary number if any, else the first by creation.
+
+        Iterates the already-loaded `phones` queryset in Python rather than calling
+        `.filter()` on the related manager — `.filter()` on a related manager bypasses
+        `prefetch_related`, turning a directory listing into one query per row.
+        """
+        phones = list(self.phones.all())
+        for p in phones:
+            if p.is_primary:
+                return p
+        return phones[0] if phones else None
 
     @property
     def phone(self) -> str:
@@ -116,15 +129,24 @@ class Contact(TimeStampedModel):
             self._pending_phone = None
             self.set_primary_phone(pending)
 
-    def _owned_or_unclaimed(self, e164: str) -> bool:
-        """True unless `e164` is already attached to a *different* contact.
+    def _other_owner(self, e164: str) -> int | None:
+        """Pk of a *different* contact that already owns `e164`, or None if it's
+        unclaimed or already `self`'s.
 
         `ContactPhone.e164` is globally unique, so a naive lookup-by-number would let
         `set_primary_phone`/`add_phone` silently reassign another contact's row to
         `self`. Product decision: refuse, never steal — no error, no reassignment.
         """
         owner = ContactPhone.objects.filter(e164=e164).values_list("contact_id", flat=True).first()
-        return owner is None or owner == self.pk
+        return owner if owner is not None and owner != self.pk else None
+
+    def _log_refusal(self, e164: str, other_owner: int) -> None:
+        logger.info(
+            "Refusing to reassign phone %s from contact %s to contact %s (refuse, never steal)",
+            e164,
+            other_owner,
+            self.pk,
+        )
 
     def set_primary_phone(self, raw: str) -> "ContactPhone | None":
         """Make `raw` this contact's primary number, demoting any current primary.
@@ -135,7 +157,9 @@ class Contact(TimeStampedModel):
         e164 = to_e164(raw)
         if e164 is None:
             return None
-        if not self._owned_or_unclaimed(e164):
+        other_owner = self._other_owner(e164)
+        if other_owner is not None:
+            self._log_refusal(e164, other_owner)
             return None
         self.phones.exclude(e164=e164).update(is_primary=False)
         phone, _ = ContactPhone.objects.update_or_create(
@@ -148,7 +172,7 @@ class Contact(TimeStampedModel):
         """Attach another number.
 
         Returns None if it cannot be normalized, or if it already belongs to another
-        contact (refuse, never steal — see `_owned_or_unclaimed`).
+        contact (refuse, never steal — see `_other_owner`).
         """
         if primary:
             phone = self.set_primary_phone(raw)
@@ -159,7 +183,9 @@ class Contact(TimeStampedModel):
         e164 = to_e164(raw)
         if e164 is None:
             return None
-        if not self._owned_or_unclaimed(e164):
+        other_owner = self._other_owner(e164)
+        if other_owner is not None:
+            self._log_refusal(e164, other_owner)
             return None
         phone, created = ContactPhone.objects.get_or_create(
             e164=e164,
