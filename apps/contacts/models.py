@@ -3,6 +3,7 @@ from django.db.models import Q
 
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
+from apps.core.phone import to_e164
 
 
 class ContactManager(models.Manager):
@@ -12,7 +13,12 @@ class ContactManager(models.Manager):
         phone, email = (phone or "").strip(), (email or "").strip()
         lookup = Q()
         if phone:
+            # Match the canonical form *and* the raw input: rows that predate the
+            # backfill, and numbers to_e164 rejects, are only reachable as typed.
             lookup |= Q(phone__iexact=phone)
+            normalized = to_e164(phone)
+            if normalized and normalized != phone:
+                lookup |= Q(phone__iexact=normalized)
         if email:
             lookup |= Q(email__iexact=email)
         if not lookup:
@@ -34,7 +40,7 @@ class ContactManager(models.Manager):
         return self.create(
             name=name,
             company=company,
-            phone=(phone or "").strip(),
+            phone=to_e164(phone) or (phone or "").strip(),
             email=(email or "").strip(),
             channel=channel,
         )
