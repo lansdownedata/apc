@@ -21,6 +21,7 @@ from apps.accounts.models import User
 from apps.accounts.permissions import payment_access_required
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.core.phone import to_e164
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
@@ -224,12 +225,27 @@ def lead_update(request, pk: int) -> JsonResponse:
                     {"ok": False, "error": "Enter a valid email address."}, status=400
                 )
 
+    normalized_phone = None
+    if "phone" in request.POST:
+        phone_val = request.POST.get("phone", "").strip()
+        if phone_val:
+            normalized_phone = to_e164(phone_val)
+            if normalized_phone is None:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid phone number."}, status=400
+                )
+        else:
+            normalized_phone = ""
+
     contact = lead.contact
     contact_fields = []
-    for field in ("name", "phone", "email", "company"):
+    for field in ("name", "email", "company"):
         if field in request.POST:
             setattr(contact, field, request.POST.get(field, "").strip())
             contact_fields.append(field)
+    if normalized_phone is not None:
+        contact.phone = normalized_phone
+        contact_fields.append("phone")
     if contact_fields:
         contact.save(update_fields=contact_fields + ["updated_at"])
 

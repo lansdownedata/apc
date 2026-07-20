@@ -2,6 +2,7 @@ from django import forms
 
 from apps.accounts.models import User
 from apps.core.choices import Channel
+from apps.core.phone import to_e164
 
 
 class NewLeadForm(forms.Form):
@@ -13,3 +14,13 @@ class NewLeadForm(forms.Form):
     email = forms.EmailField(required=False)
     channel = forms.ChoiceField(choices=Channel.choices, initial=Channel.WEBSITE)
     agent = forms.ModelChoiceField(queryset=User.objects.all(), required=False)
+
+    def clean_phone(self) -> str:
+        """Store E.164 so the contact matches Podium's inbound identifier."""
+        raw = (self.cleaned_data.get("phone") or "").strip()
+        if not raw:
+            return ""
+        normalized = to_e164(raw)
+        if normalized is None:
+            raise forms.ValidationError("Enter a valid phone number.")
+        return normalized
