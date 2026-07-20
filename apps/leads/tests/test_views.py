@@ -107,7 +107,9 @@ def test_lead_create_makes_lead_and_contact(client):
 
 
 def test_lead_create_dedupes_contact(client):
-    existing = ContactFactory(phone="(703) 555-0148", email="old@example.com")
+    # Stored in E.164 (the canonical form the app now writes); the POST below sends
+    # the same number in raw display format, which normalizes to this and must dedupe.
+    existing = ContactFactory(phone="+17035550148", email="old@example.com")
     client.force_login(UserFactory())
     client.post(
         reverse("lead_create"),
