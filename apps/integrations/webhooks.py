@@ -6,10 +6,12 @@ raw payload is always stored on PodiumEvent so we can refine against real traffi
 
 import logging
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.core.phone import to_e164
 from apps.leads.models import Lead
 from apps.messaging import touchpoints
 from apps.messaging.models import Message
@@ -70,17 +72,32 @@ def _ingest_inbound(data: dict) -> Lead:
     return lead
 
 
+def _contact_by_phone(identifier: str) -> Contact | None:
+    """Match a Podium identifier (E.164) against stored phones in either format.
+
+    Both `_resolve_lead` and `_resolve_lead_readonly` match on phone. Sharing one
+    helper keeps them from drifting — they have already been duplicated once.
+    """
+    if not identifier:
+        return None
+    normalized = to_e164(identifier)
+    lookup = Q(phone=identifier)
+    if normalized and normalized != identifier:
+        lookup |= Q(phone=normalized)
+    return Contact.objects.filter(lookup).first()
+
+
 def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
     uid = contact_data.get("uid", "")
     contact = None
     if uid:
         contact = Contact.objects.filter(podium_contact_uid=uid).first()
-    if contact is None and identifier:
-        contact = Contact.objects.filter(phone=identifier).first()
+    if contact is None:
+        contact = _contact_by_phone(identifier)
     if contact is None:
         contact = Contact.objects.create(
             name=contact_data.get("name") or identifier or "Podium contact",
-            phone=identifier or "",
+            phone=to_e164(identifier) or identifier or "",
             podium_contact_uid=uid,
             channel=Channel.PHONE,
         )
@@ -148,8 +165,8 @@ def _resolve_lead_readonly(contact_data: dict, identifier: str) -> Lead | None:
     contact = None
     if uid:
         contact = Contact.objects.filter(podium_contact_uid=uid).first()
-    if contact is None and identifier:
-        contact = Contact.objects.filter(phone=identifier).first()
+    if contact is None:
+        contact = _contact_by_phone(identifier)
     if contact is None:
         return None
     return contact.leads.order_by("-id").first()

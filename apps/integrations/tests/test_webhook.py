@@ -143,3 +143,37 @@ def test_webhook_view_rejects_bad_json(client, settings):
     settings.PODIUM_WEBHOOK_SECRET = ""
     resp = client.post("/webhooks/podium/", data="not-json", content_type="application/json")
     assert resp.status_code == 400
+
+
+def test_received_matches_e164_contact_when_identifier_not_normalized():
+    """Podium identifier arrives without the +; the old exact match would miss it and
+    fork a duplicate. The normalized lookup matches the E.164-stored contact instead."""
+    contact = ContactFactory(phone="+16175550207")
+    lead = LeadFactory(contact=contact)
+
+    event = process_podium_webhook(_received(uid="mA", phone="6175550207", cuid="", name="Ada"))
+
+    assert Contact.objects.count() == 1, "must not fork a duplicate contact"
+    assert event.lead == lead
+
+
+def test_received_stores_new_contact_in_e164():
+    """A brand-new contact created from an inbound webhook is stored canonical, even
+    when the identifier arrives in raw display format."""
+    process_podium_webhook(_received(uid="mB", phone="(617) 555-0208", cuid="pod-new", name="New"))
+
+    contact = Contact.objects.get(podium_contact_uid="pod-new")
+    assert contact.phone == "+16175550208"
+
+
+def test_sent_mirror_matches_via_normalized_phone():
+    """_resolve_lead_readonly is a second, separate match site — it must normalize too."""
+    contact = ContactFactory(phone="+16175550207")
+    lead = LeadFactory(contact=contact)
+
+    event = process_podium_webhook(_sent(uid="sA", phone="6175550207", contact_uid=""))
+
+    msg = Message.objects.get(podium_message_uid="sA")
+    assert msg.lead == lead
+    assert msg.direction == Message.Direction.OUT
+    assert event.lead == lead
