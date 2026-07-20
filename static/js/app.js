@@ -165,9 +165,16 @@ function quoteWorkspace(opts = {}) {
     editorOpen: false,
     draftIsNew: false,
     draft: null,
+    _saved: null,
 
     saveHeader() {
-      const body = new URLSearchParams(this.header);
+      const changed = {};
+      for (const [key, value] of Object.entries(this.header)) {
+        if (!this._saved || this._saved[key] !== value) changed[key] = value;
+      }
+      if (Object.keys(changed).length === 0) return;
+
+      const body = new URLSearchParams(changed);
       fetch(this.updateUrl, {
         method: "POST",
         headers: {
@@ -176,9 +183,25 @@ function quoteWorkspace(opts = {}) {
         },
         body,
       }).then((r) => {
-        if (r.ok) Alpine.store("toast").push({ type: "success", title: "Saved" });
-        else Alpine.store("toast").push({ type: "danger", title: "Could not save" });
-      }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
+        if (r.ok) {
+          this._saved = { ...this.header };
+          Alpine.store("toast").push({ type: "success", title: "Saved" });
+          return;
+        }
+        r.json()
+          .then((d) =>
+            Alpine.store("toast").push({
+              type: "danger",
+              title: "Could not save",
+              message: d.error || "",
+            }),
+          )
+          .catch(() =>
+            Alpine.store("toast").push({ type: "danger", title: "Could not save" }),
+          );
+      }).catch(() =>
+        Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }),
+      );
     },
 
     // Channel picker — never window.confirm. Options reflect whichever contact fields are
@@ -300,7 +323,12 @@ function quoteWorkspace(opts = {}) {
       };
     },
     money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
-    init() { this.draft = this.blankReservation(); },
+    init() {
+      this.draft = this.blankReservation();
+      // Snapshot so saveHeader() posts only what changed; posting the whole
+      // header would let one invalid stored phone 400 every other edit.
+      this._saved = { ...this.header };
+    },
 
     // ---- reservation editor ----
     syncVehicleSelect() {
