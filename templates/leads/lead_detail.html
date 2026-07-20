@@ -46,7 +46,8 @@
           </span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-phone text-[14px]"></i>
-            <input type="text" x-model="header.phone" @blur="saveHeader()"
+            <input type="tel" data-phone value="{{ lead.contact.phone }}"
+                   @blur="onPhoneBlur($event)"
                    class="inline-edit px-2 py-1 w-36 text-[12.5px] text-ink"
                    placeholder="Phone">
           </span>
