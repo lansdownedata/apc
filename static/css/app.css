@@ -350,3 +350,52 @@ header, aside, main, .wash-gold {
   font-weight: 500;
 }
 .ts-wrapper .ts-control .item .remove { border-left-color: rgb(var(--gold) / .3); }
+
+/* ====================================== intl-tel-input — gold theming ===== */
+/* Stock CSS is light-only and blue-accented. Match the Tom Select treatment so
+   the country picker reads as part of the design system in both themes. */
+.iti { width: 100%; }
+.iti__country-container { padding: 2px; }
+
+.iti__selected-country {
+  background: transparent;
+  border-radius: 8px 0 0 8px;
+}
+.iti__selected-country:hover,
+.iti__selected-country:focus { background: rgb(var(--surface-2)); }
+.iti__selected-dial-code { color: rgb(var(--muted)); font-size: 12.5px; }
+
+.iti__dropdown-content {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
+  border-radius: 12px;
+  box-shadow: var(--shadow-lift);
+  color: rgb(var(--text));
+}
+.iti__search-input {
+  background: rgb(var(--surface));
+  color: rgb(var(--text));
+  border: 0;
+  border-bottom: 1px solid rgb(var(--border));
+  border-radius: 12px 12px 0 0;
+  padding: .6rem .85rem;
+  font-size: 13px;
+}
+.iti__search-input:focus { outline: none; }
+.iti__country { padding: .5rem .85rem; font-size: 13px; }
+.iti__country.iti__highlight,
+.iti__country:hover { background: rgb(var(--surface-2)); }
+.iti__country.iti__highlight {
+  background: linear-gradient(90deg, rgb(var(--gold) / .16), rgb(var(--gold) / .06));
+  color: rgb(var(--gold-deep));
+}
+.iti__dial-code { color: rgb(var(--muted)); }
+
+/* Header field: the injected .iti wrapper must not stretch the metadata row. */
+.iti:has(> .inline-edit) { width: auto; }
+
+/* Invalid-input state, shared by both phone fields. */
+.field-error {
+  border-color: rgb(var(--danger)) !important;
+  box-shadow: 0 0 0 3px rgb(var(--danger) / .18) !important;
+}
