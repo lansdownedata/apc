@@ -59,3 +59,33 @@ def test_match_or_create_creates_when_no_match():
     assert got.pk is not None
     assert got.channel == Channel.PHONE
     assert Contact.objects.count() == 1
+
+
+def test_find_match_normalizes_the_search_phone(db):
+    """A contact stored in E.164 is found by a human-formatted search."""
+    contact = Contact.objects.create(name="Ada", phone="+16175550207")
+    assert Contact.objects.find_match(phone="(617) 555-0207") == contact
+
+
+def test_find_match_still_finds_unnormalized_rows(db):
+    """Legacy rows that predate the backfill, and rows to_e164 rejects, stay reachable."""
+    contact = Contact.objects.create(name="Jerry", phone="(734) 069-1777")
+    assert Contact.objects.find_match(phone="(734) 069-1777") == contact
+
+
+def test_match_or_create_stores_e164(db):
+    contact = Contact.objects.match_or_create(name="Ada", phone="(617) 555-0207")
+    assert contact.phone == "+16175550207"
+
+
+def test_match_or_create_dedupes_across_formats(db):
+    """The bug this whole change exists to fix."""
+    first = Contact.objects.match_or_create(name="Ada", phone="(617) 555-0207")
+    second = Contact.objects.match_or_create(name="Ada Lovelace", phone="+16175550207")
+    assert first.pk == second.pk
+
+
+def test_match_or_create_keeps_unparseable_input_verbatim(db):
+    """Never silently discard the only contact detail we hold."""
+    contact = Contact.objects.match_or_create(name="Jerry", phone="(734) 069-1777")
+    assert contact.phone == "(734) 069-1777"
