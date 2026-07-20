@@ -167,6 +167,22 @@ function quoteWorkspace(opts = {}) {
     draft: null,
     _saved: null,
 
+    onPhoneBlur(e) {
+      const el = e.target;
+      if (!phoneIsValid(el)) {
+        el.classList.add("field-error");
+        Alpine.store("toast").push({
+          type: "danger",
+          title: "Invalid phone number",
+          message: "Check the number for the country you selected.",
+        });
+        return;
+      }
+      el.classList.remove("field-error");
+      this.header.phone = phoneValue(el);
+      this.saveHeader();
+    },
+
     saveHeader() {
       const changed = {};
       for (const [key, value] of Object.entries(this.header)) {
@@ -531,3 +547,54 @@ function initTomSelects(root = document) {
 }
 document.addEventListener("DOMContentLoaded", () => initTomSelects());
 window.initTomSelects = initTomSelects;
+
+/* ------------------------------------------------ intl-tel-input auto-init */
+/* The WithUtils CDN bundle includes libphonenumber, so getNumber()/isValidNumber()
+   work synchronously — no loadUtils, no dynamic import. */
+function initPhoneInputs(root = document) {
+  if (typeof window.intlTelInput === "undefined") return;
+  root.querySelectorAll("input[data-phone]").forEach((el) => {
+    if (el.iti) return; // already enhanced
+    el.iti = window.intlTelInput(el, {
+      initialCountry: "us", // always US — never geo-locate
+      strictMode: true,
+    });
+  });
+}
+
+/** E.164 for a phone input, or the raw value if the widget never initialized. */
+function phoneValue(el) {
+  const raw = el.value.trim();
+  if (!raw) return "";
+  return el.iti ? el.iti.getNumber() || raw : raw;
+}
+
+/** False only when the widget is present AND says the non-empty number is invalid. */
+function phoneIsValid(el) {
+  if (!el.value.trim() || !el.iti) return true;
+  return el.iti.isValidNumber() !== false;
+}
+
+// Plain (non-Alpine) forms — the New-lead modal posts normally. Rewrite the field
+// to E.164 on submit, or block if it cannot be dialled.
+document.addEventListener("submit", (e) => {
+  const form = e.target;
+  if (!form.querySelectorAll) return;
+  form.querySelectorAll("input[data-phone]").forEach((el) => {
+    if (!phoneIsValid(el)) {
+      e.preventDefault();
+      el.classList.add("field-error");
+      Alpine.store("toast").push({
+        type: "danger",
+        title: "Invalid phone number",
+        message: "Check the number for the country you selected.",
+      });
+      return;
+    }
+    el.classList.remove("field-error");
+    el.value = phoneValue(el);
+  });
+});
+
+document.addEventListener("DOMContentLoaded", () => initPhoneInputs());
+window.initPhoneInputs = initPhoneInputs;
