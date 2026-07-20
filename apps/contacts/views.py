@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -46,12 +47,13 @@ def contact_list(request: HttpRequest) -> HttpResponse:
 
     query = request.GET.get("q", "").strip()
     if query:
-        contacts = contacts.filter(
-            Q(name__icontains=query)
-            | Q(company__icontains=query)
-            | Q(phone__icontains=query)
-            | Q(email__icontains=query)
-        )
+        # Phones are stored E.164 (+16175559271); match on digits so a formatted
+        # query like "(617) 555-9271" or "555-9271" still finds them.
+        lookup = Q(name__icontains=query) | Q(company__icontains=query) | Q(email__icontains=query)
+        phone_digits = re.sub(r"\D", "", query)
+        if len(phone_digits) >= 3:
+            lookup |= Q(phone__icontains=phone_digits)
+        contacts = contacts.filter(lookup)
 
     rows = list(contacts)
     for c in rows:

@@ -225,7 +225,7 @@ def lead_update(request, pk: int) -> JsonResponse:
                     {"ok": False, "error": "Enter a valid email address."}, status=400
                 )
 
-    normalized_phone = None
+    normalized_phone = None  # tri-state: None = key absent, "" = explicit clear, str = new value
     if "phone" in request.POST:
         phone_val = request.POST.get("phone", "").strip()
         if phone_val:

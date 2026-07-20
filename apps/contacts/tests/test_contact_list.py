@@ -80,7 +80,7 @@ def test_trips_counts_reservations_across_leads(logged_in_client):
     [
         ("name", "Zephyr Aurelius", "zephyr"),
         ("company", "Quixotic Ventures LLC", "quixotic"),
-        ("phone", "(617) 555-9271", "555-9271"),
+        ("phone", "+16175559271", "(617) 555-9271"),
         ("email", "needle@haystack.example", "needle@haystack"),
     ],
 )

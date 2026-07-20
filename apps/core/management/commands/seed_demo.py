@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.core.phone import to_e164
 from apps.leads.models import Lead, VehicleType
 from apps.messaging.models import Message, Review
 from apps.notifications.models import Notification
@@ -74,7 +75,11 @@ class Command(BaseCommand):
 
         def new_lead(name, company, phone, email, channel, status, notes=""):
             contact = Contact.objects.create(
-                name=name, company=company, phone=phone, email=email, channel=channel
+                name=name,
+                company=company,
+                phone=to_e164(phone) or phone,
+                email=email,
+                channel=channel,
             )
             return Lead.objects.create(
                 contact=contact,
@@ -447,7 +452,7 @@ class Command(BaseCommand):
         Contact.objects.create(
             name="Priya Anand",
             company="Anand Family Office",
-            phone="(617) 555-0207",
+            phone=to_e164("(617) 555-0207") or "(617) 555-0207",
             email="priya.anand@example.com",
             channel=Channel.PHONE,
         )
