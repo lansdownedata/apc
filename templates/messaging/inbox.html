@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize phone_filters %}
 
 {% block content %}
 <div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6 h-[calc(100vh-3rem)] flex flex-col"
@@ -52,7 +52,7 @@
         <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ selected.contact.name|slice:":2" }}</span>
         <div class="min-w-0">
           <div class="text-[14px] font-semibold text-ink leading-tight truncate">{{ selected.contact.name }}</div>
-          <div class="text-[11px] text-muted num truncate">{{ selected.contact.phone }}{% if selected.contact.company %} · {{ selected.contact.company }}{% endif %}</div>
+          <div class="text-[11px] text-muted num truncate">{{ selected.contact.phone|phone_display }}{% if selected.contact.company %} · {{ selected.contact.company }}{% endif %}</div>
         </div>
         <a href="{% url 'lead_detail' selected.pk %}" class="btn-ghost ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-goldd hover:bg-goldl px-2.5 py-1.5 rounded-lg ring-1 ring-line shrink-0">
           <i class="ti ti-file-text text-[14px]"></i> Open quote

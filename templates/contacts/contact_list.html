@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize phone_filters %}
 
 {% block content %}
 <div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
@@ -46,7 +46,7 @@
             <td class="px-3 py-3.5">
               <span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted">{{ c.get_channel_display }}</span>
             </td>
-            <td class="px-3 py-3.5 text-muted num">{{ c.phone|default:"—" }}</td>
+            <td class="px-3 py-3.5 text-muted num">{{ c.phone|phone_display|default:"—" }}</td>
             <td class="px-3 py-3.5 text-center num font-medium text-ink">{{ c.trips }}</td>
             <td class="px-3 py-3.5 text-right num font-display text-[14px] font-semibold text-ink">${{ c.lifetime_value|floatformat:0|intcomma }}</td>
             <td class="px-5 py-3.5 text-muted">
