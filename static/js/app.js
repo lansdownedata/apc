@@ -598,3 +598,67 @@ document.addEventListener("submit", (e) => {
 
 document.addEventListener("DOMContentLoaded", () => initPhoneInputs());
 window.initPhoneInputs = initPhoneInputs;
+
+/* -------------------------------------------------- image upload (settings)
+ * A styled dropzone layered over a real <input type="file"> — the input still
+ * carries the value and submits normally; this only adds preview + drag/drop.
+ * Preview mirrors the customer-facing vehicle card: the photo sits contained on
+ * a tile, so the admin sees exactly what the customer will.
+ */
+function imageUpload(existingUrl) {
+  return {
+    existing: existingUrl || "",
+    preview: existingUrl || "",
+    filename: "",
+    picked: false, // a new file was chosen this session
+    dragging: false,
+    _blobUrl: "", // object URL we own and must revoke
+
+    init() {
+      this.input = this.$root.querySelector('input[type="file"]');
+      if (this.input) this.input.addEventListener("change", () => this.onChange());
+    },
+
+    onDrop(e) {
+      this.dragging = false;
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length || !this.input) return;
+      // Hand the dropped file to the real input so the form submits it unchanged.
+      this.input.files = files;
+      this.onChange();
+    },
+
+    onChange() {
+      const file = this.input.files && this.input.files[0];
+      this._releaseBlob();
+      if (!file) {
+        this.revert();
+        return;
+      }
+      this._blobUrl = URL.createObjectURL(file);
+      this.preview = this._blobUrl;
+      this.filename = file.name;
+      this.picked = true;
+    },
+
+    clear() {
+      if (this.input) this.input.value = "";
+      this._releaseBlob();
+      this.revert();
+    },
+
+    revert() {
+      this.preview = this.existing;
+      this.filename = "";
+      this.picked = false;
+    },
+
+    _releaseBlob() {
+      if (this._blobUrl) {
+        URL.revokeObjectURL(this._blobUrl);
+        this._blobUrl = "";
+      }
+    },
+  };
+}
+window.imageUpload = imageUpload;

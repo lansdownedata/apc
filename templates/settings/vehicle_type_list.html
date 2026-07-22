@@ -37,11 +37,13 @@
               class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
             <td class="px-5 py-3.5">
               {% if vt.image %}
-              <img src="{{ vt.image.url }}" alt="{{ vt.name }}"
-                   class="w-14 h-14 rounded-lg object-cover ring-1 ring-line">
+              <span class="w-24 h-14 rounded-lg bg-surface2 ring-1 ring-line grid place-items-center overflow-hidden p-1.5 shrink-0">
+                <img src="{{ vt.image.url }}" alt="{{ vt.name }}"
+                     class="max-w-full max-h-full object-contain">
+              </span>
               {% else %}
-              <span class="w-14 h-14 rounded-lg bg-charcoal2 text-gold grid place-items-center shrink-0">
-                <i class="ti ti-car text-[20px]"></i>
+              <span class="w-24 h-14 rounded-lg bg-charcoal2 text-gold grid place-items-center shrink-0">
+                <i class="ti ti-car text-[22px]"></i>
               </span>
               {% endif %}
             </td>

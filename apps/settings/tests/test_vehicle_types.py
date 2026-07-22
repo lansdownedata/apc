@@ -124,3 +124,72 @@ def test_form_carries_multipart_enctype(client):
     client.force_login(UserFactory(role="owner_admin"))
     response = client.get(reverse("vehicle_type_create"))
     assert b'enctype="multipart/form-data"' in response.content
+
+
+def test_create_page_uses_the_custom_uploader_not_native_chrome(client):
+    """The Photo field should render the styled dropzone (an Alpine imageUpload
+    component driving a still-real, still-submittable <input type=file name=image>),
+    not the browser's native "Choose File / No file chosen" control."""
+    client.force_login(UserFactory(role="owner_admin"))
+    html = client.get(reverse("vehicle_type_create")).content.decode()
+    assert 'x-data="imageUpload(' in html, "modern uploader component is missing"
+    # the real input must survive, or the upload silently stops working
+    assert 'type="file"' in html
+    assert 'name="image"' in html
+    # exactly one file input — a stray one signals a leaked/duplicated widget
+    assert html.count('type="file"') == 1
+
+
+def test_uploader_template_comment_does_not_leak_into_the_page(client):
+    """Django's {# #} comments are single-line only (the lexer regex is not DOTALL),
+    so a multi-line one renders its body — including any literal <input> markup —
+    as real HTML. This exact class of bug shipped once already; guard against it."""
+    client.force_login(UserFactory(role="owner_admin"))
+    html = client.get(reverse("vehicle_type_create")).content.decode()
+    assert "{#" not in html and "#}" not in html, "a template comment leaked into the page"
+    assert "still submittable" not in html, "uploader comment body rendered as text"
+
+
+def test_edit_page_has_no_clearable_fileinput_chrome(client, settings, tmp_path):
+    """Switching the widget to FileInput drops Django's ClearableFileInput markup —
+    the "Currently: … Clear" checkbox (id image-clear_id) that reads as old-school.
+    Its absence on an edit page (which has an existing image) proves the plain widget
+    is in use."""
+    settings.MEDIA_ROOT = tmp_path
+    client.force_login(UserFactory(role="owner_admin"))
+    vt = VehicleType.objects.create(
+        name="Photographed Coach",
+        capacity=40,
+        image=SimpleUploadedFile("coach.gif", TINY_GIF, content_type="image/gif"),
+    )
+    html = client.get(reverse("vehicle_type_edit", args=[vt.pk])).content.decode()
+    assert "image-clear" not in html, "ClearableFileInput chrome leaked into the page"
+
+
+def test_edit_page_seeds_the_uploader_with_the_existing_image(client, settings, tmp_path):
+    """Editing a type that already has a photo should show it inside the uploader as
+    the initial preview, so the admin sees what the customer will."""
+    settings.MEDIA_ROOT = tmp_path
+    client.force_login(UserFactory(role="owner_admin"))
+    vt = VehicleType.objects.create(
+        name="Previewed SUV",
+        capacity=6,
+        image=SimpleUploadedFile("suv.gif", TINY_GIF, content_type="image/gif"),
+    )
+    html = client.get(reverse("vehicle_type_edit", args=[vt.pk])).content.decode()
+    assert vt.image.url in html, "existing photo not seeded into the uploader preview"
+
+
+def test_list_thumbnails_show_the_whole_vehicle(client, settings, tmp_path):
+    """Vehicle photos are landscape; a square object-cover crop lops off the front and
+    rear. The list must contain the full vehicle, so the thumbnail is object-contain."""
+    settings.MEDIA_ROOT = tmp_path
+    client.force_login(UserFactory(role="owner_admin"))
+    VehicleType.objects.create(
+        name="Landscape Limo",
+        capacity=10,
+        image=SimpleUploadedFile("limo.gif", TINY_GIF, content_type="image/gif"),
+    )
+    html = client.get(reverse("vehicle_type_list")).content.decode()
+    assert "object-contain" in html
+    assert "object-cover" not in html, "object-cover crops the vehicle out of frame"
