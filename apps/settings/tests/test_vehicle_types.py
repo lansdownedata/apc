@@ -140,13 +140,36 @@ def test_create_page_uses_the_custom_uploader_not_native_chrome(client):
     assert html.count('type="file"') == 1
 
 
-def test_uploader_template_comment_does_not_leak_into_the_page(client):
-    """Django's {# #} comments are single-line only (the lexer regex is not DOTALL),
-    so a multi-line one renders its body — including any literal <input> markup —
-    as real HTML. This exact class of bug shipped once already; guard against it."""
+def test_local_assets_carry_a_cache_busting_version(client):
+    """Dev serves app.js at a stable URL, so a browser keeps a cached copy after an
+    edit — a stale app.js missing a new Alpine component leaves the widget blank. The
+    ?v=<mtime> stamp makes the URL change with the file."""
     client.force_login(UserFactory(role="owner_admin"))
-    html = client.get(reverse("vehicle_type_create")).content.decode()
+    html = client.get(reverse("vehicle_type_list")).content.decode()
+    assert "js/app.js?v=" in html, "app.js is not cache-busted — edits will serve stale"
+    assert "css/app.css?v=" in html
+
+
+@pytest.mark.parametrize(
+    "url_name",
+    ["vehicle_type_create", "vehicle_type_list"],
+)
+def test_template_comments_do_not_leak_into_settings_pages(client, url_name, settings, tmp_path):
+    """Django's {# #} comments are single-line only (the lexer regex is not DOTALL),
+    so a multi-line one renders its body as real HTML. This class of bug has now
+    shipped twice in these templates; guard every settings page that carries one."""
+    settings.MEDIA_ROOT = tmp_path
+    client.force_login(UserFactory(role="owner_admin"))
+    if url_name == "vehicle_type_list":
+        # a row with an image exercises the comment inside the {% if vt.image %} branch
+        VehicleType.objects.create(
+            name="Commented Coach",
+            capacity=40,
+            image=SimpleUploadedFile("c.gif", TINY_GIF, content_type="image/gif"),
+        )
+    html = client.get(reverse(url_name)).content.decode()
     assert "{#" not in html and "#}" not in html, "a template comment leaked into the page"
+    assert "White plate" not in html, "list comment body rendered as text"
     assert "still submittable" not in html, "uploader comment body rendered as text"
 
 

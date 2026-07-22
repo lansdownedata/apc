@@ -37,7 +37,12 @@
               class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
             <td class="px-5 py-3.5">
               {% if vt.image %}
-              <span class="w-24 h-14 rounded-lg bg-surface2 ring-1 ring-line grid place-items-center overflow-hidden p-1.5 shrink-0">
+              {% comment %}
+              White plate: vehicle photos are shot on white/transparent, so a light
+              backdrop presents them consistently (a white-bg photo on a dark tile reads
+              as a jarring rectangle). Matches how the customer's quote shows them.
+              {% endcomment %}
+              <span class="w-24 h-14 rounded-lg bg-white ring-1 ring-line grid place-items-center overflow-hidden p-1 shrink-0">
                 <img src="{{ vt.image.url }}" alt="{{ vt.name }}"
                      class="max-w-full max-h-full object-contain">
               </span>
