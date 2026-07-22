@@ -17,6 +17,10 @@ class VehicleTypeForm(forms.ModelForm):
             "capacity": forms.NumberInput(attrs={"class": "field w-full", "min": 1}),
             "description": forms.Textarea(attrs={"class": "field w-full", "rows": 2}),
             "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
+            # Plain FileInput, not the default ClearableFileInput: the template wraps
+            # it in a styled dropzone (imageUpload) and renders the current photo as a
+            # preview, so Django's "Currently: … Clear" chrome would be redundant noise.
+            "image": forms.FileInput(attrs={"class": "sr-only", "accept": "image/*"}),
         }
         help_texts = {
             "image": "Landscape photo, transparent or white background, about 1200px wide.",
