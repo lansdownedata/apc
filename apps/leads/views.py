@@ -10,7 +10,8 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
-from django.db.models import Q
+from django.db.models import CharField, F, Q, Value
+from django.db.models.functions import Cast, Concat
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -79,8 +80,17 @@ def lead_list(request):
 
     query = request.GET.get("q", "").strip()
     if query:
-        leads = leads.filter(
-            Q(contact__name__icontains=query)
+        # quote_no is a computed property ("Q-{1040+pk}"), not a column — rebuild it
+        # in SQL so the grid is searchable by "1065", "Q-1065", or a partial.
+        leads = leads.annotate(
+            quote_ref=Concat(
+                Value("Q-"),
+                Cast(1040 + F("id"), output_field=CharField()),
+                output_field=CharField(),
+            )
+        ).filter(
+            Q(quote_ref__icontains=query)
+            | Q(contact__name__icontains=query)
             | Q(contact__company__icontains=query)
             | Q(contact__email__icontains=query)
             | Q(reservations__service__icontains=query)
