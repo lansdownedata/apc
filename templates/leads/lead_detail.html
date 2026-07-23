@@ -32,13 +32,13 @@
       <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0 uppercase">{{ lead.contact.name|slice:":2" }}</span>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2.5 flex-wrap">
+          <span class="font-mono2 text-[13px] font-semibold text-goldd bg-goldl ring-1 ring-gold/25 px-2.5 py-1 rounded-lg shrink-0">{{ lead.quote_no }}</span>
           <input type="text" x-model="header.name" @blur="saveHeader()"
-                 class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 -ml-2 w-full max-w-xs"
+                 class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 w-full max-w-xs"
                  placeholder="Customer name">
         </div>
-        <!-- meta row 1: id · company · email -->
+        <!-- meta row 1: company · email -->
         <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
-          <span class="font-mono2 shrink-0">{{ lead.quote_no }}</span>
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-building text-[14px]"></i>
             <input type="text" x-model="header.company" @blur="saveHeader()"
