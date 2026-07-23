@@ -36,6 +36,7 @@
                  class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 -ml-2 w-full max-w-xs"
                  placeholder="Customer name">
         </div>
+        <!-- meta row 1: id · company · email -->
         <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
           <span class="font-mono2 shrink-0">{{ lead.quote_no }}</span>
           <span class="flex items-center gap-1 shrink-0">
@@ -45,17 +46,20 @@
                    placeholder="Company">
           </span>
           <span class="flex items-center gap-1 shrink-0">
+            <i class="ti ti-mail text-[14px]"></i>
+            <input type="email" x-model="header.email" @blur="saveHeader()"
+                   class="inline-edit px-2 py-1 w-72 text-[12.5px] text-ink"
+                   placeholder="Email">
+          </span>
+        </div>
+        <!-- meta row 2: phone · source · view state -->
+        <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
+          <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-phone text-[14px]"></i>
             <input type="tel" data-phone value="{{ lead.contact.phone }}"
                    @blur="onPhoneBlur($event)"
                    class="inline-edit px-2 py-1 w-56 text-[12.5px] text-ink"
                    placeholder="Phone">
-          </span>
-          <span class="flex items-center gap-1 shrink-0">
-            <i class="ti ti-mail text-[14px]"></i>
-            <input type="email" x-model="header.email" @blur="saveHeader()"
-                   class="inline-edit px-2 py-1 w-44 text-[12.5px] text-ink"
-                   placeholder="Email">
           </span>
           <span class="flex items-center gap-1.5 shrink-0 ts-compact ts-inline"
                 @change="header.channel = $event.target.value; saveHeader()">
