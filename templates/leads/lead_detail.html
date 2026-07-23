@@ -36,6 +36,14 @@
           <input type="text" x-model="header.name" @blur="saveHeader()"
                  class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 w-full max-w-xs"
                  placeholder="Customer name">
+          <span class="flex items-center gap-1 shrink-0 ml-auto text-[12.5px] text-muted">
+            <i class="ti ti-eye text-[14px]"></i>
+            {% if lead.quote_view_count %}
+              Viewed {{ lead.quote_view_count }}&times;
+            {% else %}
+              Not viewed
+            {% endif %}
+          </span>
         </div>
         <!-- meta row 1: company · email -->
         <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
@@ -65,14 +73,6 @@
                 @change="header.channel = $event.target.value; saveHeader()">
             <span class="text-[11px] uppercase tracking-wide text-muted/80">Source</span>
             {% include "components/searchable_select.html" with name="channel" field_id="hdr-channel" options=channels selected=lead.channel search="off" %}
-          </span>
-          <span class="flex items-center gap-1 shrink-0">
-            <i class="ti ti-eye text-[14px]"></i>
-            {% if lead.quote_view_count %}
-              Viewed {{ lead.quote_view_count }}&times;
-            {% else %}
-              Not viewed
-            {% endif %}
           </span>
         </div>
       </div>
