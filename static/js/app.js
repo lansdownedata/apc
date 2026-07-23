@@ -558,6 +558,7 @@ function initPhoneInputs(root = document) {
     el.iti = window.intlTelInput(el, {
       initialCountry: "us", // always US — never geo-locate
       strictMode: true,
+      fixDropdownWidth: false, // size the country list to its content, not the narrow input
     });
   });
 }
