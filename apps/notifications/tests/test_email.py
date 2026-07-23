@@ -50,6 +50,18 @@ def test_sends_both_a_text_and_an_html_part():
     assert "https://example.com/quote/abc123/" in html
 
 
+def test_plain_text_part_is_not_html_escaped():
+    """Django autoescapes .txt templates too, so a name/company with & rendered as
+    "&amp;" in the plain-text body — wrong for plain text. The HTML part still escapes."""
+    _send(context={"contact_name": "Priya & Daniel", "company_name": "Smith & Co Charter"})
+    message = mail.outbox[0]
+    assert "Priya & Daniel" in message.body, "plain-text body must not HTML-escape the name"
+    assert "&amp;" not in message.body
+    # the HTML part must still escape — & belongs as &amp; there
+    html = message.alternatives[0][0]
+    assert "Priya &amp; Daniel" in html
+
+
 def test_subject_and_recipient():
     _send()
     assert mail.outbox[0].subject == "Your All Pro Charter quote Q-1041"

@@ -1,4 +1,4 @@
-Hi {{ contact_name }},
+{% autoescape off %}Hi {{ contact_name }},
 
 Your {{ company_name }} quote {{ quote_no }} is ready — {{ trip_count }} trip{{ trip_count|pluralize }}.
 
@@ -13,3 +13,4 @@ This quote is valid through {{ expires_at|date:"F j, Y" }}.
 Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
 
 {{ company_name }}
+{% endautoescape %}
