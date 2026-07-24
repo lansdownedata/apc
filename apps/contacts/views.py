@@ -7,15 +7,21 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import IntegrityError
 from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_POST
 
+from apps.core.choices import Channel
+from apps.core.phone import to_e164
 from apps.leads.models import Lead
 from apps.payments.models import PaymentPlan
 
-from .models import Contact
+from .models import Company, Contact
 
 # Sentinel so contacts with no activity sort last (None isn't orderable against datetimes).
 _NO_ACTIVITY = datetime.min.replace(tzinfo=UTC)
@@ -77,3 +83,91 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "q": query,
         },
     )
+
+
+def _contact_stats(contact: Contact) -> dict[str, object]:
+    """LTV / orders / trips for one contact — reuses the directory's booked-plan LTV rule."""
+    ltv = PaymentPlan.objects.filter(
+        lead__contact=contact, lead__status=Lead.Status.BOOKED
+    ).aggregate(total=Sum("quote_total"))["total"] or Decimal("0.00")
+    orders = contact.leads.filter(status=Lead.Status.BOOKED).count()
+    trips = sum(lead.reservation_count for lead in contact.leads.all())
+    return {"ltv": ltv, "orders": orders, "trips": trips}
+
+
+@login_required
+def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """Editable contact profile — header stats, contact-details card, order history."""
+    contact = get_object_or_404(
+        Contact.objects.select_related("company").prefetch_related("leads__reservations"), pk=pk
+    )
+    leads = list(contact.leads.select_related("payment").order_by("-id")[:10])
+    company_names = [(co.name, co.name) for co in Company.objects.order_by("name")]
+    return render(
+        request,
+        "contacts/contact_detail.html",
+        {
+            "nav": "contacts",
+            "contact": contact,
+            "stats": _contact_stats(contact),
+            "leads": leads,
+            "channels": Channel.choices,
+            "company_names": company_names,
+        },
+    )
+
+
+@login_required
+@require_POST
+def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
+    """Partial-field autosave for the contact profile — validates phone/email/company."""
+    contact = get_object_or_404(Contact, pk=pk)
+    if "name" in request.POST and not request.POST.get("name", "").strip():
+        return JsonResponse({"ok": False, "error": "Name cannot be blank."}, status=400)
+    if "email" in request.POST:
+        email = request.POST.get("email", "").strip()
+        if email:
+            try:
+                validate_email(email)
+            except ValidationError:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid email address."}, status=400
+                )
+    phone = None
+    if "phone" in request.POST:
+        raw = request.POST.get("phone", "").strip()
+        if raw:
+            phone = to_e164(raw)
+            if phone is None:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid phone number."}, status=400
+                )
+        else:
+            phone = ""
+
+    fields = []
+    for f in ("name", "notes"):
+        if f in request.POST:
+            setattr(contact, f, request.POST.get(f, "").strip())
+            fields.append(f)
+    if "email" in request.POST:
+        contact.email = request.POST.get("email", "").strip()
+        fields.append("email")
+    if "channel" in request.POST and request.POST["channel"] in Channel.values:
+        contact.channel = request.POST["channel"]
+        fields.append("channel")
+    if "company" in request.POST:
+        contact.company = Company.objects.get_or_create_by_name(request.POST.get("company", ""))
+        fields.append("company")
+    if phone is not None:
+        contact.phone = phone
+        fields.append("phone")
+    if fields:
+        try:
+            contact.save(update_fields=[*fields, "updated_at"])
+        except IntegrityError:
+            return JsonResponse(
+                {"ok": False, "error": "That email is already used by another contact."},
+                status=400,
+            )
+    return JsonResponse({"ok": True})
