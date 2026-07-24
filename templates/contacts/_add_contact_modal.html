@@ -1,0 +1,89 @@
+{% comment %}
+  Add-contact modal — included in contact_list.html.
+  Requires the parent x-data scope to have `addContactOpen` (Boolean).
+  Post to `contact_create`; normal form submit — no AJAX.
+  Tom Select fields must be in DOM on page load (x-show, not x-if).
+{% endcomment %}
+<div x-show="addContactOpen" x-cloak
+     class="fixed inset-0 z-[60] flex items-center justify-center p-4"
+     x-transition.opacity
+     @keydown.escape.window="addContactOpen && (addContactOpen = false)">
+
+  <!-- backdrop -->
+  <div class="modal-overlay absolute inset-0" @click.self="addContactOpen = false"></div>
+
+  <!-- panel -->
+  <div class="relative bg-surface rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl pop">
+
+    <!-- header -->
+    <div class="flex items-center gap-3 px-6 py-5 border-b border-line bg-surface2">
+      <span class="w-9 h-9 rounded-xl grid place-items-center bg-goldl text-goldd shrink-0">
+        <i class="ti ti-user-plus text-[18px]"></i>
+      </span>
+      <h2 class="font-display text-[19px] font-semibold text-ink tracking-tight">Add contact</h2>
+      <button type="button" class="ml-auto text-muted hover:text-ink transition-colors"
+              @click="addContactOpen = false" aria-label="Close">
+        <i class="ti ti-x text-[18px]"></i>
+      </button>
+    </div>
+
+    <!-- form -->
+    <form method="post" action="{% url 'contact_create' %}" class="p-6 space-y-4">
+      {% csrf_token %}
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <!-- name -->
+        <div class="sm:col-span-2">
+          <label for="ac-name" class="block text-[12px] font-medium text-muted mb-1.5">
+            Name <span class="text-rose-500">*</span>
+          </label>
+          <input id="ac-name" name="name" type="text" required autocomplete="name"
+                 placeholder="Full name"
+                 class="field w-full">
+        </div>
+
+        <!-- company -->
+        <div>
+          <label for="ac-company" class="block text-[12px] font-medium text-muted mb-1.5">Company</label>
+          {% include "components/searchable_select.html" with name="company" field_id="ac-company" options=company_names empty_label="No company" create=1 %}
+        </div>
+
+        <!-- phone -->
+        <div>
+          <label for="ac-phone" class="block text-[12px] font-medium text-muted mb-1.5">Phone</label>
+          <input id="ac-phone" name="phone" type="tel" autocomplete="tel" data-phone
+                 placeholder="(###) ###-####"
+                 class="field w-full">
+        </div>
+
+        <!-- email -->
+        <div class="sm:col-span-2">
+          <label for="ac-email" class="block text-[12px] font-medium text-muted mb-1.5">Email</label>
+          <input id="ac-email" name="email" type="email" autocomplete="email"
+                 placeholder="customer@example.com"
+                 class="field w-full">
+        </div>
+
+        <!-- channel -->
+        <div>
+          <label for="ac-channel" class="block text-[12px] font-medium text-muted mb-1.5">Channel</label>
+          {% include "components/searchable_select.html" with name="channel" field_id="ac-channel" options=channels selected="website" search="off" %}
+        </div>
+      </div>
+
+      <!-- footer -->
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <button type="button"
+                class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors"
+                @click="addContactOpen = false">
+          Cancel
+        </button>
+        <button type="submit"
+                class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2">
+          <i class="ti ti-plus text-[15px]"></i> Add contact
+        </button>
+      </div>
+    </form>
+
+  </div>
+</div>

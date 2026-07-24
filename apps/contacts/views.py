@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -13,7 +14,7 @@ from django.db import IntegrityError
 from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.core.choices import Channel
@@ -70,6 +71,7 @@ def contact_list(request: HttpRequest) -> HttpResponse:
     rows.sort(key=lambda c: c.last_activity or _NO_ACTIVITY, reverse=True)
 
     total_ltv = sum((c.lifetime_value for c in rows), Decimal("0.00"))
+    company_names = [(co.name, co.name) for co in Company.objects.order_by("name")]
 
     return render(
         request,
@@ -81,8 +83,30 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "total_contacts": len(rows),
             "total_ltv": total_ltv,
             "q": query,
+            "channels": Channel.choices,
+            "company_names": company_names,
         },
     )
+
+
+@login_required
+@require_POST
+def contact_create(request: HttpRequest) -> HttpResponse:
+    """Add-contact modal target — dedupes by phone/email and resolves the company
+    name string to a Company FK via `match_or_create`."""
+    name = request.POST.get("name", "").strip()
+    if not name:
+        messages.error(request, "Name is required.")
+        return redirect("contact_list")
+    contact = Contact.objects.match_or_create(
+        name=name,
+        company_name=request.POST.get("company", ""),
+        phone=request.POST.get("phone", ""),
+        email=request.POST.get("email", ""),
+        channel=request.POST.get("channel", Channel.WEBSITE),
+    )
+    messages.success(request, f"Contact {contact.name} saved.")
+    return redirect("contact_detail", pk=contact.pk)
 
 
 def _contact_stats(contact: Contact) -> dict[str, object]:
