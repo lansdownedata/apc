@@ -48,7 +48,12 @@ class VendorForm(forms.ModelForm):
             "website": forms.URLInput(attrs=_TEXT),
             "usdot_number": forms.TextInput(attrs=_TEXT),
             "vehicle_types": forms.SelectMultiple(
-                attrs={"class": "field w-full", "data-tom": "", "multiple": "multiple"}
+                attrs={
+                    "class": "field w-full",
+                    "data-tom": "",
+                    "multiple": "multiple",
+                    "data-placeholder": "Select vehicle types…",
+                }
             ),
             "notes": forms.Textarea(attrs={"class": "field w-full", "rows": 3}),
         }
