@@ -10,7 +10,7 @@
   <form method="post" class="card p-5 grid gap-4 sm:grid-cols-2">
     {% csrf_token %}
     {% for field in form %}
-    <div class="{% if field.name == 'notes' or field.name == 'service_area' or field.name == 'address_line1' %}sm:col-span-2{% endif %}">
+    <div class="{% if field.name == 'notes' or field.name == 'service_area' %}sm:col-span-2{% endif %}">
       {% if field.name == 'phone' %}
       {% include "components/phone_input.html" with name=field.html_name field_id=field.id_for_label label=field.label value=field.value %}
       {% else %}
@@ -31,8 +31,9 @@
   <div class="card p-5 mt-4">
     <h2 class="font-display text-[15px] font-semibold text-ink">Compliance &amp; records</h2>
     {% if target %}
-    <p class="text-[12px] text-muted mt-0.5 mb-3">Insurance certificates (COI), drivers, and documents for this vendor.</p>
-    <div class="grid gap-2 sm:grid-cols-3">
+    <p class="text-[12px] text-muted mt-0.5 mb-3">Address, insurance certificates (COI), drivers, and documents for this vendor.</p>
+    <div class="grid gap-2 sm:grid-cols-2">
+      <a href="{% url 'vendor_detail' target.pk %}" class="rounded-xl ring-1 ring-line hover:wash-gold px-3 py-3 text-[12.5px] font-medium text-ink flex items-center gap-2 transition-colors"><i class="ti ti-map-pin text-[15px]" style="color:rgb(var(--gold-deep));"></i> Edit address</a>
       <a href="{% url 'insurance_create' target.pk %}" class="rounded-xl ring-1 ring-line hover:wash-gold px-3 py-3 text-[12.5px] font-medium text-ink flex items-center gap-2 transition-colors"><i class="ti ti-shield-plus text-[15px]" style="color:rgb(var(--gold-deep));"></i> Add insurance</a>
       <a href="{% url 'driver_create' target.pk %}" class="rounded-xl ring-1 ring-line hover:wash-gold px-3 py-3 text-[12.5px] font-medium text-ink flex items-center gap-2 transition-colors"><i class="ti ti-user-plus text-[15px]" style="color:rgb(var(--gold-deep));"></i> Add driver</a>
       <a href="{% url 'document_create' target.pk %}" class="rounded-xl ring-1 ring-line hover:wash-gold px-3 py-3 text-[12.5px] font-medium text-ink flex items-center gap-2 transition-colors"><i class="ti ti-file-plus text-[15px]" style="color:rgb(var(--gold-deep));"></i> Add document</a>
@@ -40,9 +41,10 @@
     {% else %}
     <p class="text-[12px] text-muted mt-0.5 flex items-start gap-1.5">
       <i class="ti ti-lock text-[14px] mt-px shrink-0"></i>
-      <span>You can add insurance certificates (COI), drivers, and documents once this vendor is saved — you'll land on the vendor's page to attach them.</span>
+      <span>You can add the address, insurance certificates (COI), drivers, and documents once this vendor is saved — you'll land on the vendor's page to attach them.</span>
     </p>
-    <div class="mt-3 grid gap-2 sm:grid-cols-3 opacity-55 select-none">
+    <div class="mt-3 grid gap-2 sm:grid-cols-2 opacity-55 select-none">
+      <div class="rounded-xl ring-1 ring-line px-3 py-3 text-[12.5px] text-muted flex items-center gap-2"><i class="ti ti-map-pin text-[15px]"></i> Address</div>
       <div class="rounded-xl ring-1 ring-line px-3 py-3 text-[12.5px] text-muted flex items-center gap-2"><i class="ti ti-shield-check text-[15px]"></i> Insurance</div>
       <div class="rounded-xl ring-1 ring-line px-3 py-3 text-[12.5px] text-muted flex items-center gap-2"><i class="ti ti-user text-[15px]"></i> Drivers</div>
       <div class="rounded-xl ring-1 ring-line px-3 py-3 text-[12.5px] text-muted flex items-center gap-2"><i class="ti ti-files text-[15px]"></i> Documents</div>

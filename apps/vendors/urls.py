@@ -11,5 +11,6 @@ urlpatterns = [
     path("<int:pk>/insurance/new/", views.insurance_create, name="insurance_create"),
     path("insurance/<int:pk>/", views.insurance_edit, name="insurance_edit"),
     path("<int:pk>/documents/new/", views.document_create, name="document_create"),
+    path("<int:pk>/address/update/", views.vendor_address_update, name="vendor_address_update"),
     path("<int:pk>/", views.vendor_detail, name="vendor_detail"),
 ]
