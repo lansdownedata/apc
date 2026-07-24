@@ -41,3 +41,21 @@ def test_edit_vendor_updates_fields(client, django_user_model):
     vendor.refresh_from_db()
     assert vendor.name == "New Name"
     assert vendor.status == Vendor.Status.INACTIVE
+
+
+def test_new_form_notes_records_need_save_first(client, django_user_model):
+    _login(client, django_user_model)
+    resp = client.get(reverse("vendor_create"))
+    assert resp.status_code == 200
+    # The compliance/records section is previewed but gated until the vendor exists.
+    assert b"once this vendor is saved" in resp.content
+
+
+def test_edit_form_shows_records_add_links(client, django_user_model):
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    resp = client.get(reverse("vendor_edit", args=[vendor.pk]))
+    assert resp.status_code == 200
+    assert reverse("insurance_create", args=[vendor.pk]).encode() in resp.content
+    assert reverse("driver_create", args=[vendor.pk]).encode() in resp.content
+    assert reverse("document_create", args=[vendor.pk]).encode() in resp.content
