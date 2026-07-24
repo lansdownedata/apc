@@ -760,7 +760,10 @@ window.imageUpload = imageUpload;
 
 /* ------------------------------------------------ smart-address (reusable) */
 /* Address ranking — all tunable constants here, no magic numbers in the scorer. */
-const SMART_ADDRESS_RANKING = { INDEX_WEIGHT: 1.0, NEAR_MI: 40, MID_MI: 90, NEAR_BONUS: 12, MID_BONUS: 6, TOP_N: 8 };
+// score = upstream index (relevance) + a continuous per-mile distance penalty, so the
+// closest match wins at ANY distance while a strong upstream #0 still surfaces. Coordless
+// results get no distance term (keep their upstream rank). Tune DIST_WEIGHT up to favor local more.
+const SMART_ADDRESS_RANKING = { INDEX_WEIGHT: 1.0, DIST_WEIGHT: 0.003, TOP_N: 8 };
 
 function haversineMiles(a, b) {
   if (a.lat == null || a.lon == null || b.lat == null || b.lon == null || Number.isNaN(b.lat) || Number.isNaN(b.lon)) {
@@ -824,10 +827,8 @@ function smartAddress(opts = {}) {
       return results
         .map((r, i) => {
           const d = haversineMiles(center, { lat: parseFloat(r.latitude), lon: parseFloat(r.longitude) });
-          let s = i * cfg.INDEX_WEIGHT;
-          if (d <= cfg.NEAR_MI) s -= cfg.NEAR_BONUS;
-          else if (d <= cfg.MID_MI) s -= cfg.MID_BONUS;
-          return { r, s };
+          const distTerm = Number.isFinite(d) ? d * cfg.DIST_WEIGHT : 0;
+          return { r, s: i * cfg.INDEX_WEIGHT + distTerm };
         })
         .sort((a, b) => a.s - b.s)
         .slice(0, cfg.TOP_N)
