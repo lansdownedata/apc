@@ -22,7 +22,7 @@
   <form method="get" class="flex flex-wrap items-center gap-2 mb-4">
     <input type="search" name="q" value="{{ q }}" placeholder="Search name, contact, phone, email"
            class="field w-full sm:w-72" onchange="this.form.submit()">
-    {% include "components/searchable_select.html" with name="status" field_id="f-status" options=status_options selected=status_filter empty_label="Active" autosubmit=1 search="off" %}
+    {% include "components/searchable_select.html" with name="status" field_id="f-status" options=status_options selected=status_filter autosubmit=1 search="off" %}
   </form>
 
   {% if attention %}

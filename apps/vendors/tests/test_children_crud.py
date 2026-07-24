@@ -47,6 +47,24 @@ def test_add_insurance_with_certificate(client, django_user_model):
     assert policy.certificate.name.endswith(".pdf")
 
 
+def test_add_insurance_rejects_expiry_before_effective(client, django_user_model):
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    today = timezone.localdate()
+    resp = client.post(
+        reverse("insurance_create", args=[vendor.pk]),
+        {
+            "insurer": "Acme Mutual",
+            "policy_number": "P-9",
+            "coverage_amount": "1000000",
+            "effective_date": str(today),
+            "expiry_date": str(today - timezone.timedelta(days=1)),
+        },
+    )
+    assert resp.status_code == 200
+    assert VendorInsurance.objects.count() == 0
+
+
 def test_add_document_sets_uploaded_by(client, django_user_model):
     user = _login(client, django_user_model)
     vendor = VendorFactory()
