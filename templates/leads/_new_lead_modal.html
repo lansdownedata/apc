@@ -51,12 +51,7 @@
         </div>
 
         <!-- phone -->
-        <div>
-          <label for="nl-phone" class="block text-[12px] font-medium text-muted mb-1.5">Phone</label>
-          <input id="nl-phone" name="phone" type="tel" autocomplete="tel" data-phone
-                 placeholder="(###) ###-####"
-                 class="field w-full">
-        </div>
+        {% include "components/phone_input.html" with name="phone" field_id="nl-phone" label="Phone" %}
 
         <!-- email -->
         <div class="sm:col-span-2">

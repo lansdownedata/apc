@@ -11,8 +11,12 @@
     {% csrf_token %}
     {% for field in form %}
     <div class="{% if field.name == 'notes' or field.name == 'service_area' or field.name == 'address_line1' %}sm:col-span-2{% endif %}">
+      {% if field.name == 'phone' %}
+      {% include "components/phone_input.html" with name=field.html_name field_id=field.id_for_label label=field.label value=field.value %}
+      {% else %}
       <label for="{{ field.id_for_label }}" class="block text-[12px] font-medium text-muted mb-1">{{ field.label }}</label>
       {{ field }}
+      {% endif %}
       {% if field.errors %}<p class="text-[11px] text-rose-600 mt-1">{{ field.errors|striptags }}</p>{% endif %}
     </div>
     {% endfor %}
