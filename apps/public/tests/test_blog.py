@@ -27,6 +27,24 @@ def test_blog_index_renders(client):
         assert url.encode() in resp.content
 
 
+def test_blog_index_newest_first(client):
+    resp = client.get("/blogs/")
+    assert resp.status_code == 200
+    content = resp.content
+
+    offsets = {url: content.index(url.encode()) for url in POSTS}
+
+    # Both 2025-03 posts must appear before both 2021-01 posts.
+    posts_2025 = [u for u in POSTS if u.startswith("/2025/03/")]
+    posts_2021 = [u for u in POSTS if u.startswith("/2021/01/")]
+    assert posts_2025 and posts_2021
+    for url_2025 in posts_2025:
+        for url_2021 in posts_2021:
+            assert offsets[url_2025] < offsets[url_2021], (
+                f"{url_2025} should appear before {url_2021} (newest-first ordering)"
+            )
+
+
 @pytest.mark.parametrize("url", POSTS)
 def test_blog_posts_keep_dated_urls_with_article_schema(client, url):
     resp = client.get(url)
