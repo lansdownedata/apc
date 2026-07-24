@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+
+  <div class="flex items-start justify-between gap-4 mb-5">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Vendors</h1>
+      <p class="text-[12.5px] text-muted mt-1 flex items-center gap-2 flex-wrap">
+        <span>{{ active_count }} active affiliate{{ active_count|pluralize }}</span>
+        {% if attention %}<span class="text-line">·</span>
+        <span class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-0.5 rounded-full" style="color:rgb(var(--danger));background:rgb(var(--danger-soft));">
+          <i class="ti ti-alert-triangle text-[12px]"></i> {{ attention|length }} need attention</span>{% endif %}
+        {% if archived_count %}<span class="text-line">·</span><span>{{ archived_count }} archived</span>{% endif %}
+      </p>
+    </div>
+    <a href="{% url 'vendor_create' %}"
+       class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0">
+      <i class="ti ti-plus text-[15px]"></i> New vendor
+    </a>
+  </div>
+
+  <form method="get" class="flex flex-wrap items-center gap-2 mb-4">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search name, contact, phone, email"
+           class="field w-full sm:w-72" onchange="this.form.submit()">
+    {% include "components/searchable_select.html" with name="status" field_id="f-status" options=status_options selected=status_filter empty_label="Active" autosubmit=1 search="off" %}
+  </form>
+
+  {% if attention %}
+  <div class="attn-strip mb-4">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-line">
+      <i class="ti ti-alert-triangle text-[15px]" style="color:rgb(var(--warn));"></i>
+      <span class="text-[11px] font-bold uppercase tracking-wider" style="color:rgb(var(--warn));">Needs attention</span>
+      <span class="text-[11.5px] text-muted">— coverage lapsed, expiring within 30 days, or missing · most urgent first</span>
+    </div>
+    {% for v in attention %}
+    <a href="{% url 'vendor_detail' v.pk %}"
+       class="attn-row edge-{{ v.summary.status }} grid grid-cols-[1.4fr_1.1fr_1fr_auto] items-center gap-4 px-4 py-3 border-b border-line/60 last:border-0 transition-colors">
+      <div><span class="font-semibold text-ink">{{ v.name }}</span>{% if v.contact_name %}<span class="block text-[11px] text-muted">{{ v.contact_name }}{% if v.phone %} · {{ v.phone }}{% endif %}</span>{% endif %}</div>
+      <div class="text-[12.5px] text-muted truncate">{% for vt in v.vehicle_types.all %}{{ vt.name }}{% if not forloop.last %} · {% endif %}{% empty %}—{% endfor %}</div>
+      <div class="text-[12.5px] text-muted truncate">{{ v.service_area|default:"—" }}</div>
+      <div class="text-right">{% include "vendors/_insurance_cell.html" with summary=v.summary %}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[720px]">
+        <thead>
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-5 py-3 uppercase text-[11px] tracking-wide">Vendor</th>
+            <th class="font-medium px-3 py-3 uppercase text-[11px] tracking-wide">Coverage</th>
+            <th class="font-medium px-3 py-3 uppercase text-[11px] tracking-wide">Service area</th>
+            <th class="font-medium px-3 py-3 uppercase text-[11px] tracking-wide">Insurance</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for v in roster %}
+          <tr onclick="window.location='{% url 'vendor_detail' v.pk %}'"
+              class="border-b border-line/60 last:border-0 hover:wash-gold cursor-pointer transition-colors {% if v.status != 'active' %}opacity-50{% endif %}">
+            <td class="px-5 py-3.5">
+              <span class="font-semibold text-ink leading-tight">{{ v.name }}</span>{% if v.status != 'active' %}<span class="ml-2 text-[9.5px] font-bold uppercase tracking-wide text-muted ring-1 ring-line rounded px-1.5 py-0.5">Archived</span>{% endif %}
+              {% if v.contact_name %}<div class="text-[11px] text-muted">{{ v.contact_name }}{% if v.phone %} · {{ v.phone }}{% endif %}</div>{% endif %}
+            </td>
+            <td class="px-3 py-3.5">
+              <div class="flex flex-wrap gap-1">{% for vt in v.vehicle_types.all %}<span class="inline-block px-2 py-0.5 rounded-full bg-surface2 ring-1 ring-line text-[11px]">{{ vt.name }}</span>{% empty %}<span class="text-muted">—</span>{% endfor %}</div>
+            </td>
+            <td class="px-3 py-3.5 text-muted">{{ v.service_area|default:"—" }}</td>
+            <td class="px-3 py-3.5">{% include "vendors/_insurance_cell.html" with summary=v.summary %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="px-5 py-16 text-center text-muted">
+            <i class="ti ti-address-book text-[28px] text-slate-300"></i>
+            <div class="mt-2 text-[13px]">{% if attention %}All other active vendors are in good standing.{% else %}No vendors yet. Add your first affiliate to get started.{% endif %}</div>
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if archived_count %}
+    <div class="px-4 py-3 border-t border-line/60 text-[11.5px] text-muted flex items-center gap-1.5">
+      <i class="ti ti-archive text-[14px]"></i>
+      {{ archived_count }} archived vendor{{ archived_count|pluralize }} hidden ·
+      <a href="?status=inactive" class="font-semibold" style="color:rgb(var(--gold-deep));">Show archive</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

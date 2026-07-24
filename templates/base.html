@@ -116,6 +116,11 @@
         <i class="ti ti-address-book text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Contacts</span>
       </a>
+      <a href="{% url 'vendor_list' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'vendors' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-truck text-[19px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Vendors</span>
+      </a>
       <a href="{% url 'inbox' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'inbox' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-inbox text-[18px] shrink-0"></i>
