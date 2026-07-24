@@ -11,6 +11,7 @@ from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+from django.contrib.staticfiles import finders
 from django.core import signing
 from django.urls import reverse
 from django.utils import timezone
@@ -103,7 +104,16 @@ def _quote_email_context(lead: Lead, plan: PaymentPlan, link: str) -> dict:
         "company_name": settings.COMPANY_NAME,
         "company_phone": settings.COMPANY_PHONE,
         "company_email": settings.COMPANY_EMAIL,
+        # The banner logo is embedded as an inline CID attachment (see _quote_logo /
+        # the send_html_email call) so it renders without a remote fetch.
+        "logo_cid": "logo" if _quote_logo() else "",
     }
+
+
+def _quote_logo() -> str | None:
+    """Absolute path to the email banner logo PNG (email clients can't render the SVG),
+    or None if it isn't collectable. Attached inline as cid:logo."""
+    return finders.find("brand/apc-logo-email.png")
 
 
 def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -> SendQuoteResult:
@@ -173,11 +183,13 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     if "email" in selected:
         result = {"sent": False, "recipient": email, "error": None}
         try:
+            logo = _quote_logo()
             sent = send_html_email(
                 to=email,
                 subject=f"Your {settings.COMPANY_NAME} quote {lead.quote_no}",
                 template="quote_sent",
                 context=_quote_email_context(lead, plan, link),
+                inline_images={"logo": logo} if logo else None,
             )
             result["sent"] = sent
             if not sent:
