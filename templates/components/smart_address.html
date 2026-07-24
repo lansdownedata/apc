@@ -10,8 +10,8 @@
 <div class="sa" x-data="smartAddress({
        updateUrl: {{ update_url|json_string }},
        acUrl: {{ autocomplete_url|json_string }},
-       fallbackLat: {{ address_bias_center.0|default:'null' }},
-       fallbackLon: {{ address_bias_center.1|default:'null' }},
+       fallbackLat: {{ address_bias_center.0|default_if_none:'null' }},
+       fallbackLon: {{ address_bias_center.1|default_if_none:'null' }},
        fields: {
          landmark_name: {{ address.landmark_name|default:''|json_string }},
          line1: {{ address.line1|default:''|json_string }},

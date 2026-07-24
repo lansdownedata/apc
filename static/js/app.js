@@ -758,7 +758,7 @@ window.imageUpload = imageUpload;
 
 /* ------------------------------------------------ smart-address (reusable) */
 /* Address ranking — all tunable constants here, no magic numbers in the scorer. */
-const SMART_ADDRESS_RANKING = { INDEX_WEIGHT: 1.0, NEAR_MI: 40, MID_MI: 90, NEAR_BONUS: 12, MID_BONUS: 6 };
+const SMART_ADDRESS_RANKING = { INDEX_WEIGHT: 1.0, NEAR_MI: 40, MID_MI: 90, NEAR_BONUS: 12, MID_BONUS: 6, TOP_N: 8 };
 
 function haversineMiles(a, b) {
   if (a.lat == null || a.lon == null || b.lat == null || b.lon == null || Number.isNaN(b.lat) || Number.isNaN(b.lon)) {
@@ -814,7 +814,7 @@ function smartAddress(opts = {}) {
           return { r, s };
         })
         .sort((a, b) => a.s - b.s)
-        .slice(0, 8)
+        .slice(0, cfg.TOP_N)
         .map((x) => x.r);
     },
 
