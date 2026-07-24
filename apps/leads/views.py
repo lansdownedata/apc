@@ -10,6 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
+from django.db import IntegrityError
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Cast, Concat
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
@@ -266,7 +267,13 @@ def lead_update(request, pk: int) -> JsonResponse:
         contact.phone = normalized_phone
         contact_fields.append("phone")
     if contact_fields:
-        contact.save(update_fields=contact_fields + ["updated_at"])
+        try:
+            contact.save(update_fields=contact_fields + ["updated_at"])
+        except IntegrityError:
+            return JsonResponse(
+                {"ok": False, "error": "That email is already used by another contact."},
+                status=400,
+            )
 
     lead_fields = []
     channel = request.POST.get("channel")
