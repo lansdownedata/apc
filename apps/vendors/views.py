@@ -10,8 +10,14 @@ from django.db.models import Prefetch, Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
-from .forms import VendorForm
-from .models import INSURANCE_SEVERITY, Vendor, VendorDocument, VendorInsurance
+from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
+from .models import (
+    INSURANCE_SEVERITY,
+    Vendor,
+    VendorDocument,
+    VendorDriver,
+    VendorInsurance,
+)
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(INSURANCE_SEVERITY)}
 _STATUS_FILTERS = [("active", "Active"), ("inactive", "Archived"), ("all", "All")]
@@ -163,4 +169,80 @@ def vendor_edit(request: HttpRequest, pk: int) -> HttpResponse:
         request,
         "vendors/vendor_form.html",
         {"nav": "vendors", "page_title": target.name, "form": form, "target": target},
+    )
+
+
+def _child_form_view(request, *, vendor, instance, form_class, title, uploader=False):
+    form = form_class(request.POST or None, request.FILES or None, instance=instance)
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        if instance is None:
+            obj.vendor = vendor
+        if uploader and getattr(obj, "uploaded_by_id", None) is None:
+            obj.uploaded_by = request.user
+        obj.save()
+        form.save_m2m()
+        messages.success(request, f"{title} saved.")
+        return redirect("vendor_detail", pk=vendor.pk)
+    return render(
+        request,
+        "vendors/child_form.html",
+        {"nav": "vendors", "page_title": title, "form": form, "vendor": vendor},
+    )
+
+
+@login_required
+def driver_create(request: HttpRequest, pk: int) -> HttpResponse:
+    vendor = get_object_or_404(Vendor, pk=pk)
+    return _child_form_view(
+        request, vendor=vendor, instance=None, form_class=VendorDriverForm, title="Add driver"
+    )
+
+
+@login_required
+def driver_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    driver = get_object_or_404(VendorDriver, pk=pk)
+    return _child_form_view(
+        request,
+        vendor=driver.vendor,
+        instance=driver,
+        form_class=VendorDriverForm,
+        title="Edit driver",
+    )
+
+
+@login_required
+def insurance_create(request: HttpRequest, pk: int) -> HttpResponse:
+    vendor = get_object_or_404(Vendor, pk=pk)
+    return _child_form_view(
+        request,
+        vendor=vendor,
+        instance=None,
+        form_class=VendorInsuranceForm,
+        title="Add insurance policy",
+    )
+
+
+@login_required
+def insurance_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    policy = get_object_or_404(VendorInsurance, pk=pk)
+    return _child_form_view(
+        request,
+        vendor=policy.vendor,
+        instance=policy,
+        form_class=VendorInsuranceForm,
+        title="Edit insurance policy",
+    )
+
+
+@login_required
+def document_create(request: HttpRequest, pk: int) -> HttpResponse:
+    vendor = get_object_or_404(Vendor, pk=pk)
+    return _child_form_view(
+        request,
+        vendor=vendor,
+        instance=None,
+        form_class=VendorDocumentForm,
+        title="Upload document",
+        uploader=True,
     )
