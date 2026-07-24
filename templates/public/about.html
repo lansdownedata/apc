@@ -1,0 +1,200 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% block meta %}
+<title>{% block title %}About Us - All Pro Charter{% endblock %}</title>
+<meta name="description" content="All Pro Charter is a Washington D.C.-area transportation company providing luxury ground transportation at an affordable price — a world-class experience from start to finish.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="About Us - All Pro Charter">
+<meta property="og:description" content="All Pro Charter is a Washington D.C.-area transportation company providing luxury ground transportation at an affordable price — a world-class experience from start to finish.">
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("About US" subhead + mission
+  blurb over qtq80-ACFK22.jpeg). Same charcoal-scrim treatment as the home
+  hero for visual continuity across the site.
+{% endcomment %}
+<section class="relative overflow-hidden bg-charcoal">
+  <img src="{% static 'public/img/417444582_906151881212230_681455248582491383_n.jpg' %}"
+       alt="An All Pro Charter chauffeur opening the door of a black executive vehicle"
+       class="absolute inset-0 h-full w-full object-cover opacity-60">
+  <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/[0.75] to-charcoal/[0.55]"></div>
+
+  <div class="relative mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-28 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      About Us
+    </span>
+    <h1 class="mt-5 font-display text-[34px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[46px]">
+      A world-class experience, from start to finish.
+    </h1>
+    <p class="mx-auto mt-5 max-w-2xl text-[15.5px] leading-relaxed text-slate-300">
+      All Pro Charter is a ground transportation company providing luxury vehicles at an
+      affordable price. Our mission is to deliver a world-class experience on every trip,
+      for every client, every time.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  VALUE PROPS — "01. Reliable / 02. Available / 03. Affordable" strip from
+  the WP page, re-flowed as a numbered 3-up.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-6 sm:grid-cols-3">
+    <div class="rounded-2xl bg-surface p-6 ring-1 ring-line">
+      <span class="font-display text-[13px] font-semibold text-goldd">01.</span>
+      <h2 class="mt-1 font-display text-[19px] font-semibold text-ink">Reliable</h2>
+      <p class="mt-2 text-[14px] leading-relaxed text-muted">
+        More people choose All Pro Charter for the reliable service we provide, trip after trip.
+      </p>
+    </div>
+    <div class="rounded-2xl bg-surface p-6 ring-1 ring-line">
+      <span class="font-display text-[13px] font-semibold text-goldd">02.</span>
+      <h2 class="mt-1 font-display text-[19px] font-semibold text-ink">Available</h2>
+      <p class="mt-2 text-[14px] leading-relaxed text-muted">
+        Available 24 hours a day, seven days a week — we make anything possible.
+      </p>
+    </div>
+    <div class="rounded-2xl bg-surface p-6 ring-1 ring-line">
+      <span class="font-display text-[13px] font-semibold text-goldd">03.</span>
+      <h2 class="mt-1 font-display text-[19px] font-semibold text-ink">Affordable</h2>
+      <p class="mt-2 text-[14px] leading-relaxed text-muted">
+        Competitors often overprice mediocre service — All Pro Charter makes sure you get more for your budget.
+      </p>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  MISSION / CORE VALUES — two-column band from the WP page.
+{% endcomment %}
+<section class="bg-surface2">
+  <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+    <div class="grid gap-10 sm:grid-cols-2 sm:gap-14">
+      <div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">Mission Statement</div>
+        <p class="mt-3 text-[16px] leading-relaxed text-ink">
+          At All Pro Charter, our mission is to match and exceed our clients' expectations by
+          providing endless ground transportation solutions with limitless and superior care.
+        </p>
+      </div>
+      <div>
+        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">Core Values</div>
+        <p class="mt-3 text-[16px] leading-relaxed text-ink">
+          Care, Safety, Integrity, Consistency, Responsiveness, Awareness, Accountability,
+          Diligence, Fairness, Results.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  PROVEN SUCCESS — "The Numbers Don't Lie" stat band from the WP circle
+  counters (100% availability / 100% satisfaction), rendered as static stat
+  tiles rather than an animated counter widget.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-10 lg:grid-cols-[1.3fr_1fr] lg:items-center lg:gap-16">
+    <div>
+      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">Proven Success</div>
+      <h2 class="mt-2 font-display text-[28px] font-semibold tracking-tight text-ink sm:text-[34px]">
+        The numbers don&rsquo;t lie
+      </h2>
+      <p class="mt-4 max-w-xl text-[14.5px] leading-relaxed text-muted">
+        What sets us apart is our availability and service — we match any price on the market
+        in the US without cutting corners on care.
+      </p>
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div class="rounded-2xl bg-surface p-6 text-center ring-1 ring-line">
+        <div class="font-display text-[34px] font-semibold text-goldd">100%</div>
+        <div class="mt-1 text-[12.5px] font-semibold uppercase tracking-[0.1em] text-muted">Availability</div>
+      </div>
+      <div class="rounded-2xl bg-surface p-6 text-center ring-1 ring-line">
+        <div class="font-display text-[34px] font-semibold text-goldd">100%</div>
+        <div class="mt-1 text-[12.5px] font-semibold uppercase tracking-[0.1em] text-muted">Satisfaction</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  TEAM — Tarrick Ghannam (CEO/Founder) profile from the WP page.
+{% endcomment %}
+<section class="bg-charcoal">
+  <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+    <div class="text-center">
+      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">Consultants</div>
+      <h2 class="mt-2 font-display text-[28px] font-semibold tracking-tight text-white sm:text-[34px]">
+        A team of professionals
+      </h2>
+    </div>
+
+    <div class="mt-10 grid gap-8 sm:grid-cols-[0.85fr_1.15fr] sm:items-center sm:gap-12">
+      <div class="overflow-hidden rounded-2xl">
+        <img src="{% static 'public/img/Tarrick0025-Edit.jpg' %}" alt="Tarrick Ghannam, CEO and Founder of All Pro Charter"
+             class="aspect-[4/5] w-full object-cover">
+      </div>
+      <div class="rounded-2xl bg-white/[0.04] p-6 ring-1 ring-white/10 sm:p-8">
+        <h3 class="font-display text-[19px] font-semibold text-white">Tarrick Ghannam</h3>
+        <p class="mt-0.5 text-[12.5px] font-semibold uppercase tracking-[0.1em] text-gold">CEO &amp; Founder</p>
+        <p class="mt-4 text-[14px] leading-relaxed text-slate-300">
+          Tarrick Ghannam is an industry leader in providing organized ground transportation to
+          businesses and individuals nationwide. As a natural leader with a drive to exceed
+          expectations, he communicates closely with clients to provide the best possible value
+          in every aspect.
+        </p>
+        <p class="mt-3 text-[14px] leading-relaxed text-slate-300">
+          Working with a variety of industries and organizations, his trusted reputation with
+          CEOs, business owners, HR managers, and event coordinators has brought All Pro Charter
+          to the forefront of ground transportation services.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  AWARDS / TRUST BADGES — WeddingWire &amp; Best of Weddings badges, review
+  score badge, all lifted from the WP page's image list.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+  <div class="flex flex-wrap items-center justify-center gap-x-10 gap-y-6 opacity-90">
+    <img src="{% static 'public/img/All-Pro-Charter-Reviews-Ashburn-VA-32-Reviews.png' %}" alt="32 five-star All Pro Charter reviews on WeddingWire" class="h-10 w-auto sm:h-12">
+    <img src="{% static 'public/img/weddingwire.png' %}" alt="WeddingWire" class="h-14 w-auto sm:h-16">
+    <img src="{% static 'public/img/badge-weddingawards_en_US.png' %}" alt="WeddingWire Couples' Choice Award" class="h-14 w-auto sm:h-16">
+    <img src="{% static 'public/img/wedding-wire-couples-choice-2020-1.png' %}" alt="WeddingWire Couples' Choice Award 2020" class="h-14 w-auto sm:h-16">
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — "MOVE FURTHER TOGETHER" band, matching the home page's
+  closing section.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Connecting your company — or your next big day — with more opportunities. Get a free
+      quote in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

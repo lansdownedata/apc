@@ -1,0 +1,107 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% block meta %}
+<title>{% block title %}Contact - All Pro Charter{% endblock %}</title>
+<meta name="description" content="Contact All Pro Charter for a free quote — call (202) 424-2600 or email info@allprocharter.com. Available 24/7, serving Virginia, Washington D.C. &amp; Maryland.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Contact - All Pro Charter">
+<meta property="og:description" content="Contact All Pro Charter for a free quote — call (202) 424-2600 or email info@allprocharter.com. Available 24/7, serving Virginia, Washington D.C. &amp; Maryland.">
+{% endblock %}
+
+{% block schema %}
+{{ block.super }}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "ContactPage",
+  "name": "Contact - All Pro Charter",
+  "url": "{{ canonical_url }}",
+  "about": {
+    "@type": "LocalBusiness",
+    "name": "All Pro Charter",
+    "telephone": "+1-202-424-2600",
+    "email": "info@allprocharter.com",
+    "areaServed": ["Virginia", "Washington, D.C.", "Maryland"],
+    "openingHours": "Mo-Su 00:00-23:59"
+  }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("Contact US" over the
+  consultant photo). Kept short since the real content is the form below.
+{% endcomment %}
+<section class="relative overflow-hidden bg-charcoal">
+  <img src="{% static 'public/img/qtq80-HUfFx3.jpeg' %}"
+       alt="A presenter gesturing to a boardroom during a business meeting"
+       class="absolute inset-0 h-full w-full object-cover opacity-45">
+  <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/[0.82] to-charcoal/[0.65]"></div>
+
+  <div class="relative mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Contact Us
+    </span>
+    <h1 class="mt-5 font-display text-[32px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[42px]">
+      Let&rsquo;s plan your trip.
+    </h1>
+    <p class="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-slate-300">
+      Reach us any time, day or night — a real person replies within one business day.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  CONTACT DETAILS — phone / email / hours / service area surfaced as quick
+  cards, replacing the WP page's inline text block with something scannable
+  and click-to-call/email.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+  <div class="grid gap-4 sm:grid-cols-3">
+    <a href="tel:+12024242600" class="group rounded-2xl bg-surface p-6 ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4] focus-gold">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-5 w-5 text-gold">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h1.5a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106a1.125 1.125 0 0 0-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97a1.125 1.125 0 0 0 .417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z"/>
+      </svg>
+      <div class="mt-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-muted">Call us</div>
+      <div class="mt-1 text-[16px] font-semibold text-ink">(202) 424-2600</div>
+    </a>
+    <a href="mailto:info@allprocharter.com" class="group rounded-2xl bg-surface p-6 ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4] focus-gold">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-5 w-5 text-gold">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0a2.25 2.25 0 0 0-2.25-2.25h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/>
+      </svg>
+      <div class="mt-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-muted">Email us</div>
+      <div class="mt-1 break-all text-[16px] font-semibold text-ink">info@allprocharter.com</div>
+    </a>
+    <div class="rounded-2xl bg-surface p-6 ring-1 ring-line">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="h-5 w-5 text-gold">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/>
+        <circle cx="12" cy="12" r="9"/>
+      </svg>
+      <div class="mt-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-muted">Hours &amp; area</div>
+      <div class="mt-1 text-[16px] font-semibold text-ink">24/7 &middot; VA &middot; D.C. &middot; MD</div>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  QUOTE FORM — reuses the shared _booking_widget.html rather than
+  re-implementing the WP page's native contact form + native &lt;select&gt;
+  (destinations/type-of-vehicle/message), per the "no native selects, one
+  reusable form" rule. Same fields, styled and functional.
+{% endcomment %}
+<section class="mx-auto max-w-3xl px-4 pb-20 sm:px-6 lg:px-8">
+  <div class="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line sm:p-8">
+    <h2 class="font-display text-[20px] font-semibold text-ink">Request a free quote</h2>
+    <p class="mt-1 text-[13px] text-muted">Tell us the date, destination, and group size — we&rsquo;ll follow up with pricing.</p>
+    <div class="mt-6">
+      {% include "public/_booking_widget.html" %}
+    </div>
+  </div>
+</section>
+
+{% endblock %}

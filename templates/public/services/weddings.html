@@ -1,0 +1,124 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% block meta %}
+<title>{% block title %}Weddings Transportation - All Pro Charter{% endblock %}</title>
+<meta name="description" content="Planning the logistics of your wedding? Let us handle the transportation details. From the rehearsal dinner to the main event, we've got your guests covered.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Weddings Transportation - All Pro Charter">
+<meta property="og:description" content="Planning the logistics of your wedding? Let us handle the transportation details. From the rehearsal dinner to the main event, we've got your guests covered.">
+{% endblock %}
+
+{% block schema %}
+{{ block.super }}
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Service","name":"Wedding Transportation","provider":{"@type":"LocalBusiness","name":"All Pro Charter"},"areaServed":["Virginia","Washington, D.C.","Maryland"]}
+</script>
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("Reliable - Available -
+  Affordable" / "WEDDING transportation" subhead over the limo-hero
+  parallax background).
+{% endcomment %}
+<section class="relative overflow-hidden bg-charcoal">
+  <img src="{% static 'public/img/limo-hero-01.jpg' %}"
+       alt="A wedding party arriving in an All Pro Charter limousine"
+       class="absolute inset-0 h-full w-full object-cover opacity-50">
+  <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/[0.8] to-charcoal/[0.6]"></div>
+
+  <div class="relative mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-28 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Wedding Transportation
+    </span>
+    <h1 class="mt-5 font-display text-[34px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[46px]">
+      Reliable, available, affordable
+    </h1>
+    <p class="mx-auto mt-5 max-w-2xl text-[15.5px] leading-relaxed text-slate-300">
+      Special days deserve special service. We want you to enjoy the festivities as much as
+      your guests will.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  BODY — the WP text blocks (chauffeur care for the bride, concierge
+  planning support, shuttle logistics + partner vendors) paired with real
+  wedding photography.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-10 lg:grid-cols-2 lg:items-center lg:gap-16">
+    <div class="space-y-5">
+      <p class="text-[15px] leading-relaxed text-ink">
+        We take care of all your transportation needs on the big day to provide you with a
+        stress-free and safe travel accommodation. Our exceptional chauffeurs don't just
+        perform their job professionally — they're extremely helpful to the bride, assisting
+        with all those last-minute details that may slip her mind.
+      </p>
+      <p class="text-[15px] leading-relaxed text-ink">
+        Our friendly, dedicated coordinating concierge can answer any questions you may have
+        about your wedding plans, assist you in the selection of your vehicles, and offer full
+        support right up to the day of your wedding.
+      </p>
+      <p class="text-[15px] leading-relaxed text-ink">
+        All Pro Charter provides professional transportation to ensure your attendees show up
+        timely and safely to the wedding, the pictures, or the rehearsal dinner — with shuttle
+        services to hotels and venues. For additional wedding services such as make-up,
+        up-lighting, sound systems, or photography, just ask your coordinating concierge — we
+        partner with local businesses to help provide everything you need.
+      </p>
+      <a href="/bookings/" class="btn-gold focus-gold mt-2 inline-flex w-fit items-center rounded-full px-6 py-3 text-[14px] font-semibold">
+        Book Now
+      </a>
+    </div>
+    <div class="overflow-hidden rounded-2xl">
+      <img src="{% static 'public/img/Facebook-1.png' %}" alt="A bride and groom stepping out of an All Pro Charter wedding vehicle" class="aspect-[4/5] w-full object-cover">
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  AWARDS / TRUST BADGES — WeddingWire &amp; Best of Weddings badges, the same
+  set featured on the WP page and about.html.
+{% endcomment %}
+<section class="bg-surface2">
+  <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+    <div class="flex flex-wrap items-center justify-center gap-x-10 gap-y-6 opacity-90">
+      <img src="{% static 'public/img/weddingwire.png' %}" alt="WeddingWire" class="h-14 w-auto sm:h-16">
+      <img src="{% static 'public/img/badge-weddingawards_en_US.png' %}" alt="WeddingWire Couples' Choice Award" class="h-14 w-auto sm:h-16">
+      <img src="{% static 'public/img/wedding-wire-couples-choice-2020-1.png' %}" alt="WeddingWire Couples' Choice Award 2020" class="h-14 w-auto sm:h-16">
+      <img src="{% static 'public/img/badge-weddingawards_en_US-2025-03.png' %}" alt="The Knot Best of Weddings 2025 award" class="h-14 w-auto sm:h-16">
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — "MOVE FURTHER TOGETHER" band, matching the other content
+  pages' closing section.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Tell us your wedding date and headcount and we'll build your transportation plan — a
+      free quote in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
