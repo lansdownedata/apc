@@ -9,8 +9,12 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import models
 from django.db.models import Prefetch, Q
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
+
+from apps.addresses.models import Address
 
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
 from .models import (
@@ -23,6 +27,19 @@ from .models import (
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(INSURANCE_SEVERITY)}
 _STATUS_FILTERS = [("active", "Active"), ("inactive", "Archived"), ("all", "All")]
+# Text fields the smart-address widget posts; place_id/lat/lng handled separately below.
+_ADDRESS_FIELDS = (
+    "landmark_name",
+    "line1",
+    "line2",
+    "city",
+    "state",
+    "postal",
+    "country",
+    "place_type",
+    "place_class",
+    "display_name",
+)
 
 
 @login_required
@@ -125,7 +142,7 @@ def _insurance_banner(summary: dict) -> dict | None:
 @login_required
 def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
     vendor = get_object_or_404(
-        Vendor.objects.prefetch_related(
+        Vendor.objects.select_related("address").prefetch_related(
             "vehicle_types",
             "drivers",
             "policies",
@@ -141,8 +158,44 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
     return render(
         request,
         "vendors/vendor_detail.html",
-        {"nav": "vendors", "page_title": vendor.name, "vendor": vendor},
+        {
+            "nav": "vendors",
+            "page_title": vendor.name,
+            "vendor": vendor,
+            "addr_url": reverse("vendor_address_update", args=[vendor.pk]),
+            "ac_url": reverse("integrations:geocode_autocomplete"),
+        },
     )
+
+
+@login_required
+@require_POST
+def vendor_address_update(request: HttpRequest, pk: int) -> JsonResponse:
+    """Auto-save endpoint for the smart-address widget — lazily creates the vendor's
+    Address on first save and writes the posted fields (mirrors contact_address_update)."""
+    vendor = get_object_or_404(Vendor, pk=pk)
+    address = vendor.address
+    if address is None:
+        address = Address.objects.create()
+        vendor.address = address
+        vendor.save(update_fields=["address", "updated_at"])
+
+    changed = []
+    for f in _ADDRESS_FIELDS:
+        if f in request.POST:
+            setattr(address, f, request.POST.get(f, "").strip())
+            changed.append(f)
+    if "place_id" in request.POST:
+        address.locationiq_place_id = request.POST.get("place_id", "").strip()
+        changed.append("locationiq_place_id")
+    for coord in ("latitude", "longitude"):
+        if coord in request.POST:
+            raw = request.POST.get(coord, "").strip()
+            setattr(address, coord, raw or None)
+            changed.append(coord)
+    if changed:
+        address.save(update_fields=[*changed, "updated_at"])
+    return JsonResponse({"ok": True, "address_id": address.pk})
 
 
 @login_required

@@ -30,6 +30,12 @@
   </div>
   {% endif %}
 
+  {# location — LocationIQ smart address, auto-saves to the vendor #}
+  <div class="card p-4 mb-4">
+    <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2 mb-3"><i class="ti ti-map-pin text-[16px]" style="color:rgb(var(--gold-deep));"></i>Address</h2>
+    {% include "components/smart_address.html" with address=vendor.address update_url=addr_url autocomplete_url=ac_url prefix="vendor" %}
+  </div>
+
   <div class="grid gap-4 sm:grid-cols-2">
     {# insurance leads — risk-first #}
     <div class="card overflow-hidden">

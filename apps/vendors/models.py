@@ -66,12 +66,12 @@ class Vendor(TimeStampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
 
     service_area = models.CharField(max_length=200, blank=True)
-    location_name = models.CharField("location label", max_length=120, blank=True)
-    address_line1 = models.CharField("street address", max_length=200, blank=True)
-    unit = models.CharField("unit / suite", max_length=60, blank=True)
-    city = models.CharField(max_length=120, blank=True)
-    state = models.CharField(max_length=60, blank=True)
-    postal_code = models.CharField(max_length=20, blank=True)
+    # Mailing address is a shared addresses.Address (LocationIQ smart-address), set on the
+    # vendor detail page — mirrors Contact.primary_address. service_area stays a free-text
+    # coverage descriptor, distinct from the postal address.
+    address = models.ForeignKey(
+        "addresses.Address", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     website = models.URLField(blank=True)
     usdot_number = models.CharField("USDOT number", max_length=40, blank=True)
