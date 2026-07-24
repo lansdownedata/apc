@@ -75,12 +75,21 @@ class Reservation(TimeStampedModel):
     pickup_time = models.TimeField(null=True, blank=True)
     passengers = models.PositiveIntegerField(default=1)
 
-    # transfer pricing
-    base_rate = MoneyField()
-    # hourly pricing
+    # pricing — rate × billed_hours + gratuity (snapshotted from the vehicle's rate card)
+    rate = MoneyField()  # per-hour
     hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    hourly_rate = MoneyField()
     min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    gratuity_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    gratuity_flat = MoneyField()  # optional override; used when > 0
+    # reserved (not wired into pricing/editor yet — see the pricing-rework spec §4c)
+    discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    discount_flat = MoneyField()
+    # legacy — removed in the contract migration once the editor is switched over
+    base_rate = MoneyField()
+    hourly_rate = MoneyField()
+    # drop-off (enables end times + overnight trips)
+    dropoff_date = models.DateField(null=True, blank=True)
+    dropoff_time = models.TimeField(null=True, blank=True)
 
     la_reservation_id = models.CharField(max_length=64, blank=True)
     la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)
@@ -104,23 +113,30 @@ class Reservation(TimeStampedModel):
         ordering = ["sort_order", "id"]
 
     # --- pricing ---
+    _CENTS = Decimal("0.01")
+
     @property
     def billed_hours(self) -> Decimal:
         return max(Decimal(self.hours or 0), Decimal(self.min_hours or 0))
 
     @property
     def min_applied(self) -> bool:
-        return self.trip_type == self.TripType.HOURLY and Decimal(self.hours or 0) < Decimal(
-            self.min_hours or 0
-        )
+        return Decimal(self.hours or 0) < Decimal(self.min_hours or 0)
+
+    @property
+    def subtotal(self) -> Decimal:
+        return (Decimal(self.rate or 0) * self.billed_hours).quantize(self._CENTS)
+
+    @property
+    def gratuity(self) -> Decimal:
+        flat = Decimal(self.gratuity_flat or 0)
+        if flat > 0:
+            return flat.quantize(self._CENTS)
+        return (self.subtotal * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
 
     @property
     def line_total(self) -> Decimal:
-        if self.trip_type == self.TripType.HOURLY:
-            amount = self.billed_hours * Decimal(self.hourly_rate or 0)
-        else:
-            amount = Decimal(self.base_rate or 0)
-        return amount.quantize(Decimal("0.01"))
+        return (self.subtotal + self.gratuity).quantize(self._CENTS)
 
     # --- routing ---
     @property

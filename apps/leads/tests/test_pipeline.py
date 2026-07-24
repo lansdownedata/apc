@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db
 
 def test_columns_group_and_sum(logged_in_client):
     quoted = LeadFactory(status=Lead.Status.QUOTED)
-    ReservationFactory(lead=quoted, base_rate=Decimal("500"))
+    ReservationFactory(lead=quoted, rate=Decimal("500"))
     LeadFactory(status=Lead.Status.NEW)
     resp = logged_in_client.get("/pipeline/")
     columns = {c["status"]: c for c in resp.context["columns"]}

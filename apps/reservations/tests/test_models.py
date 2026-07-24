@@ -4,6 +4,7 @@ import pytest
 
 from apps.reservations.factories import (
     HourlyReservationFactory,
+    ReservationFactory,
     StopFactory,
     TransferReservationFactory,
 )
@@ -14,23 +15,19 @@ pytestmark = pytest.mark.django_db
 
 # --- pricing ---------------------------------------------------------------
 def test_transfer_line_total_is_base_rate():
-    res = TransferReservationFactory(base_rate=Decimal("185"))
+    res = TransferReservationFactory(rate=Decimal("185"))
     assert res.line_total == Decimal("185.00")
 
 
 def test_hourly_line_total_is_hours_times_rate():
-    res = HourlyReservationFactory(
-        hours=Decimal("5"), hourly_rate=Decimal("240"), min_hours=Decimal("4")
-    )
+    res = HourlyReservationFactory(hours=Decimal("5"), rate=Decimal("240"), min_hours=Decimal("4"))
     assert res.billed_hours == Decimal("5")
     assert res.min_applied is False
     assert res.line_total == Decimal("1200.00")
 
 
 def test_hourly_applies_minimum_when_below():
-    res = HourlyReservationFactory(
-        hours=Decimal("2"), hourly_rate=Decimal("300"), min_hours=Decimal("4")
-    )
+    res = HourlyReservationFactory(hours=Decimal("2"), rate=Decimal("300"), min_hours=Decimal("4"))
     assert res.billed_hours == Decimal("4")
     assert res.min_applied is True
     assert res.line_total == Decimal("1200.00")
@@ -94,3 +91,44 @@ def test_vehicle_reference_list_seeded(db):
 
     names = set(VehicleType.objects.filter(active=True).values_list("name", flat=True))
     assert {"Luxury Sedan", "Luxury SUV", "Sprinter Van", "Mini Coach", "Motor Coach"} <= names
+
+
+# --- unified rate x hours + gratuity pricing --------------------------------
+def test_line_total_is_rate_times_billed_hours_plus_gratuity():
+    r = ReservationFactory(
+        trip_type="hourly",
+        rate=Decimal("100.00"),
+        hours=Decimal("5"),
+        min_hours=Decimal("4"),
+        gratuity_pct=Decimal("20"),
+    )
+    assert r.subtotal == Decimal("500.00")  # 100 * max(5,4)
+    assert r.gratuity == Decimal("100.00")  # 20% of 500
+    assert r.line_total == Decimal("600.00")
+
+
+def test_hourly_minimum_floors_billed_hours():
+    r = ReservationFactory(
+        trip_type="hourly",
+        rate=Decimal("100.00"),
+        hours=Decimal("2"),
+        min_hours=Decimal("4"),
+    )
+    assert r.billed_hours == Decimal("4") and r.subtotal == Decimal("400.00")
+
+
+def test_gratuity_flat_overrides_percent():
+    r = ReservationFactory(
+        rate=Decimal("100"),
+        hours=Decimal("2"),
+        min_hours=0,
+        gratuity_pct=Decimal("20"),
+        gratuity_flat=Decimal("75.00"),
+    )
+    assert r.gratuity == Decimal("75.00")
+    assert r.line_total == Decimal("275.00")  # 200 + 75
+
+
+def test_zero_gratuity_means_line_total_equals_subtotal():
+    r = ReservationFactory(rate=Decimal("100"), hours=Decimal("3"), min_hours=0)
+    assert r.gratuity == Decimal("0.00") and r.line_total == r.subtotal

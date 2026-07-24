@@ -114,7 +114,7 @@ def test_ungeocode_stop_triggers_geocoding():
 
 
 def test_booking_payload_carries_passenger_payment_and_notes():
-    res = _geocoded_reservation(base_rate=Decimal("450"))
+    res = _geocoded_reservation(rate=Decimal("450"))
     res.lead.contact.name = "Jane Doe"
     res.lead.contact.save()
     payload = la_sync.build_booking_payload(res, 987654)

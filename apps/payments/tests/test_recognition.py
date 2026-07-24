@@ -15,7 +15,7 @@ pytestmark = pytest.mark.django_db
 
 def test_recognition_draws_from_deferred():
     lead = LeadFactory()
-    res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
+    res = TransferReservationFactory(lead=lead, rate=Decimal("1500.00"))
     ledger.post_capture(
         lead=lead,
         amount=Decimal("2670.00"),
@@ -35,7 +35,7 @@ def test_recognition_draws_from_deferred():
 
 def test_recognition_overflows_to_ar_when_underpaid():
     lead = LeadFactory()
-    res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
+    res = TransferReservationFactory(lead=lead, rate=Decimal("1500.00"))
     ledger.post_capture(
         lead=lead,
         amount=Decimal("1335.00"),
@@ -51,7 +51,7 @@ def test_recognition_overflows_to_ar_when_underpaid():
 
 def test_recognition_is_idempotent():
     lead = LeadFactory()
-    res = TransferReservationFactory(lead=lead, base_rate=Decimal("1500.00"))
+    res = TransferReservationFactory(lead=lead, rate=Decimal("1500.00"))
     ledger.post_capture(
         lead=lead,
         amount=Decimal("1500.00"),
@@ -70,7 +70,7 @@ def test_recognition_is_idempotent():
 
 def test_recognition_skips_zero_value_trip():
     lead = LeadFactory()
-    res = TransferReservationFactory(lead=lead, base_rate=Decimal("0.00"))
+    res = TransferReservationFactory(lead=lead, rate=Decimal("0.00"))
     result = ledger.recognize_reservation(res)
     assert result is None
     assert JournalEntry.objects.filter(reservation=res).count() == 0
@@ -88,25 +88,25 @@ def test_recognize_due_revenue_only_earned_past_trips():
     future = date.today() + timedelta(days=10)
     done_past = TransferReservationFactory(
         lead=lead,
-        base_rate=Decimal("1000.00"),
+        rate=Decimal("1000.00"),
         pickup_date=past,
         trip_status=Reservation.TripStatus.DONE,
     )
     noshow_past = TransferReservationFactory(
         lead=lead,
-        base_rate=Decimal("500.00"),
+        rate=Decimal("500.00"),
         pickup_date=past,
         trip_status=Reservation.TripStatus.NO_SHOW,
     )
     done_future = TransferReservationFactory(
         lead=lead,
-        base_rate=Decimal("700.00"),
+        rate=Decimal("700.00"),
         pickup_date=future,
         trip_status=Reservation.TripStatus.DONE,
     )
     cancelled_past = TransferReservationFactory(
         lead=lead,
-        base_rate=Decimal("400.00"),
+        rate=Decimal("400.00"),
         pickup_date=past,
         trip_status=Reservation.TripStatus.CANCELLED,
     )

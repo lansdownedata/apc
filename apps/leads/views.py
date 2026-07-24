@@ -47,10 +47,13 @@ def _reservation_draft(r) -> dict:
         "time": r.pickup_time.strftime("%H:%M") if r.pickup_time else "",
         "vehicle": r.vehicle_id or "",
         "pax": r.passengers,
-        "baseRate": float(r.base_rate),
+        "rate": float(r.rate),
         "hours": float(r.hours),
-        "hourlyRate": float(r.hourly_rate),
         "minHours": float(r.min_hours),
+        "gratuityPct": float(r.gratuity_pct),
+        "gratuityFlat": float(r.gratuity_flat),
+        "dropoffDate": r.dropoff_date.isoformat() if r.dropoff_date else "",
+        "dropoffTime": r.dropoff_time.strftime("%H:%M") if r.dropoff_time else "",
         "stops": [
             {
                 "address": s.address,
@@ -170,7 +173,11 @@ def lead_detail(request, pk):
         ),
         pk=pk,
     )
-    _vehicles = list(VehicleType.objects.filter(active=True).values("id", "name"))
+    _vehicles = list(
+        VehicleType.objects.filter(active=True).values(
+            "id", "name", "rate", "hourly_min_hours", "transfer_min_hours"
+        )
+    )
     reservations = lead.reservations.all()
 
     la_events: dict[int, ZapEvent] = {}
@@ -216,7 +223,16 @@ def lead_detail(request, pk):
             for u in User.objects.order_by("first_name", "username")
         ],
         "reservations_json": [_reservation_draft(r) for r in lead.reservations.all()],
-        "vehicles_json": _vehicles,
+        "vehicles_json": [
+            {
+                "id": v["id"],
+                "name": v["name"],
+                "rate": float(v["rate"]),
+                "hourlyMin": float(v["hourly_min_hours"]),
+                "transferMin": float(v["transfer_min_hours"]),
+            }
+            for v in _vehicles
+        ],
         "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
     }
     return render(request, "leads/lead_detail.html", context)

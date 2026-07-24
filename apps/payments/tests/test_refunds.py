@@ -59,7 +59,7 @@ def test_cancel_and_refund_cancels_and_reverses(client):
     plan = _paid_plan()
     plan.lead.status = Lead.Status.BOOKED
     plan.lead.save(update_fields=["status", "updated_at"])
-    res = TransferReservationFactory(lead=plan.lead, base_rate=Decimal("1335.00"))
+    res = TransferReservationFactory(lead=plan.lead, rate=Decimal("1335.00"))
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     with patch.object(services.stripe.Refund, "create", return_value=MagicMock(id="re_2")):
         resp = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
