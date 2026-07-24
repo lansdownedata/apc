@@ -99,6 +99,28 @@ def test_html_header_falls_back_to_the_wordmark_without_a_logo():
     assert "ALL PRO CHARTER" in html.upper()
 
 
+def test_supports_dark_mode():
+    """Dark-mode-capable clients (Apple Mail/iOS) get prefers-color-scheme overrides;
+    the dm-* classes carry the dark palette so inline light styles can be flipped."""
+    _send()
+    html, _ = mail.outbox[0].alternatives[0]
+    assert 'content="light dark"' in html, "email must declare it supports dark mode"
+    assert "prefers-color-scheme: dark" in html, "no dark-mode media query"
+    assert "dm-ink" in html and "dm-card" in html, "dark-mode override classes missing"
+
+
+def test_plain_text_part_is_complete_for_html_stripping_clients():
+    """Strict/government clients that render only text/plain must still get every key
+    fact — the quote number, total, deposit, and the link — as readable plain text."""
+    _send()
+    text = mail.outbox[0].body
+    assert BASE_CONTEXT["quote_no"] in text
+    assert BASE_CONTEXT["quote_total"] in text
+    assert BASE_CONTEXT["deposit_amount"] in text
+    assert BASE_CONTEXT["quote_url"] in text
+    assert "<" not in text, "the plain-text part must be plain text, not HTML"
+
+
 def test_no_template_comment_leaks_into_the_email():
     """Django {# #} comments are single-line only (the lexer regex is not DOTALL); a
     multi-line one renders its body as text. That shipped in the email header once and

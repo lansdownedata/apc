@@ -3,26 +3,39 @@
 <!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light only">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
 {% comment %}
-Brand display font for clients that support web fonts (Apple Mail, iOS). Gmail/Outlook
-strip web fonts, so everything falls back to Georgia — headings AND body are serif, so the
-email stays cohesive everywhere rather than serif headings over a generic sans body.
+Two progressive enhancements layered over inline styles (which every client honours):
+- Brand display font (Fraunces) for clients that support web fonts (Apple Mail/iOS);
+  Gmail/Outlook strip it and fall back to Georgia, so the email stays all-serif everywhere.
+- Dark mode via prefers-color-scheme. Inline styles are the light default; the dm-* classes
+  below are overridden with !important for clients that honour the media query (Apple Mail,
+  iOS). Gmail/Outlook auto-invert instead — the layout survives either way.
 {% endcomment %}
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap');
+@media (prefers-color-scheme: dark) {
+  .dm-page   { background:#111318 !important; }
+  .dm-card   { background:#1A1D24 !important; }
+  .dm-panel  { background:#21252E !important; border-color:#2A2F38 !important; }
+  .dm-footer { background:#15171C !important; }
+  .dm-ink    { color:#EBE9E3 !important; }
+  .dm-muted  { color:#9AA0AA !important; }
+  .dm-soft   { color:#B3AB9C !important; }
+  .dm-line   { border-color:#2A2F38 !important; }
+}
 </style>
 <title>{% block subject %}{% endblock %}</title></head>
-<body style="margin:0;padding:0;background:#F1EEE7;font-family:Georgia,'Times New Roman',serif;">
+<body class="dm-page" style="margin:0;padding:0;background:#F1EEE7;font-family:Georgia,'Times New Roman',serif;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">{% block preheader %}{% endblock %}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-page"
        style="background:#F1EEE7;padding:32px 12px;">
   <tr><td align="center">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="dm-card"
            style="max-width:600px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;
                   box-shadow:0 1px 3px rgba(23,25,29,.06);">
-      {# masthead — onyx with a gold rule beneath, like a letterhead #}
+      {# masthead — onyx with a gold rule beneath, like a letterhead (stays dark in both modes) #}
       <tr><td align="center" style="background:#17191D;padding:24px 28px;border-bottom:3px solid #C7A24E;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"><tr>
           {% if logo_cid %}<td valign="middle" style="padding-right:13px;">
@@ -35,17 +48,17 @@ email stays cohesive everywhere rather than serif headings over a generic sans b
           </td>
         </tr></table>
       </td></tr>
-      <tr><td style="padding:36px 34px 34px;color:#17191D;font-size:16px;line-height:1.6;
+      <tr><td class="dm-ink" style="padding:36px 34px 34px;color:#17191D;font-size:16px;line-height:1.6;
                      font-family:Georgia,'Times New Roman',serif;">
         {% block content %}{% endblock %}
       </td></tr>
-      <tr><td style="background:#FAF8F3;padding:24px 28px;border-top:1px solid #E7E3DA;" align="center">
-        <div style="font-family:'Fraunces',Georgia,'Times New Roman',serif;font-size:13px;
+      <tr><td class="dm-footer" style="background:#FAF8F3;padding:24px 28px;border-top:1px solid #E7E3DA;" align="center">
+        <div class="dm-soft" style="font-family:'Fraunces',Georgia,'Times New Roman',serif;font-size:13px;
               letter-spacing:2.5px;color:#6b7280;">{{ company_name|upper }}</div>
-        <div style="font-size:12px;color:#a59e90;padding-top:4px;">Luxury charter &amp; chauffeur service</div>
-        <div style="font-size:12px;color:#9a958c;padding-top:10px;line-height:1.6;">
+        <div class="dm-soft" style="font-size:12px;color:#a59e90;padding-top:4px;">Luxury charter &amp; chauffeur service</div>
+        <div class="dm-muted" style="font-size:12px;color:#9a958c;padding-top:10px;line-height:1.6;">
           {% if company_email %}<a href="mailto:{{ company_email }}"
-            style="color:#9a958c;text-decoration:none;">{{ company_email }}</a>{% endif %}{% if company_email and company_phone %}
+            style="color:inherit;text-decoration:none;">{{ company_email }}</a>{% endif %}{% if company_email and company_phone %}
           &nbsp;&middot;&nbsp;{% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
         </div>
       </td></tr>

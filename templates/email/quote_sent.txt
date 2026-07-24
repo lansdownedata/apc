@@ -1,16 +1,22 @@
 {% autoescape off %}Hi {{ contact_name }},
 
-Your {{ company_name }} quote {{ quote_no }} is ready — {{ trip_count }} trip{{ trip_count|pluralize }}.
+Your quote is ready. Review the full itinerary and reserve your date below.
 
-Total: ${{ quote_total }}
-{{ deposit_pct }}% deposit to confirm: ${{ deposit_amount }}
+  QUOTE NO.       {{ quote_no }}
+  PREPARED FOR    {{ contact_name }}
+  ESTIMATED TOTAL ${{ quote_total }}
 
-{% if quote_url %}View your full itinerary and book:
+A {{ deposit_pct }}% deposit of ${{ deposit_amount }} reserves your booking.
+{% if quote_url %}
+View your quote & reserve:
 {{ quote_url }}
 {% endif %}{% if expires_at %}
 This quote is valid through {{ expires_at|date:"F j, Y" }}.
 {% endif %}
 Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
 
+--
 {{ company_name }}
+Luxury charter & chauffeur service
+{% if company_email %}{{ company_email }}{% endif %}{% if company_email and company_phone %} · {% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
 {% endautoescape %}
