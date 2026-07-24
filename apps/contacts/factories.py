@@ -17,6 +17,6 @@ class ContactFactory(factory.django.DjangoModelFactory):
         model = Contact
 
     name = factory.Faker("name")
-    email = factory.Faker("email")
+    email = factory.Sequence(lambda n: f"contact{n}@example.com")
     phone = factory.Faker("numerify", text="(###) ###-####")
     channel = Channel.WEBSITE
