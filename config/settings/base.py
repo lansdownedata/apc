@@ -176,6 +176,14 @@ LA_PAYMENT_TYPE_ID = env.int("LA_PAYMENT_TYPE_ID", default=0)  # non-charging ty
 LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NGROK_HOST>
 LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 
+# Geolocation & address bias
+from apps.core.geo import parse_latlon  # noqa: E402 settings-safe (no Django imports)
+
+ADDRESS_BIAS_CENTER = parse_latlon(
+    env("ADDRESS_BIAS_CENTER", default="38.9531,-77.4565"), (38.9531, -77.4565)
+)  # (lat, lon); default = IAD / DMV service area
+ADDRESS_BIAS_RADIUS_DEG = env.float("ADDRESS_BIAS_RADIUS_DEG", default=0.75)
+
 # Cron — HTTP-triggered scheduled jobs (cron-job.org)
 CRON_SECRET = env("CRON_SECRET", default="")  # X-Cron-Key header for /cron/<job>/ endpoints
 
