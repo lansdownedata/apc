@@ -136,3 +136,9 @@ def test_details_view_mode_renders_readable_values(logged_in_client):
     assert 'href="tel:+16175550188"' in html
     assert 'href="mailto:grant@example.com"' in html
     assert "(617) 555-0188" in html  # phone_display national format
+
+
+def test_channel_labels_use_json_string_escaping(logged_in_client):
+    contact = ContactFactory()
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "'website': &quot;Website&quot;" in html

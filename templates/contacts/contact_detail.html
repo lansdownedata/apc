@@ -66,7 +66,7 @@
 
       <!-- contact details -->
       <div class="card p-5 sm:p-6"
-           x-data="{ editing: false, channelLabels: { {% for value, label in channels %}'{{ value }}': '{{ label }}'{% if not forloop.last %}, {% endif %}{% endfor %}} }">
+           x-data="{ editing: false, channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}} }">
         <div class="flex items-center justify-between mb-4">
           <span class="font-display text-[15px] font-semibold text-ink">Contact details</span>
           <button type="button" @click="editing = !editing"
