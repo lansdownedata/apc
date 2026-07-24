@@ -103,3 +103,7 @@ def service_personal(request):
 
 def reviews(request):
     return render(request, "public/reviews.html")
+
+
+def rates(request):
+    return render(request, "public/rates.html")
