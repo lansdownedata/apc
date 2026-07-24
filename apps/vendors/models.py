@@ -114,7 +114,7 @@ class Vendor(TimeStampedModel):
         days = worst.days_until_expiry
         if worst.status == "expired":
             n = abs(days)
-            label = "Lapsed today" if n == 0 else f"Lapsed {n} day{'s' if n != 1 else ''} ago"
+            label = f"Lapsed {n} day{'s' if n != 1 else ''} ago"
         elif worst.status == "valid":
             label = f"Valid · exp {worst.expiry_date:%b '%y}"
         else:

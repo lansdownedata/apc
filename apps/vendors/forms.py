@@ -98,6 +98,14 @@ class VendorInsuranceForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"class": "field w-full", "rows": 2}),
         }
 
+    def clean(self):
+        cleaned = super().clean()
+        effective_date = cleaned.get("effective_date")
+        expiry_date = cleaned.get("expiry_date")
+        if effective_date and expiry_date and expiry_date < effective_date:
+            raise forms.ValidationError("Expiry date can't be before the effective date.")
+        return cleaned
+
 
 class VendorDocumentForm(forms.ModelForm):
     class Meta:

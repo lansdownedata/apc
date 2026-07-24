@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 
+from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import models
 from django.db.models import Prefetch, Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -172,7 +174,15 @@ def vendor_edit(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
-def _child_form_view(request, *, vendor, instance, form_class, title, uploader=False):
+def _child_form_view(
+    request: HttpRequest,
+    *,
+    vendor: Vendor,
+    instance: models.Model | None,
+    form_class: type[forms.ModelForm],
+    title: str,
+    uploader: bool = False,
+) -> HttpResponse:
     form = form_class(request.POST or None, request.FILES or None, instance=instance)
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)

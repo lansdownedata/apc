@@ -140,6 +140,7 @@ header, aside, main, .wash-gold {
 .edge-expired, .edge-critical { border-left-color: rgb(var(--danger)); }
 .edge-urgent   { border-left-color: rgb(var(--orange)); }
 .edge-expiring { border-left-color: rgb(var(--warn)); }
+.edge-none     { border-left-color: rgb(var(--muted)); }
 
 /* compliance banner tones (detail page) */
 .tone { display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:13px; }
