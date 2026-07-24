@@ -99,6 +99,16 @@ def test_html_header_falls_back_to_the_wordmark_without_a_logo():
     assert "ALL PRO CHARTER" in html.upper()
 
 
+def test_no_template_comment_leaks_into_the_email():
+    """Django {# #} comments are single-line only (the lexer regex is not DOTALL); a
+    multi-line one renders its body as text. That shipped in the email header once and
+    appeared at the top of the message — guard the rendered HTML."""
+    _send()
+    html, _ = mail.outbox[0].alternatives[0]
+    assert "{#" not in html and "#}" not in html, "a template comment leaked into the email"
+    assert "Brand display font" not in html, "the font comment body rendered as text"
+
+
 def test_inline_image_is_embedded_with_its_content_id(tmp_path):
     """An inline_images entry is attached to the message with a matching Content-ID, so
     cid:<key> in the HTML resolves without a remote fetch."""

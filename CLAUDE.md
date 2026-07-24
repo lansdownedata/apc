@@ -95,6 +95,10 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
   line length 100. Migrations are excluded from lint.
 - Type hints on functions/methods. Docstrings on non-obvious logic. Keep modules focused.
 - External-API calls go in `services.py` (never in views); side-effects/jobs in `tasks.py`.
+- **Django `{# #}` comments are SINGLE-LINE ONLY** (the lexer regex isn't `re.DOTALL`). A
+  multi-line `{# … #}` is NOT stripped — its body renders as literal text (and any markup
+  inside it, e.g. a stray `<input>`, becomes real HTML). This has bitten repeatedly. Use
+  `{% comment %}…{% endcomment %}` for anything spanning more than one line.
 
 ## 🗂 Structure
 ```
