@@ -7,7 +7,7 @@ import re
 from django.contrib.auth.decorators import login_required
 from django.db.models import Prefetch, Q
 from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 
 from .models import INSURANCE_SEVERITY, Vendor, VendorInsurance
 
@@ -82,4 +82,45 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
             "status_filter": status_filter,
             "status_options": _STATUS_FILTERS,
         },
+    )
+
+
+_BANNER_TONE = {
+    "expired": "danger",
+    "critical": "danger",
+    "urgent": "orange",
+    "expiring": "warn",
+    "none": "warn",
+}
+
+
+def _insurance_banner(summary: dict) -> dict | None:
+    """The one loud moment on the detail page — only when coverage is at risk."""
+    tone = _BANNER_TONE.get(summary["status"])
+    if tone is None:  # valid → no banner
+        return None
+    if summary["status"] == "none":
+        message = "No insurance on file. Add a policy to clear this vendor for assignments."
+    elif summary["status"] == "expired":
+        message = (
+            f"Coverage {summary['label'].lower()}. Renew before assigning trips to this vendor."
+        )
+    else:
+        message = (
+            f"Coverage {summary['label'].lower()}. Renew before assigning new trips to this vendor."
+        )
+    return {"tone": tone, "message": message}
+
+
+@login_required
+def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    vendor = get_object_or_404(
+        Vendor.objects.prefetch_related("vehicle_types", "drivers", "policies", "documents"), pk=pk
+    )
+    vendor.summary = vendor.insurance_summary()
+    vendor.banner = _insurance_banner(vendor.summary)
+    return render(
+        request,
+        "vendors/vendor_detail.html",
+        {"nav": "vendors", "page_title": vendor.name, "vendor": vendor},
     )

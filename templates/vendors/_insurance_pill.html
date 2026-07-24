@@ -1,0 +1,5 @@
+{% if status == 'expired' %}<span class="ins ins-expired"><i class="ti ti-alert-triangle"></i>Expired</span>
+{% elif status == 'valid' %}<span class="ins ins-valid"><i class="ti ti-shield-check"></i>Valid</span>
+{% elif status == 'critical' %}<span class="ins ins-critical"><i class="ti ti-clock"></i>Critical</span>
+{% elif status == 'urgent' %}<span class="ins ins-urgent"><i class="ti ti-clock"></i>Urgent</span>
+{% elif status == 'expiring' %}<span class="ins ins-expiring"><i class="ti ti-clock"></i>Expiring</span>{% endif %}
