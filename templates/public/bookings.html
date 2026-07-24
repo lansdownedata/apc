@@ -1,0 +1,22 @@
+{% extends "public/base_public.html" %}
+
+{% block title %}Request a Booking · All Pro Charter{% endblock %}
+{% block meta %}
+{{ block.super }}
+<meta name="description" content="Request a chauffeured ride with All Pro Charter — airport transfers, corporate travel, weddings, and events across Virginia, Washington D.C. &amp; Maryland.">
+{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-3xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
+  <div class="text-center">
+    <h1 class="font-display text-[32px] font-semibold tracking-tight text-ink sm:text-[40px]">Request a booking</h1>
+    <p class="mt-3 text-[15px] text-muted">
+      Tell us about your trip and a member of our team will follow up with a quote within one business day.
+    </p>
+  </div>
+
+  <div class="mt-10 rounded-2xl bg-surface p-6 ring-1 ring-line sm:p-8">
+    {% include "public/_booking_widget.html" %}
+  </div>
+</section>
+{% endblock %}
