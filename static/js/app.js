@@ -436,6 +436,7 @@ function contactProfile(opts = {}) {
   return {
     updateUrl: opts.updateUrl,
     header: opts.header || {},
+    display: opts.display || {},
     _saved: null,
 
     onPhoneBlur(e) {
@@ -451,6 +452,7 @@ function contactProfile(opts = {}) {
       }
       el.classList.remove("field-error");
       this.header.phone = phoneValue(el);
+      this.display.phone = el.value;
       this.saveHeader();
     },
 
