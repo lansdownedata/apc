@@ -79,18 +79,32 @@ def _decompose(item: dict) -> dict:
     }
 
 
-def autocomplete(q: str) -> list[dict]:
+def autocomplete(q: str, lat=None, lon=None) -> list[dict]:
     """Type-ahead address search via LocationIQ, decomposed to the Address field set.
-    Returns [] when the key is missing, the query is blank, or the API errors — never raises."""
+    A soft viewbox around (lat, lon) biases nearby results without restricting — never
+    `bounded`/`countrycodes`. Returns [] when key/query missing or the API errors — never raises."""
     q = (q or "").strip()
     if not q or not settings.LOCATIONIQ_API_KEY:
         return []
+    params = {
+        "key": settings.LOCATIONIQ_API_KEY,
+        "q": q,
+        "limit": 20,
+        "dedupe": 1,
+        "normalizecity": 1,
+    }
     try:
-        resp = requests.get(
-            AUTOCOMPLETE_URL,
-            params={"key": settings.LOCATIONIQ_API_KEY, "q": q, "limit": 6, "dedupe": 1},
-            timeout=TIMEOUT,
+        clat, clon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        clat = clon = None
+    if clat is not None and clon is not None:
+        r = settings.ADDRESS_BIAS_RADIUS_DEG
+        # corners: (min_lon, max_lat, max_lon, min_lat) — a soft bias (no `bounded`)
+        params["viewbox"] = (
+            f"{round(clon - r, 4)},{round(clat + r, 4)},{round(clon + r, 4)},{round(clat - r, 4)}"
         )
+    try:
+        resp = requests.get(AUTOCOMPLETE_URL, params=params, timeout=TIMEOUT)
         if resp.status_code >= 400:
             return []
         payload = resp.json()

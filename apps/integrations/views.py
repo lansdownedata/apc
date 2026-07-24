@@ -158,5 +158,9 @@ def geocode_autocomplete(request):
     """Server proxy for LocationIQ autocomplete — keeps the key server-side."""
     if not settings.LOCATIONIQ_API_KEY:
         return JsonResponse({"results": [], "degraded": True})
-    results = autocomplete(request.GET.get("q", ""))
+    results = autocomplete(
+        request.GET.get("q", ""),
+        lat=request.GET.get("lat"),
+        lon=request.GET.get("lon"),
+    )
     return JsonResponse({"results": results, "degraded": False})
