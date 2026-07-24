@@ -1,8 +1,12 @@
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
+from apps.leads.factories import LeadFactory
+from apps.reservations.factories import ReservationFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -43,3 +47,29 @@ def test_contact_update_rejects_duplicate_email(client):
     resp = client.post(reverse("contact_update", args=[c.pk]), {"email": "TAKEN@example.com"})
     assert resp.status_code == 400
     assert "email" in resp.json()["error"].lower()
+
+
+def test_order_history_rows_carry_trip_count(logged_in_client):
+    contact = ContactFactory()
+    lead = LeadFactory(contact=contact)
+    ReservationFactory.create_batch(2, lead=lead)
+    resp = logged_in_client.get(reverse("contact_detail", args=[contact.pk]))
+    assert resp.status_code == 200
+    leads = resp.context["leads"]
+    assert len(leads) == 1
+    assert leads[0].trip_count == 2
+
+
+def test_contact_detail_query_count_flat_across_leads(logged_in_client):
+    def query_count(pk):
+        with CaptureQueriesContext(connection) as ctx:
+            resp = logged_in_client.get(reverse("contact_detail", args=[pk]))
+            assert resp.status_code == 200
+        return len(ctx)
+
+    small = ContactFactory()
+    ReservationFactory(lead=LeadFactory(contact=small))
+    big = ContactFactory()
+    for _ in range(3):
+        ReservationFactory.create_batch(2, lead=LeadFactory(contact=big))
+    assert query_count(big.pk) == query_count(small.pk)

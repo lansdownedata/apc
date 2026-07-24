@@ -127,7 +127,12 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
     contact = get_object_or_404(
         Contact.objects.select_related("company").prefetch_related("leads__reservations"), pk=pk
     )
-    leads = list(contact.leads.select_related("payment").order_by("-id")[:10])
+    leads = list(
+        contact.leads.select_related("payment")
+        .prefetch_related("reservations")
+        .annotate(trip_count=Count("reservations"))
+        .order_by("-id")[:10]
+    )
     company_names = [(co.name, co.name) for co in Company.objects.order_by("name")]
     return render(
         request,
