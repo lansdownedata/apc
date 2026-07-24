@@ -13,10 +13,11 @@ from django.core.validators import validate_email
 from django.db import IntegrityError
 from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.addresses.models import Address
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead
@@ -269,3 +270,51 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
                 status=400,
             )
     return JsonResponse({"ok": True})
+
+
+# POST param -> model field. `place_id` is the wire name; the column is `locationiq_place_id`.
+_ADDRESS_FIELDS = (
+    "landmark_name",
+    "line1",
+    "line2",
+    "city",
+    "state",
+    "postal",
+    "country",
+    "place_type",
+    "place_class",
+    "display_name",
+)
+
+
+@login_required
+@require_POST
+def contact_address_update(request: HttpRequest, pk: int, slot: str) -> HttpResponse:
+    """Lazy per-slot address-update endpoint. Lazily creates the slot's Address
+    on first save and writes the posted fields."""
+    if slot not in ("primary", "billing"):
+        raise Http404("Unknown address slot.")
+    contact = get_object_or_404(Contact, pk=pk)
+    fk = f"{slot}_address"
+    address = getattr(contact, fk)
+    if address is None:
+        address = Address.objects.create()
+        setattr(contact, fk, address)
+        contact.save(update_fields=[fk, "updated_at"])
+
+    changed = []
+    for f in _ADDRESS_FIELDS:
+        if f in request.POST:
+            setattr(address, f, request.POST.get(f, "").strip())
+            changed.append(f)
+    if "place_id" in request.POST:
+        address.locationiq_place_id = request.POST.get("place_id", "").strip()
+        changed.append("locationiq_place_id")
+    for coord in ("latitude", "longitude"):
+        if coord in request.POST:
+            raw = request.POST.get(coord, "").strip()
+            setattr(address, coord, raw or None)
+            changed.append(coord)
+    if changed:
+        address.save(update_fields=[*changed, "updated_at"])
+    return JsonResponse({"ok": True, "address_id": address.pk})
