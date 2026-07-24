@@ -18,4 +18,6 @@ urlpatterns = [
     path("services/weddings/", views.service_weddings, name="service_weddings"),
     path("services/personal/", views.service_personal, name="service_personal"),
     path("reviews/", views.reviews, name="reviews"),
+    # Exact legacy WordPress slug kept for SEO link-equity — do not shorten to /rates/.
+    path("all-pro-charter-rates/", views.rates, name="rates"),
 ]

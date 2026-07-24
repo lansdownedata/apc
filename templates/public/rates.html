@@ -1,0 +1,151 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% comment %}
+  templates/public/rates.html — public rates page (WP parity: legacy slug
+  /all-pro-charter-rates/ kept verbatim for SEO link-equity, per task-8).
+
+  Content decision: the WP source page opened with a "COVID-19 UPDATE" banner
+  linking to a 2020/2021 CDC-compliance post — intentionally dropped here. A
+  five-year-old pandemic notice reads as neglect on a freshly rebuilt site and
+  actively hurts credibility/authority, so only the real rates substance
+  (headline, subhead, per-vehicle hourly rates) is ported below. Only the
+  global LocalBusiness schema (base_public's default schema block) is
+  emitted — no fabricated Product/Offer pricing structured data is added for
+  these rates.
+{% endcomment %}
+
+{% block meta %}
+<title>{% block title %}Rates - All Pro Charter{% endblock %}</title>
+<meta name="description" content="All Pro Charter hourly rates for sedans, SUVs, mini buses, and full-size motor coaches — premium chauffeured ground transportation across Virginia, Washington D.C. &amp; Maryland. Request a free custom quote.">
+<link rel="canonical" href="{{ request.build_absolute_uri }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Rates - All Pro Charter">
+<meta property="og:description" content="All Pro Charter hourly rates for sedans, SUVs, mini buses, and full-size motor coaches — premium chauffeured ground transportation across Virginia, Washington D.C. &amp; Maryland. Request a free custom quote.">
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("Sedans - SUV - Coach - Bus"
+  / "APC Rates" subhead + intro line), matching the Fleet page's hero pattern.
+{% endcomment %}
+<section class="bg-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      APC Rates
+    </span>
+    <h1 class="mt-5 font-display text-[32px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[42px]">
+      Sedans &middot; SUV &middot; Coach &middot; Bus
+    </h1>
+    <p class="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-slate-300">
+      All Pro Charter&rsquo;s fleet are perfectly suited for your transportation requirements.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  RATE CARDS — the 5 vehicle classes + hourly rates from the WP source page,
+  reusing the same fleet inventory photos as the Fleet page. Rates are quoted
+  starting hourly figures, not a full price list — final pricing depends on
+  trip length, date, and stops, so each card still routes to Book Now /
+  request-a-quote rather than a self-serve checkout.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+    <div class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="grid h-44 place-items-center bg-white">
+        <img src="{% static 'public/img/2.png' %}" alt="Full-size 57-passenger motor coach" class="h-full w-full object-contain p-4 transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-5">
+        <h2 class="font-display text-[17px] font-semibold text-ink">Full Size Motor Coach</h2>
+        <p class="mt-1 text-[12.5px] text-muted">Late model 57-passenger bus</p>
+        <p class="mt-3 font-display text-[22px] font-semibold text-goldd">$164<span class="text-[13px] font-medium text-muted"> / hour</span></p>
+        <a href="/bookings/" class="btn-gold focus-gold mt-4 inline-flex w-fit items-center rounded-full px-4 py-2 text-[12.5px] font-semibold">Book Now</a>
+      </div>
+    </div>
+
+    <div class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="grid h-44 place-items-center bg-white">
+        <img src="{% static 'public/img/35passenger-shuttlebust-thumbfleet.png' %}" alt="Long 38-passenger mini coach" class="h-full w-full object-contain p-4 transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-5">
+        <h2 class="font-display text-[17px] font-semibold text-ink">Long Mini Coach</h2>
+        <p class="mt-1 text-[12.5px] text-muted">Late model 38-passenger bus</p>
+        <p class="mt-3 font-display text-[22px] font-semibold text-goldd">$98<span class="text-[13px] font-medium text-muted"> / hour</span></p>
+        <a href="/bookings/" class="btn-gold focus-gold mt-4 inline-flex w-fit items-center rounded-full px-4 py-2 text-[12.5px] font-semibold">Book Now</a>
+      </div>
+    </div>
+
+    <div class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="grid h-44 place-items-center bg-white">
+        <img src="{% static 'public/img/1.jpg' %}" alt="28-passenger mini bus" class="h-full w-full object-contain p-4 transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-5">
+        <h2 class="font-display text-[17px] font-semibold text-ink">Mini Bus</h2>
+        <p class="mt-1 text-[12.5px] text-muted">Late model 28-passenger bus</p>
+        <p class="mt-3 font-display text-[22px] font-semibold text-goldd">$89<span class="text-[13px] font-medium text-muted"> / hour</span></p>
+        <a href="/bookings/" class="btn-gold focus-gold mt-4 inline-flex w-fit items-center rounded-full px-4 py-2 text-[12.5px] font-semibold">Book Now</a>
+      </div>
+    </div>
+
+    <div class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="grid h-44 place-items-center bg-white">
+        <img src="{% static 'public/img/suv.png' %}" alt="Luxury 6-passenger SUV" class="h-full w-full object-contain p-4 transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-5">
+        <h2 class="font-display text-[17px] font-semibold text-ink">Luxury SUV</h2>
+        <p class="mt-1 text-[12.5px] text-muted">Late model 6-passenger SUV</p>
+        <p class="mt-3 font-display text-[22px] font-semibold text-goldd">$84<span class="text-[13px] font-medium text-muted"> / hour</span></p>
+        <a href="/bookings/" class="btn-gold focus-gold mt-4 inline-flex w-fit items-center rounded-full px-4 py-2 text-[12.5px] font-semibold">Book Now</a>
+      </div>
+    </div>
+
+    <div class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="grid h-44 place-items-center bg-white">
+        <img src="{% static 'public/img/car3.png' %}" alt="Luxury 4-passenger sedan" class="h-full w-full object-contain p-4 transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-5">
+        <h2 class="font-display text-[17px] font-semibold text-ink">Luxury Sedan</h2>
+        <p class="mt-1 text-[12.5px] text-muted">Late model 4-passenger sedan</p>
+        <p class="mt-3 font-display text-[22px] font-semibold text-goldd">$70<span class="text-[13px] font-medium text-muted"> / hour</span></p>
+        <a href="/bookings/" class="btn-gold focus-gold mt-4 inline-flex w-fit items-center rounded-full px-4 py-2 text-[12.5px] font-semibold">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="mt-8 text-center text-[12.5px] leading-relaxed text-muted">
+    Rates shown are starting hourly figures and vary by trip length, date, and stops.
+    Request a free custom quote for your exact itinerary.
+  </p>
+</section>
+
+{% comment %}
+  CLOSING CTA — matches the Fleet/Reviews closing band, plus a phone-first
+  option for clients who'd rather talk pricing than fill out the form.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Tell us your group size and trip details and we&rsquo;ll match you to the right vehicle
+      &mdash; a free quote in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

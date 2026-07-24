@@ -102,6 +102,17 @@ def test_reviews_page_renders(client):
     assert b"<title>" in resp.content
 
 
+def test_rates_page_keeps_legacy_slug(client):
+    resp = client.get("/all-pro-charter-rates/")
+    assert resp.status_code == 200
+    assert b'rel="canonical"' in resp.content
+
+
+def test_rates_page_drops_stale_covid_banner(client):
+    resp = client.get("/all-pro-charter-rates/")
+    assert b"COVID" not in resp.content
+
+
 def test_reviews_no_fabricated_rating(client):
     resp = client.get("/reviews/")
     assert resp.status_code == 200
