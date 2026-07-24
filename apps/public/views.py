@@ -29,7 +29,11 @@ def _booking_throttle_exceeded(request) -> bool:
 
 
 def home(request):
-    return render(request, "public/home.html")
+    return render(
+        request,
+        "public/home.html",
+        {"form": BookingRequestForm(), "service_options": SERVICE_TYPE_CHOICES},
+    )
 
 
 def bookings(request):

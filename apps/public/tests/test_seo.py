@@ -1,6 +1,8 @@
 import json
 import re
 
+from django.urls import reverse
+
 
 def _jsonld(content: bytes) -> list[dict]:
     blocks = re.findall(rb'<script type="application/ld\+json">(.*?)</script>', content, re.S)
@@ -19,3 +21,17 @@ def test_home_emits_localbusiness_schema(client):
     resp = client.get("/")
     types = {b.get("@type") for b in _jsonld(resp.content)}
     assert "LocalBusiness" in types
+
+
+def test_home_embeds_booking_widget(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    bookings_url = reverse("public:bookings").encode()
+    assert bookings_url in resp.content
+    assert b'name="pickup_date"' in resp.content
+
+
+def test_home_title_refined(client):
+    resp = client.get("/")
+    assert b"Virginia" in resp.content
+    assert b"Transportation" in resp.content
