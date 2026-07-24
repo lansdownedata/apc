@@ -99,3 +99,7 @@ def service_weddings(request):
 
 def service_personal(request):
     return render(request, "public/services/personal.html")
+
+
+def reviews(request):
+    return render(request, "public/reviews.html")

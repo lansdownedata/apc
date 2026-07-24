@@ -1,0 +1,115 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% comment %}
+  templates/public/reviews.html — public reviews page (WP parity: /reviews/).
+
+  Product decision (see task-7 override): the WordPress source page has no
+  authored testimonials text and no verifiable star-rating source, so this
+  page does NOT emit AggregateRating/Review JSON-LD — fabricating one risks a
+  Google manual action for misleading structured data. Real social proof is
+  shown instead as the client's own review-quote graphics (screenshots they
+  already published, pulled from the WP media library) rendered as plain
+  img tags — genuine content, no machine-readable rating claims. Only the
+  global LocalBusiness schema (base_public's default schema block) is
+  emitted; this template intentionally does not override that block.
+{% endcomment %}
+
+{% block meta %}
+<title>{% block title %}Reviews - All Pro Charter{% endblock %}</title>
+<meta name="description" content="See what clients say about All Pro Charter's luxury ground transportation for weddings, corporate travel, and events across Virginia, Washington D.C. &amp; Maryland.">
+<link rel="canonical" href="{{ request.build_absolute_uri }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Reviews - All Pro Charter">
+<meta property="og:description" content="See what clients say about All Pro Charter's luxury ground transportation for weddings, corporate travel, and events across Virginia, Washington D.C. &amp; Maryland.">
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header subhead + intro line
+  ("Our goal isn't just to meet your expectations...").
+{% endcomment %}
+<section class="bg-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Reviews
+    </span>
+    <h1 class="mt-5 font-display text-[32px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[42px]">
+      Here&rsquo;s what people are saying.
+    </h1>
+    <p class="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-slate-300">
+      Our goal isn&rsquo;t just to meet your expectations &mdash; we aim to go above and beyond that.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  REVIEW GALLERY — the client's own real review-quote graphics (screenshots
+  they created and published on the WP site), reused verbatim as images.
+  Alt text transcribes the quote for accessibility; nothing here is
+  authored/invented copy, and no rating is expressed as structured data.
+{% endcomment %}
+<section class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    <img src="{% static 'public/img/313260057_630285925465495_56632332081666624_n.jpg' %}"
+         alt="Five-star review from Amber: &quot;Tarrick and his team were fantastic from the start. Very responsive, very professional. The buses were on time to pick up guests and overall just a really smooth process.&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+    <img src="{% static 'public/img/1.-Maria-K-copy-1-5.png' %}"
+         alt="Five-star review from Victoria M: &quot;All Pro Charter was absolutely AMAZING! I hired them for transportation for my wedding and they were nothing short of amazing. Timely, clean and responsive. Tarrick was a delight to work with through the process. Definitely go with All Pro for your chartering needs!&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+    <img src="{% static 'public/img/1.-Maria-K-copy-1-6.png' %}"
+         alt="Five-star review from Katelyn: &quot;We booked a large 55-person bus and a smaller 36-person bus so the ~80 guests could spread out and relax for the 25-45 min drive. All Pro Charter was very friendly and informative throughout the entire planning process!&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+    <img src="{% static 'public/img/392759642_838425617984857_325112029597184333_n.jpg' %}"
+         alt="Five-star review from Lauren Laskin: &quot;Would 100% recommend All Pro Charters for all your transportation needs!&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+    <img src="{% static 'public/img/353623508_769646618196091_5902386484606556411_n.jpg' %}"
+         alt="Five-star review from Tani S: &quot;Tarrick was communicative throughout the planning process and even had a day of coordinator on-site on the wedding day to ensure everything went smoothly since we had so many guests and multiple buses. Whenever there was a concern, they were happy to accommodate and be flexible. I highly recommend them.&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+    <img src="{% static 'public/img/384100551_830679138759505_7543942153176983098_n.jpg' %}"
+         alt="Five-star review from Aswin John: &quot;Tarrick was amazingly responsive and helpful throughout the planning process. We had to move around 300 guests around during our wedding in the D.C. area. All the shuttles and limo were on time and, despite there being rain all day, there was no delays that were due to transportation. We recommend Tarrick and his team to anyone that is holding a large event.&quot;"
+         class="w-full rounded-2xl object-cover ring-1 ring-line">
+  </div>
+</section>
+
+{% comment %}
+  TRUST BADGES — same WeddingWire badges used on About; genuine third-party
+  marks, not a claim we're rendering as structured data.
+{% endcomment %}
+<section class="bg-surface2">
+  <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
+    <div class="flex flex-wrap items-center justify-center gap-x-10 gap-y-6 opacity-90">
+      <img src="{% static 'public/img/All-Pro-Charter-Reviews-Ashburn-VA-32-Reviews.png' %}" alt="32 five-star All Pro Charter reviews on WeddingWire" class="h-10 w-auto sm:h-12">
+      <img src="{% static 'public/img/weddingwire.png' %}" alt="WeddingWire" class="h-14 w-auto sm:h-16">
+      <img src="{% static 'public/img/badge-weddingawards_en_US.png' %}" alt="WeddingWire Couples' Choice Award" class="h-14 w-auto sm:h-16">
+      <img src="{% static 'public/img/wedding-wire-couples-choice-2020-1.png' %}" alt="WeddingWire Couples' Choice Award 2020" class="h-14 w-auto sm:h-16">
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — matches the About/Home closing band.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Ready to move further, together?
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Join the clients above &mdash; get a free quote for your next trip in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

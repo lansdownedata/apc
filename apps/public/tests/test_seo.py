@@ -93,3 +93,23 @@ def test_service_pages_emit_service_schema(client, url, service_name):
 
 def test_services_hub_renders(client):
     assert client.get("/services/").status_code == 200
+
+
+def test_reviews_page_renders(client):
+    resp = client.get("/reviews/")
+    assert resp.status_code == 200
+    assert b'rel="canonical"' in resp.content
+    assert b"<title>" in resp.content
+
+
+def test_reviews_no_fabricated_rating(client):
+    resp = client.get("/reviews/")
+    assert resp.status_code == 200
+
+    types = {b.get("@type") for b in _jsonld(resp.content)}
+    assert "AggregateRating" not in types
+    assert "Review" not in types
+
+    assert b"ratingValue" not in resp.content
+    assert b"reviewCount" not in resp.content
+    assert b"aggregateRating" not in resp.content
