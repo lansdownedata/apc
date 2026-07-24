@@ -79,3 +79,23 @@ def contact(request):
 
 def privacy(request):
     return render(request, "public/privacy.html")
+
+
+def services(request):
+    return render(request, "public/services.html")
+
+
+def service_airport(request):
+    return render(request, "public/services/airport.html")
+
+
+def service_corporate(request):
+    return render(request, "public/services/corporate.html")
+
+
+def service_weddings(request):
+    return render(request, "public/services/weddings.html")
+
+
+def service_personal(request):
+    return render(request, "public/services/personal.html")

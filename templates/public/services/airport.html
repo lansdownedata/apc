@@ -1,0 +1,116 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% block meta %}
+<title>{% block title %}Airport Transportation - All Pro Charter{% endblock %}</title>
+<meta name="description" content="Reliable airport transportation in Washington D.C., Virginia &amp; Maryland — flight tracking, meet-and-greet pickups, and shuttle service for individuals, families, and groups. Book to or from any major airport.">
+<link rel="canonical" href="{{ request.build_absolute_uri }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Airport Transportation - All Pro Charter">
+<meta property="og:description" content="Reliable airport transportation in Washington D.C., Virginia &amp; Maryland — flight tracking, meet-and-greet pickups, and shuttle service for individuals, families, and groups. Book to or from any major airport.">
+{% endblock %}
+
+{% block schema %}
+{{ block.super }}
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Service","name":"Airport Transportation","provider":{"@type":"LocalBusiness","name":"All Pro Charter"},"areaServed":["Virginia","Washington, D.C.","Maryland"]}
+</script>
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("Reliable - Available -
+  Affordable" / "Airport transportation" subhead over the escalade parallax
+  background).
+{% endcomment %}
+<section class="relative overflow-hidden bg-charcoal">
+  <img src="{% static 'public/img/escalade.png' %}"
+       alt="A black Cadillac Escalade SUV used for All Pro Charter airport transportation"
+       class="absolute inset-0 h-full w-full object-cover opacity-50">
+  <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/[0.8] to-charcoal/[0.6]"></div>
+
+  <div class="relative mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-28 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Airport Transportation
+    </span>
+    <h1 class="mt-5 font-display text-[34px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[46px]">
+      Reliable, available, affordable
+    </h1>
+    <p class="mx-auto mt-5 max-w-2xl text-[15.5px] leading-relaxed text-slate-300">
+      We deliver one of the most dependable airport transportation services in the nation —
+      and our rates are unbeatable.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  BODY — the three WP text blocks (fleet quality, professional drivers,
+  flight-tracking pickups) paired with a small photo grid.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-10 lg:grid-cols-2 lg:gap-16">
+    <div class="space-y-5">
+      <p class="text-[15px] font-semibold leading-relaxed text-ink">
+        Our fleet is comprised of clean, well-maintained vehicles to guarantee your comfort
+        and safety. Our drivers will always greet you with a smile, carry your luggage, and
+        take you to your destination safely and comfortably.
+      </p>
+      <p class="text-[15px] font-semibold leading-relaxed text-ink">
+        We've provided thousands of great transportation services through professional and
+        courteous drivers with deep knowledge of the area. Every ride is personal.
+      </p>
+      <p class="text-[15px] font-semibold leading-relaxed text-ink">
+        We offer professional, on-time transportation to and from any major airport in the
+        nation. With our hassle-free airport pickups, we track your flight to pick you up on
+        time — even if it's early or late. Shuttle services are available for families and
+        larger groups.
+      </p>
+      <a href="/bookings/" class="btn-gold focus-gold mt-2 inline-flex w-fit items-center rounded-full px-6 py-3 text-[14px] font-semibold">
+        Book Now
+      </a>
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div class="overflow-hidden rounded-2xl">
+        <img src="{% static 'public/img/suv.png' %}" alt="Luxury SUV for airport transportation" class="aspect-square w-full bg-white object-contain p-4">
+      </div>
+      <div class="overflow-hidden rounded-2xl">
+        <img src="{% static 'public/img/sprinter.png' %}" alt="Sprinter van for airport shuttle service" class="aspect-square w-full bg-white object-contain p-4">
+      </div>
+      <div class="overflow-hidden rounded-2xl">
+        <img src="{% static 'public/img/car.png' %}" alt="Executive sedan for airport pickup" class="aspect-square w-full bg-white object-contain p-4">
+      </div>
+      <div class="overflow-hidden rounded-2xl">
+        <img src="{% static 'public/img/car3.png' %}" alt="Black car for airport dropoff" class="aspect-square w-full bg-white object-contain p-4">
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — "MOVE FURTHER TOGETHER" band, matching the other content
+  pages' closing section.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Flying in or heading out? Tell us your flight details and we'll be there — a free quote
+      in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
