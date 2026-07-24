@@ -87,7 +87,8 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
   **factory-boy** factories live in each app at `apps/<app>/factories.py` (reusable fixtures).
 - Tests live in `apps/<app>/tests/` (or `tests.py`). Run: `pytest` (whole suite) or
   `pytest apps/leads`. Keep output pristine.
-- Cover the **logic**: pricing (transfer flat vs hourly `max(hours,min)×rate`), quote totals,
+- Cover the **logic**: pricing (unified `rate × max(hours,min_hours) + gratuity`,
+  rate/minimums snapshotted from the VehicleType rate card), quote totals,
   `balance_due_date`, trip-status→phase mapping, multi-stop, idempotency.
 
 ## 🧱 Code style

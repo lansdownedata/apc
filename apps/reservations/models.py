@@ -84,9 +84,6 @@ class Reservation(TimeStampedModel):
     # reserved (not wired into pricing/editor yet — see the pricing-rework spec §4c)
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_flat = MoneyField()
-    # legacy — removed in the contract migration once the editor is switched over
-    base_rate = MoneyField()
-    hourly_rate = MoneyField()
     # drop-off (enables end times + overnight trips)
     dropoff_date = models.DateField(null=True, blank=True)
     dropoff_time = models.TimeField(null=True, blank=True)

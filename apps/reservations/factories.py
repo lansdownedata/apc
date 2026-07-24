@@ -17,7 +17,6 @@ class ReservationFactory(factory.django.DjangoModelFactory):
     passengers = 2
     rate = 185
     hours = 1  # transfer default → subtotal = rate * 1
-    base_rate = 185  # legacy, harmless until Task 4
 
     @factory.post_generation
     def stops(self, create, extracted, **kwargs):
@@ -33,7 +32,6 @@ class ReservationFactory(factory.django.DjangoModelFactory):
 
 class TransferReservationFactory(ReservationFactory):
     trip_type = Reservation.TripType.TRANSFER
-    base_rate = 185
 
 
 class HourlyReservationFactory(ReservationFactory):
