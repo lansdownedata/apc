@@ -50,7 +50,7 @@
       <i class="ti ti-map-search sa-search-icon"></i>
       <input type="text" class="sa-search-input"
              role="combobox" aria-autocomplete="list" :aria-expanded="open"
-             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+             autocomplete="sa-nofill" autocorrect="off" autocapitalize="off" spellcheck="false"
              data-1p-ignore data-lpignore="true" data-form-type="other"
              placeholder="Search a place or address…"
              x-model="query" @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
