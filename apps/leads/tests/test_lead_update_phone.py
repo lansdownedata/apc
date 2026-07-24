@@ -73,3 +73,14 @@ def test_new_lead_form_allows_blank_phone():
     form = NewLeadForm({"name": "Ada", "phone": "", "channel": "website"})
     assert form.is_valid(), form.errors
     assert form.cleaned_data["phone"] == ""
+
+
+def test_lead_update_rejects_duplicate_email(client):
+    from apps.contacts.factories import ContactFactory
+
+    ContactFactory(email="taken@example.com")
+    lead = LeadFactory()
+    client.force_login(UserFactory())
+    resp = client.post(reverse("lead_update", args=[lead.pk]), {"email": "TAKEN@example.com"})
+    assert resp.status_code == 400
+    assert "email" in resp.json()["error"].lower()
