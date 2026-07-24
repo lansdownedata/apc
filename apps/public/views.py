@@ -53,3 +53,23 @@ def bookings(request):
 
 def booking_thanks(request):
     return render(request, "public/booking_thanks.html")
+
+
+def about(request):
+    return render(request, "public/about.html")
+
+
+def fleet(request):
+    return render(request, "public/fleet.html")
+
+
+def contact(request):
+    return render(
+        request,
+        "public/contact.html",
+        {"form": BookingRequestForm(), "service_options": SERVICE_TYPE_CHOICES},
+    )
+
+
+def privacy(request):
+    return render(request, "public/privacy.html")

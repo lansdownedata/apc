@@ -1,6 +1,7 @@
 import json
 import re
 
+import pytest
 from django.urls import reverse
 
 
@@ -35,3 +36,27 @@ def test_home_title_refined(client):
     resp = client.get("/")
     assert b"Virginia" in resp.content
     assert b"Transportation" in resp.content
+
+
+@pytest.mark.parametrize(
+    "url,phrase",
+    [
+        ("/about-us/", b"About"),
+        ("/fleet/", b"Fleet"),
+        ("/contact/", b"Contact"),
+        ("/privacy-policy/", b"Privacy"),
+    ],
+)
+def test_content_pages_render_with_title_and_canonical(client, url, phrase):
+    resp = client.get(url)
+    assert resp.status_code == 200
+    assert phrase in resp.content
+    assert b'rel="canonical"' in resp.content
+    assert b"<title>" in resp.content
+
+
+def test_contact_page_emits_contactpage_schema(client):
+    resp = client.get("/contact/")
+    types = {b.get("@type") for b in _jsonld(resp.content)}
+    assert "ContactPage" in types
+    assert "LocalBusiness" in types
