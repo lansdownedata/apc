@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Prefetch, Q
 from django.http import HttpRequest, HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 
+from .forms import VendorForm
 from .models import INSURANCE_SEVERITY, Vendor, VendorDocument, VendorInsurance
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(INSURANCE_SEVERITY)}
@@ -132,4 +134,33 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
         request,
         "vendors/vendor_detail.html",
         {"nav": "vendors", "page_title": vendor.name, "vendor": vendor},
+    )
+
+
+@login_required
+def vendor_create(request: HttpRequest) -> HttpResponse:
+    form = VendorForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        vendor = form.save()
+        messages.success(request, "Vendor added.")
+        return redirect("vendor_detail", pk=vendor.pk)
+    return render(
+        request,
+        "vendors/vendor_form.html",
+        {"nav": "vendors", "page_title": "New vendor", "form": form, "target": None},
+    )
+
+
+@login_required
+def vendor_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    target = get_object_or_404(Vendor, pk=pk)
+    form = VendorForm(request.POST or None, instance=target)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Vendor updated.")
+        return redirect("vendor_detail", pk=target.pk)
+    return render(
+        request,
+        "vendors/vendor_form.html",
+        {"nav": "vendors", "page_title": target.name, "form": form, "target": target},
     )
