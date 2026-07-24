@@ -90,7 +90,7 @@ header, aside, main, .wash-gold {
 
 .font-display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
 .font-mono2   { font-family: 'Spline Sans Mono', ui-monospace, 'SFMono-Regular', monospace; }
-.num          { font-variant-numeric: tabular-nums; }
+.num          { font-variant-numeric: lining-nums tabular-nums; }
 
 [x-cloak] { display: none !important; }
 
