@@ -1,9 +1,48 @@
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Lower
 
 from apps.core.choices import Channel
 from apps.core.models import TimeStampedModel
 from apps.core.phone import to_e164
+
+
+class CompanyManager(models.Manager):
+    def get_or_create_by_name(self, name: str) -> "Company | None":
+        """Resolve a typed company name to a Company (case-insensitive), or None if blank."""
+        name = (name or "").strip()
+        if not name:
+            return None
+        existing = self.filter(name__iexact=name).first()
+        if existing is not None:
+            return existing
+        return self.create(name=name)
+
+
+class Company(TimeStampedModel):
+    """A reusable organization a Contact can belong to (CRM Account)."""
+
+    objects = CompanyManager()
+
+    name = models.CharField(max_length=200)
+    billing_contact = models.ForeignKey(
+        "contacts.Contact",
+        related_name="billed_companies",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="The person billed for this company's bookings.",
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(Lower("name"), name="uniq_company_name_ci"),
+        ]
+        verbose_name_plural = "companies"
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class ContactManager(models.Manager):
