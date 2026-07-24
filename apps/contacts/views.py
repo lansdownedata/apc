@@ -15,6 +15,7 @@ from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Su
 from django.db.models.functions import Coalesce
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
@@ -138,6 +139,9 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "leads": leads,
             "channels": Channel.choices,
             "company_names": company_names,
+            "primary_addr_url": reverse("contact_address_update", args=[contact.pk, "primary"]),
+            "billing_addr_url": reverse("contact_address_update", args=[contact.pk, "billing"]),
+            "ac_url": reverse("integrations:geocode_autocomplete"),
         },
     )
 

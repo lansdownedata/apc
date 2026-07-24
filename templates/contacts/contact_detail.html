@@ -120,5 +120,24 @@
     </div>
   </div>
 
+  <!-- addresses -->
+  <div class="card p-5 sm:p-6 mt-4">
+    <div class="font-display text-[15px] font-semibold text-ink mb-4">Addresses</div>
+    <div class="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Primary address</div>
+    {% include "components/smart_address.html" with address=contact.primary_address update_url=primary_addr_url autocomplete_url=ac_url prefix="primary" %}
+
+    <div x-data="{ same: {{ contact.billing_same_as_primary|yesno:'true,false' }} }" class="mt-5 pt-4 border-t border-line">
+      <label class="inline-flex items-center gap-2 text-[12.5px] text-muted">
+        <input type="checkbox" x-model="same"
+               @change="fetch('{% url 'contact_update' contact.pk %}', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCookie('csrftoken')}, body: 'billing_same_as_primary=' + same})">
+        Billing address same as primary
+      </label>
+      <div x-show="!same" x-cloak class="mt-3">
+        <div class="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Billing address</div>
+        {% include "components/smart_address.html" with address=contact.billing_address update_url=billing_addr_url autocomplete_url=ac_url prefix="billing" %}
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
