@@ -32,6 +32,7 @@ DJANGO_APPS = [
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "anymail",  # ESP email backend (Postmark) — see the email section below
 ]
 # Local apps — the Lead Manager domain (see docs ERD/scope).
 LOCAL_APPS = [
@@ -179,22 +180,26 @@ QUOTE_EXPIRY_DAYS_BEFORE_PICKUP = env.int("QUOTE_EXPIRY_DAYS_BEFORE_PICKUP", def
 TOUCHPOINTS_ENABLED = env.bool("TOUCHPOINTS_ENABLED", default=False)  # dev safety: off by default
 COMPANY_NAME = env("COMPANY_NAME", default="All Pro Charter")
 COMPANY_PHONE = env("COMPANY_PHONE", default="")
-COMPANY_EMAIL = env("COMPANY_EMAIL", default="")
+COMPANY_EMAIL = env("COMPANY_EMAIL", default="reservations@allprocharter.com")
 # Public https base of the portal, e.g. https://<NGROK_HOST> in dev; required for touch-point
 # quote links (distinct from LA_WEBHOOK_BASE_URL, which is LimoAnywhere-specific).
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")
 
-# ---------------------------------------------------------------- email (SMTP)
-# Provider-agnostic: Google Workspace, Postmark, SendGrid all speak SMTP. Dev overrides
-# EMAIL_BACKEND to the console backend (config/settings/dev.py).
-EMAIL_HOST = env("EMAIL_HOST", default="")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
-EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="All Pro Charter <noreply@localhost>")
-# seconds; unset (None) means a hung SMTP host hangs the worker forever
-EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
+# ---------------------------------------------------------------- email (Postmark / Anymail)
+# Sent through Postmark's HTTP API via django-anymail. One credential: the Postmark Server
+# API Token (POSTMARK_SERVER_TOKEN in .env). Anymail is a drop-in EMAIL_BACKEND, so the
+# send_html_email primitive is unchanged. The allprocharter.com domain is DKIM +
+# Return-Path verified in Postmark, so reservations@allprocharter.com sends freely.
+# Dev defaults to the console backend (config/settings/dev.py) until EMAIL_BACKEND is
+# flipped to the Anymail backend.
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="anymail.backends.postmark.EmailBackend")
+ANYMAIL = {
+    "POSTMARK_SERVER_TOKEN": env("POSTMARK_SERVER_TOKEN", default=""),
+    "REQUESTS_TIMEOUT": 10,  # seconds; bound the API call so a hung request can't hang a worker
+}
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default="All Pro Charter <reservations@allprocharter.com>"
+)
 
 # ---------------------------------------------------------------- logging
 LOGGING = {

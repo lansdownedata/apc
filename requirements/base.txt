@@ -12,6 +12,7 @@ django-environ>=0.11,<0.13
 requests>=2.32,<3.0          # Zapier / LimoAnywhere / Podium HTTP
 stripe>=10.0                 # deposits + off-session balance charges
 cryptography>=43,<46         # encrypt LA customer passwords at rest
+django-anymail[postmark]>=12,<16  # Postmark email backend (quotes + confirmations)
 
 # --- Media ---
 Pillow>=11.0,<13.0           # required by ImageField (vehicle-type photos)
