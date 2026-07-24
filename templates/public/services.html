@@ -1,0 +1,152 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% block meta %}
+<title>{% block title %}Ground Transportation Services - All Pro Charter{% endblock %}</title>
+<meta name="description" content="With All Pro Charter, we have a coordinating concierge who will plan and fulfill the service you have chosen.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ground Transportation Services - All Pro Charter">
+<meta property="og:description" content="With All Pro Charter, we have a coordinating concierge who will plan and fulfill the service you have chosen.">
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — re-flowed from the WP fullwidth header ("Airport - Weddings -
+  Corporate - Passenger Transport" / "Our Services" subhead + concierge blurb).
+{% endcomment %}
+<section class="relative overflow-hidden bg-charcoal">
+  <img src="{% static 'public/img/DSC04088.jpg' %}"
+       alt="An All Pro Charter executive vehicle waiting curbside"
+       class="absolute inset-0 h-full w-full object-cover opacity-50">
+  <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/[0.8] to-charcoal/[0.6]"></div>
+
+  <div class="relative mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-28 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Our Services
+    </span>
+    <h1 class="mt-5 font-display text-[34px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[46px]">
+      Airport, weddings, corporate &amp; personal transport
+    </h1>
+    <p class="mx-auto mt-5 max-w-2xl text-[15.5px] leading-relaxed text-slate-300">
+      With All Pro Charter, a coordinating concierge plans and fulfills the service you've
+      chosen — taking care of everything from start to finish, for meetings, weddings, and
+      every important event in between.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  SERVICE GRID — the four service lines from the WP page, each card linking
+  to its dedicated sub-page.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-6 sm:grid-cols-2">
+
+    <a href="{% url 'public:service_airport' %}"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/qtq80-HUfFx3.jpeg' %}" alt="Airport transportation SUV"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <h2 class="font-display text-[19px] font-semibold text-ink">Airport Transportation</h2>
+        <p class="mt-2 flex-1 text-[14px] leading-relaxed text-muted">
+          Individual, family, and shuttle rides to and from any major airport — with flight
+          tracking so we're always there when you land.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Learn more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="{% url 'public:service_corporate' %}"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/2.png' %}" alt="Corporate ground transportation"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <h2 class="font-display text-[19px] font-semibold text-ink">Corporate Transportation</h2>
+        <p class="mt-2 flex-1 text-[14px] leading-relaxed text-muted">
+          Company events, outings, and shuttles — reliable, hassle-free ground transportation
+          trusted by top corporations, organizations, and government agencies.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Learn more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="{% url 'public:service_weddings' %}"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/limo-hero-01.jpg' %}" alt="Wedding transportation limousine"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <h2 class="font-display text-[19px] font-semibold text-ink">Wedding Transportation</h2>
+        <p class="mt-2 flex-1 text-[14px] leading-relaxed text-muted">
+          Weddings, rehearsals, and more — stress-free travel for the whole party, so you can
+          enjoy the big day as much as your guests will.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Learn more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="{% url 'public:service_personal' %}"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/qtq80-q798pp.jpeg' %}" alt="Personal chauffeured transportation"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <h2 class="font-display text-[19px] font-semibold text-ink">Personal Transportation</h2>
+        <p class="mt-2 flex-1 text-[14px] leading-relaxed text-muted">
+          Errands, meetings, and trips — prompt, reliable service that gets you to your
+          appointments on time, every time, 24 hours a day, 7 days a week.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Learn more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — "MOVE FURTHER TOGETHER" band, matching the other content
+  pages' closing section.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Not sure which service fits your trip? Tell us the occasion and we'll match you to the
+      right vehicle — a free quote in 24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

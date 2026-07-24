@@ -1,0 +1,226 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+
+{% comment %}
+  templates/public/blog_index.html — public blog index (WP parity: /blogs/).
+  Lists the 6 posts we ported from the WordPress export, newest first, each
+  linking to its exact legacy dated URL (SEO link-equity — see urls.py).
+{% endcomment %}
+
+{% block meta %}
+<title>{% block title %}Blog - All Pro Charter{% endblock %}</title>
+<meta name="description" content="News, tips, and updates from All Pro Charter — luxury ground transportation in Virginia, Washington D.C. &amp; Maryland.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Blog - All Pro Charter">
+<meta property="og:description" content="News, tips, and updates from All Pro Charter — luxury ground transportation in Virginia, Washington D.C. &amp; Maryland.">
+{% endblock %}
+
+{% block content %}
+
+{% comment %}
+  HERO — matches the reviews/services page pattern (charcoal band, gold eyebrow).
+{% endcomment %}
+<section class="bg-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <span class="inline-flex items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.14em] text-goldd ring-1 ring-white/15">
+      Blog
+    </span>
+    <h1 class="mt-5 font-display text-[32px] font-semibold leading-[1.1] tracking-tight text-white sm:text-[42px]">
+      News &amp; travel notes from All Pro Charter
+    </h1>
+    <p class="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-slate-300">
+      Awards, announcements, and practical guidance for booking ground transportation
+      in Virginia, Washington D.C. &amp; Maryland.
+    </p>
+  </div>
+</section>
+
+{% comment %}
+  POST GRID — newest first. Same card treatment as services.html (bg-surface,
+  ring-line, hover lift) so the site's card language stays consistent.
+{% endcomment %}
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
+  <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+    <a href="/2025/03/the-ultimate-guide-to-selecting-the-right-wedding-transportation-for-2025/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/417444582_906151881212230_681455248582491383_n.jpg' %}"
+             alt="A bride and groom's wedding party beside an All Pro Charter vehicle"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2025-03-15" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          March 15, 2025
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          The Ultimate Guide to Selecting the Right Wedding Transportation for 2025
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          Your wedding day deserves smooth, stress-free transportation. Here's the complete
+          2025 checklist for choosing the right provider — and how All Pro Charter checks
+          every box.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="/2025/03/all-pro-charter-named-2025-the-knot-best-of-weddings-weddingwire-couples-choice-award-winner/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/Untitled-2025-03-15T150648.789.png' %}"
+             alt="2025 The Knot Best of Weddings and WeddingWire Couples' Choice Award graphic"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2025-03-15" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          March 15, 2025
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          All Pro Charter Named 2025 The Knot Best of Weddings &amp; WeddingWire Couples&rsquo; Choice Award Winner!
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          We're honored to be named a 2025 The Knot Best of Weddings Winner and a 2025
+          WeddingWire Couples' Choice Award Winner — recognizing our commitment to luxury,
+          reliability, and exceptional wedding transportation.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="/2023/11/5-reasons-all-pro-charter-is-your-reliable-transportation-choice/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/DSC04088.jpg' %}"
+             alt="An All Pro Charter executive vehicle"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2023-11-06" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          November 6, 2023
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          5 Reasons All Pro Charter is Your Reliable Transportation Choice
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          Five reasons clients trust All Pro Charter: safety, punctuality, comfort, affordable
+          luxury, and exceptional customer service.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="/2022/11/5-tips-to-traveling-this-holiday-season/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/qtq80-J6p327.jpeg' %}"
+             alt="A traveler packing for a trip"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2022-11-22" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          November 22, 2022
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          5 Tips for Traveling this Holiday Season
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          Five simple tips for safe, stress-free holiday travel — from packing smart to
+          booking early.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="/2021/01/covid-19-update-all-pro-charter-is-cdc-compliant/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/escalade.png' %}"
+             alt="An All Pro Charter Cadillac Escalade"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2021-01-26" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          January 26, 2021
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          COVID-19 Update &ndash; All Pro Charter is CDC Compliant
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          Our number one priority is the health and safety of our employees, partners, and
+          passengers. Here's how All Pro Charter stays CDC compliant.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+    <a href="/2021/01/all-pro-charter-named-winner-in-2021-weddingwire-couples-choice-awards/"
+       class="group flex flex-col overflow-hidden rounded-2xl bg-surface ring-1 ring-line transition-all hover:-translate-y-0.5 hover:shadow-lg hover:ring-gold/[0.4]">
+      <div class="h-48 overflow-hidden">
+        <img src="{% static 'public/img/badge-weddingawards_en_US-1.png' %}"
+             alt="2021 WeddingWire Couples' Choice Award badge"
+             class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105">
+      </div>
+      <div class="flex flex-1 flex-col p-6">
+        <time datetime="2021-01-19" class="text-[12px] font-semibold uppercase tracking-[0.08em] text-goldd">
+          January 19, 2021
+        </time>
+        <h2 class="mt-2 font-display text-[18px] font-semibold leading-snug text-ink">
+          All Pro Charter Named Winner in 2021 WeddingWire Couples&rsquo; Choice Awards
+        </h2>
+        <p class="mt-2 flex-1 text-[13.5px] leading-relaxed text-muted">
+          All Pro Charter was named a winner of the 2021 WeddingWire Couples' Choice Award,
+          recognizing the top wedding professionals nationwide.
+        </p>
+        <span class="mt-4 inline-flex items-center gap-1 text-[13px] font-semibold text-goldd">
+          Read more
+          <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </span>
+      </div>
+    </a>
+
+  </div>
+</section>
+
+{% comment %}
+  CLOSING CTA — matches the Reviews/Wedding closing band.
+{% endcomment %}
+<section class="bg-gradient-to-br from-charcoal2 to-charcoal">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
+    <h2 class="font-display text-[28px] font-semibold tracking-tight text-white sm:text-[36px]">
+      Move further, together.
+    </h2>
+    <p class="mx-auto mt-3 max-w-lg text-[14.5px] leading-relaxed text-slate-400">
+      Tell us about your trip and we'll build your transportation plan — a free quote in
+      24 hours.
+    </p>
+    <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+        Book Now
+      </a>
+      <a href="tel:+12024242600"
+         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
+        Call (202) 424-2600
+      </a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

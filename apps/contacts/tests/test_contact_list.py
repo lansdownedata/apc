@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 import pytest
+from django.urls import reverse
 
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.leads.factories import LeadFactory
@@ -44,7 +45,7 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
     lost = LeadFactory(contact=contact, status=Lead.Status.LOST)
     PaymentPlanFactory(lead=lost, quote_total=Decimal("9999.00"))
 
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)
 
     # 1000 + 500 only — not 1000*3 + 500*2, and the lost 9999 excluded.
@@ -55,7 +56,7 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
 
 def test_contact_with_no_leads_has_zero_ltv(logged_in_client):
     contact = ContactFactory()
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)
     assert row.lifetime_value == Decimal("0.00")
     assert row.trips == 0
@@ -71,7 +72,7 @@ def test_trips_counts_reservations_across_leads(logged_in_client):
     ReservationFactory(lead=lead_a)
     ReservationFactory(lead=lead_a)
     ReservationFactory(lead=lead_b)
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     assert _row_for(resp.context["contacts"], contact).trips == 3
 
 
@@ -95,7 +96,7 @@ def test_search_matches_each_field(logged_in_client, field, value, term):
         phone="(000) 000-0000",
         email="other@example.com",
     )
-    resp = logged_in_client.get("/contacts/", {"q": term})
+    resp = logged_in_client.get(reverse("contact_list"), {"q": term})
     pks = {c.pk for c in resp.context["contacts"]}
     assert match.pk in pks
     assert other.pk not in pks
@@ -106,7 +107,7 @@ def test_header_totals(logged_in_client):
     booked = LeadFactory(contact=c1, status=Lead.Status.BOOKED)
     PaymentPlanFactory(lead=booked, quote_total=Decimal("1200.00"))
     ContactFactory()  # second contact, no leads → $0
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     assert resp.context["total_contacts"] == 2
     assert resp.context["total_ltv"] == Decimal("1200.00")
 
@@ -115,17 +116,17 @@ def test_row_link_targets_contact_profile(logged_in_client):
     contact = ContactFactory()
     LeadFactory(contact=contact, status=Lead.Status.QUOTED)
     newest = LeadFactory(contact=contact, status=Lead.Status.NEW)
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)
     assert row.latest_lead_id == newest.pk
-    assert f"/contacts/{contact.pk}/" in resp.content.decode()
+    assert reverse("contact_detail", args=[contact.pk]) in resp.content.decode()
 
 
 def test_last_activity_uses_latest_of_lead_and_message(logged_in_client):
     contact = ContactFactory()
     lead = LeadFactory(contact=contact, status=Lead.Status.QUOTED)
     msg = MessageFactory(lead=lead)
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)
     assert row.last_activity is not None
     # message is created after the lead, so last_activity tracks the message.
@@ -138,12 +139,12 @@ def test_ordered_by_most_recent_activity_first(logged_in_client):
     active = ContactFactory(name="Active Contact")
     lead = LeadFactory(contact=active, status=Lead.Status.QUOTED)
     MessageFactory(lead=lead)  # freshest activity
-    resp = logged_in_client.get("/contacts/")
+    resp = logged_in_client.get(reverse("contact_list"))
     ordered = [c.pk for c in resp.context["contacts"]]
     assert ordered.index(active.pk) < ordered.index(quiet.pk)
 
 
 def test_requires_login(client):
-    resp = client.get("/contacts/")
+    resp = client.get(reverse("contact_list"))
     assert resp.status_code == 302
     assert "/login" in resp["Location"]

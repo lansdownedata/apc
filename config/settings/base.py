@@ -29,6 +29,7 @@ DJANGO_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.humanize",
+    "django.contrib.sitemaps",
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
@@ -49,6 +50,7 @@ LOCAL_APPS = [
     "apps.notifications",
     "apps.portal",
     "apps.settings",
+    "apps.public",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -77,6 +79,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.portal.context_processors.chrome",
+                "apps.public.context_processors.canonical",
             ],
         },
     },

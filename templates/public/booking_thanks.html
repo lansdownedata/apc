@@ -1,0 +1,28 @@
+{% extends "public/base_public.html" %}
+
+{% block title %}Request received · All Pro Charter{% endblock %}
+{% block meta %}
+{{ block.super }}
+<meta name="description" content="Thanks for your booking request — All Pro Charter will follow up with a quote shortly.">
+{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-xl px-4 py-20 text-center sm:px-6 lg:px-8">
+  <div class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/[0.14] text-gold">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-7 w-7">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  </div>
+
+  <h1 class="mt-5 font-display text-[28px] font-semibold tracking-tight text-ink">Request received</h1>
+  <p class="mt-3 text-[15px] leading-relaxed text-muted">
+    Thanks for reaching out — a member of our team will follow up with a quote shortly.
+    Need to talk sooner? Call us at
+    <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold">(202) 424-2600</a>.
+  </p>
+
+  <a href="/" class="btn-gold focus-gold mt-8 inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">
+    Back to home
+  </a>
+</section>
+{% endblock %}
