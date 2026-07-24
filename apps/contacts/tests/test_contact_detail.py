@@ -113,6 +113,22 @@ def test_smart_address_view_block_city_postal_without_state(logged_in_client):
     assert "Boston,  02110" not in html
 
 
+def test_smart_address_view_block_line2_only_address(logged_in_client):
+    addr = AddressFactory(line2="Suite 400")
+    contact = ContactFactory(primary_address=addr)
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "Suite 400" in html
+    # the "No address on file" placeholder must start hidden for a line2-only address
+    assert 'style="display:none" x-show="!hasAddress()"' in html
+
+
+def test_contact_page_smart_address_starts_in_view_mode(logged_in_client):
+    contact = ContactFactory(primary_address=AddressFactory(line1="1 Elm St"))
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert '<div class="sa-view" x-show=' in html
+    assert '<div class="sa-edit" style="display:none"' in html
+
+
 def test_zero_orders_hides_card_and_shows_note(logged_in_client):
     contact = ContactFactory()
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
