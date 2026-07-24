@@ -6,7 +6,7 @@ from apps.contacts.factories import ContactFactory
 from apps.contacts.models import Contact
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.reservations.factories import TransferReservationFactory
+from apps.reservations.factories import HourlyReservationFactory, TransferReservationFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -73,6 +73,19 @@ def test_lead_detail_shows_reservations_and_total(client, agent):
     assert resp.status_code == 200
     assert resp.context["lead"] == lead
     assert resp.context["lead"].reservation_count == 2
+
+
+def test_lead_detail_shows_hourly_rate_not_blank(client, agent):
+    from decimal import Decimal
+
+    lead = LeadFactory(status=Lead.Status.QUOTED)
+    HourlyReservationFactory(lead=lead, rate=Decimal("295"))
+    client.force_login(agent)
+    resp = client.get(reverse("lead_detail", args=[lead.pk]))
+    assert resp.status_code == 200
+    content = resp.content.decode()
+    assert "295" in content
+    assert "$/hr" not in content
 
 
 def test_lead_detail_404_for_missing(client, agent):

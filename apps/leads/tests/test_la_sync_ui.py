@@ -25,9 +25,8 @@ def _draft(lead, **over):
         "time": "15:00",
         "vehicle": "",
         "pax": 2,
-        "baseRate": 200,
+        "rate": 200,
         "hours": 0,
-        "hourlyRate": 0,
         "minHours": 0,
         "stops": [{"address": "A"}, {"address": "B"}],
     }
@@ -46,14 +45,14 @@ def _post_save(client, payload):
 def test_editing_pushed_reservation_raises_la_changed_alert(client):
     res = TransferReservationFactory(la_reservation_id="67890")
     client.force_login(UserFactory())
-    _post_save(client, _draft(res.lead, id=res.pk, baseRate=250))
+    _post_save(client, _draft(res.lead, id=res.pk, rate=250))
     assert Notification.objects.filter(kind=Notification.Kind.LA_CHANGED).exists()
 
 
 def test_editing_unpushed_reservation_raises_no_alert(client):
     res = TransferReservationFactory(la_reservation_id="")
     client.force_login(UserFactory())
-    _post_save(client, _draft(res.lead, id=res.pk, baseRate=250))
+    _post_save(client, _draft(res.lead, id=res.pk, rate=250))
     assert not Notification.objects.filter(kind=Notification.Kind.LA_CHANGED).exists()
 
 
