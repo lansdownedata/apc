@@ -37,6 +37,7 @@ THIRD_PARTY_APPS = [
 # Local apps — the Lead Manager domain (see docs ERD/scope).
 LOCAL_APPS = [
     "apps.core",
+    "apps.addresses",
     "apps.accounts",
     "apps.contacts",
     "apps.vendors",
