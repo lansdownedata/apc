@@ -1,0 +1,9 @@
+{% if summary.status == 'expired' %}
+<span class="ins ins-expired"><i class="ti ti-alert-triangle"></i>{{ summary.label }}</span>
+{% elif summary.status == 'none' %}
+<span class="ins ins-none">{{ summary.label }}</span>
+{% elif summary.status == 'valid' %}
+<span class="ins ins-valid"><i class="ti ti-shield-check"></i>{{ summary.label }}</span>
+{% else %}
+<span class="ins ins-{{ summary.status }}"><i class="ti ti-clock"></i>{{ summary.label }}</span>
+{% endif %}

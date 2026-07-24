@@ -33,6 +33,7 @@
   --ok:           4 120  87;    --ok-soft:      209 240 226;
   --warn:       180 116  16;    --warn-soft:    250 238 205;
   --danger:     190  44  56;    --danger-soft:  250 222 224;
+  --orange:      194  65  12;   --orange-soft:  251 231 219;   /* insurance ≤15d tier */
   --info:         2 132 199;    --info-soft:    224 242 254;
 
   /* —— sidebar frame (always dark, both themes) ————————————————— */
@@ -62,6 +63,7 @@
   --ok:          52 199 142;    --ok-soft:       22  46  38;
   --warn:       226 178  74;    --warn-soft:     52  44  22;
   --danger:     244 113 124;    --danger-soft:   54  28  32;
+  --orange:      251 146  60;   --orange-soft:   60  30  14;
   --info:        96 165 250;    --info-soft:     23  37  56;
 
   --ring:        rgb(var(--gold) / .38);
@@ -120,6 +122,24 @@ header, aside, main, .wash-gold {
   box-shadow: var(--shadow-card);
 }
 .hairline { border-color: rgb(var(--border)); }
+
+/* ------------------------------------------------ vendor insurance status */
+.ins { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; white-space:nowrap; }
+.ins i { font-size:13px; }
+.ins-valid    { color: rgb(var(--ok)); }
+.ins-expiring { color: rgb(var(--warn)); }
+.ins-urgent   { color: rgb(var(--orange)); }
+.ins-critical { color: rgb(var(--danger)); }
+.ins-none     { color: rgb(var(--muted)); }
+/* expired reads as categorically worse than "N days left": solid, not text */
+.ins-expired  { color:#fff; background: rgb(var(--danger)); border-radius:999px; padding:3px 9px; font-weight:700; }
+
+.attn-strip { border:1px solid rgb(var(--warn) / .35); border-radius:16px; background: rgb(var(--warn-soft) / .5); overflow:hidden; }
+.attn-row { border-left:3px solid transparent; }
+.attn-row:hover { background: rgb(var(--surface-2)); }
+.edge-expired, .edge-critical { border-left-color: rgb(var(--danger)); }
+.edge-urgent   { border-left-color: rgb(var(--orange)); }
+.edge-expiring { border-left-color: rgb(var(--warn)); }
 
 /* gold-tinted active row / hover wash */
 .wash-gold { background: linear-gradient(90deg, rgb(var(--gold) / .10), rgb(var(--gold) / .03)); }
