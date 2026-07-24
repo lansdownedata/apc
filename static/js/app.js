@@ -402,6 +402,71 @@ function quoteWorkspace(opts = {}) {
 }
 window.quoteWorkspace = quoteWorkspace;
 
+/* -------------------------------------------------- contact profile */
+// Same blur/change-autosave + field-diffing pattern as quoteWorkspace's header
+// (only changed fields post to contact_update).
+function contactProfile(opts = {}) {
+  return {
+    updateUrl: opts.updateUrl,
+    header: opts.header || {},
+    _saved: null,
+
+    onPhoneBlur(e) {
+      const el = e.target;
+      if (!phoneIsValid(el)) {
+        el.classList.add("field-error");
+        Alpine.store("toast").push({
+          type: "danger",
+          title: "Invalid phone number",
+          message: "Check the number for the country you selected.",
+        });
+        return;
+      }
+      el.classList.remove("field-error");
+      this.header.phone = phoneValue(el);
+      this.saveHeader();
+    },
+
+    saveHeader() {
+      const changed = {};
+      for (const [key, value] of Object.entries(this.header)) {
+        if (!this._saved || this._saved[key] !== value) changed[key] = value;
+      }
+      if (Object.keys(changed).length === 0) return;
+
+      const body = new URLSearchParams(changed);
+      fetch(this.updateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        body,
+      }).then((r) => {
+        if (r.ok) {
+          this._saved = { ...this.header };
+          Alpine.store("toast").push({ type: "success", title: "Saved" });
+          return;
+        }
+        r.json()
+          .then((d) =>
+            Alpine.store("toast").push({
+              type: "danger",
+              title: "Could not save",
+              message: d.error || "",
+            }),
+          )
+          .catch(() =>
+            Alpine.store("toast").push({ type: "danger", title: "Could not save" }),
+          );
+      }).catch(() =>
+        Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }),
+      );
+    },
+  };
+}
+window.contactProfile = contactProfile;
+
 /* -------------------------------------------------- inbox */
 function inbox(opts = {}) {
   return {
@@ -534,7 +599,7 @@ function initTomSelects(root = document) {
     if (el.tomselect) return; // already enhanced
     new TomSelect(el, {
       allowEmptyOption: true,
-      create: false,
+      create: el.dataset.create !== undefined,
       placeholder: el.dataset.placeholder || "Select…",
       maxOptions: 1000,
       hidePlaceholder: false,

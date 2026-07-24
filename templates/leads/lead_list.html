@@ -93,7 +93,7 @@
                 <span class="w-9 h-9 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ lead.contact.name|slice:":2" }}</span>
                 <div class="min-w-0">
                   <div class="font-semibold text-ink leading-tight truncate">{{ lead.contact.name }}</div>
-                  <div class="text-[11px] text-muted truncate">{{ lead.get_channel_display }}{% if lead.contact.company %} · {{ lead.contact.company }}{% endif %}</div>
+                  <div class="text-[11px] text-muted truncate">{{ lead.get_channel_display }}{% if lead.contact.company %} · {{ lead.contact.company.name }}{% endif %}</div>
                 </div>
               </div>
             </td>

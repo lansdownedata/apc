@@ -45,7 +45,7 @@ def build_registration_payload(contact, *, password: str) -> dict:
         "password": password,
     }
     if contact.company:
-        payload["company"] = contact.company
+        payload["company"] = contact.company.name
     if contact.phone:
         payload["cellular_phone1"] = contact.phone
     return payload
