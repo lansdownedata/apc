@@ -60,3 +60,16 @@ def test_contact_page_emits_contactpage_schema(client):
     types = {b.get("@type") for b in _jsonld(resp.content)}
     assert "ContactPage" in types
     assert "LocalBusiness" in types
+
+
+def test_contact_jsonld_valid_with_query_string(client):
+    resp = client.get("/contact/?utm_source=x&utm_medium=y")
+    assert resp.status_code == 200
+
+    blocks = re.findall(rb'<script type="application/ld\+json">(.*?)</script>', resp.content, re.S)
+    assert blocks, "expected at least one JSON-LD script block"
+
+    parsed = [json.loads(b.decode()) for b in blocks]
+
+    contact_page = next(b for b in parsed if b.get("@type") == "ContactPage")
+    assert "&amp;" not in contact_page["url"]
