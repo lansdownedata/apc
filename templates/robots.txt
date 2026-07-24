@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /portal/
+Disallow: /admin/
+Disallow: /quote/
 Sitemap: https://allprocharter.com/sitemap.xml

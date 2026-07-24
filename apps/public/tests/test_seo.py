@@ -113,6 +113,31 @@ def test_rates_page_drops_stale_covid_banner(client):
     assert b"COVID" not in resp.content
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/",
+        "/fleet/",
+        "/about-us/",
+        "/contact/",
+        "/services/",
+        "/services/airport/",
+        "/reviews/",
+    ],
+)
+def test_canonical_is_query_free(client, url):
+    resp = client.get(url, {"utm_source": "x", "utm_medium": "y"})
+    assert resp.status_code == 200
+
+    match = re.search(rb'rel="canonical" href="([^"]*)"', resp.content)
+    assert match, "expected a rel=canonical link tag"
+    href = match.group(1).decode()
+
+    assert href.endswith(url)
+    assert "utm_source" not in href
+    assert "?" not in href
+
+
 def test_reviews_no_fabricated_rating(client):
     resp = client.get("/reviews/")
     assert resp.status_code == 200
