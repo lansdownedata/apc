@@ -212,6 +212,33 @@ def test_transfer_draft_derives_hours_from_dropoff():
     assert res.line_total == Decimal("500.00")  # 200 * 2.5
 
 
+def test_discount_survives_the_draft_round_trip():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        {
+            "tripType": "hourly",
+            "pax": 2,
+            "rate": "100.00",
+            "hours": "3",
+            "minHours": "0",
+            "discountPct": "10",
+            "discountFlat": "25.00",
+            "date": "2026-08-29",
+            "time": "10:00",
+            "stops": [{"address": "A"}, {"address": "B"}],
+        },
+    )
+    assert res.discount_pct == Decimal("10")
+    assert res.discount_flat == Decimal("25.00")
+
+    # round trip: serialize back to a draft, feed it straight back in
+    draft = _reservation_draft(res)
+    again = save_reservation_from_draft(lead, {**draft, "tripType": "hourly"}, instance=res)
+    assert again.discount_pct == Decimal("10"), "discount_pct silently blanked on round trip"
+    assert again.discount_flat == Decimal("25.00"), "discount_flat silently blanked on round trip"
+
+
 def test_transfer_dropoff_before_pickup_is_rejected():
     from apps.leads.factories import LeadFactory
 
