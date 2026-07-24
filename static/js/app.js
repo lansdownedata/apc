@@ -771,6 +771,20 @@ function smartAddress(opts = {}) {
 
     init() { this._saved = JSON.stringify(this.fields); },
 
+    // ---- read-only display (sa-view block) ----
+    hasAddress() {
+      const f = this.fields;
+      return !!(f.landmark_name || f.line1 || f.city || f.state || f.postal);
+    },
+    streetLine() {
+      return [this.fields.line1, this.fields.line2].filter(Boolean).join(", ");
+    },
+    cityLine() {
+      const f = this.fields;
+      const statePostal = [f.state, f.postal].filter(Boolean).join(" ");
+      return [f.city, statePostal].filter(Boolean).join(", ");
+    },
+
     search() {
       const q = this.query.trim();
       if (!q) { this.results = []; this.open = false; return; }

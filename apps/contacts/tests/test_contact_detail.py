@@ -4,6 +4,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
+from apps.addresses.factories import AddressFactory
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.reservations.factories import ReservationFactory
@@ -73,3 +74,32 @@ def test_contact_detail_query_count_flat_across_leads(logged_in_client):
     for _ in range(3):
         ReservationFactory.create_batch(2, lead=LeadFactory(contact=big))
     assert query_count(big.pk) == query_count(small.pk)
+
+
+def test_smart_address_view_block_renders_formatted_address(logged_in_client):
+    addr = AddressFactory(
+        line1="123 Main St",
+        line2="Suite 400",
+        city="Boston",
+        state="MA",
+        postal="02110",
+        country="United States",
+    )
+    contact = ContactFactory(primary_address=addr)
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "123 Main St, Suite 400" in html
+    assert "Boston, MA 02110" in html
+    assert ">United States<" not in html  # US country line suppressed
+
+
+def test_smart_address_view_block_shows_foreign_country(logged_in_client):
+    addr = AddressFactory(line1="5 Rue Cler", city="Paris", country="France")
+    contact = ContactFactory(primary_address=addr)
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert ">France<" in html
+
+
+def test_smart_address_view_block_empty_address(logged_in_client):
+    contact = ContactFactory(primary_address=None)
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "No address on file" in html
