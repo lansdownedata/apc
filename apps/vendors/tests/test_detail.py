@@ -89,3 +89,13 @@ def test_documents_query_flat_across_distinct_uploaders(
     with django_assert_max_num_queries(12):
         resp = client.get(reverse("vendor_detail", args=[vendor.pk]))
     assert resp.status_code == 200
+
+
+def test_vendor_address_editor_stays_inline(client, django_user_model):
+    """Regression: vendor detail passes no viewmode flag, so the edit grid must
+    render visible (no display:none) and the view block must start hidden."""
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    html = client.get(reverse("vendor_detail", args=[vendor.pk])).content.decode()
+    assert '<div class="sa-edit" x-show=' in html
+    assert '<div class="sa-view" style="display:none"' in html

@@ -4,7 +4,13 @@
     update_url     — where changed fields POST (host-provided)
     autocomplete_url — usually {% url 'integrations:geocode_autocomplete' %}
     prefix         — namespaces DOM ids so two can coexist on a page (e.g. "primary"/"billing")
+    viewmode       — optional; pass 1 when the host toggles a parent-scope Alpine
+                     `editing` boolean. Renders the read-only formatted block first
+                     and hides the editor until `editing` is true. Omit for the
+                     always-editable behaviour (vendor detail).
   The search box has no name and never posts; the structured fields below are the saved truth.
+  View-block text is server-rendered for the initial paint, then kept live by Alpine
+  x-text off the same `fields` state the editor mutates.
 {% endcomment %}
 {% load json_filters %}
 <div class="sa" x-data="smartAddress({
@@ -26,38 +32,51 @@
          display_name: {{ address.display_name|default:''|json_string }}
        }
      })">
-  <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
-    <i class="ti ti-map-search sa-search-icon"></i>
-    <input type="text" class="sa-search-input" autocomplete="off"
-           placeholder="Search a place or address…"
-           x-model="query" @input.debounce.300ms="search()" @focus="results.length && (open=true)">
-    <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
-      <template x-if="loading"><div class="sa-msg">Searching…</div></template>
-      <template x-if="!loading && query && !results.length"><div class="sa-msg">No matches — type the address below.</div></template>
-      <template x-for="(r, i) in results" :key="i">
-        <button type="button" class="sa-item" :class="i===active && 'sa-item-active'"
-                @mouseenter="active=i" @click="choose(i)">
-          <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
-          <span class="sa-item-sub" x-text="r.display_name"></span>
-        </button>
-      </template>
+
+  <div class="sa-view"{% if not viewmode %} style="display:none"{% endif %} x-show="!(typeof editing === 'undefined' || editing)">
+    <div class="text-[13px] leading-relaxed text-ink"{% if not address.landmark_name and not address.line1 and not address.city and not address.state and not address.postal %} style="display:none"{% endif %} x-show="hasAddress()">
+      <div class="font-semibold"{% if not address.landmark_name %} style="display:none"{% endif %} x-show="fields.landmark_name" x-text="fields.landmark_name">{{ address.landmark_name|default:"" }}</div>
+      <div{% if not address.line1 and not address.line2 %} style="display:none"{% endif %} x-show="streetLine()" x-text="streetLine()">{{ address.line1|default:"" }}{% if address.line1 and address.line2 %}, {% endif %}{% if address.line2 %}{{ address.line2 }}{% endif %}</div>
+      <div{% if not address.city and not address.state and not address.postal %} style="display:none"{% endif %} x-show="cityLine()" x-text="cityLine()">{% if address.city %}{{ address.city }}{% if address.state or address.postal %}, {% endif %}{% endif %}{% if address.state %}{{ address.state }}{% endif %}{% if address.postal %} {{ address.postal }}{% endif %}</div>
+      <div class="text-muted" x-show="fields.country && fields.country !== 'United States'" x-text="fields.country && fields.country !== 'United States' ? fields.country : ''">{% if address.country and address.country != "United States" %}{{ address.country }}{% endif %}</div>
     </div>
+    <div class="text-[12.5px] text-muted"{% if address.landmark_name or address.line1 or address.city or address.state or address.postal %} style="display:none"{% endif %} x-show="!hasAddress()">No address on file</div>
   </div>
 
-  <div class="sa-grid">
-    <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-landmark">Landmark / place</label>
-      <input id="sa-{{ prefix }}-landmark" class="sa-input" x-model="fields.landmark_name" @blur="save()" placeholder="Optional venue name"></div>
-    <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line1">Address line 1</label>
-      <input id="sa-{{ prefix }}-line1" class="sa-input" x-model="fields.line1" @blur="save()"></div>
-    <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line2">Address line 2</label>
-      <input id="sa-{{ prefix }}-line2" class="sa-input" x-model="fields.line2" @blur="save()" placeholder="Apt, suite, floor…"></div>
-    <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-city">City</label>
-      <input id="sa-{{ prefix }}-city" class="sa-input" x-model="fields.city" @blur="save()"></div>
-    <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-state">State</label>
-      <input id="sa-{{ prefix }}-state" class="sa-input" x-model="fields.state" @blur="save()"></div>
-    <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-postal">ZIP</label>
-      <input id="sa-{{ prefix }}-postal" class="sa-input num" x-model="fields.postal" @blur="save()"></div>
-    <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-country">Country</label>
-      <input id="sa-{{ prefix }}-country" class="sa-input" x-model="fields.country" @blur="save()"></div>
+  <div class="sa-edit"{% if viewmode %} style="display:none"{% endif %} x-show="typeof editing === 'undefined' || editing">
+    <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
+      <i class="ti ti-map-search sa-search-icon"></i>
+      <input type="text" class="sa-search-input" autocomplete="off"
+             placeholder="Search a place or address…"
+             x-model="query" @input.debounce.300ms="search()" @focus="results.length && (open=true)">
+      <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
+        <template x-if="loading"><div class="sa-msg">Searching…</div></template>
+        <template x-if="!loading && query && !results.length"><div class="sa-msg">No matches — type the address below.</div></template>
+        <template x-for="(r, i) in results" :key="i">
+          <button type="button" class="sa-item" :class="i===active && 'sa-item-active'"
+                  @mouseenter="active=i" @click="choose(i)">
+            <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
+            <span class="sa-item-sub" x-text="r.display_name"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <div class="sa-grid">
+      <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-landmark">Landmark / place</label>
+        <input id="sa-{{ prefix }}-landmark" class="sa-input" x-model="fields.landmark_name" @blur="save()" placeholder="Optional venue name"></div>
+      <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line1">Address line 1</label>
+        <input id="sa-{{ prefix }}-line1" class="sa-input" x-model="fields.line1" @blur="save()"></div>
+      <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line2">Address line 2</label>
+        <input id="sa-{{ prefix }}-line2" class="sa-input" x-model="fields.line2" @blur="save()" placeholder="Apt, suite, floor…"></div>
+      <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-city">City</label>
+        <input id="sa-{{ prefix }}-city" class="sa-input" x-model="fields.city" @blur="save()"></div>
+      <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-state">State</label>
+        <input id="sa-{{ prefix }}-state" class="sa-input" x-model="fields.state" @blur="save()"></div>
+      <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-postal">ZIP</label>
+        <input id="sa-{{ prefix }}-postal" class="sa-input num" x-model="fields.postal" @blur="save()"></div>
+      <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-country">Country</label>
+        <input id="sa-{{ prefix }}-country" class="sa-input" x-model="fields.country" @blur="save()"></div>
+    </div>
   </div>
 </div>
