@@ -68,7 +68,7 @@ class ContactManager(models.Manager):
         self,
         *,
         name: str,
-        company: str = "",
+        company_name: str = "",
         phone: str = "",
         email: str = "",
         channel: str = Channel.WEBSITE,
@@ -76,9 +76,11 @@ class ContactManager(models.Manager):
         existing = self.find_match(phone=phone, email=email)
         if existing is not None:
             return existing
+        from apps.contacts.models import Company  # local import avoids ordering issues
+
         return self.create(
             name=name,
-            company=company,
+            company=Company.objects.get_or_create_by_name(company_name),
             phone=to_e164(phone) or (phone or "").strip(),
             email=(email or "").strip(),
             channel=channel,
@@ -91,7 +93,13 @@ class Contact(TimeStampedModel):
     objects = ContactManager()
 
     name = models.CharField(max_length=200)
-    company = models.CharField(max_length=200, blank=True)
+    company = models.ForeignKey(
+        "contacts.Company",
+        related_name="contacts",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     phone = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.WEBSITE)
@@ -100,4 +108,4 @@ class Contact(TimeStampedModel):
     notes = models.TextField(blank=True)
 
     def __str__(self) -> str:
-        return f"{self.name} · {self.company}" if self.company else self.name
+        return f"{self.name} · {self.company.name}" if self.company else self.name

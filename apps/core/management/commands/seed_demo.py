@@ -12,7 +12,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from apps.contacts.models import Contact
+from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead, VehicleType
@@ -74,12 +74,8 @@ class Command(BaseCommand):
             vehicles[name] = vt
 
         def new_lead(name, company, phone, email, channel, status, notes=""):
-            contact = Contact.objects.create(
-                name=name,
-                company=company,
-                phone=to_e164(phone) or phone,
-                email=email,
-                channel=channel,
+            contact = Contact.objects.match_or_create(
+                name=name, company_name=company, phone=phone, email=email, channel=channel
             )
             return Lead.objects.create(
                 contact=contact,
@@ -451,7 +447,7 @@ class Command(BaseCommand):
         #    (LTV $0, "New lead" affordance).
         Contact.objects.create(
             name="Priya Anand",
-            company="Anand Family Office",
+            company=Company.objects.get_or_create_by_name("Anand Family Office"),
             phone=to_e164("(617) 555-0207") or "(617) 555-0207",
             email="priya.anand@example.com",
             channel=Channel.PHONE,

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.integrations import la_sync
 from apps.leads.factories import LeadFactory
 from apps.reservations.factories import ReservationFactory, StopFactory
@@ -44,7 +44,10 @@ def _geocoded_reservation(trip_type=Reservation.TripType.TRANSFER, **kwargs):
 
 def test_registration_payload():
     contact = ContactFactory(
-        name="Jane Doe", email="jane@example.com", phone="+15551234567", company="Acme"
+        name="Jane Doe",
+        email="jane@example.com",
+        phone="+15551234567",
+        company=CompanyFactory(name="Acme"),
     )
     payload = la_sync.build_registration_payload(contact, password="pw123")
     assert payload == {

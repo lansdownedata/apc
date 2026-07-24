@@ -173,7 +173,7 @@ def test_lead_update_writes_contact_and_lead(client):
     lead.refresh_from_db()
     lead.contact.refresh_from_db()
     assert lead.contact.name == "New Name"
-    assert lead.contact.company == "Acme"
+    assert lead.contact.company.name == "Acme"
     assert lead.channel == "phone"
     assert lead.assigned_agent_id == agent.pk
 
