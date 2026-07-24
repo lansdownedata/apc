@@ -111,7 +111,7 @@ def test_detail_shows_preview_badge_and_payload_script(logged_in_client):
         result=ZapEvent.Result.PREVIEW,
         payload={"booking": {"search_result_id": None}},
     )
-    resp = logged_in_client.get(f"/leads/{res.lead.pk}/")
+    resp = logged_in_client.get(reverse("lead_detail", args=[res.lead.pk]))
     html = resp.content.decode()
     assert "LimoAnywhere sync" in html
     assert "Preview" in html
@@ -126,7 +126,7 @@ def test_detail_shows_sent_confirmation(logged_in_client):
         idempotency_key=f"create_reservation-res{res.pk}",
         result=ZapEvent.Result.SUCCESS,
     )
-    resp = logged_in_client.get(f"/leads/{res.lead.pk}/")
+    resp = logged_in_client.get(reverse("lead_detail", args=[res.lead.pk]))
     assert "ABC123" in resp.content.decode()
 
 
@@ -139,7 +139,7 @@ def test_resend_button_hidden_for_preview_when_unconfigured(client):
         result=ZapEvent.Result.PREVIEW,
     )
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    resp = client.get(f"/leads/{res.lead.pk}/")
+    resp = client.get(reverse("lead_detail", args=[res.lead.pk]))
     assert resp.context["can_resend_la"] is False
     assert "Resend to LA" not in resp.content.decode()
 
@@ -156,6 +156,6 @@ def test_resend_button_shown_for_preview_once_configured(client, settings):
         result=ZapEvent.Result.PREVIEW,
     )
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    resp = client.get(f"/leads/{res.lead.pk}/")
+    resp = client.get(reverse("lead_detail", args=[res.lead.pk]))
     assert resp.context["can_resend_la"] is True
     assert "Resend to LA" in resp.content.decode()
