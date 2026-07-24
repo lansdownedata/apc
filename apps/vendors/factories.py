@@ -1,6 +1,9 @@
-import factory
+from datetime import timedelta
 
-from .models import Vendor, VendorDocument, VendorDriver
+import factory
+from django.utils import timezone
+
+from .models import Vendor, VendorDocument, VendorDriver, VendorInsurance
 
 
 class VendorFactory(factory.django.DjangoModelFactory):
@@ -29,3 +32,15 @@ class VendorDocumentFactory(factory.django.DjangoModelFactory):
     vendor = factory.SubFactory(VendorFactory)
     label = "W-9"
     file = factory.django.FileField(filename="w9.pdf")
+
+
+class VendorInsuranceFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = VendorInsurance
+
+    vendor = factory.SubFactory(VendorFactory)
+    insurer = "Acme Mutual"
+    policy_number = factory.Sequence(lambda n: f"P-{n}")
+    coverage_amount = 1_000_000
+    effective_date = factory.LazyFunction(lambda: timezone.localdate() - timedelta(days=365))
+    expiry_date = factory.LazyFunction(lambda: timezone.localdate() + timedelta(days=180))
