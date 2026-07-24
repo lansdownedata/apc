@@ -64,7 +64,7 @@ def _decompose(item: dict) -> dict:
     name = (addr.get("name") or "").strip()  # POI name, if any
     return {
         "landmark_name": name if (name and (road or item.get("type") != "house")) else "",
-        "line1": street or (name if not road else ""),
+        "line1": street,
         "line2": "",
         "city": addr.get("city") or addr.get("town") or addr.get("village") or "",
         "state": addr.get("state") or "",

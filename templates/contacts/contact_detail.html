@@ -129,7 +129,9 @@
     <div x-data="{ same: {{ contact.billing_same_as_primary|yesno:'true,false' }} }" class="mt-5 pt-4 border-t border-line">
       <label class="inline-flex items-center gap-2 text-[12.5px] text-muted">
         <input type="checkbox" x-model="same"
-               @change="fetch('{% url 'contact_update' contact.pk %}', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCookie('csrftoken')}, body: 'billing_same_as_primary=' + same})">
+               @change="fetch('{% url 'contact_update' contact.pk %}', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCookie('csrftoken')}, body: 'billing_same_as_primary=' + same})
+                 .then(r => Alpine.store('toast').push(r.ok ? {type:'success',title:'Saved'} : {type:'danger',title:'Could not save'}))
+                 .catch(() => Alpine.store('toast').push({type:'danger',title:'Network error — not saved'}))">
         Billing address same as primary
       </label>
       <div x-show="!same" x-cloak class="mt-3">

@@ -740,6 +740,9 @@ function smartAddress(opts = {}) {
     open: false,
     loading: false,
     active: -1,
+    _saved: null,
+
+    init() { this._saved = JSON.stringify(this.fields); },
 
     search() {
       const q = this.query.trim();
@@ -766,6 +769,8 @@ function smartAddress(opts = {}) {
 
     save(/* field */) { this.saveAll(); },  // per-field blur → persist the whole group (simple + safe)
     saveAll() {
+      const snapshot = JSON.stringify(this.fields);
+      if (snapshot === this._saved) return;
       const body = new URLSearchParams();
       for (const [k, v] of Object.entries(this.fields)) body.append(k, v ?? "");
       fetch(this.updateUrl, {
@@ -773,7 +778,7 @@ function smartAddress(opts = {}) {
         headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": getCookie("csrftoken") },
         body,
       }).then((r) => {
-        if (r.ok) { Alpine.store("toast").push({ type: "success", title: "Address saved" }); return; }
+        if (r.ok) { this._saved = snapshot; Alpine.store("toast").push({ type: "success", title: "Address saved" }); return; }
         Alpine.store("toast").push({ type: "danger", title: "Could not save address" });
       }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — address not saved" }));
     },
