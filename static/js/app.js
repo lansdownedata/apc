@@ -328,10 +328,14 @@ function quoteWorkspace(opts = {}) {
     },
 
     blankReservation() {
+      const v = this.vehicles.length ? this.vehicles[0] : null;
       return {
         tripType: "transfer", service: "", date: "", time: "",
-        vehicle: this.vehicles.length ? this.vehicles[0].id : "",
-        pax: 1, baseRate: 0, hours: 4, hourlyRate: 295, minHours: 4,
+        dropoffDate: "", dropoffTime: "",
+        vehicle: v ? v.id : "",
+        pax: 1,
+        rate: v ? v.rate : 0, hours: 1, minHours: v ? v.transferMin : 0,
+        gratuityPct: 0, gratuityFlat: 0,
         stops: [
           { address: "", note: "", name: "", time: "" },
           { address: "", note: "", name: "", time: "" },
@@ -368,22 +372,45 @@ function quoteWorkspace(opts = {}) {
       this.syncVehicleSelect();
     },
     closeEditor() { this.editorOpen = false; },
+    applyVehicleRateCard() {
+      const v = this.vehicles.find((x) => String(x.id) === String(this.draft.vehicle));
+      if (!v) return;
+      this.draft.rate = v.rate;
+      this.draft.minHours = this.draft.tripType === "hourly" ? v.hourlyMin : v.transferMin;
+    },
+    onHoursChanged() {              // hourly: derive drop-off from pickup + hours
+      if (this.draft.tripType !== "hourly") return;
+      if (!this.draft.date || !this.draft.time || !this.draft.hours) return;
+      const start = new Date(this.draft.date + "T" + this.draft.time);
+      const end = new Date(start.getTime() + Number(this.draft.hours) * 3600000);
+      this.draft.dropoffDate = end.toISOString().slice(0, 10);
+      this.draft.dropoffTime = end.toTimeString().slice(0, 5);
+    },
+    onDropoffChanged() {            // transfer: derive hours from drop-off − pickup
+      if (this.draft.tripType !== "transfer") return;
+      if (!this.draft.date || !this.draft.time || !this.draft.dropoffDate || !this.draft.dropoffTime) return;
+      const start = new Date(this.draft.date + "T" + this.draft.time);
+      const end = new Date(this.draft.dropoffDate + "T" + this.draft.dropoffTime);
+      this.draft.hours = end > start ? Math.round((end - start) / 3600000 * 100) / 100 : 0;
+    },
     setDraftType(t) {
       this.draft.tripType = t;
-      if (t === "hourly") {
-        this.draft.hours = this.draft.hours || 4;
-        this.draft.hourlyRate = this.draft.hourlyRate || 295;
-        this.draft.minHours = this.draft.minHours || 4;
-      } else { this.draft.baseRate = this.draft.baseRate || 0; }
+      this.applyVehicleRateCard();
+      if (t === "hourly") { this.draft.hours = this.draft.hours || 4; this.onHoursChanged(); }
+      else { this.onDropoffChanged(); }
     },
     addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
-    billedHours(r) { return Math.max(r.hours || 0, r.minHours || 0); },
-    minApplied(r) { return r.tripType === "hourly" && (r.hours || 0) < (r.minHours || 0); },
-    resTotal(r) {
-      return r.tripType === "hourly" ? this.billedHours(r) * (r.hourlyRate || 0) : (r.baseRate || 0);
+    billedHours(r) { return Math.max(Number(r.hours) || 0, Number(r.minHours) || 0); },
+    minApplied(r) { return (Number(r.hours) || 0) < (Number(r.minHours) || 0); },
+    resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },
+    resGratuity(r) {
+      const flat = Number(r.gratuityFlat) || 0;
+      if (flat > 0) return flat;
+      return this.resSubtotal(r) * (Number(r.gratuityPct) || 0) / 100;
     },
+    resTotal(r) { return this.resSubtotal(r) + this.resGratuity(r); },
     saveReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
       d.lead_id = this.leadId;
