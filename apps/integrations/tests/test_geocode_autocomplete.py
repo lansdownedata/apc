@@ -120,3 +120,54 @@ def test_autocomplete_skips_non_dict_items(settings):
         g.return_value.status_code = 200
         g.return_value.json.return_value = ["junk", None]  # non-dict elements
         assert autocomplete("anything") == []
+
+
+def _params_of(mock_get):
+    return mock_get.call_args.kwargs["params"]
+
+
+def test_autocomplete_adds_soft_viewbox_when_biased(settings):
+    settings.LOCATIONIQ_API_KEY = "k"
+    settings.ADDRESS_BIAS_RADIUS_DEG = 0.75
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [POI]
+        autocomplete("dulles", lat=38.95, lon=-77.45)
+    p = _params_of(g)
+    assert "viewbox" in p and "bounded" not in p
+    # box built around the center: "<lon-R>,<lat+R>,<lon+R>,<lat-R>"
+    assert p["viewbox"] == "-78.2,39.7,-76.7,38.2"
+    assert p["limit"] == 20 and p["dedupe"] == 1 and p["normalizecity"] == 1
+    for forbidden in ("countrycodes", "bounded", "importancesort"):
+        assert forbidden not in p
+
+
+def test_autocomplete_no_viewbox_without_coords(settings):
+    settings.LOCATIONIQ_API_KEY = "k"
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [POI]
+        autocomplete("dulles")
+    assert "viewbox" not in _params_of(g)
+
+
+def test_autocomplete_bad_coords_skip_viewbox(settings):
+    settings.LOCATIONIQ_API_KEY = "k"
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [POI]
+        autocomplete("dulles", lat="abc", lon="def")  # never raises, no viewbox
+    assert "viewbox" not in _params_of(g)
+
+
+def test_view_forwards_coords(client, settings):
+    settings.LOCATIONIQ_API_KEY = "k"
+    client.force_login(UserFactory())
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [POI]
+        client.get(
+            reverse("integrations:geocode_autocomplete"),
+            {"q": "dulles", "lat": "38.95", "lon": "-77.45"},
+        )
+    assert "viewbox" in g.call_args.kwargs["params"]
