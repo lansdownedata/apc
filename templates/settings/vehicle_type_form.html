@@ -20,6 +20,12 @@
 
       {% include "components/form_field.html" with field=form.description %}
 
+      {% include "components/form_field.html" with field=form.rate %}
+      <div class="grid grid-cols-2 gap-3">
+        {% include "components/form_field.html" with field=form.hourly_min_hours %}
+        {% include "components/form_field.html" with field=form.transfer_min_hours %}
+      </div>
+
       {% comment %}
       Styled photo uploader. The real file input stays in the DOM (sr-only, still
       submittable) — imageUpload() only layers preview + drag/drop over it.

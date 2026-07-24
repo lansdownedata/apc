@@ -65,3 +65,22 @@ def test_reservation_fk_survives_the_rename():
     res = ReservationFactory(vehicle=vt)
     res.refresh_from_db()
     assert res.vehicle.name == "Sprinter Van"
+
+
+def test_vehicle_type_has_rate_card_fields():
+    from decimal import Decimal
+
+    vt = VehicleTypeFactory(
+        name="Rate Card SUV",
+        rate=Decimal("125.00"),
+        hourly_min_hours=Decimal("4"),
+        transfer_min_hours=Decimal("2"),
+    )
+    assert vt.rate == Decimal("125.00")
+    assert vt.hourly_min_hours == Decimal("4")
+    assert vt.transfer_min_hours == Decimal("2")
+
+
+def test_vehicle_type_rate_card_defaults_to_zero():
+    vt = VehicleTypeFactory(name="Zero Card")
+    assert vt.rate == 0 and vt.hourly_min_hours == 0 and vt.transfer_min_hours == 0

@@ -14,6 +14,9 @@ class VehicleTypeFactory(factory.django.DjangoModelFactory):
     capacity = 6
     description = ""
     sort_order = 0
+    rate = 0
+    hourly_min_hours = 0
+    transfer_min_hours = 0
 
 
 class LeadFactory(factory.django.DjangoModelFactory):
