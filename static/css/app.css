@@ -141,6 +141,16 @@ header, aside, main, .wash-gold {
 .edge-urgent   { border-left-color: rgb(var(--orange)); }
 .edge-expiring { border-left-color: rgb(var(--warn)); }
 
+/* compliance banner tones (detail page) */
+.tone { display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:13px; }
+.tone .tone-ic { width:34px; height:34px; border-radius:9px; flex:none; display:grid; place-items:center; }
+.tone-danger { border:1px solid rgb(var(--danger) / .4); background: rgb(var(--danger-soft) / .5); }
+.tone-danger .tone-ic { color: rgb(var(--danger)); background: rgb(var(--danger) / .14); }
+.tone-orange { border:1px solid rgb(var(--orange) / .4); background: rgb(var(--orange-soft) / .5); }
+.tone-orange .tone-ic { color: rgb(var(--orange)); background: rgb(var(--orange) / .14); }
+.tone-warn { border:1px solid rgb(var(--warn) / .4); background: rgb(var(--warn-soft) / .5); }
+.tone-warn .tone-ic { color: rgb(var(--warn)); background: rgb(var(--warn) / .14); }
+
 /* gold-tinted active row / hover wash */
 .wash-gold { background: linear-gradient(90deg, rgb(var(--gold) / .10), rgb(var(--gold) / .03)); }
 

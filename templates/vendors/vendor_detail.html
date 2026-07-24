@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[960px] mx-auto px-4 sm:px-6 py-6">
+
+  <a href="{% url 'vendor_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4">
+    <i class="ti ti-arrow-left text-[15px]"></i> Vendors
+  </a>
+
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ vendor.name }}</h1>
+      <p class="text-[12.5px] text-muted mt-1">
+        {{ vendor.contact_name|default:"" }}{% if vendor.phone %} · {{ vendor.phone }}{% endif %}{% if vendor.email %} · {{ vendor.email }}{% endif %}
+      </p>
+      <div class="mt-2.5 flex items-center gap-2 flex-wrap text-[11.5px] text-muted">
+        {% if vendor.service_area %}<span><i class="ti ti-map-pin text-[13px]"></i> {{ vendor.service_area }}</span>{% endif %}
+        {% if vendor.usdot_number %}<span class="text-line">·</span><span class="font-mono2">USDOT {{ vendor.usdot_number }}</span>{% endif %}
+        {% for vt in vendor.vehicle_types.all %}<span class="inline-block px-2 py-0.5 rounded-full bg-surface2 ring-1 ring-line">{{ vt.name }}</span>{% endfor %}
+      </div>
+    </div>
+    <a href="{% url 'vendor_edit' vendor.pk %}" class="btn-gold text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0">
+      <i class="ti ti-pencil text-[14px]"></i> Edit
+    </a>
+  </div>
+
+  {% if vendor.banner %}
+  <div class="tone tone-{{ vendor.banner.tone }} mb-5">
+    <div class="tone-ic"><i class="ti ti-shield-x text-[18px]"></i></div>
+    <div class="text-[13px] text-ink">{{ vendor.banner.message }}</div>
+  </div>
+  {% endif %}
+
+  <div class="grid gap-4 sm:grid-cols-2">
+    {# insurance leads — risk-first #}
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-3">
+        <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-shield-check text-[16px]" style="color:rgb(var(--gold-deep));"></i>Insurance</h2>
+        <a href="{% url 'insurance_create' vendor.pk %}" class="text-[12px] font-semibold" style="color:rgb(var(--gold-deep));">+ Add policy</a>
+      </div>
+      {% for p in vendor.policies.all %}
+      <div class="flex items-start justify-between gap-3 px-4 py-3 border-t border-line/60 hover:wash-gold">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-ink">{{ p.insurer }}</span>
+            {% if p.policy_number %}<span class="text-[11px] text-muted font-mono2">{{ p.policy_number }}</span>{% endif %}
+            {% include "vendors/_insurance_pill.html" with status=p.status %}
+          </div>
+          <div class="text-[11.5px] text-muted mt-1 flex items-center gap-2 flex-wrap num">
+            <span>${{ p.coverage_amount|floatformat:0 }}</span><span class="text-line">·</span>
+            <span>{{ p.effective_date|date:"M j, Y" }} – {{ p.expiry_date|date:"M j, Y" }}</span>
+            {% if p.certificate %}<a href="{{ p.certificate.url }}" class="font-semibold" style="color:rgb(var(--gold-deep));"><i class="ti ti-file-text text-[12px]"></i> COI</a>{% endif %}
+          </div>
+        </div>
+        <a href="{% url 'insurance_edit' p.pk %}" class="text-[11px] text-muted hover:text-ink shrink-0">Edit</a>
+      </div>
+      {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">No coverage on file. Add a policy to clear this vendor for assignments.</p>{% endfor %}
+    </div>
+
+    {# drivers #}
+    <div class="card overflow-hidden">
+      <div class="flex items-center justify-between px-4 pt-4 pb-3">
+        <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-user text-[16px]" style="color:rgb(var(--gold-deep));"></i>Drivers</h2>
+        <a href="{% url 'driver_create' vendor.pk %}" class="text-[12px] font-semibold" style="color:rgb(var(--gold-deep));">+ Add</a>
+      </div>
+      {% for d in vendor.drivers.all %}
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-line/60 hover:wash-gold {% if not d.active %}opacity-50{% endif %}">
+        <div><span class="font-medium text-ink text-[13px]">{{ d.name }}</span>{% if not d.active %}<span class="ml-1.5 text-[9.5px] font-bold uppercase tracking-wide text-muted">Inactive</span>{% endif %}
+          {% if d.phone %}<div class="text-[11px] text-muted font-mono2">{{ d.phone }}{% if d.license_number %} · {{ d.license_number }}{% endif %}</div>{% endif %}</div>
+        <a href="{% url 'driver_edit' d.pk %}" class="text-[11px] text-muted hover:text-ink shrink-0">Edit</a>
+      </div>
+      {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">No drivers on the roster yet.</p>{% endfor %}
+    </div>
+
+    {# documents #}
+    <div class="card overflow-hidden sm:col-span-2">
+      <div class="flex items-center justify-between px-4 pt-4 pb-3">
+        <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-files text-[16px]" style="color:rgb(var(--gold-deep));"></i>Documents</h2>
+        <a href="{% url 'document_create' vendor.pk %}" class="text-[12px] font-semibold" style="color:rgb(var(--gold-deep));">+ Upload</a>
+      </div>
+      {% for doc in vendor.documents.all %}
+      <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
+        <a href="{{ doc.file.url }}" class="font-medium text-ink hover:text-goldd text-[13px]"><i class="ti ti-paperclip text-[13px]"></i> {{ doc.label }}</a>
+        <span class="text-[11px] text-muted">Uploaded by {{ doc.uploaded_by|default:"—" }} on {{ doc.created_at|date:"M j, Y" }}</span>
+      </div>
+      {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">No documents attached yet.</p>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
