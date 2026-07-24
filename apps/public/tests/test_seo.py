@@ -26,8 +26,8 @@ def test_home_emits_localbusiness_schema(client):
 def test_home_embeds_booking_widget(client):
     resp = client.get("/")
     assert resp.status_code == 200
-    bookings_url = reverse("public:bookings").encode()
-    assert bookings_url in resp.content
+    bookings_url = reverse("public:bookings")
+    assert f'action="{bookings_url}"'.encode() in resp.content
     assert b'name="pickup_date"' in resp.content
 
 
