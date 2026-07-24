@@ -186,6 +186,9 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
     if phone is not None:
         contact.phone = phone
         fields.append("phone")
+    if "billing_same_as_primary" in request.POST:
+        contact.billing_same_as_primary = request.POST["billing_same_as_primary"] == "true"
+        fields.append("billing_same_as_primary")
     if fields:
         try:
             contact.save(update_fields=[*fields, "updated_at"])

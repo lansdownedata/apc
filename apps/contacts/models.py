@@ -108,6 +108,13 @@ class Contact(TimeStampedModel):
     la_account_id = models.CharField("LimoAnywhere account", max_length=64, blank=True)
     podium_contact_uid = models.CharField("Podium contact UID", max_length=64, blank=True)
     notes = models.TextField(blank=True)
+    primary_address = models.ForeignKey(
+        "addresses.Address", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    billing_address = models.ForeignKey(
+        "addresses.Address", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    billing_same_as_primary = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -117,6 +124,11 @@ class Contact(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.name} · {self.company.name}" if self.company else self.name
+
+    @property
+    def effective_billing_address(self):
+        """Billing address, falling back to the primary when 'same as primary' is set."""
+        return self.primary_address if self.billing_same_as_primary else self.billing_address
 
     def save(self, *args, **kwargs):
         # Blank email → NULL (many allowed); otherwise store lowercase for CI uniqueness.
