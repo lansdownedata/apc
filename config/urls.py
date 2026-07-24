@@ -47,6 +47,7 @@ urlpatterns = [
     # API routes are mounted here as apps expose routers, e.g.:
     # path("api/", include("config.api")),
     # public marketing site at root — added in Task 2 (MUST stay last)
+    path("", include("apps.public.urls")),  # public marketing site — keep last
 ]
 
 # Uploaded media (vehicle-type photos). django.conf.urls.static.static() is a no-op when
