@@ -111,14 +111,14 @@ def test_header_totals(logged_in_client):
     assert resp.context["total_ltv"] == Decimal("1200.00")
 
 
-def test_row_link_targets_most_recent_lead(logged_in_client):
+def test_row_link_targets_contact_profile(logged_in_client):
     contact = ContactFactory()
     LeadFactory(contact=contact, status=Lead.Status.QUOTED)
     newest = LeadFactory(contact=contact, status=Lead.Status.NEW)
     resp = logged_in_client.get("/contacts/")
     row = _row_for(resp.context["contacts"], contact)
     assert row.latest_lead_id == newest.pk
-    assert f"/leads/{newest.pk}/" in resp.content.decode()
+    assert f"/contacts/{contact.pk}/" in resp.content.decode()
 
 
 def test_last_activity_uses_latest_of_lead_and_message(logged_in_client):
