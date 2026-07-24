@@ -1,0 +1,26 @@
+{# templates/public/base_public.html — public marketing shell (no staff chrome) #}
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% block meta %}
+  <title>{% block title %}All Pro Charter{% endblock %}</title>
+  <meta name="description" content="Premium ground transportation in Virginia, Washington D.C. & Maryland.">
+  <link rel="canonical" href="{{ request.build_absolute_uri }}">
+  <meta property="og:site_name" content="All Pro Charter">
+  <meta property="og:type" content="website">
+  {% endblock %}
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v={{ asset_version }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-white text-charcoal antialiased">
+  {% include "public/_header.html" %}
+  <main>{% block content %}{% endblock %}</main>
+  {% include "public/_footer.html" %}
+  {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
+  {% block body_extra %}{% endblock %}
+</body>
+</html>
