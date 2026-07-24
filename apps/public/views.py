@@ -1,6 +1,5 @@
 from django.core.cache import cache
 from django.shortcuts import redirect, render
-from django.urls import reverse
 
 from .forms import SERVICE_TYPE_CHOICES, BookingRequestForm
 from .services import create_lead_from_booking
@@ -11,9 +10,9 @@ BOOKING_THROTTLE_LIMIT = 5
 BOOKING_THROTTLE_WINDOW_SECONDS = 60 * 60  # 1 hour
 
 
-def _booking_throttle_exceeded(request) -> bool:
-    """Rolling-window per-IP counter using Django's default cache (LocMemCache in
-    dev — per-process, so this throttle is per-worker until a shared cache like
+def _booking_throttle_key(request) -> str:
+    """Rolling-window per-IP counter key using Django's default cache (LocMemCache
+    in dev — per-process, so this throttle is per-worker until a shared cache like
     Redis/Memcached is configured for prod; acceptable baseline for now).
 
     NOTE: REMOTE_ADDR is trusted as-is; behind a reverse proxy in prod this needs
@@ -21,12 +20,25 @@ def _booking_throttle_exceeded(request) -> bool:
     at deploy time.
     """
     ip = request.META.get("REMOTE_ADDR", "unknown")
-    key = f"bookings-throttle:{ip}"
-    count = cache.get(key, 0)
-    if count >= BOOKING_THROTTLE_LIMIT:
-        return True
-    cache.set(key, count + 1, BOOKING_THROTTLE_WINDOW_SECONDS)
-    return False
+    return f"bookings-throttle:{ip}"
+
+
+def _booking_throttle_exceeded(request) -> bool:
+    """Peek at the rolling-window counter without incrementing it."""
+    return cache.get(_booking_throttle_key(request), 0) >= BOOKING_THROTTLE_LIMIT
+
+
+def _booking_throttle_increment(request) -> None:
+    """Count this request toward the per-IP limit.
+
+    Only called for outcomes that are actually abusive-or-successful — a Lead
+    that got created, or a tripped honeypot (spam) — never for an ordinary
+    validation failure. Otherwise a legitimate visitor who mis-fills the form a
+    few times in a row (wrong date format, forgot a phone number) gets locked
+    out for an hour on their own fumbles.
+    """
+    key = _booking_throttle_key(request)
+    cache.set(key, cache.get(key, 0) + 1, BOOKING_THROTTLE_WINDOW_SECONDS)
 
 
 def home(request):
@@ -40,11 +52,17 @@ def home(request):
 def bookings(request):
     if request.method == "POST":
         form = BookingRequestForm(request.POST)
+        # The honeypot field: real visitors never see or fill it, so a filled
+        # `company` is spam regardless of whether the rest of the form validates.
+        is_spam = bool(request.POST.get("company"))
         if _booking_throttle_exceeded(request):
             form.add_error(None, "Too many requests — please call (202) 424-2600.")
         elif form.is_valid():
             create_lead_from_booking(form.cleaned_data)
+            _booking_throttle_increment(request)
             return redirect("public:booking_thanks")
+        elif is_spam:
+            _booking_throttle_increment(request)
     else:
         form = BookingRequestForm()
     return render(
@@ -65,15 +83,10 @@ def fleet(request):
 
 
 def contact(request):
-    canonical_url = request.build_absolute_uri(reverse("public:contact"))
     return render(
         request,
         "public/contact.html",
-        {
-            "form": BookingRequestForm(),
-            "service_options": SERVICE_TYPE_CHOICES,
-            "canonical_url": canonical_url,
-        },
+        {"form": BookingRequestForm(), "service_options": SERVICE_TYPE_CHOICES},
     )
 
 
