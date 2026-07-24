@@ -101,11 +101,23 @@ class Contact(TimeStampedModel):
         on_delete=models.SET_NULL,
     )
     phone = models.CharField(max_length=32, blank=True)
-    email = models.EmailField(blank=True)
+    # null=True is intentional: blank saves as NULL so the case-insensitive unique
+    # constraint below allows any number of contacts with no email.
+    email = models.EmailField(blank=True, null=True)  # noqa: DJ001
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.WEBSITE)
     la_account_id = models.CharField("LimoAnywhere account", max_length=64, blank=True)
     podium_contact_uid = models.CharField("Podium contact UID", max_length=64, blank=True)
     notes = models.TextField(blank=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(Lower("email"), name="uniq_contact_email_ci"),
+        ]
+
     def __str__(self) -> str:
         return f"{self.name} · {self.company.name}" if self.company else self.name
+
+    def save(self, *args, **kwargs):
+        # Blank email → NULL (many allowed); otherwise store lowercase for CI uniqueness.
+        self.email = (self.email or "").strip().lower() or None
+        super().save(*args, **kwargs)
