@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging.factories import MessageFactory
@@ -85,10 +85,13 @@ def test_trips_counts_reservations_across_leads(logged_in_client):
     ],
 )
 def test_search_matches_each_field(logged_in_client, field, value, term):
-    match = ContactFactory(**{field: value})
+    kwargs = {field: value}
+    if field == "company":
+        kwargs["company"] = CompanyFactory(name=value)
+    match = ContactFactory(**kwargs)
     other = ContactFactory(
         name="Other Person",
-        company="",
+        company=None,
         phone="(000) 000-0000",
         email="other@example.com",
     )

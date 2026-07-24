@@ -82,19 +82,23 @@ def lead_list(request):
     if query:
         # quote_no is a computed property ("Q-{1040+pk}"), not a column — rebuild it
         # in SQL so the grid is searchable by "1065", "Q-1065", or a partial.
-        leads = leads.annotate(
-            quote_ref=Concat(
-                Value("Q-"),
-                Cast(1040 + F("id"), output_field=CharField()),
-                output_field=CharField(),
+        leads = (
+            leads.annotate(
+                quote_ref=Concat(
+                    Value("Q-"),
+                    Cast(1040 + F("id"), output_field=CharField()),
+                    output_field=CharField(),
+                )
             )
-        ).filter(
-            Q(quote_ref__icontains=query)
-            | Q(contact__name__icontains=query)
-            | Q(contact__company__icontains=query)
-            | Q(contact__email__icontains=query)
-            | Q(reservations__service__icontains=query)
-        ).distinct()
+            .filter(
+                Q(quote_ref__icontains=query)
+                | Q(contact__name__icontains=query)
+                | Q(contact__company__name__icontains=query)
+                | Q(contact__email__icontains=query)
+                | Q(reservations__service__icontains=query)
+            )
+            .distinct()
+        )
 
     everything = Lead.objects.all()
     counts = {
@@ -249,10 +253,15 @@ def lead_update(request, pk: int) -> JsonResponse:
 
     contact = lead.contact
     contact_fields = []
-    for field in ("name", "email", "company"):
+    for field in ("name", "email"):
         if field in request.POST:
             setattr(contact, field, request.POST.get(field, "").strip())
             contact_fields.append(field)
+    if "company" in request.POST:
+        from apps.contacts.models import Company
+
+        contact.company = Company.objects.get_or_create_by_name(request.POST.get("company", ""))
+        contact_fields.append("company")
     if normalized_phone is not None:
         contact.phone = normalized_phone
         contact_fields.append("phone")
@@ -464,7 +473,7 @@ def lead_create(request) -> HttpResponse:
     cd = form.cleaned_data
     contact = Contact.objects.match_or_create(
         name=cd["name"],
-        company=cd["company"],
+        company_name=cd["company"],
         phone=cd["phone"],
         email=cd["email"],
         channel=cd["channel"],

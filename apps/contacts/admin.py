@@ -13,4 +13,4 @@ class CompanyAdmin(admin.ModelAdmin):
 class ContactAdmin(admin.ModelAdmin):
     list_display = ("name", "company", "channel", "phone", "email", "la_account_id")
     list_filter = ("channel",)
-    search_fields = ("name", "company", "email", "phone")
+    search_fields = ("name", "company__name", "email", "phone")

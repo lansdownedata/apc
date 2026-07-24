@@ -49,7 +49,9 @@ def contact_list(request: HttpRequest) -> HttpResponse:
     if query:
         # Phones are stored E.164 (+16175559271); match on digits so a formatted
         # query like "(617) 555-9271" or "555-9271" still finds them.
-        lookup = Q(name__icontains=query) | Q(company__icontains=query) | Q(email__icontains=query)
+        lookup = (
+            Q(name__icontains=query) | Q(company__name__icontains=query) | Q(email__icontains=query)
+        )
         phone_digits = re.sub(r"\D", "", query)
         if len(phone_digits) >= 3:
             lookup |= Q(phone__icontains=phone_digits)
