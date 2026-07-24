@@ -1,5 +1,6 @@
 # scripts/scrape_wp.py — one-time WordPress content extractor. Not part of the app.
 """Pull pages, posts, SEO <head>, and images from allprocharter.com into docs/migration/."""
+
 import json
 import pathlib
 import re
@@ -44,25 +45,37 @@ def run() -> None:
     for kind in ("pages", "posts"):
         for item in _wp(kind):
             slug = item["slug"]
-            (OUT / f"{slug}.json").write_text(json.dumps({
-                "slug": slug,
-                "link": item["link"],
-                "title": item["title"]["rendered"],
-                "content_html": item["content"]["rendered"],
-                "excerpt": item["excerpt"]["rendered"],
-                "date": item.get("date"),
-            }, indent=2))
+            (OUT / f"{slug}.json").write_text(
+                json.dumps(
+                    {
+                        "slug": slug,
+                        "link": item["link"],
+                        "title": item["title"]["rendered"],
+                        "content_html": item["content"]["rendered"],
+                        "excerpt": item["excerpt"]["rendered"],
+                        "date": item.get("date"),
+                    },
+                    indent=2,
+                )
+            )
             # SEO head snapshot (Yoast title/description + JSON-LD)
             html = _get(item["link"]).decode("utf-8", "replace")
-            (HEAD / f"{slug}.json").write_text(json.dumps({
-                "title_tag": _first(r"<title>(.*?)</title>", html),
-                "meta_description": _first(
-                    r'<meta name="description" content="(.*?)"', html),
-                "canonical": _first(r'<link rel="canonical" href="(.*?)"', html),
-                "jsonld": re.findall(
-                    r'<script type="application/ld\+json"[^>]*>(.*?)</script>', html, re.S),
-                "images": re.findall(r'<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"', html),
-            }, indent=2))
+            (HEAD / f"{slug}.json").write_text(
+                json.dumps(
+                    {
+                        "title_tag": _first(r"<title>(.*?)</title>", html),
+                        "meta_description": _first(
+                            r'<meta name="description" content="(.*?)"', html
+                        ),
+                        "canonical": _first(r'<link rel="canonical" href="(.*?)"', html),
+                        "jsonld": re.findall(
+                            r'<script type="application/ld\+json"[^>]*>(.*?)</script>', html, re.S
+                        ),
+                        "images": re.findall(r'<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"', html),
+                    },
+                    indent=2,
+                )
+            )
     print(f"wrote inventory to {OUT}")
 
 
