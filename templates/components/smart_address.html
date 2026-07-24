@@ -10,6 +10,8 @@
 <div class="sa" x-data="smartAddress({
        updateUrl: {{ update_url|json_string }},
        acUrl: {{ autocomplete_url|json_string }},
+       fallbackLat: {{ address_bias_center.0|default:'null' }},
+       fallbackLon: {{ address_bias_center.1|default:'null' }},
        fields: {
          landmark_name: {{ address.landmark_name|default:''|json_string }},
          line1: {{ address.line1|default:''|json_string }},
@@ -30,7 +32,7 @@
     <i class="ti ti-map-search sa-search-icon"></i>
     <input type="text" class="sa-search-input" autocomplete="off"
            placeholder="Search a place or address…"
-           x-model="query" @input.debounce.300ms="search()" @focus="results.length && (open=true)">
+           x-model="query" @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
     <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
       <template x-if="loading"><div class="sa-msg">Searching…</div></template>
       <template x-if="!loading && query && !results.length"><div class="sa-msg">No matches — type the address below.</div></template>

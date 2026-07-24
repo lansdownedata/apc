@@ -757,6 +757,19 @@ function imageUpload(existingUrl) {
 window.imageUpload = imageUpload;
 
 /* ------------------------------------------------ smart-address (reusable) */
+/* Address ranking — all tunable constants here, no magic numbers in the scorer. */
+const SMART_ADDRESS_RANKING = { INDEX_WEIGHT: 1.0, NEAR_MI: 40, MID_MI: 90, NEAR_BONUS: 12, MID_BONUS: 6 };
+
+function haversineMiles(a, b) {
+  if (a.lat == null || a.lon == null || b.lat == null || b.lon == null || Number.isNaN(b.lat) || Number.isNaN(b.lon)) {
+    return Infinity;
+  }
+  const R = 3958.8, rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
 function smartAddress(opts = {}) {
   return {
     updateUrl: opts.updateUrl,
@@ -767,18 +780,54 @@ function smartAddress(opts = {}) {
     open: false,
     loading: false,
     active: -1,
+    _raw: [],
+    biasLat: opts.fallbackLat ?? null,
+    biasLon: opts.fallbackLon ?? null,
+    _locRequested: false,
     _saved: null,
 
     init() { this._saved = JSON.stringify(this.fields); },
 
+    requestLocation() {
+      if (this._locRequested || !("geolocation" in navigator)) return;
+      this._locRequested = true;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          this.biasLat = pos.coords.latitude;
+          this.biasLon = pos.coords.longitude;
+          if (this._raw.length) { this.results = this.rank(this._raw); this.active = this.results.length ? 0 : -1; }
+        },
+        () => {}, // denied / unavailable → keep the configured fallback center
+        { timeout: 8000, maximumAge: 600000 },
+      );
+    },
+
+    rank(results) {
+      const cfg = SMART_ADDRESS_RANKING;
+      const center = { lat: this.biasLat, lon: this.biasLon };
+      return results
+        .map((r, i) => {
+          const d = haversineMiles(center, { lat: parseFloat(r.latitude), lon: parseFloat(r.longitude) });
+          let s = i * cfg.INDEX_WEIGHT;
+          if (d <= cfg.NEAR_MI) s -= cfg.NEAR_BONUS;
+          else if (d <= cfg.MID_MI) s -= cfg.MID_BONUS;
+          return { r, s };
+        })
+        .sort((a, b) => a.s - b.s)
+        .slice(0, 8)
+        .map((x) => x.r);
+    },
+
     search() {
       const q = this.query.trim();
-      if (!q) { this.results = []; this.open = false; return; }
+      if (!q) { this.results = []; this._raw = []; this.open = false; return; }
       this.loading = true; this.open = true;
-      fetch(`${this.acUrl}?q=${encodeURIComponent(q)}`, { headers: { "X-Requested-With": "fetch" } })
+      let url = `${this.acUrl}?q=${encodeURIComponent(q)}`;
+      if (this.biasLat != null && this.biasLon != null) url += `&lat=${this.biasLat}&lon=${this.biasLon}`;
+      fetch(url, { headers: { "X-Requested-With": "fetch" } })
         .then((r) => r.json())
-        .then((d) => { this.results = d.results || []; this.active = this.results.length ? 0 : -1; })
-        .catch(() => { this.results = []; })
+        .then((d) => { this._raw = d.results || []; this.results = this.rank(this._raw); this.active = this.results.length ? 0 : -1; })
+        .catch(() => { this.results = []; this._raw = []; })
         .finally(() => { this.loading = false; });
     },
     move(delta) {
