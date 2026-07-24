@@ -4,7 +4,12 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.vendors.factories import VendorDriverFactory, VendorFactory, VendorInsuranceFactory
+from apps.vendors.factories import (
+    VendorDocumentFactory,
+    VendorDriverFactory,
+    VendorFactory,
+    VendorInsuranceFactory,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -62,3 +67,25 @@ def test_missing_coverage_banner_directs_next_action(client, django_user_model):
     vendor = VendorFactory()
     resp = client.get(reverse("vendor_detail", args=[vendor.pk]))
     assert b"Add a policy to clear this vendor for assignments." in resp.content
+
+
+def test_banner_shown_when_expired(client, django_user_model):
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    _cover(vendor, days=-5)
+    resp = client.get(reverse("vendor_detail", args=[vendor.pk]))
+    assert b"Renew before assigning trips to this vendor." in resp.content
+    assert b"Renew before assigning new trips to this vendor." not in resp.content
+
+
+def test_documents_query_flat_across_distinct_uploaders(
+    client, django_user_model, django_assert_max_num_queries
+):
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    for i in range(3):
+        uploader = django_user_model.objects.create_user(username=f"up-{i}", password="x")
+        VendorDocumentFactory(vendor=vendor, label=f"Doc {i}", uploaded_by=uploader)
+    with django_assert_max_num_queries(12):
+        resp = client.get(reverse("vendor_detail", args=[vendor.pk]))
+    assert resp.status_code == 200

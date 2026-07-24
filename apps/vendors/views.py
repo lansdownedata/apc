@@ -9,7 +9,7 @@ from django.db.models import Prefetch, Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 
-from .models import INSURANCE_SEVERITY, Vendor, VendorInsurance
+from .models import INSURANCE_SEVERITY, Vendor, VendorDocument, VendorInsurance
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(INSURANCE_SEVERITY)}
 _STATUS_FILTERS = [("active", "Active"), ("inactive", "Archived"), ("all", "All")]
@@ -115,7 +115,16 @@ def _insurance_banner(summary: dict) -> dict | None:
 @login_required
 def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
     vendor = get_object_or_404(
-        Vendor.objects.prefetch_related("vehicle_types", "drivers", "policies", "documents"), pk=pk
+        Vendor.objects.prefetch_related(
+            "vehicle_types",
+            "drivers",
+            "policies",
+            Prefetch(
+                "documents",
+                queryset=VendorDocument.objects.select_related("uploaded_by"),
+            ),
+        ),
+        pk=pk,
     )
     vendor.summary = vendor.insurance_summary()
     vendor.banner = _insurance_banner(vendor.summary)
