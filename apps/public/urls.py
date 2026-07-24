@@ -12,4 +12,9 @@ urlpatterns = [
     path("fleet/", views.fleet, name="fleet"),
     path("contact/", views.contact, name="contact"),
     path("privacy-policy/", views.privacy, name="privacy"),
+    path("services/", views.services, name="services"),
+    path("services/airport/", views.service_airport, name="service_airport"),
+    path("services/corporate/", views.service_corporate, name="service_corporate"),
+    path("services/weddings/", views.service_weddings, name="service_weddings"),
+    path("services/personal/", views.service_personal, name="service_personal"),
 ]

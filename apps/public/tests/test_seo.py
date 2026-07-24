@@ -73,3 +73,23 @@ def test_contact_jsonld_valid_with_query_string(client):
 
     contact_page = next(b for b in parsed if b.get("@type") == "ContactPage")
     assert "&amp;" not in contact_page["url"]
+
+
+@pytest.mark.parametrize(
+    "url,service_name",
+    [
+        ("/services/airport/", "Airport Transportation"),
+        ("/services/corporate/", "Corporate Transportation"),
+        ("/services/weddings/", "Wedding Transportation"),
+        ("/services/personal/", "Personal Transportation"),
+    ],
+)
+def test_service_pages_emit_service_schema(client, url, service_name):
+    resp = client.get(url)
+    assert resp.status_code == 200
+    names = [b.get("name") for b in _jsonld(resp.content) if b.get("@type") == "Service"]
+    assert service_name in names
+
+
+def test_services_hub_renders(client):
+    assert client.get("/services/").status_code == 200
