@@ -5,7 +5,7 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.factories import LeadFactory
 from apps.messaging.factories import MessageFactory
@@ -86,8 +86,12 @@ def test_inbox_search_matches_contact_name(client, agent):
 
 
 def test_inbox_search_matches_company(client, agent):
-    match = LeadFactory(contact=ContactFactory(name="Jane", company="Acme Events"))
-    other = LeadFactory(contact=ContactFactory(name="John", company="Other Co"))
+    match = LeadFactory(
+        contact=ContactFactory(name="Jane", company=CompanyFactory(name="Acme Events"))
+    )
+    other = LeadFactory(
+        contact=ContactFactory(name="John", company=CompanyFactory(name="Other Co"))
+    )
     MessageFactory(lead=match)
     MessageFactory(lead=other)
 

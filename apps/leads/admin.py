@@ -21,6 +21,6 @@ class LeadAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("status", "channel", "has_alert")
-    search_fields = ("contact__name", "contact__company", "notes")
+    search_fields = ("contact__name", "contact__company__name", "notes")
     autocomplete_fields = ("contact", "assigned_agent")
     list_select_related = ("contact", "assigned_agent")

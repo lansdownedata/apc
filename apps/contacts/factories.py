@@ -2,7 +2,14 @@ import factory
 
 from apps.core.choices import Channel
 
-from .models import Contact
+from .models import Company, Contact
+
+
+class CompanyFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Company
+
+    name = factory.Faker("company")
 
 
 class ContactFactory(factory.django.DjangoModelFactory):
@@ -10,6 +17,6 @@ class ContactFactory(factory.django.DjangoModelFactory):
         model = Contact
 
     name = factory.Faker("name")
-    email = factory.Faker("email")
+    email = factory.Sequence(lambda n: f"contact{n}@example.com")
     phone = factory.Faker("numerify", text="(###) ###-####")
     channel = Channel.WEBSITE

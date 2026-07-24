@@ -16,7 +16,7 @@
          name: {{ lead.contact.name|json_string }},
          phone: {{ lead.contact.phone|json_string }},
          email: {{ lead.contact.email|json_string }},
-         company: {{ lead.contact.company|json_string }},
+         company: {{ lead.contact.company.name|default_if_none:''|json_string }},
          channel: '{{ lead.channel }}',
          agent: '{{ lead.assigned_agent_id|default_if_none:'' }}'
        }

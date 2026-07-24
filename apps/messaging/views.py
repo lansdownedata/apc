@@ -52,7 +52,7 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
     if q:
         qs = qs.filter(
             Q(contact__name__icontains=q)
-            | Q(contact__company__icontains=q)
+            | Q(contact__company__name__icontains=q)
             | Q(contact__phone__icontains=q)
         )
     return qs
