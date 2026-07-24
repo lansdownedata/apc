@@ -80,8 +80,6 @@ def parse_draft(payload: dict) -> dict:
         "discount_flat": _money(payload.get("discountFlat")),
         "dropoff_date": _date(payload.get("dropoffDate")),
         "dropoff_time": _time(payload.get("dropoffTime")),
-        "base_rate": _money(payload.get("rate")),  # legacy mirror, dropped in Task 4
-        "hourly_rate": _money(payload.get("rate")),  # legacy mirror
         "stops": [
             {
                 "address": (s.get("address") or "").strip()[:255],

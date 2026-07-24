@@ -103,7 +103,6 @@ class Command(BaseCommand):
                 passengers=pax,
                 rate=Decimal(rate),
                 hours=Decimal("1"),
-                base_rate=Decimal(rate),
                 trip_status=status,
             )
             for i, addr in enumerate(stops):
@@ -122,7 +121,6 @@ class Command(BaseCommand):
                 rate=Decimal(rate),
                 hours=Decimal(hrs),
                 min_hours=Decimal(minimum),
-                hourly_rate=Decimal(rate),
                 trip_status=status,
             )
             for i, addr in enumerate(stops):
