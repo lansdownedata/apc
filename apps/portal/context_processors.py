@@ -48,12 +48,17 @@ def _inbox_unread_count() -> int:
 
 def chrome(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated:
-        return {"nav_soon": NAV_SOON, "asset_version": _asset_version()}
+        return {
+            "nav_soon": NAV_SOON,
+            "asset_version": _asset_version(),
+            "address_bias_center": settings.ADDRESS_BIAS_CENTER,
+        }
 
     unread = Notification.objects.unread().select_related("lead", "lead__contact")
     return {
         "nav_soon": NAV_SOON,
         "asset_version": _asset_version(),
+        "address_bias_center": settings.ADDRESS_BIAS_CENTER,
         "unread_notifications": list(unread.order_by("-created_at")[:8]),
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
