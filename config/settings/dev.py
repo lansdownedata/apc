@@ -15,4 +15,9 @@ INSTALLED_APPS += ["debug_toolbar"]  # noqa: F405
 MIDDLEWARE = ["debug_toolbar.middleware.DebugToolbarMiddleware", *MIDDLEWARE]  # noqa: F405
 INTERNAL_IPS = ["127.0.0.1"]
 
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Dev prints emails to the console by default. To send for real through Postmark from
+# local dev, set EMAIL_BACKEND=anymail.backends.postmark.EmailBackend in .env (and paste
+# your Postmark Server API Token into POSTMARK_SERVER_TOKEN).
+EMAIL_BACKEND = env(  # noqa: F405
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
