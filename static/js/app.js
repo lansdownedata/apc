@@ -776,7 +776,7 @@ function smartAddress(opts = {}) {
     // ---- read-only display (sa-view block) ----
     hasAddress() {
       const f = this.fields;
-      return !!(f.landmark_name || f.line1 || f.city || f.state || f.postal);
+      return !!(f.landmark_name || f.line1 || f.line2 || f.city || f.state || f.postal);
     },
     streetLine() {
       return [this.fields.line1, this.fields.line2].filter(Boolean).join(", ");

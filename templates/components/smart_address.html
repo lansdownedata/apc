@@ -34,13 +34,13 @@
      })">
 
   <div class="sa-view"{% if not viewmode %} style="display:none"{% endif %} x-show="!(typeof editing === 'undefined' || editing)">
-    <div class="text-[13px] leading-relaxed text-ink"{% if not address.landmark_name and not address.line1 and not address.city and not address.state and not address.postal %} style="display:none"{% endif %} x-show="hasAddress()">
+    <div class="text-[13px] leading-relaxed text-ink"{% if not address or address.is_blank %} style="display:none"{% endif %} x-show="hasAddress()">
       <div class="font-semibold"{% if not address.landmark_name %} style="display:none"{% endif %} x-show="fields.landmark_name" x-text="fields.landmark_name">{{ address.landmark_name|default:"" }}</div>
       <div{% if not address.line1 and not address.line2 %} style="display:none"{% endif %} x-show="streetLine()" x-text="streetLine()">{{ address.line1|default:"" }}{% if address.line1 and address.line2 %}, {% endif %}{% if address.line2 %}{{ address.line2 }}{% endif %}</div>
       <div{% if not address.city and not address.state and not address.postal %} style="display:none"{% endif %} x-show="cityLine()" x-text="cityLine()">{% if address.city %}{{ address.city }}{% if address.state or address.postal %}, {% endif %}{% endif %}{% if address.state %}{{ address.state }}{% endif %}{% if address.state and address.postal %} {% endif %}{% if address.postal %}{{ address.postal }}{% endif %}</div>
-      <div class="text-muted" x-show="fields.country && fields.country !== 'United States'" x-text="fields.country && fields.country !== 'United States' ? fields.country : ''">{% if address.country and address.country != "United States" %}{{ address.country }}{% endif %}</div>
+      <div class="text-muted"{% if not address or not address.country or address.country == "United States" %} style="display:none"{% endif %} x-show="fields.country && fields.country !== 'United States'" x-text="fields.country && fields.country !== 'United States' ? fields.country : ''">{% if address.country and address.country != "United States" %}{{ address.country }}{% endif %}</div>
     </div>
-    <div class="text-[12.5px] text-muted"{% if address.landmark_name or address.line1 or address.city or address.state or address.postal %} style="display:none"{% endif %} x-show="!hasAddress()">No address on file</div>
+    <div class="text-[12.5px] text-muted"{% if address and not address.is_blank %} style="display:none"{% endif %} x-show="!hasAddress()">No address on file</div>
   </div>
 
   <div class="sa-edit"{% if viewmode %} style="display:none"{% endif %} x-show="typeof editing === 'undefined' || editing">
