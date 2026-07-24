@@ -728,3 +728,55 @@ function imageUpload(existingUrl) {
   };
 }
 window.imageUpload = imageUpload;
+
+/* ------------------------------------------------ smart-address (reusable) */
+function smartAddress(opts = {}) {
+  return {
+    updateUrl: opts.updateUrl,
+    acUrl: opts.acUrl,
+    fields: opts.fields || {},
+    query: "",
+    results: [],
+    open: false,
+    loading: false,
+    active: -1,
+
+    search() {
+      const q = this.query.trim();
+      if (!q) { this.results = []; this.open = false; return; }
+      this.loading = true; this.open = true;
+      fetch(`${this.acUrl}?q=${encodeURIComponent(q)}`, { headers: { "X-Requested-With": "fetch" } })
+        .then((r) => r.json())
+        .then((d) => { this.results = d.results || []; this.active = this.results.length ? 0 : -1; })
+        .catch(() => { this.results = []; })
+        .finally(() => { this.loading = false; });
+    },
+    move(delta) {
+      if (!this.results.length) return;
+      this.active = (this.active + delta + this.results.length) % this.results.length;
+    },
+    choose(i) {
+      const r = this.results[i]; if (!r) return;
+      // Populate the bound fields from the picked result; the search box value is discarded.
+      for (const k of Object.keys(this.fields)) if (k in r) this.fields[k] = r[k] ?? "";
+      this.query = ""; this.closeResults();
+      this.saveAll();
+    },
+    closeResults() { this.open = false; this.results = []; this.active = -1; },
+
+    save(/* field */) { this.saveAll(); },  // per-field blur → persist the whole group (simple + safe)
+    saveAll() {
+      const body = new URLSearchParams();
+      for (const [k, v] of Object.entries(this.fields)) body.append(k, v ?? "");
+      fetch(this.updateUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": getCookie("csrftoken") },
+        body,
+      }).then((r) => {
+        if (r.ok) { Alpine.store("toast").push({ type: "success", title: "Address saved" }); return; }
+        Alpine.store("toast").push({ type: "danger", title: "Could not save address" });
+      }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — address not saved" }));
+    },
+  };
+}
+window.smartAddress = smartAddress;
