@@ -203,6 +203,27 @@ def test_edit_page_seeds_the_uploader_with_the_existing_image(client, settings, 
     assert vt.image.url in html, "existing photo not seeded into the uploader preview"
 
 
+def test_create_sets_rate_card(client):
+    from decimal import Decimal
+
+    client.force_login(UserFactory(role="owner_admin"))
+    client.post(
+        reverse("vehicle_type_create"),
+        {
+            "name": "Priced Coach",
+            "capacity": 30,
+            "description": "",
+            "rate": "150.00",
+            "hourly_min_hours": "4",
+            "transfer_min_hours": "2",
+            "sort_order": 0,
+            "active": "on",
+        },
+    )
+    vt = VehicleType.objects.get(name="Priced Coach")
+    assert vt.rate == Decimal("150.00") and vt.hourly_min_hours == Decimal("4")
+
+
 def test_list_thumbnails_show_the_whole_vehicle(client, settings, tmp_path):
     """Vehicle photos are landscape; a square object-cover crop lops off the front and
     rear. The list must contain the full vehicle, so the thumbnail is object-contain."""

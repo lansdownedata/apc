@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
+from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 
 
@@ -18,6 +19,11 @@ class VehicleType(TimeStampedModel):
     image = models.ImageField(upload_to="vehicle-types/", blank=True)
     description = models.TextField(blank=True)
     sort_order = models.PositiveIntegerField(default=0)
+
+    # rate card (snapshotted onto each reservation at save)
+    rate = MoneyField()  # per-hour rate for this vehicle (both trip types)
+    hourly_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    transfer_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
     class Meta:
         ordering = ["sort_order", "name"]
@@ -70,6 +76,8 @@ class Lead(TimeStampedModel):
         help_text="Leave blank when the booking contact is also billed.",
     )
     passenger_names = models.CharField(max_length=255, blank=True)
+    # reserved — promo engine is a later feature
+    promo_code = models.CharField(max_length=40, blank=True)
     quote_view_count = models.PositiveIntegerField(default=0)
     quote_last_viewed_at = models.DateTimeField(null=True, blank=True)
 
