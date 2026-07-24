@@ -4,6 +4,7 @@ import json
 import secrets
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.http import (
     Http404,
@@ -14,13 +15,14 @@ from django.http import (
 )
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.messaging import touchpoints
 from apps.notifications.models import Notification
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
 
 from . import la_sync, services, webhooks
+from .geocoding import autocomplete
 from .models import LACustomer, LAEvent
 
 STATE_SESSION_KEY = "podium_oauth_state"
@@ -148,3 +150,13 @@ def la_webhook(request, token: str):
             detail=f"Trip #{reservation.pk}: {event_name.removeprefix('reservation.')}",
         )
     return JsonResponse({"status": "ok"})
+
+
+@login_required
+@require_GET
+def geocode_autocomplete(request):
+    """Server proxy for LocationIQ autocomplete — keeps the key server-side."""
+    if not settings.LOCATIONIQ_API_KEY:
+        return JsonResponse({"results": [], "degraded": True})
+    results = autocomplete(request.GET.get("q", ""))
+    return JsonResponse({"results": results, "degraded": False})
