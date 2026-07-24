@@ -21,9 +21,9 @@ class VehicleType(TimeStampedModel):
     sort_order = models.PositiveIntegerField(default=0)
 
     # rate card (snapshotted onto each reservation at save)
-    rate = MoneyField()  # per-hour rate for this vehicle (both trip types)
-    hourly_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    transfer_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    rate = MoneyField(blank=True)  # per-hour rate for this vehicle (both trip types)
+    hourly_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0, blank=True)
+    transfer_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0, blank=True)
 
     class Meta:
         ordering = ["sort_order", "name"]

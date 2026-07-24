@@ -1,37 +1,13 @@
 """Model forms for the Settings screens."""
 
-from decimal import Decimal
-from typing import Any
-
 from django import forms
 
 from apps.leads.models import VehicleType
-
-# Rate-card fields default to 0 on the model, but Django's ModelForm derives
-# `required` from `field.blank` (not from the model default), so a plain
-# ModelForm treats these as required. Make them optional here and fall back
-# to 0 in cleaning so omitting them (e.g. legacy callers, partial forms)
-# behaves like the model default rather than a validation error.
-RATE_CARD_FIELDS = ("rate", "hourly_min_hours", "transfer_min_hours")
 
 
 class VehicleTypeForm(forms.ModelForm):
     """The project's first ModelForm with a file field — the hand-written-input
     approach used elsewhere can't carry enctype cleanly."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        for name in RATE_CARD_FIELDS:
-            self.fields[name].required = False
-
-    def clean_rate(self) -> Decimal:
-        return self.cleaned_data.get("rate") or Decimal("0")
-
-    def clean_hourly_min_hours(self) -> Decimal:
-        return self.cleaned_data.get("hourly_min_hours") or Decimal("0")
-
-    def clean_transfer_min_hours(self) -> Decimal:
-        return self.cleaned_data.get("transfer_min_hours") or Decimal("0")
 
     class Meta:
         model = VehicleType
