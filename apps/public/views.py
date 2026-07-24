@@ -107,3 +107,18 @@ def reviews(request):
 
 def rates(request):
     return render(request, "public/rates.html")
+
+
+def blog_index(request):
+    return render(request, "public/blog_index.html")
+
+
+def _post(template):
+    """View factory for a static blog post — each post is a plain template
+    render, no model/DB involved (content is hand-ported from the WP export).
+    """
+
+    def view(request):
+        return render(request, f"public/blog/{template}")
+
+    return view
