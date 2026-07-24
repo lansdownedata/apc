@@ -110,6 +110,7 @@ class Contact(TimeStampedModel):
     notes = models.TextField(blank=True)
 
     class Meta:
+        ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(Lower("email"), name="uniq_contact_email_ci"),
         ]
