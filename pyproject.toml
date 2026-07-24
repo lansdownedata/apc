@@ -16,3 +16,8 @@ select = ["E", "F", "I", "UP", "B", "DJ"]  # pycodestyle, pyflakes, isort, pyupg
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
 python_files = ["test_*.py", "tests.py", "*_test.py"]
 addopts = "--reuse-db"
+filterwarnings = [
+  # Django 5.2 warns that FORMS_URLFIELD_ASSUME_HTTPS is transitional; we set it
+  # deliberately (https assumption is the Django 6 behavior). Remove with the setting on 6.0.
+  "ignore:The FORMS_URLFIELD_ASSUME_HTTPS transitional setting is deprecated.:django.utils.deprecation.RemovedInDjango60Warning",
+]
