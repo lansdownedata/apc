@@ -111,3 +111,28 @@ def test_smart_address_view_block_city_postal_without_state(logged_in_client):
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
     assert "Boston, 02110" in html
     assert "Boston,  02110" not in html
+
+
+def test_zero_orders_hides_card_and_shows_note(logged_in_client):
+    contact = ContactFactory()
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "Order history" not in html
+    assert "No orders yet" in html
+    assert "Create a lead" in html
+
+
+def test_orders_render_with_trip_count_text(logged_in_client):
+    contact = ContactFactory()
+    ReservationFactory.create_batch(2, lead=LeadFactory(contact=contact))
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "Order history" in html
+    assert "2 trips" in html
+    assert "No orders yet" not in html
+
+
+def test_details_view_mode_renders_readable_values(logged_in_client):
+    contact = ContactFactory(phone="+16175550188", email="grant@example.com")
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert 'href="tel:+16175550188"' in html
+    assert 'href="mailto:grant@example.com"' in html
+    assert "(617) 555-0188" in html  # phone_display national format
