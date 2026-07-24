@@ -49,3 +49,53 @@ def geocode_stop(stop: "Stop") -> tuple[Decimal, Decimal]:
     stop.latitude, stop.longitude = lat, lng
     stop.save(update_fields=["latitude", "longitude", "updated_at"])
     return lat, lng
+
+
+AUTOCOMPLETE_URL = "https://api.locationiq.com/v1/autocomplete"
+
+
+def _decompose(item: dict) -> dict:
+    """Map a LocationIQ autocomplete result to the Address field set. Defensive (.get) —
+    the response shape is VERIFY-LIVE (probe against the real API before trusting field names)."""
+    addr = item.get("address") or {}
+    house = (addr.get("house_number") or "").strip()
+    road = (addr.get("road") or "").strip()
+    street = f"{house} {road}".strip()
+    name = (addr.get("name") or "").strip()  # POI name, if any
+    return {
+        "landmark_name": name if (name and (road or item.get("type") != "house")) else "",
+        "line1": street or (name if not road else ""),
+        "line2": "",
+        "city": addr.get("city") or addr.get("town") or addr.get("village") or "",
+        "state": addr.get("state") or "",
+        "postal": addr.get("postcode") or "",
+        "country": addr.get("country") or "",
+        "latitude": item.get("lat") or None,
+        "longitude": item.get("lon") or None,
+        "place_id": str(item.get("place_id") or ""),
+        "place_type": item.get("type") or "",
+        "place_class": item.get("class") or "",
+        "display_name": item.get("display_name") or "",
+    }
+
+
+def autocomplete(q: str) -> list[dict]:
+    """Type-ahead address search via LocationIQ, decomposed to the Address field set.
+    Returns [] when the key is missing, the query is blank, or the API errors — never raises."""
+    q = (q or "").strip()
+    if not q or not settings.LOCATIONIQ_API_KEY:
+        return []
+    try:
+        resp = requests.get(
+            AUTOCOMPLETE_URL,
+            params={"key": settings.LOCATIONIQ_API_KEY, "q": q, "limit": 6, "dedupe": 1},
+            timeout=TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            return []
+        payload = resp.json()
+        if not isinstance(payload, list):
+            return []
+        return [_decompose(item) for item in payload if isinstance(item, dict)]
+    except (requests.RequestException, ValueError):
+        return []

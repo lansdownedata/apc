@@ -7,4 +7,5 @@ app_name = "integrations"
 urlpatterns = [
     path("podium/authorize/", views.podium_authorize, name="podium_authorize"),
     path("podium/callback/", views.podium_callback, name="podium_callback"),
+    path("geocode/autocomplete/", views.geocode_autocomplete, name="geocode_autocomplete"),
 ]
