@@ -1,4 +1,5 @@
 import pytest
+from django.core.cache import cache
 
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
@@ -39,3 +40,23 @@ def test_missing_required_field_shows_errors(client):
     resp = client.post("/bookings/", {**VALID, "name": ""})
     assert resp.status_code == 200
     assert Lead.objects.count() == 0
+
+
+def test_missing_contact_channel_rejected(client):
+    resp = client.post("/bookings/", {**VALID, "email": "", "phone": ""})
+    assert resp.status_code == 200
+    assert resp.context["form"].errors
+    assert Lead.objects.count() == 0
+
+
+def test_bookings_throttled_after_limit(client):
+    cache.clear()
+    for i in range(5):
+        resp = client.post("/bookings/", {**VALID, "email": f"jane{i}@example.com"})
+        assert resp.status_code == 302
+    assert Lead.objects.count() == 5
+
+    resp = client.post("/bookings/", {**VALID, "email": "jane6@example.com"})
+    assert resp.status_code == 200
+    assert resp.context["form"].errors
+    assert Lead.objects.count() == 5
