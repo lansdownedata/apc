@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .redirects import perma
 
 app_name = "public"
 
@@ -53,4 +54,10 @@ urlpatterns = [
         views._post("weddingwire-2021.html"),
         name="post_weddingwire_2021",
     ),
+    # Legacy WordPress URLs — 301 to the closest live target to preserve link equity.
+    path("trips/", perma("public:services")),
+    path("all-pro-charter-ao/", perma("public:home")),
+    path("allprocharter-register/", perma("public:bookings")),
+    path("category/press-release/", perma("public:blog_index")),
+    path("category/uncategorized/", perma("public:blog_index")),
 ]
