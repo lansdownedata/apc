@@ -103,3 +103,11 @@ def test_smart_address_view_block_empty_address(logged_in_client):
     contact = ContactFactory(primary_address=None)
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
     assert "No address on file" in html
+
+
+def test_smart_address_view_block_city_postal_without_state(logged_in_client):
+    addr = AddressFactory(line1="1 Elm St", city="Boston", state="", postal="02110")
+    contact = ContactFactory(primary_address=addr)
+    html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert "Boston, 02110" in html
+    assert "Boston,  02110" not in html
