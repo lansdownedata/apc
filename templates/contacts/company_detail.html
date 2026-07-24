@@ -4,14 +4,11 @@
 {% block content %}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="contactProfile({
-       updateUrl: '{% url 'contact_update' contact.pk %}',
+       updateUrl: '{% url 'company_update' company.pk %}',
        header: {
-         name: {{ contact.name|json_string }},
-         phone: {{ contact.phone|json_string }},
-         email: {{ contact.email|json_string }},
-         company: {{ contact.company.name|default_if_none:''|json_string }},
-         channel: '{{ contact.channel }}',
-         notes: {{ contact.notes|json_string }}
+         name: {{ company.name|json_string }},
+         billing_contact: '{{ company.billing_contact_id|default_if_none:'' }}',
+         notes: {{ company.notes|json_string }}
        }
      })">
 
@@ -22,23 +19,20 @@
   <!-- header -->
   <div class="card p-5 sm:p-6 mb-4">
     <div class="flex flex-wrap items-start gap-4">
-      <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0 uppercase">{{ contact.name|slice:":2" }}</span>
+      <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0">
+        <i class="ti ti-building text-[20px]"></i>
+      </span>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2.5 flex-wrap">
           <input type="text" x-model="header.name" @blur="saveHeader()"
                  class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 w-full max-w-xs"
-                 placeholder="Contact name">
+                 placeholder="Company name">
         </div>
         <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
           <span class="flex items-center gap-1 shrink-0">
-            <i class="ti ti-building text-[14px]"></i>
-            {% if contact.company %}
-              <a href="{% url 'company_detail' contact.company.pk %}" class="text-ink hover:text-goldd hover:underline">{{ contact.company.name }}</a>
-            {% else %}
-              <span>No company</span>
-            {% endif %}
+            <i class="ti ti-users text-[14px]"></i>
+            {{ members|length }} contact{{ members|length|pluralize }}
           </span>
-          <span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted">{{ contact.get_channel_display }}</span>
         </div>
       </div>
       <div class="flex items-center gap-5 sm:gap-7">
@@ -59,43 +53,53 @@
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <!-- contact details -->
+    <!-- details -->
     <div class="card p-5 sm:p-6">
-      <div class="font-display text-[15px] font-semibold text-ink mb-4">Contact details</div>
+      <div class="font-display text-[15px] font-semibold text-ink mb-4">Details</div>
       <div class="space-y-4">
         <div>
           <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Name</label>
-          <input type="text" x-model="header.name" @blur="saveHeader()" class="field mt-1.5" placeholder="Contact name">
+          <input type="text" x-model="header.name" @blur="saveHeader()" class="field mt-1.5" placeholder="Company name">
         </div>
         <div>
-          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Company</label>
-          <div class="mt-1.5" @change="header.company = $event.target.value; saveHeader()">
-            {% include "components/searchable_select.html" with name="company" field_id="c-company" options=company_names selected=contact.company.name empty_label="No company" create=1 %}
-          </div>
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Phone</label>
-          <input type="tel" data-phone value="{{ contact.phone }}" @blur="onPhoneBlur($event)" class="field mt-1.5" placeholder="Phone">
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Email</label>
-          <input type="email" x-model="header.email" @blur="saveHeader()" class="field mt-1.5" placeholder="Email">
-        </div>
-        <div>
-          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Channel</label>
-          <div class="mt-1.5" @change="header.channel = $event.target.value; saveHeader()">
-            {% include "components/searchable_select.html" with name="channel" field_id="c-channel" options=channels selected=contact.channel %}
+          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Billing contact</label>
+          <div class="mt-1.5" @change="header.billing_contact = $event.target.value; saveHeader()">
+            {% include "components/searchable_select.html" with name="billing_contact" field_id="co-billing" options=contacts_for_billing selected=company.billing_contact_id|default_if_none:'' empty_label="No billing contact" %}
           </div>
         </div>
         <div>
           <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Notes</label>
-          <textarea x-model="header.notes" @blur="saveHeader()" rows="4" class="field mt-1.5" placeholder="Notes about this contact"></textarea>
+          <textarea x-model="header.notes" @blur="saveHeader()" rows="4" class="field mt-1.5" placeholder="Notes about this company"></textarea>
         </div>
       </div>
     </div>
 
-    <!-- order history -->
-    <div class="lg:col-span-2">
+    <div class="lg:col-span-2 space-y-4">
+      <!-- people -->
+      <div class="card overflow-hidden">
+        <div class="flex items-center px-5 py-3.5 border-b border-line">
+          <span class="font-display text-[15px] font-semibold text-ink">People</span>
+          <span class="ml-2 text-[11px] text-muted">{{ members|length }}</span>
+        </div>
+        <div class="divide-y divide-line/70">
+          {% for member in members %}
+          <a href="{% url 'contact_detail' member.pk %}" class="flex items-center gap-3 px-5 py-3 hover:wash-gold transition-colors">
+            <span class="w-8 h-8 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ member.name|slice:":2" }}</span>
+            <span class="text-[13px] text-ink font-medium">{{ member.name }}</span>
+            {% if member.pk == company.billing_contact_id %}
+            <span class="ml-auto inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted">Billing contact</span>
+            {% endif %}
+          </a>
+          {% empty %}
+          <div class="px-5 py-10 text-center text-[13px] text-muted">
+            <i class="ti ti-users text-[26px] text-slate-300"></i>
+            <div class="mt-2">No contacts linked to this company yet.</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- order history -->
       <div class="card overflow-hidden">
         <div class="flex items-center px-5 py-3.5 border-b border-line">
           <span class="font-display text-[15px] font-semibold text-ink">Order history</span>
@@ -106,13 +110,14 @@
           <a href="{% url 'lead_detail' lead.pk %}" class="flex items-center gap-3 px-5 py-3.5 hover:wash-gold transition-colors">
             {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
             <span class="font-mono2 text-[12.5px] text-ink">{{ lead.quote_no }}</span>
+            <span class="text-[12.5px] text-muted truncate">{{ lead.contact.name }}</span>
             <span class="ml-auto num font-semibold text-ink text-[13.5px]">${{ lead.quote_total|floatformat:2|intcomma }}</span>
             <span class="text-[11.5px] text-muted w-24 text-right shrink-0">{{ lead.created_at|date:"M j, Y" }}</span>
           </a>
           {% empty %}
           <div class="px-5 py-12 text-center text-[13px] text-muted">
             <i class="ti ti-file-off text-[26px] text-slate-300"></i>
-            <div class="mt-2">No leads for this contact yet.</div>
+            <div class="mt-2">No leads for this company yet.</div>
           </div>
           {% endfor %}
         </div>

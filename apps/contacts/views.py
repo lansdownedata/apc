@@ -171,3 +171,74 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
                 status=400,
             )
     return JsonResponse({"ok": True})
+
+
+@login_required
+def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """Editable company profile — rolled-up LTV/orders/trips across its contacts."""
+    company = get_object_or_404(Company.objects.select_related("billing_contact"), pk=pk)
+    members = list(company.contacts.select_related("company").order_by("name"))
+    ltv = PaymentPlan.objects.filter(
+        lead__contact__company=company, lead__status=Lead.Status.BOOKED
+    ).aggregate(total=Sum("quote_total"))["total"] or Decimal("0.00")
+    orders = Lead.objects.filter(contact__company=company, status=Lead.Status.BOOKED).count()
+    trips = (
+        Lead.objects.filter(contact__company=company).aggregate(n=Count("reservations"))["n"] or 0
+    )
+    leads = list(
+        Lead.objects.filter(contact__company=company).select_related("contact").order_by("-id")[:10]
+    )
+    return render(
+        request,
+        "contacts/company_detail.html",
+        {
+            "nav": "contacts",
+            "company": company,
+            "members": members,
+            "leads": leads,
+            "stats": {"ltv": ltv, "orders": orders, "trips": trips},
+            "contacts_for_billing": [(c.pk, c.name) for c in members],
+        },
+    )
+
+
+@login_required
+@require_POST
+def company_update(request: HttpRequest, pk: int) -> HttpResponse:
+    """Partial-field autosave for the company profile."""
+    company = get_object_or_404(Company, pk=pk)
+    fields = []
+    if "name" in request.POST and request.POST.get("name", "").strip():
+        company.name = request.POST["name"].strip()
+        fields.append("name")
+    if "notes" in request.POST:
+        company.notes = request.POST.get("notes", "").strip()
+        fields.append("notes")
+    if "billing_contact" in request.POST:
+        val = (request.POST.get("billing_contact") or "").strip()
+        if val:
+            try:
+                pk_val = int(val)
+            except ValueError:
+                return JsonResponse(
+                    {"ok": False, "error": "Select a valid billing contact."},
+                    status=400,
+                )
+            if not Contact.objects.filter(pk=pk_val).exists():
+                return JsonResponse(
+                    {"ok": False, "error": "Select a valid billing contact."},
+                    status=400,
+                )
+            company.billing_contact_id = pk_val
+        else:
+            company.billing_contact_id = None
+        fields.append("billing_contact")
+    if fields:
+        try:
+            company.save(update_fields=[*fields, "updated_at"])
+        except IntegrityError:
+            return JsonResponse(
+                {"ok": False, "error": "A company with that name already exists."},
+                status=400,
+            )
+    return JsonResponse({"ok": True})
