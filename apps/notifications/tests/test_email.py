@@ -22,6 +22,7 @@ BASE_CONTEXT = {
     "company_email": "info@allprocharter.com",
     "trip_count": 2,
     "expires_at": None,
+    "logo_cid": "logo",
 }
 
 
@@ -80,13 +81,36 @@ def test_returns_false_on_a_blank_recipient():
     assert mail.outbox == []
 
 
-def test_html_part_renders_the_text_wordmark_not_an_image():
-    """Decision 1 override: no logo.png exists, so the header must be a styled text
-    wordmark using company_name — never an <img> tag pointed at a logo file."""
+def test_html_header_shows_the_logo_and_the_wordmark():
+    """The banner references the crest logo as an inline CID image on the left, with
+    the readable "All Pro Charter" wordmark beside it."""
     _send()
     html, _ = mail.outbox[0].alternatives[0]
+    assert 'src="cid:logo"' in html, "logo not referenced as an inline CID image"
+    assert "ALL PRO CHARTER" in html.upper(), "readable wordmark must still be present"
+
+
+def test_html_header_falls_back_to_the_wordmark_without_a_logo():
+    """When logo_cid is blank, the header degrades to the text wordmark alone —
+    never a broken <img>."""
+    _send(context={"logo_cid": ""})
+    html, _ = mail.outbox[0].alternatives[0]
+    assert "<img" not in html.lower(), "must not emit a broken image when logo_cid is blank"
     assert "ALL PRO CHARTER" in html.upper()
-    assert "<img" not in html.lower()
+
+
+def test_inline_image_is_embedded_with_its_content_id(tmp_path):
+    """An inline_images entry is attached to the message with a matching Content-ID, so
+    cid:<key> in the HTML resolves without a remote fetch."""
+    png = tmp_path / "logo.png"
+    png.write_bytes(
+        b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!"
+        b"\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+    )
+    _send(inline_images={"logo": str(png)})
+    message = mail.outbox[0]
+    cids = [a["Content-ID"] for a in message.attachments if hasattr(a, "get")]
+    assert "<logo>" in cids, "inline image not attached with Content-ID <logo>"
 
 
 def test_reply_to_uses_configured_company_email(settings):
