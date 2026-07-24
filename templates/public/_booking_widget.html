@@ -1,0 +1,92 @@
+{% comment %}
+  templates/public/_booking_widget.html — the actual booking-request <form>,
+  reused wherever we want the lead-capture widget (the /bookings/ page today;
+  the home hero in a later task). Posts to public:bookings, which turns a
+  valid submission into a Lead + reservation stub in the sales pipeline.
+
+  Requires from the including template's context:
+    form            — a public.forms.BookingRequestForm instance
+    service_options — iterable of (value, label) pairs for the service dropdown
+{% endcomment %}
+<form method="post" action="{% url 'public:bookings' %}" class="grid gap-4 sm:grid-cols-2">
+  {% csrf_token %}
+
+  {% if form.non_field_errors %}
+  <div class="sm:col-span-2 rounded-lg bg-rose-50 px-3.5 py-2.5 text-[12.5px] text-rose-700 ring-1 ring-rose-200">
+    {{ form.non_field_errors|striptags }}
+  </div>
+  {% endif %}
+
+  {% comment %} honeypot — invisible to real visitors, bots that autofill every field trip it {% endcomment %}
+  <label for="bw-company" class="hidden" aria-hidden="true" tabindex="-1">Leave this field blank</label>
+  <input type="text" id="bw-company" name="company" value="{{ form.company.value|default:'' }}"
+         class="hidden" aria-hidden="true" tabindex="-1" autocomplete="off">
+
+  <div class="sm:col-span-2">
+    <label for="bw-name" class="mb-1.5 block text-[12px] font-medium text-muted">
+      Full name <span class="text-rose-500">*</span>
+    </label>
+    <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
+           required autocomplete="name" placeholder="Jane Rider"
+           class="field w-full{% if form.name.errors %} field-error{% endif %}">
+    {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-email" class="mb-1.5 block text-[12px] font-medium text-muted">Email</label>
+    <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
+           autocomplete="email" placeholder="you@example.com"
+           class="field w-full{% if form.email.errors %} field-error{% endif %}">
+    {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-phone" class="mb-1.5 block text-[12px] font-medium text-muted">Phone</label>
+    <input type="tel" id="bw-phone" name="phone" value="{{ form.phone.value|default:'' }}"
+           autocomplete="tel" placeholder="(202) 424-2600"
+           class="field w-full{% if form.phone.errors %} field-error{% endif %}">
+    {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-pickup-date" class="mb-1.5 block text-[12px] font-medium text-muted">Pickup date</label>
+    <input type="date" id="bw-pickup-date" name="pickup_date" value="{{ form.pickup_date.value|default:'' }}"
+           class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
+    {% for error in form.pickup_date.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-pickup-time" class="mb-1.5 block text-[12px] font-medium text-muted">Pickup time</label>
+    <input type="time" id="bw-pickup-time" name="pickup_time" value="{{ form.pickup_time.value|default:'' }}"
+           class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
+    {% for error in form.pickup_time.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-passengers" class="mb-1.5 block text-[12px] font-medium text-muted">Passengers</label>
+    <input type="number" id="bw-passengers" name="passengers" min="1" max="100"
+           value="{{ form.passengers.value|default:1 }}"
+           class="field w-full{% if form.passengers.errors %} field-error{% endif %}">
+    {% for error in form.passengers.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div>
+    <label for="bw-service" class="mb-1.5 block text-[12px] font-medium text-muted">Service type</label>
+    {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=service_options selected=form.service.value empty_label="Select a service" search="off" %}
+    {% for error in form.service.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div class="sm:col-span-2">
+    <label for="bw-notes" class="mb-1.5 block text-[12px] font-medium text-muted">Trip details</label>
+    <textarea id="bw-notes" name="notes" rows="3" placeholder="Pickup &amp; drop-off, flight number, occasion…"
+              class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
+    {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
+  <div class="sm:col-span-2 pt-1">
+    <button type="submit"
+            class="btn-gold focus-gold w-full rounded-full px-5 py-3 text-[14px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60">
+      Request a quote
+    </button>
+  </div>
+</form>
