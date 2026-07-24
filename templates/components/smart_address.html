@@ -48,7 +48,10 @@
   <div class="sa-edit"{% if viewmode %} style="display:none"{% endif %} x-show="typeof editing === 'undefined' || editing">
     <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
       <i class="ti ti-map-search sa-search-icon"></i>
-      <input type="text" class="sa-search-input" autocomplete="off"
+      <input type="text" class="sa-search-input"
+             role="combobox" aria-autocomplete="list" :aria-expanded="open"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+             data-1p-ignore data-lpignore="true" data-form-type="other"
              placeholder="Search a place or address…"
              x-model="query" @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
       <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
@@ -66,19 +69,19 @@
 
     <div class="sa-grid">
       <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-landmark">Landmark / place</label>
-        <input id="sa-{{ prefix }}-landmark" class="sa-input" x-model="fields.landmark_name" @blur="save()" placeholder="Optional venue name"></div>
+        <input id="sa-{{ prefix }}-landmark" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.landmark_name" @blur="save()" placeholder="Optional venue name"></div>
       <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line1">Address line 1</label>
-        <input id="sa-{{ prefix }}-line1" class="sa-input" x-model="fields.line1" @blur="save()"></div>
+        <input id="sa-{{ prefix }}-line1" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.line1" @blur="save()"></div>
       <div class="sa-field sa-full"><label class="sa-label" for="sa-{{ prefix }}-line2">Address line 2</label>
-        <input id="sa-{{ prefix }}-line2" class="sa-input" x-model="fields.line2" @blur="save()" placeholder="Apt, suite, floor…"></div>
+        <input id="sa-{{ prefix }}-line2" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.line2" @blur="save()" placeholder="Apt, suite, floor…"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-city">City</label>
-        <input id="sa-{{ prefix }}-city" class="sa-input" x-model="fields.city" @blur="save()"></div>
+        <input id="sa-{{ prefix }}-city" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.city" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-state">State</label>
-        <input id="sa-{{ prefix }}-state" class="sa-input" x-model="fields.state" @blur="save()"></div>
+        <input id="sa-{{ prefix }}-state" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.state" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-postal">ZIP</label>
-        <input id="sa-{{ prefix }}-postal" class="sa-input num" x-model="fields.postal" @blur="save()"></div>
+        <input id="sa-{{ prefix }}-postal" class="sa-input num" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.postal" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-country">Country</label>
-        <input id="sa-{{ prefix }}-country" class="sa-input" x-model="fields.country" @blur="save()"></div>
+        <input id="sa-{{ prefix }}-country" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.country" @blur="save()"></div>
     </div>
   </div>
 </div>
