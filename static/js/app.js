@@ -534,7 +534,7 @@ function initTomSelects(root = document) {
     if (el.tomselect) return; // already enhanced
     new TomSelect(el, {
       allowEmptyOption: true,
-      create: false,
+      create: el.dataset.create !== undefined,
       placeholder: el.dataset.placeholder || "Select…",
       maxOptions: 1000,
       hidePlaceholder: false,
