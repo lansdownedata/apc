@@ -1,0 +1,20 @@
+{% comment %}
+Reusable phone input — intl-tel-input with a US default, via the `data-phone`
+convention (auto-initialized in static/js/app.js and rewritten to E.164 on submit;
+invalid numbers block the submit). Use everywhere a phone is entered.
+Params:
+  name       — form field name (required; what posts)
+  field_id   — id for the <label for>/input (required)
+  label      — visible label (default "Phone"); pass label="" to omit
+  value      — current value (edit forms)
+  required   — truthy to mark required
+  placeholder — default "(###) ###-####"
+{% endcomment %}
+<div>
+  {% if label != "" %}<label for="{{ field_id }}" class="block text-[12px] font-medium text-muted mb-1.5">{{ label|default:"Phone" }}</label>{% endif %}
+  <input id="{{ field_id }}" name="{{ name }}" type="tel" autocomplete="tel" data-phone
+         {% if required %}required{% endif %}
+         value="{{ value|default:'' }}"
+         placeholder="{{ placeholder|default:'(###) ###-####' }}"
+         class="field w-full">
+</div>

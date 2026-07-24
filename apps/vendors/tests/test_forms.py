@@ -59,3 +59,13 @@ def test_edit_form_shows_records_add_links(client, django_user_model):
     assert reverse("insurance_create", args=[vendor.pk]).encode() in resp.content
     assert reverse("driver_create", args=[vendor.pk]).encode() in resp.content
     assert reverse("document_create", args=[vendor.pk]).encode() in resp.content
+
+
+def test_invalid_email_is_rejected(client, django_user_model):
+    _login(client, django_user_model)
+    resp = client.post(
+        reverse("vendor_create"),
+        {"name": "Bad Email Co", "email": "not-an-email", "status": "active"},
+    )
+    assert resp.status_code == 200  # re-rendered with errors, not redirected
+    assert not Vendor.objects.filter(name="Bad Email Co").exists()
