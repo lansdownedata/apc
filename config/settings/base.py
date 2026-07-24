@@ -106,6 +106,11 @@ TIME_ZONE = env("DJANGO_TIME_ZONE", default="America/New_York")
 USE_I18N = True
 USE_TZ = True
 
+# Django 6.0 flips URLField's assumed scheme from http to https; opt in now so
+# scheme-less URLField input (e.g. Vendor.website) is stored as https:// per that
+# forthcoming default, silencing RemovedInDjango60Warning ahead of the upgrade.
+FORMS_URLFIELD_ASSUME_HTTPS = True
+
 # ---------------------------------------------------------------- static / media
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
