@@ -66,8 +66,8 @@ def test_lead_list_search_matches_quote_number(client, agent):
 
 def test_lead_detail_shows_reservations_and_total(client, agent):
     lead = LeadFactory(status=Lead.Status.QUOTED)
-    TransferReservationFactory(lead=lead, base_rate=200)
-    TransferReservationFactory(lead=lead, base_rate=150)
+    TransferReservationFactory(lead=lead, rate=200)
+    TransferReservationFactory(lead=lead, rate=150)
     client.force_login(agent)
     resp = client.get(reverse("lead_detail", args=[lead.pk]))
     assert resp.status_code == 200

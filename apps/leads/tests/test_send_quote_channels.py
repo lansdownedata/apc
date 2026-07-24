@@ -22,7 +22,7 @@ def contact_with_both():
 @pytest.fixture
 def new_lead(contact_with_both):
     lead = LeadFactory(status=Lead.Status.NEW, contact=contact_with_both)
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     return lead
 
 
@@ -85,7 +85,7 @@ def test_email_channel_needs_an_email_address():
     lead = LeadFactory(
         status=Lead.Status.NEW, contact=ContactFactory(email="", phone="+13015550100")
     )
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     result = services.send_quote(lead, base_url="https://x.test", channels={"email"})
     assert not result.ok
     assert "email" in result.error.lower()
@@ -97,7 +97,7 @@ def test_sms_channel_needs_a_phone_number():
     lead = LeadFactory(
         status=Lead.Status.NEW, contact=ContactFactory(email="customer@example.com", phone="")
     )
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     result = services.send_quote(lead, base_url="https://x.test", channels={"sms"})
     assert not result.ok
     assert "phone" in result.error.lower()
@@ -109,7 +109,7 @@ def test_sms_still_works_without_an_email_address():
     lead = LeadFactory(
         status=Lead.Status.NEW, contact=ContactFactory(email="", phone="+13015550100")
     )
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     with patch("apps.leads.services.podium.send_message"):
         result = services.send_quote(lead, base_url="https://x.test", channels={"sms"})
     assert result.ok
@@ -121,7 +121,7 @@ def test_email_still_works_without_a_phone_number():
     lead = LeadFactory(
         status=Lead.Status.NEW, contact=ContactFactory(email="customer@example.com", phone="")
     )
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     with patch("apps.leads.services.send_html_email", return_value=True):
         result = services.send_quote(lead, base_url="https://x.test", channels={"email"})
     assert result.ok

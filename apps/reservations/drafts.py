@@ -64,17 +64,24 @@ def parse_draft(payload: dict) -> dict:
     except (ValueError, TypeError) as exc:
         raise DraftError("invalid passenger count") from exc
 
-    return {
+    data = {
         "trip_type": trip_type,
         "service": (payload.get("service") or "").strip()[:120],
         "pickup_date": _date(payload.get("date")),
         "pickup_time": _time(payload.get("time")),
         "vehicle_id": _vehicle_id(payload.get("vehicle")),
         "passengers": pax,
-        "base_rate": _money(payload.get("baseRate")),
+        "rate": _money(payload.get("rate")),
         "hours": _money(payload.get("hours")),
-        "hourly_rate": _money(payload.get("hourlyRate")),
         "min_hours": _money(payload.get("minHours")),
+        "gratuity_pct": _money(payload.get("gratuityPct")),
+        "gratuity_flat": _money(payload.get("gratuityFlat")),
+        "discount_pct": _money(payload.get("discountPct")),
+        "discount_flat": _money(payload.get("discountFlat")),
+        "dropoff_date": _date(payload.get("dropoffDate")),
+        "dropoff_time": _time(payload.get("dropoffTime")),
+        "base_rate": _money(payload.get("rate")),  # legacy mirror, dropped in Task 4
+        "hourly_rate": _money(payload.get("rate")),  # legacy mirror
         "stops": [
             {
                 "address": (s.get("address") or "").strip()[:255],
@@ -85,6 +92,27 @@ def parse_draft(payload: dict) -> dict:
             for s in raw_stops
         ],
     }
+    _derive_dropoff_and_hours(data, trip_type)
+    return data
+
+
+def _derive_dropoff_and_hours(data: dict, trip_type: str) -> None:
+    """Hourly: drop-off = pickup + hours. Transfer: hours = drop-off − pickup."""
+    from datetime import datetime, timedelta
+
+    pd, pt = data.get("pickup_date"), data.get("pickup_time")
+    if trip_type == Reservation.TripType.HOURLY:
+        if pd and pt and data["hours"]:
+            end = datetime.combine(pd, pt) + timedelta(hours=float(data["hours"]))
+            data["dropoff_date"], data["dropoff_time"] = end.date(), end.time()
+    else:  # transfer — hours come from the entered drop-off
+        dd, dt_ = data.get("dropoff_date"), data.get("dropoff_time")
+        if pd and pt and dd and dt_:
+            start = datetime.combine(pd, pt)
+            end = datetime.combine(dd, dt_)
+            if end <= start:
+                raise DraftError("drop-off must be after pickup")
+            data["hours"] = Decimal(str(round((end - start).total_seconds() / 3600, 2)))
 
 
 @transaction.atomic

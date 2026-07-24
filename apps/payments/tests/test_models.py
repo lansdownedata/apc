@@ -27,7 +27,7 @@ def test_amounts_round_to_cents():
 
 def test_snapshot_total_pulls_from_lead():
     lead = LeadFactory()
-    TransferReservationFactory(lead=lead, base_rate=Decimal("500"))
+    TransferReservationFactory(lead=lead, rate=Decimal("500"))
     plan = PaymentPlanFactory(lead=lead, quote_total=Decimal("0"))
     plan.snapshot_total()
     assert plan.quote_total == Decimal("500.00")

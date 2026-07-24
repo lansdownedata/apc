@@ -58,18 +58,25 @@ class Command(BaseCommand):
         today = date.today()
 
         vehicle_specs = [
-            ("Luxury Sedan", 3, "Executive sedan for airport runs and small parties."),
-            ("Luxury SUV", 6, "Leather seating, chilled water, room for luggage."),
-            ("Sprinter Van", 14, "Group travel with a high roof and easy step-in."),
-            ("Mini Coach", 24, "Wedding parties and corporate shuttles."),
-            ("Motor Coach", 56, "Full-size coach with luggage bays and restroom."),
-            ("Stretch Limousine", 10, "Classic stretch for milestone celebrations."),
+            ("Luxury Sedan", 3, "Executive sedan for airport runs and small parties.", 165),
+            ("Luxury SUV", 6, "Leather seating, chilled water, room for luggage.", 240),
+            ("Sprinter Van", 14, "Group travel with a high roof and easy step-in.", 165),
+            ("Mini Coach", 24, "Wedding parties and corporate shuttles.", 195),
+            ("Motor Coach", 56, "Full-size coach with luggage bays and restroom.", 320),
+            ("Stretch Limousine", 10, "Classic stretch for milestone celebrations.", 295),
         ]
         vehicles = {}
-        for i, (name, cap, description) in enumerate(vehicle_specs):
+        for i, (name, cap, description, rate) in enumerate(vehicle_specs):
             vt, _ = VehicleType.objects.update_or_create(
                 name=name,
-                defaults={"capacity": cap, "description": description, "sort_order": i},
+                defaults={
+                    "capacity": cap,
+                    "description": description,
+                    "sort_order": i,
+                    "rate": Decimal(rate),
+                    "hourly_min_hours": Decimal("4"),
+                    "transfer_min_hours": Decimal("2"),
+                },
             )
             vehicles[name] = vt
 
@@ -94,6 +101,8 @@ class Command(BaseCommand):
                 pickup_date=today + timedelta(days=days_out),
                 pickup_time=t,
                 passengers=pax,
+                rate=Decimal(rate),
+                hours=Decimal("1"),
                 base_rate=Decimal(rate),
                 trip_status=status,
             )
@@ -110,9 +119,10 @@ class Command(BaseCommand):
                 pickup_date=today + timedelta(days=days_out),
                 pickup_time=t,
                 passengers=pax,
-                hourly_rate=Decimal(rate),
+                rate=Decimal(rate),
                 hours=Decimal(hrs),
                 min_hours=Decimal(minimum),
+                hourly_rate=Decimal(rate),
                 trip_status=status,
             )
             for i, addr in enumerate(stops):

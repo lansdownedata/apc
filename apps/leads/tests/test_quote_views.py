@@ -16,7 +16,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def quoted_lead():
     lead = LeadFactory(status=Lead.Status.QUOTED)
-    ReservationFactory(lead=lead, base_rate="500.00")
+    ReservationFactory(lead=lead, rate="500.00")
     return lead
 
 

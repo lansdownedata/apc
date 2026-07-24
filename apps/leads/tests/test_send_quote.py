@@ -37,7 +37,7 @@ def test_deposit_token_rejects_tampering():
 def _quotable_lead():
     """A NEW lead with one $185 reservation and a contact email."""
     lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email="rider@example.com"))
-    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     return lead
 
 
@@ -103,7 +103,7 @@ def test_send_quote_blocks_when_no_reservations():
 
 def test_send_quote_blocks_when_no_email():
     lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email=""))
-    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
     assert "email" in result.error.lower()
@@ -111,14 +111,14 @@ def test_send_quote_blocks_when_no_email():
 
 def test_send_quote_blocks_when_booked():
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=ContactFactory(email="a@b.com"))
-    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
 
 
 def test_send_quote_blocks_when_lost():
     lead = LeadFactory(status=Lead.Status.LOST, contact=ContactFactory(email="a@b.com"))
-    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
     lead.refresh_from_db()
@@ -244,7 +244,7 @@ def test_send_quote_view_happy_path(client, agent):
 
 def test_send_quote_view_precondition_returns_400(client, agent):
     lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email=""))
-    TransferReservationFactory(lead=lead, base_rate=Decimal("185.00"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     client.force_login(agent)
     resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 400

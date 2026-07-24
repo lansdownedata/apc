@@ -22,9 +22,8 @@ def _draft(lead, **over):
         "time": "15:00",
         "vehicle": "",
         "pax": 2,
-        "baseRate": 200,
-        "hours": 0,
-        "hourlyRate": 0,
+        "rate": 200,
+        "hours": 1,
         "minHours": 0,
         "stops": [{"address": "A"}, {"address": "B"}],
     }
@@ -53,14 +52,14 @@ def test_save_creates_transfer(client):
 def test_save_creates_hourly_with_minimum(client):
     lead = LeadFactory()
     client.force_login(UserFactory())
-    _post(client, _draft(lead, tripType="hourly", baseRate=0, hours=3, hourlyRate=295, minHours=5))
+    _post(client, _draft(lead, tripType="hourly", rate=295, hours=3, minHours=5))
     assert lead.reservations.get().line_total == Decimal("1475.00")
 
 
 def test_save_updates_existing(client):
     res = TransferReservationFactory(service="Old")
     client.force_login(UserFactory())
-    _post(client, _draft(res.lead, id=res.pk, service="New", baseRate=200))
+    _post(client, _draft(res.lead, id=res.pk, service="New", rate=200))
     res.refresh_from_db()
     assert res.service == "New"
     assert res.lead.reservations.count() == 1
@@ -69,7 +68,7 @@ def test_save_updates_existing(client):
 def test_editing_booked_lead_keeps_status_booked(client):
     res = TransferReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
     client.force_login(UserFactory())
-    _post(client, _draft(res.lead, id=res.pk, baseRate=999))
+    _post(client, _draft(res.lead, id=res.pk, rate=999))
     res.lead.refresh_from_db()
     assert res.lead.status == Lead.Status.BOOKED
 
@@ -83,7 +82,7 @@ def test_save_rejects_malformed_json(client):
 def test_save_rejects_negative_amount(client):
     lead = LeadFactory()
     client.force_login(UserFactory())
-    resp = _post(client, _draft(lead, baseRate=-1))
+    resp = _post(client, _draft(lead, rate=-1))
     assert resp.status_code == 400
 
 
