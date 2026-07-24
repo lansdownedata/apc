@@ -2,6 +2,8 @@ from decimal import Decimal
 
 import pytest
 
+from apps.contacts.factories import ContactFactory
+from apps.contacts.models import Company
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import HourlyReservationFactory, TransferReservationFactory
@@ -39,3 +41,26 @@ def test_open_pipeline_value_excludes_booked_and_lost():
 def test_str_includes_quote_no():
     lead = LeadFactory()
     assert lead.quote_no in str(lead)
+
+
+def test_effective_billing_contact_resolution_order(db):
+    booker = ContactFactory(name="Assistant")
+    ap = ContactFactory(name="AP Dept")
+    company = Company.objects.create(name="BigCo", billing_contact=ap)
+    booker.company = company
+    booker.save()
+    lead = LeadFactory(contact=booker)
+
+    # no per-lead override → company's billing contact
+    assert lead.effective_billing_contact == ap
+
+    # per-lead override wins
+    override = ContactFactory(name="Override")
+    lead.billing_contact = override
+    assert lead.effective_billing_contact == override
+
+    # no company billing contact and no override → the booking contact
+    company.billing_contact = None
+    company.save()
+    lead.billing_contact = None
+    assert lead.effective_billing_contact == booker

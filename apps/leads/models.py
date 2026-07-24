@@ -93,8 +93,13 @@ class Lead(TimeStampedModel):
 
     @property
     def effective_billing_contact(self) -> Contact:
-        """The billing contact, falling back to the booking contact when unset."""
-        return self.billing_contact or self.contact
+        """Per-lead override, else company's billing contact, else the booking contact."""
+        if self.billing_contact:
+            return self.billing_contact
+        company = self.contact.company
+        if company and company.billing_contact:
+            return company.billing_contact
+        return self.contact
 
     def can_transition(self, to_status: str) -> bool:
         return to_status in ALLOWED_TRANSITIONS.get(self.status, set())
