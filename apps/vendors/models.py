@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
 
@@ -75,3 +76,38 @@ class Vendor(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class VendorDriver(TimeStampedModel):
+    """A driver on a vendor's roster. Stays optional when a trip is later farmed out."""
+
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name="drivers")
+    name = models.CharField(max_length=200)
+    phone = models.CharField(max_length=32, blank=True)
+    email = models.EmailField(blank=True)
+    license_number = models.CharField(max_length=60, blank=True)
+    active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class VendorDocument(TimeStampedModel):
+    """A file attached to a vendor. created_at is the uploaded-on timestamp."""
+
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name="documents")
+    label = models.CharField(max_length=160)
+    file = models.FileField(upload_to="vendor-docs/")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.label
