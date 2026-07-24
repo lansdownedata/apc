@@ -54,6 +54,16 @@ def test_autocomplete_decomposes_a_poi_to_landmark(settings):
     assert str(r["latitude"]) == "42.3656" and r["place_id"] == "123"
 
 
+def test_autocomplete_poi_has_empty_line1(settings):
+    settings.LOCATIONIQ_API_KEY = "k"
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [POI]
+        r = autocomplete("logan")[0]
+    assert r["line1"] == ""
+    assert r["landmark_name"] == "Logan International Airport"
+
+
 def test_autocomplete_decomposes_a_street_to_line1_no_landmark(settings):
     settings.LOCATIONIQ_API_KEY = "k"
     with mock.patch("apps.integrations.geocoding.requests.get") as g:
