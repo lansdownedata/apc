@@ -1,5 +1,6 @@
 from django.core.cache import cache
 from django.shortcuts import redirect, render
+from django.urls import reverse
 
 from .forms import SERVICE_TYPE_CHOICES, BookingRequestForm
 from .services import create_lead_from_booking
@@ -64,10 +65,15 @@ def fleet(request):
 
 
 def contact(request):
+    canonical_url = request.build_absolute_uri(reverse("public:contact"))
     return render(
         request,
         "public/contact.html",
-        {"form": BookingRequestForm(), "service_options": SERVICE_TYPE_CHOICES},
+        {
+            "form": BookingRequestForm(),
+            "service_options": SERVICE_TYPE_CHOICES,
+            "canonical_url": canonical_url,
+        },
     )
 
 
