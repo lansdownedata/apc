@@ -33,8 +33,8 @@ staff_patterns = [
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("healthz/", healthz, name="health"),
-    path("", include("django.contrib.auth.urls")),  # login/, logout/, password_* stay at root
-    path("app/", include(staff_patterns)),  # ← entire staff portal, auth-gated
+    path("portal/", include("django.contrib.auth.urls")),  # /portal/login/, /portal/logout/, ...
+    path("portal/", include(staff_patterns)),  # ← entire staff portal, auth-gated
     # public customer-facing quote page (token-keyed, no login) — unchanged
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/book/", quote_book, name="quote_book"),
