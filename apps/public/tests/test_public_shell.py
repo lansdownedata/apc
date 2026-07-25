@@ -42,8 +42,10 @@ def test_calendly_popup_button_and_assets(db):
 
 def test_awards_banner_static_fallback_when_no_snippet(db):
     html = Client().get("/").content.decode()
-    # fallback badges present when WEDDINGWIRE_WIDGET is unset (default "")
-    assert "badge-weddingawards_en_US.png" in html
+    # client's own 2025 award banner shows when WEDDINGWIRE_WIDGET is unset (default ""),
+    # and the graphic's baked-in "Book Now" links to the booking page.
+    assert "awards-banner-2025.png" in html
+    assert 'href="/bookings/"' in html
 
 
 @override_settings(WEDDINGWIRE_WIDGET='<div id="ww-live-banner"></div>')
