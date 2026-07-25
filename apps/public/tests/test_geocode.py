@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.test import Client, override_settings
 from django.urls import reverse
 
@@ -31,3 +32,13 @@ def test_geocode_throttles_per_ip(db):
             for _ in range(views.GEOCODE_THROTTLE_LIMIT + 1):
                 over = client.get(reverse("public:geocode"), {"q": "a"})
     assert over.status_code == 429
+
+
+def test_geocode_short_query_skips_api(db):
+    cache.clear()
+    with override_settings(LOCATIONIQ_API_KEY="x"):
+        with patch("apps.public.views.autocomplete", return_value=[]) as m:
+            resp = Client().get(reverse("public:geocode"), {"q": "ab"})
+    assert resp.status_code == 200
+    assert resp.json() == {"results": [], "degraded": False}
+    m.assert_not_called()

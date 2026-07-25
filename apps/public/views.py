@@ -170,6 +170,8 @@ def geocode(request):
     if not settings.LOCATIONIQ_API_KEY:
         return JsonResponse({"results": [], "degraded": True})
     q = request.GET.get("q", "")
+    if len(q.strip()) < 3:
+        return JsonResponse({"results": [], "degraded": False})
     lat, lon = request.GET.get("lat"), request.GET.get("lon")
     cache_key = "geocode-ac:" + hashlib.md5(f"{q}:{lat}:{lon}".encode()).hexdigest()
     results = cache.get(cache_key)
