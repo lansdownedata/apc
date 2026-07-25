@@ -12,3 +12,14 @@ def test_calendly_url_exposed_to_public_templates(db):
 def test_weddingwire_snippet_rendered_when_set(db):
     resp = Client().get("/")
     assert b'id="ww-live"' in resp.content
+
+
+def test_public_shell_loads_foundation(db):
+    html = Client().get("/").content.decode()
+    assert "fonts.googleapis.com/css2?family=Fraunces" in html
+    assert "@tabler/icons-webfont" in html
+    assert "intlTelInput" in html
+    assert "flatpickr" in html
+    assert "alpinejs" in html
+    # shared modal store markup present so no page needs a native dialog
+    assert '$store.modal.open' in html or "$store.modal" in html

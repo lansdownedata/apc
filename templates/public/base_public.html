@@ -12,8 +12,14 @@
   <meta property="og:site_name" content="All Pro Charter">
   <meta property="og:type" content="website">
   {% endblock %}
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v={{ asset_version }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/css/intlTelInput.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v={{ asset_version }}">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -25,10 +31,8 @@
           mono: ['Spline Sans Mono','ui-monospace','monospace'],
         },
         colors: {
-          /* sidebar frame — always dark, both themes */
           charcoal:'#14181f', charcoal2:'#1b212b', charcoal3:'#222b37',
           onyx:'#17191D', silver:'#B9B4B7',
-          /* theme-aware tokens (flip with <html data-theme>); channels live in app.css */
           gold:    'rgb(var(--gold) / <alpha-value>)',
           goldd:   'rgb(var(--gold-deep) / <alpha-value>)',
           goldl:   'rgb(var(--gold-soft) / <alpha-value>)',
@@ -43,7 +47,10 @@
     }
   </script>
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/js/intlTelInputWithUtils.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
   <script src="{% static 'js/app.js' %}?v={{ asset_version }}"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   {% block head_extra %}{% endblock %}
 </head>
 <body class="bg-white text-charcoal antialiased">
@@ -51,6 +58,8 @@
   <main>{% block content %}{% endblock %}</main>
   {% include "public/_footer.html" %}
   {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
+  {% include "components/modal.html" %}
+  {% include "components/toasts.html" %}
   {% block body_extra %}{% endblock %}
 </body>
 </html>
