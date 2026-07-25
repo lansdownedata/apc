@@ -80,6 +80,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.portal.context_processors.chrome",
                 "apps.public.context_processors.canonical",
+                "apps.public.context_processors.site_settings",
             ],
         },
     },
@@ -178,6 +179,11 @@ LA_COMPANY_ALIAS = env("LA_COMPANY_ALIAS", default="")
 LA_PAYMENT_TYPE_ID = env.int("LA_PAYMENT_TYPE_ID", default=0)  # non-charging type; see smoke test
 LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NGROK_HOST>
 LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
+
+# Public marketing site — client-provided embeds (blank = feature hidden/degraded).
+CALENDLY_URL = env("CALENDLY_URL", default="")
+# Raw HTML/JS the client pastes from his WeddingWire/The Knot storefront dashboard.
+WEDDINGWIRE_WIDGET = env("WEDDINGWIRE_WIDGET", default="")
 
 # Geolocation & address bias
 from apps.core.geo import parse_latlon  # noqa: E402 settings-safe (no Django imports)
