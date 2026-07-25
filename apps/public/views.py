@@ -1,5 +1,10 @@
+from django.conf import settings
 from django.core.cache import cache
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_GET
+
+from apps.integrations.geocoding import autocomplete
 
 from .forms import SERVICE_TYPE_CHOICES, BookingRequestForm
 from .services import create_lead_from_booking
@@ -39,6 +44,20 @@ def _booking_throttle_increment(request) -> None:
     """
     key = _booking_throttle_key(request)
     cache.set(key, cache.get(key, 0) + 1, BOOKING_THROTTLE_WINDOW_SECONDS)
+
+
+# Public autocomplete proxy — generous per-IP cap so a fast typist isn't blocked,
+# but scripted scraping of LocationIQ (which we pay for) is bounded.
+GEOCODE_THROTTLE_LIMIT = 60
+GEOCODE_THROTTLE_WINDOW_SECONDS = 60
+
+
+def _geocode_throttle_exceeded(request) -> bool:
+    ip = request.META.get("REMOTE_ADDR", "unknown")
+    key = f"geocode-throttle:{ip}"
+    count = cache.get(key, 0) + 1
+    cache.set(key, count, GEOCODE_THROTTLE_WINDOW_SECONDS)
+    return count > GEOCODE_THROTTLE_LIMIT
 
 
 def home(request):
@@ -135,3 +154,24 @@ def _post(template):
         return render(request, f"public/blog/{template}")
 
     return view
+
+
+@require_GET
+def geocode(request):
+    """Unauthenticated LocationIQ autocomplete proxy for the public booking widget.
+
+    Mirrors integrations:geocode_autocomplete's response shape but needs no login;
+    the API key stays server-side. Throttled per IP and short-cached to cap spend.
+    """
+    if _geocode_throttle_exceeded(request):
+        return JsonResponse({"results": [], "degraded": False}, status=429)
+    if not settings.LOCATIONIQ_API_KEY:
+        return JsonResponse({"results": [], "degraded": True})
+    q = request.GET.get("q", "")
+    lat, lon = request.GET.get("lat"), request.GET.get("lon")
+    cache_key = f"geocode-ac:{q}:{lat}:{lon}"
+    results = cache.get(cache_key)
+    if results is None:
+        results = autocomplete(q, lat=lat, lon=lon)
+        cache.set(cache_key, results, 300)
+    return JsonResponse({"results": results, "degraded": False})
