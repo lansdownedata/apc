@@ -53,6 +53,10 @@ def geocode_stop(stop: "Stop") -> tuple[Decimal, Decimal]:
 
 AUTOCOMPLETE_URL = "https://api.locationiq.com/v1/autocomplete"
 
+# LocationIQ `class` values that are NOT a point of interest — a road, a locality/neighbourhood,
+# or an administrative area. For these, `address.name` is just the street/place name, not a venue.
+_NON_POI_CLASSES = {"highway", "place", "boundary"}
+
 
 def _decompose(item: dict) -> dict:
     """Map a LocationIQ autocomplete result to the Address field set. Defensive (.get) —
@@ -62,14 +66,17 @@ def _decompose(item: dict) -> dict:
     road = (addr.get("road") or "").strip()
     street = f"{house} {road}".strip()
     name = (addr.get("name") or "").strip()  # POI name, if any
+    is_poi = item.get("class") not in _NON_POI_CLASSES
+    state_code = (addr.get("state_code") or "").strip()
+    country_code = (addr.get("country_code") or "").strip()
     return {
-        "landmark_name": name if (name and (road or item.get("type") != "house")) else "",
+        "landmark_name": name if (name and is_poi) else "",
         "line1": street,
         "line2": "",
         "city": addr.get("city") or addr.get("town") or addr.get("village") or "",
-        "state": addr.get("state") or "",
+        "state": state_code.upper() if state_code else (addr.get("state") or ""),
         "postal": addr.get("postcode") or "",
-        "country": addr.get("country") or "",
+        "country": country_code.upper() if country_code else (addr.get("country") or ""),
         "latitude": item.get("lat") or None,
         "longitude": item.get("lon") or None,
         "place_id": str(item.get("place_id") or ""),
