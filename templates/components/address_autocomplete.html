@@ -11,14 +11,14 @@
     suite_value — current suite value
 {% endcomment %}
 {% load json_filters %}
-<div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }} })">
+<div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }}, fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
   <label for="{{ field_id }}" class="mb-1.5 block text-[12px] font-medium text-muted">{{ label }}</label>
   <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
     <input type="text" id="{{ field_id }}" name="{{ name }}" x-model="value"
            autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
            placeholder="Search an address…"
            class="field w-full"
-           @input.debounce.300ms="search()" @focus="results.length && (open=true)">
+           @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
     <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
       <template x-if="loading"><div class="sa-msg">Searching…</div></template>
       <template x-if="!loading && value && !results.length"><div class="sa-msg">No matches — type the address.</div></template>

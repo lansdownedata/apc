@@ -18,6 +18,19 @@ def test_widget_has_flatpickr_phone_and_stops(db):
     assert "Special Event" not in html  # removed service
 
 
+def test_widget_wires_location_bias(db):
+    """Pickup, drop-off, and stop rows all seed the service-area bias center and
+    request the visitor's location on focus (parity with the staff smart-address)."""
+    html = Client().get("/bookings/").content.decode()
+    # ADDRESS_BIAS_CENTER default (DC metro) reaches the rendered widget as the fallback bias.
+    assert "fallbackLat" in html
+    assert "38.9531" in html  # ADDRESS_BIAS_CENTER default latitude
+    # geolocation is requested on focus so suggestions bias to where the visitor is.
+    assert "requestLocation()" in html
+    # both the address component (pickup/drop-off) and the stops repeater carry the bias.
+    assert "addressAutocomplete(" in html and "bookingStops(" in html
+
+
 def test_full_booking_post_creates_lead_with_stops(db):
     import json
 
