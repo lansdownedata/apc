@@ -23,3 +23,18 @@ def test_public_shell_loads_foundation(db):
     assert "alpinejs" in html
     # shared modal store markup present so no page needs a native dialog
     assert '$store.modal.open' in html or "$store.modal" in html
+
+
+def test_review_cards_bottom_align_names(db):
+    html = Client().get("/").content.decode()
+    # each review figure is a flex column and pushes the figcaption down
+    assert "flex flex-col" in html
+    assert "mt-auto" in html
+
+
+@override_settings(CALENDLY_URL="https://calendly.com/allprocharter/quick-chat")
+def test_calendly_popup_button_and_assets(db):
+    html = Client().get("/").content.decode()
+    assert "assets.calendly.com/assets/external/widget.js" in html
+    assert "Calendly.initPopupWidget" in html
+    assert "Schedule a call" in html
