@@ -1,0 +1,42 @@
+{% comment %}
+  Single-line address input with LocationIQ autocomplete for PUBLIC (unauthenticated)
+  forms. Unlike smart_address.html it never auto-saves — it posts plain form values.
+  Reuses the .sa-drop / .sa-item dropdown styling.
+  Params:
+    name        — base field name (required). Posts: name, name_lat, name_lng, name_display
+    field_id    — id for <label for> (required)
+    label       — visible label
+    value       — current one-line value (edit / error re-render)
+    suite       — truthy to render an optional "Suite / unit" line (posts name_suite)
+    suite_value — current suite value
+{% endcomment %}
+{% load json_filters %}
+<div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }} })">
+  <label for="{{ field_id }}" class="mb-1.5 block text-[12px] font-medium text-muted">{{ label }}</label>
+  <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
+    <input type="text" id="{{ field_id }}" name="{{ name }}" x-model="value"
+           autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
+           placeholder="Search an address…"
+           class="field w-full"
+           @input.debounce.300ms="search()" @focus="results.length && (open=true)">
+    <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
+      <template x-if="loading"><div class="sa-msg">Searching…</div></template>
+      <template x-if="!loading && value && !results.length"><div class="sa-msg">No matches — type the address.</div></template>
+      <template x-for="(r, i) in results" :key="i">
+        <button type="button" class="sa-item" :class="i===active && 'sa-item-active'"
+                @mouseenter="active=i" @click="choose(i)">
+          <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
+          <span class="sa-item-sub" x-text="r.display_name"></span>
+        </button>
+      </template>
+    </div>
+    <input type="hidden" name="{{ name }}_lat" :value="lat">
+    <input type="hidden" name="{{ name }}_lng" :value="lng">
+    <input type="hidden" name="{{ name }}_display" :value="display">
+  </div>
+  {% if suite %}
+  <input type="text" name="{{ name }}_suite" value="{{ suite_value|default:'' }}"
+         placeholder="Suite / unit (optional)" autocomplete="off"
+         class="field w-full mt-2 text-[13px]">
+  {% endif %}
+</div>
