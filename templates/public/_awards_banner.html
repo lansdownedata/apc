@@ -1,0 +1,17 @@
+{% comment %}
+  Awards / social-proof banner. When settings.WEDDINGWIRE_WIDGET is set (the client's
+  storefront widget/badge snippet from his WeddingWire / The Knot dashboard), render it
+  live. Otherwise fall back to the static badge images he already has. Reusable on
+  home / reviews / about.
+{% endcomment %}
+{% load static %}
+<div class="flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+  {% if weddingwire_widget %}
+    {{ weddingwire_widget|safe }}
+  {% else %}
+    <img src="{% static 'public/img/All-Pro-Charter-Reviews-Ashburn-VA-32-Reviews.png' %}" alt="32 five-star All Pro Charter reviews on WeddingWire" class="h-10 w-auto sm:h-12">
+    <img src="{% static 'public/img/weddingwire.png' %}" alt="WeddingWire" class="h-14 w-auto sm:h-16">
+    <img src="{% static 'public/img/badge-weddingawards_en_US.png' %}" alt="WeddingWire Couples' Choice Award" class="h-14 w-auto sm:h-16">
+    <img src="{% static 'public/img/wedding-wire-couples-choice-2020-1.png' %}" alt="WeddingWire Couples' Choice Award 2020" class="h-14 w-auto sm:h-16">
+  {% endif %}
+</div>

@@ -22,7 +22,7 @@ def test_public_shell_loads_foundation(db):
     assert "flatpickr" in html
     assert "alpinejs" in html
     # shared modal store markup present so no page needs a native dialog
-    assert '$store.modal.open' in html or "$store.modal" in html
+    assert "$store.modal.open" in html or "$store.modal" in html
 
 
 def test_review_cards_bottom_align_names(db):
@@ -38,3 +38,15 @@ def test_calendly_popup_button_and_assets(db):
     assert "assets.calendly.com/assets/external/widget.js" in html
     assert "Calendly.initPopupWidget" in html
     assert "Schedule a call" in html
+
+
+def test_awards_banner_static_fallback_when_no_snippet(db):
+    html = Client().get("/").content.decode()
+    # fallback badges present when WEDDINGWIRE_WIDGET is unset (default "")
+    assert "badge-weddingawards_en_US.png" in html
+
+
+@override_settings(WEDDINGWIRE_WIDGET='<div id="ww-live-banner"></div>')
+def test_awards_banner_uses_live_snippet_when_set(db):
+    html = Client().get("/").content.decode()
+    assert 'id="ww-live-banner"' in html

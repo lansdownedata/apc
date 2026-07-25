@@ -68,7 +68,6 @@
           Schedule a call
         </button>
         {% endif %}
-        {% if weddingwire_widget %}<div class="hidden">{{ weddingwire_widget|safe }}</div>{% endif %}
       </div>
     </div>
 
@@ -306,6 +305,10 @@
         </blockquote>
         <figcaption class="mt-auto pt-4 text-[12.5px] font-semibold text-white">Lauren Laskin</figcaption>
       </figure>
+    </div>
+
+    <div class="mt-10 border-t border-white/10 pt-8">
+      {% include "public/_awards_banner.html" %}
     </div>
   </div>
 </section>
