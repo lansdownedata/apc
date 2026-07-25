@@ -1,14 +1,11 @@
 {% comment %}
-  templates/public/_booking_widget.html — the actual booking-request <form>,
-  reused wherever we want the lead-capture widget (the /bookings/ page today;
-  the home hero in a later task). Posts to public:bookings, which turns a
-  valid submission into a Lead + reservation stub in the sales pipeline.
-
-  Requires from the including template's context:
-    form            — a public.forms.BookingRequestForm instance
-    service_options — iterable of (value, label) pairs for the service dropdown
+  templates/public/_booking_widget.html — the booking-request <form>. Posts to
+  public:bookings, which turns a valid submission into a Lead + reservation stub +
+  ordered Stop records. Requires from context: form, service_options.
 {% endcomment %}
-<form method="post" action="{% url 'public:bookings' %}" class="grid gap-4 sm:grid-cols-2">
+<form method="post" action="{% url 'public:bookings' %}"
+      x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}' })"
+      class="grid gap-4 sm:grid-cols-2">
   {% csrf_token %}
 
   {% if form.non_field_errors %}
@@ -17,15 +14,54 @@
   </div>
   {% endif %}
 
-  {% comment %} honeypot — invisible to real visitors, bots that autofill every field trip it {% endcomment %}
+  {% comment %} honeypot — invisible to real visitors {% endcomment %}
   <label for="bw-company" class="hidden" aria-hidden="true" tabindex="-1">Leave this field blank</label>
   <input type="text" id="bw-company" name="company" value="{{ form.company.value|default:'' }}"
          class="hidden" aria-hidden="true" tabindex="-1" autocomplete="off">
 
+  {% comment %} --- Trip: pickup, optional in-between stops, drop-off --- {% endcomment %}
   <div class="sm:col-span-2">
-    <label for="bw-name" class="mb-1.5 block text-[12px] font-medium text-muted">
-      Full name <span class="text-rose-500">*</span>
-    </label>
+    {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value suite=1 suite_value=form.pickup_suite.value %}
+  </div>
+
+  <div class="sm:col-span-2 space-y-2">
+    <template x-for="(stop, i) in stops" :key="i">
+      <div class="aac rounded-xl bg-surface2 p-3 ring-1 ring-line">
+        <div class="mb-1.5 flex items-center justify-between">
+          <span class="text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></span>
+          <button type="button" class="text-[12px] font-semibold text-rose-600 hover:text-rose-700" @click="remove(i)">Remove</button>
+        </div>
+        <div class="sa-search" @keydown.escape="closeRow(i)">
+          <input type="text" x-model="stop.address" placeholder="Search an address…"
+                 autocomplete="off" data-1p-ignore class="field w-full"
+                 @input.debounce.300ms="search(i)" @focus="rowState(i).list.length && (rowState(i).open = true)">
+          <div class="sa-drop" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
+            <template x-for="(r, j) in rowState(i).list" :key="j">
+              <button type="button" class="sa-item" @click="choose(i, j)">
+                <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
+                <span class="sa-item-sub" x-text="r.display_name"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+        <input type="text" x-model="stop.suite" placeholder="Suite / unit (optional)"
+               autocomplete="off" class="field w-full mt-2 text-[13px]">
+      </div>
+    </template>
+    <button type="button" @click="add()"
+            class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd hover:text-gold focus-gold">
+      <i class="ti ti-plus"></i> Add a stop
+    </button>
+    <input type="hidden" name="stops_json" :value="json()">
+  </div>
+
+  <div class="sm:col-span-2">
+    {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value suite=1 suite_value=form.dropoff_suite.value %}
+  </div>
+
+  {% comment %} --- Contact --- {% endcomment %}
+  <div class="sm:col-span-2">
+    <label for="bw-name" class="mb-1.5 block text-[12px] font-medium text-muted">Full name <span class="text-rose-500">*</span></label>
     <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
            required autocomplete="name" placeholder="Jane Rider"
            class="field w-full{% if form.name.errors %} field-error{% endif %}">
@@ -41,27 +77,28 @@
   </div>
 
   <div>
-    <label for="bw-phone" class="mb-1.5 block text-[12px] font-medium text-muted">Phone</label>
-    <input type="tel" id="bw-phone" name="phone" value="{{ form.phone.value|default:'' }}"
-           autocomplete="tel" placeholder="(202) 424-2600"
-           class="field w-full{% if form.phone.errors %} field-error{% endif %}">
+    {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone" value=form.phone.value %}
     {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
+  {% comment %} --- When --- {% endcomment %}
   <div>
     <label for="bw-pickup-date" class="mb-1.5 block text-[12px] font-medium text-muted">Pickup date</label>
-    <input type="date" id="bw-pickup-date" name="pickup_date" value="{{ form.pickup_date.value|default:'' }}"
+    <input type="text" id="bw-pickup-date" name="pickup_date" data-flatpickr
+           value="{{ form.pickup_date.value|default:'' }}" placeholder="Select a date"
            class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
     {% for error in form.pickup_date.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
   <div>
     <label for="bw-pickup-time" class="mb-1.5 block text-[12px] font-medium text-muted">Pickup time</label>
-    <input type="time" id="bw-pickup-time" name="pickup_time" value="{{ form.pickup_time.value|default:'' }}"
+    <input type="text" id="bw-pickup-time" name="pickup_time" data-flatpickr-time
+           value="{{ form.pickup_time.value|default:'' }}" placeholder="Select a time"
            class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
     {% for error in form.pickup_time.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
+  {% comment %} --- Trip details --- {% endcomment %}
   <div>
     <label for="bw-passengers" class="mb-1.5 block text-[12px] font-medium text-muted">Passengers</label>
     <input type="number" id="bw-passengers" name="passengers" min="1" max="100"
@@ -78,7 +115,7 @@
 
   <div class="sm:col-span-2">
     <label for="bw-notes" class="mb-1.5 block text-[12px] font-medium text-muted">Trip details</label>
-    <textarea id="bw-notes" name="notes" rows="3" placeholder="Pickup &amp; drop-off, flight number, occasion…"
+    <textarea id="bw-notes" name="notes" rows="3" placeholder="Flight number, occasion, anything we should know…"
               class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
     {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
