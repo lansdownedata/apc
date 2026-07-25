@@ -802,9 +802,17 @@ function smartAddress(opts = {}) {
 
     // Reflect fields.state in the (Tom Select) state dropdown — scoped to THIS component's root so
     // primary/billing don't collide. create=1 means a value not in the list is accepted.
+    // Tom Select's setValue() only shows a value that is already a registered option — it never
+    // creates one on its own (createItem() only runs from interactive click/enter). Legacy
+    // addresses may carry a full state name (e.g. "Virginia") that isn't in us_states, so register
+    // it as a synthetic option first or the widget silently blanks instead of showing it.
     syncStateSelect() {
       const el = this.$root && this.$root.querySelector("select[data-tom]");
-      if (el && el.tomselect && this.fields.state) el.tomselect.setValue(this.fields.state, true);
+      if (!el || !el.tomselect || !this.fields.state) return;
+      const ts = el.tomselect;
+      const v = this.fields.state;
+      if (!ts.options[v]) ts.addOption({ value: v, text: v });
+      ts.setValue(v, true);
     },
 
     // ---- read-only display (sa-view block) ----
