@@ -2,17 +2,27 @@ from apps.public.services import create_lead_from_booking
 
 
 def _data(**over):
-    d = {"name": "Jane Rider", "email": "jane@example.com", "passengers": 2, "service": "Airport Transfer", "stops": []}
+    d = {
+        "name": "Jane Rider",
+        "email": "jane@example.com",
+        "passengers": 2,
+        "service": "Airport Transfer",
+        "stops": [],
+    }
     d.update(over)
     return d
 
 
 def test_stops_written_in_sequence(db):
-    lead = create_lead_from_booking(_data(stops=[
-        {"address": "123 Main St", "suite": "Apt 4", "lat": 38.9, "lng": -77.4},
-        {"address": "Reston Town Center", "suite": "", "lat": None, "lng": None},
-        {"address": "Dulles Intl (IAD)", "suite": "", "lat": 38.95, "lng": -77.45},
-    ]))
+    lead = create_lead_from_booking(
+        _data(
+            stops=[
+                {"address": "123 Main St", "suite": "Apt 4", "lat": 38.9, "lng": -77.4},
+                {"address": "Reston Town Center", "suite": "", "lat": None, "lng": None},
+                {"address": "Dulles Intl (IAD)", "suite": "", "lat": 38.95, "lng": -77.45},
+            ]
+        )
+    )
     res = lead.reservations.get()
     stops = list(res.stops.order_by("sequence"))
     assert [s.sequence for s in stops] == [0, 1, 2]
