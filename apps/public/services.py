@@ -4,7 +4,7 @@ from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, Stop
 
 
 def create_lead_from_booking(data: dict) -> Lead:
@@ -21,13 +21,28 @@ def create_lead_from_booking(data: dict) -> Lead:
         channel=Channel.WEBSITE,
         notes=data.get("notes", ""),
     )
-    Reservation.objects.create(
+    reservation = Reservation.objects.create(
         lead=lead,
         service=data.get("service", ""),
         pickup_date=data.get("pickup_date"),
         pickup_time=data.get("pickup_time"),
         passengers=data.get("passengers") or 1,
     )
+    stops = data.get("stops") or []
+    if stops:
+        Stop.objects.bulk_create(
+            [
+                Stop(
+                    reservation=reservation,
+                    sequence=i,
+                    address=s.get("address", ""),
+                    note=s.get("suite", ""),
+                    latitude=s.get("lat"),
+                    longitude=s.get("lng"),
+                )
+                for i, s in enumerate(stops)
+            ]
+        )
     Notification.notify(
         lead,
         Notification.Kind.NEW_LEAD,
