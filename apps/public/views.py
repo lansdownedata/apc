@@ -1,3 +1,5 @@
+import hashlib
+
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -169,7 +171,7 @@ def geocode(request):
         return JsonResponse({"results": [], "degraded": True})
     q = request.GET.get("q", "")
     lat, lon = request.GET.get("lat"), request.GET.get("lon")
-    cache_key = f"geocode-ac:{q}:{lat}:{lon}"
+    cache_key = "geocode-ac:" + hashlib.md5(f"{q}:{lat}:{lon}".encode()).hexdigest()
     results = cache.get(cache_key)
     if results is None:
         results = autocomplete(q, lat=lat, lon=lon)
