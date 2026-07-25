@@ -149,3 +149,12 @@ def test_reviews_no_fabricated_rating(client):
     assert b"ratingValue" not in resp.content
     assert b"reviewCount" not in resp.content
     assert b"aggregateRating" not in resp.content
+
+
+@pytest.mark.parametrize("url", ["/", "/fleet/", "/contact/", "/blogs/"])
+def test_public_nav_has_no_staff_portal_link(client, url):
+    """The staff portal is internal-only — client-facing pages must not link to it."""
+    resp = client.get(url)
+    assert resp.status_code == 200
+    assert b'href="/portal/"' not in resp.content
+    assert b"Staff Portal" not in resp.content
