@@ -943,6 +943,34 @@ function formatAddressLine(r) {
 }
 window.formatAddressLine = formatAddressLine;
 
+/* Reorder autocomplete results by proximity to a bias center (mirrors smartAddress.rank).
+   With no center (geolocation denied and no fallback) it preserves the server order. */
+function rankByProximity(results, lat, lon) {
+  const cfg = SMART_ADDRESS_RANKING;
+  if (lat == null || lon == null) return results.slice(0, cfg.TOP_N);
+  const center = { lat, lon };
+  return results
+    .map((r, i) => {
+      const d = haversineMiles(center, { lat: parseFloat(r.latitude), lon: parseFloat(r.longitude) });
+      const distTerm = Number.isFinite(d) ? d * cfg.DIST_WEIGHT : 0;
+      return { r, s: i * cfg.INDEX_WEIGHT + distTerm };
+    })
+    .sort((a, b) => a.s - b.s)
+    .slice(0, cfg.TOP_N)
+    .map((x) => x.r);
+}
+
+/* Ask the browser for location once; call onOk(lat, lon) if the user grants it.
+   Denied/unavailable → no-op, so callers keep their configured fallback center. */
+function requestBrowserLocation(onOk) {
+  if (!("geolocation" in navigator)) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => onOk(pos.coords.latitude, pos.coords.longitude),
+    () => {},
+    { timeout: 8000, maximumAge: 600000 },
+  );
+}
+
 /* Single-line address input for the public booking form (pickup / drop-off). */
 function addressAutocomplete(opts = {}) {
   return {
@@ -955,12 +983,31 @@ function addressAutocomplete(opts = {}) {
     open: false,
     active: -1,
     loading: false,
+    biasLat: opts.fallbackLat ?? null,
+    biasLon: opts.fallbackLon ?? null,
+    _raw: [],
+    _locRequested: false,
+    // On first focus, ask the browser for the visitor's location; on grant, re-rank
+    // any results already showing. Denied → keep the service-area fallback center.
+    requestLocation() {
+      if (this._locRequested) return;
+      this._locRequested = true;
+      requestBrowserLocation((lat, lon) => {
+        this.biasLat = lat; this.biasLon = lon;
+        if (this._raw.length) {
+          this.results = rankByProximity(this._raw, this.biasLat, this.biasLon);
+          this.active = this.results.length ? 0 : -1;
+        }
+      });
+    },
     search() {
       const q = this.value.trim();
-      if (!q) { this.results = []; this.open = false; return; }
+      if (!q) { this.results = []; this._raw = []; this.open = false; return; }
       this.loading = true; this.open = true;
-      geocodeSearch(this.acUrl, q).then((rs) => {
-        this.results = rs; this.active = rs.length ? 0 : -1;
+      geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
+        this._raw = rs;
+        this.results = rankByProximity(rs, this.biasLat, this.biasLon);
+        this.active = this.results.length ? 0 : -1;
       }).finally(() => { this.loading = false; });
     },
     move(d) {
@@ -984,14 +1031,25 @@ function bookingStops(opts = {}) {
     acUrl: opts.acUrl,
     stops: [],
     _r: {}, // per-row results cache keyed by index
+    biasLat: opts.fallbackLat ?? null,
+    biasLon: opts.fallbackLon ?? null,
+    _locRequested: false,
+    // Same location bias as the pickup/drop-off inputs: ask once on focus, fall back
+    // to the service-area center when denied. The next debounced search picks it up.
+    requestLocation() {
+      if (this._locRequested) return;
+      this._locRequested = true;
+      requestBrowserLocation((lat, lon) => { this.biasLat = lat; this.biasLon = lon; });
+    },
     add() { this.stops.push({ address: "", suite: "", lat: "", lng: "", display: "" }); },
     remove(i) { this.stops.splice(i, 1); },
     search(i) {
       const s = this.stops[i];
       const q = (s.address || "").trim();
       if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
-      geocodeSearch(this.acUrl, q).then((rs) => {
-        this._r[i] = { open: true, list: rs, active: rs.length ? 0 : -1 };
+      geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
+        const list = rankByProximity(rs, this.biasLat, this.biasLon);
+        this._r[i] = { open: true, list, active: list.length ? 0 : -1 };
       });
     },
     rowState(i) { return this._r[i] || { open: false, list: [], active: -1 }; },

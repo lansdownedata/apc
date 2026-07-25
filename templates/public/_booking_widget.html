@@ -4,7 +4,7 @@
   ordered Stop records. Requires from context: form, service_options.
 {% endcomment %}
 <form method="post" action="{% url 'public:bookings' %}"
-      x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}' })"
+      x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })"
       class="grid gap-4 sm:grid-cols-2">
   {% csrf_token %}
 
@@ -34,7 +34,7 @@
         <div class="sa-search" @keydown.escape="closeRow(i)">
           <input type="text" x-model="stop.address" placeholder="Search an address…"
                  autocomplete="off" data-1p-ignore class="field w-full"
-                 @input.debounce.300ms="search(i)" @focus="rowState(i).list.length && (rowState(i).open = true)">
+                 @input.debounce.300ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
           <div class="sa-drop" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
             <template x-for="(r, j) in rowState(i).list" :key="j">
               <button type="button" class="sa-item" @click="choose(i, j)">
