@@ -791,7 +791,21 @@ function smartAddress(opts = {}) {
     _locRequested: false,
     _saved: null,
 
-    init() { this._saved = JSON.stringify(this.fields); },
+    init() {
+      this._saved = JSON.stringify(this.fields);
+      this.$nextTick(() => this.syncStateSelect());
+    },
+
+    isUS(c) {
+      return ["US", "United States", "United States of America"].includes((c || "").trim());
+    },
+
+    // Reflect fields.state in the (Tom Select) state dropdown — scoped to THIS component's root so
+    // primary/billing don't collide. create=1 means a value not in the list is accepted.
+    syncStateSelect() {
+      const el = this.$root && this.$root.querySelector("select[data-tom]");
+      if (el && el.tomselect && this.fields.state) el.tomselect.setValue(this.fields.state, true);
+    },
 
     // ---- read-only display (sa-view block) ----
     hasAddress() {
@@ -855,6 +869,7 @@ function smartAddress(opts = {}) {
       const r = this.results[i]; if (!r) return;
       // Populate the bound fields from the picked result; the search box value is discarded.
       for (const k of Object.keys(this.fields)) if (k in r) this.fields[k] = r[k] ?? "";
+      this.syncStateSelect();
       this.query = ""; this.closeResults();
       this.saveAll();
     },

@@ -25,7 +25,7 @@
          city: {{ address.city|default:''|json_string }},
          state: {{ address.state|default:''|json_string }},
          postal: {{ address.postal|default:''|json_string }},
-         country: {{ address.country|default:'United States'|json_string }},
+         country: {{ address.country|default:'US'|json_string }},
          latitude: {{ address.latitude|default:''|json_string }},
          longitude: {{ address.longitude|default:''|json_string }},
          place_id: {{ address.locationiq_place_id|default:''|json_string }},
@@ -40,7 +40,7 @@
       <div class="font-semibold"{% if not address.landmark_name %} style="display:none"{% endif %} x-show="fields.landmark_name" x-text="fields.landmark_name">{{ address.landmark_name|default:"" }}</div>
       <div{% if not address.line1 and not address.line2 %} style="display:none"{% endif %} x-show="streetLine()" x-text="streetLine()">{{ address.line1|default:"" }}{% if address.line1 and address.line2 %}, {% endif %}{% if address.line2 %}{{ address.line2 }}{% endif %}</div>
       <div{% if not address.city and not address.state and not address.postal %} style="display:none"{% endif %} x-show="cityLine()" x-text="cityLine()">{% if address.city %}{{ address.city }}{% if address.state or address.postal %}, {% endif %}{% endif %}{% if address.state %}{{ address.state }}{% endif %}{% if address.state and address.postal %} {% endif %}{% if address.postal %}{{ address.postal }}{% endif %}</div>
-      <div class="text-muted"{% if not address or not address.country or address.country == "United States" %} style="display:none"{% endif %} x-show="fields.country && fields.country !== 'United States'" x-text="fields.country && fields.country !== 'United States' ? fields.country : ''">{% if address.country and address.country != "United States" %}{{ address.country }}{% endif %}</div>
+      <div class="text-muted"{% if not address or not address.country or address.country == "US" or address.country == "United States" or address.country == "United States of America" %} style="display:none"{% endif %} x-show="fields.country && !isUS(fields.country)" x-text="fields.country && !isUS(fields.country) ? fields.country : ''">{% if address.country and address.country != "US" and address.country != "United States" and address.country != "United States of America" %}{{ address.country }}{% endif %}</div>
     </div>
     <div class="text-[12.5px] text-muted"{% if address and not address.is_blank %} style="display:none"{% endif %} x-show="!hasAddress()">No address on file</div>
   </div>
@@ -77,7 +77,10 @@
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-city">City</label>
         <input id="sa-{{ prefix }}-city" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.city" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-state">State</label>
-        <input id="sa-{{ prefix }}-state" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.state" @blur="save()"></div>
+        <span @change="fields.state = $event.target.value; save()">
+          {% include "components/searchable_select.html" with name="state" field_id="sa-"|add:prefix|add:"-state" options=us_states selected=address.state create=1 placeholder="State" %}
+        </span>
+      </div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-postal">ZIP</label>
         <input id="sa-{{ prefix }}-postal" class="sa-input num" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.postal" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-country">Country</label>
