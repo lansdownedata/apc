@@ -464,10 +464,11 @@ header, aside, main, .wash-gold {
   border-radius: 0.9rem;
   box-shadow: 0 14px 36px -10px rgb(0 0 0 / 0.22);
   color: rgb(var(--text));
+  overflow: hidden; /* clip inner rows to the rounded corners — no stray white sliver at the bottom */
 }
-.flatpickr-calendar.arrowTop:before, .flatpickr-calendar.arrowBottom:before { border-bottom-color: rgb(var(--border)); border-top-color: rgb(var(--border)); }
-.flatpickr-calendar.arrowTop:after { border-bottom-color: rgb(var(--surface)); }
-.flatpickr-calendar.arrowBottom:after { border-top-color: rgb(var(--surface)); }
+/* drop the little connector triangle (it caused a white border artifact under the time row) */
+.flatpickr-calendar.arrowTop:before, .flatpickr-calendar.arrowTop:after,
+.flatpickr-calendar.arrowBottom:before, .flatpickr-calendar.arrowBottom:after { display: none; }
 
 /* date grid */
 .flatpickr-months .flatpickr-month, .flatpickr-current-month input.cur-year, .flatpickr-monthDropdown-months, .flatpickr-weekday { color: rgb(var(--text)); fill: rgb(var(--text)); }

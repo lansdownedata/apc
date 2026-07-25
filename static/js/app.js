@@ -653,6 +653,9 @@ function initPhoneInputs(root = document) {
       initialCountry: "us", // always US — never geo-locate
       strictMode: true,
       fixDropdownWidth: false, // size the country list to its content, not the narrow input
+      // Auto-fill a real, country-appropriate example number as the placeholder
+      // (e.g. "(201) 555-0123") instead of a bare "###" mask, when the input has none.
+      autoPlaceholder: "polite",
     });
   });
 }
@@ -1041,7 +1044,7 @@ function bookingStops(opts = {}) {
       this._locRequested = true;
       requestBrowserLocation((lat, lon) => { this.biasLat = lat; this.biasLon = lon; });
     },
-    add() { this.stops.push({ address: "", suite: "", lat: "", lng: "", display: "" }); },
+    add() { this.stops.push({ address: "", lat: "", lng: "", display: "" }); },
     remove(i) { this.stops.splice(i, 1); },
     search(i) {
       const s = this.stops[i];
@@ -1065,7 +1068,7 @@ function bookingStops(opts = {}) {
       return JSON.stringify(
         this.stops
           .filter((s) => (s.address || "").trim())
-          .map((s) => ({ address: s.address, suite: s.suite, lat: s.lat || null, lng: s.lng || null, display: s.display })),
+          .map((s) => ({ address: s.address, lat: s.lat || null, lng: s.lng || null, display: s.display })),
       );
     },
   };

@@ -8,13 +8,13 @@ Params:
   label      — visible label (default "Phone"); pass label="" to omit
   value      — current value (edit forms)
   required   — truthy to mark required
-  placeholder — default "(###) ###-####"
+  placeholder — optional; omitted → intl-tel-input auto-fills a real example number
 {% endcomment %}
 <div>
-  {% if label != "" %}<label for="{{ field_id }}" class="block text-[12px] font-medium text-muted mb-1.5">{{ label|default:"Phone" }}</label>{% endif %}
+  {% if label != "" %}<label for="{{ field_id }}" class="block text-[12px] font-medium text-muted mb-1">{{ label|default:"Phone" }}</label>{% endif %}
   <input id="{{ field_id }}" name="{{ name }}" type="tel" autocomplete="tel" data-phone
          {% if required %}required{% endif %}
          value="{{ value|default:'' }}"
-         placeholder="{{ placeholder|default:'(###) ###-####' }}"
+         {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
          class="field w-full">
 </div>
