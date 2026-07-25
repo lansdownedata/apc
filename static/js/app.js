@@ -808,9 +808,13 @@ function smartAddress(opts = {}) {
     // it as a synthetic option first or the widget silently blanks instead of showing it.
     syncStateSelect() {
       const el = this.$root && this.$root.querySelector("select[data-tom]");
-      if (!el || !el.tomselect || !this.fields.state) return;
+      if (!el || !el.tomselect) return;
       const ts = el.tomselect;
       const v = this.fields.state;
+      if (!v) {
+        ts.clear(true); // a later pick with no state must not leave the prior state showing
+        return;
+      }
       if (!ts.options[v]) ts.addOption({ value: v, text: v });
       ts.setValue(v, true);
     },
