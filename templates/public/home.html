@@ -69,6 +69,9 @@
         {% include "public/_booking_widget.html" %}
       </div>
     </div>
+
+    {% if calendly_url %}<a href="{{ calendly_url }}" data-calendly class="hidden">Schedule a call</a>{% endif %}
+    {% if weddingwire_widget %}<div class="hidden">{{ weddingwire_widget|safe }}</div>{% endif %}
   </div>
 </section>
 
