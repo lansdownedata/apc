@@ -694,6 +694,21 @@ document.addEventListener("submit", (e) => {
 document.addEventListener("DOMContentLoaded", () => initPhoneInputs());
 window.initPhoneInputs = initPhoneInputs;
 
+/* -------------------------------------------------------- flatpickr auto-init */
+function initFlatpickr(root = document) {
+  if (typeof window.flatpickr === "undefined") return;
+  root.querySelectorAll("input[data-flatpickr]").forEach((el) => {
+    if (el._flatpickr) return;
+    window.flatpickr(el, { altInput: true, altFormat: "F j, Y", dateFormat: "Y-m-d", minDate: "today" });
+  });
+  root.querySelectorAll("input[data-flatpickr-time]").forEach((el) => {
+    if (el._flatpickr) return;
+    window.flatpickr(el, { enableTime: true, noCalendar: true, dateFormat: "H:i", altInput: true, altFormat: "h:i K", time_24hr: false });
+  });
+}
+document.addEventListener("DOMContentLoaded", () => initFlatpickr());
+window.initFlatpickr = initFlatpickr;
+
 /* -------------------------------------------------- image upload (settings)
  * A styled dropzone layered over a real <input type="file"> — the input still
  * carries the value and submits normally; this only adds preview + drag/drop.
@@ -904,4 +919,99 @@ function smartAddress(opts = {}) {
     },
   };
 }
+
+/* ---------------------------------------------- public booking autocomplete */
+/* Shared low-level fetch against the PUBLIC geocode proxy — no auth, no auto-save. */
+function geocodeSearch(acUrl, q, biasLat, biasLon) {
+  q = (q || "").trim();
+  if (!q) return Promise.resolve([]);
+  let url = `${acUrl}?q=${encodeURIComponent(q)}`;
+  if (biasLat != null && biasLon != null) url += `&lat=${biasLat}&lon=${biasLon}`;
+  return fetch(url, { headers: { "X-Requested-With": "fetch" } })
+    .then((r) => r.json())
+    .then((d) => d.results || [])
+    .catch(() => []);
+}
+window.geocodeSearch = geocodeSearch;
+
+/* One-line label from a decomposed LocationIQ result (see geocoding._decompose). */
+function formatAddressLine(r) {
+  const head = r.landmark_name || r.line1 || "";
+  const cityState = [r.city, [r.state, r.postal].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const line = [head, cityState].filter(Boolean).join(", ");
+  return line || r.display_name || "";
+}
+window.formatAddressLine = formatAddressLine;
+
+/* Single-line address input for the public booking form (pickup / drop-off). */
+function addressAutocomplete(opts = {}) {
+  return {
+    acUrl: opts.acUrl,
+    value: opts.value || "",
+    lat: opts.lat || "",
+    lng: opts.lng || "",
+    display: opts.display || "",
+    results: [],
+    open: false,
+    active: -1,
+    loading: false,
+    search() {
+      const q = this.value.trim();
+      if (!q) { this.results = []; this.open = false; return; }
+      this.loading = true; this.open = true;
+      geocodeSearch(this.acUrl, q).then((rs) => {
+        this.results = rs; this.active = rs.length ? 0 : -1;
+      }).finally(() => { this.loading = false; });
+    },
+    move(d) {
+      if (!this.results.length) return;
+      this.active = (this.active + d + this.results.length) % this.results.length;
+    },
+    choose(i) {
+      const r = this.results[i]; if (!r) return;
+      this.value = formatAddressLine(r);
+      this.lat = r.latitude || ""; this.lng = r.longitude || ""; this.display = r.display_name || "";
+      this.closeResults();
+    },
+    closeResults() { this.open = false; this.results = []; this.active = -1; },
+  };
+}
+window.addressAutocomplete = addressAutocomplete;
+
+/* Repeater for optional in-between stops; serializes to one hidden stops_json field. */
+function bookingStops(opts = {}) {
+  return {
+    acUrl: opts.acUrl,
+    stops: [],
+    _r: {}, // per-row results cache keyed by index
+    add() { this.stops.push({ address: "", suite: "", lat: "", lng: "", display: "" }); },
+    remove(i) { this.stops.splice(i, 1); },
+    search(i) {
+      const s = this.stops[i];
+      const q = (s.address || "").trim();
+      if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
+      geocodeSearch(this.acUrl, q).then((rs) => {
+        this._r[i] = { open: true, list: rs, active: rs.length ? 0 : -1 };
+      });
+    },
+    rowState(i) { return this._r[i] || { open: false, list: [], active: -1 }; },
+    choose(i, j) {
+      const rs = this.rowState(i); const r = rs.list[j]; if (!r) return;
+      const s = this.stops[i];
+      s.address = formatAddressLine(r);
+      s.lat = r.latitude || ""; s.lng = r.longitude || ""; s.display = r.display_name || "";
+      this._r[i] = { open: false, list: [], active: -1 };
+    },
+    closeRow(i) { this._r[i] = { open: false, list: [], active: -1 }; },
+    json() {
+      return JSON.stringify(
+        this.stops
+          .filter((s) => (s.address || "").trim())
+          .map((s) => ({ address: s.address, suite: s.suite, lat: s.lat || null, lng: s.lng || null, display: s.display })),
+      );
+    },
+  };
+}
+window.bookingStops = bookingStops;
+
 window.smartAddress = smartAddress;

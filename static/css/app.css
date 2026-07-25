@@ -456,3 +456,13 @@ header, aside, main, .wash-gold {
 .sa-input { width: 100%; background: rgb(var(--surface)); border: 1px solid rgb(var(--border));
   border-radius: 10px; padding: .5rem .7rem; font-size: 13px; color: rgb(var(--text)); }
 .sa-input:focus { outline: none; border-color: rgb(var(--gold)); box-shadow: 0 0 0 3px var(--ring); }
+
+/* ---- flatpickr theme (charcoal/gold tokens) ---- */
+.flatpickr-day.selected, .flatpickr-day.selected:hover { background: rgb(var(--gold)); border-color: rgb(var(--gold)); }
+.flatpickr-day.today { border-color: rgb(var(--gold)); }
+.flatpickr-day:hover { background: rgb(var(--surface-2)); }
+.flatpickr-time input:hover, .flatpickr-time input:focus { background: rgb(var(--surface-2)); }
+
+/* ---- single-line public address autocomplete (reuses .sa-drop / .sa-item) ---- */
+.aac { position: relative; }
+.aac .sa-drop { position: absolute; z-index: 30; left: 0; right: 0; }
