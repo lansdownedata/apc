@@ -17,15 +17,12 @@ def test_ordered_stops_pickup_mids_dropoff():
     form = BookingRequestForm(
         _base(
             pickup="123 Main St, Ashburn, VA",
-            pickup_suite="Apt 4",
             pickup_lat="38.9",
             pickup_lng="-77.4",
             dropoff="Dulles Intl (IAD)",
             dropoff_lat="38.95",
             dropoff_lng="-77.45",
-            stops_json=json.dumps(
-                [{"address": "Reston Town Center", "suite": "", "lat": 38.95, "lng": -77.35}]
-            ),
+            stops_json=json.dumps([{"address": "Reston Town Center", "lat": 38.95, "lng": -77.35}]),
         )
     )
     assert form.is_valid(), form.errors
@@ -35,8 +32,21 @@ def test_ordered_stops_pickup_mids_dropoff():
         "Reston Town Center",
         "Dulles Intl (IAD)",
     ]
-    assert stops[0]["suite"] == "Apt 4"
     assert stops[0]["lat"] == 38.9
+    # suite/unit was removed from the booking form — stops carry no suite key
+    assert "suite" not in stops[0]
+
+
+def test_invalid_email_rejected():
+    """The email field validates format server-side (EmailField)."""
+    form = BookingRequestForm(_base(email="not-an-email"))
+    assert not form.is_valid()
+    assert "email" in form.errors
+
+
+def test_valid_email_accepted():
+    form = BookingRequestForm(_base(email="rider@example.com"))
+    assert form.is_valid(), form.errors
 
 
 def test_no_addresses_yields_empty_stops():

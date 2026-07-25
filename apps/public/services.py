@@ -36,7 +36,6 @@ def create_lead_from_booking(data: dict) -> Lead:
                     reservation=reservation,
                     sequence=i,
                     address=s.get("address", ""),
-                    note=s.get("suite", ""),
                     latitude=s.get("lat"),
                     longitude=s.get("lng"),
                 )

@@ -15,7 +15,6 @@ SERVICE_TYPE_CHOICES = [
 
 MAX_STOPS = 10
 ADDRESS_MAXLEN = 255
-SUITE_MAXLEN = 160
 
 
 def _to_float(v):
@@ -45,12 +44,10 @@ class BookingRequestForm(forms.Form):
 
     # Trip ends (posted as plain fields by the address_autocomplete component).
     pickup = forms.CharField(max_length=ADDRESS_MAXLEN, required=False)
-    pickup_suite = forms.CharField(max_length=SUITE_MAXLEN, required=False)
     pickup_lat = forms.FloatField(required=False)
     pickup_lng = forms.FloatField(required=False)
     pickup_display = forms.CharField(max_length=512, required=False)
     dropoff = forms.CharField(max_length=ADDRESS_MAXLEN, required=False)
-    dropoff_suite = forms.CharField(max_length=SUITE_MAXLEN, required=False)
     dropoff_lat = forms.FloatField(required=False)
     dropoff_lng = forms.FloatField(required=False)
     dropoff_display = forms.CharField(max_length=512, required=False)
@@ -80,7 +77,6 @@ class BookingRequestForm(forms.Form):
             cleaned.append(
                 {
                     "address": address,
-                    "suite": str(item.get("suite") or "").strip()[:SUITE_MAXLEN],
                     "lat": _to_float(item.get("lat")),
                     "lng": _to_float(item.get("lng")),
                 }
@@ -101,7 +97,6 @@ class BookingRequestForm(forms.Form):
             stops.append(
                 {
                     "address": pickup[:ADDRESS_MAXLEN],
-                    "suite": (cleaned.get("pickup_suite") or "").strip()[:SUITE_MAXLEN],
                     "lat": cleaned.get("pickup_lat"),
                     "lng": cleaned.get("pickup_lng"),
                 }
@@ -112,7 +107,6 @@ class BookingRequestForm(forms.Form):
             stops.append(
                 {
                     "address": dropoff[:ADDRESS_MAXLEN],
-                    "suite": (cleaned.get("dropoff_suite") or "").strip()[:SUITE_MAXLEN],
                     "lat": cleaned.get("dropoff_lat"),
                     "lng": cleaned.get("dropoff_lng"),
                 }
