@@ -78,7 +78,7 @@
         <input id="sa-{{ prefix }}-city" class="sa-input" autocomplete="off" data-1p-ignore data-lpignore="true" x-model="fields.city" @blur="save()"></div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-state">State</label>
         <span @change="fields.state = $event.target.value; save()">
-          {% include "components/searchable_select.html" with name="state" field_id="sa-"|add:prefix|add:"-state" options=us_states selected=address.state create=1 placeholder="State" %}
+          {% include "components/searchable_select.html" with name="state" field_id="sa-"|add:prefix|add:"-state" options=us_states selected=address.state create=1 empty_label="State" %}
         </span>
       </div>
       <div class="sa-field"><label class="sa-label" for="sa-{{ prefix }}-postal">ZIP</label>
