@@ -16,13 +16,20 @@ NOT linked here — it is internal-only; staff navigate to it directly.
       </span>
     </a>
 
+    {% comment %} Active state: gold underline + darker text on the current page (matched by path). {% endcomment %}
     <nav class="ml-4 hidden items-center gap-7 text-[13.5px] font-medium text-muted lg:flex" aria-label="Primary">
-      <a href="/" class="rounded focus-gold transition-colors hover:text-ink">Home</a>
-      <a href="/fleet/" class="rounded focus-gold transition-colors hover:text-ink">Fleet</a>
-      <a href="/services/" class="rounded focus-gold transition-colors hover:text-ink">Services</a>
-      <a href="/reviews/" class="rounded focus-gold transition-colors hover:text-ink">Reviews</a>
-      <a href="/about-us/" class="rounded focus-gold transition-colors hover:text-ink">About</a>
-      <a href="/contact/" class="rounded focus-gold transition-colors hover:text-ink">Contact</a>
+      <a href="/" {% if request.path == '/' %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if request.path == '/' %}border-gold text-ink{% else %}border-transparent{% endif %}">Home</a>
+      <a href="/fleet/" {% if '/fleet/' in request.path %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/fleet/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">Fleet</a>
+      <a href="/services/" {% if '/services/' in request.path %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/services/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">Services</a>
+      <a href="/reviews/" {% if '/reviews/' in request.path %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/reviews/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">Reviews</a>
+      <a href="/about-us/" {% if '/about-us/' in request.path %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/about-us/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">About</a>
+      <a href="/contact/" {% if '/contact/' in request.path %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/contact/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">Contact</a>
     </nav>
 
     <div class="ml-auto flex items-center gap-3 sm:gap-4">
@@ -47,12 +54,18 @@ NOT linked here — it is internal-only; staff navigate to it directly.
 
   <nav id="mobile-nav" class="hidden border-t border-line bg-white px-4 py-3 lg:hidden" aria-label="Primary mobile">
     <div class="flex flex-col gap-1 text-[14px] font-medium text-ink">
-      <a href="/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Home</a>
-      <a href="/fleet/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Fleet</a>
-      <a href="/services/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Services</a>
-      <a href="/reviews/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Reviews</a>
-      <a href="/about-us/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">About</a>
-      <a href="/contact/" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Contact</a>
+      <a href="/" {% if request.path == '/' %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if request.path == '/' %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Home</a>
+      <a href="/fleet/" {% if '/fleet/' in request.path %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/fleet/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Fleet</a>
+      <a href="/services/" {% if '/services/' in request.path %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/services/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Services</a>
+      <a href="/reviews/" {% if '/reviews/' in request.path %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/reviews/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Reviews</a>
+      <a href="/about-us/" {% if '/about-us/' in request.path %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/about-us/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">About</a>
+      <a href="/contact/" {% if '/contact/' in request.path %}aria-current="page"{% endif %}
+         class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/contact/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Contact</a>
     </div>
   </nav>
 </header>

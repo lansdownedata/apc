@@ -458,10 +458,47 @@ header, aside, main, .wash-gold {
 .sa-input:focus { outline: none; border-color: rgb(var(--gold)); box-shadow: 0 0 0 3px var(--ring); }
 
 /* ---- flatpickr theme (charcoal/gold tokens) ---- */
-.flatpickr-day.selected, .flatpickr-day.selected:hover { background: rgb(var(--gold)); border-color: rgb(var(--gold)); }
+.flatpickr-calendar {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
+  border-radius: 0.9rem;
+  box-shadow: 0 14px 36px -10px rgb(0 0 0 / 0.22);
+  color: rgb(var(--text));
+}
+.flatpickr-calendar.arrowTop:before, .flatpickr-calendar.arrowBottom:before { border-bottom-color: rgb(var(--border)); border-top-color: rgb(var(--border)); }
+.flatpickr-calendar.arrowTop:after { border-bottom-color: rgb(var(--surface)); }
+.flatpickr-calendar.arrowBottom:after { border-top-color: rgb(var(--surface)); }
+
+/* date grid */
+.flatpickr-months .flatpickr-month, .flatpickr-current-month input.cur-year, .flatpickr-monthDropdown-months, .flatpickr-weekday { color: rgb(var(--text)); fill: rgb(var(--text)); }
+.flatpickr-day { color: rgb(var(--text)); border-radius: 0.55rem; }
+.flatpickr-day.selected, .flatpickr-day.selected:hover { background: rgb(var(--gold)); border-color: rgb(var(--gold)); color: #fff; }
 .flatpickr-day.today { border-color: rgb(var(--gold)); }
 .flatpickr-day:hover { background: rgb(var(--surface-2)); }
+.flatpickr-day.flatpickr-disabled, .flatpickr-day.prevMonthDay, .flatpickr-day.nextMonthDay { color: rgb(var(--muted)); }
+.flatpickr-months .flatpickr-prev-month svg, .flatpickr-months .flatpickr-next-month svg { fill: rgb(var(--muted)); }
+.flatpickr-months .flatpickr-prev-month:hover svg, .flatpickr-months .flatpickr-next-month:hover svg { fill: rgb(var(--gold)); }
+
+/* time picker — larger, higher-contrast, clearer AM/PM toggle (restyled per client) */
+.flatpickr-calendar.noCalendar.hasTime { width: 15rem; }
+.flatpickr-calendar.hasTime .flatpickr-time { height: 3.4rem; max-height: 3.4rem; border-top: 1px solid rgb(var(--border)); border-radius: 0 0 0.9rem 0.9rem; }
+.flatpickr-time input, .flatpickr-time .flatpickr-time-separator, .flatpickr-time .flatpickr-am-pm {
+  height: 3.4rem; line-height: 3.4rem; font-size: 1.1rem; color: rgb(var(--text));
+}
+.flatpickr-time input { font-weight: 600; }
 .flatpickr-time input:hover, .flatpickr-time input:focus { background: rgb(var(--surface-2)); }
+.flatpickr-time .flatpickr-time-separator { font-weight: 700; color: rgb(var(--muted)); }
+.flatpickr-time .flatpickr-am-pm {
+  font-weight: 700; letter-spacing: 0.05em; color: rgb(var(--gold-deep));
+  border-left: 1px solid rgb(var(--border)); flex-basis: 3.5rem; text-align: center;
+}
+.flatpickr-time .flatpickr-am-pm:hover, .flatpickr-time .flatpickr-am-pm:focus { background: rgb(var(--gold-soft)); }
+/* always-visible, brand-coloured step arrows for bigger, clearer tap targets */
+.flatpickr-time .numInputWrapper span { opacity: 1; border: none; width: 1.1rem; }
+.flatpickr-time .numInputWrapper span.arrowUp:after { border-bottom-color: rgb(var(--muted)); }
+.flatpickr-time .numInputWrapper span.arrowDown:after { border-top-color: rgb(var(--muted)); }
+.flatpickr-time .numInputWrapper:hover span.arrowUp:after { border-bottom-color: rgb(var(--gold)); }
+.flatpickr-time .numInputWrapper:hover span.arrowDown:after { border-top-color: rgb(var(--gold)); }
 
 /* ---- single-line public address autocomplete (reuses .sa-drop / .sa-item) ---- */
 .aac { position: relative; }
