@@ -171,3 +171,60 @@ def test_view_forwards_coords(client, settings):
             {"q": "dulles", "lat": "38.95", "lon": "-77.45"},
         )
     assert "viewbox" in g.call_args.kwargs["params"]
+
+
+STREET_HW = {
+    "place_id": "321234735530",
+    "lat": "39.1034772",
+    "lon": "-77.5218607",
+    "class": "highway",
+    "type": "residential",
+    "display_name": (
+        "Big Spruce Square, Spring Lake, Leesburg, Loudoun County, Virginia, 20176, USA"
+    ),
+    "address": {
+        "name": "Big Spruce Square",
+        "house_number": "42748",
+        "road": "Big Spruce Square",
+        "city": "Leesburg",
+        "state": "Virginia",
+        "state_code": "va",
+        "postcode": "20176",
+        "country": "United States of America",
+        "country_code": "us",
+    },
+}
+
+
+def _one(settings, fixture, q="x"):
+    settings.LOCATIONIQ_API_KEY = "k"
+    with mock.patch("apps.integrations.geocoding.requests.get") as g:
+        g.return_value.status_code = 200
+        g.return_value.json.return_value = [fixture]
+        return autocomplete(q)[0]
+
+
+def test_decompose_uses_state_and_country_codes(settings):
+    r = _one(settings, STREET_HW)
+    assert r["state"] == "VA"
+    assert r["country"] == "US"
+
+
+def test_decompose_landmark_blank_for_a_street(settings):
+    r = _one(settings, STREET_HW)
+    assert r["landmark_name"] == ""  # class=highway → not a POI
+    assert r["line1"] == "42748 Big Spruce Square"  # street still lands in line1
+
+
+def test_decompose_landmark_kept_for_a_poi(settings):
+    r = _one(settings, POI)  # POI fixture is class=aeroway
+    assert r["landmark_name"] == "Logan International Airport"
+
+
+def test_decompose_falls_back_to_full_state_without_code(settings):
+    item = {**STREET_HW, "address": {**STREET_HW["address"]}}
+    del item["address"]["state_code"]
+    del item["address"]["country_code"]
+    r = _one(settings, item)
+    assert r["state"] == "Virginia"  # no code → full name unchanged
+    assert r["country"] == "United States of America"
