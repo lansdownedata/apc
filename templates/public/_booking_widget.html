@@ -24,12 +24,15 @@
     {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value %}
   </div>
 
-  <div class="sm:col-span-2 space-y-2">
+  <div class="sm:col-span-2 space-y-3">
     <template x-for="(stop, i) in stops" :key="i">
-      <div class="aac rounded-xl bg-surface2 p-3 ring-1 ring-line">
-        <div class="mb-1.5 flex items-center justify-between">
-          <span class="text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></span>
-          <button type="button" class="text-[12px] font-semibold text-rose-600 hover:text-rose-700" @click="remove(i)">Remove</button>
+      <div class="aac">
+        <div class="mb-1 flex items-center justify-between">
+          <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
+          <button type="button" @click="remove(i)"
+                  class="inline-flex items-center gap-1 rounded text-[11.5px] font-medium text-muted transition-colors hover:text-rose-600 focus-gold">
+            <i class="ti ti-x text-[13px]"></i> Remove
+          </button>
         </div>
         <div class="sa-search" @keydown.escape="closeRow(i)">
           <input type="text" x-model="stop.address" placeholder="Search an address…"
@@ -47,7 +50,7 @@
       </div>
     </template>
     <button type="button" @click="add()"
-            class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd hover:text-gold focus-gold">
+            class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
       <i class="ti ti-plus"></i> Add a stop
     </button>
     <input type="hidden" name="stops_json" :value="json()">
