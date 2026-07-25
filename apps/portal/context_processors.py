@@ -4,6 +4,7 @@ from pathlib import Path
 
 from django.conf import settings
 
+from apps.core.us_states import US_STATES
 from apps.leads.models import Lead
 from apps.messaging.models import Message
 from apps.notifications.models import Notification
@@ -52,6 +53,7 @@ def chrome(request):
             "nav_soon": NAV_SOON,
             "asset_version": _asset_version(),
             "address_bias_center": settings.ADDRESS_BIAS_CENTER,
+            "us_states": US_STATES,
         }
 
     unread = Notification.objects.unread().select_related("lead", "lead__contact")
@@ -59,6 +61,7 @@ def chrome(request):
         "nav_soon": NAV_SOON,
         "asset_version": _asset_version(),
         "address_bias_center": settings.ADDRESS_BIAS_CENTER,
+        "us_states": US_STATES,
         "unread_notifications": list(unread.order_by("-created_at")[:8]),
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
