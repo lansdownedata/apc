@@ -1,7 +1,7 @@
 # Production — pip install -r requirements/prod.txt
 -r base.txt
 
-mysqlclient>=2.2             # MySQL driver (needs MySQL client libs at build time)
+psycopg[binary]>=3.2         # PostgreSQL driver (Heroku Postgres); binary = no build-time libpq
 gunicorn>=22.0
 whitenoise>=6.7             # static file serving
 sentry-sdk>=2.0            # error monitoring

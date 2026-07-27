@@ -1,0 +1,3 @@
+# Heroku's Python buildpack only looks for a requirements.txt at the repo root.
+# The real dependency lists live in requirements/ — this just points at the prod one.
+-r requirements/prod.txt
