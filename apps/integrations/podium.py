@@ -5,14 +5,24 @@ business calls: locations, messages, contacts. Higher-level orchestration
 (creating Message rows, etc.) belongs in views/tasks, not here.
 """
 
+import logging
+
 import requests
 from django.conf import settings
+from django.core.cache import cache
 
 from . import services
 from .models import PodiumCredential
 
+logger = logging.getLogger(__name__)
+
 API_BASE = "https://api.podium.com/v4"
 TIMEOUT = 30
+
+# Podium's message webhooks identify the sender only by user UID, so outbound
+# attribution needs a UID -> name lookup. The roster changes rarely; cache it.
+USER_NAMES_CACHE_KEY = "podium:user-names"
+USER_NAMES_CACHE_TTL = 60 * 60
 
 
 class PodiumNotConnected(Exception):
@@ -60,6 +70,42 @@ def _request(method: str, path: str, *, json=None, params=None) -> dict:
 def list_locations() -> dict:
     """All locations for the connected org (use to find the location UID)."""
     return _request("GET", "/locations")
+
+
+def list_users() -> dict:
+    """All users on locations this token can see. Requires the `read_users` scope."""
+    return _request("GET", "/users", params={"limit": 100})
+
+
+def user_name_map(*, refresh: bool = False) -> dict[str, str]:
+    """Podium user UID -> display name, cached for an hour.
+
+    Returns {} rather than raising when Podium is unreachable or the token lacks
+    `read_users`: sender attribution is cosmetic and must never break webhook
+    ingestion or a send.
+    """
+    if not refresh:
+        cached = cache.get(USER_NAMES_CACHE_KEY)
+        if cached is not None:
+            return cached
+
+    try:
+        users = list_users().get("data", [])
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        logger.warning("podium user_name_map: lookup failed (%s)", exc)
+        return {}
+
+    names: dict[str, str] = {}
+    for user in users:
+        uid = user.get("uid")
+        if not uid:
+            continue
+        name = " ".join(p for p in (user.get("firstName"), user.get("lastName")) if p).strip()
+        if name:
+            names[uid] = name
+
+    cache.set(USER_NAMES_CACHE_KEY, names, USER_NAMES_CACHE_TTL)
+    return names
 
 
 def send_message(

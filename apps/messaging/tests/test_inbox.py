@@ -196,6 +196,39 @@ def test_inbox_send_sms_happy_path(client, agent):
     assert message.delivery_status == Message.DeliveryStatus.SENT
 
 
+def test_inbox_send_records_the_sending_user_as_sender(client, agent):
+    """Composer sends know their author directly — no /users round-trip needed."""
+    agent.first_name, agent.last_name = "Tarrick", "Ghannam"
+    agent.save(update_fields=["first_name", "last_name"])
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch("apps.messaging.views.podium.send_message", return_value={"uid": "m-own"}):
+        client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "hi", "channel": "sms"}),
+            content_type="application/json",
+        )
+
+    assert Message.objects.get(lead=lead).sender_name == "Tarrick Ghannam"
+
+
+def test_inbox_send_falls_back_to_username_when_no_full_name(client, agent):
+    agent.first_name, agent.last_name = "", ""
+    agent.save(update_fields=["first_name", "last_name"])
+    lead = LeadFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+
+    with patch("apps.messaging.views.podium.send_message", return_value={"uid": "m-own2"}):
+        client.post(
+            reverse("inbox_send", args=[lead.pk]),
+            data=json.dumps({"body": "hi", "channel": "sms"}),
+            content_type="application/json",
+        )
+
+    assert Message.objects.get(lead=lead).sender_name == agent.username
+
+
 def test_inbox_send_email_happy_path(client, agent):
     lead = LeadFactory(contact=ContactFactory(email="rider@example.com"))
     client.force_login(agent)
@@ -399,3 +432,44 @@ def test_chrome_context_includes_inbox_unread_count(client, agent):
 
     assert resp.status_code == 200
     assert resp.context["inbox_unread"] == 2
+
+
+# --- thread rendering: direction + sender attribution --------------------------------
+
+
+def test_thread_renders_outbound_right_aligned_and_inbound_left(client, agent):
+    """The bug that shipped: every message rendered left because all were stored IN."""
+    lead = LeadFactory(contact=ContactFactory(phone="+17035736008"))
+    MessageFactory(lead=lead, direction=Message.Direction.IN, body="Which hotel?")
+    MessageFactory(lead=lead, direction=Message.Direction.OUT, body="Fairview Marriott")
+    client.force_login(agent)
+
+    html = client.get(reverse("inbox"), {"lead": lead.pk}).content.decode()
+
+    assert "items-end" in html, "an outbound message must render right-aligned"
+    assert "items-start" in html, "an inbound message must render left-aligned"
+
+
+def test_thread_shows_sender_name_when_known(client, agent):
+    lead = LeadFactory(contact=ContactFactory(phone="+17035736008"))
+    MessageFactory(
+        lead=lead,
+        direction=Message.Direction.OUT,
+        body="On our way",
+        sender_name="Tarrick Ghannam",
+    )
+    client.force_login(agent)
+
+    html = client.get(reverse("inbox"), {"lead": lead.pk}).content.decode()
+
+    assert "Tarrick Ghannam" in html
+
+
+def test_thread_falls_back_to_phone_when_sender_name_unknown(client, agent):
+    lead = LeadFactory(contact=ContactFactory(phone="+17035736008"))
+    MessageFactory(lead=lead, direction=Message.Direction.IN, body="hi", sender_name="")
+    client.force_login(agent)
+
+    html = client.get(reverse("inbox"), {"lead": lead.pk}).content.decode()
+
+    assert "(703) 573-6008" in html

@@ -16,6 +16,7 @@ from apps.leads.models import Lead
 from apps.messaging import touchpoints
 from apps.messaging.models import Message
 
+from . import podium
 from .models import PodiumEvent
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,20 @@ CHANNEL_MAP = {
 }
 
 
+def podium_event_type(payload: dict) -> str:
+    """Extract the event type from a Podium webhook payload.
+
+    Podium nests it under `metadata.eventType`. The top-level lookups are kept as a
+    fallback for hand-built/replayed payloads. Returns "" when absent — callers must
+    NOT assume a message event, or an unrecognised payload becomes a fake customer
+    message (see `process_podium_webhook`).
+    """
+    metadata = payload.get("metadata") or {}
+    return metadata.get("eventType") or payload.get("eventType") or payload.get("type") or ""
+
+
 def process_podium_webhook(payload: dict) -> PodiumEvent:
-    event_type = payload.get("eventType") or payload.get("type") or "message.received"
+    event_type = podium_event_type(payload)
     data = payload.get("data", payload)
     event = PodiumEvent.objects.create(event_type=event_type, payload=payload)
 
@@ -41,6 +54,12 @@ def process_podium_webhook(payload: dict) -> PodiumEvent:
         event.lead = _ingest_outbound(data)
     elif event_type == PodiumEvent.EventType.MESSAGE_FAILED:
         _mark_failed(data)
+    else:
+        # Left unprocessed on purpose: unhandled events stay queryable rather than
+        # being silently absorbed as inbound messages.
+        logger.warning("podium webhook: unhandled eventType %r, skipping", event_type)
+        event.save(update_fields=["updated_at"])
+        return event
 
     event.processed = True
     event.save(update_fields=["lead", "processed", "updated_at"])
@@ -67,6 +86,7 @@ def _ingest_inbound(data: dict) -> Lead:
         body=data.get("body", ""),
         podium_conversation_uid=conversation.get("uid", ""),
         podium_message_uid=msg_uid,
+        sender_name=(contact_data.get("name") or data.get("contactName") or "").strip(),
         delivery_status=Message.DeliveryStatus.RECEIVED,
     )
     return lead
@@ -146,6 +166,7 @@ def _ingest_outbound(data: dict) -> Lead | None:
         logger.warning("message.sent uid=%s: no matching contact/lead, skipping", msg_uid)
         return None
 
+    sender_uid = data.get("senderUid") or (data.get("sender") or {}).get("uid") or ""
     Message.objects.create(
         lead=lead,
         direction=Message.Direction.OUT,
@@ -153,6 +174,8 @@ def _ingest_outbound(data: dict) -> Lead | None:
         body=data.get("body", ""),
         podium_conversation_uid=conversation.get("uid", ""),
         podium_message_uid=msg_uid,
+        podium_sender_uid=sender_uid,
+        sender_name=podium.user_name_map().get(sender_uid, "") if sender_uid else "",
         delivery_status=Message.DeliveryStatus.SENT,
         sent_at=timezone.now(),
     )
