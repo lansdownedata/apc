@@ -308,6 +308,7 @@ header, aside, main, .wash-gold {
 @media (prefers-reduced-motion: reduce) {
   *, .stagger > *, .reveal, .pop { animation: none !important; }
   body, .card, .field, .sidebar { transition: none !important; }
+  .qf-seg-label { transition: none !important; }
 }
 
 /* =================================================== reusable modal ===== */
