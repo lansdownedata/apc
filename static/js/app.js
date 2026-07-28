@@ -865,18 +865,20 @@ function smartAddress(opts = {}) {
       );
     },
 
+    // Airports are held out of the proximity sort and always lead — see partitionAirports.
     rank(results) {
       const cfg = SMART_ADDRESS_RANKING;
+      const [airports, rest] = partitionAirports(results);
       const center = { lat: this.biasLat, lon: this.biasLon };
-      return results
+      const ranked = rest
         .map((r, i) => {
           const d = haversineMiles(center, { lat: parseFloat(r.latitude), lon: parseFloat(r.longitude) });
           const distTerm = Number.isFinite(d) ? d * cfg.DIST_WEIGHT : 0;
           return { r, s: i * cfg.INDEX_WEIGHT + distTerm };
         })
         .sort((a, b) => a.s - b.s)
-        .slice(0, cfg.TOP_N)
         .map((x) => x.r);
+      return airports.concat(ranked).slice(0, cfg.TOP_N);
     },
 
     search() {
@@ -946,21 +948,32 @@ function formatAddressLine(r) {
 }
 window.formatAddressLine = formatAddressLine;
 
+/* Split airport results (server-ranked, must stay on top) from the rest. The proximity
+   sort below would otherwise sink an airport beneath any closer street address — and the
+   TOP_N truncation could drop it entirely. */
+function partitionAirports(results) {
+  const airports = [], rest = [];
+  for (const r of results) (r.is_airport ? airports : rest).push(r);
+  return [airports, rest];
+}
+
 /* Reorder autocomplete results by proximity to a bias center (mirrors smartAddress.rank).
-   With no center (geolocation denied and no fallback) it preserves the server order. */
+   With no center (geolocation denied and no fallback) it preserves the server order.
+   Airports are held out of the sort and always lead. */
 function rankByProximity(results, lat, lon) {
   const cfg = SMART_ADDRESS_RANKING;
-  if (lat == null || lon == null) return results.slice(0, cfg.TOP_N);
+  const [airports, rest] = partitionAirports(results);
+  if (lat == null || lon == null) return airports.concat(rest).slice(0, cfg.TOP_N);
   const center = { lat, lon };
-  return results
+  const ranked = rest
     .map((r, i) => {
       const d = haversineMiles(center, { lat: parseFloat(r.latitude), lon: parseFloat(r.longitude) });
       const distTerm = Number.isFinite(d) ? d * cfg.DIST_WEIGHT : 0;
       return { r, s: i * cfg.INDEX_WEIGHT + distTerm };
     })
     .sort((a, b) => a.s - b.s)
-    .slice(0, cfg.TOP_N)
     .map((x) => x.r);
+  return airports.concat(ranked).slice(0, cfg.TOP_N);
 }
 
 /* Ask the browser for location once; call onOk(lat, lon) if the user grants it.

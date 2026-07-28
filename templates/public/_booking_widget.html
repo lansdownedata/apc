@@ -40,10 +40,7 @@
                  @input.debounce.300ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
           <div class="sa-drop" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
             <template x-for="(r, j) in rowState(i).list" :key="j">
-              <button type="button" class="sa-item" @click="choose(i, j)">
-                <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
-                <span class="sa-item-sub" x-text="r.display_name"></span>
-              </button>
+              {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
             </template>
           </div>
         </div>

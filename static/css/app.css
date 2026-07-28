@@ -450,6 +450,7 @@ header, aside, main, .wash-gold {
 .sa-item-main { display: block; font-size: 13px; color: rgb(var(--text)); }
 .sa-item-sub { display: block; font-size: 11.5px; color: rgb(var(--muted));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sa-item-air { color: rgb(var(--gold)); margin-right: 5px; font-size: 12.5px; vertical-align: -1px; }
 /* self-contained field layout so the component needs no host-page classes */
 .sa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; margin-top: 12px; }
 .sa-full { grid-column: 1 / -1; }
