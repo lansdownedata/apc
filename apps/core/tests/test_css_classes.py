@@ -110,6 +110,30 @@ def test_quote_form_scope_is_present(rule):
     assert rule in css, f"{rule!r} missing from app.css"
 
 
+def test_selected_toggle_segment_carries_a_brand_colour():
+    """The Transfer/Hourly toggle read as muted/disabled: the selected pill was
+    white-on-near-white with plain body text, so neither the selection nor the
+    brand registered. The checked segment must use a gold token."""
+    css = (ROOT / "static" / "css" / "app.css").read_text()
+    block = re.search(r"\.qf-seg input:checked \+ \.qf-seg-label \{(.+?)\}", css, re.S)
+    assert block, "no rule for the checked toggle segment"
+    assert "--gold" in block.group(1), (
+        f"checked segment has no gold token, so it reads as muted: {block.group(1)!r}"
+    )
+
+
+def test_time_picker_number_wrapper_fills_the_row():
+    """Stepping the time with the arrows exposed a white strip: .numInputWrapper is
+    40px tall inside a 3.4rem (54.4px) row, so the calendar's white background showed
+    below it. The wrapper must be pinned to the row height."""
+    css = (ROOT / "static" / "css" / "app.css").read_text()
+    block = re.search(r"\.flatpickr-time \.numInputWrapper \{(.+?)\}", css, re.S)
+    assert block, "no height rule for .flatpickr-time .numInputWrapper"
+    assert "3.4rem" in block.group(1), (
+        f"wrapper not pinned to the 3.4rem row height: {block.group(1)!r}"
+    )
+
+
 @pytest.mark.parametrize("cls", ["wash-gold", "hover:wash-gold"])
 def test_custom_utility_is_compiled(cls):
     """`wash-gold` is a real utility, so its variants must compile too.
