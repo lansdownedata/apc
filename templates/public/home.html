@@ -26,13 +26,14 @@
   <div class="absolute inset-0 bg-gradient-to-r from-charcoal via-charcoal/[0.85] to-charcoal/[0.4]"></div>
   <div class="absolute inset-0 bg-gradient-to-t from-charcoal via-transparent to-transparent"></div>
 
-  <div class="relative mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 sm:py-24 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:gap-16 lg:px-8 lg:py-28">
-    <div>
+  <div class="relative mx-auto grid max-w-[1200px] gap-10 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-12 lg:items-center lg:gap-12 lg:py-28">
+    <div class="lg:col-span-5">
       <span class="inline-flex max-w-full items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-goldd ring-1 ring-white/15 sm:text-[11.5px] sm:tracking-[0.14em]">
         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-gold"></span>
-        Available 24/7<span class="hidden sm:inline">&nbsp;&middot; Virginia &middot; D.C. &middot; Maryland</span>
+        {% comment %} the region list drops out between lg and xl, where the 5/12 copy column is too narrow for it and the pill wrapped mid-phrase {% endcomment %}
+        <span class="whitespace-nowrap">Available 24/7</span><span class="hidden whitespace-nowrap sm:inline lg:hidden xl:inline">&nbsp;&middot; Virginia &middot; D.C. &middot; Maryland</span>
       </span>
-      <h1 class="mt-5 max-w-xl font-display text-[36px] font-semibold leading-[1.08] tracking-tight text-white sm:text-[48px] lg:text-[54px]">
+      <h1 class="mt-5 max-w-xl font-display text-[clamp(2.25rem,4vw,3.25rem)] font-semibold leading-[1.08] tracking-tight text-white">
         Stress-free, reliable &amp; affordable ground transportation.
       </h1>
       <p class="mt-5 max-w-lg text-[15.5px] leading-relaxed text-slate-300 sm:text-[16.5px]">
@@ -71,11 +72,11 @@
       </div>
     </div>
 
-    <div id="quote" class="rounded-2xl bg-paper/[0.97] p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur sm:p-7">
-      <h2 class="font-display text-[19px] font-semibold text-ink">Request a free quote</h2>
-      <p class="mt-1 text-[13px] text-muted">No obligation — a real person replies within one business day.</p>
+    <div id="quote" class="mx-auto w-full max-w-[34rem] rounded-2xl bg-paper/[0.97] p-4 shadow-2xl ring-1 ring-black/5 backdrop-blur sm:p-6 lg:col-span-6 lg:col-start-7 lg:max-w-[30rem] lg:p-7 xl:max-w-[32rem]">
+      <h2 class="font-display text-[19px] font-semibold text-ink">Get a quote</h2>
+      <p class="mt-1 text-[13px] text-muted">A real person replies within one business day.</p>
       <div class="mt-5">
-        {% include "public/_booking_widget.html" %}
+        {% include "public/_booking_widget.html" with two_step=1 %}
       </div>
     </div>
 
