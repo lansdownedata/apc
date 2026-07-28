@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
+from apps.accounts.views import accept_invite
 from apps.core.cron import run_job
 from apps.integrations.views import la_webhook, podium_webhook
 from apps.leads.views import pipeline, quote_book, quote_page
@@ -39,6 +40,8 @@ urlpatterns = [
     path("portal/", include("django.contrib.auth.urls")),  # /portal/login/, /portal/logout/, ...
     path("portal/", include(staff_patterns)),  # ← entire staff portal, auth-gated
     # public customer-facing quote page (token-keyed, no login) — unchanged
+    # staff invite acceptance — unauthenticated by design; the signed token is the guard
+    path("invite/<str:uidb64>/<str:token>/", accept_invite, name="accept_invite"),
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/book/", quote_book, name="quote_book"),
     # integrations + webhooks + cron — unchanged

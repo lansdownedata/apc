@@ -1,0 +1,20 @@
+{% extends "registration/_auth_shell.html" %}
+
+{% block title %}Invite expired{% endblock %}
+{% block heading %}This invite link has expired{% endblock %}
+{% block subheading %}Invite links are valid for 7 days and can only be used once.{% endblock %}
+
+{% block body %}
+<div class="px-7 py-6">
+  <p class="text-[13px] text-muted mb-5 leading-relaxed">
+    If you've already set your password, sign in below. Otherwise, ask an admin to send
+    you a fresh invite from the Users screen.
+  </p>
+  <a href="{% url 'login' %}"
+     class="btn-gold w-full flex items-center justify-center gap-2 text-[13.5px] font-semibold rounded-xl py-2.5">
+    <i class="ti ti-login-2 text-[17px]"></i> Back to sign in
+  </a>
+</div>
+{% endblock %}
+
+{% block footnote %}Secured access · authorized staff only{% endblock %}
