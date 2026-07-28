@@ -227,7 +227,14 @@ def test_deposit_webhook_cancels_pending_touchpoints():
     assert cancel_pending.call_args.args[0].pk == plan.lead_id
 
 
-def test_podium_inbound_new_lead_schedules_touchpoints():
+def test_podium_inbound_message_schedules_no_touchpoints():
+    """Inverted deliberately (spec 2026-07-28).
+
+    This used to assert that an inbound text scheduled TP1/TP2. It runs on the main
+    business number, so that sent a wrong number the "thank you for visiting our
+    website" welcome by SMS *and* email 30 minutes later. Touch-points now start only
+    when an agent qualifies the conversation into a lead.
+    """
     from apps.integrations.webhooks import process_podium_webhook
 
     payload = {
@@ -240,6 +247,6 @@ def test_podium_inbound_new_lead_schedules_touchpoints():
         },
     }
     event = process_podium_webhook(payload)
-    lead = event.lead
-    assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME).exists()
-    assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP2_LEAD_FOLLOWUP).exists()
+
+    assert event.conversation is not None
+    assert TouchPoint.objects.count() == 0

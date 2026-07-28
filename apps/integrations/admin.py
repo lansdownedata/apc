@@ -18,7 +18,7 @@ class ZapEventAdmin(admin.ModelAdmin):
 
 @admin.register(PodiumEvent)
 class PodiumEventAdmin(admin.ModelAdmin):
-    list_display = ("event_type", "lead", "processed", "created_at")
+    list_display = ("event_type", "conversation", "processed", "created_at")
     list_filter = ("event_type", "processed")
 
 

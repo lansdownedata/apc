@@ -12,9 +12,8 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
-from apps.leads.models import Lead
-from apps.messaging import touchpoints
-from apps.messaging.models import Message
+from apps.messaging import services as messaging_services
+from apps.messaging.models import Conversation, Message
 
 from . import podium
 from .models import PodiumEvent
@@ -49,9 +48,9 @@ def process_podium_webhook(payload: dict) -> PodiumEvent:
     event = PodiumEvent.objects.create(event_type=event_type, payload=payload)
 
     if event_type == PodiumEvent.EventType.MESSAGE_RECEIVED:
-        event.lead = _ingest_inbound(data)
+        event.conversation = _ingest_inbound(data)
     elif event_type == PodiumEvent.EventType.MESSAGE_SENT:
-        event.lead = _ingest_outbound(data)
+        event.conversation = _ingest_outbound(data)
     elif event_type == PodiumEvent.EventType.MESSAGE_FAILED:
         _mark_failed(data)
     else:
@@ -62,34 +61,32 @@ def process_podium_webhook(payload: dict) -> PodiumEvent:
         return event
 
     event.processed = True
-    event.save(update_fields=["lead", "processed", "updated_at"])
+    event.save(update_fields=["conversation", "processed", "updated_at"])
     return event
 
 
-def _ingest_inbound(data: dict) -> Lead:
+def _ingest_inbound(data: dict) -> Conversation | None:
     msg_uid = data.get("uid", "")
     existing = Message.objects.filter(podium_message_uid=msg_uid).first() if msg_uid else None
     if existing:
-        return existing.lead  # dedupe — Podium may retry
+        return existing.conversation  # dedupe — Podium may retry
 
     contact_data = data.get("contact") or {}
-    conversation = data.get("conversation") or {}
-    channel = conversation.get("channel") or data.get("channel") or {}
+    conversation_data = data.get("conversation") or {}
+    channel = conversation_data.get("channel") or data.get("channel") or {}
     identifier = channel.get("identifier") or contact_data.get("phoneNumber") or ""
     channel_type = channel.get("type", "phone")
 
-    lead = _resolve_lead(contact_data, identifier)
-    Message.objects.create(
-        lead=lead,
-        direction=Message.Direction.IN,
+    conversation = _resolve_conversation(contact_data, identifier)
+    messaging_services.record_inbound(
+        conversation,
         channel=CHANNEL_MAP.get(channel_type, Message.Channel.SMS),
         body=data.get("body", ""),
-        podium_conversation_uid=conversation.get("uid", ""),
         podium_message_uid=msg_uid,
+        podium_conversation_uid=conversation_data.get("uid", ""),
         sender_name=(contact_data.get("name") or data.get("contactName") or "").strip(),
-        delivery_status=Message.DeliveryStatus.RECEIVED,
     )
-    return lead
+    return conversation
 
 
 def _contact_by_phone(identifier: str) -> Contact | None:
@@ -107,7 +104,13 @@ def _contact_by_phone(identifier: str) -> Contact | None:
     return Contact.objects.filter(lookup).first()
 
 
-def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
+def _resolve_conversation(contact_data: dict, identifier: str) -> Conversation:
+    """Match (or create) the Contact behind a Podium message, then its conversation.
+
+    Deliberately does NOT create a Lead: the Podium account is the main business
+    number, so inbound traffic includes wrong numbers, vendors and spam alongside real
+    inquiries. Qualifying is an explicit agent action (the inbox "Create lead" button).
+    """
     uid = contact_data.get("uid", "")
     contact = None
     if uid:
@@ -125,21 +128,18 @@ def _resolve_lead(contact_data: dict, identifier: str) -> Lead:
         contact.podium_contact_uid = uid
         contact.save(update_fields=["podium_contact_uid"])
 
-    lead = contact.leads.order_by("-id").first()
-    if lead is None:
-        lead = Lead.objects.create(contact=contact, channel=Channel.PHONE)
-        touchpoints.schedule_lead_created(lead)
-    return lead
+    return messaging_services.conversation_for(contact)
 
 
-def _ingest_outbound(data: dict) -> Lead | None:
+def _ingest_outbound(data: dict) -> Conversation | None:
     """Mirror an outbound Podium send into the inbox thread.
 
-    If the send was made from our own composer, a Message with this uid already
-    exists — just update its delivery status. Otherwise (sent from the Podium web
-    app / another integration) create the OUT Message on the matching lead. If no
-    lead can be matched, log-and-skip rather than creating an orphan contact for an
-    outbound message.
+    If the send came from our own composer a Message with this uid already exists —
+    just confirm its delivery status. Otherwise (sent from the Podium web app or
+    another integration) record it, creating the conversation if the number is new:
+    agent-initiated outreach belongs in the inbox too. This used to log-and-skip to
+    avoid orphaning a contact on a lead; conversations are decoupled from leads now,
+    so there is nothing to orphan.
     """
     msg_uid = data.get("uid", "")
     existing = Message.objects.filter(podium_message_uid=msg_uid).first() if msg_uid else None
@@ -153,46 +153,26 @@ def _ingest_outbound(data: dict) -> Lead | None:
             update_fields.append("sent_at")
         if update_fields:
             existing.save(update_fields=update_fields)
-        return existing.lead
+        return existing.conversation
 
     contact_data = data.get("contact") or {}
-    conversation = data.get("conversation") or {}
-    channel = conversation.get("channel") or data.get("channel") or {}
+    conversation_data = data.get("conversation") or {}
+    channel = conversation_data.get("channel") or data.get("channel") or {}
     identifier = channel.get("identifier") or contact_data.get("phoneNumber") or ""
     channel_type = channel.get("type", "phone")
 
-    lead = _resolve_lead_readonly(contact_data, identifier)
-    if lead is None:
-        logger.warning("message.sent uid=%s: no matching contact/lead, skipping", msg_uid)
-        return None
-
+    conversation = _resolve_conversation(contact_data, identifier)
     sender_uid = data.get("senderUid") or (data.get("sender") or {}).get("uid") or ""
-    Message.objects.create(
-        lead=lead,
-        direction=Message.Direction.OUT,
+    messaging_services.record_outbound(
+        conversation,
         channel=CHANNEL_MAP.get(channel_type, Message.Channel.SMS),
         body=data.get("body", ""),
-        podium_conversation_uid=conversation.get("uid", ""),
         podium_message_uid=msg_uid,
+        podium_conversation_uid=conversation_data.get("uid", ""),
         podium_sender_uid=sender_uid,
         sender_name=podium.user_name_map().get(sender_uid, "") if sender_uid else "",
-        delivery_status=Message.DeliveryStatus.SENT,
-        sent_at=timezone.now(),
     )
-    return lead
-
-
-def _resolve_lead_readonly(contact_data: dict, identifier: str) -> Lead | None:
-    """Like `_resolve_lead` but never creates a Contact/Lead — for outbound mirroring."""
-    uid = contact_data.get("uid", "")
-    contact = None
-    if uid:
-        contact = Contact.objects.filter(podium_contact_uid=uid).first()
-    if contact is None:
-        contact = _contact_by_phone(identifier)
-    if contact is None:
-        return None
-    return contact.leads.order_by("-id").first()
+    return conversation
 
 
 def _mark_failed(data: dict) -> None:

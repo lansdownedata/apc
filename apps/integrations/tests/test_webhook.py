@@ -9,10 +9,9 @@ from apps.contacts.models import Contact
 from apps.integrations import podium
 from apps.integrations.models import PodiumEvent
 from apps.integrations.webhooks import process_podium_webhook
-from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging.factories import MessageFactory
-from apps.messaging.models import Message
+from apps.messaging.factories import ConversationFactory, MessageFactory
+from apps.messaging.models import Conversation, Message, TouchPoint
 
 pytestmark = pytest.mark.django_db
 
@@ -30,17 +29,24 @@ def _received(uid="m1", phone="+15551230000", body="Need a quote", name="Sarah",
     }
 
 
-def test_received_creates_event_lead_and_inbound_message():
+def test_received_creates_contact_and_conversation_but_no_lead():
     event = process_podium_webhook(_received())
     assert event.event_type == "message.received"
     assert event.processed is True
+
     msg = Message.objects.get()
     assert msg.is_inbound is True
     assert msg.body == "Need a quote"
     assert msg.podium_message_uid == "m1"
     assert msg.delivery_status == Message.DeliveryStatus.RECEIVED
-    assert Contact.objects.filter(phone="+15551230000").exists()
-    assert event.lead == msg.lead
+
+    contact = Contact.objects.get(phone="+15551230000")
+    assert msg.conversation.contact == contact
+    assert event.conversation == msg.conversation
+
+    # The whole point: an inbound text is not a lead and gets no touch-points.
+    assert Lead.objects.count() == 0
+    assert TouchPoint.objects.count() == 0
 
 
 def test_received_is_idempotent_on_message_uid():
@@ -49,12 +55,31 @@ def test_received_is_idempotent_on_message_uid():
     assert Message.objects.filter(podium_message_uid="dup").count() == 1
 
 
-def test_received_attaches_to_existing_contacts_lead():
+def test_received_reuses_an_existing_contacts_conversation():
     contact = ContactFactory(phone="+15559999999", podium_contact_uid="cX")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
+
     process_podium_webhook(_received(uid="m2", phone="+15559999999", cuid="cX"))
-    assert Message.objects.get().lead == lead
-    assert Lead.objects.count() == 1
+
+    assert Conversation.objects.count() == 1
+    assert Message.objects.get().conversation == convo
+
+
+def test_received_stamps_last_message_at():
+    process_podium_webhook(_received())
+    assert Conversation.objects.get().last_message_at is not None
+
+
+def test_received_on_archived_conversation_does_not_reopen_it():
+    """Dismissal is permanent — a later text is recorded but stays out of the inbox."""
+    contact = ContactFactory(phone="+15551230000")
+    ConversationFactory(contact=contact, status=Conversation.Status.ARCHIVED)
+
+    process_podium_webhook(_received())
+
+    convo = Conversation.objects.get()
+    assert convo.status == Conversation.Status.ARCHIVED
+    assert convo.messages.count() == 1
 
 
 def test_failed_marks_outbound_message_failed():
@@ -81,9 +106,10 @@ def _sent(uid="s1", phone="+15551230000", body="On our way!", contact_uid="c1", 
 
 def test_sent_updates_existing_message_by_uid_no_duplicate():
     contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
     msg = MessageFactory(
-        lead=lead,
+        conversation=convo,
+        lead=None,
         direction=Message.Direction.OUT,
         podium_message_uid="s1",
         delivery_status="",
@@ -96,25 +122,25 @@ def test_sent_updates_existing_message_by_uid_no_duplicate():
     assert msg.delivery_status == Message.DeliveryStatus.SENT
     assert msg.sent_at is not None
     assert Message.objects.filter(podium_message_uid="s1").count() == 1
-    assert event.lead == lead
+    assert event.conversation == convo
 
 
-def test_sent_unknown_uid_creates_outbound_message_on_matched_lead():
+def test_sent_unknown_uid_creates_outbound_message_on_matched_conversation():
     contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
 
     event = process_podium_webhook(_sent(uid="new-sent-uid"))
 
     msg = Message.objects.get(podium_message_uid="new-sent-uid")
     assert msg.direction == Message.Direction.OUT
-    assert msg.lead == lead
+    assert msg.conversation == convo
     assert msg.delivery_status == Message.DeliveryStatus.SENT
-    assert event.lead == lead
+    assert event.conversation == convo
 
 
 def test_sent_replay_of_same_event_stays_one_row():
     contact = ContactFactory(phone="+15551230000", podium_contact_uid="c1")
-    LeadFactory(contact=contact)
+    ConversationFactory(contact=contact)
 
     process_podium_webhook(_sent(uid="dup-sent"))
     process_podium_webhook(_sent(uid="dup-sent"))
@@ -122,13 +148,19 @@ def test_sent_replay_of_same_event_stays_one_row():
     assert Message.objects.filter(podium_message_uid="dup-sent").count() == 1
 
 
-def test_sent_with_no_matching_lead_is_skipped_no_orphan_contact():
-    before = Contact.objects.count()
-    event = process_podium_webhook(_sent(uid="orphan", phone="+15550000000", contact_uid="unknown"))
+def test_sent_to_an_unknown_number_creates_a_conversation():
+    """An agent texting a new number from the Podium web app belongs in the inbox.
 
-    assert not Message.objects.filter(podium_message_uid="orphan").exists()
-    assert Contact.objects.count() == before
-    assert event.lead is None
+    Previously skipped to avoid orphaning a contact on a lead; now that conversations
+    are decoupled from leads there is nothing to orphan.
+    """
+    event = process_podium_webhook(_sent(uid="outreach", phone="+15550000000", contact_uid="new"))
+
+    msg = Message.objects.get(podium_message_uid="outreach")
+    assert msg.direction == Message.Direction.OUT
+    assert msg.conversation.contact.phone == "+15550000000"
+    assert event.conversation == msg.conversation
+    assert Lead.objects.count() == 0
 
 
 def _live_shape(event_type, uid="L1", phone="+17035736008", sender_uid=None, body="hi"):
@@ -155,7 +187,7 @@ def _live_shape(event_type, uid="L1", phone="+17035736008", sender_uid=None, bod
 def test_live_shape_sent_is_stored_outbound():
     """Regression: metadata.eventType=message.sent must not land as an inbound message."""
     contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
 
     event = process_podium_webhook(
         _live_shape("message.sent", uid="LS1", sender_uid="8a320781-agent")
@@ -164,7 +196,7 @@ def test_live_shape_sent_is_stored_outbound():
     assert event.event_type == "message.sent"
     msg = Message.objects.get(podium_message_uid="LS1")
     assert msg.direction == Message.Direction.OUT
-    assert msg.lead == lead
+    assert msg.conversation == convo
 
 
 def test_live_shape_received_is_stored_inbound():
@@ -180,14 +212,14 @@ def test_unknown_event_type_does_not_fabricate_an_inbound_message():
 
     assert event.event_type == "contact.updated"
     assert not Message.objects.filter(podium_message_uid="LU1").exists()
-    assert event.lead is None
+    assert event.conversation is None
 
 
 def test_sent_records_sender_uid_and_resolved_agent_name():
     """Podium sends only a user UID — the agent's name comes from /users."""
     cache.clear()
     contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
-    LeadFactory(contact=contact)
+    ConversationFactory(contact=contact)
 
     with patch.object(podium, "user_name_map", return_value={"8a320781-agent": "Tarrick Ghannam"}):
         process_podium_webhook(_live_shape("message.sent", uid="LS2", sender_uid="8a320781-agent"))
@@ -201,7 +233,7 @@ def test_sent_with_unresolvable_sender_still_ingests():
     """A failed /users lookup must not block the message."""
     cache.clear()
     contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
-    LeadFactory(contact=contact)
+    ConversationFactory(contact=contact)
 
     with patch.object(podium, "user_name_map", return_value={}):
         process_podium_webhook(_live_shape("message.sent", uid="LS3", sender_uid="unknown-agent"))
@@ -240,12 +272,12 @@ def test_received_matches_e164_contact_when_identifier_not_normalized():
     """Podium identifier arrives without the +; the old exact match would miss it and
     fork a duplicate. The normalized lookup matches the E.164-stored contact instead."""
     contact = ContactFactory(phone="+16175550207")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
 
     event = process_podium_webhook(_received(uid="mA", phone="6175550207", cuid="", name="Ada"))
 
     assert Contact.objects.count() == 1, "must not fork a duplicate contact"
-    assert event.lead == lead
+    assert event.conversation == convo
 
 
 def test_received_stores_new_contact_in_e164():
@@ -258,13 +290,13 @@ def test_received_stores_new_contact_in_e164():
 
 
 def test_sent_mirror_matches_via_normalized_phone():
-    """_resolve_lead_readonly is a second, separate match site — it must normalize too."""
+    """The outbound mirror is a second, separate match site — it must normalize too."""
     contact = ContactFactory(phone="+16175550207")
-    lead = LeadFactory(contact=contact)
+    convo = ConversationFactory(contact=contact)
 
     event = process_podium_webhook(_sent(uid="sA", phone="6175550207", contact_uid=""))
 
     msg = Message.objects.get(podium_message_uid="sA")
-    assert msg.lead == lead
+    assert msg.conversation == convo
     assert msg.direction == Message.Direction.OUT
-    assert event.lead == lead
+    assert event.conversation == convo
