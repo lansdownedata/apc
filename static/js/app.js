@@ -1063,6 +1063,16 @@ function addressAutocomplete(opts = {}) {
 }
 window.addressAutocomplete = addressAutocomplete;
 
+/* Public quote form. Owns the trip-type toggle everywhere, and (when twoStep is set,
+   i.e. the homepage hero) the two-step progressive disclosure. */
+function quoteSteps(opts = {}) {
+  return {
+    twoStep: !!opts.twoStep,
+    tripType: opts.tripType || "transfer",
+  };
+}
+window.quoteSteps = quoteSteps;
+
 /* Repeater for optional in-between stops; serializes to one hidden stops_json field. */
 function bookingStops(opts = {}) {
   return {
