@@ -1,0 +1,37 @@
+{% extends "email/base_email.html" %}
+{% block subject %}You've been invited to the {{ company_name }} Lead Manager{% endblock %}
+{% block preheader %}Set your password to activate your account. This link expires in 7 days.{% endblock %}
+{% block content %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ first_name|default:"there" }},</p>
+<p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">
+  You've been added to the {{ company_name }} Lead Manager. Set a password below and your
+  account is ready to use.
+</p>
+
+{# Role panel — mirrors the quote email's framed-document treatment. #}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td style="padding:24px 26px;">
+    <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;">YOUR ACCESS LEVEL</div>
+    <div class="dm-ink" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:26px;font-weight:600;color:#17191D;padding:6px 0 4px;">{{ role_label }}</div>
+    <div class="dm-muted" style="font-size:14px;color:#6b7280;">Sign in with this email address once your password is set.</div>
+  </td></tr>
+</table>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 0;">
+  <tr><td align="center" style="background:#C7A24E;border-radius:8px;">
+    <a href="{{ invite_url }}" style="display:inline-block;padding:15px 34px;color:#17191D;
+       font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:16px;font-weight:600;
+       letter-spacing:.3px;text-decoration:none;">Set your password</a>
+  </td></tr>
+</table>
+
+<p class="dm-muted" style="margin:26px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  This link expires in 7 days and can only be used once. If it lapses, ask an admin to
+  resend your invite.
+</p>
+<p class="dm-muted" style="margin:12px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  If you weren't expecting this, you can ignore this email — the account stays locked
+  until someone uses the link above.
+</p>
+{% endblock %}

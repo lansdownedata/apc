@@ -1,0 +1,17 @@
+{% autoescape off %}Hi {{ first_name|default:"there" }},
+
+You've been added to the {{ company_name }} Lead Manager as {{ role_label }}.
+
+Set your password to activate your account:
+{{ invite_url }}
+
+This link expires in 7 days. If it lapses, ask an admin to resend your invite.
+
+If you weren't expecting this, you can ignore this email — the account stays
+locked until someone uses the link above.
+
+--
+{{ company_name }}
+Luxury charter & chauffeur service
+{% if company_email %}{{ company_email }}{% endif %}{% if company_email and company_phone %} · {% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
+{% endautoescape %}

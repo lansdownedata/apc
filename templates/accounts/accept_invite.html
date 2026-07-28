@@ -1,0 +1,47 @@
+{% extends "registration/_auth_shell.html" %}
+
+{% block title %}Set your password{% endblock %}
+{% block heading %}Set your password{% endblock %}
+{% block subheading %}Welcome, {{ target.first_name|default:target.email }}. Choose a password to activate your account.{% endblock %}
+
+{% block body %}
+{% if form.errors %}
+<div class="mx-7 mt-3 flex items-start gap-2.5 text-[12.5px] text-rose-700 bg-rose-50 ring-1 ring-inset ring-rose-600/15 rounded-lg px-3.5 py-2.5">
+  <i class="ti ti-alert-triangle text-[16px] mt-0.5 shrink-0"></i>
+  <div>
+    {% for field, errors in form.errors.items %}{% for error in errors %}<div>{{ error }}</div>{% endfor %}{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<form method="post" class="px-7 py-6 flex flex-col gap-4">
+  {% csrf_token %}
+
+  <label class="block">
+    <span class="text-[12px] font-medium text-ink/80">New password</span>
+    <div class="relative mt-1.5" x-data="{ show:false }">
+      <i class="ti ti-lock text-[16px] text-muted absolute left-3 top-1/2 -translate-y-1/2"></i>
+      <input :type="show ? 'text':'password'" name="new_password1" autocomplete="new-password" autofocus required
+             class="field pl-9 pr-10" placeholder="••••••••">
+      <button type="button" @click="show=!show" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
+        <i class="ti text-[16px]" :class="show ? 'ti-eye-off':'ti-eye'"></i>
+      </button>
+    </div>
+  </label>
+
+  <label class="block">
+    <span class="text-[12px] font-medium text-ink/80">Confirm password</span>
+    <div class="relative mt-1.5">
+      <i class="ti ti-lock-check text-[16px] text-muted absolute left-3 top-1/2 -translate-y-1/2"></i>
+      <input type="password" name="new_password2" autocomplete="new-password" required
+             class="field pl-9" placeholder="••••••••">
+    </div>
+  </label>
+
+  <button type="submit" class="btn-gold mt-1 w-full flex items-center justify-center gap-2 text-[13.5px] font-semibold rounded-xl py-2.5">
+    <i class="ti ti-check text-[17px]"></i> Set password &amp; continue
+  </button>
+</form>
+{% endblock %}
+
+{% block footnote %}This link expires 7 days after it was sent{% endblock %}
