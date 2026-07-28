@@ -102,6 +102,39 @@ def test_single_step_pages_render_every_field_at_once(db):
         assert "Request a quote" in html, url
 
 
+def test_autocomplete_has_combobox_semantics(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'role="combobox"' in html
+    assert ':aria-expanded="open"' in html
+    assert "aria-controls=" in html
+    assert 'aria-live="polite"' in html
+
+
+def test_autocomplete_debounce_is_250ms(db):
+    html = Client().get("/bookings/").content.decode()
+    assert "debounce.250ms" in html
+    assert "debounce.300ms" not in html
+
+
+def test_stop_rows_support_arrow_keys(db):
+    """Stop rows previously handled only Escape.
+
+    Asserts the row-indexed handlers specifically — the bare `keydown.down.prevent`
+    string is already present via the pickup/drop-off inputs, so checking for it
+    alone would pass without the stop rows changing at all.
+    """
+    html = Client().get("/bookings/").content.decode()
+    assert 'keydown.down.prevent="move(i, 1)"' in html
+    assert 'keydown.up.prevent="move(i, -1)"' in html
+    assert 'keydown.enter.prevent="chooseActive(i)"' in html
+
+
+def test_result_rows_are_listbox_options(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'role="listbox"' in html
+    assert 'role="option"' in html
+
+
 def test_notes_textarea_opens_at_three_rows_and_autogrows(db):
     html = Client().get("/bookings/").content.decode()
     assert 'rows="3"' in html
