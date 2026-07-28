@@ -102,6 +102,12 @@ def test_single_step_pages_render_every_field_at_once(db):
         assert "Request a quote" in html, url
 
 
+def test_notes_textarea_opens_at_three_rows_and_autogrows(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'rows="3"' in html
+    assert "data-autogrow" in html
+
+
 def test_home_hero_renders_two_steps(db):
     html = Client().get("/").content.decode()
     assert 'data-step="1"' in html
