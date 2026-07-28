@@ -10,6 +10,7 @@
        updateUrl: '{% url 'lead_update' lead.pk %}',
        saveUrl: '{% url 'reservation_save' %}',
        sendQuoteUrl: '{% url 'lead_send_quote' lead.pk %}',
+       acUrl: '{% url 'integrations:geocode_autocomplete' %}',
        reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
        vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {

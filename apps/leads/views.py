@@ -62,6 +62,10 @@ def _reservation_draft(r) -> dict:
                 "note": s.note,
                 "name": s.name,
                 "time": s.scheduled_time.strftime("%H:%M") if s.scheduled_time else "",
+                # Round-tripped so the delete-and-recreate in save_reservation_from_draft
+                # doesn't drop coordinates the user already picked.
+                "lat": str(s.latitude) if s.latitude is not None else "",
+                "lng": str(s.longitude) if s.longitude is not None else "",
             }
             for s in r.stops.all()
         ],
