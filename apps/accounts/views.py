@@ -6,8 +6,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from django.views.decorators.http import require_POST
 
-from .forms import AcceptInviteForm
+from . import services
+from .forms import AcceptInviteForm, UserInviteForm
 from .models import User
 from .permissions import owner_admin_required
 
@@ -43,6 +45,15 @@ def user_detail(request, pk):
     user = get_object_or_404(User, pk=pk)
     valid = {key for key, _, _ in CAPABILITIES}
     if request.method == "POST":
+        if "role" in request.POST:
+            try:
+                services.change_user_role(
+                    target=user, new_role=request.POST["role"], actor=request.user
+                )
+                messages.success(request, "Role updated.")
+            except services.UserManagementError as exc:
+                messages.error(request, str(exc))
+            return redirect("user_detail", pk=user.pk)
         cap = request.POST.get("capability")
         if cap in valid:
             setattr(user, cap, request.POST.get("enabled") == "on")
@@ -59,6 +70,88 @@ def user_detail(request, pk):
             "page_title": user.get_full_name() or user.username,
         },
     )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def user_invite(request):
+    """Create a pending staff account and email the set-password link."""
+    form = UserInviteForm(request.POST)
+    if not form.is_valid():
+        first_error = next(iter(form.errors.values()))[0]
+        messages.error(request, first_error)
+        return redirect("user_list")
+
+    data = form.cleaned_data
+    try:
+        user, sent = services.invite_user(
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            email=data["email"],
+            role=data["role"],
+            can_manage_payments=data.get("can_manage_payments", False),
+            actor=request.user,
+        )
+    except services.UserManagementError as exc:
+        messages.error(request, str(exc))
+        return redirect("user_list")
+
+    if sent:
+        messages.success(request, f"Invite sent to {user.email}.")
+    else:
+        messages.warning(
+            request,
+            f"{user.email} was created, but the invite email could not be sent. "
+            "Use Resend invite to try again.",
+        )
+    return redirect("user_detail", pk=user.pk)
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def user_resend_invite(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    try:
+        sent = services.resend_invite(target=target)
+    except services.UserManagementError as exc:
+        messages.error(request, str(exc))
+        return redirect("user_detail", pk=pk)
+    if sent:
+        messages.success(request, f"Invite resent to {target.email}.")
+    else:
+        messages.warning(request, "The invite email could not be sent — see the server log.")
+    return redirect("user_detail", pk=pk)
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def user_revoke_invite(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    try:
+        services.revoke_invite(target=target)
+    except services.UserManagementError as exc:
+        messages.error(request, str(exc))
+        return redirect("user_detail", pk=pk)
+    messages.success(request, "Invite revoked.")
+    return redirect("user_list")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def user_set_active(request, pk):
+    target = get_object_or_404(User, pk=pk)
+    active = request.POST.get("active") == "1"
+    try:
+        services.set_user_active(target=target, active=active, actor=request.user)
+    except services.UserManagementError as exc:
+        messages.error(request, str(exc))
+        return redirect("user_detail", pk=pk)
+    messages.success(request, "Access updated.")
+    return redirect("user_detail", pk=pk)
 
 
 def accept_invite(request, uidb64: str, token: str):
