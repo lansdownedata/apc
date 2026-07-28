@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6" x-data="{ inviteOpen: false }">
 
   <!-- page header -->
   <div class="flex items-center justify-between mb-5">
@@ -9,6 +9,10 @@
       <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Users</h1>
       <p class="text-[12.5px] text-muted mt-0.5">Manage team access and capabilities.</p>
     </div>
+    <button type="button" @click="inviteOpen = true"
+            class="btn-gold flex items-center gap-2 px-3.5 py-2 rounded-lg text-[13px] font-semibold shrink-0">
+      <i class="ti ti-user-plus text-[16px]"></i> Invite user
+    </button>
   </div>
 
   <!-- table card -->
@@ -20,6 +24,7 @@
             <th class="font-medium px-5 py-3">Name</th>
             <th class="font-medium px-3 py-3">Username / Email</th>
             <th class="font-medium px-3 py-3">Role</th>
+            <th class="font-medium px-3 py-3">Status</th>
             {% for cap_key, cap_label, cap_help in capabilities %}
             <th class="font-medium px-3 py-3 text-center">{{ cap_label }}</th>
             {% endfor %}
@@ -54,6 +59,21 @@
               </span>
               {% endif %}
             </td>
+            <td class="px-3 py-3.5">
+              {% if u.status == 'pending' %}
+              <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-500/30">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Pending
+              </span>
+              {% elif u.status == 'deactivated' %}
+              <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-500/20">
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Deactivated
+              </span>
+              {% else %}
+              <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-500/30">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active
+              </span>
+              {% endif %}
+            </td>
             {% for cap_key, cap_label, cap_help in capabilities %}
             <td class="px-3 py-3.5 text-center">
               {% if u.is_owner_admin %}
@@ -79,5 +99,6 @@
     </div>
   </div>
 
+  {% include "accounts/_invite_modal.html" %}
 </div>
 {% endblock %}

@@ -1,0 +1,65 @@
+{% comment %}
+Invite panel. The shared $store.modal covers confirm/alert dialogs with a message body;
+this needs a real POST form, so it reuses the same visual language (charcoal backdrop,
+card, display-face heading) driven by the local `inviteOpen` flag from user_list.html.
+Escape and backdrop-click close it, matching the shared component's behaviour.
+{% endcomment %}
+<div x-show="inviteOpen" x-cloak x-transition.opacity
+     @keydown.escape.window="inviteOpen = false"
+     class="fixed inset-0 z-50 flex items-center justify-center p-4">
+
+  <div class="absolute inset-0 bg-charcoal/50 backdrop-blur-sm" @click="inviteOpen = false"></div>
+
+  <div class="relative card w-full max-w-[440px] p-5 max-h-[90vh] overflow-y-auto">
+    <h2 class="font-display text-[18px] font-semibold text-ink">Invite a user</h2>
+    <p class="text-[12.5px] text-muted mt-0.5 mb-4">
+      They'll get an email with a link to set their own password. The link expires in 7 days.
+    </p>
+
+    <form method="post" action="{% url 'user_invite' %}" class="flex flex-col gap-3">
+      {% csrf_token %}
+
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block">
+          <span class="text-[11.5px] font-medium text-muted">First name</span>
+          <div class="mt-1.5">{{ invite_form.first_name }}</div>
+        </label>
+        <label class="block">
+          <span class="text-[11.5px] font-medium text-muted">Last name</span>
+          <div class="mt-1.5">{{ invite_form.last_name }}</div>
+        </label>
+      </div>
+
+      <label class="block">
+        <span class="text-[11.5px] font-medium text-muted">Email</span>
+        <div class="mt-1.5">{{ invite_form.email }}</div>
+        <span class="text-[11px] text-slate-400 mt-1 block">This is also their sign-in username.</span>
+      </label>
+
+      <label class="block">
+        <span class="text-[11.5px] font-medium text-muted">Role</span>
+        <div class="mt-1.5">
+          {% include "components/searchable_select.html" with name="role" field_id="f-invite-role" options=roles selected="agent" search="off" %}
+        </div>
+      </label>
+
+      <label class="flex items-start gap-2.5 mt-1 cursor-pointer">
+        <div class="mt-0.5">{{ invite_form.can_manage_payments }}</div>
+        <span class="text-[12.5px] text-ink leading-snug">
+          Manage payments
+          <span class="block text-[11.5px] text-muted">Run refunds, mark-paid, and retry charges on orders.</span>
+        </span>
+      </label>
+
+      <div class="flex justify-end gap-2 mt-3">
+        <button type="button" @click="inviteOpen = false"
+                class="btn-ghost px-3.5 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line">
+          Cancel
+        </button>
+        <button type="submit" class="btn-gold px-3.5 py-2 rounded-lg text-[13px] font-semibold">
+          Send invite
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

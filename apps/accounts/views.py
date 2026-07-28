@@ -26,13 +26,19 @@ CAPABILITIES = [
 @login_required
 @owner_admin_required
 def user_list(request):
-    users = User.objects.order_by("role", "username")
+    """Pending accounts sort first — they are the rows that need action."""
+    users = sorted(
+        User.objects.select_related("invited_by"),
+        key=lambda u: (u.status != User.Status.PENDING, (u.get_full_name() or u.username).lower()),
+    )
     return render(
         request,
         "accounts/user_list.html",
         {
             "users": users,
             "capabilities": CAPABILITIES,
+            "invite_form": UserInviteForm(),
+            "roles": User.Role.choices,
             "nav": "users",
             "page_title": "Users",
         },

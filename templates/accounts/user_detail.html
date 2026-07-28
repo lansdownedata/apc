@@ -34,8 +34,79 @@
             </span>
             {% endif %}
           </span>
+          <span class="flex items-center gap-1">
+            {% if target.status == 'pending' %}
+            <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-500/30">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Pending invite
+            </span>
+            {% elif target.status == 'deactivated' %}
+            <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Deactivated
+            </span>
+            {% else %}
+            <span class="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-500/30">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active
+            </span>
+            {% endif %}
+          </span>
         </div>
+
+        {% if target.status == 'pending' and target.invited_at %}
+        <div class="text-[11.5px] text-muted mt-2">
+          Invited {{ target.invited_at|date:"M j, Y" }}{% if target.invited_by %} by {{ target.invited_by.get_full_name|default:target.invited_by.username }}{% endif %} · link expires {{ target.invited_at|timesince }} after sending
+        </div>
+        {% elif target.last_login %}
+        <div class="text-[11.5px] text-muted mt-2">Last signed in {{ target.last_login|date:"M j, Y g:i A" }}</div>
+        {% endif %}
       </div>
+    </div>
+
+    <!-- account actions -->
+    <div class="border-t border-line mt-5 pt-4 flex flex-wrap gap-2">
+      {% if target.status == 'pending' %}
+      <form method="post" action="{% url 'user_resend_invite' target.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="btn-ghost flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 ring-line">
+          <i class="ti ti-mail-forward text-[15px]"></i> Resend invite
+        </button>
+      </form>
+      <form method="post" action="{% url 'user_revoke_invite' target.pk %}"
+            @submit.prevent="$store.modal.confirm({
+              title: 'Revoke this invite?',
+              message: 'The account is deleted and the link stops working. You can invite this address again later.',
+              variant: 'danger',
+              confirmText: 'Revoke invite',
+              onConfirm: () => $el.submit(),
+            })">
+        {% csrf_token %}
+        <button type="submit" class="btn-ghost flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold text-rose-600 ring-1 ring-rose-500/25">
+          <i class="ti ti-trash text-[15px]"></i> Revoke invite
+        </button>
+      </form>
+      {% elif target.is_active %}
+      <form method="post" action="{% url 'user_set_active' target.pk %}"
+            @submit.prevent="$store.modal.confirm({
+              title: 'Deactivate this user?',
+              message: 'They will not be able to sign in. Their history is kept and you can reactivate them at any time.',
+              variant: 'danger',
+              confirmText: 'Deactivate',
+              onConfirm: () => $el.submit(),
+            })">
+        {% csrf_token %}
+        <input type="hidden" name="active" value="0">
+        <button type="submit" class="btn-ghost flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold text-rose-600 ring-1 ring-rose-500/25">
+          <i class="ti ti-user-off text-[15px]"></i> Deactivate
+        </button>
+      </form>
+      {% else %}
+      <form method="post" action="{% url 'user_set_active' target.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="active" value="1">
+        <button type="submit" class="btn-gold flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold">
+          <i class="ti ti-user-check text-[15px]"></i> Reactivate
+        </button>
+      </form>
+      {% endif %}
     </div>
   </div>
 
@@ -88,13 +159,26 @@
   </div>
 
   <!-- django messages (shown after redirect) -->
+  {% comment %}
+  Styled per level: a refused guard or a failed invite email arrives here as
+  error/warning and must not read as a green success.
+  {% endcomment %}
   {% if messages %}
   <div class="mt-4 space-y-2">
     {% for msg in messages %}
-    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20 text-[12.5px] font-medium">
-      <i class="ti ti-circle-check text-[16px]"></i>
-      {{ msg }}
+    {% if msg.level_tag == 'error' %}
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/20 text-[12.5px] font-medium">
+      <i class="ti ti-alert-triangle text-[16px] shrink-0"></i> {{ msg }}
     </div>
+    {% elif msg.level_tag == 'warning' %}
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20 text-[12.5px] font-medium">
+      <i class="ti ti-alert-circle text-[16px] shrink-0"></i> {{ msg }}
+    </div>
+    {% else %}
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20 text-[12.5px] font-medium">
+      <i class="ti ti-circle-check text-[16px] shrink-0"></i> {{ msg }}
+    </div>
+    {% endif %}
     {% endfor %}
   </div>
   {% endif %}

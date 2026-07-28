@@ -179,3 +179,47 @@ def test_role_change_goes_through_the_guard(client):
     client.post(reverse("user_detail", args=[target.pk]), {"role": User.Role.OWNER_ADMIN})
     target.refresh_from_db()
     assert target.role == User.Role.OWNER_ADMIN
+
+
+# --- list rendering --------------------------------------------------------------------
+
+
+def test_user_list_orders_pending_first(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN, username="zz-admin"))
+    UserFactory(username="aa-active", role=User.Role.AGENT)
+    pending = UserFactory(username="zz-pending", role=User.Role.AGENT, pending=True)
+    resp = client.get(reverse("user_list"))
+    assert list(resp.context["users"])[0] == pending
+
+
+def test_user_list_exposes_the_invite_form(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    resp = client.get(reverse("user_list"))
+    assert "invite_form" in resp.context
+    assert "roles" in resp.context
+
+
+def test_user_list_shows_status_badges(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    UserFactory(username="p@x.com", pending=True)
+    UserFactory(username="d@x.com", deactivated=True)
+    html = client.get(reverse("user_list")).content.decode()
+    assert "Pending" in html
+    assert "Deactivated" in html
+
+
+def test_user_detail_shows_resend_and_revoke_for_pending(client):
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    client.force_login(admin)
+    user = _make_pending(admin)
+    html = client.get(reverse("user_detail", args=[user.pk])).content.decode()
+    assert "Resend invite" in html
+    assert "Revoke invite" in html
+
+
+def test_user_detail_shows_deactivate_for_active_user(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    target = UserFactory(role=User.Role.AGENT)
+    html = client.get(reverse("user_detail", args=[target.pk])).content.decode()
+    assert "Deactivate" in html
+    assert "Resend invite" not in html
