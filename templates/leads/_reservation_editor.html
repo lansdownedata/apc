@@ -1,10 +1,19 @@
 {% comment %}
 Reservation editor modal — used inside quoteWorkspace() x-data scope.
 Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMContentLoaded.
+
+Escape closes the editor, except the Escape that just dismissed a picker — see
+`fpJustClosed()` in app.js for why the calendar can't simply be looked for.
+
+One x-show, on the OUTER container, and no x-transition anywhere. A transition on the
+backdrop made Alpine defer the container's hide to that child, and a transition on the
+container itself never settled either — both left it `display:flex` after closing, with
+an invisible backdrop eating the next click on the page. The panel's entrance is the
+`.pop` CSS animation, so nothing is lost by hiding outright.
 {% endcomment %}
-<div x-cloak x-show="editorOpen" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="closeEditor()">
-  <div x-show="editorOpen" x-transition.opacity class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="closeEditor()"></div>
-  <div x-show="editorOpen" class="pop relative w-full sm:max-w-[620px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+<div x-cloak x-show="editorOpen" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="if (!fpJustClosed()) closeEditor()">
+  <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="closeEditor()"></div>
+  <div class="pop relative w-full sm:max-w-[620px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
     <div class="flex flex-col min-h-0">
       <!-- header -->
       <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
@@ -39,22 +48,11 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
           </div>
         </div>
 
-        <!-- service + schedule -->
+        <!-- what's being booked -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="sm:col-span-2">
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Service name</label>
-            <input x-model="draft.service" placeholder="e.g. Wedding — as-directed"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Date</label>
-            <input type="date" x-model="draft.date"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Time</label>
-            <input type="time" x-model="draft.time"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
+            <input x-model="draft.service" placeholder="e.g. Wedding — as-directed" class="field mt-1.5 text-[13px]">
           </div>
           <div>
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Vehicle</label>
@@ -65,22 +63,56 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
           </div>
           <div>
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Passengers</label>
-            <input x-model.number="draft.pax" type="number" min="1"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold num">
+            <input x-model.number="draft.pax" type="number" min="1" class="field mt-1.5 text-[13px] num">
           </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Drop-off date</label>
-            <input type="date" x-model="draft.dropoffDate" @input="onDropoffChanged()"
-              :readonly="draft.tripType === 'hourly'"
-              :class="draft.tripType === 'hourly' ? 'bg-surface2 text-muted' : 'bg-surface'"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Drop-off time</label>
-            <input type="time" x-model="draft.dropoffTime" @input="onDropoffChanged()"
-              :readonly="draft.tripType === 'hourly'"
-              :class="draft.tripType === 'hourly' ? 'bg-surface2 text-muted' : 'bg-surface'"
-              class="mt-1.5 w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold">
+        </div>
+
+        {% comment %}
+        Schedule — start and end sit together because they're one fact. Pickers are
+        flatpickr, same build and options as the public booking widget; `data-fp-past`
+        lets an agent enter or correct a trip after it ran. x-show (never x-if) keeps
+        each instance alive, and x-effect repaints it when the draft changes underneath.
+        {% endcomment %}
+        <div>
+          <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Schedule</label>
+          <div class="mt-1.5 grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[11.5px] text-muted mb-1">Pickup date</div>
+              <input type="text" data-flatpickr data-fp-past placeholder="Select a date"
+                x-model="draft.date" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.date)"
+                @input="onHoursChanged(); onDropoffChanged()" class="field text-[13px]">
+            </div>
+            <div>
+              <div class="text-[11.5px] text-muted mb-1">Pickup time</div>
+              <input type="text" data-flatpickr-time placeholder="Select a time"
+                x-model="draft.time" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.time)"
+                @input="onHoursChanged(); onDropoffChanged()" class="field text-[13px]">
+            </div>
+
+            <div class="col-span-2 grid grid-cols-2 gap-3" x-show="draft.tripType === 'transfer'">
+              <div>
+                <div class="text-[11.5px] text-muted mb-1">Drop-off date</div>
+                <input type="text" data-flatpickr data-fp-past placeholder="Select a date"
+                  x-model="draft.dropoffDate" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.dropoffDate)"
+                  @input="onDropoffChanged()" class="field text-[13px]">
+              </div>
+              <div>
+                <div class="text-[11.5px] text-muted mb-1">Drop-off time</div>
+                <input type="text" data-flatpickr-time placeholder="Select a time"
+                  x-model="draft.dropoffTime" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.dropoffTime)"
+                  @input="onDropoffChanged()" class="field text-[13px]">
+              </div>
+            </div>
+
+            {# hourly: the end is derived from the booked hours, so read it out rather than ask twice #}
+            <div class="col-span-2 flex items-center gap-2 text-[12px] text-muted" x-show="draft.tripType === 'hourly'">
+              <i class="ti ti-clock-hour-4 text-[15px] text-goldd"></i>
+              <span x-show="dropoffLabel()">
+                Ends <span class="font-medium text-ink num" x-text="dropoffLabel()"></span>
+                — <span class="num" x-text="billedHours(draft)"></span> hrs as directed
+              </span>
+              <span x-show="!dropoffLabel()">Set a pickup date, time and hours to see when the trip ends.</span>
+            </div>
           </div>
         </div>
 
@@ -89,21 +121,26 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
           <div class="flex items-center justify-between">
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Route</label>
             <span x-show="draft.stops.length > 2" class="text-[10.5px] font-medium text-goldd bg-goldl px-1.5 py-0.5 rounded">
-              Multi-stop · <span x-text="draft.stops.length - 2"></span> stop(s)
+              <span x-text="draft.stops.length - 2"></span> extra <span x-text="draft.stops.length === 3 ? 'stop' : 'stops'"></span>
             </span>
           </div>
           <div class="mt-2 space-y-2">
             <template x-for="(s, i) in draft.stops" :key="i">
-              <div class="flex items-start gap-2.5">
-                <div class="flex flex-col items-center pt-2.5">
-                  <span class="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow"
+              <div class="flex gap-2.5">
+                <div class="flex flex-col items-center pt-[7px] pb-1">
+                  <span class="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow shrink-0"
                         :class="i === 0 ? 'bg-gold' : (i === draft.stops.length - 1 ? 'bg-charcoal' : 'bg-slate-300')"></span>
-                  <span x-show="i < draft.stops.length - 1" class="route-line w-[2px] h-7 mt-1"></span>
+                  <span x-show="i < draft.stops.length - 1" class="route-line w-[2px] flex-1 min-h-[1rem] mt-1"></span>
                 </div>
-                <div class="flex-1">
-                  <div class="text-[10px] font-medium uppercase tracking-wide mb-0.5"
-                       :class="i === 0 ? 'text-goldd' : (i === draft.stops.length - 1 ? 'text-ink' : 'text-muted')"
-                       x-text="stopLabel(i, draft.stops.length)"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-baseline gap-2 mb-0.5">
+                    <span class="text-[10px] font-medium uppercase tracking-wide"
+                          :class="i === 0 ? 'text-goldd' : (i === draft.stops.length - 1 ? 'text-ink' : 'text-muted')"
+                          x-text="stopLabel(i, draft.stops.length)"></span>
+                    {# the endpoints happen at the trip's own times — echoed, never asked for twice #}
+                    <span x-show="stopTime(i, draft.stops.length)" class="text-[10.5px] text-muted num"
+                          x-text="stopTime(i, draft.stops.length)"></span>
+                  </div>
                   <div class="flex items-center gap-1.5">
                     <div class="sa-search flex-1" @keydown.escape="closeStopRow(i)"
                          @keydown.down.prevent="stopRow(i).list.length && (stopRow(i).active = (stopRow(i).active + 1) % stopRow(i).list.length)"
@@ -113,7 +150,7 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
                         autocomplete="off" data-1p-ignore data-lpignore="true"
                         @input.debounce.300ms="searchStop(i)"
                         @focus="stopRow(i).list.length && (stopRow(i).open = true)"
-                        class="w-full text-[12.5px] ring-1 ring-line rounded-lg px-3 py-2 focus:outline-none focus:ring-gold">
+                        class="field text-[12.5px]">
                       <div class="sa-drop" role="listbox" x-show="stopRow(i).open" x-cloak @click.outside="closeStopRow(i)">
                         <template x-for="(r, j) in stopRow(i).list" :key="j">
                           {% include "components/_ac_result_row.html" with idx="j" active_expr="stopRow(i).active" choose_expr="chooseStop(i, j)" %}
@@ -124,15 +161,23 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
                       <i class="ti ti-trash text-[16px]"></i>
                     </button>
                   </div>
-                  <div class="mt-1 flex items-center gap-1.5">
+                  <div class="mt-1 flex items-start gap-1.5">
                     <input x-model="s.name" placeholder="Venue name (optional)"
                       class="field flex-1 min-w-0 text-[12.5px]">
-                    <input x-model="s.time" type="time"
-                      class="field shrink-0 w-[130px] text-[12.5px]">
+                    {% comment %}
+                    Only the in-between stops carry a time of their own — and the wrapper,
+                    not the input, owns x-show: flatpickr hides the real input behind an
+                    altInput sibling, so hiding the input alone would leave the picker visible.
+                    {% endcomment %}
+                    <div class="shrink-0 w-[128px]" x-show="i !== 0 && i !== draft.stops.length - 1">
+                      <input type="text" data-flatpickr-time placeholder="Arrive"
+                        x-model="s.time" x-init="initFlatpickr($el)" x-effect="fpSync($el, s.time)"
+                        class="field text-[12.5px]">
+                    </div>
                   </div>
                   <input x-show="i !== 0 && i !== draft.stops.length - 1" x-model="s.note"
                     placeholder="Note (e.g. 20-min photo stop)"
-                    class="mt-1 w-full text-[11.5px] ring-1 ring-line rounded-lg px-3 py-1.5 focus:outline-none focus:ring-gold text-muted">
+                    class="field mt-1 text-[11.5px] py-1.5 text-muted">
                 </div>
               </div>
             </template>
@@ -148,7 +193,7 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
           <div class="mt-2 grid grid-cols-3 gap-3">
             <div>
               <div class="text-[12px] text-muted mb-1" x-text="draft.tripType === 'hourly' ? 'Rate / hr' : 'Rate (flat)'"></div>
-              <div class="flex items-center ring-1 ring-line rounded-lg bg-surface px-3 focus-within:ring-gold">
+              <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
                 <span class="text-muted text-[13px]">$</span>
                 <input x-model.number="draft.rate" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num">
               </div>
@@ -158,12 +203,12 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
               <input x-model.number="draft.hours" type="number" min="0" step="0.25"
                 @input="onHoursChanged()"
                 :readonly="draft.tripType === 'transfer'"
-                :class="draft.tripType === 'transfer' ? 'bg-surface2 text-muted' : 'bg-surface'"
-                class="w-full text-[13px] ring-1 ring-line rounded-lg px-3 py-2.5 focus:outline-none focus:ring-gold num">
+                :title="draft.tripType === 'transfer' ? 'Derived from the pickup and drop-off times' : ''"
+                class="field text-[13px] num read-only:bg-surface2 read-only:text-muted">
             </div>
             <div>
               <div class="text-[12px] text-muted mb-1">Min hours</div>
-              <input x-model.number="draft.minHours" type="number" min="0" class="w-full text-[13px] ring-1 ring-line rounded-lg bg-surface px-3 py-2.5 focus:outline-none focus:ring-gold num">
+              <input x-model.number="draft.minHours" type="number" min="0" class="field text-[13px] num">
             </div>
           </div>
           <div x-show="minApplied(draft)"
@@ -172,7 +217,7 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
           </div>
           <div class="mt-3">
             <div class="text-[12px] text-muted mb-1">Gratuity %</div>
-            <div class="flex items-center ring-1 ring-line rounded-lg bg-surface px-3 focus-within:ring-gold w-1/3">
+            <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold w-1/3">
               <input x-model.number="draft.gratuityPct" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num">
               <span class="text-muted text-[13px]">%</span>
             </div>
