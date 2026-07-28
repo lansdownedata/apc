@@ -11,7 +11,17 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import IntegrityError
-from django.db.models import Count, DecimalField, Max, OuterRef, Q, Subquery, Sum, Value
+from django.db.models import (
+    Count,
+    DecimalField,
+    Exists,
+    Max,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+)
 from django.db.models.functions import Coalesce
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -50,9 +60,21 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             Value(Decimal("0.00"), output_field=_LTV_FIELD),
         ),
         last_lead_at=Max("leads__updated_at"),
-        last_message_at=Max("leads__messages__created_at"),
+        last_message_at=Max("conversation__messages__created_at"),
         latest_lead_id=Max("leads__id"),
     )
+
+    # Derived customer filter: a contact with no leads has no LTV, no trips, and nothing
+    # the directory's columns are for. Every stranger who texts the main business number
+    # becomes a Contact, so the default view would otherwise fill with wrong numbers.
+    #
+    # Exists, NOT .filter(leads__isnull=False) — the latter joins the leads table and
+    # lists a three-quote customer three times. `trips` is already guarded by
+    # distinct=True and LTV by its Subquery, so only the row set would be wrong.
+    scope = request.GET.get("scope", "customers")
+    if scope != "all":
+        scope = "customers"
+        contacts = contacts.filter(Exists(Lead.objects.filter(contact=OuterRef("pk"))))
 
     query = request.GET.get("q", "").strip()
     if query:
@@ -85,6 +107,8 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "total_contacts": len(rows),
             "total_ltv": total_ltv,
             "q": query,
+            "scope": scope,
+            "scope_tabs": [("customers", "Customers"), ("all", "All contacts")],
             "channels": Channel.choices,
             "company_names": company_names,
         },

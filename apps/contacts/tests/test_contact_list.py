@@ -8,7 +8,7 @@ from django.urls import reverse
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging.factories import MessageFactory
+from apps.messaging.factories import ConversationFactory, MessageFactory
 from apps.payments.factories import PaymentPlanFactory
 from apps.reservations.factories import ReservationFactory
 
@@ -55,8 +55,9 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
 
 
 def test_contact_with_no_leads_has_zero_ltv(logged_in_client):
+    """Lead-less contacts are only listed under the All-contacts scope."""
     contact = ContactFactory()
-    resp = logged_in_client.get(reverse("contact_list"))
+    resp = logged_in_client.get(reverse("contact_list"), {"scope": "all"})
     row = _row_for(resp.context["contacts"], contact)
     assert row.lifetime_value == Decimal("0.00")
     assert row.trips == 0
@@ -96,6 +97,9 @@ def test_search_matches_each_field(logged_in_client, field, value, term):
         phone="(000) 000-0000",
         email="other@example.com",
     )
+    # The directory lists customers by default, so both need a lead to be searchable.
+    LeadFactory(contact=match)
+    LeadFactory(contact=other)
     resp = logged_in_client.get(reverse("contact_list"), {"q": term})
     pks = {c.pk for c in resp.context["contacts"]}
     assert match.pk in pks
@@ -107,7 +111,7 @@ def test_header_totals(logged_in_client):
     booked = LeadFactory(contact=c1, status=Lead.Status.BOOKED)
     PaymentPlanFactory(lead=booked, quote_total=Decimal("1200.00"))
     ContactFactory()  # second contact, no leads → $0
-    resp = logged_in_client.get(reverse("contact_list"))
+    resp = logged_in_client.get(reverse("contact_list"), {"scope": "all"})
     assert resp.context["total_contacts"] == 2
     assert resp.context["total_ltv"] == Decimal("1200.00")
 
@@ -148,3 +152,68 @@ def test_requires_login(client):
     resp = client.get(reverse("contact_list"))
     assert resp.status_code == 302
     assert "/login" in resp["Location"]
+
+
+def test_directory_hides_contacts_with_no_leads(logged_in_client):
+    """A contact with no leads has no LTV, no trips, and nothing the columns are for.
+
+    Every stranger who texts the main business number becomes a Contact, so without
+    this the directory fills with wrong numbers named +15715550137.
+    """
+    customer = ContactFactory(name="Real Customer")
+    LeadFactory(contact=customer)
+    ContactFactory(name="Wrong Number")  # no lead
+
+    resp = logged_in_client.get(reverse("contact_list"))
+
+    names = [c.name for c in resp.context["contacts"]]
+    assert "Real Customer" in names
+    assert "Wrong Number" not in names
+
+
+def test_all_scope_shows_lead_less_contacts(logged_in_client):
+    ContactFactory(name="Wrong Number")
+
+    resp = logged_in_client.get(reverse("contact_list"), {"scope": "all"})
+
+    assert "Wrong Number" in [c.name for c in resp.context["contacts"]]
+
+
+def test_customer_with_several_leads_is_listed_once(logged_in_client):
+    """The filter must be an EXISTS, not a join — a join lists them once per lead."""
+    customer = ContactFactory(name="Repeat Customer")
+    LeadFactory(contact=customer)
+    LeadFactory(contact=customer)
+    LeadFactory(contact=customer)
+
+    resp = logged_in_client.get(reverse("contact_list"))
+
+    names = [c.name for c in resp.context["contacts"]]
+    assert names.count("Repeat Customer") == 1
+
+
+def test_last_activity_uses_conversation_messages(logged_in_client):
+    customer = ContactFactory()
+    LeadFactory(contact=customer)
+    convo = ConversationFactory(contact=customer)
+    MessageFactory(conversation=convo, lead=None)
+
+    resp = logged_in_client.get(reverse("contact_list"))
+
+    assert _row_for(resp.context["contacts"], customer).last_message_at is not None
+
+
+def test_contact_with_a_lead_but_no_conversation_renders(logged_in_client):
+    """A contact from the New Lead modal has no Conversation at all.
+
+    `contact.conversation` is a reverse OneToOne — reading it when absent raises
+    RelatedObjectDoesNotExist, so nothing may touch it directly.
+    """
+    customer = ContactFactory(name="Modal Customer")
+    lead = LeadFactory(contact=customer)
+
+    resp = logged_in_client.get(reverse("contact_list"))
+    assert resp.status_code == 200
+    assert _row_for(resp.context["contacts"], customer).last_message_at is None
+
+    assert logged_in_client.get(reverse("lead_detail", args=[lead.pk])).status_code == 200
