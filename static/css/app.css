@@ -2,7 +2,7 @@
    All Pro Charter — Lead Manager  ·  design system
    "Executive chauffeur" — onyx frame, concierge gold, warm paper.
    Brand kit: Concierge Gold #C7A24E · Onyx #17191D · Silver #B9B4B7
-   Display: Fraunces (serif) · UI: Hanken Grotesk · Mono: Spline Sans Mono
+   Display: Fraunces (serif) · UI: Inter · Mono: Spline Sans Mono
 
    Theming model
    -------------
@@ -77,7 +77,7 @@
 html, body { height: 100%; }
 body {
   margin: 0;
-  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   color: rgb(var(--text));
   background-color: rgb(var(--bg));
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
@@ -316,7 +316,7 @@ header, aside, main, .wash-gold {
 /* ============================================ Tom Select — gold theming === */
 /* Make the searchable dropdown feel native to the design system, never the
    stock blue-on-white look. */
-.ts-wrapper { font-family: 'Hanken Grotesk', system-ui, sans-serif; }
+.ts-wrapper { font-family: 'Inter', system-ui, sans-serif; }
 /* Tom Select copies the source <select>'s classes onto .ts-wrapper, so the
    `.field` class from searchable_select.html would paint a second border +
    padding *around* .ts-control (a double box that reads as clipped).  The
