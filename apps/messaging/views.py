@@ -10,7 +10,7 @@ import json
 from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Avg, Count, DecimalField, Max, Q, QuerySet
+from django.db.models import Avg, Count, DecimalField, Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -20,7 +20,8 @@ from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
-from .models import Message, Review
+from . import services
+from .models import Conversation, Message, Review
 from .touchpoints import PODIUM_CHANNEL
 
 # Podium calls the SMS channel "phone" — shared with apps.messaging.touchpoints so the
@@ -29,14 +30,16 @@ from .touchpoints import PODIUM_CHANNEL
 CHANNEL_TYPE = PODIUM_CHANNEL
 CHANNEL_MODEL = {"sms": Message.Channel.SMS, "email": Message.Channel.EMAIL}
 
+FILTERS = ("open", "archived", "all")
+FILTER_TABS = [("open", "Open"), ("archived", "Archived"), ("all", "All")]
 
-def _conversations(q: str = "") -> QuerySet[Lead]:
-    """Leads with at least one message, annotated for the inbox list."""
+
+def _conversations(q: str = "", conversation_filter: str = "open") -> QuerySet[Conversation]:
+    """Conversations with at least one message, annotated for the inbox list."""
     qs = (
-        Lead.objects.filter(messages__isnull=False)
-        .select_related("contact")
+        Conversation.objects.filter(messages__isnull=False)
+        .select_related("contact", "contact__company")
         .annotate(
-            last_message_at=Max("messages__created_at"),
             unread_count=Count(
                 "messages",
                 filter=Q(
@@ -47,8 +50,12 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
             ),
         )
         .distinct()
-        .order_by("-last_message_at")
+        .order_by("-last_message_at", "-id")
     )
+    if conversation_filter == "open":
+        qs = qs.filter(status=Conversation.Status.OPEN)
+    elif conversation_filter == "archived":
+        qs = qs.filter(status=Conversation.Status.ARCHIVED)
     if q:
         qs = qs.filter(
             Q(contact__name__icontains=q)
@@ -62,30 +69,36 @@ def _conversations(q: str = "") -> QuerySet[Lead]:
 def inbox(request):
     """Conversation list + (optionally) the selected thread, marking it read."""
     q = request.GET.get("q", "").strip()
+    conversation_filter = request.GET.get("filter", "open")
+    if conversation_filter not in FILTERS:
+        conversation_filter = "open"
 
     selected = None
     thread_messages: list[Message] = []
-    la_confirmation = ""
-    lead_pk = request.GET.get("lead")
-    if lead_pk:
-        # Validate that lead_pk is numeric to avoid ValueError → 500.
-        if not lead_pk.isdigit():
+    leads: list[Lead] = []
+    conversation_pk = request.GET.get("conversation")
+    if conversation_pk:
+        # Validate that conversation_pk is numeric to avoid ValueError → 500.
+        if not conversation_pk.isdigit():
             raise Http404
         selected = get_object_or_404(
-            Lead.objects.filter(messages__isnull=False).select_related("contact").distinct(),
-            pk=lead_pk,
+            Conversation.objects.filter(messages__isnull=False)
+            .select_related("contact", "contact__company")
+            .distinct(),
+            pk=conversation_pk,
         )
         # Mark read before building list so response reflects cleared unread count.
         Message.objects.filter(
-            lead=selected, direction=Message.Direction.IN, read_at__isnull=True
+            conversation=selected, direction=Message.Direction.IN, read_at__isnull=True
         ).update(read_at=timezone.now())
         thread_messages = list(selected.messages.all())
-        for reservation in selected.reservations.all():
-            if reservation.la_confirmation:
-                la_confirmation = reservation.la_confirmation
-                break
-
-    conversations = list(_conversations(q))
+        # One conversation can spawn several quotes — the rail shows them all, so an
+        # agent sees "2 quotes already" instead of creating a third by accident.
+        leads = list(
+            selected.contact.leads.select_related("payment")
+            .prefetch_related("reservations")
+            .order_by("-id")
+        )
 
     return render(
         request,
@@ -93,10 +106,12 @@ def inbox(request):
         {
             "nav": "inbox",
             "page_title": "Inbox",
-            "conversations": conversations,
+            "conversations": list(_conversations(q, conversation_filter)),
             "selected": selected,
             "thread_messages": thread_messages,
-            "la_confirmation": la_confirmation,
+            "leads": leads,
+            "conversation_filter": conversation_filter,
+            "filter_tabs": FILTER_TABS,
             "q": q,
         },
     )
@@ -106,7 +121,7 @@ def inbox(request):
 @require_POST
 def inbox_send(request, pk: int) -> JsonResponse:
     """Send an outbound SMS/email through Podium and record the Message row."""
-    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
+    conversation = get_object_or_404(Conversation.objects.select_related("contact"), pk=pk)
     try:
         payload = json.loads(request.body or b"{}")
     except (ValueError, TypeError):
@@ -122,7 +137,7 @@ def inbox_send(request, pk: int) -> JsonResponse:
     if not body:
         return JsonResponse({"ok": False, "error": "Message body cannot be blank."}, status=400)
 
-    identifier = lead.contact.phone if channel == "sms" else lead.contact.email
+    identifier = conversation.contact.phone if channel == "sms" else conversation.contact.email
     if not identifier:
         label = "phone number" if channel == "sms" else "email address"
         return JsonResponse(
@@ -140,15 +155,12 @@ def inbox_send(request, pk: int) -> JsonResponse:
     if isinstance(response, dict):
         uid = response.get("uid") or (response.get("data") or {}).get("uid") or ""
 
-    message = Message.objects.create(
-        lead=lead,
-        direction=Message.Direction.OUT,
+    message = services.record_outbound(
+        conversation,
         channel=CHANNEL_MODEL[channel],
         body=body,
         podium_message_uid=uid,
         sender_name=request.user.get_full_name() or request.user.username,
-        sent_at=timezone.now(),
-        delivery_status=Message.DeliveryStatus.SENT,
     )
     return JsonResponse(
         {

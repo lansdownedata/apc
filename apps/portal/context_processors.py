@@ -5,8 +5,7 @@ from pathlib import Path
 from django.conf import settings
 
 from apps.core.us_states import US_STATES
-from apps.leads.models import Lead
-from apps.messaging.models import Message
+from apps.messaging.models import Conversation, Message
 from apps.notifications.models import Notification
 
 # Screens lifted from the prototype that aren't wired up yet — shown dimmed.
@@ -37,10 +36,16 @@ def _asset_version() -> str:
 
 
 def _inbox_unread_count() -> int:
-    """Distinct leads with at least one unread inbound message."""
+    """Open conversations with at least one unread inbound message.
+
+    Archived threads are excluded: dismissing a wrong number should stop it nagging
+    the bell, not just hide it from the list.
+    """
     return (
-        Lead.objects.filter(
-            messages__direction=Message.Direction.IN, messages__read_at__isnull=True
+        Conversation.objects.filter(
+            status=Conversation.Status.OPEN,
+            messages__direction=Message.Direction.IN,
+            messages__read_at__isnull=True,
         )
         .distinct()
         .count()
