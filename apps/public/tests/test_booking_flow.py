@@ -102,6 +102,12 @@ def test_single_step_pages_render_every_field_at_once(db):
         assert "Request a quote" in html, url
 
 
+def test_thanks_page_copy(db):
+    html = Client().get("/bookings/thanks/").content.decode()
+    assert "Got it. We will follow up within one business day." in html
+    assert "(202) 424-2600" in html
+
+
 def test_autocomplete_has_combobox_semantics(db):
     html = Client().get("/bookings/").content.decode()
     assert 'role="combobox"' in html

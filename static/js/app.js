@@ -1104,6 +1104,11 @@ function quoteSteps(opts = {}) {
     // name/email/phone are the only server-required fields, so that is step 2.
     step: opts.twoStep && !opts.hasErrors ? 1 : 2,
     errors: {},
+    // Snapshotted when step 1 is cleared. It cannot be a lazy x-text call: summary()
+    // reads field values straight off the DOM, which Alpine's reactivity cannot see,
+    // so x-text would only re-run when some *other* reactive prop changed and would
+    // render a stale trip.
+    summaryText: "",
 
     submitLabel() {
       if (!this.twoStep) return "Request a quote";
@@ -1128,7 +1133,10 @@ function quoteSteps(opts = {}) {
       this.errors = {};
       let firstBad = null;
       for (const [name, message] of this.required()) {
-        const el = this.$el.querySelector(`[name="${name}"]`);
+        // $root, never $el: Alpine resolves $el to the element the expression runs
+        // on, which for @click is the button — and a button contains no fields, so
+        // every lookup would come back null and the gate would silently pass.
+        const el = this.$root.querySelector(`[name="${name}"]`);
         if (el && !String(el.value || "").trim()) {
           this.errors[name] = message;
           if (!firstBad) firstBad = el;
@@ -1145,7 +1153,9 @@ function quoteSteps(opts = {}) {
     onSubmit(e) {
       if (!this.twoStep || this.step === 2) return; // let it post
       e.preventDefault();
-      if (this.validateStepOne()) this.step = 2;
+      if (!this.validateStepOne()) return;
+      this.summaryText = this.summary();
+      this.step = 2;
     },
 
     back() {
@@ -1155,7 +1165,7 @@ function quoteSteps(opts = {}) {
     // Reads flatpickr's altInput display values, not the raw Y-m-d / H:i.
     summary() {
       const val = (name) => {
-        const el = this.$el.querySelector(`[name="${name}"]`);
+        const el = this.$root.querySelector(`[name="${name}"]`); // see validateStepOne
         if (!el) return "";
         return (el._flatpickr?.altInput?.value || el.value || "").trim();
       };

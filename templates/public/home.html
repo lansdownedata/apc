@@ -30,7 +30,8 @@
     <div class="lg:col-span-5">
       <span class="inline-flex max-w-full items-center gap-2 rounded-full bg-goldl px-3.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-goldd ring-1 ring-white/15 sm:text-[11.5px] sm:tracking-[0.14em]">
         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-gold"></span>
-        Available 24/7<span class="hidden sm:inline">&nbsp;&middot; Virginia &middot; D.C. &middot; Maryland</span>
+        {% comment %} the region list drops out between lg and xl, where the 5/12 copy column is too narrow for it and the pill wrapped mid-phrase {% endcomment %}
+        <span class="whitespace-nowrap">Available 24/7</span><span class="hidden whitespace-nowrap sm:inline lg:hidden xl:inline">&nbsp;&middot; Virginia &middot; D.C. &middot; Maryland</span>
       </span>
       <h1 class="mt-5 max-w-xl font-display text-[clamp(2.25rem,4vw,3.25rem)] font-semibold leading-[1.08] tracking-tight text-white">
         Stress-free, reliable &amp; affordable ground transportation.
