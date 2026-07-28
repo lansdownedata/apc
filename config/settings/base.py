@@ -104,6 +104,11 @@ LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
+# Staff invite links and password-reset links both use Django's default_token_generator,
+# which reads this single global timeout — there is no separate invite setting. 7 days
+# gives a new hire a working week to accept.
+PASSWORD_RESET_TIMEOUT = 60 * 60 * 24 * 7
+
 # ---------------------------------------------------------------- i18n / tz
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = env("DJANGO_TIME_ZONE", default="America/New_York")
