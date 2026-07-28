@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.test import Client
 
 
@@ -62,3 +64,47 @@ def test_full_booking_post_creates_lead_with_stops(db):
         "Reston Town Center",
         "Dulles Intl",
     ]
+
+
+def test_hourly_post_records_trip_type_and_hours(db):
+    """Regression: create_lead_from_booking never set trip_type, so every hourly
+    request the public site took was stored as a transfer."""
+    from apps.leads.models import Lead
+
+    resp = Client().post(
+        "/bookings/",
+        {
+            "name": "Jane Rider",
+            "email": "jane@example.com",
+            "passengers": 2,
+            "trip_type": "hourly",
+            "hours": "4",
+            "pickup": "Dulles Intl (IAD)",
+            "dropoff": "New York, NY",
+        },
+    )
+    assert resp.status_code == 302
+    res = Lead.objects.latest("id").reservations.get()
+    assert res.trip_type == "hourly"
+    assert res.hours == Decimal("4")
+
+
+def test_transfer_post_stores_zero_hours(db):
+    from apps.leads.models import Lead
+
+    resp = Client().post(
+        "/bookings/",
+        {
+            "name": "Jane Rider",
+            "email": "jane@example.com",
+            "passengers": 2,
+            "trip_type": "transfer",
+            "hours": "4",
+            "pickup": "123 Main St, Ashburn VA",
+            "dropoff": "Dulles Intl",
+        },
+    )
+    assert resp.status_code == 302
+    res = Lead.objects.latest("id").reservations.get()
+    assert res.trip_type == "transfer"
+    assert res.hours == Decimal("0")

@@ -2,18 +2,21 @@ import json
 
 from django import forms
 
-# Static service-type options for the booking widget's dropdown (no ServiceType
-# model yet). Reservation.service is a free-text CharField, so the value IS the label.
-SERVICE_TYPE_CHOICES = [
+from apps.reservations.models import Reservation
+
+# Optional "occasion" for the booking widget's dropdown (no ServiceType model yet).
+# Reservation.service is a free-text CharField, so the value IS the label. Trip *type*
+# (transfer/hourly) is a separate field posting Reservation.trip_type — these are the
+# occasions that used to be conflated with it in a single six-option select.
+OCCASION_CHOICES = [
     ("Airport Transfer", "Airport Transfer"),
     ("Corporate Travel", "Corporate Travel"),
     ("Wedding Transportation", "Wedding Transportation"),
-    ("Hourly Charter", "Hourly Charter"),
     ("Group / Shuttle Service", "Group / Shuttle Service"),
     ("Other", "Other"),
 ]
 
-MAX_STOPS = 10
+MAX_STOPS = 4
 ADDRESS_MAXLEN = 255
 
 
@@ -38,6 +41,11 @@ class BookingRequestForm(forms.Form):
     pickup_date = forms.DateField(required=False)
     pickup_time = forms.TimeField(required=False)
     passengers = forms.IntegerField(min_value=1, max_value=100, initial=1)
+    # trip_type is required=False with a transfer fallback rather than a required
+    # ChoiceField: it matches Reservation.trip_type's model default, and it keeps a
+    # POST that predates the toggle (or omits it) valid instead of erroring.
+    trip_type = forms.ChoiceField(choices=Reservation.TripType.choices, required=False)
+    hours = forms.DecimalField(min_value=1, max_value=24, required=False)
     service = forms.CharField(max_length=120, required=False)
     notes = forms.CharField(widget=forms.Textarea, required=False)
     company = forms.CharField(required=False)  # honeypot — bots fill it
@@ -89,6 +97,16 @@ class BookingRequestForm(forms.Form):
             raise forms.ValidationError("spam detected")
         if not cleaned.get("email") and not cleaned.get("phone"):
             raise forms.ValidationError("Provide an email or phone so we can reach you.")
+
+        trip_type = cleaned.get("trip_type") or Reservation.TripType.TRANSFER
+        cleaned["trip_type"] = trip_type
+        if trip_type == Reservation.TripType.HOURLY:
+            if cleaned.get("hours") is None:
+                self.add_error("hours", "Enter how many hours you need.")
+        else:
+            # A visitor can fill hours, toggle back to Transfer, and submit. Drop the
+            # stale duration rather than recording it against a transfer.
+            cleaned["hours"] = None
 
         # Assemble the ordered trip: pickup -> in-between stops -> drop-off, blanks removed.
         stops = []

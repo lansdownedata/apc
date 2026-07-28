@@ -1,6 +1,7 @@
 import json
+from decimal import Decimal
 
-from apps.public.forms import SERVICE_TYPE_CHOICES, BookingRequestForm
+from apps.public.forms import OCCASION_CHOICES, BookingRequestForm
 
 
 def _base(**over):
@@ -9,8 +10,40 @@ def _base(**over):
     return data
 
 
-def test_special_event_removed():
-    assert all(v != "Special Event" for v, _ in SERVICE_TYPE_CHOICES)
+def test_occasion_choices_drop_hourly_charter():
+    """Hourly is a trip_type now, not an occasion."""
+    assert all(v != "Hourly Charter" for v, _ in OCCASION_CHOICES)
+    assert all(v != "Special Event" for v, _ in OCCASION_CHOICES)
+
+
+def test_trip_type_defaults_to_transfer_when_absent():
+    form = BookingRequestForm(_base())
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["trip_type"] == "transfer"
+
+
+def test_hourly_requires_hours():
+    form = BookingRequestForm(_base(trip_type="hourly"))
+    assert not form.is_valid()
+    assert "hours" in form.errors
+
+
+def test_hourly_with_hours_is_valid():
+    form = BookingRequestForm(_base(trip_type="hourly", hours="4"))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["hours"] == Decimal("4")
+
+
+def test_transfer_nulls_stale_hours():
+    """Fill hours, toggle back to Transfer, submit — the duration must not persist."""
+    form = BookingRequestForm(_base(trip_type="transfer", hours="4"))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["hours"] is None
+
+
+def test_occasion_is_optional():
+    form = BookingRequestForm(_base(service=""))
+    assert form.is_valid(), form.errors
 
 
 def test_ordered_stops_pickup_mids_dropoff():
@@ -62,7 +95,7 @@ def test_malformed_stops_json_is_rejected_not_500():
 
 
 def test_too_many_stops_rejected():
-    payload = [{"address": f"Stop {i}"} for i in range(11)]
+    payload = [{"address": f"Stop {i}"} for i in range(5)]
     form = BookingRequestForm(_base(stops_json=json.dumps(payload)))
     assert not form.is_valid()
     assert "stops_json" in form.errors

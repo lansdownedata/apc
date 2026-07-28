@@ -1,7 +1,7 @@
 {% comment %}
   templates/public/_booking_widget.html — the booking-request <form>. Posts to
   public:bookings, which turns a valid submission into a Lead + reservation stub +
-  ordered Stop records. Requires from context: form, service_options.
+  ordered Stop records. Requires from context: form, occasion_options.
 {% endcomment %}
 <form method="post" action="{% url 'public:bookings' %}"
       x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })"
@@ -106,8 +106,8 @@
   </div>
 
   <div>
-    <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Service type</label>
-    {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=service_options selected=form.service.value empty_label="Select a service" search="off" %}
+    <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Occasion <span class="text-muted/70">(optional)</span></label>
+    {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=occasion_options selected=form.service.value empty_label="Select an occasion" search="off" %}
     {% for error in form.service.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
