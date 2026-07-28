@@ -20,7 +20,7 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
-        display: ["Fraunces", "Georgia", "serif"],
+        display: ["Playfair Display", "Georgia", "serif"],
         mono: ["Spline Sans Mono", "ui-monospace", "monospace"],
       },
       colors: {

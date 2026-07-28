@@ -2,7 +2,7 @@
    All Pro Charter — Lead Manager  ·  design system
    "Executive chauffeur" — onyx frame, concierge gold, warm paper.
    Brand kit: Concierge Gold #C7A24E · Onyx #17191D · Silver #B9B4B7
-   Display: Fraunces (serif) · UI: Inter · Mono: Spline Sans Mono
+   Display: Playfair Display (serif) · UI: Inter · Mono: Spline Sans Mono
 
    Theming model
    -------------
@@ -90,7 +90,7 @@ header, aside, main, .wash-gold {
   transition: background-color .25s ease, border-color .25s ease, color .25s ease;
 }
 
-.font-display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
+.font-display { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; letter-spacing: -0.01em; }
 .font-mono2   { font-family: 'Spline Sans Mono', ui-monospace, 'SFMono-Regular', monospace; }
 .num          { font-variant-numeric: lining-nums tabular-nums; }
 

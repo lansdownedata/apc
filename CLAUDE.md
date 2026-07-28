@@ -76,8 +76,8 @@ npm run watch:css    # keep running while editing templates
   silently has no styles in prod. Never hand-edit it.
 - **Load order is `tailwind.css` → `app.css`** in all three shells (`base.html`,
   `public/base_public.html`, `registration/login.html`). `app.css` must win: it and Tailwind
-  both define `.font-display`, and the `app.css` version adds `font-optical-sizing` +
-  `letter-spacing`. Don't reverse these two `<link>`s.
+  both define `.font-display`, and the `app.css` version adds `letter-spacing`. Don't
+  reverse these two `<link>`s.
 - **JIT only emits classes it can find as literal strings.** `content` in `tailwind.config.js`
   covers `templates/`, `apps/**/*.py` (form widget `attrs={"class": …}`) and `static/js/`
   (modal/toast markup). A class assembled by concatenation at runtime will NOT be generated —
