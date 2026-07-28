@@ -43,11 +43,11 @@
 
           {# empty state — no photo chosen and none on file #}
           <div x-show="!preview" class="px-5 py-8 text-center">
-            <span class="mx-auto mb-3 grid place-items-center w-11 h-11 rounded-full bg-gold-soft text-gold-deep ring-1 ring-gold/25">
+            <span class="mx-auto mb-3 grid place-items-center w-11 h-11 rounded-full bg-goldl text-goldd ring-1 ring-gold/25">
               <i class="ti ti-photo-up text-[20px]"></i>
             </span>
             <div class="text-[13px] text-ink">
-              Drop a photo, or <span class="text-gold-deep font-medium group-hover:underline">browse</span>
+              Drop a photo, or <span class="text-goldd font-medium group-hover:underline">browse</span>
             </div>
             <p class="text-[11.5px] text-muted mt-1">Landscape, transparent or white background, about 1200px wide.</p>
           </div>
@@ -61,7 +61,7 @@
               <div class="text-[13px] font-medium text-ink truncate" x-text="filename || 'Current photo'"></div>
               <div class="text-[11.5px] text-muted" x-text="picked ? 'Ready to save' : 'On file'"></div>
               <div class="flex items-center gap-3 mt-1.5">
-                <span class="text-[12px] font-medium text-gold-deep group-hover:underline">Replace</span>
+                <span class="text-[12px] font-medium text-goldd group-hover:underline">Replace</span>
                 <button type="button" x-show="picked" @click.prevent.stop="clear()"
                         class="text-[12px] font-medium text-muted hover:text-rose-600 transition-colors">Remove</button>
               </div>

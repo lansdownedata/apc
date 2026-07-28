@@ -1,0 +1,16 @@
+{
+  "name": "apc",
+  "version": "1.0.0",
+  "description": "All Pro Charter Lead Manager — CSS build (Tailwind).",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./assets/css/tailwind.src.css -o ./static/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./assets/css/tailwind.src.css -o ./static/css/tailwind.css --watch"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^3.4.19"
+  }
+}

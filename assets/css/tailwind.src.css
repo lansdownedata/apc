@@ -1,0 +1,6 @@
+/* Tailwind source — compiled to static/css/tailwind.css by `npm run build:css`.
+   Do NOT edit static/css/tailwind.css by hand; it is generated (and committed).
+   The design system itself lives in static/css/app.css, loaded after this file. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
