@@ -22,7 +22,7 @@ from apps.notifications.models import Notification
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
 
 from . import la_sync, services, webhooks
-from .geocoding import autocomplete
+from .geocoding import merged_autocomplete
 from .models import LACustomer, LAEvent
 
 STATE_SESSION_KEY = "podium_oauth_state"
@@ -155,12 +155,14 @@ def la_webhook(request, token: str):
 @login_required
 @require_GET
 def geocode_autocomplete(request):
-    """Server proxy for LocationIQ autocomplete — keeps the key server-side."""
-    if not settings.LOCATIONIQ_API_KEY:
-        return JsonResponse({"results": [], "degraded": True})
-    results = autocomplete(
+    """Server proxy for LocationIQ autocomplete, with airport matches prepended.
+
+    Airports come from the local table, so results are returned even with no API key —
+    `degraded` tells the client LocationIQ itself is unavailable.
+    """
+    results = merged_autocomplete(
         request.GET.get("q", ""),
         lat=request.GET.get("lat"),
         lon=request.GET.get("lon"),
     )
-    return JsonResponse({"results": results, "degraded": False})
+    return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})

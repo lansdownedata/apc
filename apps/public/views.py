@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET
 
-from apps.integrations.geocoding import autocomplete
+from apps.integrations.geocoding import merged_autocomplete
 
 from .forms import SERVICE_TYPE_CHOICES, BookingRequestForm
 from .services import create_lead_from_booking
@@ -167,15 +167,14 @@ def geocode(request):
     """
     if _geocode_throttle_exceeded(request):
         return JsonResponse({"results": [], "degraded": False}, status=429)
-    if not settings.LOCATIONIQ_API_KEY:
-        return JsonResponse({"results": [], "degraded": True})
     q = request.GET.get("q", "")
     if len(q.strip()) < 3:
         return JsonResponse({"results": [], "degraded": False})
     lat, lon = request.GET.get("lat"), request.GET.get("lon")
-    cache_key = "geocode-ac:" + hashlib.md5(f"{q}:{lat}:{lon}".encode()).hexdigest()
+    # Key bumped to v2: entries cached before airports existed hold LocationIQ-only lists.
+    cache_key = "geocode-ac2:" + hashlib.md5(f"{q}:{lat}:{lon}".encode()).hexdigest()
     results = cache.get(cache_key)
     if results is None:
-        results = autocomplete(q, lat=lat, lon=lon)
+        results = merged_autocomplete(q, lat=lat, lon=lon)
         cache.set(cache_key, results, 300)
-    return JsonResponse({"results": results, "degraded": False})
+    return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})
