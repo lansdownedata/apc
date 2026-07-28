@@ -26,6 +26,12 @@ media/vehicle-types/*
 .env.*
 !.env.example
 
+# Node / CSS build
+# NOTE: static/css/tailwind.css IS committed on purpose — Heroku runs the Python
+# buildpack only, so the compiled CSS must be in the repo. Rebuild before committing
+# template changes: `npm run build:css` (or keep `npm run watch:css` running in dev).
+node_modules/
+
 # OS / editors
 .DS_Store
 .idea/

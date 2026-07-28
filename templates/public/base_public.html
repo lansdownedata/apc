@@ -19,33 +19,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/css/intlTelInput.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+  {# Tailwind is compiled — see tailwind.config.js + `npm run build:css`. Must load before app.css. #}
+  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}?v={{ asset_version }}">
   <link rel="stylesheet" href="{% static 'css/app.css' %}?v={{ asset_version }}">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: ['selector', '[data-theme="dark"]'],
-      theme: { extend: {
-        fontFamily: {
-          sans: ['Inter','system-ui','sans-serif'],
-          display: ['Fraunces','Georgia','serif'],
-          mono: ['Spline Sans Mono','ui-monospace','monospace'],
-        },
-        colors: {
-          charcoal:'#14181f', charcoal2:'#1b212b', charcoal3:'#222b37',
-          onyx:'#17191D', silver:'#B9B4B7',
-          gold:    'rgb(var(--gold) / <alpha-value>)',
-          goldd:   'rgb(var(--gold-deep) / <alpha-value>)',
-          goldl:   'rgb(var(--gold-soft) / <alpha-value>)',
-          ink:     'rgb(var(--text) / <alpha-value>)',
-          muted:   'rgb(var(--muted) / <alpha-value>)',
-          paper:   'rgb(var(--bg) / <alpha-value>)',
-          surface: 'rgb(var(--surface) / <alpha-value>)',
-          surface2:'rgb(var(--surface-2) / <alpha-value>)',
-          line:    'rgb(var(--border) / <alpha-value>)',
-        },
-      }}
-    }
-  </script>
   <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/js/intlTelInputWithUtils.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>

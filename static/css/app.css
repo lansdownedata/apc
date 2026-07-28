@@ -152,8 +152,9 @@ header, aside, main, .wash-gold {
 .tone-warn { border:1px solid rgb(var(--warn) / .4); background: rgb(var(--warn-soft) / .5); }
 .tone-warn .tone-ic { color: rgb(var(--warn)); background: rgb(var(--warn) / .14); }
 
-/* gold-tinted active row / hover wash */
-.wash-gold { background: linear-gradient(90deg, rgb(var(--gold) / .10), rgb(var(--gold) / .03)); }
+/* gold-tinted active row / hover wash — now a Tailwind utility so `hover:wash-gold`
+   works; see the plugins block in tailwind.config.js. The transition rule above
+   still references .wash-gold. */
 
 /* nav item (sidebar is always dark) */
 .nav-item { transition: background-color .15s ease, color .15s ease; }

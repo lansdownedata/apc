@@ -42,8 +42,8 @@ These are hard rules. Build the reusable component once; use it everywhere.
   ```
   `options` = any iterable of `(value, label)` (e.g. a `TextChoices.choices`). Hooks:
   `data-autosubmit` (submit the form on change), `data-search="off"`, `multiple`.
-- **TODO before prod:** a Django form-widget wrapper for model forms, and a real asset build —
-  Tailwind / Alpine / Tom Select currently load via **CDN** in `base.html`.
+- **TODO before prod:** a Django form-widget wrapper for model forms. Alpine / Tom Select /
+  Tabler / flatpickr still load via **CDN**; Tailwind no longer does (see below).
 
 > ✅ These are now **built** (`templates/components/`) and used by the live screens —
 > see the **Web portal** section below. Use them; don't reintroduce native modals/selects.
@@ -57,6 +57,33 @@ These are hard rules. Build the reusable component once; use it everywhere.
   shared pagination, permission mixins) — don't repeat per app.
 - **Models:** abstract bases + mixins in `apps/core` (`TimeStampedModel`, `MoneyField`),
   `TextChoices` enums, and `QuerySet`/`Manager` methods over ad-hoc filtering.
+
+---
+
+## 🎨 CSS build (Tailwind — compiled, not CDN)
+Tailwind **3.4** is installed via npm and compiled ahead of time. There is no `cdn.tailwindcss.com`
+and no inline `tailwind.config` in any template — the single source of truth is `tailwind.config.js`.
+
+```bash
+npm install          # once
+npm run build:css    # assets/css/tailwind.src.css → static/css/tailwind.css (minified)
+npm run watch:css    # keep running while editing templates
+```
+
+- **`static/css/tailwind.css` is generated AND committed.** Heroku runs the Python buildpack
+  only, so the compiled CSS must be in the repo. **Rebuild and commit it whenever you add or
+  change a class in a template, `apps/**/*.py`, or `static/js/*.js`** — otherwise the new class
+  silently has no styles in prod. Never hand-edit it.
+- **Load order is `tailwind.css` → `app.css`** in all three shells (`base.html`,
+  `public/base_public.html`, `registration/login.html`). `app.css` must win: it and Tailwind
+  both define `.font-display`, and the `app.css` version adds `font-optical-sizing` +
+  `letter-spacing`. Don't reverse these two `<link>`s.
+- **JIT only emits classes it can find as literal strings.** `content` in `tailwind.config.js`
+  covers `templates/`, `apps/**/*.py` (form widget `attrs={"class": …}`) and `static/js/`
+  (modal/toast markup). A class assembled by concatenation at runtime will NOT be generated —
+  write the full class name as a literal, or add it to `safelist`.
+- Pinned to v3 deliberately: v4 requires Safari 16.4+ / Chrome 111+, too new for the public
+  booking site's customers. Revisit when that floor ages out.
 
 ---
 
@@ -122,6 +149,8 @@ source .venv/bin/activate
 python manage.py check | makemigrations | migrate | runserver
 pytest                       # tests
 ruff check . && ruff format .
+npm run watch:css            # Tailwind rebuild-on-save (run alongside runserver)
+npm run build:css            # one-off minified build — commit static/css/tailwind.css
 ```
 
 ## ✅ Definition of done (per feature)
