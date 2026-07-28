@@ -257,3 +257,59 @@ def test_transfer_dropoff_before_pickup_is_rejected():
                 "stops": [{"address": "A"}, {"address": "B"}],
             },
         )
+
+
+def test_endpoint_stop_times_mirror_the_trip_times():
+    """The editor stopped asking for a pickup/drop-off stop time — it's the trip's."""
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        _payload(
+            date="2026-07-04",
+            time="15:00",
+            dropoffDate="2026-07-04",
+            dropoffTime="16:30",
+            stops=[{"address": "Dulles"}, {"address": "Photo stop"}, {"address": "The Ritz"}],
+        ),
+    )
+    stops = list(res.ordered_stops)
+    assert stops[0].scheduled_time == time(15, 0)
+    assert stops[-1].scheduled_time == time(16, 30)
+    assert stops[1].scheduled_time is None, "in-between stops keep their own (blank) time"
+
+
+def test_an_explicit_endpoint_stop_time_is_kept():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        _payload(
+            date="2026-07-04",
+            time="15:00",
+            dropoffDate="2026-07-04",
+            dropoffTime="16:30",
+            stops=[{"address": "Dulles", "time": "14:45"}, {"address": "The Ritz"}],
+        ),
+    )
+    stops = list(res.ordered_stops)
+    assert stops[0].scheduled_time == time(14, 45)
+    assert stops[-1].scheduled_time == time(16, 30)
+
+
+def test_hourly_endpoint_stop_times_use_the_derived_dropoff():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        {
+            "tripType": "hourly",
+            "pax": 2,
+            "rate": "150.00",
+            "hours": "4",
+            "minHours": "0",
+            "date": "2026-08-29",
+            "time": "15:00",
+            "stops": [{"address": "A"}, {"address": "B"}],
+        },
+    )
+    stops = list(res.ordered_stops)
+    assert stops[0].scheduled_time == time(15, 0)
+    assert stops[-1].scheduled_time == time(19, 0)

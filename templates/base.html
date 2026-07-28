@@ -32,12 +32,15 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/css/intlTelInput.css">
+{# same build + options as the public booking widget; themed in app.css (.flatpickr-*) #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
 
 {# Tailwind is compiled — see tailwind.config.js + `npm run build:css`. Must load before app.css. #}
 <link rel="stylesheet" href="{% static 'css/tailwind.css' %}?v={{ asset_version }}">
 <link rel="stylesheet" href="{% static 'css/app.css' %}?v={{ asset_version }}">
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/js/intlTelInputWithUtils.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
 <script src="{% static 'js/app.js' %}?v={{ asset_version }}"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
 {% block head_extra %}{% endblock %}

@@ -370,6 +370,9 @@ function quoteWorkspace(opts = {}) {
       this.draft = JSON.parse(JSON.stringify(r));
       this.draftIsNew = false;
       this.editorOpen = true;
+      // Older rows can predate the derived drop-off — fill it so the hourly
+      // read-out shows the end time instead of the "set a date" prompt.
+      this.onHoursChanged();
       this.syncVehicleSelect();
     },
     closeEditor() { this.editorOpen = false; },
@@ -403,6 +406,22 @@ function quoteWorkspace(opts = {}) {
     addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
+    /* The first and last stop happen at the trip's own times — shown against the row
+       instead of asking for them twice. The server mirrors them onto the stops. */
+    stopTime(i, len) {
+      if (i === 0) return time12(this.draft.time);
+      if (i === len - 1) return time12(this.draft.dropoffTime);
+      return "";
+    },
+    /** Hourly drop-off is derived from hours — read out rather than edited. */
+    dropoffLabel() {
+      const d = this.draft.dropoffDate, t = this.draft.dropoffTime;
+      if (!d || !t) return "";
+      const dt = new Date(d + "T" + t);
+      if (isNaN(dt)) return "";
+      const day = dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return day + " · " + time12(t);
+    },
 
     /* ---- stop address autocomplete (airport-aware; mirrors bookingStops) ---- */
     _stopResults: {},
@@ -738,20 +757,71 @@ document.addEventListener("submit", (e) => {
 document.addEventListener("DOMContentLoaded", () => initPhoneInputs());
 window.initPhoneInputs = initPhoneInputs;
 
-/* -------------------------------------------------------- flatpickr auto-init */
+/* -------------------------------------------------------- flatpickr auto-init
+ * One options object for the whole app: the portal's pickers must read exactly
+ * like the public booking widget's (theme lives in app.css, `.flatpickr-*`).
+ * `data-fp-past` drops the no-past-dates rule — back-office trips are sometimes
+ * entered, or corrected, after they ran.
+ *
+ * Escape inside a picker must not also close the dialog around it. flatpickr's own
+ * Escape handler sits on document and runs before any window listener, so by the
+ * time a modal sees the key its calendar is already shut and undetectable — stamp
+ * the close instead, and let the modal ask whether one just happened. */
+let fpClosedAt = 0;
+const FP_BASE = { onClose: () => { fpClosedAt = Date.now(); } };
+window.fpJustClosed = () => Date.now() - fpClosedAt < 250;
+
+const FP_DATE = { ...FP_BASE, altInput: true, altFormat: "F j, Y", dateFormat: "Y-m-d", minDate: "today" };
+const FP_TIME = { ...FP_BASE, enableTime: true, noCalendar: true, dateFormat: "H:i", altInput: true, altFormat: "h:i K", time_24hr: false };
+
+/** Matches inside `root` plus `root` itself, so x-for rows can pass their own input. */
+function fpTargets(root, selector) {
+  const found = Array.from(root.querySelectorAll ? root.querySelectorAll(selector) : []);
+  if (root.matches && root.matches(selector)) found.unshift(root);
+  return found;
+}
+
 function initFlatpickr(root = document) {
   if (typeof window.flatpickr === "undefined") return;
-  root.querySelectorAll("input[data-flatpickr]").forEach((el) => {
+  fpTargets(root, "input[data-flatpickr]").forEach((el) => {
     if (el._flatpickr) return;
-    window.flatpickr(el, { altInput: true, altFormat: "F j, Y", dateFormat: "Y-m-d", minDate: "today" });
+    const opts = { ...FP_DATE };
+    if (el.hasAttribute("data-fp-past")) delete opts.minDate;
+    window.flatpickr(el, opts);
   });
-  root.querySelectorAll("input[data-flatpickr-time]").forEach((el) => {
+  fpTargets(root, "input[data-flatpickr-time]").forEach((el) => {
     if (el._flatpickr) return;
-    window.flatpickr(el, { enableTime: true, noCalendar: true, dateFormat: "H:i", altInput: true, altFormat: "h:i K", time_24hr: false });
+    window.flatpickr(el, FP_TIME);
   });
 }
 document.addEventListener("DOMContentLoaded", () => initFlatpickr());
 window.initFlatpickr = initFlatpickr;
+
+/* Alpine writes straight to input.value, which the visible altInput never sees —
+ * so a picker in reused markup (the reservation editor, an x-for stop row) keeps
+ * showing the previous trip's date. Call from x-effect to repaint it. */
+function fpSync(el, value) {
+  const fp = el && el._flatpickr;
+  if (!fp) return;
+  // Compare against what flatpickr has *parsed*, never el.value: Alpine writes the
+  // raw model straight onto the (now hidden) input, so el.value already matches
+  // while the visible altInput is still blank.
+  const shown = fp.selectedDates.length
+    ? fp.formatDate(fp.selectedDates[0], fp.config.dateFormat)
+    : "";
+  if ((value || "") === shown) return;
+  if (value) fp.setDate(value, false);
+  else fp.clear(false);
+}
+window.fpSync = fpSync;
+
+/** "15:30" → "3:30 PM". Empty for anything unparseable. */
+function time12(hhmm) {
+  const [h, m] = String(hhmm || "").split(":").map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return "";
+  return (h % 12 || 12) + ":" + String(m).padStart(2, "0") + " " + (h >= 12 ? "PM" : "AM");
+}
+window.time12 = time12;
 
 /* -------------------------------------------------- image upload (settings)
  * A styled dropzone layered over a real <input type="file"> — the input still

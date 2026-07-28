@@ -107,7 +107,23 @@ def parse_draft(payload: dict) -> dict:
         ],
     }
     _derive_dropoff_and_hours(data, trip_type)
+    _derive_endpoint_stop_times(data)
     return data
+
+
+def _derive_endpoint_stop_times(data: dict) -> None:
+    """Give the first/last stop the trip's pickup / drop-off time when they carry none.
+
+    The editor asks for the trip's times once, so the two endpoint stops would otherwise
+    reach the customer's itinerary (`public/quote.html`) with no time against them. Run
+    after `_derive_dropoff_and_hours` so an hourly trip mirrors its *derived* drop-off.
+    An explicit stop time always wins.
+    """
+    stops = data["stops"]
+    if stops[0]["scheduled_time"] is None:
+        stops[0]["scheduled_time"] = data.get("pickup_time")
+    if stops[-1]["scheduled_time"] is None:
+        stops[-1]["scheduled_time"] = data.get("dropoff_time")
 
 
 def _derive_dropoff_and_hours(data: dict, trip_type: str) -> None:
