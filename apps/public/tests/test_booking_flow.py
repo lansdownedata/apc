@@ -66,6 +66,67 @@ def test_full_booking_post_creates_lead_with_stops(db):
     ]
 
 
+def test_widget_renders_two_segment_trip_type_toggle(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'name="trip_type" value="transfer"' in html
+    assert 'name="trip_type" value="hourly"' in html
+    # exactly two segments — no third option
+    assert html.count('name="trip_type"') == 2
+    assert "quoteSteps(" in html
+
+
+def test_widget_renders_hours_field(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'name="hours"' in html
+    assert 'id="bw-hours"' in html
+
+
+def test_widget_renders_optional_occasion_select(db):
+    html = Client().get("/bookings/").content.decode()
+    assert 'name="service"' in html
+    assert "Occasion" in html
+    assert "Hourly Charter" not in html
+
+
+def test_single_step_pages_render_every_field_at_once(db):
+    """/bookings/ and /contact/ share the partial but opt out of the split.
+
+    The fieldsets are present in the markup everywhere — the partial is not forked —
+    so the contract is `twoStep: false`, which makes x-show render both, and a button
+    that keeps its plain label.
+    """
+    for url in ("/bookings/", "/contact/"):
+        html = Client().get(url).content.decode()
+        assert "twoStep: false" in html, url
+        assert "twoStep: true" not in html, url
+        assert "Request a quote" in html, url
+
+
+def test_home_hero_renders_two_steps(db):
+    html = Client().get("/").content.decode()
+    assert 'data-step="1"' in html
+    assert 'data-step="2"' in html
+    assert "twoStep: true" in html
+    assert "data-quote-summary" in html
+
+
+def test_home_hero_step_two_holds_contact_fields(db):
+    """Name/email/phone/details live in step 2, trip fields in step 1."""
+    html = Client().get("/").content.decode()
+    step_two = html.split('data-step="2"', 1)[1]
+    for field in ('name="name"', 'name="email"', 'name="phone"', 'name="notes"'):
+        assert field in step_two, field
+    step_one = html.split('data-step="1"', 1)[1].split('data-step="2"', 1)[0]
+    for field in ('name="pickup"', 'name="dropoff"', 'name="pickup_date"', 'name="passengers"'):
+        assert field in step_one, field
+
+
+def test_no_js_fallback_button_label(db):
+    """The button's server-rendered label works without Alpine."""
+    html = Client().get("/").content.decode()
+    assert "Request a quote" in html
+
+
 def test_hourly_post_records_trip_type_and_hours(db):
     """Regression: create_lead_from_booking never set trip_type, so every hourly
     request the public site took was stored as a transfer."""
