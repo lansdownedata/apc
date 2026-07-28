@@ -4,7 +4,12 @@ import pytest
 from django.utils import timezone
 
 from apps.leads.factories import LeadFactory
-from apps.messaging.factories import MessageFactory, ReviewFactory, TouchPointFactory
+from apps.messaging.factories import (
+    ConversationFactory,
+    MessageFactory,
+    ReviewFactory,
+    TouchPointFactory,
+)
 from apps.messaging.models import Message, Review, TouchPoint
 
 pytestmark = pytest.mark.django_db
@@ -17,10 +22,10 @@ def test_message_is_inbound():
 
 
 def test_thread_is_chronological():
-    lead = LeadFactory()
-    first = MessageFactory(lead=lead)
-    second = MessageFactory(lead=lead)
-    assert list(lead.messages.all()) == [first, second]
+    convo = ConversationFactory()
+    first = MessageFactory(conversation=convo)
+    second = MessageFactory(conversation=convo)
+    assert list(convo.messages.all()) == [first, second]
 
 
 # --- TouchPoint ------------------------------------------------------------
@@ -89,7 +94,7 @@ def test_touchpoint_error_field():
 
 def test_message_read_at_defaults_null():
     """Message.read_at defaults to None (unread)."""
-    msg = Message.objects.create(lead=LeadFactory(), direction=Message.Direction.IN)
+    msg = Message.objects.create(conversation=ConversationFactory(), direction=Message.Direction.IN)
     assert msg.read_at is None
 
 
@@ -123,3 +128,22 @@ def test_lead_quote_expired_property_false_when_null():
     """Lead.quote_expired is False if quote_expires_at is not set."""
     lead = LeadFactory(quote_expires_at=None)
     assert lead.quote_expired is False
+
+
+def test_message_has_no_lead_field():
+    """Messages belong to a conversation, never to a lead.
+
+    A conversation may have zero leads (not qualified) or several (repeat customer),
+    so there is no lead a message could sensibly point at.
+    """
+    field_names = {f.name for f in Message._meta.get_fields()}
+    assert "lead" not in field_names
+    assert "conversation" in field_names
+
+
+def test_message_requires_a_conversation():
+    from django.core.exceptions import ValidationError
+
+    message = Message(direction=Message.Direction.IN, channel=Message.Channel.SMS, body="hi")
+    with pytest.raises(ValidationError):
+        message.full_clean()

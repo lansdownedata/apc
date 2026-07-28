@@ -109,7 +109,6 @@ def test_sent_updates_existing_message_by_uid_no_duplicate():
     convo = ConversationFactory(contact=contact)
     msg = MessageFactory(
         conversation=convo,
-        lead=None,
         direction=Message.Direction.OUT,
         podium_message_uid="s1",
         delivery_status="",

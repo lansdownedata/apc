@@ -62,16 +62,7 @@ class Message(TimeStampedModel):
         FAILED = "failed", "Failed"
 
     conversation = models.ForeignKey(
-        "messaging.Conversation",
-        related_name="messages",
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-    )
-    # Nullable only for the duration of the conversation cut-over — dropped entirely
-    # once every caller writes through `conversation`. Do not build on it.
-    lead = models.ForeignKey(
-        "leads.Lead", related_name="messages", null=True, blank=True, on_delete=models.CASCADE
+        "messaging.Conversation", related_name="messages", on_delete=models.CASCADE
     )
     direction = models.CharField(max_length=4, choices=Direction.choices)
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.SMS)
