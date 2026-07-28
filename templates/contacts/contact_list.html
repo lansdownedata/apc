@@ -11,9 +11,16 @@
       lifetime value
       <span class="font-display text-[15px] font-semibold text-goldd num">${{ total_ltv|floatformat:0|intcomma }}</span>
     </div>
-    <div class="flex items-center gap-2 bg-surface ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 ml-auto focus-within:ring-gold transition">
+    <div class="flex items-center gap-1.5 ml-auto">
+      {% for key, label in scope_tabs %}
+      <a href="?scope={{ key }}{% if q %}&q={{ q }}{% endif %}"
+         class="text-[11px] font-semibold px-2 py-1 rounded-full ring-1 ring-inset transition-colors {% if scope == key %}bg-charcoal text-gold ring-charcoal{% else %}text-muted ring-line hover:bg-surface2{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+    <div class="flex items-center gap-2 bg-surface ring-1 ring-line rounded-full px-3 py-2 w-full sm:w-64 focus-within:ring-gold transition">
       <i class="ti ti-search text-[15px] text-muted"></i>
       <input name="q" value="{{ q }}" placeholder="Search name, company, phone, email…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
+      <input type="hidden" name="scope" value="{{ scope }}">
     </div>
     <button type="button" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
             @click="addContactOpen = true">
