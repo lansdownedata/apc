@@ -3,9 +3,11 @@
   the public booking stop repeater and the reservation editor.
 
   Renders inside an Alpine `x-for` that exposes the result as `r`. Params:
-    idx          — name of the loop index variable in scope   (default "i")
-    active_expr  — expression holding the active index         (default "active")
-    choose_expr  — expression called on click                  (default "choose(i)")
+    idx           — name of the loop index variable in scope   (default "i")
+    active_expr   — expression holding the active index         (default "active")
+    choose_expr   — expression called on click                  (default "choose(i)")
+    opt_id_prefix — when set, gives each row a stable id so the input's
+                    aria-activedescendant can point at it (optional)
 
   Airports get a plane icon and show "DCA — Name" over "City, ST"; everything else
   keeps the original LocationIQ two-line format.
@@ -13,7 +15,10 @@
 {% firstof idx "i" as idx_var %}
 {% firstof active_expr "active" as active_var %}
 {% firstof choose_expr "choose(i)" as choose_call %}
-<button type="button" class="sa-item" :class="{{ idx_var }} === {{ active_var }} && 'sa-item-active'"
+<button type="button" class="sa-item" role="option"
+        :class="{{ idx_var }} === {{ active_var }} && 'sa-item-active'"
+        :aria-selected="{{ idx_var }} === {{ active_var }}"
+        {% if opt_id_prefix %}:id="'{{ opt_id_prefix }}-opt-' + {{ idx_var }}"{% endif %}
         @mouseenter="{{ active_var }} = {{ idx_var }}" @click="{{ choose_call }}">
   <span class="sa-item-main">
     <i class="ti ti-plane sa-item-air" x-show="r.is_airport"></i>

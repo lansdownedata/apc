@@ -1,11 +1,17 @@
 {% comment %}
   templates/public/_booking_widget.html — the booking-request <form>. Posts to
   public:bookings, which turns a valid submission into a Lead + reservation stub +
-  ordered Stop records. Requires from context: form, service_options.
+  ordered Stop records. Requires from context: form, occasion_options.
+
+  Pass `two_step=1` (the homepage hero does) to split the form into progressive
+  disclosure: step 1 collects the trip, step 2 the contact details. Everything still
+  posts together on final submit — there is no wizard, no route change, no server-side
+  step state. Omit it (/contact/, /bookings/) and every field renders at once.
 {% endcomment %}
+{% load json_filters %}
 <form method="post" action="{% url 'public:bookings' %}"
-      x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })"
-      class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+      x-data="quoteSteps({ twoStep: {% if two_step %}true{% else %}false{% endif %}, tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, hasErrors: {% if form.errors %}true{% else %}false{% endif %} })"
+      class="quote-form grid gap-x-4 gap-y-3 sm:grid-cols-2">
   {% csrf_token %}
 
   {% if form.non_field_errors %}
@@ -19,109 +25,179 @@
   <input type="text" id="bw-company" name="company" value="{{ form.company.value|default:'' }}"
          class="hidden" aria-hidden="true" tabindex="-1" autocomplete="off">
 
-  {% comment %} --- Trip: pickup, optional in-between stops, drop-off --- {% endcomment %}
-  <div class="sm:col-span-2">
-    {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value %}
-  </div>
+  {% comment %}
+    STEP 1 — the trip. `contents` keeps the fieldset out of the grid's box model so
+    its children stay direct grid items.
+  {% endcomment %}
+  <fieldset data-step="1" class="contents" x-show="!twoStep || step === 1">
 
-  <div class="sm:col-span-2 space-y-3">
-    <template x-for="(stop, i) in stops" :key="i">
-      <div class="aac">
-        <div class="mb-1 flex items-center justify-between">
-          <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
-          <button type="button" @click="remove(i)"
-                  class="inline-flex items-center gap-1 rounded text-[11.5px] font-medium text-muted transition-colors hover:text-rose-600 focus-gold">
-            <i class="ti ti-x text-[13px]"></i> Remove
-          </button>
-        </div>
-        <div class="sa-search" @keydown.escape="closeRow(i)">
-          <input type="text" x-model="stop.address" placeholder="Search an address…"
-                 autocomplete="off" data-1p-ignore class="field w-full"
-                 @input.debounce.300ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
-          <div class="sa-drop" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
-            <template x-for="(r, j) in rowState(i).list" :key="j">
-              {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
-            </template>
+    {% comment %}
+      Trip type — two segments only, posting Reservation.TripType. Radio inputs so it
+      works with no JS and is keyboard-navigable for free. Hourly reveals the Hours
+      field; it does NOT remove drop-off (an hourly booking still has a destination —
+      e.g. four hours from IAD to reach NYC).
+    {% endcomment %}
+    <div class="sm:col-span-2">
+      <div class="qf-toggle" role="radiogroup" aria-label="Trip type">
+        <label class="qf-seg">
+          <input type="radio" name="trip_type" value="transfer" id="bw-trip-type-transfer"
+                 x-model="tripType"
+                 {% if form.trip_type.value != 'hourly' %}checked{% endif %}>
+          <span class="qf-seg-label">Transfer</span>
+        </label>
+        <label class="qf-seg">
+          <input type="radio" name="trip_type" value="hourly" id="bw-trip-type-hourly"
+                 x-model="tripType"
+                 {% if form.trip_type.value == 'hourly' %}checked{% endif %}>
+          <span class="qf-seg-label">Hourly</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="sm:col-span-2">
+      {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup" x-text="errors.pickup"></p>
+    </div>
+
+    <div class="sm:col-span-2">
+      {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
+    </div>
+
+    <div>
+      <label for="bw-pickup-date" class="mb-1 block text-[12px] font-medium text-muted">Pickup date</label>
+      <input type="text" id="bw-pickup-date" name="pickup_date" data-flatpickr
+             value="{{ form.pickup_date.value|default:'' }}" placeholder="Select a date"
+             class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
+      {% for error in form.pickup_date.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup_date" x-text="errors.pickup_date"></p>
+    </div>
+
+    <div>
+      <label for="bw-pickup-time" class="mb-1 block text-[12px] font-medium text-muted">Pickup time</label>
+      <input type="text" id="bw-pickup-time" name="pickup_time" data-flatpickr-time
+             value="{{ form.pickup_time.value|default:'' }}" placeholder="Select a time"
+             class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
+      {% for error in form.pickup_time.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup_time" x-text="errors.pickup_time"></p>
+    </div>
+
+    <div>
+      <label for="bw-passengers" class="mb-1 block text-[12px] font-medium text-muted">Passengers</label>
+      <input type="number" id="bw-passengers" name="passengers" min="1" max="100"
+             value="{{ form.passengers.value|default:1 }}"
+             class="field w-full{% if form.passengers.errors %} field-error{% endif %}">
+      {% for error in form.passengers.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.passengers" x-text="errors.passengers"></p>
+    </div>
+
+    {% comment %}
+      Hours — hourly trips only. Occupies the half-column passengers leaves empty, so
+      the seventh control adds no vertical height at >=640px. With no JS it stays
+      visible: the server nulls it for transfers, so showing it is harmless.
+    {% endcomment %}
+    <div x-show="tripType === 'hourly'">
+      <label for="bw-hours" class="mb-1 block text-[12px] font-medium text-muted">Hours</label>
+      <input type="number" id="bw-hours" name="hours" min="1" max="24" step="1"
+             value="{{ form.hours.value|default:'' }}" placeholder="4"
+             class="field w-full{% if form.hours.errors %} field-error{% endif %}">
+      {% for error in form.hours.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.hours" x-text="errors.hours"></p>
+    </div>
+
+  </fieldset>
+
+  {% comment %}
+    STEP 2 — contact details. Hidden ONLY by x-show, never x-cloak and never an inline
+    display:none: with Alpine absent both fieldsets render and the form posts normally.
+  {% endcomment %}
+  <fieldset data-step="2" class="contents" x-show="!twoStep || step === 2">
+
+    <div class="sm:col-span-2" x-show="twoStep" data-quote-summary>
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-surface2 px-3 py-2">
+        <span class="text-[12.5px] text-muted" x-text="summaryText"></span>
+        <button type="button" @click="back()"
+                class="shrink-0 rounded text-[12.5px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Edit</button>
+      </div>
+    </div>
+
+    <div class="sm:col-span-2 space-y-3"
+         x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
+      <template x-for="(stop, i) in stops" :key="i">
+        <div class="aac">
+          <div class="mb-1 flex items-center justify-between">
+            <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
+            <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
+                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
+              <i class="ti ti-x text-[13px]"></i>
+            </button>
+          </div>
+          <div class="sa-search" @keydown.escape="closeRow(i)"
+               @keydown.down.prevent="move(i, 1)" @keydown.up.prevent="move(i, -1)"
+               @keydown.enter.prevent="chooseActive(i)">
+            <input type="text" x-model="stop.address" placeholder="Search an address…"
+                   role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
+                   autocomplete="off" data-1p-ignore class="field w-full"
+                   @input.debounce.250ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
+            <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
+              <template x-for="(r, j) in rowState(i).list" :key="j">
+                {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
+              </template>
+            </div>
           </div>
         </div>
-      </div>
-    </template>
-    <button type="button" @click="add()"
-            class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
-      <i class="ti ti-plus"></i> Add a stop
-    </button>
-    <input type="hidden" name="stops_json" :value="json()">
-  </div>
+      </template>
+      <button type="button" @click="add()" x-show="canAdd()"
+              class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
+        <i class="ti ti-plus"></i> Add a stop
+      </button>
+      <input type="hidden" name="stops_json" :value="json()">
+    </div>
 
-  <div class="sm:col-span-2">
-    {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value %}
-  </div>
+    <div class="sm:col-span-2">
+      <label for="bw-name" class="mb-1 block text-[12px] font-medium text-muted">Full name</label>
+      <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
+             required autocomplete="name" placeholder="Jane Rider"
+             class="field w-full{% if form.name.errors %} field-error{% endif %}">
+      {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    </div>
 
-  {% comment %} --- Contact --- {% endcomment %}
-  <div class="sm:col-span-2">
-    <label for="bw-name" class="mb-1 block text-[12px] font-medium text-muted">Full name <span class="text-rose-500">*</span></label>
-    <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
-           required autocomplete="name" placeholder="Jane Rider"
-           class="field w-full{% if form.name.errors %} field-error{% endif %}">
-    {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
+    <div>
+      <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email <span class="text-muted/70">(optional)</span></label>
+      <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
+             autocomplete="email" placeholder="you@example.com"
+             class="field w-full{% if form.email.errors %} field-error{% endif %}">
+      {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    </div>
 
-  <div>
-    <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email</label>
-    <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
-           autocomplete="email" placeholder="you@example.com"
-           class="field w-full{% if form.email.errors %} field-error{% endif %}">
-    {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
+    <div>
+      {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone (optional)" value=form.phone.value %}
+      {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    </div>
 
-  <div>
-    {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone" value=form.phone.value %}
-    {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
+    <div class="sm:col-span-2">
+      <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Occasion <span class="text-muted/70">(optional)</span></label>
+      {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=occasion_options selected=form.service.value empty_label="Select an occasion" search="off" %}
+      {% for error in form.service.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    </div>
 
-  {% comment %} --- When --- {% endcomment %}
-  <div>
-    <label for="bw-pickup-date" class="mb-1 block text-[12px] font-medium text-muted">Pickup date</label>
-    <input type="text" id="bw-pickup-date" name="pickup_date" data-flatpickr
-           value="{{ form.pickup_date.value|default:'' }}" placeholder="Select a date"
-           class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
-    {% for error in form.pickup_date.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
+    <div class="sm:col-span-2">
+      <label for="bw-notes" class="mb-1 block text-[12px] font-medium text-muted">Trip details <span class="text-muted/70">(optional)</span></label>
+      <textarea id="bw-notes" name="notes" rows="3" data-autogrow placeholder="Flight number, occasion, anything we should know…"
+                class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
+      {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    </div>
 
-  <div>
-    <label for="bw-pickup-time" class="mb-1 block text-[12px] font-medium text-muted">Pickup time</label>
-    <input type="text" id="bw-pickup-time" name="pickup_time" data-flatpickr-time
-           value="{{ form.pickup_time.value|default:'' }}" placeholder="Select a time"
-           class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
-    {% for error in form.pickup_time.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
+  </fieldset>
 
-  {% comment %} --- Trip details --- {% endcomment %}
-  <div>
-    <label for="bw-passengers" class="mb-1 block text-[12px] font-medium text-muted">Passengers</label>
-    <input type="number" id="bw-passengers" name="passengers" min="1" max="100"
-           value="{{ form.passengers.value|default:1 }}"
-           class="field w-full{% if form.passengers.errors %} field-error{% endif %}">
-    {% for error in form.passengers.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
-
-  <div>
-    <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Service type</label>
-    {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=service_options selected=form.service.value empty_label="Select a service" search="off" %}
-    {% for error in form.service.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
-
-  <div class="sm:col-span-2">
-    <label for="bw-notes" class="mb-1 block text-[12px] font-medium text-muted">Trip details</label>
-    <textarea id="bw-notes" name="notes" rows="2" placeholder="Flight number, occasion, anything we should know…"
-              class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
-    {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-  </div>
-
+  {% comment %}
+    One button, after both fieldsets, so it reads correctly in both states. Its label
+    is server-rendered for the no-JS case; Alpine swaps it once booted.
+  {% endcomment %}
   <div class="sm:col-span-2 pt-1">
-    <button type="submit"
+    <button type="submit" @click="onSubmit($event)"
             class="btn-gold focus-gold w-full rounded-full px-5 py-3 text-[14px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60">
-      Request a quote
+      <span x-text="submitLabel()">Request a quote</span>
     </button>
   </div>
 </form>

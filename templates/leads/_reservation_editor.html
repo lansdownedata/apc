@@ -114,7 +114,7 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
                         @input.debounce.300ms="searchStop(i)"
                         @focus="stopRow(i).list.length && (stopRow(i).open = true)"
                         class="w-full text-[12.5px] ring-1 ring-line rounded-lg px-3 py-2 focus:outline-none focus:ring-gold">
-                      <div class="sa-drop" x-show="stopRow(i).open" x-cloak @click.outside="closeStopRow(i)">
+                      <div class="sa-drop" role="listbox" x-show="stopRow(i).open" x-cloak @click.outside="closeStopRow(i)">
                         <template x-for="(r, j) in stopRow(i).list" :key="j">
                           {% include "components/_ac_result_row.html" with idx="j" active_expr="stopRow(i).active" choose_expr="chooseStop(i, j)" %}
                         </template>

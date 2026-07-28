@@ -23,6 +23,8 @@ def create_lead_from_booking(data: dict) -> Lead:
     )
     reservation = Reservation.objects.create(
         lead=lead,
+        trip_type=data.get("trip_type") or Reservation.TripType.TRANSFER,
+        hours=data.get("hours") or 0,
         service=data.get("service", ""),
         pickup_date=data.get("pickup_date"),
         pickup_time=data.get("pickup_time"),

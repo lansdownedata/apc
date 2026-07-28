@@ -13,15 +13,19 @@
   <label for="{{ field_id }}" class="mb-1 block text-[12px] font-medium text-muted">{{ label }}</label>
   <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
     <input type="text" id="{{ field_id }}" name="{{ name }}" x-model="value"
+           role="combobox" aria-autocomplete="list" :aria-expanded="open"
+           aria-controls="{{ field_id }}-listbox"
+           :aria-activedescendant="active >= 0 ? '{{ field_id }}-opt-' + active : null"
            autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
            placeholder="Search an address…"
            class="field w-full"
-           @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
-    <div class="sa-drop" x-show="open" x-cloak @click.outside="closeResults()">
+           @input.debounce.250ms="search()" @focus="requestLocation(); results.length && (open=true)">
+    <div class="sa-drop" id="{{ field_id }}-listbox" role="listbox" x-show="open" x-cloak @click.outside="closeResults()">
+      <div class="sr-only" aria-live="polite" x-text="statusText()"></div>
       <template x-if="loading"><div class="sa-msg">Searching…</div></template>
       <template x-if="!loading && value && !results.length"><div class="sa-msg">No matches — type the address.</div></template>
       <template x-for="(r, i) in results" :key="i">
-        {% include "components/_ac_result_row.html" %}
+        {% include "components/_ac_result_row.html" with opt_id_prefix=field_id %}
       </template>
     </div>
     <input type="hidden" name="{{ name }}_lat" :value="lat">
