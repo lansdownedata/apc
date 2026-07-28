@@ -74,8 +74,8 @@ class PodiumEvent(TimeStampedModel):
         MESSAGE_SENT = "message.sent", "Message sent"
         MESSAGE_FAILED = "message.failed", "Message failed"
 
-    lead = models.ForeignKey(
-        "leads.Lead",
+    conversation = models.ForeignKey(
+        "messaging.Conversation",
         related_name="podium_events",
         null=True,
         blank=True,
