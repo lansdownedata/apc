@@ -127,16 +127,19 @@
         <div class="aac">
           <div class="mb-1 flex items-center justify-between">
             <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
-            <button type="button" @click="remove(i)"
-                    class="inline-flex items-center gap-1 rounded text-[11.5px] font-medium text-muted transition-colors hover:text-rose-600 focus-gold">
-              <i class="ti ti-x text-[13px]"></i> Remove
+            <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
+                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
+              <i class="ti ti-x text-[13px]"></i>
             </button>
           </div>
-          <div class="sa-search" @keydown.escape="closeRow(i)">
+          <div class="sa-search" @keydown.escape="closeRow(i)"
+               @keydown.down.prevent="move(i, 1)" @keydown.up.prevent="move(i, -1)"
+               @keydown.enter.prevent="chooseActive(i)">
             <input type="text" x-model="stop.address" placeholder="Search an address…"
+                   role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
                    autocomplete="off" data-1p-ignore class="field w-full"
-                   @input.debounce.300ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
-            <div class="sa-drop" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
+                   @input.debounce.250ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
+            <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
               <template x-for="(r, j) in rowState(i).list" :key="j">
                 {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
               </template>
@@ -144,7 +147,7 @@
           </div>
         </div>
       </template>
-      <button type="button" @click="add()"
+      <button type="button" @click="add()" x-show="canAdd()"
               class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
         <i class="ti ti-plus"></i> Add a stop
       </button>

@@ -968,15 +968,18 @@ function smartAddress(opts = {}) {
 
 /* ---------------------------------------------- public booking autocomplete */
 /* Shared low-level fetch against the PUBLIC geocode proxy — no auth, no auto-save. */
-function geocodeSearch(acUrl, q, biasLat, biasLon) {
+function geocodeSearch(acUrl, q, biasLat, biasLon, signal) {
   q = (q || "").trim();
   if (!q) return Promise.resolve([]);
   let url = `${acUrl}?q=${encodeURIComponent(q)}`;
   if (biasLat != null && biasLon != null) url += `&lat=${biasLat}&lon=${biasLon}`;
-  return fetch(url, { headers: { "X-Requested-With": "fetch" } })
+  return fetch(url, { headers: { "X-Requested-With": "fetch" }, signal })
     .then((r) => r.json())
     .then((d) => d.results || [])
-    .catch(() => []);
+    .catch((e) => {
+      if (e.name === "AbortError") throw e; // caller drops it; do not clear results
+      return [];
+    });
 }
 window.geocodeSearch = geocodeSearch;
 
@@ -1043,6 +1046,7 @@ function addressAutocomplete(opts = {}) {
     biasLat: opts.fallbackLat ?? null,
     biasLon: opts.fallbackLon ?? null,
     _raw: [],
+    _ctl: null,
     _locRequested: false,
     // On first focus, ask the browser for the visitor's location; on grant, re-rank
     // any results already showing. Denied → keep the service-area fallback center.
@@ -1059,13 +1063,21 @@ function addressAutocomplete(opts = {}) {
     },
     search() {
       const q = this.value.trim();
-      if (!q) { this.results = []; this._raw = []; this.open = false; return; }
+      this._ctl?.abort();
+      if (!q) { this.results = []; this._raw = []; this.open = false; this.loading = false; return; }
+      this._ctl = new AbortController();
       this.loading = true; this.open = true;
-      geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
+      geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon, this._ctl.signal).then((rs) => {
         this._raw = rs;
         this.results = rankByProximity(rs, this.biasLat, this.biasLon);
         this.active = this.results.length ? 0 : -1;
-      }).finally(() => { this.loading = false; });
+        this.loading = false;
+      }).catch(() => { /* superseded by a newer keystroke — leave state alone */ });
+    },
+    statusText() {
+      if (this.loading) return "Searching addresses";
+      if (!this.results.length) return this.value ? "No matches" : "";
+      return `${this.results.length} address suggestions available`;
     },
     move(d) {
       if (!this.results.length) return;
@@ -1176,8 +1188,24 @@ function bookingStops(opts = {}) {
       this._locRequested = true;
       requestBrowserLocation((lat, lon) => { this.biasLat = lat; this.biasLon = lon; });
     },
-    add() { this.stops.push({ address: "", lat: "", lng: "", display: "" }); },
+    max: 4,
+    canAdd() { return this.stops.length < this.max; },
+    add() {
+      if (!this.canAdd()) return;
+      this.stops.push({ address: "", lat: "", lng: "", display: "" });
+    },
     remove(i) { this.stops.splice(i, 1); },
+    // Reassign rather than mutate: rowState() hands back a throwaway object when the
+    // row has no cached results yet, so mutating that would silently go nowhere.
+    move(i, d) {
+      const st = this._r[i];
+      if (!st || !st.list.length) return;
+      this._r[i] = { ...st, active: ((st.active ?? -1) + d + st.list.length) % st.list.length };
+    },
+    chooseActive(i) {
+      const st = this._r[i];
+      if (st && st.active >= 0) this.choose(i, st.active);
+    },
     search(i) {
       const s = this.stops[i];
       const q = (s.address || "").trim();
