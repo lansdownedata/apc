@@ -157,6 +157,7 @@ function quoteWorkspace(opts = {}) {
     updateUrl: opts.updateUrl,
     saveUrl: opts.saveUrl,
     sendQuoteUrl: opts.sendQuoteUrl,
+    acUrl: opts.acUrl,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
@@ -337,8 +338,8 @@ function quoteWorkspace(opts = {}) {
         rate: v ? v.rate : 0, hours: 1, minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
-          { address: "", note: "", name: "", time: "" },
-          { address: "", note: "", name: "", time: "" },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "" },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "" },
         ],
       };
     },
@@ -399,9 +400,30 @@ function quoteWorkspace(opts = {}) {
       if (t === "hourly") { this.draft.hours = this.draft.hours || 4; this.onHoursChanged(); }
       else { this.onDropoffChanged(); }
     },
-    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "" }); },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
+
+    /* ---- stop address autocomplete (airport-aware; mirrors bookingStops) ---- */
+    _stopResults: {},
+    stopRow(i) { return this._stopResults[i] || { open: false, list: [], active: -1 }; },
+    searchStop(i) {
+      const s = this.draft.stops[i];
+      const q = (s.address || "").trim();
+      if (!q) { this._stopResults[i] = { open: false, list: [], active: -1 }; return; }
+      geocodeSearch(this.acUrl, q, null, null).then((rs) => {
+        const list = rankByProximity(rs, null, null);
+        this._stopResults[i] = { open: true, list, active: list.length ? 0 : -1 };
+      });
+    },
+    chooseStop(i, j) {
+      const row = this.stopRow(i); const r = row.list[j]; if (!r) return;
+      const s = this.draft.stops[i];
+      s.address = formatAddressLine(r);
+      s.lat = r.latitude || ""; s.lng = r.longitude || "";
+      this._stopResults[i] = { open: false, list: [], active: -1 };
+    },
+    closeStopRow(i) { this._stopResults[i] = { open: false, list: [], active: -1 }; },
     billedHours(r) { return Math.max(Number(r.hours) || 0, Number(r.minHours) || 0); },
     minApplied(r) { return (Number(r.hours) || 0) < (Number(r.minHours) || 0); },
     resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },

@@ -105,9 +105,21 @@ Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMCont
                        :class="i === 0 ? 'text-goldd' : (i === draft.stops.length - 1 ? 'text-ink' : 'text-muted')"
                        x-text="stopLabel(i, draft.stops.length)"></div>
                   <div class="flex items-center gap-1.5">
-                    <input x-model="s.address"
-                      :placeholder="i === 0 ? 'Pickup address' : (i === draft.stops.length - 1 ? 'Drop-off address' : 'Stop address')"
-                      class="flex-1 text-[12.5px] ring-1 ring-line rounded-lg px-3 py-2 focus:outline-none focus:ring-gold">
+                    <div class="sa-search flex-1" @keydown.escape="closeStopRow(i)"
+                         @keydown.down.prevent="stopRow(i).list.length && (stopRow(i).active = (stopRow(i).active + 1) % stopRow(i).list.length)"
+                         @keydown.enter.prevent="chooseStop(i, stopRow(i).active)">
+                      <input x-model="s.address"
+                        :placeholder="i === 0 ? 'Pickup address' : (i === draft.stops.length - 1 ? 'Drop-off address' : 'Stop address')"
+                        autocomplete="off" data-1p-ignore data-lpignore="true"
+                        @input.debounce.300ms="searchStop(i)"
+                        @focus="stopRow(i).list.length && (stopRow(i).open = true)"
+                        class="w-full text-[12.5px] ring-1 ring-line rounded-lg px-3 py-2 focus:outline-none focus:ring-gold">
+                      <div class="sa-drop" x-show="stopRow(i).open" x-cloak @click.outside="closeStopRow(i)">
+                        <template x-for="(r, j) in stopRow(i).list" :key="j">
+                          {% include "components/_ac_result_row.html" with idx="j" active_expr="stopRow(i).active" choose_expr="chooseStop(i, j)" %}
+                        </template>
+                      </div>
+                    </div>
                     <button x-show="i !== 0 && i !== draft.stops.length - 1" @click="removeStop(i)" class="text-muted hover:text-rose-600 p-1">
                       <i class="ti ti-trash text-[16px]"></i>
                     </button>

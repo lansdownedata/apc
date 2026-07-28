@@ -49,6 +49,20 @@ def _vehicle_id(value) -> int | None:
         return None
 
 
+def _coord(value, limit: int) -> Decimal | None:
+    """A stop coordinate from the editor. Out-of-range or unparseable → None, so a
+    malformed client payload degrades to 'geocode it later' rather than 400-ing a save."""
+    if value in (None, ""):
+        return None
+    try:
+        coord = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not -limit <= coord <= limit:
+        return None
+    return coord.quantize(Decimal("0.000001"))
+
+
 def parse_draft(payload: dict) -> dict:
     """Validate + normalise a draft into model kwargs (+ a `stops` list)."""
     trip_type = payload.get("tripType") or payload.get("trip_type")
@@ -86,6 +100,8 @@ def parse_draft(payload: dict) -> dict:
                 "note": (s.get("note") or "").strip()[:255],
                 "name": (s.get("name") or "").strip()[:160],
                 "scheduled_time": _time(s.get("time")),
+                "latitude": _coord(s.get("lat"), 90),
+                "longitude": _coord(s.get("lng"), 180),
             }
             for s in raw_stops
         ],
@@ -137,6 +153,8 @@ def save_reservation_from_draft(
                 note=s["note"],
                 name=s["name"],
                 scheduled_time=s["scheduled_time"],
+                latitude=s["latitude"],
+                longitude=s["longitude"],
             )
             for i, s in enumerate(stops)
         ]
