@@ -146,6 +146,7 @@ def inbox_send(request, pk: int) -> JsonResponse:
         channel=CHANNEL_MODEL[channel],
         body=body,
         podium_message_uid=uid,
+        sender_name=request.user.get_full_name() or request.user.username,
         sent_at=timezone.now(),
         delivery_status=Message.DeliveryStatus.SENT,
     )

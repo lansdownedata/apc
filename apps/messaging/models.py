@@ -29,6 +29,11 @@ class Message(TimeStampedModel):
     body = models.TextField(blank=True)
     podium_conversation_uid = models.CharField(max_length=64, blank=True)
     podium_message_uid = models.CharField(max_length=64, blank=True)
+    # Who actually sent it. Podium's webhooks identify an agent only by user UID, and
+    # an agent may reply from the Podium app instead of our composer — so the name is
+    # resolved and denormalised at ingest rather than derived from the lead.
+    podium_sender_uid = models.CharField(max_length=64, blank=True)
+    sender_name = models.CharField(max_length=120, blank=True)
     delivery_status = models.CharField(max_length=20, choices=DeliveryStatus.choices, blank=True)
     failure_reason = models.CharField(max_length=255, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)

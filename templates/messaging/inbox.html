@@ -61,9 +61,13 @@
 
       <div id="thread-messages" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-2.5 bg-surface2/40">
         {% for message in thread_messages %}
-        <div class="flex flex-col {% if message.direction == 'out' %}items-end{% else %}items-start{% endif %}">
-          <div class="max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.direction == 'out' %}bg-charcoal text-slate-100 rounded-br-sm{% else %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% endif %}">{{ message.body }}</div>
-          <span class="text-[10px] text-muted mt-1 px-1 num">{{ message.created_at|date:"M j, g:i A" }}</span>
+        <div class="flex flex-col {% if message.is_inbound %}items-start{% else %}items-end{% endif %}">
+          <div class="max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.is_inbound %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% else %}bg-charcoal text-slate-100 rounded-br-sm{% endif %}">{{ message.body }}</div>
+          <span class="text-[10px] text-muted mt-1 px-1 num">
+            {% if message.sender_name %}{{ message.sender_name }} ·
+            {% elif message.is_inbound and message.lead.contact.phone %}{{ message.lead.contact.phone|phone_display }} ·
+            {% endif %}{{ message.created_at|date:"M j, g:i A" }}
+          </span>
         </div>
         {% empty %}
         <div class="text-[13px] text-muted text-center">No messages yet.</div>

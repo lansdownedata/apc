@@ -1,9 +1,12 @@
 import json
+from unittest.mock import patch
 
 import pytest
+from django.core.cache import cache
 
 from apps.contacts.factories import ContactFactory
 from apps.contacts.models import Contact
+from apps.integrations import podium
 from apps.integrations.models import PodiumEvent
 from apps.integrations.webhooks import process_podium_webhook
 from apps.leads.factories import LeadFactory
@@ -126,6 +129,94 @@ def test_sent_with_no_matching_lead_is_skipped_no_orphan_contact():
     assert not Message.objects.filter(podium_message_uid="orphan").exists()
     assert Contact.objects.count() == before
     assert event.lead is None
+
+
+def _live_shape(event_type, uid="L1", phone="+17035736008", sender_uid=None, body="hi"):
+    """The payload shape Podium actually sends: eventType nested under `metadata`.
+
+    Captured from production (PodiumEvent rows 1-6). Every other fixture in this
+    module puts eventType at the top level, which Podium never does — that mismatch
+    is why message.sent was silently ingested as inbound.
+    """
+    return {
+        "data": {
+            "uid": uid,
+            "body": body,
+            "sender": {"uid": sender_uid},
+            "senderUid": sender_uid,
+            "contact": {"uid": "c1", "name": "Mark Shaltanis"},
+            "conversation": {"uid": "conv1", "channel": {"type": "phone", "identifier": phone}},
+            "location": {"uid": "loc", "organizationUid": "org"},
+        },
+        "metadata": {"eventUid": "ev-" + uid, "eventType": event_type},
+    }
+
+
+def test_live_shape_sent_is_stored_outbound():
+    """Regression: metadata.eventType=message.sent must not land as an inbound message."""
+    contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
+    lead = LeadFactory(contact=contact)
+
+    event = process_podium_webhook(
+        _live_shape("message.sent", uid="LS1", sender_uid="8a320781-agent")
+    )
+
+    assert event.event_type == "message.sent"
+    msg = Message.objects.get(podium_message_uid="LS1")
+    assert msg.direction == Message.Direction.OUT
+    assert msg.lead == lead
+
+
+def test_live_shape_received_is_stored_inbound():
+    event = process_podium_webhook(_live_shape("message.received", uid="LR1"))
+
+    assert event.event_type == "message.received"
+    assert Message.objects.get(podium_message_uid="LR1").direction == Message.Direction.IN
+
+
+def test_unknown_event_type_does_not_fabricate_an_inbound_message():
+    """No silent default: an unrecognised event must not become a customer message."""
+    event = process_podium_webhook(_live_shape("contact.updated", uid="LU1"))
+
+    assert event.event_type == "contact.updated"
+    assert not Message.objects.filter(podium_message_uid="LU1").exists()
+    assert event.lead is None
+
+
+def test_sent_records_sender_uid_and_resolved_agent_name():
+    """Podium sends only a user UID — the agent's name comes from /users."""
+    cache.clear()
+    contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
+    LeadFactory(contact=contact)
+
+    with patch.object(podium, "user_name_map", return_value={"8a320781-agent": "Tarrick Ghannam"}):
+        process_podium_webhook(_live_shape("message.sent", uid="LS2", sender_uid="8a320781-agent"))
+
+    msg = Message.objects.get(podium_message_uid="LS2")
+    assert msg.podium_sender_uid == "8a320781-agent"
+    assert msg.sender_name == "Tarrick Ghannam"
+
+
+def test_sent_with_unresolvable_sender_still_ingests():
+    """A failed /users lookup must not block the message."""
+    cache.clear()
+    contact = ContactFactory(phone="+17035736008", podium_contact_uid="c1")
+    LeadFactory(contact=contact)
+
+    with patch.object(podium, "user_name_map", return_value={}):
+        process_podium_webhook(_live_shape("message.sent", uid="LS3", sender_uid="unknown-agent"))
+
+    msg = Message.objects.get(podium_message_uid="LS3")
+    assert msg.podium_sender_uid == "unknown-agent"
+    assert msg.sender_name == ""
+
+
+def test_received_records_contact_name_as_sender():
+    process_podium_webhook(_live_shape("message.received", uid="LR2"))
+
+    msg = Message.objects.get(podium_message_uid="LR2")
+    assert msg.sender_name == "Mark Shaltanis"
+    assert msg.podium_sender_uid == ""
 
 
 def test_webhook_view_accepts_post(client, settings):
