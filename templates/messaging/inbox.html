@@ -61,6 +61,33 @@
           <div class="text-[14px] font-semibold text-ink leading-tight truncate">{{ selected.contact.name }}</div>
           <div class="text-[11px] text-muted num truncate">{{ selected.contact.phone|phone_display }}{% if selected.contact.company %} · {{ selected.contact.company.name }}{% endif %}</div>
         </div>
+
+        <div class="ml-auto flex items-center gap-2 shrink-0">
+          <form method="post" action="{% url 'conversation_create_lead' selected.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn-gold flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold">
+              <i class="ti ti-plus text-[14px]"></i> Create lead
+            </button>
+          </form>
+          {% if selected.is_archived %}
+          <form method="post" action="{% url 'conversation_unarchive' selected.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn-ghost text-[12px] font-semibold text-muted hover:bg-surface2 px-2.5 py-1.5 rounded-lg ring-1 ring-line">Unarchive</button>
+          </form>
+          {% else %}
+          <form method="post" action="{% url 'conversation_archive' selected.pk %}" x-ref="archiveForm">
+            {% csrf_token %}
+            <button type="button" class="btn-ghost text-[12px] font-semibold text-muted hover:bg-surface2 px-2.5 py-1.5 rounded-lg ring-1 ring-line"
+                    @click="$store.modal.confirm({
+                      title: 'Archive conversation',
+                      message: 'This thread stops appearing in the inbox. Later messages are still recorded but will not reopen it.',
+                      variant: 'danger',
+                      confirmText: 'Archive',
+                      onConfirm: () => $refs.archiveForm.submit(),
+                    })">Archive</button>
+          </form>
+          {% endif %}
+        </div>
       </div>
 
       <div id="thread-messages" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-2.5 bg-surface2/40">

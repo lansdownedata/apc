@@ -12,15 +12,17 @@ from decimal import ROUND_HALF_UP
 from django.contrib.auth.decorators import login_required
 from django.db.models import Avg, Count, DecimalField, Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.core.choices import Channel
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
-from . import services
+from . import services, touchpoints
 from .models import Conversation, Message, Review
 from .touchpoints import PODIUM_CHANNEL
 
@@ -174,6 +176,53 @@ def inbox_send(request, pk: int) -> JsonResponse:
             },
         }
     )
+
+
+@login_required
+@require_POST
+def conversation_archive(request: HttpRequest, pk: int) -> HttpResponse:
+    """Mark a conversation as not-a-lead.
+
+    Permanent until an agent unarchives it — later inbound messages are still recorded
+    (see apps.messaging.services) but do not reopen the thread.
+    """
+    conversation = get_object_or_404(Conversation, pk=pk)
+    conversation.status = Conversation.Status.ARCHIVED
+    conversation.archived_at = timezone.now()
+    conversation.archived_by = request.user
+    conversation.save(update_fields=["status", "archived_at", "archived_by", "updated_at"])
+    return redirect("inbox")
+
+
+@login_required
+@require_POST
+def conversation_unarchive(request: HttpRequest, pk: int) -> HttpResponse:
+    conversation = get_object_or_404(Conversation, pk=pk)
+    conversation.status = Conversation.Status.OPEN
+    conversation.archived_at = None
+    conversation.archived_by = None
+    conversation.save(update_fields=["status", "archived_at", "archived_by", "updated_at"])
+    return redirect(f"{reverse('inbox')}?conversation={conversation.pk}")
+
+
+@login_required
+@require_POST
+def conversation_create_lead(request: HttpRequest, pk: int) -> HttpResponse:
+    """Qualify a conversation into a lead.
+
+    Intentionally repeatable: one conversation can spawn several quotes, and each click
+    produces a distinct lead. Mirrors `apps.leads.views.lead_create` minus the form —
+    the contact already exists, and trip details belong in the quote workspace.
+    """
+    conversation = get_object_or_404(Conversation.objects.select_related("contact"), pk=pk)
+    lead = Lead.objects.create(
+        contact=conversation.contact,
+        channel=Channel.PHONE,
+        assigned_agent=request.user,
+        status=Lead.Status.NEW,
+    )
+    touchpoints.schedule_lead_created(lead)
+    return redirect("lead_detail", pk=lead.pk)
 
 
 @login_required
