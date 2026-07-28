@@ -16,7 +16,9 @@ def test_weddingwire_snippet_rendered_when_set(db):
 
 def test_public_shell_loads_foundation(db):
     html = Client().get("/").content.decode()
-    assert "fonts.googleapis.com/css2?family=Fraunces" in html
+    # which faces load is owned by apps/core/tests/test_typography.py — this only
+    # asserts the shell pulls a webfont stylesheet at all
+    assert "fonts.googleapis.com/css2?family=" in html
     assert "@tabler/icons-webfont" in html
     assert "intlTelInput" in html
     assert "flatpickr" in html

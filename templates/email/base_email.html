@@ -7,14 +7,14 @@
 <meta name="supported-color-schemes" content="light dark">
 {% comment %}
 Two progressive enhancements layered over inline styles (which every client honours):
-- Brand display font (Fraunces) for clients that support web fonts (Apple Mail/iOS);
+- Brand display font (Playfair Display) for clients that support web fonts (Apple Mail/iOS);
   Gmail/Outlook strip it and fall back to Georgia, so the email stays all-serif everywhere.
 - Dark mode via prefers-color-scheme. Inline styles are the light default; the dm-* classes
   below are overridden with !important for clients that honour the media query (Apple Mail,
   iOS). Gmail/Outlook auto-invert instead — the layout survives either way.
 {% endcomment %}
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&display=swap');
 @media (prefers-color-scheme: dark) {
   .dm-page   { background:#111318 !important; }
   .dm-card   { background:#1A1D24 !important; }
@@ -43,7 +43,7 @@ Two progressive enhancements layered over inline styles (which every client hono
                  style="display:block;border:0;height:45px;width:auto;">
           </td>{% endif %}
           <td valign="middle">
-            <span style="font-family:'Fraunces',Georgia,'Times New Roman',serif;
+            <span style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;
                   font-size:22px;font-weight:600;letter-spacing:.2px;color:#C7A24E;">{{ company_name }}</span>
           </td>
         </tr></table>
@@ -53,7 +53,7 @@ Two progressive enhancements layered over inline styles (which every client hono
         {% block content %}{% endblock %}
       </td></tr>
       <tr><td class="dm-footer" style="background:#FAF8F3;padding:24px 28px;border-top:1px solid #E7E3DA;" align="center">
-        <div class="dm-soft" style="font-family:'Fraunces',Georgia,'Times New Roman',serif;font-size:13px;
+        <div class="dm-soft" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:13px;
               letter-spacing:2.5px;color:#6b7280;">{{ company_name|upper }}</div>
         <div class="dm-soft" style="font-size:12px;color:#a59e90;padding-top:4px;">Luxury charter &amp; chauffeur service</div>
         <div class="dm-muted" style="font-size:12px;color:#9a958c;padding-top:10px;line-height:1.6;">
