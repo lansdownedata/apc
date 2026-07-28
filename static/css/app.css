@@ -506,3 +506,38 @@ header, aside, main, .wash-gold {
 /* ---- single-line public address autocomplete (reuses .sa-drop / .sa-item) ---- */
 .aac { position: relative; }
 .aac .sa-drop { position: absolute; z-index: 30; left: 0; right: 0; }
+
+/* ============================================= public quote form — toggle ===
+   Two segments only (Reservation.TripType). Radio inputs, styled via :checked on
+   the adjacent label, so it needs no JS to render its selected state. */
+.qf-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: rgb(var(--surface-2));
+  border: 1px solid rgb(var(--border));
+  border-radius: 10px;
+}
+.qf-seg { position: relative; margin: 0; }
+.qf-seg input { position: absolute; opacity: 0; width: 0; height: 0; }
+.qf-seg-label {
+  display: block;
+  padding: .55rem .75rem;
+  border-radius: 7px;
+  text-align: center;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgb(var(--muted));
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.qf-seg input:checked + .qf-seg-label {
+  background: rgb(var(--surface));
+  color: rgb(var(--text));
+  box-shadow: 0 1px 2px rgb(0 0 0 / .06);
+}
+.qf-seg input:focus-visible + .qf-seg-label {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}

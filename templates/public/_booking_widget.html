@@ -3,9 +3,10 @@
   public:bookings, which turns a valid submission into a Lead + reservation stub +
   ordered Stop records. Requires from context: form, occasion_options.
 {% endcomment %}
+{% load json_filters %}
 <form method="post" action="{% url 'public:bookings' %}"
-      x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })"
-      class="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+      x-data="quoteSteps({ twoStep: {% if two_step %}true{% else %}false{% endif %}, tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, hasErrors: {% if form.errors %}true{% else %}false{% endif %} })"
+      class="quote-form grid gap-x-4 gap-y-3 sm:grid-cols-2">
   {% csrf_token %}
 
   {% if form.non_field_errors %}
@@ -19,12 +20,36 @@
   <input type="text" id="bw-company" name="company" value="{{ form.company.value|default:'' }}"
          class="hidden" aria-hidden="true" tabindex="-1" autocomplete="off">
 
+  {% comment %}
+    Trip type — two segments only, posting Reservation.TripType. Radio inputs so it
+    works with no JS and is keyboard-navigable for free. Hourly reveals the Hours
+    field; it does NOT remove drop-off (an hourly booking still has a destination —
+    e.g. four hours from IAD to reach NYC).
+  {% endcomment %}
+  <div class="sm:col-span-2">
+    <div class="qf-toggle" role="radiogroup" aria-label="Trip type">
+      <label class="qf-seg">
+        <input type="radio" name="trip_type" value="transfer" id="bw-trip-type-transfer"
+               x-model="tripType"
+               {% if form.trip_type.value != 'hourly' %}checked{% endif %}>
+        <span class="qf-seg-label">Transfer</span>
+      </label>
+      <label class="qf-seg">
+        <input type="radio" name="trip_type" value="hourly" id="bw-trip-type-hourly"
+               x-model="tripType"
+               {% if form.trip_type.value == 'hourly' %}checked{% endif %}>
+        <span class="qf-seg-label">Hourly</span>
+      </label>
+    </div>
+  </div>
+
   {% comment %} --- Trip: pickup, optional in-between stops, drop-off --- {% endcomment %}
   <div class="sm:col-span-2">
     {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value %}
   </div>
 
-  <div class="sm:col-span-2 space-y-3">
+  <div class="sm:col-span-2 space-y-3"
+       x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
     <template x-for="(stop, i) in stops" :key="i">
       <div class="aac">
         <div class="mb-1 flex items-center justify-between">
@@ -59,7 +84,7 @@
 
   {% comment %} --- Contact --- {% endcomment %}
   <div class="sm:col-span-2">
-    <label for="bw-name" class="mb-1 block text-[12px] font-medium text-muted">Full name <span class="text-rose-500">*</span></label>
+    <label for="bw-name" class="mb-1 block text-[12px] font-medium text-muted">Full name</label>
     <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
            required autocomplete="name" placeholder="Jane Rider"
            class="field w-full{% if form.name.errors %} field-error{% endif %}">
@@ -67,7 +92,7 @@
   </div>
 
   <div>
-    <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email</label>
+    <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email <span class="text-muted/70">(optional)</span></label>
     <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
            autocomplete="email" placeholder="you@example.com"
            class="field w-full{% if form.email.errors %} field-error{% endif %}">
@@ -75,7 +100,7 @@
   </div>
 
   <div>
-    {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone" value=form.phone.value %}
+    {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone (optional)" value=form.phone.value %}
     {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
@@ -105,6 +130,19 @@
     {% for error in form.passengers.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
   </div>
 
+  {% comment %}
+    Hours — hourly trips only. Occupies the half-column passengers leaves empty, so
+    the seventh control adds no vertical height at >=640px. With no JS it stays
+    visible: the server nulls it for transfers, so showing it is harmless.
+  {% endcomment %}
+  <div x-show="tripType === 'hourly'">
+    <label for="bw-hours" class="mb-1 block text-[12px] font-medium text-muted">Hours</label>
+    <input type="number" id="bw-hours" name="hours" min="1" max="24" step="1"
+           value="{{ form.hours.value|default:'' }}" placeholder="4"
+           class="field w-full{% if form.hours.errors %} field-error{% endif %}">
+    {% for error in form.hours.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+  </div>
+
   <div>
     <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Occasion <span class="text-muted/70">(optional)</span></label>
     {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=occasion_options selected=form.service.value empty_label="Select an occasion" search="off" %}
@@ -112,7 +150,7 @@
   </div>
 
   <div class="sm:col-span-2">
-    <label for="bw-notes" class="mb-1 block text-[12px] font-medium text-muted">Trip details</label>
+    <label for="bw-notes" class="mb-1 block text-[12px] font-medium text-muted">Trip details <span class="text-muted/70">(optional)</span></label>
     <textarea id="bw-notes" name="notes" rows="2" placeholder="Flight number, occasion, anything we should know…"
               class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
     {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
