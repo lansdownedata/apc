@@ -18,6 +18,11 @@ class MessageFactory(factory.django.DjangoModelFactory):
         model = Message
 
     lead = factory.SubFactory(LeadFactory)
+    # Derived from the lead's contact during the cut-over; the final state drops `lead`
+    # and makes this a plain SubFactory(ConversationFactory).
+    conversation = factory.LazyAttribute(
+        lambda o: Conversation.objects.get_or_create(contact=o.lead.contact)[0]
+    )
     direction = Message.Direction.IN
     channel = Message.Channel.SMS
     body = factory.Faker("sentence")
