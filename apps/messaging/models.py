@@ -1,7 +1,45 @@
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
 from apps.core.models import TimeStampedModel
+
+
+class Conversation(TimeStampedModel):
+    """A customer's message thread. Exists independently of any Lead.
+
+    One per Contact, all channels interleaved — each Message carries its own channel
+    and Podium conversation uid, so the thread stays reconcilable with Podium without
+    splitting the inbox into one row per channel.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        ARCHIVED = "archived", "Archived"
+
+    contact = models.OneToOneField(
+        "contacts.Contact", related_name="conversation", on_delete=models.CASCADE
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="archived_conversations",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta:
+        ordering = ["-last_message_at", "-id"]
+
+    @property
+    def is_archived(self) -> bool:
+        return self.status == self.Status.ARCHIVED
+
+    def __str__(self) -> str:
+        return f"Conversation · {self.contact.name}"
 
 
 class Message(TimeStampedModel):

@@ -3,7 +3,14 @@ import factory
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 
-from .models import Message, Review, TouchPoint
+from .models import Conversation, Message, Review, TouchPoint
+
+
+class ConversationFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Conversation
+
+    contact = factory.SubFactory(ContactFactory)
 
 
 class MessageFactory(factory.django.DjangoModelFactory):
