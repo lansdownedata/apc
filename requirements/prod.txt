@@ -5,3 +5,4 @@ psycopg[binary]>=3.2         # PostgreSQL driver (Heroku Postgres); binary = no 
 gunicorn>=22.0
 whitenoise>=6.7             # static file serving
 sentry-sdk>=2.0            # error monitoring
+django-storages[s3]>=1.14   # S3 media storage (Heroku's filesystem is ephemeral)
