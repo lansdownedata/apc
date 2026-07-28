@@ -1069,6 +1069,74 @@ function quoteSteps(opts = {}) {
   return {
     twoStep: !!opts.twoStep,
     tripType: opts.tripType || "transfer",
+    // On a server-side error re-render, open the step holding the first error.
+    // name/email/phone are the only server-required fields, so that is step 2.
+    step: opts.twoStep && !opts.hasErrors ? 1 : 2,
+    errors: {},
+
+    submitLabel() {
+      if (!this.twoStep) return "Request a quote";
+      return this.step === 1 ? "Get my quote" : "Send my request";
+    },
+
+    // Step-1 gate. Every visible trip field is required; hours only when hourly.
+    // Messages name the fix, not the rule.
+    required() {
+      const req = [
+        ["pickup", "Enter a pickup address"],
+        ["dropoff", "Enter a drop-off address"],
+        ["pickup_date", "Pick a date"],
+        ["pickup_time", "Pick a time"],
+        ["passengers", "How many passengers?"],
+      ];
+      if (this.tripType === "hourly") req.push(["hours", "Enter how many hours you need"]);
+      return req;
+    },
+
+    validateStepOne() {
+      this.errors = {};
+      let firstBad = null;
+      for (const [name, message] of this.required()) {
+        const el = this.$el.querySelector(`[name="${name}"]`);
+        if (el && !String(el.value || "").trim()) {
+          this.errors[name] = message;
+          if (!firstBad) firstBad = el;
+        }
+      }
+      if (firstBad) {
+        // flatpickr hides the real input behind an altInput sibling; focus that.
+        (firstBad._flatpickr?.altInput || firstBad).focus();
+        return false;
+      }
+      return true;
+    },
+
+    onSubmit(e) {
+      if (!this.twoStep || this.step === 2) return; // let it post
+      e.preventDefault();
+      if (this.validateStepOne()) this.step = 2;
+    },
+
+    back() {
+      this.step = 1;
+    },
+
+    // Reads flatpickr's altInput display values, not the raw Y-m-d / H:i.
+    summary() {
+      const val = (name) => {
+        const el = this.$el.querySelector(`[name="${name}"]`);
+        if (!el) return "";
+        return (el._flatpickr?.altInput?.value || el.value || "").trim();
+      };
+      const label = this.tripType === "hourly" ? "Hourly" : "Transfer";
+      const route = [val("pickup"), val("dropoff")].filter(Boolean).join(" → ");
+      const when = [val("pickup_date"), val("pickup_time")].filter(Boolean).join(", ");
+      const pax = val("passengers");
+      const parts = [label, route, when];
+      if (this.tripType === "hourly" && val("hours")) parts.push(`${val("hours")} hrs`);
+      if (pax) parts.push(`${pax} passenger${pax === "1" ? "" : "s"}`);
+      return parts.filter(Boolean).join(" · ");
+    },
   };
 }
 window.quoteSteps = quoteSteps;
