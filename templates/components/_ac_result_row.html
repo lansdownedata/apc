@@ -1,0 +1,26 @@
+{% comment %}
+  One autocomplete result row, shared by smart_address.html, address_autocomplete.html,
+  the public booking stop repeater and the reservation editor.
+
+  Renders inside an Alpine `x-for` that exposes the result as `r`. Params:
+    idx          — name of the loop index variable in scope   (default "i")
+    active_expr  — expression holding the active index         (default "active")
+    choose_expr  — expression called on click                  (default "choose(i)")
+
+  Airports get a plane icon and show "DCA — Name" over "City, ST"; everything else
+  keeps the original LocationIQ two-line format.
+{% endcomment %}
+{% firstof idx "i" as idx_var %}
+{% firstof active_expr "active" as active_var %}
+{% firstof choose_expr "choose(i)" as choose_call %}
+<button type="button" class="sa-item" :class="{{ idx_var }} === {{ active_var }} && 'sa-item-active'"
+        @mouseenter="{{ active_var }} = {{ idx_var }}" @click="{{ choose_call }}">
+  <span class="sa-item-main">
+    <i class="ti ti-plane sa-item-air" x-show="r.is_airport"></i>
+    <span x-text="r.is_airport
+                    ? ((r.airport_code ? r.airport_code + ' — ' : '') + r.landmark_name)
+                    : (r.landmark_name || r.line1 || r.display_name)"></span>
+  </span>
+  <span class="sa-item-sub"
+        x-text="r.is_airport ? [r.city, r.state].filter(Boolean).join(', ') : r.display_name"></span>
+</button>

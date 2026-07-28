@@ -21,11 +21,7 @@
       <template x-if="loading"><div class="sa-msg">Searching…</div></template>
       <template x-if="!loading && value && !results.length"><div class="sa-msg">No matches — type the address.</div></template>
       <template x-for="(r, i) in results" :key="i">
-        <button type="button" class="sa-item" :class="i===active && 'sa-item-active'"
-                @mouseenter="active=i" @click="choose(i)">
-          <span class="sa-item-main" x-text="r.landmark_name || r.line1 || r.display_name"></span>
-          <span class="sa-item-sub" x-text="r.display_name"></span>
-        </button>
+        {% include "components/_ac_result_row.html" %}
       </template>
     </div>
     <input type="hidden" name="{{ name }}_lat" :value="lat">
