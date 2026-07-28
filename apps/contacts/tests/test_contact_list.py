@@ -218,3 +218,17 @@ def test_contact_with_a_lead_but_no_conversation_renders(logged_in_client):
     assert _row_for(resp.context["contacts"], customer).last_message_at is None
 
     assert logged_in_client.get(reverse("lead_detail", args=[lead.pk])).status_code == 200
+
+
+def test_contact_with_no_company_or_email_does_not_render_none(logged_in_client):
+    """Contact.email is null=True, so `|default:c.email` renders the string "None".
+
+    Every stranger who texts the main business number becomes a contact with neither a
+    company nor an email, so this is now the common case rather than a curiosity.
+    """
+    contact = ContactFactory(name="+15715550137", company=None, email=None, phone="+15715550137")
+    LeadFactory(contact=contact)
+
+    resp = logged_in_client.get(reverse("contact_list"))
+
+    assert b">None<" not in resp.content
