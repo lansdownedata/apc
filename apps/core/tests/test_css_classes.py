@@ -98,6 +98,18 @@ def test_brand_colour_utilities_resolve_to_a_real_token():
     )
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [".quote-form .field", ".quote-form textarea.field", ".qf-toggle"],
+)
+def test_quote_form_scope_is_present(rule):
+    """The public quote form retunes .field inside its own scope so the shared
+    portal .field is untouched. Written in app.css, not Tailwind — this guards
+    against the scope being deleted, not against a missing build."""
+    css = (ROOT / "static" / "css" / "app.css").read_text()
+    assert rule in css, f"{rule!r} missing from app.css"
+
+
 @pytest.mark.parametrize("cls", ["wash-gold", "hover:wash-gold"])
 def test_custom_utility_is_compiled(cls):
     """`wash-gold` is a real utility, so its variants must compile too.

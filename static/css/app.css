@@ -541,3 +541,39 @@ header, aside, main, .wash-gold {
   outline: none;
   box-shadow: 0 0 0 3px var(--ring);
 }
+
+/* ====================================== public quote form — control sizing ===
+   Scoped to .quote-form on purpose: the bare `.field` is shared with every
+   authenticated portal screen and must not move. 16px type below md or iOS
+   zooms the page on focus. One radius (10px) across inputs, selects, button.
+
+   flatpickr's altInput copies the original input's className, so it already picks
+   up `.field` here; `input.form-control` is a defensive belt for the altInputClass
+   default in case that copying behaviour changes. */
+.quote-form .field,
+.quote-form .ts-control,
+.quote-form input.form-control {
+  min-height: 44px;
+  border-radius: 10px;
+  font-size: 16px;
+  padding: .6rem .85rem;
+}
+.quote-form textarea.field {
+  min-height: 0;
+  resize: vertical;
+}
+.quote-form label { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.quote-form { row-gap: 12px; }
+
+@media (min-width: 640px) {
+  .quote-form .field,
+  .quote-form .ts-control,
+  .quote-form input.form-control { min-height: 48px; font-size: 15px; }
+  .quote-form { row-gap: 14px; }
+}
+@media (min-width: 1024px) {
+  .quote-form { row-gap: 16px; }
+}
+
+/* The autocomplete panel: exactly the input's width, above the hero scrim. */
+.quote-form .sa-drop { max-height: 16rem; z-index: 60; }

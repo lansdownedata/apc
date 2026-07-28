@@ -661,7 +661,26 @@ function initTomSelects(root = document) {
     });
   });
 }
-document.addEventListener("DOMContentLoaded", () => initTomSelects());
+document.addEventListener("DOMContentLoaded", () => { initTomSelects(); initAutogrow(); });
+
+/* Textareas that grow with their content, capped so a long note can't push the
+   rest of the form off screen. Opens at its `rows` height. */
+function initAutogrow(root = document) {
+  root.querySelectorAll("textarea[data-autogrow]").forEach((el) => {
+    if (el._autogrow) return;
+    el._autogrow = true;
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 20;
+    const max = line * 8;
+    const grow = () => {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, max) + "px";
+      el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+    };
+    el.addEventListener("input", grow);
+    grow();
+  });
+}
+window.initAutogrow = initAutogrow;
 window.initTomSelects = initTomSelects;
 
 /* ------------------------------------------------ intl-tel-input auto-init */
