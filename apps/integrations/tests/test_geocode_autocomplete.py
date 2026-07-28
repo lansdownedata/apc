@@ -84,7 +84,16 @@ def test_view_requires_login(client):
     assert resp.status_code == 302
 
 
-def test_view_degraded_when_key_missing(client, settings):
+@pytest.fixture
+def no_airports():
+    """These two tests exercise the LocationIQ path with q="logan", which the seeded
+    Boston Logan airport now matches. Empty the table so they keep testing LocationIQ."""
+    from apps.addresses.models import Airport
+
+    Airport.objects.all().delete()
+
+
+def test_view_degraded_when_key_missing(client, settings, no_airports):
     settings.LOCATIONIQ_API_KEY = ""
     client.force_login(UserFactory())
     resp = client.get(reverse("integrations:geocode_autocomplete"), {"q": "logan"})
@@ -92,7 +101,7 @@ def test_view_degraded_when_key_missing(client, settings):
     assert resp.json() == {"results": [], "degraded": True}
 
 
-def test_view_returns_results(client, settings):
+def test_view_returns_results(client, settings, no_airports):
     settings.LOCATIONIQ_API_KEY = "pk_live_SECRETKEY_ZZZ"
     client.force_login(UserFactory())
     with mock.patch("apps.integrations.geocoding.requests.get") as g:

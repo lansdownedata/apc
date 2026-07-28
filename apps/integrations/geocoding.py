@@ -120,3 +120,48 @@ def autocomplete(q: str, lat=None, lon=None) -> list[dict]:
         return [_decompose(item) for item in payload if isinstance(item, dict)]
     except (requests.RequestException, ValueError):
         return []
+
+
+# A LocationIQ aeroway result this close to an airport we already emitted is the same
+# place seen twice — drop it rather than show the user a duplicate.
+AIRPORT_DEDUPE_MILES = 0.5
+_EARTH_RADIUS_MILES = 3958.8
+
+
+def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * _EARTH_RADIUS_MILES * asin(sqrt(a))
+
+
+def _duplicates_an_airport(result: dict, airports: list[dict]) -> bool:
+    if result.get("place_class") != "aeroway":
+        return False
+    try:
+        lat, lon = float(result["latitude"]), float(result["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    for airport in airports:
+        distance = _haversine_miles(
+            lat, lon, float(airport["latitude"]), float(airport["longitude"])
+        )
+        if distance <= AIRPORT_DEDUPE_MILES:
+            return True
+    return False
+
+
+def merged_autocomplete(q: str, lat=None, lon=None) -> list[dict]:
+    """Airport matches first, then LocationIQ results with any airport twins removed.
+
+    Airports are a local query, so this still returns results when LOCATIONIQ_API_KEY is
+    unset — `autocomplete()` just contributes an empty list.
+    """
+    from apps.addresses.search import search_airports
+
+    airports = search_airports(q)
+    results = autocomplete(q, lat=lat, lon=lon)
+    if airports:
+        results = [r for r in results if not _duplicates_an_airport(r, airports)]
+    return airports + results
