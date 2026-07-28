@@ -485,7 +485,7 @@ header, aside, main, .wash-gold {
 
 /* time picker — larger, higher-contrast, clearer AM/PM toggle (restyled per client) */
 .flatpickr-calendar.noCalendar.hasTime { width: 15rem; }
-.flatpickr-calendar.hasTime .flatpickr-time { height: 3.4rem; max-height: 3.4rem; border-top: 1px solid rgb(var(--border)); border-radius: 0 0 0.9rem 0.9rem; }
+.flatpickr-calendar.hasTime .flatpickr-time { height: 3.4rem; max-height: 3.4rem; border-top: 1px solid rgb(var(--border)); border-radius: 0 0 0.9rem 0.9rem; overflow: hidden; }
 .flatpickr-time input, .flatpickr-time .flatpickr-time-separator, .flatpickr-time .flatpickr-am-pm {
   height: 3.4rem; line-height: 3.4rem; font-size: 1.1rem; color: rgb(var(--text));
 }
@@ -497,6 +497,19 @@ header, aside, main, .wash-gold {
   border-left: 1px solid rgb(var(--border)); flex-basis: 3.5rem; text-align: center;
 }
 .flatpickr-time .flatpickr-am-pm:hover, .flatpickr-time .flatpickr-am-pm:focus { background: rgb(var(--gold-soft)); }
+/* The wrapper defaults to 40px inside our 3.4rem (54.4px) row and is top-aligned,
+   so ~13px of the calendar's white background showed as a strip under the numbers
+   whenever the stepper arrows were used. Pin it to the row and centre its contents
+   so the row reads as one continuous surface.
+
+   height:100% does NOT work here — the percentage fails to resolve against the flex
+   row and collapses the wrapper to its 21px content height, which is worse. */
+.flatpickr-time .numInputWrapper {
+  height: 3.4rem;
+  display: flex;
+  align-items: center;
+}
+.flatpickr-time .numInputWrapper input.numInput { height: 3.4rem; }
 /* always-visible, brand-coloured step arrows for bigger, clearer tap targets */
 .flatpickr-time .numInputWrapper span { opacity: 1; border: none; width: 1.1rem; }
 .flatpickr-time .numInputWrapper span.arrowUp:after { border-bottom-color: rgb(var(--muted)); }
@@ -516,7 +529,10 @@ header, aside, main, .wash-gold {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   padding: 4px;
-  background: rgb(var(--surface-2));
+  /* A tint of the ink rather than --surface-2: the track has to sit *darker* than
+     the warm-paper card so the white selected pill reads as raised. --surface-2 is
+     lighter than the card, which is why the whole control looked washed out. */
+  background: rgb(var(--text) / .06);
   border: 1px solid rgb(var(--border));
   border-radius: 10px;
 }
@@ -529,14 +545,18 @@ header, aside, main, .wash-gold {
   text-align: center;
   font-size: 13.5px;
   font-weight: 600;
-  color: rgb(var(--muted));
+  color: rgb(var(--text) / .68);
   cursor: pointer;
-  transition: background .15s ease, color .15s ease;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 }
+.qf-seg-label:hover { color: rgb(var(--text)); }
+/* Selected: white pill + gold text + a gold hairline. Deliberately not a gold
+   *fill* — the CTA below already owns that, and two gold slabs in one card
+   compete. This keeps one accent while making the selection unmistakable. */
 .qf-seg input:checked + .qf-seg-label {
   background: rgb(var(--surface));
-  color: rgb(var(--text));
-  box-shadow: 0 1px 2px rgb(0 0 0 / .06);
+  color: rgb(var(--gold-deep));
+  box-shadow: 0 0 0 1px rgb(var(--gold) / .45), 0 1px 3px rgb(20 24 31 / .10);
 }
 .qf-seg input:focus-visible + .qf-seg-label {
   outline: none;
