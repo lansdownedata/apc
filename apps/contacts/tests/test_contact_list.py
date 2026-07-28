@@ -34,8 +34,9 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
     ReservationFactory(lead=booked1)
     # Messages on the same lead: the reservations x messages cartesian must not
     # inflate the LTV Sum or the trips Count.
-    MessageFactory(lead=booked1)
-    MessageFactory(lead=booked1)
+    convo1 = ConversationFactory(contact=booked1.contact)
+    MessageFactory(conversation=convo1)
+    MessageFactory(conversation=convo1)
 
     booked2 = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
     PaymentPlanFactory(lead=booked2, quote_total=Decimal("500.00"))
@@ -129,7 +130,7 @@ def test_row_link_targets_contact_profile(logged_in_client):
 def test_last_activity_uses_latest_of_lead_and_message(logged_in_client):
     contact = ContactFactory()
     lead = LeadFactory(contact=contact, status=Lead.Status.QUOTED)
-    msg = MessageFactory(lead=lead)
+    msg = MessageFactory(conversation=ConversationFactory(contact=lead.contact))
     resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)
     assert row.last_activity is not None
@@ -142,7 +143,7 @@ def test_ordered_by_most_recent_activity_first(logged_in_client):
     LeadFactory(contact=quiet, status=Lead.Status.NEW)
     active = ContactFactory(name="Active Contact")
     lead = LeadFactory(contact=active, status=Lead.Status.QUOTED)
-    MessageFactory(lead=lead)  # freshest activity
+    MessageFactory(conversation=ConversationFactory(contact=lead.contact))  # freshest
     resp = logged_in_client.get(reverse("contact_list"))
     ordered = [c.pk for c in resp.context["contacts"]]
     assert ordered.index(active.pk) < ordered.index(quiet.pk)
@@ -196,7 +197,7 @@ def test_last_activity_uses_conversation_messages(logged_in_client):
     customer = ContactFactory()
     LeadFactory(contact=customer)
     convo = ConversationFactory(contact=customer)
-    MessageFactory(conversation=convo, lead=None)
+    MessageFactory(conversation=convo)
 
     resp = logged_in_client.get(reverse("contact_list"))
 

@@ -16,7 +16,7 @@ from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead, VehicleType
-from apps.messaging.models import Message, Review
+from apps.messaging.models import Conversation, Message, Review
 from apps.notifications.models import Notification
 from apps.payments.models import Charge, PaymentPlan
 from apps.reservations.models import Reservation, Stop
@@ -39,6 +39,7 @@ class Command(BaseCommand):
                 Notification,
                 Review,
                 Message,
+                Conversation,
                 Charge,
                 PaymentPlan,
                 Stop,
@@ -138,10 +139,20 @@ class Command(BaseCommand):
             )
             return p
 
+        def conversation(contact):
+            """A contact's inbox thread. Lazily created — most contacts never text."""
+            convo, _ = Conversation.objects.get_or_create(contact=contact)
+            return convo
+
         def message(lead, direction, body, channel=Message.Channel.SMS, unread=False):
-            """A Podium conversation message. `unread` only applies to inbound messages."""
-            return Message.objects.create(
-                lead=lead,
+            """A Podium conversation message. `unread` only applies to inbound messages.
+
+            Takes a lead for convenience at the call sites; the message is stored on
+            the lead contact's conversation, which is where threads actually live.
+            """
+            convo = conversation(lead.contact)
+            msg = Message.objects.create(
+                conversation=convo,
                 direction=direction,
                 channel=channel,
                 body=body,
@@ -151,6 +162,8 @@ class Command(BaseCommand):
                 if direction == Message.Direction.OUT
                 else Message.DeliveryStatus.RECEIVED,
             )
+            Conversation.objects.filter(pk=convo.pk).update(last_message_at=msg.created_at)
+            return msg
 
         TS = Reservation.TripStatus
 
@@ -461,6 +474,49 @@ class Command(BaseCommand):
             channel=Channel.PHONE,
         )
 
+        # A second quote for an existing customer — the multi-lead rail this feature exists
+        # to enable. One conversation, several quotes.
+        Lead.objects.create(
+            contact=lead1.contact,
+            channel=Channel.PHONE,
+            status=Lead.Status.NEW,
+        )
+
+        # Unqualified: a real inbound text that is not a lead. Lives in the inbox until an
+        # agent decides. Contact name is the raw number because that is all Podium gives us.
+        junk = Contact.objects.create(
+            name="+15715550137", phone="+15715550137", channel=Channel.PHONE
+        )
+        junk_convo = conversation(junk)
+        junk_msg = Message.objects.create(
+            conversation=junk_convo,
+            direction=Message.Direction.IN,
+            channel=Message.Channel.SMS,
+            body="wrong number sorry",
+            read_at=None,
+            delivery_status=Message.DeliveryStatus.RECEIVED,
+        )
+        Conversation.objects.filter(pk=junk_convo.pk).update(last_message_at=junk_msg.created_at)
+
+        # Archived: dismissed permanently. Later messages still record but never reopen it.
+        spam = Contact.objects.create(
+            name="+15715550199", phone="+15715550199", channel=Channel.PHONE
+        )
+        spam_convo = conversation(spam)
+        spam_msg = Message.objects.create(
+            conversation=spam_convo,
+            direction=Message.Direction.IN,
+            channel=Message.Channel.SMS,
+            body="LOWER YOUR MERCHANT PROCESSING FEES TODAY — reply STOP to opt out",
+            read_at=timezone.now(),
+            delivery_status=Message.DeliveryStatus.RECEIVED,
+        )
+        Conversation.objects.filter(pk=spam_convo.pk).update(
+            last_message_at=spam_msg.created_at,
+            status=Conversation.Status.ARCHIVED,
+            archived_at=timezone.now(),
+        )
+
         leads = Lead.objects.count()
         res = Reservation.objects.count()
         self.stdout.write(
@@ -468,6 +524,7 @@ class Command(BaseCommand):
                 f"Seeded {leads} leads, {res} reservations, "
                 f"{PaymentPlan.objects.count()} payment plans, "
                 f"{Notification.objects.count()} notification(s), "
-                f"{Review.objects.count()} review invite(s)."
+                f"{Review.objects.count()} review invite(s), "
+                f"{Conversation.objects.count()} conversation(s)."
             )
         )

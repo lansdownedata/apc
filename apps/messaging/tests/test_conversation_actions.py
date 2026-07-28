@@ -64,7 +64,7 @@ def test_create_lead_requires_login(client):
 def test_create_lead_makes_a_new_lead_on_the_contact(client, agent):
     contact = ContactFactory()
     convo = ConversationFactory(contact=contact)
-    MessageFactory(conversation=convo, lead=None)
+    MessageFactory(conversation=convo)
     client.force_login(agent)
 
     resp = client.post(reverse("conversation_create_lead", args=[convo.pk]))
