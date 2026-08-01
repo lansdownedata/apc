@@ -6,6 +6,7 @@ raw payload is always stored on PodiumEvent so we can refine against real traffi
 
 import logging
 
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -42,10 +43,45 @@ def podium_event_type(payload: dict) -> str:
     return metadata.get("eventType") or payload.get("eventType") or payload.get("type") or ""
 
 
+def podium_event_uid(payload: dict) -> str | None:
+    """Podium's stable id for the event itself, constant across delivery retries.
+
+    Returns None (not "") when absent so the unique index treats unidentifiable payloads
+    as distinct rather than colliding them all onto one key.
+    """
+    metadata = payload.get("metadata") or {}
+    return metadata.get("eventUid") or None
+
+
+def _event_for_uid(event_uid: str | None) -> PodiumEvent | None:
+    if not event_uid:
+        return None
+    return PodiumEvent.objects.filter(event_uid=event_uid).first()
+
+
 def process_podium_webhook(payload: dict) -> PodiumEvent:
     event_type = podium_event_type(payload)
     data = payload.get("data", payload)
-    event = PodiumEvent.objects.create(event_type=event_type, payload=payload)
+
+    # Retries are no-ops. Podium re-delivers when it doesn't see a timely 200 — on
+    # 2026-07-31 one message.failed arrived 8 times — and reprocessing would re-run the
+    # side effects and pile up duplicate rows.
+    event_uid = podium_event_uid(payload)
+    seen = _event_for_uid(event_uid)
+    if seen is not None:
+        return seen
+
+    try:
+        with transaction.atomic():
+            event = PodiumEvent.objects.create(
+                event_type=event_type, payload=payload, event_uid=event_uid
+            )
+    except IntegrityError:
+        # Lost the insert race against a concurrent retry — the winner already has it.
+        won = _event_for_uid(event_uid)
+        if won is None:
+            raise
+        return won
 
     if event_type == PodiumEvent.EventType.MESSAGE_RECEIVED:
         event.conversation = _ingest_inbound(data)

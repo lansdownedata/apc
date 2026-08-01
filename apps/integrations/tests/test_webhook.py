@@ -6,7 +6,7 @@ from django.core.cache import cache
 
 from apps.contacts.factories import ContactFactory
 from apps.contacts.models import Contact
-from apps.integrations import podium
+from apps.integrations import podium, webhooks
 from apps.integrations.models import PodiumEvent
 from apps.integrations.webhooks import process_podium_webhook
 from apps.leads.models import Lead
@@ -299,3 +299,84 @@ def test_sent_mirror_matches_via_normalized_phone():
     assert msg.conversation == convo
     assert msg.direction == Message.Direction.OUT
     assert event.conversation == convo
+
+
+# --- retry idempotency (2026-08-01 incident) ---------------------------------------------
+# Podium retried one message.failed delivery 8 times when our responses exceeded its client
+# timeout, and each retry wrote another PodiumEvent row. Every delivery carries a stable
+# metadata.eventUid, so a retry is identifiable and must be a no-op.
+
+
+def test_retried_delivery_creates_one_event_row():
+    payload = _live_shape("message.failed", uid="retry-1")
+
+    first = process_podium_webhook(payload)
+    second = process_podium_webhook(payload)
+    third = process_podium_webhook(payload)
+
+    assert PodiumEvent.objects.count() == 1
+    assert second.pk == first.pk == third.pk
+    assert first.event_uid == "ev-retry-1"
+
+
+def test_retried_inbound_does_not_reprocess():
+    payload = _live_shape("message.received", uid="retry-2")
+
+    process_podium_webhook(payload)
+    process_podium_webhook(payload)
+
+    assert PodiumEvent.objects.count() == 1
+    assert Message.objects.filter(podium_message_uid="retry-2").count() == 1
+    assert Conversation.objects.count() == 1
+
+
+def test_retry_of_an_unhandled_event_is_still_deduped():
+    """Unhandled types are left unprocessed on purpose — retries must not pile up rows."""
+    payload = _live_shape("contact.updated", uid="retry-3")
+
+    process_podium_webhook(payload)
+    process_podium_webhook(payload)
+
+    assert PodiumEvent.objects.count() == 1
+    assert PodiumEvent.objects.get().processed is False
+
+
+def test_payload_without_event_uid_is_not_deduped():
+    """Hand-built and replayed payloads carry no metadata — keep the old behaviour rather
+    than collapsing unrelated events onto a single NULL key."""
+    process_podium_webhook(_received(uid="no-meta"))
+    process_podium_webhook(_received(uid="no-meta"))
+
+    assert PodiumEvent.objects.count() == 2
+    assert PodiumEvent.objects.filter(event_uid__isnull=True).count() == 2
+    # Message-level dedupe still holds.
+    assert Message.objects.filter(podium_message_uid="no-meta").count() == 1
+
+
+def test_event_uid_is_unique_at_the_database_level():
+    """Attempts 1 and 2 overlapped in the real incident, so the app-level pre-check alone
+    cannot guarantee one row — the constraint is what does."""
+    from django.db import IntegrityError, transaction
+
+    winner = process_podium_webhook(_live_shape("message.failed", uid="retry-race"))
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PodiumEvent.objects.create(
+            event_type="message.failed", payload={}, event_uid=winner.event_uid
+        )
+
+
+def test_insert_race_returns_the_existing_row_instead_of_raising():
+    """When the pre-check misses and the INSERT loses, callers still get the winner back."""
+    from unittest.mock import patch as _patch
+
+    payload = _live_shape("message.failed", uid="retry-lost")
+    winner = process_podium_webhook(payload)
+
+    # Pre-check misses (as it would if the other attempt hadn't committed yet), the INSERT
+    # then loses to the unique constraint, and the recovery lookup finds the winner.
+    with _patch.object(webhooks, "_event_for_uid", side_effect=[None, winner]):
+        result = process_podium_webhook(payload)
+
+    assert result.pk == winner.pk
+    assert PodiumEvent.objects.count() == 1
