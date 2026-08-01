@@ -81,6 +81,14 @@ class PodiumEvent(TimeStampedModel):
         blank=True,
         on_delete=models.SET_NULL,
     )
+    # Podium's stable per-event id (metadata.eventUid), identical across delivery retries.
+    # NULL — not "" — when absent, so hand-built and replayed payloads don't all collide on
+    # a single empty key. Unique because retries can overlap: in the 2026-07-31 incident
+    # attempts 1 and 2 were in flight simultaneously, so an app-level check alone would
+    # still have double-inserted.
+    event_uid = models.CharField(  # noqa: DJ001 — see above
+        max_length=64, unique=True, null=True, blank=True
+    )
     event_type = models.CharField(max_length=40, choices=EventType.choices)
     payload = models.JSONField(default=dict, blank=True)
     processed = models.BooleanField(default=False)
