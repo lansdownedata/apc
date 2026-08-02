@@ -147,6 +147,38 @@ def test_notes_textarea_opens_at_three_rows_and_autogrows(db):
     assert "data-autogrow" in html
 
 
+def _order(html, *needles):
+    """Positions of each needle, asserting all are present."""
+    idx = []
+    for n in needles:
+        i = html.find(n)
+        assert i != -1, f"missing from markup: {n}"
+        idx.append(i)
+    return idx
+
+
+def test_add_a_stop_sits_between_pickup_and_dropoff(db):
+    """A stop is a waypoint *on the way*, so the control belongs between the two
+    address fields. It previously lived in the contact fieldset, which pushed it
+    below Passengers on the full form and dropped it from the hero entirely.
+    """
+    for url in ("/", "/bookings/", "/contact/"):
+        html = Client().get(url).content.decode()
+        pickup, add_stop, dropoff = _order(html, 'id="bw-pickup"', "Add a stop", 'id="bw-dropoff"')
+        assert pickup < add_stop < dropoff, (
+            f"{url}: expected pickup < 'Add a stop' < drop-off, got {pickup}, {add_stop}, {dropoff}"
+        )
+
+
+def test_hero_step_one_holds_the_stops_repeater(db):
+    """The hero's short form must be able to add stops without reaching step 2."""
+    html = Client().get("/").content.decode()
+    step_one = html.split('data-step="1"', 1)[1].split('data-step="2"', 1)[0]
+    assert "Add a stop" in step_one
+    assert "bookingStops(" in step_one
+    assert 'name="stops_json"' in step_one
+
+
 def test_home_hero_renders_two_steps(db):
     html = Client().get("/").content.decode()
     assert 'data-step="1"' in html

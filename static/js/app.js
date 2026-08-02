@@ -1240,7 +1240,19 @@ function quoteSteps(opts = {}) {
         return (el._flatpickr?.altInput?.value || el.value || "").trim();
       };
       const label = this.tripType === "hourly" ? "Hourly" : "Transfer";
-      const route = [val("pickup"), val("dropoff")].filter(Boolean).join(" → ");
+      // Stops live in a nested bookingStops component, so read the serialised
+      // hidden field rather than reaching into its state.
+      let stops = 0;
+      try {
+        stops = (JSON.parse(val("stops_json") || "[]") || []).length;
+      } catch (e) {
+        stops = 0;
+      }
+      const route = [
+        val("pickup"),
+        stops ? `${stops} stop${stops === 1 ? "" : "s"}` : null,
+        val("dropoff"),
+      ].filter(Boolean).join(" → ");
       const when = [val("pickup_date"), val("pickup_time")].filter(Boolean).join(", ");
       const pax = val("passengers");
       const parts = [label, route, when];
