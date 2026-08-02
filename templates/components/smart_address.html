@@ -53,7 +53,7 @@
              autocomplete="sa-nofill" autocorrect="off" autocapitalize="off" spellcheck="false"
              data-1p-ignore data-lpignore="true" data-form-type="other"
              placeholder="Search a place or address…"
-             x-model="query" @input.debounce.300ms="search()" @focus="requestLocation(); results.length && (open=true)">
+             x-model="query" @input.debounce.300ms="search()" @focus="results.length && (open=true)">
       <div class="sa-drop" role="listbox" x-show="open" x-cloak @click.outside="closeResults()">
         <template x-if="loading"><div class="sa-msg">Searching…</div></template>
         <template x-if="!loading && query && !results.length"><div class="sa-msg">No matches — type the address below.</div></template>

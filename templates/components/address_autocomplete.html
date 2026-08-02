@@ -19,7 +19,7 @@
            autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
            placeholder="Search an address…"
            class="field w-full"
-           @input.debounce.250ms="search()" @focus="requestLocation(); results.length && (open=true)">
+           @input.debounce.250ms="search()" @focus="results.length && (open=true)">
     <div class="sa-drop" id="{{ field_id }}-listbox" role="listbox" x-show="open" x-cloak @click.outside="closeResults()">
       <div class="sr-only" aria-live="polite" x-text="statusText()"></div>
       <template x-if="loading"><div class="sa-msg">Searching…</div></template>

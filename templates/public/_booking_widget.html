@@ -83,7 +83,7 @@
             <input type="text" x-model="stop.address" placeholder="Search an address…"
                    role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
                    autocomplete="off" data-1p-ignore class="field w-full"
-                   @input.debounce.250ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
+                   @input.debounce.250ms="search(i)" @focus="rowState(i).list.length && (rowState(i).open = true)">
             <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
               <template x-for="(r, j) in rowState(i).list" :key="j">
                 {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}

@@ -917,7 +917,6 @@ function smartAddress(opts = {}) {
     _raw: [],
     biasLat: opts.fallbackLat ?? null,
     biasLon: opts.fallbackLon ?? null,
-    _locRequested: false,
     _saved: null,
 
     init() {
@@ -960,20 +959,6 @@ function smartAddress(opts = {}) {
       const f = this.fields;
       const statePostal = [f.state, f.postal].filter(Boolean).join(" ");
       return [f.city, statePostal].filter(Boolean).join(", ");
-    },
-
-    requestLocation() {
-      if (this._locRequested || !("geolocation" in navigator)) return;
-      this._locRequested = true;
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          this.biasLat = pos.coords.latitude;
-          this.biasLon = pos.coords.longitude;
-          if (this._raw.length) { this.results = this.rank(this._raw); this.active = this.results.length ? 0 : -1; }
-        },
-        () => {}, // denied / unavailable → keep the configured fallback center
-        { timeout: 8000, maximumAge: 600000 },
-      );
     },
 
     // Airports are held out of the proximity sort and always lead — see partitionAirports.
@@ -1090,16 +1075,11 @@ function rankByProximity(results, lat, lon) {
   return airports.concat(ranked).slice(0, cfg.TOP_N);
 }
 
-/* Ask the browser for location once; call onOk(lat, lon) if the user grants it.
-   Denied/unavailable → no-op, so callers keep their configured fallback center. */
-function requestBrowserLocation(onOk) {
-  if (!("geolocation" in navigator)) return;
-  navigator.geolocation.getCurrentPosition(
-    (pos) => onOk(pos.coords.latitude, pos.coords.longitude),
-    () => {},
-    { timeout: 8000, maximumAge: 600000 },
-  );
-}
+/* NOTE: address suggestions are biased by ADDRESS_BIAS_CENTER (settings → every
+   widget's fallbackLat/fallbackLon), never by the browser's geolocation API. We
+   deliberately do not prompt: every trip we quote happens in the DMV, so the
+   service-area center already describes where the addresses are, and a visitor
+   browsing from another metro would have been biased to the wrong one. */
 
 /* Single-line address input for the public booking form (pickup / drop-off). */
 function addressAutocomplete(opts = {}) {
@@ -1117,20 +1097,6 @@ function addressAutocomplete(opts = {}) {
     biasLon: opts.fallbackLon ?? null,
     _raw: [],
     _ctl: null,
-    _locRequested: false,
-    // On first focus, ask the browser for the visitor's location; on grant, re-rank
-    // any results already showing. Denied → keep the service-area fallback center.
-    requestLocation() {
-      if (this._locRequested) return;
-      this._locRequested = true;
-      requestBrowserLocation((lat, lon) => {
-        this.biasLat = lat; this.biasLon = lon;
-        if (this._raw.length) {
-          this.results = rankByProximity(this._raw, this.biasLat, this.biasLon);
-          this.active = this.results.length ? 0 : -1;
-        }
-      });
-    },
     search() {
       const q = this.value.trim();
       this._ctl?.abort();
@@ -1272,14 +1238,6 @@ function bookingStops(opts = {}) {
     _r: {}, // per-row results cache keyed by index
     biasLat: opts.fallbackLat ?? null,
     biasLon: opts.fallbackLon ?? null,
-    _locRequested: false,
-    // Same location bias as the pickup/drop-off inputs: ask once on focus, fall back
-    // to the service-area center when denied. The next debounced search picks it up.
-    requestLocation() {
-      if (this._locRequested) return;
-      this._locRequested = true;
-      requestBrowserLocation((lat, lon) => { this.biasLat = lat; this.biasLon = lon; });
-    },
     max: 4,
     canAdd() { return this.stops.length < this.max; },
     add() {
