@@ -134,6 +134,20 @@ def test_time_picker_number_wrapper_fills_the_row():
     )
 
 
+def test_native_mobile_picker_cannot_outgrow_its_container():
+    """On a phone flatpickr steps aside for the OS picker: it hides the styled
+    altInput and swaps in a native date/time input classed `.flatpickr-mobile`
+    (flatpickr.js `setupMobile`). iOS gives those a UA intrinsic width that beats
+    `width: 100%` from `.field`, so both pickers hung out past the quote card.
+    """
+    css = (ROOT / "static" / "css" / "app.css").read_text()
+    block = re.search(r"\.flatpickr-mobile \{(.+?)\}", css, re.S)
+    assert block, "no width rule for .flatpickr-mobile"
+    body = block.group(1)
+    assert "min-width: 0" in body, f"UA intrinsic minimum not cleared: {body!r}"
+    assert "max-width: 100%" in body, f"nothing caps the field at its container: {body!r}"
+
+
 @pytest.mark.parametrize("cls", ["wash-gold", "hover:wash-gold"])
 def test_custom_utility_is_compiled(cls):
     """`wash-gold` is a real utility, so its variants must compile too.
