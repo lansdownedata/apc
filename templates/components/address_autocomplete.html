@@ -7,10 +7,12 @@
     field_id    — id for <label for> (required)
     label       — visible label
     value       — current one-line value (edit / error re-render)
+    hide_label  — render no label; the caller owns the label row (e.g. to sit a
+                  control beside it). The caller MUST still render a <label for>.
 {% endcomment %}
 {% load json_filters %}
 <div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }}, fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
-  <label for="{{ field_id }}" class="mb-1 block text-[12px] font-medium text-muted">{{ label }}</label>
+  {% if not hide_label %}<label for="{{ field_id }}" class="mb-1 block text-[12px] font-medium text-muted">{{ label }}</label>{% endif %}
   <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
     <input type="text" id="{{ field_id }}" name="{{ name }}" x-model="value"
            role="combobox" aria-autocomplete="list" :aria-expanded="open"

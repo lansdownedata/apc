@@ -63,15 +63,21 @@
       In-between stops sit BETWEEN pickup and drop-off — a stop is a waypoint on the
       way, and reading pickup → stops → drop-off is the trip in order. Keeping it here
       (rather than with the contact fields) is also what puts it in the hero's short
-      form, since that only renders step 1 up front. At rest this is a single 13px
-      text button, so it costs a row of text, not a field.
+      form, since that only renders step 1 up front.
+
+      "Add a stop" rides the Drop-off *label* row instead of taking a row of its own:
+      a standalone row broke the label→field rhythm the rest of the card keeps, so the
+      gap above Drop-off read wider than every other gap. That is also why this wrapper
+      is `contents` — it carries the Alpine scope without becoming a grid item, so the
+      stop rows and the drop-off block stay direct children of the form grid and
+      inherit its row-gap rather than needing their own spacing.
     {% endcomment %}
-    <div class="sm:col-span-2 space-y-3"
+    <div class="contents"
          x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
       <template x-for="(stop, i) in stops" :key="i">
-        <div class="aac">
-          <div class="mb-1 flex items-center justify-between">
-            <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
+        <div class="aac sm:col-span-2">
+          <div class="mb-1 flex items-center justify-between gap-3">
+            <label class="!mb-0 block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
             <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
                     class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
               <i class="ti ti-x text-[13px]"></i>
@@ -92,16 +98,19 @@
           </div>
         </div>
       </template>
-      <button type="button" @click="add()" x-show="canAdd()"
-              class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
-        <i class="ti ti-plus"></i> Add a stop
-      </button>
       <input type="hidden" name="stops_json" :value="json()">
-    </div>
 
-    <div class="sm:col-span-2">
-      {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
+      <div class="sm:col-span-2">
+        <div class="mb-1 flex items-center justify-between gap-3">
+          <label for="bw-dropoff" class="!mb-0 block text-[12px] font-medium text-muted">Drop-off location</label>
+          <button type="button" @click="add()" x-show="canAdd()"
+                  class="inline-flex shrink-0 items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
+            <i class="ti ti-plus text-[13px]"></i> Add a stop
+          </button>
+        </div>
+        {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value hide_label=1 %}
+        <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
+      </div>
     </div>
 
     <div>
