@@ -193,6 +193,21 @@ def test_add_a_stop_sits_between_pickup_and_dropoff(db):
         )
 
 
+def test_add_a_stop_shares_the_dropoff_label_row(db):
+    """It rides the Drop-off label row rather than taking a row of its own.
+
+    A standalone row broke the label→field rhythm the rest of the card keeps, so
+    the gap above Drop-off read wider than every other gap. Encoded as ordering:
+    the label text, then the button, then the input it labels.
+    """
+    for url in ("/", "/bookings/", "/contact/"):
+        html = Client().get(url).content.decode()
+        label, add_stop, field = _order(html, "Drop-off location", "Add a stop", 'id="bw-dropoff"')
+        assert label < add_stop < field, (
+            f"{url}: 'Add a stop' is not on the drop-off label row ({label}, {add_stop}, {field})"
+        )
+
+
 def test_hero_step_one_holds_the_stops_repeater(db):
     """The hero's short form must be able to add stops without reaching step 2."""
     html = Client().get("/").content.decode()
