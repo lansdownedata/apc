@@ -517,6 +517,23 @@ header, aside, main, .wash-gold {
 .flatpickr-time .numInputWrapper:hover span.arrowUp:after { border-bottom-color: rgb(var(--gold)); }
 .flatpickr-time .numInputWrapper:hover span.arrowDown:after { border-top-color: rgb(var(--gold)); }
 
+/* ---- touch devices: the OS picker, not this calendar ----
+   flatpickr matches the phone/tablet UA and steps aside (`setupMobile`): it hides
+   the real input AND the styled altInput, then inserts a native date/time input
+   carrying the original classes plus `.flatpickr-mobile`. So `.field` still styles
+   it, but iOS hands date/time inputs a UA intrinsic width that outranks `.field`'s
+   `width: 100%` — both hero pickers hung past the right edge of the quote card while
+   every plain text field beside them behaved. Clearing the minimum and capping at the
+   container is what makes the declared width stick; `appearance: none` stops iOS
+   re-imposing its own control metrics. Deliberately unscoped: the portal's reservation
+   editor takes the same path on a phone. */
+.flatpickr-mobile {
+  min-width: 0;
+  max-width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* ---- single-line public address autocomplete (reuses .sa-drop / .sa-item) ---- */
 .aac { position: relative; }
 .aac .sa-drop { position: absolute; z-index: 30; left: 0; right: 0; }
