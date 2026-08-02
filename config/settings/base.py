@@ -80,6 +80,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.portal.context_processors.chrome",
                 "apps.public.context_processors.canonical",
+                "apps.public.context_processors.social_card",
                 "apps.public.context_processors.site_settings",
             ],
         },

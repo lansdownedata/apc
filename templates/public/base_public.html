@@ -12,6 +12,22 @@
   <meta property="og:site_name" content="All Pro Charter">
   <meta property="og:type" content="website">
   {% endblock %}
+
+  {% comment %}
+    Link preview (iMessage, Slack, WhatsApp, Facebook). Deliberately OUTSIDE
+    {% block meta %}: every page template overrides that block wholesale, so tags
+    placed inside it would only ever reach pages that forgot to. With no og:image
+    a scraper picks its own — which made the pink wedding-awards banner the face
+    of the company in a text message. og_image_url comes from
+    apps/public/context_processors.social_card (absolute, request-derived);
+    override it per page with {% block og_image %}.
+  {% endcomment %}
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:image" content="{% block og_image %}{{ og_image_url }}{% endblock %}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="All Pro Charter — premium ground transportation">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
