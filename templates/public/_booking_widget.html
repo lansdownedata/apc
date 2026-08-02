@@ -59,6 +59,46 @@
       <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup" x-text="errors.pickup"></p>
     </div>
 
+    {% comment %}
+      In-between stops sit BETWEEN pickup and drop-off — a stop is a waypoint on the
+      way, and reading pickup → stops → drop-off is the trip in order. Keeping it here
+      (rather than with the contact fields) is also what puts it in the hero's short
+      form, since that only renders step 1 up front. At rest this is a single 13px
+      text button, so it costs a row of text, not a field.
+    {% endcomment %}
+    <div class="sm:col-span-2 space-y-3"
+         x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
+      <template x-for="(stop, i) in stops" :key="i">
+        <div class="aac">
+          <div class="mb-1 flex items-center justify-between">
+            <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
+            <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
+                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
+              <i class="ti ti-x text-[13px]"></i>
+            </button>
+          </div>
+          <div class="sa-search" @keydown.escape="closeRow(i)"
+               @keydown.down.prevent="move(i, 1)" @keydown.up.prevent="move(i, -1)"
+               @keydown.enter.prevent="chooseActive(i)">
+            <input type="text" x-model="stop.address" placeholder="Search an address…"
+                   role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
+                   autocomplete="off" data-1p-ignore class="field w-full"
+                   @input.debounce.250ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
+            <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
+              <template x-for="(r, j) in rowState(i).list" :key="j">
+                {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+      <button type="button" @click="add()" x-show="canAdd()"
+              class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
+        <i class="ti ti-plus"></i> Add a stop
+      </button>
+      <input type="hidden" name="stops_json" :value="json()">
+    </div>
+
     <div class="sm:col-span-2">
       {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value %}
       <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
@@ -119,39 +159,6 @@
         <button type="button" @click="back()"
                 class="shrink-0 rounded text-[12.5px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Edit</button>
       </div>
-    </div>
-
-    <div class="sm:col-span-2 space-y-3"
-         x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
-      <template x-for="(stop, i) in stops" :key="i">
-        <div class="aac">
-          <div class="mb-1 flex items-center justify-between">
-            <label class="block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
-            <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
-                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
-              <i class="ti ti-x text-[13px]"></i>
-            </button>
-          </div>
-          <div class="sa-search" @keydown.escape="closeRow(i)"
-               @keydown.down.prevent="move(i, 1)" @keydown.up.prevent="move(i, -1)"
-               @keydown.enter.prevent="chooseActive(i)">
-            <input type="text" x-model="stop.address" placeholder="Search an address…"
-                   role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
-                   autocomplete="off" data-1p-ignore class="field w-full"
-                   @input.debounce.250ms="search(i)" @focus="requestLocation(); rowState(i).list.length && (rowState(i).open = true)">
-            <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
-              <template x-for="(r, j) in rowState(i).list" :key="j">
-                {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
-              </template>
-            </div>
-          </div>
-        </div>
-      </template>
-      <button type="button" @click="add()" x-show="canAdd()"
-              class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
-        <i class="ti ti-plus"></i> Add a stop
-      </button>
-      <input type="hidden" name="stops_json" :value="json()">
     </div>
 
     <div class="sm:col-span-2">
