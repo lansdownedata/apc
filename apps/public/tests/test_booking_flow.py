@@ -1,5 +1,7 @@
 from decimal import Decimal
+from pathlib import Path
 
+import pytest
 from django.test import Client
 
 
@@ -21,16 +23,37 @@ def test_widget_has_flatpickr_phone_and_stops(db):
 
 
 def test_widget_wires_location_bias(db):
-    """Pickup, drop-off, and stop rows all seed the service-area bias center and
-    request the visitor's location on focus (parity with the staff smart-address)."""
+    """Pickup, drop-off, and stop rows seed the service-area bias center.
+
+    We do NOT ask the visitor for their location. ADDRESS_BIAS_CENTER already
+    describes where every trip happens, so the browser permission prompt bought
+    nothing — and for a visitor browsing from outside the DMV it actively biased
+    suggestions to the wrong metro.
+    """
     html = Client().get("/bookings/").content.decode()
-    # ADDRESS_BIAS_CENTER default (DC metro) reaches the rendered widget as the fallback bias.
+    # ADDRESS_BIAS_CENTER default (DC metro) reaches the rendered widget as the bias.
     assert "fallbackLat" in html
     assert "38.9531" in html  # ADDRESS_BIAS_CENTER default latitude
-    # geolocation is requested on focus so suggestions bias to where the visitor is.
-    assert "requestLocation()" in html
     # both the address component (pickup/drop-off) and the stops repeater carry the bias.
     assert "addressAutocomplete(" in html and "bookingStops(" in html
+    # no geolocation prompt is wired to any field
+    assert "requestLocation" not in html
+
+
+@pytest.mark.parametrize("url", ["/", "/bookings/", "/contact/"])
+def test_booking_forms_never_prompt_for_geolocation(db, url):
+    html = Client().get(url).content.decode()
+    assert "requestLocation" not in html
+    assert "getCurrentPosition" not in html
+
+
+def test_app_js_has_no_geolocation_api_calls():
+    """The prompt is gone at the source, not just unwired from the templates."""
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    assert "getCurrentPosition" not in js, (
+        "app.js still calls the geolocation API — the permission prompt will fire"
+    )
+    assert "requestBrowserLocation" not in js, "dead geolocation helper left behind"
 
 
 def test_full_booking_post_creates_lead_with_stops(db):
