@@ -22,7 +22,7 @@
     <div class="relative mt-1.5" x-data="{ show:false }">
       <i class="ti ti-lock text-[16px] text-muted absolute left-3 top-1/2 -translate-y-1/2"></i>
       <input :type="show ? 'text':'password'" name="new_password1" autocomplete="new-password" autofocus required
-             class="field pl-9 pr-10" placeholder="••••••••">
+             class="field field-icon-left field-icon-right" placeholder="••••••••">
       <button type="button" @click="show=!show" class="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
         <i class="ti text-[16px]" :class="show ? 'ti-eye-off':'ti-eye'"></i>
       </button>
@@ -34,7 +34,7 @@
     <div class="relative mt-1.5">
       <i class="ti ti-lock-check text-[16px] text-muted absolute left-3 top-1/2 -translate-y-1/2"></i>
       <input type="password" name="new_password2" autocomplete="new-password" required
-             class="field pl-9" placeholder="••••••••">
+             class="field field-icon-left" placeholder="••••••••">
     </div>
   </label>
 
