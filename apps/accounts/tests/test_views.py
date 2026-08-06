@@ -223,3 +223,32 @@ def test_user_detail_shows_deactivate_for_active_user(client):
     html = client.get(reverse("user_detail", args=[target.pk])).content.decode()
     assert "Deactivate" in html
     assert "Resend invite" not in html
+
+
+# --- auth-page markup ----------------------------------------------------------------
+# Icon-inset inputs must use the `.field-icon-left/right` modifiers, not Tailwind's
+# `pl-*`/`pr-*` utilities: app.css loads after tailwind.css and `.field`'s `padding`
+# shorthand overrides them, so the icon lands on top of the placeholder text.
+
+
+def _icon_inputs(html: str) -> list[str]:
+    return [line for line in html.splitlines() if 'class="field' in line]
+
+
+def test_login_icon_inputs_use_field_inset_modifiers(client):
+    lines = _icon_inputs(client.get(reverse("login")).content.decode())
+    assert len(lines) == 2
+    assert all("field-icon-left" in line for line in lines)
+    assert any("field-icon-right" in line for line in lines)
+    assert not any(" pl-9" in line or " pr-10" in line for line in lines)
+
+
+def test_accept_invite_icon_inputs_use_field_inset_modifiers(client):
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    user = _make_pending(admin)
+    uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+    url = reverse("accept_invite", args=[uidb64, default_token_generator.make_token(user)])
+    lines = _icon_inputs(client.get(url).content.decode())
+    assert len(lines) == 2
+    assert all("field-icon-left" in line for line in lines)
+    assert not any(" pl-9" in line or " pr-10" in line for line in lines)

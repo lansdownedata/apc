@@ -195,6 +195,12 @@ header, aside, main, .wash-gold {
 .field::placeholder { color: rgb(var(--muted) / .7); }
 .field:focus { outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
 
+/* Room for an icon / affordance overlaid inside the field.  Tailwind's `pl-*`/`pr-*`
+   utilities can NOT be used for this: app.css loads after tailwind.css and `.field`'s
+   `padding` shorthand wins on source order, so the icon ends up on the placeholder. */
+.field-icon-left { padding-left: 2.25rem; }
+.field-icon-right { padding-right: 2.5rem; }
+
 /* Inline-editable text (quote header).  Must read as an input *at rest* — a
    fully transparent field is indistinguishable from static label text. */
 .inline-edit {
