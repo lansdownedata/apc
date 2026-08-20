@@ -68,3 +68,12 @@ def test_confirm_moves_an_offer_to_confirmed():
     a.refresh_from_db()
     assert a.status == Assignment.Status.CONFIRMED
     assert a.resolved_at is not None
+
+
+def test_confirming_an_already_confirmed_assignment_is_a_no_op():
+    a = AssignmentFactory(status=Assignment.Status.CONFIRMED)
+    first_resolved = a.resolved_at
+    assert services.confirm(a) is a
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.CONFIRMED
+    assert a.resolved_at == first_resolved
