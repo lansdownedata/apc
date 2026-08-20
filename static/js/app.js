@@ -144,6 +144,48 @@ function drawer() {
 }
 window.drawer = drawer;
 
+/* Assign drawer — posts the offer form and the resolve actions, then refreshes the board. */
+function assignPanel() {
+  return {
+    busy: false,
+    async send(url, extra) {
+      this.busy = true;
+      const form = new FormData(this.$root.querySelector("form") || undefined);
+      Object.entries(extra || {}).forEach(([k, v]) => form.set(k, v));
+      let data;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          body: form,
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+        });
+        data = await resp.json();
+      } catch (e) {
+        data = { ok: false, error: "Network error — nothing was saved" };
+      }
+      this.busy = false;
+      if (data.ok) window.location.reload();
+      else Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+    },
+    post(url) {
+      return this.send(url, {});
+    },
+    resolve(url, action) {
+      return this.send(url, { action });
+    },
+    confirmWithdraw(url) {
+      Alpine.store("modal").confirm({
+        title: "Withdraw this assignment?",
+        message: "The trip goes back to unassigned. The affiliate is not notified automatically.",
+        variant: "danger",
+        confirmText: "Withdraw",
+        onConfirm: () => this.send(url, { action: "withdraw" }),
+      });
+    },
+  };
+}
+window.assignPanel = assignPanel;
+
 /* -------------------------------------------------- CSRF helper */
 function getCookie(name) {
   const m = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
