@@ -1,45 +1,70 @@
 {% comment %} Drawer body — injected via x-html, so this is a fragment with no {% extends %}. {% endcomment %}
-<div class="rounded-xl bg-goldl/40 ring-1 ring-line px-4 py-3 mb-4">
-  <p class="font-semibold text-ink text-[14px]">
-    #{{ trip.la_confirmation|default:trip.pk }} · {% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% endif %} · {{ trip.lead.contact.name }}
-  </p>
-  <p class="text-[12.5px] text-muted mt-1">
-    {{ trip.pickup.address|default:"—" }} → {{ trip.dropoff.address|default:"—" }}
-  </p>
-  <p class="text-[12.5px] text-muted mt-0.5 num">
-    {{ trip.vehicle.name|default:"Any vehicle" }} · customer {{ trip.line_total }}
-  </p>
-</div>
-
-{% if assignment %}
-  <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Coverage</p>
-  <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
-    <p class="font-semibold text-ink text-[13px]">{{ assignment.vendor.name }}</p>
-    <p class="text-[12px] text-muted mt-0.5 num">
-      {{ assignment.get_status_display }} · payout {{ assignment.payout }} · margin {{ assignment.margin }}
+{% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
+     {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
+     assignPanel()'s busy flag and post/resolve/confirmWithdraw methods. {% endcomment %}
+<div x-data="assignPanel()">
+  <div class="rounded-xl bg-goldl/40 ring-1 ring-line px-4 py-3 mb-4">
+    <p class="font-semibold text-ink text-[14px]">
+      #{{ trip.la_confirmation|default:trip.pk }} · {% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% endif %} · {{ trip.lead.contact.name }}
+    </p>
+    <p class="text-[12.5px] text-muted mt-1">
+      {{ trip.pickup.address|default:"—" }} → {{ trip.dropoff.address|default:"—" }}
+    </p>
+    <p class="text-[12.5px] text-muted mt-0.5 num">
+      {{ trip.vehicle.name|default:"Any vehicle" }} · customer {{ trip.line_total }}
     </p>
   </div>
-  {% comment %} Task 5 wires these buttons to their POST endpoints. {% endcomment %}
-{% else %}
-  <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Offer to</p>
-  {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}
-  <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
-         value="{{ search }}" x-init="$el.focus()"
-         @input.debounce.300ms="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}?q=' + encodeURIComponent($event.target.value)})">
-  <div class="space-y-1.5">
-    {% for option in options %}
-      <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
-        <input type="radio" name="vendor" value="{{ option.vendor.pk }}" class="shrink-0">
-        <span class="min-w-0">
-          <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vendor.name }}</span>
-          <span class="block text-[11.5px] text-muted truncate">
-            {% if option.fits_vehicle %}{{ trip.vehicle.name }} ✓ · {% endif %}
-            {{ option.vendor.service_area|default:"—" }} · used {{ option.used }}×
-          </span>
-        </span>
-      </label>
-    {% empty %}
-      <p class="text-[13px] text-muted">No active affiliates yet.</p>
-    {% endfor %}
-  </div>
-{% endif %}
+
+  {% if assignment %}
+    <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Coverage</p>
+    <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
+      <p class="font-semibold text-ink text-[13px]">{{ assignment.vendor.name }}</p>
+      <p class="text-[12px] text-muted mt-0.5 num">
+        {{ assignment.get_status_display }} · payout {{ assignment.payout }} · margin {{ assignment.margin }}
+      </p>
+    </div>
+    <div class="flex gap-2 mt-4">
+      {% if assignment.status == 'offered' %}
+        <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+                :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
+        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+                :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
+      {% endif %}
+      <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
+              :disabled="busy" @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}')">Withdraw</button>
+    </div>
+  {% else %}
+    <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Offer to</p>
+    {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}
+    <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
+           value="{{ search }}" x-init="$el.focus()"
+           @input.debounce.300ms="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}?q=' + encodeURIComponent($event.target.value)})">
+    <form @submit.prevent>{% csrf_token %}
+      <div class="space-y-1.5">
+        {% for option in options %}
+          <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
+            <input type="radio" name="vendor" value="{{ option.vendor.pk }}" class="shrink-0">
+            <span class="min-w-0">
+              <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vendor.name }}</span>
+              <span class="block text-[11.5px] text-muted truncate">
+                {% if option.fits_vehicle %}{{ trip.vehicle.name }} ✓ · {% endif %}
+                {{ option.vendor.service_area|default:"—" }} · used {{ option.used }}×
+              </span>
+            </span>
+          </label>
+        {% empty %}
+          <p class="text-[13px] text-muted">No active affiliates yet.</p>
+        {% endfor %}
+      </div>
+      <label class="block text-[11px] uppercase tracking-wide text-muted mt-4 mb-1">Payout</label>
+      <input type="text" name="payout" inputmode="decimal" placeholder="0.00"
+             class="field w-full num text-[13px]">
+      <div class="flex gap-2 mt-4">
+        <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+                :disabled="busy" @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
+        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+                :disabled="busy" @click="post('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
+      </div>
+    </form>
+  {% endif %}
+</div>
