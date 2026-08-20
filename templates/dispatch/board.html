@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Dispatch{% endblock %}
+
+{% block content %}
+<div class="flex items-center gap-3 mb-5">
+  <h1 class="font-display text-[22px] font-semibold text-ink">Dispatch</h1>
+  <div class="flex items-center gap-1 ml-auto text-[13px]">
+    <a href="?day={{ prev_day|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
+       class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Previous day">
+      <i class="ti ti-chevron-left text-[16px]"></i>
+    </a>
+    <span class="px-3 py-1.5 font-semibold text-ink num">{{ day|date:"D M j, Y" }}</span>
+    <a href="?day={{ next_day|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
+       class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Next day">
+      <i class="ti ti-chevron-right text-[16px]"></i>
+    </a>
+    {% if day != today %}
+      <a href="?day={{ today|date:'Y-m-d' }}" class="btn-ghost px-3 py-1.5 rounded-lg ring-1 ring-line ml-1">Today</a>
+    {% endif %}
+  </div>
+</div>
+
+{% comment %} Attention strip — whole-day counts; each chip filters the grid below. {% endcomment %}
+<div class="flex flex-wrap items-center gap-2 mb-3">
+  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'uncovered' %}&f=uncovered{% endif %}"
+     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 {% if active_filter == 'uncovered' %}bg-amber-100 text-amber-800 ring-amber-600/30{% else %}bg-amber-50 text-amber-700 ring-amber-600/20{% endif %}">
+    {{ counts.uncovered }} uncovered
+  </a>
+  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'offered' %}&f=offered{% endif %}"
+     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 {% if active_filter == 'offered' %}bg-sky-100 text-sky-800 ring-sky-600/30{% else %}bg-surface text-muted ring-line{% endif %}">
+    {{ counts.offered }} awaiting affiliate
+  </a>
+  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'confirmed' %}&f=confirmed{% endif %}"
+     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 ml-auto {% if active_filter == 'confirmed' %}bg-emerald-100 text-emerald-800 ring-emerald-600/30{% else %}bg-surface text-muted ring-line{% endif %}">
+    {{ counts.confirmed }} covered
+  </a>
+</div>
+
+<div class="card overflow-x-auto">
+  <table class="w-full text-[13px]">
+    <thead class="sticky top-0 bg-surface2 z-10">
+      <tr class="text-[11px] uppercase tracking-wide text-muted">
+        <th class="text-left px-3 py-2.5">PU</th>
+        <th class="text-left px-3 py-2.5">Conf#</th>
+        <th class="text-left px-3 py-2.5">Status</th>
+        <th class="text-left px-3 py-2.5">Passenger</th>
+        <th class="text-left px-3 py-2.5">Routing</th>
+        <th class="text-left px-3 py-2.5">Veh</th>
+        <th class="text-left px-3 py-2.5">Coverage</th>
+        <th class="text-right px-3 py-2.5">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for trip in trips %}
+        <tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if trip.coverage == 'uncovered' %}bg-amber-50/40{% endif %}">
+          <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% else %}—{% endif %}</td>
+          <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
+          <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
+          <td class="px-3 py-3">{{ trip.lead.contact.name }}</td>
+          {% comment %} pickup_stop/dropoff_stop come from the selector — never trip.pickup (N+1). {% endcomment %}
+          <td class="px-3 py-3 text-muted">{{ trip.pickup_stop.address|default:"—" }} → {{ trip.dropoff_stop.address|default:"—" }}</td>
+          <td class="px-3 py-3 text-muted">{{ trip.vehicle.name|default:"—" }}</td>
+          <td class="px-3 py-3">{% include "dispatch/_coverage_cell.html" with trip=trip %}</td>
+          <td class="px-3 py-3 num text-right">{{ trip.line_total }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="8" class="px-3 py-10 text-center text-muted">No trips on this day.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

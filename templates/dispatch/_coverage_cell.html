@@ -1,0 +1,6 @@
+{% comment %} Vendor covering the trip — trip.active is set by the selector, no per-row query. {% endcomment %}
+{% if trip.active %}
+  <span class="text-muted">↗ {{ trip.active.vendor.name }}{% if trip.coverage == 'offered' %} <i class="ti ti-clock text-[13px]"></i>{% endif %}</span>
+{% else %}
+  <span class="text-muted">—</span>
+{% endif %}
