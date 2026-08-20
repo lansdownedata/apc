@@ -118,6 +118,32 @@ function shell() {
 }
 window.shell = shell;
 
+/* Right-side drawer — fetches an HTML fragment and shows it beside the page. */
+function drawer() {
+  return {
+    open: false,
+    body: "",
+    async load(url) {
+      this.body = '<p class="text-muted text-[13px]">Loading…</p>';
+      this.open = true;
+      try {
+        const resp = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+        if (!resp.ok) throw new Error(resp.status);
+        this.body = await resp.text();
+      } catch (e) {
+        this.body = "";
+        this.open = false;
+        Alpine.store("toast").push({ type: "danger", title: "Could not open that trip" });
+      }
+    },
+    close() {
+      this.open = false;
+      this.body = "";
+    },
+  };
+}
+window.drawer = drawer;
+
 /* -------------------------------------------------- CSRF helper */
 function getCookie(name) {
   const m = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
