@@ -1,0 +1,27 @@
+{% comment %}
+  Reusable right-side drawer. Unlike the modal (a global $store), a drawer is a per-page
+  surface, so it takes a scoped x-data. Include once per page that needs one:
+    {% include "components/drawer.html" with drawer_title="Assign trip" %}
+  Open it from anywhere on the page:  $dispatch('drawer-open', {url: '/portal/…/panel/'})
+  The fragment at `url` is fetched and injected — the drawer never knows what it holds.
+{% endcomment %}
+<div x-data="drawer()" x-show="open" x-cloak class="fixed inset-0 z-[55]"
+     @drawer-open.window="load($event.detail.url)"
+     @keydown.escape.window="open && close()">
+  <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>
+  <aside class="absolute right-0 top-0 h-full w-full max-w-[460px] bg-surface shadow-2xl overflow-y-auto"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
+    <header class="flex items-center gap-3 px-5 py-4 border-b border-line sticky top-0 bg-surface">
+      <h2 class="font-display text-[17px] font-semibold text-ink">{{ drawer_title|default:"Details" }}</h2>
+      <button @click="close()" class="ml-auto btn-ghost p-1.5 rounded-lg" aria-label="Close">
+        <i class="ti ti-x text-[18px]"></i>
+      </button>
+    </header>
+    <div class="p-5" x-html="body">
+      <p class="text-muted text-[13px]">Loading…</p>
+    </div>
+  </aside>
+</div>

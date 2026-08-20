@@ -52,7 +52,8 @@
     </thead>
     <tbody>
       {% for trip in trips %}
-        <tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if trip.coverage == 'uncovered' %}bg-amber-50/40{% endif %}">
+        <tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if trip.coverage == 'uncovered' %}bg-amber-50/40{% endif %}"
+            @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
           <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% else %}—{% endif %}</td>
           <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
           <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
@@ -69,4 +70,6 @@
     </tbody>
   </table>
 </div>
+
+{% include "components/drawer.html" with drawer_title="Assign trip" %}
 {% endblock %}

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch
 
 from apps.leads.models import Lead
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
+from apps.vendors.models import Vendor
 
 from .models import Assignment
 
@@ -66,3 +67,31 @@ def strip_counts(trips: list[Reservation]) -> dict[str, int]:
     for trip in trips:
         counts[trip.coverage] += 1
     return counts
+
+
+def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> list[dict]:
+    """Affiliates to offer this trip to — most-used first, or whatever the search matches.
+
+    "Most used" counts every past assignment regardless of outcome: a vendor he offers to
+    often is the one he reaches for, even when they sometimes decline. Search bypasses the
+    ranking so the whole directory stays reachable from the drawer.
+    """
+    qs = (
+        Vendor.objects.filter(status=Vendor.Status.ACTIVE)
+        .annotate(used=Count("assignments"))
+        .prefetch_related("vehicle_types")
+    )
+    term = (search or "").strip()
+    if term:
+        qs = qs.filter(name__icontains=term)
+    qs = qs.order_by("-used", "name")[:limit]
+
+    vehicle_id = trip.vehicle_id
+    return [
+        {
+            "vendor": vendor,
+            "used": vendor.used,
+            "fits_vehicle": any(vt.pk == vehicle_id for vt in vendor.vehicle_types.all()),
+        }
+        for vendor in qs
+    ]
