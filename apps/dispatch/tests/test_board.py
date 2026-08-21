@@ -116,6 +116,16 @@ def test_board_requires_login(client):
     assert "/portal/login/" in resp["Location"]
 
 
+def test_today_link_preserves_the_active_filter(logged_in_client):
+    """Clicking Today while a strip filter is active should not silently clear it."""
+    _trip(pickup_time=time(6, 0))
+    resp = logged_in_client.get(
+        reverse("dispatch_board"), {"day": DAY.isoformat(), "f": "uncovered"}
+    )
+    today_str = timezone.localdate().isoformat()
+    assert f'href="?day={today_str}&f=uncovered"'.encode() in resp.content
+
+
 def test_board_query_count_does_not_grow_with_trips(
     logged_in_client, django_assert_max_num_queries
 ):

@@ -15,7 +15,8 @@
       <i class="ti ti-chevron-right text-[16px]"></i>
     </a>
     {% if day != today %}
-      <a href="?day={{ today|date:'Y-m-d' }}" class="btn-ghost px-3 py-1.5 rounded-lg ring-1 ring-line ml-1">Today</a>
+      <a href="?day={{ today|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
+         class="btn-ghost px-3 py-1.5 rounded-lg ring-1 ring-line ml-1">Today</a>
     {% endif %}
   </div>
 </div>
