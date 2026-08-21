@@ -9,6 +9,7 @@ from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 
+from apps.dispatch import services as dispatch_services
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
@@ -83,5 +84,8 @@ def reservation_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
     _alert_la_stale(res)
+    # The trip is about to stop existing — pull any affiliate offer first, so coverage is
+    # released through the one door instead of vanishing with the CASCADE.
+    dispatch_services.release_trips([res], note="Trip removed")
     res.delete()
     return redirect("lead_detail", pk=lead_id)

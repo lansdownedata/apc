@@ -40,6 +40,13 @@ def test_offer_email_never_shows_the_customer_price(mailoutbox):
     assert "285" not in body
 
 
+def test_offer_email_formats_the_payout_as_money(mailoutbox):
+    """A bare 1200.00 is the kind of figure an affiliate misreads at a glance."""
+    services.send_offer(_trip(), VendorFactory(email="ops@x.example"), payout=Decimal("1200.00"))
+    body = mailoutbox[0].body + mailoutbox[0].alternatives[0][0]
+    assert "$1,200.00" in body
+
+
 def test_a_vendor_without_an_email_still_gets_the_assignment(mailoutbox):
     vendor = VendorFactory(email="")
     assignment = services.send_offer(_trip(), vendor, payout=Decimal("215.00"))

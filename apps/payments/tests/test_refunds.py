@@ -6,11 +6,14 @@ from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
+from apps.dispatch import services as dispatch_services
+from apps.dispatch.models import Assignment
 from apps.leads.models import Lead
 from apps.payments import ledger, services
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import Charge, JournalEntry, PaymentPlan
 from apps.reservations.factories import TransferReservationFactory
+from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -68,6 +71,25 @@ def test_cancel_and_refund_cancels_and_reverses(client):
     res.refresh_from_db()
     assert plan.lead.status == Lead.Status.LOST
     assert res.revenue_status == res.RevenueStatus.REVERSED
+
+
+def test_cancel_and_refund_withdraws_affiliate_coverage(client):
+    """The board hides cancelled trips, and nothing lists assignments by vendor — so an
+    offer left active here is one no dispatcher can ever find, while the affiliate still
+    thinks he is covering the trip."""
+    plan = _paid_plan()
+    plan.lead.status = Lead.Status.BOOKED
+    plan.lead.save(update_fields=["status", "updated_at"])
+    res = TransferReservationFactory(lead=plan.lead, rate=Decimal("1335.00"))
+    offer = dispatch_services.send_offer(res, VendorFactory(), payout=Decimal("900.00"))
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    with patch.object(services.stripe.Refund, "create", return_value=MagicMock(id="re_3")):
+        client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+
+    offer.refresh_from_db()
+    assert offer.status == Assignment.Status.WITHDRAWN
+    assert offer.note == "Order cancelled"
 
 
 def test_refund_caps_at_captured_no_double_refund():

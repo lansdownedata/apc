@@ -4,22 +4,23 @@ from decimal import Decimal
 import pytest
 from django.urls import reverse
 
-from apps.dispatch import services
+from apps.dispatch import services, views
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
+from apps.reservations.models import Reservation
 from apps.vendors.factories import VendorFactory
+from apps.vendors.models import Vendor
 
 pytestmark = pytest.mark.django_db
 
 
-def _trip():
-    return ReservationFactory(
-        lead=LeadFactory(status=Lead.Status.BOOKED),
-        pickup_date=date(2026, 8, 26),
-        pickup_time=time(6, 15),
-    )
+def _trip(**kwargs):
+    kwargs.setdefault("lead", LeadFactory(status=Lead.Status.BOOKED))
+    kwargs.setdefault("pickup_date", date(2026, 8, 26))
+    kwargs.setdefault("pickup_time", time(6, 15))
+    return ReservationFactory(**kwargs)
 
 
 def test_offer_creates_an_offered_assignment(logged_in_client):
@@ -87,6 +88,46 @@ def test_non_finite_payout_is_rejected(logged_in_client, payout):
     )
     assert resp.status_code == 400
     assert resp.json()["ok"] is False
+
+
+@pytest.mark.parametrize("endpoint", ["dispatch_offer", "dispatch_assign"])
+def test_a_trip_on_an_unsold_quote_is_refused(logged_in_client, endpoint):
+    """A hand-crafted POST must not farm out a quote nobody bought."""
+    trip = _trip(lead=LeadFactory(status=Lead.Status.QUOTED))
+    resp = logged_in_client.post(
+        reverse(endpoint, args=[trip.pk]), {"vendor": VendorFactory().pk, "payout": "215.00"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    assert not Assignment.objects.filter(reservation=trip).exists()
+
+
+@pytest.mark.parametrize("endpoint", ["dispatch_offer", "dispatch_assign"])
+def test_a_cancelled_trip_is_refused(logged_in_client, endpoint):
+    trip = _trip(trip_status=Reservation.TripStatus.CANCELLED)
+    resp = logged_in_client.post(
+        reverse(endpoint, args=[trip.pk]), {"vendor": VendorFactory().pk, "payout": "215.00"}
+    )
+    assert resp.status_code == 400
+    assert not Assignment.objects.filter(reservation=trip).exists()
+
+
+def test_an_inactive_affiliate_is_refused(logged_in_client):
+    """The picker only offers active affiliates; the endpoint must agree."""
+    trip = _trip()
+    archived = VendorFactory(status=Vendor.Status.INACTIVE)
+    resp = logged_in_client.post(
+        reverse("dispatch_offer", args=[trip.pk]), {"vendor": archived.pk, "payout": "215.00"}
+    )
+    assert resp.status_code == 400
+    assert not Assignment.objects.filter(reservation=trip).exists()
+
+
+@pytest.mark.parametrize("posted,expected", [("100.999", "101.00"), ("100.005", "100.01")])
+def test_payout_is_quantized_to_cents_before_it_reaches_the_db(rf, posted, expected):
+    """MySQL rounds a third decimal half-even and Postgres half-up, so dev and prod would
+    store different money. Round in Python instead, half-up like the rest of the app."""
+    assert views._payout(rf.post("/", {"payout": posted})) == Decimal(expected)
 
 
 @pytest.mark.parametrize(
