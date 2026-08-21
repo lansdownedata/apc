@@ -39,11 +39,13 @@
     <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
            value="{{ search }}" x-init="$el.focus()"
            @input.debounce.300ms="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}?q=' + encodeURIComponent($event.target.value)})">
-    <form @submit.prevent>{% csrf_token %}
+    <form x-data="{ selectedVendor: '', selectedEmail: '' }" @submit.prevent>{% csrf_token %}
       <div class="space-y-1.5">
         {% for option in options %}
           <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
-            <input type="radio" name="vendor" value="{{ option.vendor.pk }}" class="shrink-0">
+            <input type="radio" name="vendor" value="{{ option.vendor.pk }}" data-email="{{ option.vendor.email }}"
+                   class="shrink-0"
+                   @change="selectedVendor = $event.target.value; selectedEmail = $event.target.dataset.email">
             <span class="min-w-0">
               <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vendor.name }}</span>
               <span class="block text-[11.5px] text-muted truncate">
@@ -61,10 +63,14 @@
              class="field w-full num text-[13px]">
       <div class="flex gap-2 mt-4">
         <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
-                :disabled="busy" @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
+                :disabled="busy || (selectedVendor && !selectedEmail)"
+                @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
                 :disabled="busy" @click="post('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
       </div>
+      <p class="text-[11.5px] text-muted mt-2" x-show="selectedVendor && !selectedEmail">
+        Add an email on the vendor page to send offers.
+      </p>
     </form>
   {% endif %}
 </div>

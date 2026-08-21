@@ -1,0 +1,22 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Trip offer — {{ trip.pickup_date|date:"M j" }}{% endblock %}
+{% block preheader %}{{ trip.pickup_date|date:"M j" }} at {{ trip.pickup_time|time:"g:i A" }} — ${{ payout }} payout.{% endblock %}
+{% block content %}
+<h1 style="font-size:20px;margin:0 0 12px">Trip offer</h1>
+<p style="margin:0 0 16px">{{ vendor.name }} — we have a trip we'd like you to cover.</p>
+
+<table cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;margin-bottom:16px">
+  <tr><td style="padding:4px 0;color:#6b7280">Date</td><td style="padding:4px 0">{{ trip.pickup_date|date:"l, F j, Y" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Pickup</td><td style="padding:4px 0">{{ trip.pickup_time|time:"g:i A" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Vehicle</td><td style="padding:4px 0">{{ trip.vehicle.name|default:"—" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Passengers</td><td style="padding:4px 0">{{ trip.passengers }}</td></tr>
+</table>
+
+<p style="margin:0 0 6px;font-weight:600">Routing</p>
+<ol style="margin:0 0 16px;padding-left:20px">
+  {% for stop in stops %}<li style="padding:2px 0">{{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}</li>{% endfor %}
+</ol>
+
+<p style="font-size:18px;font-weight:700;margin:0 0 16px">Payout offered: ${{ payout }}</p>
+<p style="margin:0;color:#6b7280;font-size:13px">Reply to this email or call the office to accept.</p>
+{% endblock %}
