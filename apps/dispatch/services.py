@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from django.conf import settings
+from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.utils import timezone
 
@@ -58,6 +60,11 @@ def _claim(
         )
 
 
+def _offer_logo() -> str | None:
+    """Absolute path to the email banner logo PNG, or None if it isn't collectable."""
+    return finders.find("brand/apc-logo-email.png")
+
+
 def offer_email_context(assignment: Assignment) -> dict:
     """Trip-sheet fields for the affiliate. Deliberately omits the customer price —
     an affiliate sees only what we pay them."""
@@ -67,6 +74,12 @@ def offer_email_context(assignment: Assignment) -> dict:
         "trip": trip,
         "payout": assignment.payout,
         "stops": list(trip.ordered_stops),
+        "company_name": settings.COMPANY_NAME,
+        "company_phone": settings.COMPANY_PHONE,
+        "company_email": settings.COMPANY_EMAIL,
+        # The banner logo is embedded as an inline CID attachment (see _offer_logo /
+        # the send_html_email call) so it renders without a remote fetch.
+        "logo_cid": "logo" if _offer_logo() else "",
     }
 
 
@@ -88,11 +101,13 @@ def send_offer(
         subject = f"Trip offer — {reservation.pickup_date:%b %-d}"
     else:
         subject = "Trip offer"
+    logo = _offer_logo()
     if send_html_email(
         to=vendor.email,
         subject=subject,
         template="vendor_offer",
         context=offer_email_context(assignment),
+        inline_images={"logo": logo} if logo else None,
     ):
         return assignment
 
