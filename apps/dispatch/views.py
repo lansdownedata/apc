@@ -78,6 +78,9 @@ def _payout(request: HttpRequest) -> Decimal:
 
     Rounded to cents here rather than left to the database: MySQL (dev/test) rounds a third
     decimal half-even and Postgres (prod) half-up, so the two would store different money.
+
+    Every rejection leaves as an AssignmentError — the callers only catch that one, so
+    anything else is a 500.
     """
     try:
         value = Decimal((request.POST.get("payout") or "").strip())
@@ -87,10 +90,14 @@ def _payout(request: HttpRequest) -> Decimal:
         raise services.AssignmentError("Enter a payout amount.")
     if value < 0:
         raise services.AssignmentError("Payout cannot be negative.")
-    value = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if value >= Decimal("100000000"):  # MoneyField is max_digits=10, 2dp
+    # Judge the magnitude BEFORE rounding, and against .995 rather than 1e8. Both halves
+    # matter: quantize() raises InvalidOperation (not AssignmentError → a 500) once the
+    # result would pass the 28-digit context precision, so it must never see a huge number;
+    # and 99999999.999 is under 1e8 until it rounds up to it, overflowing
+    # MoneyField(max_digits=10, decimal_places=2) at save time. Don't "simplify" this.
+    if value >= Decimal("99999999.995"):
         raise services.AssignmentError("Payout is too large.")
-    return value
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _vendor(request: HttpRequest) -> Vendor:
