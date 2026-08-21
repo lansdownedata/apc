@@ -10,6 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.dispatch import services as dispatch_services
 from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
@@ -102,6 +103,9 @@ def order_cancel_refund(request, lead_id):
         trip_status=Reservation.TripStatus.CANCELLED,
         revenue_status=Reservation.RevenueStatus.REVERSED,
     )
+    # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
+    # them would be unreachable — pull it here while we still know the trip died.
+    dispatch_services.release_trips(lead.reservations.all(), note="Order cancelled")
     lead.status = Lead.Status.LOST
     lead.lost_reason = "Cancelled"
     lead.has_alert = False

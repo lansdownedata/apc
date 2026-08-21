@@ -116,6 +116,32 @@ def test_delete_removes_reservation_and_stops(client):
     assert not Stop.objects.filter(reservation_id=res.pk).exists()
 
 
+def test_delete_withdraws_affiliate_coverage_first(client, monkeypatch):
+    """A deleted trip must not leave an affiliate holding coverage nobody can withdraw —
+    no screen lists assignments by vendor. The Assignment row goes with the trip (CASCADE),
+    so the withdrawal is observed at the service door it has to pass through."""
+    from apps.dispatch import services as dispatch_services
+    from apps.dispatch.models import Assignment
+    from apps.vendors.factories import VendorFactory
+
+    res = TransferReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
+    dispatch_services.send_offer(res, VendorFactory(), payout=Decimal("100.00"))
+    released = []
+    real = dispatch_services.release_trips
+
+    def spy(reservations, *, note):
+        withdrawn = real(reservations, note=note)
+        released.extend((a.status, a.note) for a in withdrawn)
+        return withdrawn
+
+    monkeypatch.setattr(dispatch_services, "release_trips", spy)
+    client.force_login(UserFactory())
+    client.post(reverse("reservation_delete", args=[res.pk]))
+
+    assert released == [(Assignment.Status.WITHDRAWN, "Trip removed")]
+    assert not Assignment.objects.filter(reservation_id=res.pk).exists()
+
+
 def test_duplicate_requires_login(client):
     res = TransferReservationFactory()
     resp = client.post(reverse("reservation_duplicate", args=[res.pk]))

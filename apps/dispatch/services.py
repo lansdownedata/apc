@@ -8,6 +8,7 @@ constraint would exist on prod Postgres and silently not exist where the tests r
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import Decimal
 
 from django.conf import settings
@@ -15,6 +16,7 @@ from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.utils import timezone
 
+from apps.leads.models import Lead
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
@@ -40,11 +42,19 @@ def _claim(
     note: str,
     status: str,
 ) -> Assignment:
-    """Create an assignment, refusing if the trip already has an active one.
+    """Create an assignment, refusing if the trip can't legally be farmed out.
+
+    The trip guards live here rather than in the view so both doors (`send_offer` and
+    `assign_direct`) are covered: farming out an unsold quote emails a real affiliate a
+    trip sheet for a trip nobody bought, and a cancelled trip needs no coverage at all.
 
     Locks the reservation row so two dispatchers assigning the same trip at the same
-    moment can't both pass the check.
+    moment can't both pass the already-active check.
     """
+    if reservation.lead.status != Lead.Status.BOOKED:
+        raise AssignmentError(f"Trip #{reservation.pk} isn't on a booked order.")
+    if reservation.is_cancelled:
+        raise AssignmentError(f"Trip #{reservation.pk} is cancelled.")
     with transaction.atomic():
         Reservation.objects.select_for_update().get(pk=reservation.pk)
         if reservation.assignments.active().exists():
@@ -72,7 +82,9 @@ def offer_email_context(assignment: Assignment) -> dict:
     return {
         "vendor": assignment.vendor,
         "trip": trip,
-        "payout": assignment.payout,
+        # Pre-formatted here rather than in the template: the email templates have no
+        # humanize filters, and `send_quote` formats its money the same way.
+        "payout": f"{assignment.payout:,.2f}",
         "stops": list(trip.ordered_stops),
         "company_name": settings.COMPANY_NAME,
         "company_phone": settings.COMPANY_PHONE,
@@ -157,3 +169,17 @@ def decline(assignment: Assignment, *, note: str = "") -> Assignment:
 def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
     """We pulled the offer, or unassigned confirmed coverage."""
     return _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
+
+
+def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Assignment]:
+    """Withdraw whatever active assignment each of `reservations` still has.
+
+    Called when trips stop needing coverage — a cancelled order, a deleted trip. The board
+    excludes both, and no screen lists assignments by vendor, so an assignment left active
+    is one no dispatcher can reach while the affiliate is still holding a trip that no
+    longer exists. One query for the whole set rather than a lookup per trip.
+    """
+    return [
+        withdraw(assignment, note=note)
+        for assignment in Assignment.objects.active().filter(reservation__in=reservations)
+    ]

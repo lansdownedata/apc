@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -74,7 +74,11 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 def _payout(request: HttpRequest) -> Decimal:
-    """Parse the posted payout, refusing anything that isn't non-negative money."""
+    """Parse the posted payout, refusing anything that isn't non-negative money.
+
+    Rounded to cents here rather than left to the database: MySQL (dev/test) rounds a third
+    decimal half-even and Postgres (prod) half-up, so the two would store different money.
+    """
     try:
         value = Decimal((request.POST.get("payout") or "").strip())
     except (InvalidOperation, TypeError) as exc:
@@ -83,16 +87,18 @@ def _payout(request: HttpRequest) -> Decimal:
         raise services.AssignmentError("Enter a payout amount.")
     if value < 0:
         raise services.AssignmentError("Payout cannot be negative.")
+    value = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     if value >= Decimal("100000000"):  # MoneyField is max_digits=10, 2dp
         raise services.AssignmentError("Payout is too large.")
     return value
 
 
 def _vendor(request: HttpRequest) -> Vendor:
+    """The posted affiliate — active only, matching what the picker offers."""
     try:
-        return Vendor.objects.get(pk=request.POST.get("vendor"))
+        return Vendor.objects.get(pk=request.POST.get("vendor"), status=Vendor.Status.ACTIVE)
     except (Vendor.DoesNotExist, ValueError, TypeError) as exc:
-        raise services.AssignmentError("Choose an affiliate.") from exc
+        raise services.AssignmentError("Choose an active affiliate.") from exc
 
 
 def _fail(exc: Exception) -> JsonResponse:
