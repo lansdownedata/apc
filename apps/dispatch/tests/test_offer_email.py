@@ -58,3 +58,21 @@ def test_a_failed_send_alerts_but_keeps_the_offer(monkeypatch):
     assignment = services.send_offer(trip, VendorFactory(email="x@y.example"), payout=Decimal("1"))
     assert assignment.status == services.Assignment.Status.OFFERED
     assert Notification.objects.filter(lead=trip.lead).exists()
+
+
+def test_offer_email_carries_the_company_branding(mailoutbox, settings):
+    vendor = VendorFactory(email="ops@capital.example")
+    services.send_offer(_trip(), vendor, payout=Decimal("215.00"))
+    html = mailoutbox[0].alternatives[0][0]
+    assert settings.COMPANY_NAME in html
+
+
+def test_offer_email_embeds_the_logo_inline(mailoutbox):
+    """The static/brand/apc-logo-email.png asset resolves in this environment (verified via
+    finders.find), so the offer email must attach it inline rather than reference a dead
+    cid: placeholder — matching how send_quote embeds the same logo."""
+    vendor = VendorFactory(email="ops@capital.example")
+    services.send_offer(_trip(), vendor, payout=Decimal("215.00"))
+    message = mailoutbox[0]
+    cids = [a["Content-ID"] for a in message.attachments if hasattr(a, "get")]
+    assert "<logo>" in cids
