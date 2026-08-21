@@ -13,6 +13,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.notifications.email import send_html_email
+from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.vendors.models import Vendor
 
@@ -56,11 +58,51 @@ def _claim(
         )
 
 
+def offer_email_context(assignment: Assignment) -> dict:
+    """Trip-sheet fields for the affiliate. Deliberately omits the customer price —
+    an affiliate sees only what we pay them."""
+    trip = assignment.reservation
+    return {
+        "vendor": assignment.vendor,
+        "trip": trip,
+        "payout": assignment.payout,
+        "stops": list(trip.ordered_stops),
+    }
+
+
 def send_offer(
     reservation: Reservation, vendor: Vendor, *, payout: Decimal, note: str = ""
 ) -> Assignment:
-    """Offer the trip to an affiliate and wait for their answer."""
-    return _claim(reservation, vendor, payout=payout, note=note, status=Assignment.Status.OFFERED)
+    """Offer the trip to an affiliate and email them the trip sheet.
+
+    Delivery is best-effort: a vendor with no email on file (or a send that fails) still
+    gets the assignment recorded, because he may well be arranging it by phone in parallel.
+    """
+    assignment = _claim(
+        reservation, vendor, payout=payout, note=note, status=Assignment.Status.OFFERED
+    )
+    if not vendor.email:
+        return assignment
+
+    if reservation.pickup_date:
+        subject = f"Trip offer — {reservation.pickup_date:%b %-d}"
+    else:
+        subject = "Trip offer"
+    if send_html_email(
+        to=vendor.email,
+        subject=subject,
+        template="vendor_offer",
+        context=offer_email_context(assignment),
+    ):
+        return assignment
+
+    Notification.notify(
+        reservation.lead,
+        Notification.Kind.SYNC_FAILED,
+        title=f"Offer email to {vendor.name} failed"[:160],
+        detail=f"Trip #{reservation.pk} is still marked offered — follow up by phone."[:255],
+    )
+    return assignment
 
 
 def assign_direct(

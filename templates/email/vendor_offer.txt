@@ -1,0 +1,12 @@
+{{ vendor.name }} — trip offer from All Pro Charter
+
+{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip.pickup_time|time:"g:i A" }}
+Vehicle: {{ trip.vehicle.name|default:"—" }}
+Passengers: {{ trip.passengers }}
+
+Routing:
+{% for stop in stops %}  {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}
+{% endfor %}
+Payout offered: ${{ payout }}
+
+Reply to this email or call the office to accept.
