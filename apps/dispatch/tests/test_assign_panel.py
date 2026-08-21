@@ -40,6 +40,26 @@ def test_ranking_is_capped_at_the_limit():
     assert len(selectors.vendor_options(trip, limit=8)) == 8
 
 
+def test_vendor_options_query_count_is_flat_regardless_of_vendor_count(
+    django_assert_max_num_queries,
+):
+    """Guards against reintroducing an N+1, e.g. a per-vendor insurance lookup.
+
+    The bound must hold at two very different vendor counts to prove the query count is
+    flat, not just under some ceiling that a mild N+1 would still clear.
+    """
+    trip = _trip()
+    for _ in range(3):
+        VendorFactory()
+    with django_assert_max_num_queries(2):
+        selectors.vendor_options(trip)
+
+    for _ in range(27):  # 30 active vendors total
+        VendorFactory()
+    with django_assert_max_num_queries(2):
+        selectors.vendor_options(trip)
+
+
 def test_search_looks_past_the_top_slice():
     trip = _trip()
     for _ in range(12):
