@@ -41,6 +41,31 @@ def test_trips_are_ordered_by_pickup_time(logged_in_client):
     assert [t.pk for t in resp.context["trips"]] == [early.pk, late.pk]
 
 
+def test_a_trip_with_no_pickup_time_sorts_first(logged_in_client):
+    """NULLs sort first on MySQL and last on Postgres, so the board would read differently
+    in dev and prod unless the ordering says which it wants. An untimed booked trip is an
+    exception the dispatcher has to resolve — it goes on top."""
+    timed = _trip(pickup_time=time(6, 15))
+    untimed = _trip(pickup_time=None)
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+    assert [t.pk for t in resp.context["trips"]] == [untimed.pk, timed.pk]
+
+
+def test_the_grid_columns_are_labelled_for_what_they_hold(logged_in_client):
+    """The pill column is coverage state; the vendor column is the affiliate."""
+    _trip()
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
+    assert b">Coverage<" in body
+    assert b">Affiliate<" in body
+    assert b">Status<" not in body
+
+
+def test_the_trip_total_renders_as_money(logged_in_client):
+    _trip(rate=Decimal("1200.00"), hours=1)
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
+    assert b"$1,200.00" in body
+
+
 def test_coverage_reflects_the_active_assignment(logged_in_client):
     uncovered = _trip(pickup_time=time(6, 0))
     offered = _trip(pickup_time=time(9, 0))

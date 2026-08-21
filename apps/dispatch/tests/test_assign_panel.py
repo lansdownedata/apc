@@ -1,14 +1,15 @@
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.dispatch import selectors, services
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
-from apps.vendors.factories import VendorFactory
+from apps.vendors.factories import VendorFactory, VendorInsuranceFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -77,6 +78,39 @@ def test_options_carry_vehicle_fit():
     by_pk = {o["vendor"].pk: o for o in selectors.vendor_options(trip)}
     assert by_pk[fitting.pk]["fits_vehicle"] is True
     assert all(o["fits_vehicle"] is False for pk, o in by_pk.items() if pk != fitting.pk)
+
+
+def test_options_carry_the_insurance_state():
+    """Lapsed coverage is the one fit signal with legal consequences for a broker, and the
+    drawer is where the assignment decision actually gets made."""
+    trip = _trip()
+    lapsed = VendorFactory(name="Lapsed Ltd")
+    VendorInsuranceFactory(vendor=lapsed, expiry_date=timezone.localdate() - timedelta(days=3))
+    insured = VendorFactory(name="Insured Co")
+    VendorInsuranceFactory(vendor=insured, expiry_date=timezone.localdate() + timedelta(days=200))
+    bare = VendorFactory(name="Bare Inc")
+
+    by_pk = {o["vendor"].pk: o for o in selectors.vendor_options(trip)}
+    assert by_pk[lapsed.pk]["insurance"]["status"] == "expired"
+    assert by_pk[insured.pk]["insurance"]["status"] == "valid"
+    assert by_pk[bare.pk]["insurance"]["status"] == "none"
+
+
+def test_panel_shows_the_insurance_state(logged_in_client):
+    trip = _trip()
+    lapsed = VendorFactory(name="Lapsed Ltd")
+    VendorInsuranceFactory(vendor=lapsed, expiry_date=timezone.localdate() - timedelta(days=3))
+    body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content
+    assert b"Lapsed 3 days ago" in body
+
+
+def test_panel_renders_money_as_money(logged_in_client):
+    trip = _trip(rate=Decimal("1200.00"), hours=1)
+    services.assign_direct(trip, VendorFactory(), payout=Decimal("1000.00"))
+    body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content
+    assert b"$1,200.00" in body  # customer total
+    assert b"$1,000.00" in body  # payout
+    assert b"$200.00" in body  # margin
 
 
 def test_panel_renders_the_trip_and_vendors(logged_in_client):
