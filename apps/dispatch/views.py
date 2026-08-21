@@ -79,6 +79,8 @@ def _payout(request: HttpRequest) -> Decimal:
         value = Decimal((request.POST.get("payout") or "").strip())
     except (InvalidOperation, TypeError) as exc:
         raise services.AssignmentError("Enter a payout amount.") from exc
+    if not value.is_finite():  # NaN/sNaN/Infinity parse fine but aren't valid money
+        raise services.AssignmentError("Enter a payout amount.")
     if value < 0:
         raise services.AssignmentError("Payout cannot be negative.")
     if value >= Decimal("100000000"):  # MoneyField is max_digits=10, 2dp

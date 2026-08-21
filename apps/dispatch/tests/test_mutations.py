@@ -79,6 +79,16 @@ def test_negative_payout_is_rejected(logged_in_client):
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize("payout", ["NaN", "Infinity"])
+def test_non_finite_payout_is_rejected(logged_in_client, payout):
+    resp = logged_in_client.post(
+        reverse("dispatch_offer", args=[_trip().pk]),
+        {"vendor": VendorFactory().pk, "payout": payout},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+
+
 @pytest.mark.parametrize(
     "action,expected",
     [
