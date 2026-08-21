@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.db.models import Count, Prefetch
+from django.db.models import Count, Exists, F, OuterRef, Prefetch
 
-from apps.leads.models import Lead
+from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
-from apps.vendors.models import Vendor
+from apps.vendors.models import Vendor, VendorInsurance
 
 from .models import Assignment
 
@@ -37,6 +37,11 @@ def board_trips(day: date) -> list[Reservation]:
     `stops.order_by("sequence")`, and that `.order_by()` builds a fresh queryset that
     ignores the prefetch cache — two extra queries per row if a caller touches them.
     `pickup_stop`/`dropoff_stop` exist so the template never has to.
+
+    NULL pickup times are pinned to the top explicitly: MySQL (dev/test) sorts NULLs first
+    and Postgres (prod) sorts them last, so without saying which we want the same day reads
+    differently in the two environments. A booked trip with no pickup time is an exception
+    the dispatcher has to resolve, so it belongs at the top rather than buried at the end.
     """
     trips = list(
         Reservation.objects.filter(lead__status=Lead.Status.BOOKED, pickup_date=day)
@@ -50,7 +55,7 @@ def board_trips(day: date) -> list[Reservation]:
                 to_attr="active_list",
             ),
         )
-        .order_by("pickup_time", "pk")
+        .order_by(F("pickup_time").asc(nulls_first=True), "pk")
     )
     for trip in trips:
         stops = list(trip.stops.all())  # prefetched, already in sequence order
@@ -75,23 +80,38 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> li
     "Most used" counts every past assignment regardless of outcome: a vendor he offers to
     often is the one he reaches for, even when they sometimes decline. Search bypasses the
     ranking so the whole directory stays reachable from the drawer.
+
+    Two queries whatever the vendor count, and it has to stay that way (see
+    test_vendor_options_query_count_is_flat_regardless_of_vendor_count). That is why
+    vehicle fit is an `Exists` subquery rather than a second prefetch: the one prefetch
+    slot buys the insurance policies, which `insurance_summary()` needs in memory.
     """
     qs = (
         Vendor.objects.filter(status=Vendor.Status.ACTIVE)
-        .annotate(used=Count("assignments"))
-        .prefetch_related("vehicle_types")
+        .annotate(
+            used=Count("assignments"),
+            fits_vehicle=Exists(
+                VehicleType.objects.filter(pk=trip.vehicle_id, vendors=OuterRef("pk"))
+            ),
+        )
+        .prefetch_related(
+            Prefetch(
+                "policies",
+                queryset=VendorInsurance.objects.only("id", "vendor_id", "expiry_date"),
+            )
+        )
     )
     term = (search or "").strip()
     if term:
         qs = qs.filter(name__icontains=term)
     qs = qs.order_by("-used", "name")[:limit]
 
-    vehicle_id = trip.vehicle_id
     return [
         {
             "vendor": vendor,
             "used": vendor.used,
-            "fits_vehicle": any(vt.pk == vehicle_id for vt in vendor.vehicle_types.all()),
+            "fits_vehicle": vendor.fits_vehicle,
+            "insurance": vendor.insurance_summary(),
         }
         for vendor in qs
     ]

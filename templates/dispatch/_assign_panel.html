@@ -1,3 +1,4 @@
+{% load humanize %}
 {% comment %} Drawer body — injected via x-html, so this is a fragment with no {% extends %}. {% endcomment %}
 {% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
@@ -11,7 +12,7 @@
       {{ trip.pickup.address|default:"—" }} → {{ trip.dropoff.address|default:"—" }}
     </p>
     <p class="text-[12.5px] text-muted mt-0.5 num">
-      {{ trip.vehicle.name|default:"Any vehicle" }} · customer {{ trip.line_total }}
+      {{ trip.vehicle.name|default:"Any vehicle" }} · customer ${{ trip.line_total|floatformat:2|intcomma }}
     </p>
   </div>
 
@@ -20,7 +21,7 @@
     <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
       <p class="font-semibold text-ink text-[13px]">{{ assignment.vendor.name }}</p>
       <p class="text-[12px] text-muted mt-0.5 num">
-        {{ assignment.get_status_display }} · payout {{ assignment.payout }} · margin {{ assignment.margin }}
+        {{ assignment.get_status_display }} · payout ${{ assignment.payout|floatformat:2|intcomma }} · margin ${{ assignment.margin|floatformat:2|intcomma }}
       </p>
     </div>
     <div class="flex gap-2 mt-4">
@@ -50,7 +51,8 @@
               <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vendor.name }}</span>
               <span class="block text-[11.5px] text-muted truncate">
                 {% if option.fits_vehicle %}{{ trip.vehicle.name }} ✓ · {% endif %}
-                {{ option.vendor.service_area|default:"—" }} · used {{ option.used }}×
+                {{ option.vendor.service_area|default:"—" }} · used {{ option.used }}× ·
+                {% include "vendors/_insurance_cell.html" with summary=option.insurance %}
               </span>
             </span>
           </label>
