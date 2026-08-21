@@ -130,6 +130,36 @@ def test_payout_is_quantized_to_cents_before_it_reaches_the_db(rf, posted, expec
     assert views._payout(rf.post("/", {"payout": posted})) == Decimal(expected)
 
 
+@pytest.mark.parametrize("payout", ["1e25", "1e26", "1e30", "99999999.999", "100000000"])
+def test_an_oversized_payout_is_refused_cleanly(logged_in_client, payout):
+    """Every bad payout has to come back as a 400, not a 500.
+
+    `99999999.999` is under the column ceiling until it is rounded and 1e8 after — it must be
+    refused too, or it reaches MoneyField(max_digits=10) and dies in the database. And the
+    magnitude has to be judged before rounding: `Decimal.quantize` raises InvalidOperation
+    once the result would exceed the 28-digit context precision, and that escapes the view's
+    `except AssignmentError` as a 500.
+    """
+    trip = _trip()
+    resp = logged_in_client.post(
+        reverse("dispatch_offer", args=[trip.pk]), {"vendor": VendorFactory().pk, "payout": payout}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    assert not Assignment.objects.filter(reservation=trip).exists()
+
+
+def test_a_payout_just_under_the_ceiling_is_still_stored_rounded(logged_in_client):
+    """The companion to the guard above: rounding still happens for values in range."""
+    trip = _trip()
+    resp = logged_in_client.post(
+        reverse("dispatch_offer", args=[trip.pk]),
+        {"vendor": VendorFactory().pk, "payout": "215.005"},
+    )
+    assert resp.status_code == 200
+    assert services.active_assignment(trip).payout == Decimal("215.01")
+
+
 @pytest.mark.parametrize(
     "action,expected",
     [
