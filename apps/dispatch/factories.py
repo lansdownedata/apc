@@ -3,7 +3,7 @@ import factory
 from apps.reservations.factories import ReservationFactory
 from apps.vendors.factories import VendorFactory
 
-from .models import Assignment
+from .models import Assignment, GnetEvent
 
 
 class AssignmentFactory(factory.django.DjangoModelFactory):
@@ -13,3 +13,12 @@ class AssignmentFactory(factory.django.DjangoModelFactory):
     reservation = factory.SubFactory(ReservationFactory)
     vendor = factory.SubFactory(VendorFactory)
     payout = 140
+
+
+class GnetEventFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = GnetEvent
+
+    assignment = factory.SubFactory(AssignmentFactory)
+    action = GnetEvent.Action.SEND_TRIP
+    idempotency_key = factory.Sequence(lambda n: f"gnet-event-{n}")
