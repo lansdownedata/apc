@@ -137,7 +137,12 @@ def push_assignment(assignment: Assignment) -> GnetEvent:
     # gnet.send_trip's docstring), so that case is handled by the plain `or` below.
     # The only reason to fall back to whatever's already on the assignment is a
     # deduped response that, unusually, omits transactionId outright.
-    transaction_id = data.get("transactionId") or ""
+    #
+    # `.strip()` matters: a whitespace-only string is truthy in Python, so an
+    # unstripped `"   "` would sail past every check below and commit as a terminal
+    # SUCCESS with a garbage id. The relay applies this exact same trim for the
+    # exact same reason (parseSendTripResult in the gateway repo).
+    transaction_id = (data.get("transactionId") or "").strip()
     if not transaction_id and data.get("deduped") and assignment.gnet_transaction_id:
         transaction_id = assignment.gnet_transaction_id
 

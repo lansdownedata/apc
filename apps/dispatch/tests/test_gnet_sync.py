@@ -140,6 +140,7 @@ def test_second_push_after_error_does_not_resend(settings):
         {},
         {"reservationId": "R-1"},
         {"transactionId": ""},
+        {"transactionId": "   "},
         {"deduped": True},
     ],
 )
