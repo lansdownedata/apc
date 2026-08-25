@@ -17,6 +17,7 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.integrations import gnet
 from apps.leads.factories import VehicleTypeFactory
 from apps.reservations.factories import ReservationFactory
+from apps.reservations.models import Stop
 from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
@@ -52,6 +53,17 @@ def _assignment(vehicle_name="Luxury Sedan", **kwargs):
     return AssignmentFactory(
         reservation=reservation, vendor=vendor, payout=Decimal("300.00"), **kwargs
     )
+
+
+def _assignment_with_stops(*stop_kwargs_list, **reservation_kwargs):
+    """An assignment on a reservation whose stops are exactly `stop_kwargs_list`, in
+    order — each a dict of Stop field overrides (address required)."""
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-42")
+    vehicle = VehicleTypeFactory(name="Luxury Sedan")
+    reservation = ReservationFactory(vehicle=vehicle, stops=[], **reservation_kwargs)
+    for sequence, stop_kwargs in enumerate(stop_kwargs_list):
+        Stop.objects.create(reservation=reservation, sequence=sequence, **stop_kwargs)
+    return AssignmentFactory(reservation=reservation, vendor=vendor, payout=Decimal("300.00"))
 
 
 # --- vehicle_code ---
@@ -119,6 +131,88 @@ def test_payload_stops_map_to_pickup_and_dropoff_addresses():
     payload = gnet.build_send_payload(assignment)
     assert payload["locations"]["pickup"]["address"] == "1600 Pennsylvania Ave NW"
     assert payload["locations"]["dropOff"]["address"] == "IAD Airport"
+
+
+def test_payload_two_stop_trip_sends_empty_stops_array():
+    """GNet's own worked example sends `"stops": []` explicitly on a trip with no
+    intermediate stops — the key must be present, not merely empty-or-absent."""
+    assignment = _assignment()
+    payload = gnet.build_send_payload(assignment)
+    assert payload["locations"]["stops"] == []
+
+
+def test_payload_intermediate_stops_appear_in_sequence_order():
+    assignment = _assignment_with_stops(
+        {"address": "Pickup Address"},
+        {"address": "Stop One"},
+        {"address": "Stop Two"},
+        {"address": "Dropoff Address"},
+    )
+    payload = gnet.build_send_payload(assignment)
+    assert payload["locations"]["pickup"]["address"] == "Pickup Address"
+    assert payload["locations"]["dropOff"]["address"] == "Dropoff Address"
+    stops_payload = payload["locations"]["stops"]
+    assert [s["address"] for s in stops_payload] == ["Stop One", "Stop Two"]
+
+
+def test_payload_never_drops_a_stop():
+    """The property that actually matters: a lost stop means a driver never learns
+    about it. Regardless of how many stops split across pickup/dropOff/stops, every
+    address on the reservation must appear somewhere in the payload."""
+    addresses = ["A Address", "B Address", "C Address", "D Address", "E Address"]
+    assignment = _assignment_with_stops(*({"address": a} for a in addresses))
+    payload = gnet.build_send_payload(assignment)
+    locations = payload["locations"]
+    seen = {locations["pickup"]["address"], locations["dropOff"]["address"]}
+    seen |= {s["address"] for s in locations["stops"]}
+    assert seen == set(addresses)
+
+
+def test_payload_location_with_coordinates_emits_float_lat_lon():
+    assignment = _assignment_with_stops(
+        {
+            "address": "Pickup",
+            "latitude": Decimal("34.066470"),
+            "longitude": Decimal("-118.399324"),
+        },
+        {"address": "Dropoff"},
+    )
+    payload = gnet.build_send_payload(assignment)
+    pickup = payload["locations"]["pickup"]
+    assert pickup["lat"] == pytest.approx(34.066470)
+    assert pickup["lon"] == pytest.approx(-118.399324)
+    assert isinstance(pickup["lat"], float)
+    assert isinstance(pickup["lon"], float)
+
+
+def test_payload_location_without_coordinates_omits_lat_lon():
+    assignment = _assignment_with_stops({"address": "Pickup"}, {"address": "Dropoff"})
+    payload = gnet.build_send_payload(assignment)
+    dropoff = payload["locations"]["dropOff"]
+    assert "lat" not in dropoff
+    assert "lon" not in dropoff
+
+
+def test_payload_intermediate_stop_time_uses_reservation_pickup_date():
+    assignment = _assignment_with_stops(
+        {"address": "Pickup"},
+        {"address": "Middle", "scheduled_time": time(14, 30)},
+        {"address": "Dropoff"},
+        pickup_date=date(2026, 9, 1),
+        pickup_time=time(14, 0),
+    )
+    payload = gnet.build_send_payload(assignment)
+    middle = payload["locations"]["stops"][0]
+    assert middle["time"] == "2026-09-01T14:30:00"
+
+
+def test_payload_intermediate_stop_omits_time_when_not_scheduled():
+    assignment = _assignment_with_stops(
+        {"address": "Pickup"}, {"address": "Middle"}, {"address": "Dropoff"}
+    )
+    payload = gnet.build_send_payload(assignment)
+    middle = payload["locations"]["stops"][0]
+    assert "time" not in middle
 
 
 def test_payload_carries_no_money_at_all():

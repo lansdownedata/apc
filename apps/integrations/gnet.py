@@ -74,6 +74,28 @@ def vehicle_code(vehicle: VehicleType) -> str:
         ) from None
 
 
+def _location(stop, *, time_iso: str | None = None) -> dict:
+    """One `locations.*` entry (pickup/dropOff/a `stops[]` element) for `stop`.
+
+    `locationType` is hardcoded to `"address"` everywhere — deliberately, not an
+    oversight: GNet's real `"airport"` type additionally wants `flightInfo`, and
+    `Stop` captures no flight data at all. An address string plus precise
+    coordinates (below) is enough for a driver to route on regardless of pickup
+    type. Keys with no value (`lat`/`lon`, `time`) are omitted rather than sent as
+    null — the payload is passthrough, so an absent key reaches GNet as "we don't
+    have this," not as a value to act on.
+    """
+    location = {"locationType": "address", "address": stop.address}
+    if stop.latitude is not None and stop.longitude is not None:
+        # Floats, not strings — this is the one place a number is correct in this
+        # payload (see GNET farm-out doc's worked example); money stays a string.
+        location["lat"] = float(stop.latitude)
+        location["lon"] = float(stop.longitude)
+    if time_iso:
+        location["time"] = time_iso
+    return location
+
+
 def build_send_payload(assignment: Assignment) -> dict:
     """Build the body for `POST /api/gateway/v1/trips` from one dispatch.Assignment.
 
@@ -90,28 +112,44 @@ def build_send_payload(assignment: Assignment) -> dict:
       would just be passed through and ignored, so neither goes out. `totalAmount` is
       read off the *response*, not sent in this payload.
 
-    Times are sent verbatim from the trip-local `pickup_date`/`pickup_time` /
-    `dropoff_date`/`dropoff_time` fields with no timezone conversion invented — the
-    contract's timestamps are naive and irregular by design (§1.4/§5.11).
+    Times are sent verbatim with no timezone conversion invented — the contract's
+    timestamps are naive and irregular by design (§1.4/§5.11). Pickup/dropOff use
+    the reservation's own `pickup_date`/`pickup_time` and `dropoff_date`/
+    `dropoff_time`; an intermediate stop has no date of its own (`Stop.scheduled_time`
+    is rendered against the trip's `pickup_date` — see the model), so its `time` is
+    that same `pickup_date` combined with its own `scheduled_time`.
+
+    Every stop on the trip reaches GNet: the first and last of `ordered_stops` become
+    `locations.pickup`/`.dropOff`, and everything between is `locations.stops` — a
+    first-class array in GNet's farm-out contract, always sent (even empty) rather
+    than omitted, matching the doc's own `"stops": []` example. No stop is ever
+    silently dropped between the two.
     """
     reservation = assignment.reservation
     vendor = assignment.vendor
     vehicle_type_code = vehicle_code(reservation.vehicle)
 
     stops = list(reservation.ordered_stops)
-    pickup_stop, dropoff_stop = stops[0], stops[-1]
+    pickup_stop, dropoff_stop, middle_stops = stops[0], stops[-1], stops[1:-1]
 
-    pickup = {"locationType": "address", "address": pickup_stop.address}
+    pickup_time = None
     if reservation.pickup_date and reservation.pickup_time:
-        pickup["time"] = datetime.combine(
-            reservation.pickup_date, reservation.pickup_time
-        ).isoformat()
+        pickup_time = datetime.combine(reservation.pickup_date, reservation.pickup_time).isoformat()
+    pickup = _location(pickup_stop, time_iso=pickup_time)
 
-    dropoff = {"locationType": "address", "address": dropoff_stop.address}
+    dropoff_time = None
     if reservation.dropoff_date and reservation.dropoff_time:
-        dropoff["time"] = datetime.combine(
+        dropoff_time = datetime.combine(
             reservation.dropoff_date, reservation.dropoff_time
         ).isoformat()
+    dropoff = _location(dropoff_stop, time_iso=dropoff_time)
+
+    stops_payload = []
+    for stop in middle_stops:
+        stop_time = None
+        if stop.scheduled_time and reservation.pickup_date:
+            stop_time = datetime.combine(reservation.pickup_date, stop.scheduled_time).isoformat()
+        stops_payload.append(_location(stop, time_iso=stop_time))
 
     return {
         "affiliateReservation": {
@@ -124,6 +162,7 @@ def build_send_payload(assignment: Assignment) -> dict:
         "locations": {
             "pickup": pickup,
             "dropOff": dropoff,
+            "stops": stops_payload,
         },
     }
 
