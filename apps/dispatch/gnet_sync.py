@@ -44,7 +44,14 @@ def _is_preview() -> bool:
     return not settings.GNET_ACTIVE or not settings.GNET_API_KEY
 
 
-def _fail(event: GnetEvent, assignment: Assignment, message: str, *, title: str) -> GnetEvent:
+def _fail(
+    event: GnetEvent,
+    assignment: Assignment,
+    message: str,
+    *,
+    title: str,
+    payload: dict | None = None,
+) -> GnetEvent:
     """Record an ERROR on `event` and alert a human. Never retries.
 
     A 409 means the original send was claimed but its outcome is ambiguous; a
@@ -52,10 +59,18 @@ def _fail(event: GnetEvent, assignment: Assignment, message: str, *, title: str)
     same requesterResNo (== this assignment's pk, per build_send_payload) risks
     booking a second real vehicle with a real affiliate, so this function's only
     job is to surface the failure for a person to resolve — never to retry it.
+
+    `payload` is only passed (and only then written to `update_fields`) when the
+    caller actually built one before failing — a `GnetNotConfigured` refusal never
+    reaches that point, so its event's `payload` field is left exactly as it was.
     """
     event.result = GnetEvent.Result.ERROR
     event.response = message[:2000]
-    event.save(update_fields=["payload", "result", "response", "updated_at"])
+    update_fields = ["result", "response", "updated_at"]
+    if payload is not None:
+        event.payload = payload
+        update_fields.append("payload")
+    event.save(update_fields=update_fields)
     Notification.notify(
         assignment.reservation.lead,
         Notification.Kind.SYNC_FAILED,
@@ -70,23 +85,28 @@ def push_assignment(assignment: Assignment) -> GnetEvent:
 
     Idempotent per assignment via the unique `send_trip-a<pk>` key. Ordering matters:
 
-    1. If the event already succeeded, return it untouched — sent nothing. This runs
-       *before* the preview check so a completed trip is never re-sent, not even in
-       preview.
+    1. If the event already resolved — SUCCESS *or* ERROR — return it untouched,
+       sending nothing. The SUCCESS half runs before the preview check so a completed
+       trip is never re-sent, not even in preview. The ERROR half exists because a
+       failed send must never be retried under the same requesterResNo (== this
+       assignment's pk): `Assignment` is an append-only model precisely so that
+       retrying a farm-out means creating a *new* Assignment row, which gets a new pk
+       and therefore a genuinely new, safe requesterResNo — not calling this function
+       again on the one that already failed.
     2. Build the payload. A `GnetNotConfigured` here is a local refusal (unmapped
        vehicle, no vendor griddID, <2 stops): record ERROR, alert, and stop — the
        gateway is never called.
     3. In preview, store the full payload we would have sent, mark PREVIEW, and stop.
-    4. Otherwise send. A `deduped: true` response is a success (the original send
-       already landed); any other non-2xx is an ERROR that is alerted and never
-       retried by this function.
+    4. Otherwise send. A 2xx with no usable `transactionId` is treated as an ERROR,
+       not a success (see below) — any other non-2xx is likewise an ERROR that is
+       alerted and never retried by this function.
     """
     event, _ = GnetEvent.objects.get_or_create(
         assignment=assignment,
         action=GnetEvent.Action.SEND_TRIP,
         idempotency_key=f"{SEND_PREFIX}{assignment.pk}",
     )
-    if event.result == GnetEvent.Result.SUCCESS:
+    if event.result in (GnetEvent.Result.SUCCESS, GnetEvent.Result.ERROR):
         return event
 
     try:
@@ -104,13 +124,42 @@ def push_assignment(assignment: Assignment) -> GnetEvent:
     try:
         data = send_trip(payload)
     except GnetAPIError as exc:
-        return _fail(event, assignment, f"{exc.status}: {exc.body}", title="GNet send failed")
+        return _fail(
+            event,
+            assignment,
+            f"{exc.status}: {exc.body}",
+            title="GNet send failed",
+            payload=payload,
+        )
 
     # `deduped: true` means this requesterResNo already succeeded once — the gateway
-    # still returns the original transactionId (see gnet.send_trip's docstring), so
-    # this is treated exactly like a fresh success. Fall back to any id already on
-    # the assignment only if the response is missing one outright.
-    transaction_id = data.get("transactionId") or assignment.gnet_transaction_id
+    # still returns the original transactionId on a normal dedup response (see
+    # gnet.send_trip's docstring), so that case is handled by the plain `or` below.
+    # The only reason to fall back to whatever's already on the assignment is a
+    # deduped response that, unusually, omits transactionId outright.
+    transaction_id = data.get("transactionId") or ""
+    if not transaction_id and data.get("deduped") and assignment.gnet_transaction_id:
+        transaction_id = assignment.gnet_transaction_id
+
+    if not transaction_id:
+        # A 2xx with no usable id must NOT become a terminal SUCCESS: SUCCESS
+        # short-circuits every future push (see point 1 above) and cancel_assignment
+        # no-ops on a blank id, so a false success here would leave the trip
+        # permanently unretryable AND uncancellable — with a real vehicle possibly
+        # already dispatched and nobody told. Treat it as an ERROR and let a human
+        # reconcile it in the gateway before farming this trip out again (as a new
+        # Assignment — see point 1).
+        return _fail(
+            event,
+            assignment,
+            "Gateway returned a 2xx with no usable transactionId "
+            f"(response={json.dumps(data)[:1900]}) — a trip may already exist on "
+            "the gateway; reconcile manually in GNet before farming this trip out "
+            "again.",
+            title="GNet send failed",
+            payload=payload,
+        )
+
     with transaction.atomic():
         # Losing the transaction id here makes the trip permanently uncancellable —
         # the gateway has no lookup-by-requesterResNo endpoint — so this save and the
@@ -141,7 +190,8 @@ def cancel_assignment(assignment: Assignment) -> GnetEvent | None:
     if event.result == GnetEvent.Result.SUCCESS:
         return event
 
-    event.payload = {"transactionId": assignment.gnet_transaction_id}
+    cancel_payload = {"transactionId": assignment.gnet_transaction_id}
+    event.payload = cancel_payload
     if _is_preview():
         event.result = GnetEvent.Result.PREVIEW
         event.response = "Preview — nothing sent to GNet."
@@ -151,7 +201,13 @@ def cancel_assignment(assignment: Assignment) -> GnetEvent | None:
     try:
         data = cancel_trip(assignment.gnet_transaction_id)
     except GnetAPIError as exc:
-        return _fail(event, assignment, f"{exc.status}: {exc.body}", title="GNet cancel failed")
+        return _fail(
+            event,
+            assignment,
+            f"{exc.status}: {exc.body}",
+            title="GNet cancel failed",
+            payload=cancel_payload,
+        )
 
     event.result = GnetEvent.Result.SUCCESS
     event.response = json.dumps(data)
