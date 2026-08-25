@@ -81,7 +81,9 @@ class Vendor(TimeStampedModel):
         "GNet griddID",
         max_length=64,
         blank=True,
-        help_text="Affiliate's GNet id; set to enable GNet farm-out.",
+        help_text=(
+            "The affiliate's GNet id. Set this and trips farm out over GNet instead of email."
+        ),
     )
 
     class Meta:
