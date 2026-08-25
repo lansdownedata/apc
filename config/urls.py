@@ -9,7 +9,7 @@ from django.views.generic import TemplateView
 
 from apps.accounts.views import accept_invite
 from apps.core.cron import run_job
-from apps.integrations.views import la_webhook, podium_webhook
+from apps.integrations.views import gnet_callback, la_webhook, podium_webhook
 from apps.leads.views import pipeline, quote_book, quote_page
 from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
@@ -50,6 +50,7 @@ urlpatterns = [
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),
     path("webhooks/limoanywhere/<str:token>/", la_webhook, name="la_webhook"),
     path("webhooks/stripe/", stripe_webhook, name="stripe_webhook"),
+    path("api/gnet/callback/", gnet_callback, name="gnet_callback"),
     path("cron/<slug:job>/", run_job, name="cron_job"),
     # API routes are mounted here as apps expose routers, e.g.:
     # path("api/", include("config.api")),
