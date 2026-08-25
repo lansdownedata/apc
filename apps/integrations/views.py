@@ -58,15 +58,22 @@ def _podium_signature_ok(request: HttpRequest) -> bool:
 
 
 def _gnet_signature_ok(request: HttpRequest) -> bool:
-    """HMAC-SHA256 over the RAW body with GNET_CALLBACK_SECRET.
+    """Verify both credentials the gateway sends (contract v2 §5.8):
+    `Authorization: Bearer <GNET_CALLBACK_SECRET>` and an HMAC-SHA256 of the RAW
+    body, also keyed with GNET_CALLBACK_SECRET, in `X-Lansdowne-Signature`.
 
-    Blank secret => accept (dev); set => fail closed. Mirrors _podium_signature_ok.
-    The signature covers raw bytes: re-serialising the JSON changes key order and
-    whitespace and will never match.
+    Blank secret => accept (dev); set => fail closed on either check. Mirrors
+    _podium_signature_ok. The HMAC is the cryptographically stronger check — the
+    Bearer comparison is defence in depth, not a substitute for it. The signature
+    covers raw bytes: re-serialising the JSON changes key order and whitespace and
+    will never match.
     """
     secret = settings.GNET_CALLBACK_SECRET
     if not secret:
         return True
+    auth_header = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(auth_header, f"Bearer {secret}"):
+        return False
     header = request.headers.get("X-Lansdowne-Signature", "")
     if not header.startswith("sha256="):
         return False

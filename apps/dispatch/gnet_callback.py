@@ -80,18 +80,27 @@ def _alert(assignment: Assignment, *, title: str, detail: str) -> None:
 
 
 def _apply_amount(assignment: Assignment, payload: dict, status: str) -> None:
-    """Auto-heal `assignment.payout`.
+    """Auto-heal `assignment.payout` — but only when an amount means something.
 
     On GNet the affiliate prices the trip, not APC (unlike the manual trip-sheet
-    email flow) — so any callback carrying a `totalAmount` supersedes whatever
-    payout is already on file. A `CLOSE` figure overwrites an earlier estimate with
-    nobody re-keying anything: "when they price it and we get the change it auto
-    heals."
+    email flow), so a callback that reports real coverage supersedes whatever
+    payout is already on file: "when they price it and we get the change it auto
+    heals." But `REJECT` and `FAILED` mean nobody is covering the trip — no amount
+    in either payload is a payout we owe, and `FAILED` in particular leaves the
+    assignment OFFERED, so writing a price there would put one on a still-open
+    offer. Both are skipped entirely, before `totalAmount` is even parsed.
+
+    `CANCEL` still auto-heals: it happens after acceptance, so an amount there is a
+    plausible cancellation charge, and `CANCEL` already withdraws the assignment
+    and alerts, so a human sees it either way.
 
     Alerts only for the one pricing event a broker needs told about: a `CLOSE`
     amount that differs from what was already recorded. A first quote landing on
-    top of a dispatcher's manual estimate — or any non-CLOSE update — is silent.
+    top of a dispatcher's manual estimate — or any other non-CLOSE update — is
+    silent.
     """
+    if status in {"REJECT", "FAILED"}:
+        return
     amount = _parse_amount(payload.get("totalAmount"))
     if amount is None:
         return

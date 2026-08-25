@@ -37,7 +37,12 @@ def _post(client, body: bytes, **headers):
 
 def _signed_post(client, payload: dict, secret: str = SECRET):
     body = json.dumps(payload).encode()
-    return _post(client, body, HTTP_X_LANSDOWNE_SIGNATURE=_sig(secret, body))
+    return _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION=f"Bearer {secret}",
+        HTTP_X_LANSDOWNE_SIGNATURE=_sig(secret, body),
+    )
 
 
 def _gnet_assignment(**kwargs):
@@ -57,14 +62,19 @@ def _gnet_assignment(**kwargs):
 def test_bad_signature_403(client, settings):
     settings.GNET_CALLBACK_SECRET = SECRET
     body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
-    resp = _post(client, body, HTTP_X_LANSDOWNE_SIGNATURE="sha256=deadbeef")
+    resp = _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION=f"Bearer {SECRET}",
+        HTTP_X_LANSDOWNE_SIGNATURE="sha256=deadbeef",
+    )
     assert resp.status_code == 403
 
 
 def test_missing_signature_403_when_secret_set(client, settings):
     settings.GNET_CALLBACK_SECRET = SECRET
     body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
-    resp = _post(client, body)
+    resp = _post(client, body, HTTP_AUTHORIZATION=f"Bearer {SECRET}")
     assert resp.status_code == 403
 
 
@@ -72,6 +82,34 @@ def test_blank_secret_accepts_unsigned(client, settings):
     settings.GNET_CALLBACK_SECRET = ""
     body = json.dumps({"transactionId": "unknown-tx", "status": "CONFIRMED"}).encode()
     resp = _post(client, body)
+    assert resp.status_code == 200
+
+
+# --- Authorization: Bearer verification (defence in depth alongside the HMAC) ---
+
+
+def test_missing_authorization_header_403(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
+    resp = _post(client, body, HTTP_X_LANSDOWNE_SIGNATURE=_sig(SECRET, body))
+    assert resp.status_code == 403
+
+
+def test_wrong_authorization_bearer_403(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
+    resp = _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION="Bearer wrong-secret",
+        HTTP_X_LANSDOWNE_SIGNATURE=_sig(SECRET, body),
+    )
+    assert resp.status_code == 403
+
+
+def test_correct_authorization_bearer_accepted(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    resp = _signed_post(client, {"transactionId": "unknown-tx", "status": "CONFIRMED"})
     assert resp.status_code == 200
 
 
@@ -333,3 +371,54 @@ def test_unparseable_totalamount_string_does_not_crash(client, settings):
     assert resp.status_code == 200
     assignment.refresh_from_db()
     assert assignment.payout == Decimal("140.00")
+
+
+def test_reject_with_totalamount_leaves_payout_untouched(client, settings):
+    """REJECT means the affiliate declined — nobody is covering the trip, so an
+    amount in the payload is not a payout owed and must not be written."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("140.00"))
+
+    resp = _signed_post(
+        client, {"transactionId": "TX-1", "status": "REJECT", "totalAmount": "999.00"}
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("140.00")
+    assert assignment.status == Assignment.Status.DECLINED
+
+
+def test_failed_with_totalamount_leaves_payout_untouched(client, settings):
+    """FAILED leaves the assignment OFFERED — a still-open offer must never pick up
+    a price from a failure message."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("140.00"))
+
+    resp = _signed_post(
+        client, {"transactionId": "TX-1", "status": "FAILED", "totalAmount": "999.00"}
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("140.00")
+    assert assignment.status == Assignment.Status.OFFERED
+    assert Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
+
+
+def test_cancel_with_totalamount_still_auto_heals(client, settings):
+    """CANCEL happens after acceptance, so an amount there is a plausible
+    cancellation charge — auto-heal stays on for this status."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(status=Assignment.Status.CONFIRMED, payout=Decimal("140.00"))
+
+    resp = _signed_post(
+        client, {"transactionId": "TX-1", "status": "CANCEL", "totalAmount": "160.00"}
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("160.00")
+    assert assignment.status == Assignment.Status.WITHDRAWN
