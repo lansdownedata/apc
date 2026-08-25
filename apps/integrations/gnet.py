@@ -80,13 +80,15 @@ def build_send_payload(assignment: Assignment) -> dict:
     Deliberately excludes two things:
     - `transactionId` / `affiliateReservation.requesterId`: the gateway injects both
       (contract v2 §5.2) and rejects the whole request with 400 if either is sent.
-    - The customer price (`Reservation.line_total`): this is a brokerage and the
-      margin is confidential. Only `Assignment.payout` — what we pay the affiliate —
-      goes out, matching `dispatch.services.offer_email_context`'s same rule for the
-      manual trip-sheet email. `payoutAmount` is not part of the gateway's validated
-      allowlist (only `providerId`/`requesterResNo`/`preferredVehicleType` are), but
-      the send-trip schema is passthrough end-to-end, so this business context
-      survives to the affiliate without affecting routing.
+    - Any amount at all. `sendTripSchema` (the gateway's actual validator) has no
+      money field, and the §5.11 worked example confirms why: on GNet, the AFFILIATE
+      prices the trip and quotes it back in the response's `totalAmount` (superseded
+      later by the `CLOSE` callback's final figure) — APC does not dictate a payout
+      the way it does in the manual trip-sheet email
+      (`dispatch.services.offer_email_context`). Sending either the confidential
+      customer price (`Reservation.line_total`) or our own `Assignment.payout` here
+      would just be passed through and ignored, so neither goes out. `totalAmount` is
+      read off the *response*, not sent in this payload.
 
     Times are sent verbatim from the trip-local `pickup_date`/`pickup_time` /
     `dropoff_date`/`dropoff_time` fields with no timezone conversion invented — the
@@ -115,7 +117,6 @@ def build_send_payload(assignment: Assignment) -> dict:
         "affiliateReservation": {
             "requesterResNo": str(assignment.pk),
             "providerId": vendor.gnet_grid_id,
-            "payoutAmount": f"{assignment.payout:.2f}",
         },
         "preferredVehicleType": vehicle_type_code,
         "reservationType": reservation.trip_type.upper(),
