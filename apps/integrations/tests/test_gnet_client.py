@@ -121,16 +121,27 @@ def test_payload_stops_map_to_pickup_and_dropoff_addresses():
     assert payload["locations"]["dropOff"]["address"] == "IAD Airport"
 
 
-def test_payload_money_fields_are_strings():
+def test_payload_carries_no_money_at_all():
+    """On GNet the AFFILIATE prices the trip and quotes it back via the response's
+    totalAmount (superseded later by the CLOSE callback) — sendTripSchema has no
+    money field, so APC never dictates a payout here the way it does in the manual
+    trip-sheet email. Neither the confidential customer price nor our own payout
+    belongs in the send payload; assert both are absent."""
     assignment = _assignment()
+    reservation = assignment.reservation
+    assert reservation.line_total == Decimal("1500.00")  # rate 500 x 3h, no gratuity
+    assert assignment.payout == Decimal("300.00")
     payload = gnet.build_send_payload(assignment)
-    payout_value = payload["affiliateReservation"]["payoutAmount"]
-    assert isinstance(payout_value, str)
-    assert payout_value == "300.00"
+    serialized = json.dumps(payload)
+    assert "1500.00" not in serialized
+    assert "300.00" not in serialized
+    assert str(reservation.line_total) not in serialized
+    assert "payoutAmount" not in serialized
 
 
 def test_payload_never_leaks_customer_price():
-    """Brokerage margin is confidential — only the payout goes to the affiliate."""
+    """Brokerage margin is confidential — the customer price must never reach the
+    affiliate-facing payload, independent of whether any other amount is sent."""
     assignment = _assignment()
     reservation = assignment.reservation
     assert reservation.line_total == Decimal("1500.00")  # rate 500 x 3h, no gratuity
