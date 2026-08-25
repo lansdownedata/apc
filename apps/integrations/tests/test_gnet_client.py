@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from apps.dispatch.factories import AssignmentFactory
 from apps.integrations import gnet
@@ -357,3 +358,41 @@ def test_cancel_trip_error_raises_gnet_api_error():
         with pytest.raises(gnet.GnetAPIError) as exc:
             gnet.cancel_trip("nope")
     assert exc.value.status == 404
+
+
+# --- transport failures: a RequestException must become a GnetAPIError, not escape raw ---
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        requests.exceptions.ConnectionError("refused"),
+        requests.exceptions.Timeout("timed out"),
+        requests.exceptions.TooManyRedirects("too many redirects"),
+    ],
+)
+def test_send_trip_transport_failure_becomes_gnet_api_error(transport_error):
+    """A requests.exceptions.RequestException must never escape _request raw — every
+    caller (apps.dispatch.gnet_sync) only catches GnetAPIError, so a raw transport
+    exception would skip the terminal ERROR/alert path entirely and leave the
+    GnetEvent stuck PENDING, free to be resent under the same requesterResNo."""
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = transport_error
+        with pytest.raises(gnet.GnetAPIError) as exc:
+            gnet.send_trip({})
+    assert exc.value.status == gnet.TRANSPORT_FAILED
+    assert str(transport_error) in exc.value.body
+
+
+def test_cancel_trip_transport_failure_becomes_gnet_api_error():
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = requests.exceptions.ConnectionError("refused")
+        with pytest.raises(gnet.GnetAPIError) as exc:
+            gnet.cancel_trip("t-1")
+    assert exc.value.status == gnet.TRANSPORT_FAILED
+
+
+def test_transport_failure_status_is_distinct_from_any_real_http_status():
+    """TRANSPORT_FAILED (0) must not collide with a real HTTP status code, since
+    callers branch on `.status` to decide retry policy."""
+    assert gnet.TRANSPORT_FAILED == 0

@@ -2,17 +2,22 @@
 
 SAFETY: the GNet gateway is deployed in production and talks to real GNet — a
 successful send books a REAL vehicle with a REAL affiliate. Every test here mocks
-the client functions (`send_trip` / `cancel_trip`) at the boundary via
-`patch.object(gnet_sync, ...)`; none may perform real network I/O.
+either the client functions (`send_trip` / `cancel_trip`) at the `gnet_sync` boundary
+via `patch.object(gnet_sync, ...)`, or — for the transport-failure tests, which
+deliberately exercise `gnet.py`'s own exception handling rather than bypassing it —
+`requests.request` itself via `patch.object(gnet, "requests")`. Neither performs real
+network I/O.
 """
 
 from unittest.mock import patch
 
 import pytest
+import requests
 
 import apps.dispatch.gnet_sync as gnet_sync
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import GnetEvent
+from apps.integrations import gnet
 from apps.integrations.gnet import GnetAPIError, build_send_payload
 from apps.leads.factories import VehicleTypeFactory
 from apps.notifications.models import Notification
@@ -266,6 +271,68 @@ def test_api_error_notification_anchored_on_lead_and_truncated(settings):
     assert notification.lead_id == assignment.reservation.lead_id
     assert len(notification.title) <= 160
     assert len(notification.detail) <= 255
+
+
+# --- transport failures (a RequestException, never a GnetAPIError) ---
+#
+# These deliberately do NOT mock `send_trip`/`cancel_trip` — that would bypass the
+# very conversion in `gnet.py`'s `_request` this is regression-testing. A prior
+# version of the GNet integration let `requests.exceptions.RequestException`
+# (connection refused, timeout, ...) escape `_request` raw. That skipped
+# `push_assignment`'s `except GnetAPIError` entirely, leaving the `GnetEvent` stuck
+# PENDING (never ERROR), raising no alert, and — because PENDING isn't one of the
+# two terminal results that short-circuit a re-push — leaving a second push free to
+# resend under the exact same `requesterResNo`. For a `Timeout` that is exactly the
+# double-booking risk Task 3 exists to prevent (see `test_gnet_client.py` for the
+# lower-level client test of the same fix).
+
+
+@pytest.mark.parametrize(
+    "transport_error",
+    [requests.exceptions.ConnectionError("refused"), requests.exceptions.Timeout("timed out")],
+)
+def test_transport_failure_is_recorded_as_error_and_alerts(settings, transport_error):
+    _arm(settings)
+    assignment = _assignment()
+
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = transport_error
+        event = gnet_sync.push_assignment(assignment)
+
+    assert event.result == GnetEvent.Result.ERROR
+    assignment.refresh_from_db()
+    assert assignment.gnet_transaction_id == ""
+    assert Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
+
+
+def test_second_push_after_transport_failure_makes_no_further_http_call(settings):
+    _arm(settings)
+    assignment = _assignment()
+
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = requests.exceptions.ConnectionError("refused")
+        first = gnet_sync.push_assignment(assignment)
+        second = gnet_sync.push_assignment(assignment)
+
+    assert req.request.call_count == 1  # ERROR is terminal — no silent resend
+    assert first.pk == second.pk
+    assert second.result == GnetEvent.Result.ERROR
+
+
+def test_cancel_assignment_transport_failure_is_recorded_as_error_and_alerts(settings):
+    _arm(settings)
+    assignment = _assignment(gnet_transaction_id="TX-existing")
+
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = requests.exceptions.Timeout("timed out")
+        event = gnet_sync.cancel_assignment(assignment)
+
+    assert event.result == GnetEvent.Result.ERROR
+    assert Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
 
 
 # --- cancel_assignment ---

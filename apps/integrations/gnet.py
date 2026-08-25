@@ -20,6 +20,7 @@ from datetime import time as time_type
 
 import requests
 from django.conf import settings
+from requests.exceptions import RequestException
 
 from apps.dispatch.models import Assignment
 from apps.leads.models import VehicleType
@@ -27,6 +28,12 @@ from apps.reservations.models import Stop
 
 API_PATH = "/api/gateway/v1/trips"
 TIMEOUT = 10  # seconds — an unbounded call can hang a worker indefinitely
+
+# GnetAPIError.status for a request that never got an HTTP response at all — a
+# requests.exceptions.RequestException (connection refused, DNS failure, timeout,
+# too many redirects, ...). See _request's docstring for why this is treated as
+# unretryable, same as any other GnetAPIError.
+TRANSPORT_FAILED = 0
 
 # This project's six seeded VehicleType.name values (apps/core/management/commands/
 # seed_demo.py) -> GNet's standardized, allowlisted preferredVehicleType codes
@@ -44,9 +51,12 @@ VEHICLE_TYPE_MAP: dict[str, str] = {
 
 
 class GnetAPIError(Exception):
-    """A non-2xx response from the GNet gateway. Carries `.status` and `.body` so a
-    caller (Task 3) can branch on the status — see contract v2 §5.3/§5.7: 409 must
-    never be retried, 502/503 are worth retrying, 400/401/403/422 are not."""
+    """A non-2xx response from the GNet gateway, OR a transport failure that never got
+    a response at all (`.status == TRANSPORT_FAILED`, i.e. `0` — see `_request`).
+    Carries `.status` and `.body` so a caller (Task 3) can branch on the status — see
+    contract v2 §5.3/§5.7: 409 must never be retried, 502/503 are worth retrying,
+    400/401/403/422 are not. `TRANSPORT_FAILED` is treated as unretryable too — see
+    `_request`'s docstring for why."""
 
     def __init__(self, status: int, body: str):
         self.status = status
@@ -193,16 +203,38 @@ def build_send_payload(assignment: Assignment) -> dict:
 
 
 def _request(method: str, path: str, *, json: dict | None = None) -> dict:
-    resp = requests.request(
-        method,
-        f"{settings.GNET_GATEWAY_URL}{path}",
-        headers={
-            "Authorization": f"Bearer {settings.GNET_API_KEY}",
-            "Accept": "application/json",
-        },
-        json=json,
-        timeout=TIMEOUT,
-    )
+    """Make one HTTP call to the gateway, raising `GnetAPIError` for every failure —
+    including one that never reached the gateway at all.
+
+    A `requests.exceptions.RequestException` (connection refused, DNS failure, a
+    `Timeout`, too many redirects, ...) is caught here and re-raised as
+    `GnetAPIError(TRANSPORT_FAILED, ...)` rather than escaping raw. This matters
+    because a raw exception would bypass `push_assignment`/`cancel_assignment`'s
+    `except GnetAPIError` entirely (see `apps.dispatch.gnet_sync`): the `GnetEvent`
+    would stay PENDING forever instead of being marked ERROR, no one would be
+    alerted, and — because PENDING isn't one of the two terminal results that
+    short-circuit a re-push — a second call would resend under the exact same
+    `requesterResNo`. For a plain connection failure that's harmless (nothing ever
+    reached the gateway), but for a `Timeout` it is not: the request may well have
+    arrived and booked a real vehicle before the response was lost, and there is no
+    reliable way from here to tell the two cases apart. So BOTH are treated as
+    unretryable, exactly like a 409 — recovery is the same as any other gateway
+    failure: reconcile manually in GNet, then farm the trip out again as a new
+    `Assignment`, which gets a fresh pk and therefore a fresh, safe `requesterResNo`.
+    """
+    try:
+        resp = requests.request(
+            method,
+            f"{settings.GNET_GATEWAY_URL}{path}",
+            headers={
+                "Authorization": f"Bearer {settings.GNET_API_KEY}",
+                "Accept": "application/json",
+            },
+            json=json,
+            timeout=TIMEOUT,
+        )
+    except RequestException as exc:
+        raise GnetAPIError(TRANSPORT_FAILED, f"transport failure: {exc}") from exc
     if resp.status_code >= 400:
         raise GnetAPIError(resp.status_code, resp.text or "")
     if not resp.content:

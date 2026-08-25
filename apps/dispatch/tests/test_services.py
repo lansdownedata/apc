@@ -2,10 +2,12 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from apps.dispatch import services
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
+from apps.integrations import gnet
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
@@ -13,6 +15,14 @@ from apps.reservations.models import Reservation
 from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
+
+
+def _armed(settings):
+    """Flip both preview-gating flags off so send_offer/withdraw would actually
+    attempt a real HTTP call — needed to exercise gnet.py's transport-failure
+    handling rather than short-circuiting in preview mode."""
+    settings.GNET_ACTIVE = True
+    settings.GNET_API_KEY = "lds_testkey1234567890"
 
 
 def _booked_trip(**kwargs):
@@ -197,25 +207,62 @@ def test_withdrawing_a_gnet_assignment_that_was_previously_cancelled_still_calls
     assert mock_sync.cancel_assignment.called
 
 
-def test_a_gnet_gateway_failure_does_not_roll_back_the_offer():
-    """Best-effort, exactly like the email path: send_offer must not raise, and the
-    assignment must remain exactly as claimed, even when the gateway call blows up."""
+def test_a_transport_failure_during_send_offer_does_not_roll_back_or_raise(settings):
+    """A real gateway problem — here, a connection that never reaches api.grdd.net at
+    all — is handled entirely inside gnet.py/gnet_sync (converted to a terminal
+    GnetEvent + alert, never a raised exception). send_offer must see a normal return,
+    not an exception, and the assignment must remain exactly as claimed. This exercises
+    the actual `_request` -> `push_assignment` chain, not a stand-in mock, because a
+    prior version of this fix let `requests.exceptions.RequestException` escape
+    `_request` raw, past `push_assignment`'s `except GnetAPIError`, straight into
+    `send_offer` — see apps/integrations/tests/test_gnet_client.py for the
+    client-level regression test."""
+    _armed(settings)
     res = _booked_trip()
     vendor = VendorFactory(gnet_grid_id="gnet-partner-1")
-    with patch.object(services.gnet_sync, "push_assignment", side_effect=RuntimeError("boom")):
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = requests.exceptions.ConnectionError("refused")
         a = services.send_offer(res, vendor, payout=Decimal("140.00"))  # must not raise
     a.refresh_from_db()
     assert a.status == Assignment.Status.OFFERED
     assert a.channel == Assignment.Channel.GNET
 
 
-def test_a_gnet_gateway_failure_in_withdraw_does_not_undo_the_state_change():
+def test_a_transport_failure_during_withdraw_does_not_undo_the_state_change(settings):
+    """Same as above but for the cancel side: a Timeout talking to the gateway must
+    not undo the WITHDRAWN state change or raise out of withdraw()."""
+    _armed(settings)
     a = AssignmentFactory(
         status=Assignment.Status.OFFERED,
         channel=Assignment.Channel.GNET,
         gnet_transaction_id="TX-1",
     )
-    with patch.object(services.gnet_sync, "cancel_assignment", side_effect=RuntimeError("boom")):
+    with patch.object(gnet, "requests") as req:
+        req.request.side_effect = requests.exceptions.Timeout("timed out")
         services.withdraw(a)  # must not raise
     a.refresh_from_db()
     assert a.status == Assignment.Status.WITHDRAWN
+
+
+def test_send_offer_lets_a_genuine_gnet_sync_bug_propagate():
+    """Only real gateway problems are best-effort — that guarantee lives inside
+    gnet_sync/gnet.py itself (see the transport-failure tests above and in
+    test_gnet_sync.py/test_gnet_client.py). send_offer no longer wraps the call in a
+    bare `except Exception`, so a genuine bug (a TypeError, say) must be loud rather
+    than silently swallowed."""
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1")
+    with patch.object(services.gnet_sync, "push_assignment", side_effect=TypeError("boom")):
+        with pytest.raises(TypeError):
+            services.send_offer(res, vendor, payout=Decimal("140.00"))
+
+
+def test_withdraw_lets_a_genuine_gnet_sync_bug_propagate():
+    a = AssignmentFactory(
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+    with patch.object(services.gnet_sync, "cancel_assignment", side_effect=TypeError("boom")):
+        with pytest.raises(TypeError):
+            services.withdraw(a)
