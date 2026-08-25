@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -120,3 +121,101 @@ def test_confirming_an_already_confirmed_assignment_is_a_no_op():
     a.refresh_from_db()
     assert a.status == Assignment.Status.CONFIRMED
     assert a.resolved_at == first_resolved
+
+
+# --- GNet routing ---
+
+
+def test_send_offer_to_a_gnet_capable_vendor_uses_the_gnet_channel():
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1", email="ops@x.example")
+    with patch.object(services, "gnet_sync") as mock_sync:
+        a = services.send_offer(res, vendor, payout=Decimal("140.00"))
+    assert a.channel == Assignment.Channel.GNET
+    mock_sync.push_assignment.assert_called_once_with(a)
+
+
+def test_send_offer_to_a_non_gnet_vendor_uses_the_manual_channel():
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="", email="ops@x.example")
+    with patch.object(services, "gnet_sync") as mock_sync:
+        a = services.send_offer(res, vendor, payout=Decimal("140.00"))
+    assert a.channel == Assignment.Channel.MANUAL
+    mock_sync.push_assignment.assert_not_called()
+
+
+def test_assign_direct_is_always_manual_even_for_a_gnet_capable_vendor():
+    """assign_direct records phone-arranged coverage — it never farms out over GNet,
+    regardless of whether the vendor carries a griddID."""
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1")
+    with patch.object(services, "gnet_sync") as mock_sync:
+        a = services.assign_direct(res, vendor, payout=Decimal("140.00"))
+    assert a.channel == Assignment.Channel.MANUAL
+    mock_sync.push_assignment.assert_not_called()
+
+
+def test_assign_direct_is_manual_for_a_non_gnet_vendor_too():
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="")
+    a = services.assign_direct(res, vendor, payout=Decimal("140.00"))
+    assert a.channel == Assignment.Channel.MANUAL
+
+
+def test_withdrawing_a_gnet_assignment_cancels_it_on_the_gateway():
+    a = AssignmentFactory(
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+    with patch.object(services, "gnet_sync") as mock_sync:
+        services.withdraw(a, note="vendor unreachable")
+    mock_sync.cancel_assignment.assert_called_once_with(a)
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
+
+
+def test_withdrawing_a_manual_assignment_never_touches_the_gateway():
+    a = AssignmentFactory(status=Assignment.Status.OFFERED, channel=Assignment.Channel.MANUAL)
+    with patch.object(services, "gnet_sync") as mock_sync:
+        services.withdraw(a, note="vendor unreachable")
+    mock_sync.cancel_assignment.assert_not_called()
+
+
+def test_withdrawing_a_gnet_assignment_that_was_previously_cancelled_still_calls_cancel():
+    """A cancelled assignment keeps its gnet_transaction_id (append-only history — see
+    gnet_sync's docstring), so routing must key off `channel`/`status`, never off
+    `bool(gnet_transaction_id)`. cancel_assignment itself is the thing that guards
+    against a double-cancel."""
+    a = AssignmentFactory(
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+    with patch.object(services, "gnet_sync") as mock_sync:
+        services.withdraw(a)
+    assert mock_sync.cancel_assignment.called
+
+
+def test_a_gnet_gateway_failure_does_not_roll_back_the_offer():
+    """Best-effort, exactly like the email path: send_offer must not raise, and the
+    assignment must remain exactly as claimed, even when the gateway call blows up."""
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1")
+    with patch.object(services.gnet_sync, "push_assignment", side_effect=RuntimeError("boom")):
+        a = services.send_offer(res, vendor, payout=Decimal("140.00"))  # must not raise
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.OFFERED
+    assert a.channel == Assignment.Channel.GNET
+
+
+def test_a_gnet_gateway_failure_in_withdraw_does_not_undo_the_state_change():
+    a = AssignmentFactory(
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+    with patch.object(services.gnet_sync, "cancel_assignment", side_effect=RuntimeError("boom")):
+        services.withdraw(a)  # must not raise
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
