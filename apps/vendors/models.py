@@ -77,12 +77,23 @@ class Vendor(TimeStampedModel):
     usdot_number = models.CharField("USDOT number", max_length=40, blank=True)
     vehicle_types = models.ManyToManyField("leads.VehicleType", blank=True, related_name="vendors")
     notes = models.TextField(blank=True)
+    gnet_grid_id = models.CharField(
+        "GNet griddID",
+        max_length=64,
+        blank=True,
+        help_text="Affiliate's GNet id; set to enable GNet farm-out.",
+    )
 
     class Meta:
         ordering = ["name"]
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def is_gnet_capable(self) -> bool:
+        """True if this vendor has a valid GNet griddID set."""
+        return bool(self.gnet_grid_id.strip())
 
     @property
     def insurance_status(self) -> str:

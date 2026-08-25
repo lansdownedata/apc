@@ -43,6 +43,7 @@ class Assignment(TimeStampedModel):
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.MANUAL)
     payout = MoneyField()
     note = models.TextField(blank=True)
+    gnet_transaction_id = models.CharField(max_length=128, blank=True)
     offered_at = models.DateTimeField(default=timezone.now)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
@@ -62,3 +63,35 @@ class Assignment(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.vendor.name} · {self.get_status_display()}"
+
+
+class GnetEvent(TimeStampedModel):
+    """Idempotent log of every gateway exchange — mirrors integrations.ZapEvent.
+
+    The unique idempotency_key is what stops a duplicate send: the gateway's own contract
+    warns that reusing a requesterResNo after a failure books a SECOND vehicle rather than
+    retrying, so a send that already succeeded must never be repeated.
+    """
+
+    class Action(models.TextChoices):
+        SEND_TRIP = "send_trip", "Send trip"
+        CANCEL_TRIP = "cancel_trip", "Cancel trip"
+        CALLBACK = "callback", "Callback"
+
+    class Result(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SUCCESS = "success", "Success"
+        ERROR = "error", "Error"
+        PREVIEW = "preview", "Preview (not sent)"
+
+    assignment = models.ForeignKey(
+        Assignment, related_name="gnet_events", on_delete=models.CASCADE, null=True, blank=True
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    payload = models.JSONField(default=dict, blank=True)
+    result = models.CharField(max_length=20, choices=Result.choices, default=Result.PENDING)
+    response = models.TextField(blank=True)
+    idempotency_key = models.CharField(max_length=160, unique=True)
+
+    def __str__(self) -> str:
+        return f"{self.get_action_display()} · {self.get_result_display()}"
