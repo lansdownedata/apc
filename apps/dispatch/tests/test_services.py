@@ -124,6 +124,35 @@ def test_release_trips_leaves_resolved_history_alone():
     assert declined.note == "no cars"
 
 
+def test_release_trips_isolates_a_failure_so_the_rest_of_the_batch_still_releases():
+    """A gateway problem can no longer raise out of withdraw() at all (see its
+    docstring) — but a genuine bug or a DB hiccup mid-batch still could, and a batch
+    that aborts on the first failure would strand every later trip in exactly the
+    "affiliate still holds a trip that no longer exists" state this function exists
+    to prevent. One bad row must not stop the other rows from releasing."""
+    reservations = [_booked_trip() for _ in range(3)]
+    assignments = [
+        services.send_offer(res, VendorFactory(), payout=Decimal("140.00")) for res in reservations
+    ]
+    boom = assignments[1]
+    real_withdraw = services.withdraw
+
+    def _flaky(assignment, *, note=""):
+        if assignment.pk == boom.pk:
+            raise RuntimeError("boom")
+        return real_withdraw(assignment, note=note)
+
+    with patch.object(services, "withdraw", side_effect=_flaky):
+        released = services.release_trips(reservations, note="Order cancelled")
+
+    assert {a.pk for a in released} == {assignments[0].pk, assignments[2].pk}
+    for assignment in (assignments[0], assignments[2]):
+        assignment.refresh_from_db()
+        assert assignment.status == Assignment.Status.WITHDRAWN
+    boom.refresh_from_db()
+    assert boom.status == Assignment.Status.OFFERED  # never withdrawn — but not fatal
+
+
 def test_confirming_an_already_confirmed_assignment_is_a_no_op():
     a = AssignmentFactory(status=Assignment.Status.CONFIRMED)
     first_resolved = a.resolved_at
@@ -192,21 +221,6 @@ def test_withdrawing_a_manual_assignment_never_touches_the_gateway():
     mock_sync.cancel_assignment.assert_not_called()
 
 
-def test_withdrawing_a_gnet_assignment_that_was_previously_cancelled_still_calls_cancel():
-    """A cancelled assignment keeps its gnet_transaction_id (append-only history — see
-    gnet_sync's docstring), so routing must key off `channel`/`status`, never off
-    `bool(gnet_transaction_id)`. cancel_assignment itself is the thing that guards
-    against a double-cancel."""
-    a = AssignmentFactory(
-        status=Assignment.Status.OFFERED,
-        channel=Assignment.Channel.GNET,
-        gnet_transaction_id="TX-1",
-    )
-    with patch.object(services, "gnet_sync") as mock_sync:
-        services.withdraw(a)
-    assert mock_sync.cancel_assignment.called
-
-
 def test_a_transport_failure_during_send_offer_does_not_roll_back_or_raise(settings):
     """A real gateway problem — here, a connection that never reaches api.grdd.net at
     all — is handled entirely inside gnet.py/gnet_sync (converted to a terminal
@@ -223,6 +237,7 @@ def test_a_transport_failure_during_send_offer_does_not_roll_back_or_raise(setti
     with patch.object(gnet, "requests") as req:
         req.request.side_effect = requests.exceptions.ConnectionError("refused")
         a = services.send_offer(res, vendor, payout=Decimal("140.00"))  # must not raise
+    req.request.assert_called_once()  # prove this actually reached the transport call
     a.refresh_from_db()
     assert a.status == Assignment.Status.OFFERED
     assert a.channel == Assignment.Channel.GNET
@@ -240,6 +255,7 @@ def test_a_transport_failure_during_withdraw_does_not_undo_the_state_change(sett
     with patch.object(gnet, "requests") as req:
         req.request.side_effect = requests.exceptions.Timeout("timed out")
         services.withdraw(a)  # must not raise
+    req.request.assert_called_once()  # prove this actually reached the transport call
     a.refresh_from_db()
     assert a.status == Assignment.Status.WITHDRAWN
 

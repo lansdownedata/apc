@@ -8,6 +8,7 @@ constraint would exist on prod Postgres and silently not exist where the tests r
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from decimal import Decimal
 
@@ -24,6 +25,8 @@ from apps.vendors.models import Vendor
 
 from . import gnet_sync
 from .models import Assignment
+
+logger = logging.getLogger(__name__)
 
 
 class AssignmentError(Exception):
@@ -228,8 +231,19 @@ def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Ass
     excludes both, and no screen lists assignments by vendor, so an assignment left active
     is one no dispatcher can reach while the affiliate is still holding a trip that no
     longer exists. One query for the whole set rather than a lookup per trip.
+
+    Isolated per assignment: a gateway problem can no longer raise out of `withdraw` at
+    all (see its docstring), but a genuine bug or a DB hiccup mid-batch still could, and
+    a list comprehension would let that abort the whole call — stranding every later
+    trip in the batch in exactly the "affiliate still holds a trip that no longer
+    exists" state this function exists to prevent. One bad row is logged loudly and
+    skipped; the rest of the batch still releases, and the return value is only the
+    assignments that actually did.
     """
-    return [
-        withdraw(assignment, note=note)
-        for assignment in Assignment.objects.active().filter(reservation__in=reservations)
-    ]
+    released = []
+    for assignment in Assignment.objects.active().filter(reservation__in=reservations):
+        try:
+            released.append(withdraw(assignment, note=note))
+        except Exception:  # noqa: BLE001 - one bad row must not strand the rest of the batch
+            logger.exception("Failed to release assignment %s", assignment.pk)
+    return released
