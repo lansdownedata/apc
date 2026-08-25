@@ -188,9 +188,11 @@ LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NG
 LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 
 # GNet farm-out gateway (Lansdowne relay in front of the real GNet partner network —
-# docs/... GNET-CONNECTION-GUIDE.md §5). Blank GNET_API_KEY => preview mode (no sends);
-# Task 3 gates on it. The gateway is LIVE against real GNet — a configured key can book
-# a REAL vehicle with a REAL affiliate operator.
+# docs/... GNET-CONNECTION-GUIDE.md §5). Preview mode (no sends) unless BOTH GNET_ACTIVE
+# is true AND GNET_API_KEY is set — apps/dispatch/gnet_sync.py gates on this. The gateway
+# is LIVE against real GNet — GNET_ACTIVE=True arms real bookings with a real affiliate
+# operator, so it defaults to False and must be switched on deliberately.
+GNET_ACTIVE = env.bool("GNET_ACTIVE", default=False)
 GNET_GATEWAY_URL = env("GNET_GATEWAY_URL", default="https://lansdownedata.com")
 GNET_API_KEY = env("GNET_API_KEY", default="")
 GNET_CALLBACK_SECRET = env("GNET_CALLBACK_SECRET", default="")
