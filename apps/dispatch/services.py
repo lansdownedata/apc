@@ -8,7 +8,6 @@ constraint would exist on prod Postgres and silently not exist where the tests r
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterable
 from decimal import Decimal
 
@@ -25,8 +24,6 @@ from apps.vendors.models import Vendor
 
 from . import gnet_sync
 from .models import Assignment
-
-logger = logging.getLogger(__name__)
 
 
 class AssignmentError(Exception):
@@ -116,6 +113,14 @@ def send_offer(
     (or a vendor with no email on file) still leaves the assignment recorded, because
     dispatch may well be arranging coverage by phone in parallel. A dispatcher's action
     must never fail because a network — ours or the gateway's — is down.
+
+    `gnet_sync.push_assignment` is trusted to make good on that guarantee itself: every
+    gateway-side failure it can encounter (a non-2xx response, a `requests`-level
+    transport error, an unmapped vehicle/vendor) is caught inside `gnet_sync`/`gnet.py`
+    and turned into a terminal `GnetEvent` plus an alert, never a raised exception — see
+    `apps.integrations.gnet._request`. This call is therefore made directly, with no
+    defensive `try/except` here: anything that still escapes it is a genuine bug, not a
+    network hiccup, and should fail loudly rather than be swallowed.
     """
     channel = Assignment.Channel.GNET if vendor.is_gnet_capable else Assignment.Channel.MANUAL
     assignment = _claim(
@@ -128,10 +133,7 @@ def send_offer(
     )
 
     if channel == Assignment.Channel.GNET:
-        try:
-            gnet_sync.push_assignment(assignment)
-        except Exception:  # noqa: BLE001 — best-effort; gnet_sync already alerts on failure
-            logger.exception("GNet push failed for assignment %s", assignment.pk)
+        gnet_sync.push_assignment(assignment)
         return assignment
 
     if not vendor.email:
@@ -201,10 +203,13 @@ def decline(assignment: Assignment, *, note: str = "") -> Assignment:
 def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
     """We pulled the offer, or unassigned confirmed coverage.
 
-    For a GNet-channel assignment this also releases the affiliate on the gateway. That
-    call is best-effort, same as `send_offer`'s: the state change here has already
-    committed, so a gateway problem must never look like a failed withdraw to the
-    dispatcher — it only ever raises an alert (see `gnet_sync.cancel_assignment`).
+    For a GNet-channel assignment this also releases the affiliate on the gateway. The
+    state change above has already committed, so a gateway problem must never look like
+    a failed withdraw to the dispatcher. As in `send_offer`, that guarantee lives inside
+    `gnet_sync.cancel_assignment` itself (every gateway-side failure becomes a terminal
+    `GnetEvent` plus an alert, never a raised exception), so this calls it directly with
+    no defensive `try/except` — anything that still escapes is a genuine bug and should
+    be loud.
 
     Routes off `channel`, never off `bool(assignment.gnet_transaction_id)` — a cancelled
     assignment deliberately keeps its transaction id (append-only history), and
@@ -212,10 +217,7 @@ def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
     """
     resolved = _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
     if resolved.channel == Assignment.Channel.GNET:
-        try:
-            gnet_sync.cancel_assignment(resolved)
-        except Exception:  # noqa: BLE001 — best-effort; gnet_sync already alerts on failure
-            logger.exception("GNet cancel failed for assignment %s", resolved.pk)
+        gnet_sync.cancel_assignment(resolved)
     return resolved
 
 
