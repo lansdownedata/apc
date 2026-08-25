@@ -8,6 +8,7 @@ constraint would exist on prod Postgres and silently not exist where the tests r
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from decimal import Decimal
 
@@ -22,7 +23,10 @@ from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.vendors.models import Vendor
 
+from . import gnet_sync
 from .models import Assignment
+
+logger = logging.getLogger(__name__)
 
 
 class AssignmentError(Exception):
@@ -41,6 +45,7 @@ def _claim(
     payout: Decimal,
     note: str,
     status: str,
+    channel: str = Assignment.Channel.MANUAL,
 ) -> Assignment:
     """Create an assignment, refusing if the trip can't legally be farmed out.
 
@@ -50,6 +55,11 @@ def _claim(
 
     Locks the reservation row so two dispatchers assigning the same trip at the same
     moment can't both pass the already-active check.
+
+    `channel` defaults to MANUAL — `assign_direct` always wants that, and it's the safe
+    default for any future caller. `send_offer` passes GNET explicitly for a GNet-capable
+    vendor, so the assignment's channel is correct from creation rather than patched on
+    afterwards.
     """
     if reservation.lead.status != Lead.Status.BOOKED:
         raise AssignmentError(f"Trip #{reservation.pk} isn't on a booked order.")
@@ -66,6 +76,7 @@ def _claim(
             payout=payout,
             note=note,
             status=status,
+            channel=channel,
             resolved_at=resolved,
         )
 
@@ -98,14 +109,31 @@ def offer_email_context(assignment: Assignment) -> dict:
 def send_offer(
     reservation: Reservation, vendor: Vendor, *, payout: Decimal, note: str = ""
 ) -> Assignment:
-    """Offer the trip to an affiliate and email them the trip sheet.
+    """Offer the trip to an affiliate — over GNet if it's a GNet-capable vendor, by
+    trip-sheet email otherwise.
 
-    Delivery is best-effort: a vendor with no email on file (or a send that fails) still
-    gets the assignment recorded, because he may well be arranging it by phone in parallel.
+    Both channels are best-effort: a GNet gateway problem or an email that fails to send
+    (or a vendor with no email on file) still leaves the assignment recorded, because
+    dispatch may well be arranging coverage by phone in parallel. A dispatcher's action
+    must never fail because a network — ours or the gateway's — is down.
     """
+    channel = Assignment.Channel.GNET if vendor.is_gnet_capable else Assignment.Channel.MANUAL
     assignment = _claim(
-        reservation, vendor, payout=payout, note=note, status=Assignment.Status.OFFERED
+        reservation,
+        vendor,
+        payout=payout,
+        note=note,
+        status=Assignment.Status.OFFERED,
+        channel=channel,
     )
+
+    if channel == Assignment.Channel.GNET:
+        try:
+            gnet_sync.push_assignment(assignment)
+        except Exception:  # noqa: BLE001 — best-effort; gnet_sync already alerts on failure
+            logger.exception("GNet push failed for assignment %s", assignment.pk)
+        return assignment
+
     if not vendor.email:
         return assignment
 
@@ -135,7 +163,11 @@ def send_offer(
 def assign_direct(
     reservation: Reservation, vendor: Vendor, *, payout: Decimal, note: str = ""
 ) -> Assignment:
-    """Record coverage already arranged out of band (phone, text) — no offer step."""
+    """Record coverage already arranged out of band (phone, text) — no offer step.
+
+    Always MANUAL, even for a GNet-capable vendor: this is a phone-arranged coverage
+    record, not a farm-out, so it never touches the gateway.
+    """
     return _claim(reservation, vendor, payout=payout, note=note, status=Assignment.Status.CONFIRMED)
 
 
@@ -167,8 +199,24 @@ def decline(assignment: Assignment, *, note: str = "") -> Assignment:
 
 
 def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
-    """We pulled the offer, or unassigned confirmed coverage."""
-    return _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
+    """We pulled the offer, or unassigned confirmed coverage.
+
+    For a GNet-channel assignment this also releases the affiliate on the gateway. That
+    call is best-effort, same as `send_offer`'s: the state change here has already
+    committed, so a gateway problem must never look like a failed withdraw to the
+    dispatcher — it only ever raises an alert (see `gnet_sync.cancel_assignment`).
+
+    Routes off `channel`, never off `bool(assignment.gnet_transaction_id)` — a cancelled
+    assignment deliberately keeps its transaction id (append-only history), and
+    `cancel_assignment` itself is what guards against sending a second cancel.
+    """
+    resolved = _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
+    if resolved.channel == Assignment.Channel.GNET:
+        try:
+            gnet_sync.cancel_assignment(resolved)
+        except Exception:  # noqa: BLE001 — best-effort; gnet_sync already alerts on failure
+            logger.exception("GNet cancel failed for assignment %s", resolved.pk)
+    return resolved
 
 
 def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Assignment]:

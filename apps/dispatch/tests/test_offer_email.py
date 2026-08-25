@@ -1,5 +1,6 @@
 from datetime import date, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -83,3 +84,12 @@ def test_offer_email_embeds_the_logo_inline(mailoutbox):
     message = mailoutbox[0]
     cids = [a["Content-ID"] for a in message.attachments if hasattr(a, "get")]
     assert "<logo>" in cids
+
+
+def test_a_gnet_capable_vendor_gets_no_trip_sheet_email(mailoutbox):
+    """A GNet-capable vendor is farmed out over the gateway, not by email — even though
+    the vendor has an email on file, send_offer must not send anything through it."""
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1", email="ops@capital.example")
+    with patch.object(services, "gnet_sync"):
+        services.send_offer(_trip(), vendor, payout=Decimal("215.00"))
+    assert len(mailoutbox) == 0
