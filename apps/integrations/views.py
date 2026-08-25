@@ -17,6 +17,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.dispatch.gnet_callback import handle_callback
 from apps.messaging import touchpoints
 from apps.notifications.models import Notification
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
@@ -54,6 +55,23 @@ def _podium_signature_ok(request: HttpRequest) -> bool:
         secret.encode(), f"{timestamp}.".encode() + request.body, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+def _gnet_signature_ok(request: HttpRequest) -> bool:
+    """HMAC-SHA256 over the RAW body with GNET_CALLBACK_SECRET.
+
+    Blank secret => accept (dev); set => fail closed. Mirrors _podium_signature_ok.
+    The signature covers raw bytes: re-serialising the JSON changes key order and
+    whitespace and will never match.
+    """
+    secret = settings.GNET_CALLBACK_SECRET
+    if not secret:
+        return True
+    header = request.headers.get("X-Lansdowne-Signature", "")
+    if not header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.removeprefix("sha256="))
 
 
 def podium_authorize(request):
@@ -150,6 +168,32 @@ def la_webhook(request, token: str):
             detail=f"Trip #{reservation.pk}: {event_name.removeprefix('reservation.')}",
         )
     return JsonResponse({"status": "ok"})
+
+
+@csrf_exempt
+def gnet_callback(request):
+    """Receive GNet farm-out status callbacks (contract v2 §5.8) and resolve the
+    assignment they concern.
+
+    Unlike farm-in (§1), the response body is ignored by the gateway — only the
+    HTTP status matters — so this answers 2xx as fast as possible and never surfaces
+    processing detail in the body. The gateway holds a 15s budget and retries a
+    non-2xx (including a timeout) up to 3 times with backoff plus a background
+    sweeper, so every internal failure mode `handle_callback` can hit — an
+    unrecognised status, an already-resolved assignment, an uncorrelated
+    transactionId — is swallowed there and still answered 2xx here; only a bad
+    signature returns non-2xx.
+    """
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST only.")
+    if not _gnet_signature_ok(request):
+        return HttpResponse(status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON.")
+    handle_callback(payload)
+    return HttpResponse(status=200)
 
 
 @login_required
