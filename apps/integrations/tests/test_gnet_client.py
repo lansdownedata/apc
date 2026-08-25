@@ -115,6 +115,35 @@ def test_payload_raises_for_unmapped_vehicle():
         gnet.build_send_payload(assignment)
 
 
+def test_payload_raises_for_vendor_without_grid_id():
+    """Task 4's routing means a non-GNet vendor should never reach this path, but the
+    guard is defence in depth: refuse locally rather than send an empty providerId
+    and let the gateway reject it remotely."""
+    vendor = VendorFactory(gnet_grid_id="")
+    vehicle = VehicleTypeFactory(name="Luxury Sedan")
+    reservation = ReservationFactory(vehicle=vehicle)
+    assignment = AssignmentFactory(reservation=reservation, vendor=vendor)
+    with pytest.raises(gnet.GnetNotConfigured):
+        gnet.build_send_payload(assignment)
+
+
+def test_payload_raises_for_reservation_with_no_stops():
+    """Not reachable through the reservation editor (it enforces a pickup + drop-off),
+    but there is no model-level constraint — an admin edit or import could still
+    produce one, and stops[0] on an empty list would otherwise raise a raw
+    IndexError on a call that books real work."""
+    assignment = _assignment_with_stops()
+    with pytest.raises(gnet.GnetNotConfigured):
+        gnet.build_send_payload(assignment)
+
+
+def test_payload_raises_for_reservation_with_one_stop():
+    """A single stop would otherwise send pickup and dropOff as the SAME stop."""
+    assignment = _assignment_with_stops({"address": "Only Stop"})
+    with pytest.raises(gnet.GnetNotConfigured):
+        gnet.build_send_payload(assignment)
+
+
 def test_payload_passenger_count_and_naive_pickup_time():
     assignment = _assignment()
     payload = gnet.build_send_payload(assignment)
@@ -289,6 +318,22 @@ def test_send_trip_error_statuses_raise_gnet_api_error(status):
             gnet.send_trip({})
     assert exc.value.status == status
     assert "nope" in exc.value.body
+
+
+def test_send_trip_malformed_json_on_2xx_raises_gnet_api_error():
+    """A 2xx with an unparseable body (a proxy hiccup) must surface as the same
+    GnetAPIError callers already handle everywhere else, not a raw exception."""
+    with patch.object(gnet, "requests") as req:
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b"<html>not json</html>"
+        resp.text = "<html>not json</html>"
+        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        req.request.return_value = resp
+        with pytest.raises(gnet.GnetAPIError) as exc:
+            gnet.send_trip({})
+    assert exc.value.status == 200
+    assert "not json" in exc.value.body
 
 
 def test_cancel_trip_deletes_by_transaction_id():

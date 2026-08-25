@@ -14,13 +14,16 @@ successful POST books a REAL vehicle with a REAL affiliate. Never call send_trip
 cancel_trip from a test — always mock `requests` at the boundary.
 """
 
+from datetime import date as date_type
 from datetime import datetime
+from datetime import time as time_type
 
 import requests
 from django.conf import settings
 
 from apps.dispatch.models import Assignment
 from apps.leads.models import VehicleType
+from apps.reservations.models import Stop
 
 API_PATH = "/api/gateway/v1/trips"
 TIMEOUT = 10  # seconds — an unbounded call can hang a worker indefinitely
@@ -52,10 +55,11 @@ class GnetAPIError(Exception):
 
 
 class GnetNotConfigured(Exception):
-    """Raised when a trip can't be represented in GNet's wire format locally —
-    currently just an unmapped vehicle type. Refusing the send here, before any
-    network call, is deliberate: it turns a silent partner-side 400 into a clear
-    local error naming exactly what to fix."""
+    """Raised when a trip can't be represented in GNet's wire format locally — an
+    unmapped vehicle type, a vendor with no `gnet_grid_id`, or a reservation with
+    fewer than 2 stops. Refusing the send here, before any network call, is
+    deliberate: it turns a silent partner-side 400 (or a raw `IndexError`) into a
+    clear local error naming exactly what to fix."""
 
 
 def vehicle_code(vehicle: VehicleType) -> str:
@@ -74,7 +78,18 @@ def vehicle_code(vehicle: VehicleType) -> str:
         ) from None
 
 
-def _location(stop, *, time_iso: str | None = None) -> dict:
+def _combine_iso(date_val: date_type | None, time_val: time_type | None) -> str | None:
+    """Naive `date`+`time` -> ISO 8601 string, or None if either half is missing.
+
+    No timezone is ever attached — the contract's timestamps are naive and irregular
+    by design (§1.4/§5.11), so this never invents a conversion, only a format.
+    """
+    if not date_val or not time_val:
+        return None
+    return datetime.combine(date_val, time_val).isoformat()
+
+
+def _location(stop: Stop, *, time_iso: str | None = None) -> dict:
     """One `locations.*` entry (pickup/dropOff/a `stops[]` element) for `stop`.
 
     `locationType` is hardcoded to `"address"` everywhere — deliberately, not an
@@ -124,32 +139,42 @@ def build_send_payload(assignment: Assignment) -> dict:
     first-class array in GNet's farm-out contract, always sent (even empty) rather
     than omitted, matching the doc's own `"stops": []` example. No stop is ever
     silently dropped between the two.
+
+    Raises GnetNotConfigured — refusing the send locally rather than earning an
+    opaque gateway 400 (or, for the stop count, a raw `IndexError`) — for an
+    unmapped vehicle type, fewer than 2 stops (a reservation always needs at least
+    a pickup and a drop-off; the reservation editor enforces this, but there is no
+    model-level constraint, so a stray admin edit or import could still produce
+    one), or a vendor with no `gnet_grid_id` set.
     """
     reservation = assignment.reservation
     vendor = assignment.vendor
     vehicle_type_code = vehicle_code(reservation.vehicle)
 
+    if not vendor.gnet_grid_id:
+        raise GnetNotConfigured(
+            f"Vendor {vendor.name!r} has no GNet griddID set — it can't be a farm-out "
+            "provider until one is."
+        )
+
     stops = list(reservation.ordered_stops)
+    if len(stops) < 2:
+        raise GnetNotConfigured(
+            f"Reservation #{reservation.pk} has {len(stops)} stop(s) — a trip needs at "
+            "least a pickup and a drop-off before it can be farmed out over GNet."
+        )
     pickup_stop, dropoff_stop, middle_stops = stops[0], stops[-1], stops[1:-1]
 
-    pickup_time = None
-    if reservation.pickup_date and reservation.pickup_time:
-        pickup_time = datetime.combine(reservation.pickup_date, reservation.pickup_time).isoformat()
-    pickup = _location(pickup_stop, time_iso=pickup_time)
-
-    dropoff_time = None
-    if reservation.dropoff_date and reservation.dropoff_time:
-        dropoff_time = datetime.combine(
-            reservation.dropoff_date, reservation.dropoff_time
-        ).isoformat()
-    dropoff = _location(dropoff_stop, time_iso=dropoff_time)
-
-    stops_payload = []
-    for stop in middle_stops:
-        stop_time = None
-        if stop.scheduled_time and reservation.pickup_date:
-            stop_time = datetime.combine(reservation.pickup_date, stop.scheduled_time).isoformat()
-        stops_payload.append(_location(stop, time_iso=stop_time))
+    pickup = _location(
+        pickup_stop, time_iso=_combine_iso(reservation.pickup_date, reservation.pickup_time)
+    )
+    dropoff = _location(
+        dropoff_stop, time_iso=_combine_iso(reservation.dropoff_date, reservation.dropoff_time)
+    )
+    stops_payload = [
+        _location(stop, time_iso=_combine_iso(reservation.pickup_date, stop.scheduled_time))
+        for stop in middle_stops
+    ]
 
     return {
         "affiliateReservation": {
@@ -180,7 +205,15 @@ def _request(method: str, path: str, *, json: dict | None = None) -> dict:
     )
     if resp.status_code >= 400:
         raise GnetAPIError(resp.status_code, resp.text or "")
-    return resp.json() if resp.content else {}
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except ValueError as exc:
+        # A 2xx with an unparseable body (a proxy hiccup, an HTML error page slipping
+        # through with a 200) is still a failure — surface it the same way callers
+        # already handle every other failure, not as a raw exception from `resp.json`.
+        raise GnetAPIError(resp.status_code, resp.text or "") from exc
 
 
 def send_trip(payload: dict) -> dict:
