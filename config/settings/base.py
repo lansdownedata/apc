@@ -187,6 +187,14 @@ LA_PAYMENT_TYPE_ID = env.int("LA_PAYMENT_TYPE_ID", default=0)  # non-charging ty
 LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NGROK_HOST>
 LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 
+# GNet farm-out gateway (Lansdowne relay in front of the real GNet partner network —
+# docs/... GNET-CONNECTION-GUIDE.md §5). Blank GNET_API_KEY => preview mode (no sends);
+# Task 3 gates on it. The gateway is LIVE against real GNet — a configured key can book
+# a REAL vehicle with a REAL affiliate operator.
+GNET_GATEWAY_URL = env("GNET_GATEWAY_URL", default="https://lansdownedata.com")
+GNET_API_KEY = env("GNET_API_KEY", default="")
+GNET_CALLBACK_SECRET = env("GNET_CALLBACK_SECRET", default="")
+
 # Public marketing site — client-provided embeds (blank = feature hidden/degraded).
 CALENDLY_URL = env("CALENDLY_URL", default="")
 # Raw HTML/JS the client pastes from his WeddingWire/The Knot storefront dashboard.
