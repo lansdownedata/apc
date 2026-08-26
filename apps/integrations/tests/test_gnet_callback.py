@@ -11,10 +11,12 @@ import hashlib
 import hmac
 import json
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
 
+from apps.dispatch import gnet_callback
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.gnet_callback import handle_callback
 from apps.dispatch.models import Assignment, GnetEvent
@@ -288,22 +290,6 @@ def test_unknown_transaction_id_returns_200_and_records_uncorrelated_event(clien
 # --- payout auto-heal ---
 
 
-def test_totalamount_updates_payout_silently(client, settings):
-    settings.GNET_CALLBACK_SECRET = SECRET
-    assignment = _gnet_assignment(payout=Decimal("140.00"))
-
-    resp = _signed_post(
-        client, {"transactionId": "TX-1", "status": "ASSIGNED", "totalAmount": "150.00"}
-    )
-
-    assert resp.status_code == 200
-    assignment.refresh_from_db()
-    assert assignment.payout == Decimal("150.00")
-    assert not Notification.objects.filter(
-        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
-    ).exists()
-
-
 def test_later_totalamount_supersedes_earlier(client, settings):
     settings.GNET_CALLBACK_SECRET = SECRET
     assignment = _gnet_assignment(payout=Decimal("140.00"))
@@ -476,3 +462,229 @@ def test_falsy_but_present_status_is_not_treated_as_absent():
     as missing. handle_callback must distinguish "absent" from "falsy"."""
     event = handle_callback({"transactionId": "TX-falsy-status", "status": 0})
     assert event.idempotency_key == "callback-TX-falsy-status-0"
+
+
+# --- the dedupe row must not outlive a failed state change ---
+#
+# There is no ATOMIC_REQUESTS, so `get_or_create` commits the dedupe row on its own. If
+# the state change then raised, the view 500'd and every one of the gateway's retries
+# found that row, returned 200, and never applied the status — the assignment sat
+# OFFERED forever while the affiliate was confirmed.
+
+
+def test_a_failed_state_change_rolls_back_the_dedupe_row():
+    assignment = _gnet_assignment()
+
+    with (
+        patch.object(gnet_callback.services, "confirm", side_effect=RuntimeError("boom")),
+        pytest.raises(RuntimeError),
+    ):
+        handle_callback({"transactionId": "TX-1", "status": "CONFIRMED"})
+
+    assert not GnetEvent.objects.filter(idempotency_key="callback-TX-1-CONFIRMED").exists()
+
+    # The gateway's retry now actually re-applies rather than hitting a stale row.
+    handle_callback({"transactionId": "TX-1", "status": "CONFIRMED"})
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
+
+
+def test_an_oversized_transaction_id_does_not_overflow_the_dedupe_key(client, settings):
+    """`idempotency_key` is CharField(max_length=160); a partner id longer than that
+    used to raise DataError on the inbound hot path."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+
+    resp = _signed_post(client, {"transactionId": "X" * 400, "status": "Y" * 400})
+
+    assert resp.status_code == 200
+    event = GnetEvent.objects.get()
+    assert len(event.idempotency_key) <= 160
+
+
+# --- header comparison must never raise on non-ASCII (an unauthenticated 500 otherwise) ---
+
+
+def test_non_ascii_authorization_header_is_rejected_not_a_500(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
+
+    resp = _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION="Bearer ünïcode",
+        HTTP_X_LANSDOWNE_SIGNATURE=_sig(SECRET, body),
+    )
+
+    assert resp.status_code == 403
+
+
+def test_non_ascii_signature_header_is_rejected_not_a_500(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = json.dumps({"transactionId": "TX-1", "status": "CONFIRMED"}).encode()
+
+    resp = _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION=f"Bearer {SECRET}",
+        HTTP_X_LANSDOWNE_SIGNATURE="sha256=déadbeef",
+    )
+
+    assert resp.status_code == 403
+
+
+# --- payout bounds: the callback writes the same field the dispatcher door guards ---
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [
+        "-500.00",
+        "-0.01",
+        "99999999.995",
+        "100000000.00",
+        "99999999999.99",
+        "1e999",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+    ],
+)
+def test_out_of_range_totalamount_is_treated_as_absent(client, settings, amount):
+    """`views._payout` refuses negatives and anything >= 99999999.995; the callback
+    writes the same MoneyField and must refuse the same values — as "absent," never as
+    an exception on a public endpoint."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("140.00"))
+
+    resp = _signed_post(client, {"transactionId": "TX-1", "status": "CLOSE", "totalAmount": amount})
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("140.00")
+
+
+def test_totalamount_is_quantized_to_cents(client, settings):
+    """MySQL rounds a third decimal half-even and Postgres half-up — quantize here so
+    both environments store the same money, exactly as `views._payout` does."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("140.00"))
+
+    _signed_post(client, {"transactionId": "TX-1", "status": "CLOSE", "totalAmount": "215.005"})
+
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("215.01")
+
+
+def test_a_pre_close_reprice_that_moves_payout_alerts(client, settings):
+    """A provisional first quote can flip a trip's margin from positive to negative.
+    Auto-healing is right; doing it silently is not."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("140.00"))
+
+    resp = _signed_post(
+        client, {"transactionId": "TX-1", "status": "ASSIGNED", "totalAmount": "150.00"}
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("150.00")
+    notification = Notification.objects.get(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    )
+    assert "150.00" in notification.detail
+
+
+def test_a_reprice_that_does_not_move_payout_stays_silent(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("150.00"))
+
+    _signed_post(client, {"transactionId": "TX-1", "status": "ASSIGNED", "totalAmount": "150.00"})
+
+    assert not Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
+
+
+# --- correlation by requesterResNo when the body carries no transactionId ---
+#
+# The gateway's own callbackSchema allows a body with no transactionId when
+# affiliateReservation.requesterResNo is present, and its correlate() implements that
+# fallback. Correlating on transactionId alone left every such callback unapplied — and,
+# worse, collided them all on one `callback--<STATUS>` dedupe key, so the second one
+# recorded nothing at all, losing even the audit evidence.
+
+
+def test_callback_without_transaction_id_correlates_by_requester_res_no(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment()
+
+    resp = _signed_post(
+        client,
+        {
+            "status": "CONFIRMED",
+            "affiliateReservation": {"requesterResNo": f"apc-{assignment.pk}"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
+
+
+def test_id_less_callbacks_for_different_assignments_do_not_collide(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    first = _gnet_assignment()
+    second = _gnet_assignment(gnet_transaction_id="TX-2")
+
+    for assignment in (first, second):
+        _signed_post(
+            client,
+            {
+                "status": "CONFIRMED",
+                "affiliateReservation": {"requesterResNo": f"apc-{assignment.pk}"},
+            },
+        )
+
+    assert GnetEvent.objects.filter(action=GnetEvent.Action.CALLBACK).count() == 2
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.status == Assignment.Status.CONFIRMED
+    assert second.status == Assignment.Status.CONFIRMED
+
+
+@pytest.mark.parametrize(
+    "res_no",
+    ["not-a-number", "apc-", "", None, "apc-99999999999999999999999", {"a": 1}],
+    ids=["text", "prefix-only", "blank", "null", "out-of-range", "object"],
+)
+def test_an_unusable_requester_res_no_is_recorded_and_never_crashes(client, settings, res_no):
+    settings.GNET_CALLBACK_SECRET = SECRET
+
+    resp = _signed_post(
+        client,
+        {"status": "CONFIRMED", "affiliateReservation": {"requesterResNo": res_no}},
+    )
+
+    assert resp.status_code == 200
+    assert GnetEvent.objects.get().assignment is None
+
+
+def test_transaction_id_still_wins_when_both_are_present(client, settings):
+    """The id is the gateway's own correlator; the resNo is only a fallback."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    by_id = _gnet_assignment()
+    by_res_no = _gnet_assignment(gnet_transaction_id="TX-2")
+
+    _signed_post(
+        client,
+        {
+            "transactionId": "TX-1",
+            "status": "CONFIRMED",
+            "affiliateReservation": {"requesterResNo": f"apc-{by_res_no.pk}"},
+        },
+    )
+
+    by_id.refresh_from_db()
+    by_res_no.refresh_from_db()
+    assert by_id.status == Assignment.Status.CONFIRMED
+    assert by_res_no.status == Assignment.Status.OFFERED

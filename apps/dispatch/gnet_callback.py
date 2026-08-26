@@ -16,8 +16,11 @@ receiver.
 from __future__ import annotations
 
 import logging
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from django.db import transaction
+
+from apps.integrations.gnet import RESNO_PREFIX
 from apps.notifications.models import Notification
 
 from . import services
@@ -33,11 +36,40 @@ logger = logging.getLogger(__name__)
 # tomorrow — is recorded but changes no state.
 _CONFIRM_STATUSES = frozenset({"CONFIRMED", "ACKNOWLEDGED", "ASSIGNED"})
 
+# Same ceiling `dispatch.views._payout` enforces, and for the same two reasons: a value
+# at or above it overflows MoneyField(max_digits=10, decimal_places=2) once rounded, and
+# quantize() itself raises InvalidOperation on a number large enough to blow the 28-digit
+# context precision. Judged BEFORE rounding — don't "simplify" this to 1e8.
+_PAYOUT_CEILING = Decimal("99999999.995")
+
+# Bounds for the parts that compose `idempotency_key` (CharField(max_length=160)). A
+# partner id or status longer than the column used to raise DataError from the inbound
+# hot path — with finding 2's atomic() that is now merely a retried 500 rather than a
+# lost callback, but a key that cannot be written is still a callback that can never be
+# applied. 9 ("callback-") + 100 + 1 + 40 = 150.
+_MAX_KEY_CORRELATOR = 100
+_MAX_KEY_STATUS = 40
+
+# `Assignment.pk` is a BigAutoField; anything outside the signed 64-bit range is not a
+# pk we could ever hold, and handing it to the ORM risks a database-level range error
+# on the public callback endpoint.
+_MAX_PK = 2**63 - 1
+
 
 def _parse_amount(raw: object) -> Decimal | None:
-    """`totalAmount` is a string in this contract (§5.10); anything else — a JSON
-    number, `None`, an unparseable string — means "absent," not an error. Parsing
-    must never raise: a malformed amount from a partner is not our bug to crash on.
+    """`totalAmount` as money we could actually store, or None.
+
+    `totalAmount` is a string in this contract (§5.10); anything else — a JSON number,
+    `None`, an unparseable string — means "absent," not an error. Parsing must never
+    raise: a malformed amount from a partner is not our bug to crash on.
+
+    Out-of-range is "absent" too, deliberately rather than an exception. This writes the
+    very same `Assignment.payout` that `dispatch.views._payout` guards, so it enforces
+    the same three rules — finite, non-negative, below the ceiling — and quantizes to
+    cents for the same reason (MySQL rounds a third decimal half-even, Postgres half-up).
+    Without them a `CLOSE` carrying `"-500.00"` was accepted and silently inflated the
+    trip's margin, and `"1e999"`/`"NaN"` reached the database as a `DataError` /
+    `InvalidOperation` — a 500 on an unauthenticated-by-payload endpoint.
     """
     if not isinstance(raw, str):
         return None
@@ -45,9 +77,34 @@ def _parse_amount(raw: object) -> Decimal | None:
     if not text:
         return None
     try:
-        return Decimal(text)
+        value = Decimal(text)
     except InvalidOperation:
         return None
+    # is_finite() first: NaN/Infinity parse fine, and comparing a NaN raises.
+    if not value.is_finite() or value < 0 or value >= _PAYOUT_CEILING:
+        return None
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _resno_pk(affiliate_reservation: object) -> int | None:
+    """The `Assignment` pk behind `affiliateReservation.requesterResNo`, or None.
+
+    We send `apc-<pk>` (`apps.integrations.gnet.build_send_payload`), so the prefix comes
+    back off here — the two must change together. Anything that isn't a plausible pk
+    (text, the bare prefix, an out-of-range integer, a nested object) is None: an
+    uncorrelatable callback is still recorded as evidence, never a crash.
+    """
+    if not isinstance(affiliate_reservation, dict):
+        return None
+    raw = affiliate_reservation.get("requesterResNo")
+    if raw is None or isinstance(raw, (dict, list, bool)):
+        return None
+    text = str(raw).strip().removeprefix(RESNO_PREFIX)
+    try:
+        value = int(text)
+    except ValueError:
+        return None
+    return value if 0 < value <= _MAX_PK else None
 
 
 def _notes_text(affiliate_reservation: object) -> str:
@@ -94,10 +151,12 @@ def _apply_amount(assignment: Assignment, payload: dict, status: str) -> None:
     plausible cancellation charge, and `CANCEL` already withdraws the assignment
     and alerts, so a human sees it either way.
 
-    Alerts only for the one pricing event a broker needs told about: a `CLOSE`
-    amount that differs from what was already recorded. A first quote landing on
-    top of a dispatcher's manual estimate — or any other non-CLOSE update — is
-    silent.
+    Every heal that MOVES the payout alerts — not just the `CLOSE` mismatch. A
+    provisional first quote arriving on an earlier status can flip a trip's margin from
+    positive to negative, and if the later `CLOSE` then repeats that same figure it
+    equals what is now on file and would stay silent too, so nobody would ever be told.
+    An amount equal to what is already recorded changes nothing and says nothing, so a
+    run of statuses repeating one price alerts exactly once.
     """
     if status in {"REJECT", "FAILED"}:
         return
@@ -114,6 +173,15 @@ def _apply_amount(assignment: Assignment, payload: dict, status: str) -> None:
             detail=(
                 f"Trip #{assignment.reservation_id}: quoted {previous}, "
                 f"affiliate closed at {amount}."
+            ),
+        )
+    else:
+        _alert(
+            assignment,
+            title=f"GNet repriced assignment #{assignment.pk}",
+            detail=(
+                f"Trip #{assignment.reservation_id}: payout {previous} -> {amount} "
+                f"on {status or 'an unnamed status'} — margin has changed."
             ),
         )
     assignment.payout = amount
@@ -186,11 +254,26 @@ def handle_callback(payload: object) -> GnetEvent:
     recorded (uncorrelated, `assignment=None`) rather than being dropped — it's
     evidence a callback fired for a trip we can't currently place.
 
-    Dedupe is on `transaction_id` + `status` (`f"callback-{transaction_id}-
-    {status}"`), per the contract's instruction to dedupe independently of the
-    gateway's own payload-based dedupe. `GnetEvent.idempotency_key`'s unique
-    constraint makes `get_or_create` the atomic guard: a repeat delivery finds the
-    existing row and returns without reapplying anything.
+    When the body carries NO `transactionId`, correlation falls back to
+    `affiliateReservation.requesterResNo` — which is this assignment's pk, namespaced
+    (see `_resno_pk`). The gateway's own `callbackSchema` permits that body and its
+    `correlate()` implements the same fallback, so a callback shaped that way is
+    ordinary traffic, not an anomaly. The id still wins whenever both are present: it is
+    the gateway's own correlator.
+
+    Dedupe is on the correlator + status (`f"callback-{correlator}-{status}"`), per the
+    contract's instruction to dedupe independently of the gateway's own payload-based
+    dedupe. The resNo goes into the key when there is no transaction id — otherwise
+    every id-less callback would collide on one `callback--<STATUS>` key and the second
+    one, for a completely different assignment, would be discarded as a repeat.
+    `GnetEvent.idempotency_key`'s unique constraint makes `get_or_create` the atomic
+    guard: a repeat delivery finds the existing row and returns without reapplying.
+
+    The whole body runs in one `transaction.atomic()`. There is no `ATOMIC_REQUESTS`, so
+    without it the dedupe row committed on its own and any later failure was permanent:
+    the view 500'd, and every one of the gateway's retries then found that row, returned
+    200, and never applied the status — the assignment stuck OFFERED while the affiliate
+    was confirmed. Rolling back together means a retry can genuinely re-apply.
     """
     if not isinstance(payload, dict):
         payload = {}
@@ -198,26 +281,33 @@ def handle_callback(payload: object) -> GnetEvent:
     transaction_id = "" if raw_transaction_id is None else str(raw_transaction_id)
     raw_status = payload.get("status")
     status = "" if raw_status is None else str(raw_status)
-    idempotency_key = f"callback-{transaction_id}-{status}"
 
     assignment = None
+    correlator = ""
     if transaction_id:
+        correlator = transaction_id
         assignment = Assignment.objects.filter(gnet_transaction_id=transaction_id).first()
+    elif (res_pk := _resno_pk(payload.get("affiliateReservation"))) is not None:
+        correlator = f"resno:{res_pk}"
+        assignment = Assignment.objects.filter(pk=res_pk).first()
 
-    event, created = GnetEvent.objects.get_or_create(
-        idempotency_key=idempotency_key,
-        defaults={
-            "assignment": assignment,
-            "action": GnetEvent.Action.CALLBACK,
-            "payload": payload,
-            "result": GnetEvent.Result.SUCCESS,
-        },
-    )
-    if not created:
-        return event
+    idempotency_key = f"callback-{correlator[:_MAX_KEY_CORRELATOR]}-{status[:_MAX_KEY_STATUS]}"
 
-    if assignment is not None:
-        _apply_amount(assignment, payload, status)
-        _apply_status(assignment, status, payload)
+    with transaction.atomic():
+        event, created = GnetEvent.objects.get_or_create(
+            idempotency_key=idempotency_key,
+            defaults={
+                "assignment": assignment,
+                "action": GnetEvent.Action.CALLBACK,
+                "payload": payload,
+                "result": GnetEvent.Result.SUCCESS,
+            },
+        )
+        if not created:
+            return event
+
+        if assignment is not None:
+            _apply_amount(assignment, payload, status)
+            _apply_status(assignment, status, payload)
 
     return event

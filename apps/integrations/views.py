@@ -42,6 +42,19 @@ _CANCELLED_STATUSES = (
 _TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + _CANCELLED_STATUSES
 
 
+def _digests_equal(expected: str, received: str) -> bool:
+    """Constant-time compare of two header-sourced strings, as BYTES.
+
+    `hmac.compare_digest` raises `TypeError: comparing strings with non-ASCII
+    characters is not supported` when either `str` argument has a codepoint above
+    U+007F. Both call sites here feed it a raw request header, so a single non-ASCII
+    byte from an unauthenticated caller would turn a 403 into a 500 on a public
+    endpoint. Encoding first is defined for every input and keeps the comparison
+    constant-time.
+    """
+    return hmac.compare_digest(expected.encode(), received.encode())
+
+
 def _podium_signature_ok(request: HttpRequest) -> bool:
     """HMAC-SHA256 over '{podium-timestamp}.{raw_body}' with PODIUM_WEBHOOK_SECRET.
 
@@ -57,7 +70,7 @@ def _podium_signature_ok(request: HttpRequest) -> bool:
     expected = hmac.new(
         secret.encode(), f"{timestamp}.".encode() + request.body, hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    return _digests_equal(expected, signature)
 
 
 def _gnet_signature_ok(request: HttpRequest) -> bool:
@@ -75,13 +88,13 @@ def _gnet_signature_ok(request: HttpRequest) -> bool:
     if not secret:
         return True
     auth_header = request.headers.get("Authorization", "")
-    if not hmac.compare_digest(auth_header, f"Bearer {secret}"):
+    if not _digests_equal(f"Bearer {secret}", auth_header):
         return False
     header = request.headers.get("X-Lansdowne-Signature", "")
     if not header.startswith("sha256="):
         return False
     expected = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header.removeprefix("sha256="))
+    return _digests_equal(expected, header.removeprefix("sha256="))
 
 
 def podium_authorize(request):
