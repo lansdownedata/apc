@@ -1,5 +1,6 @@
 """push_reservation / push_lead_bookings — preview, live, idempotency, failure alerts."""
 
+import logging
 from datetime import date, time
 from decimal import Decimal
 from unittest.mock import patch
@@ -59,16 +60,63 @@ def test_preview_reruns_refresh_the_same_event():
     assert ZapEvent.objects.count() == 1
 
 
-# --- live mode ---
+# --- the LA_ACTIVE arming switch ---
+#
+# Credentials alone no longer mean "send". LA_ACTIVE defaults False so a fresh environment —
+# including production before Phase 1 lands — previews rather than booking into the client's
+# real LimoAnywhere account, and says so in the log rather than failing silently.
 
 
-@pytest.fixture
-def live(settings):
+def _credentials(settings):
     settings.LA_CLIENT_ID = "cid"
     settings.LA_CLIENT_SECRET = "cs"
     settings.LA_COMPANY_ALIAS = "allpro"
     settings.LA_PAYMENT_TYPE_ID = 7
     la_sync.limoanywhere._token_cache.clear()
+
+
+def test_credentials_present_but_inactive_previews_instead_of_sending(settings, caplog):
+    _credentials(settings)
+    settings.LA_ACTIVE = False
+    res = _reservation(_lead())
+    with patch.object(la_sync.limoanywhere, "requests", create=True) as req:
+        with caplog.at_level(logging.WARNING, logger="apps.integrations.la_sync"):
+            event = la_sync.push_reservation(res)
+    req.post.assert_not_called()
+    req.request.assert_not_called()
+    assert event.result == ZapEvent.Result.PREVIEW
+    assert str(res.pk) in caplog.text
+    assert "LA_ACTIVE" in caplog.text
+
+
+def test_active_without_credentials_still_previews(settings):
+    settings.LA_ACTIVE = True
+    res = _reservation(_lead())
+    with patch.object(la_sync.limoanywhere, "requests", create=True) as req:
+        event = la_sync.push_reservation(res)
+    req.post.assert_not_called()
+    assert event.result == ZapEvent.Result.PREVIEW
+
+
+def test_retry_leaves_previews_alone_while_inactive(settings):
+    """Credential day is not enough — the flag has to be armed too."""
+    res = _reservation(_lead())
+    assert la_sync.push_reservation(res).result == ZapEvent.Result.PREVIEW
+    _credentials(settings)
+    settings.LA_ACTIVE = False
+    with patch.object(la_sync.limoanywhere, "requests", create=True) as req:
+        la_sync.retry_failed_pushes()
+    req.post.assert_not_called()
+    req.request.assert_not_called()
+
+
+# --- live mode ---
+
+
+@pytest.fixture
+def live(settings):
+    _credentials(settings)
+    settings.LA_ACTIVE = True
 
 
 def test_live_push_books_and_stores_ids(live):
@@ -177,11 +225,8 @@ def test_retry_picks_up_preview_events_once_configured(settings):
     event = la_sync.push_reservation(res)
     assert event.result == ZapEvent.Result.PREVIEW
 
-    settings.LA_CLIENT_ID = "cid"
-    settings.LA_CLIENT_SECRET = "cs"
-    settings.LA_COMPANY_ALIAS = "allpro"
-    settings.LA_PAYMENT_TYPE_ID = 7
-    la_sync.limoanywhere._token_cache.clear()
+    _credentials(settings)
+    settings.LA_ACTIVE = True  # credential day arms the flag too
     with (
         patch.object(
             la_sync.limoanywhere, "register_customer", return_value={"id": 1, "number": "2"}

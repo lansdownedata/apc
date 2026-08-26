@@ -178,7 +178,12 @@ PODIUM_SCOPES = env.list(
     ],
 )
 
-# LimoAnywhere Customer API (docs/la-api/). Unset LA_CLIENT_ID => preview mode (no sends).
+# LimoAnywhere Customer API (docs/la-api/). Preview mode (no sends) unless BOTH LA_ACTIVE is
+# true AND the credentials below are set — credentials alone are not consent to book. A send
+# creates a real reservation in the client's LimoAnywhere account, and LA_BASE_URL defaults to
+# PRODUCTION, so LA_ACTIVE defaults False and must be armed deliberately (Phase 1). While it is
+# off, every skipped send is recorded as a PREVIEW ZapEvent and logged — see la_sync._is_preview.
+LA_ACTIVE = env.bool("LA_ACTIVE", default=False)
 LA_BASE_URL = env("LA_BASE_URL", default="https://api.mylimobiz.com")
 LA_CLIENT_ID = env("LA_CLIENT_ID", default="")
 LA_CLIENT_SECRET = env("LA_CLIENT_SECRET", default="")
