@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 
 from django.conf import settings
@@ -25,6 +26,8 @@ from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, Trip
 from . import la_sync, services, webhooks
 from .geocoding import merged_autocomplete
 from .models import LACustomer, LAEvent
+
+logger = logging.getLogger(__name__)
 
 STATE_SESSION_KEY = "podium_oauth_state"
 
@@ -190,6 +193,14 @@ def gnet_callback(request):
     unrecognised status, an already-resolved assignment, an uncorrelated
     transactionId — is swallowed there and still answered 2xx here; only a bad
     signature returns non-2xx.
+
+    A syntactically valid JSON body that isn't an object (`[1,2,3]`, `"str"`, a
+    bare number/bool/`null`) parses fine — `json.loads` doesn't raise for any of
+    those — but has no `.get`, so it's rejected here before reaching
+    `handle_callback` rather than crashing there. That's answered 200 too: the
+    gateway ignores the body and retries any non-2xx, so a 4xx would only buy a
+    guaranteed-to-fail retry storm for a request that can never succeed. Logged so
+    a genuinely malformed sender is still visible.
     """
     if request.method != "POST":
         return HttpResponseBadRequest("POST only.")
@@ -199,6 +210,12 @@ def gnet_callback(request):
         payload = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
         return HttpResponseBadRequest("Invalid JSON.")
+    if not isinstance(payload, dict):
+        logger.warning(
+            "GNet callback: valid JSON but not an object (got %s) — ignored.",
+            type(payload).__name__,
+        )
+        return HttpResponse(status=200)
     handle_callback(payload)
     return HttpResponse(status=200)
 
