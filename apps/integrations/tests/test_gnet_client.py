@@ -91,10 +91,23 @@ def test_vehicle_code_raises_for_unmapped_vehicle():
 
 
 def test_payload_has_requester_res_no_and_provider_id():
+    """The resNo is namespaced: the gateway's fallback correlation matches resNo across
+    ALL its clients and refuses on a tie, so a bare pk like "7" is a collision waiting to
+    happen. The prefix keeps the pk semantics and removes the ambiguity."""
     assignment = _assignment()
     payload = gnet.build_send_payload(assignment)
-    assert payload["affiliateReservation"]["requesterResNo"] == str(assignment.pk)
+    assert payload["affiliateReservation"]["requesterResNo"] == f"apc-{assignment.pk}"
     assert payload["affiliateReservation"]["providerId"] == assignment.vendor.gnet_grid_id
+
+
+def test_payload_strips_the_provider_id():
+    """`Vendor.is_gnet_capable` strips before deciding the vendor is on the network, so
+    a griddID pasted with a trailing space passes routing — it must not then go out as
+    `"gnet-42 "` and fail to match a partner."""
+    assignment = _assignment()
+    assignment.vendor.gnet_grid_id = "  gnet-partner-42  "
+    payload = gnet.build_send_payload(assignment)
+    assert payload["affiliateReservation"]["providerId"] == "gnet-partner-42"
 
 
 def test_payload_never_sends_injected_fields():
