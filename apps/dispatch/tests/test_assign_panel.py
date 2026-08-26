@@ -1,3 +1,4 @@
+import re
 from datetime import date, time, timedelta
 from decimal import Decimal
 
@@ -135,3 +136,28 @@ def test_panel_requires_login(client):
     trip = _trip()
     resp = client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
     assert resp.status_code == 302
+
+
+# --- GNet channel hint ---
+
+
+def test_options_carry_the_gnet_flag():
+    trip = _trip()
+    grid = VendorFactory(name="Grid Co", gnet_grid_id="gnet-1")
+    manual = VendorFactory(name="Manual Co")
+    by_pk = {o["vendor"].pk: o for o in selectors.vendor_options(trip)}
+    assert by_pk[grid.pk]["is_gnet"] is True
+    assert by_pk[manual.pk]["is_gnet"] is False
+
+
+def test_panel_shows_the_gnet_badge_for_a_gnet_capable_vendor_only(logged_in_client):
+    trip = _trip()
+    VendorFactory(name="Grid Co", gnet_grid_id="gnet-1")
+    VendorFactory(name="Manual Co")
+    body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+
+    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
+    grid_label = next(label for label in labels if "Grid Co" in label)
+    manual_label = next(label for label in labels if "Manual Co" in label)
+    assert "GNET" in grid_label
+    assert "GNET" not in manual_label

@@ -48,7 +48,10 @@
                    class="shrink-0"
                    @change="selectedVendor = $event.target.value; selectedEmail = $event.target.dataset.email">
             <span class="min-w-0">
-              <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vendor.name }}</span>
+              <span class="block font-semibold text-ink text-[13px] truncate">
+                {{ option.vendor.name }}
+                {% if option.is_gnet %}<span class="ml-1 text-[9.5px] font-bold uppercase tracking-wide text-muted ring-1 ring-line rounded px-1.5 py-0.5">GNET</span>{% endif %}
+              </span>
               <span class="block text-[11.5px] text-muted truncate">
                 {% if option.fits_vehicle %}{{ trip.vehicle.name }} ✓ · {% endif %}
                 {{ option.vendor.service_area|default:"—" }} · used {{ option.used }}× ·

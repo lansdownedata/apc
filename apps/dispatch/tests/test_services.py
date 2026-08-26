@@ -6,7 +6,7 @@ import requests
 
 from apps.dispatch import services
 from apps.dispatch.factories import AssignmentFactory
-from apps.dispatch.models import Assignment
+from apps.dispatch.models import Assignment, GnetEvent
 from apps.integrations import gnet
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
@@ -282,3 +282,60 @@ def test_withdraw_lets_a_genuine_gnet_sync_bug_propagate():
     with patch.object(services.gnet_sync, "cancel_assignment", side_effect=TypeError("boom")):
         with pytest.raises(TypeError):
             services.withdraw(a)
+
+
+# --- THE SAFETY PROOF ---
+#
+# GNET_API_KEY is already set in the production environment (see gnet_sync.py's SAFETY
+# docstring) — GNET_ACTIVE defaulting to False is the ONLY thing standing between a
+# deployed send/cancel path and a real vehicle being booked with a real affiliate
+# operator. These tests exercise the gate through the real, public service path
+# (services.send_offer / services.withdraw) — not gnet_sync directly — and patch
+# `requests` at the boundary inside apps/integrations/gnet.py so a regression that
+# reintroduces a network call anywhere in the send_offer/withdraw call chain is
+# caught, not just a regression inside gnet_sync itself.
+
+
+def test_send_offer_with_key_present_but_inactive_makes_no_http_call(settings):
+    """The one scenario matching the real prod environment right now: a non-blank
+    GNET_API_KEY (already configured) with GNET_ACTIVE still False (not armed). Proves
+    the `requests` boundary is never touched at all — not merely that no exception
+    escapes — and that a PREVIEW GnetEvent captures the exact payload an operator
+    would need to inspect before arming the gate."""
+    settings.GNET_ACTIVE = False
+    settings.GNET_API_KEY = "lds_prodkey_do_not_use_in_tests"
+    res = _booked_trip()
+    vendor = VendorFactory(gnet_grid_id="gnet-partner-1")
+
+    with patch.object(gnet, "requests") as req:
+        assignment = services.send_offer(res, vendor, payout=Decimal("140.00"))
+
+    assert not req.request.called
+    assert assignment.channel == Assignment.Channel.GNET
+    event = GnetEvent.objects.get(assignment=assignment, action=GnetEvent.Action.SEND_TRIP)
+    assert event.result == GnetEvent.Result.PREVIEW
+    assert event.payload == gnet.build_send_payload(assignment)
+    assert event.payload  # non-empty — a real payload, not a stand-in
+
+
+def test_withdraw_with_key_present_but_inactive_makes_no_http_call(settings):
+    """Same proof for the cancel side: withdrawing a GNet-channel assignment must
+    never reach the gateway while GNET_ACTIVE is False, even with a real transaction
+    id already on the assignment (as if an earlier, since-armed send had succeeded)."""
+    settings.GNET_ACTIVE = False
+    settings.GNET_API_KEY = "lds_prodkey_do_not_use_in_tests"
+    a = AssignmentFactory(
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+
+    with patch.object(gnet, "requests") as req:
+        services.withdraw(a, note="vendor unreachable")
+
+    assert not req.request.called
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
+    event = GnetEvent.objects.get(assignment=a, action=GnetEvent.Action.CANCEL_TRIP)
+    assert event.result == GnetEvent.Result.PREVIEW
+    assert event.payload == {"transactionId": "TX-1"}
