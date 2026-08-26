@@ -43,7 +43,9 @@ class Assignment(TimeStampedModel):
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.MANUAL)
     payout = MoneyField()
     note = models.TextField(blank=True)
-    gnet_transaction_id = models.CharField(max_length=128, blank=True)
+    # Indexed: every inbound GNet callback correlates on this column, so without one
+    # the gateway's hot path full-scans the assignment table on each delivery.
+    gnet_transaction_id = models.CharField(max_length=128, blank=True, db_index=True)
     offered_at = models.DateTimeField(default=timezone.now)
     resolved_at = models.DateTimeField(null=True, blank=True)
 

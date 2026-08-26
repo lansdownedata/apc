@@ -29,6 +29,14 @@ from apps.reservations.models import Stop
 API_PATH = "/api/gateway/v1/trips"
 TIMEOUT = 10  # seconds — an unbounded call can hang a worker indefinitely
 
+# `requesterResNo` is `f"{RESNO_PREFIX}{assignment.pk}"`. The pk alone is correct but
+# has almost no entropy, and the gateway's fallback correlation (a callback carrying no
+# transactionId) matches resNo across ALL of its clients and refuses on a tie — so a
+# bare "7" would be one collision away from an unroutable callback. The prefix keeps the
+# pk semantics and namespaces them to us. `apps.dispatch.gnet_callback` strips it back
+# off when correlating; change the two together.
+RESNO_PREFIX = "apc-"
+
 # GnetAPIError.status for a request that never got an HTTP response at all — a
 # requests.exceptions.RequestException (connection refused, DNS failure, timeout,
 # too many redirects, ...). See _request's docstring for why this is treated as
@@ -188,8 +196,11 @@ def build_send_payload(assignment: Assignment) -> dict:
 
     return {
         "affiliateReservation": {
-            "requesterResNo": str(assignment.pk),
-            "providerId": vendor.gnet_grid_id,
+            "requesterResNo": f"{RESNO_PREFIX}{assignment.pk}",
+            # Stripped, because `Vendor.is_gnet_capable` strips before deciding this
+            # vendor is on the network: a griddID pasted with a trailing space routes
+            # here and would otherwise go out as `"gnet-42 "` and match no partner.
+            "providerId": vendor.gnet_grid_id.strip(),
         },
         "preferredVehicleType": vehicle_type_code,
         "reservationType": reservation.trip_type.upper(),

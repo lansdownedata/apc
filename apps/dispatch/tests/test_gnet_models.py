@@ -4,7 +4,7 @@ import pytest
 from django.db import IntegrityError, transaction
 
 from apps.dispatch.factories import AssignmentFactory
-from apps.dispatch.models import GnetEvent
+from apps.dispatch.models import Assignment, GnetEvent
 from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
@@ -32,6 +32,12 @@ def test_assignment_gnet_transaction_id_defaults_blank():
     """Assignment.gnet_transaction_id should default to blank."""
     assignment = AssignmentFactory()
     assert assignment.gnet_transaction_id == ""
+
+
+def test_assignment_gnet_transaction_id_is_indexed():
+    """Every inbound callback correlates on this column — without an index each one
+    full-scans the assignment table on the hot path."""
+    assert Assignment._meta.get_field("gnet_transaction_id").db_index is True
 
 
 def test_gnet_event_defaults_to_pending():
