@@ -72,6 +72,40 @@ def test_preview_when_key_blank_even_if_active(settings):
     assert event.result == GnetEvent.Result.PREVIEW
 
 
+def test_a_previewed_offer_alerts_instead_of_vanishing(settings):
+    """The assignment is created OFFERED either way, so a preview used to leave the
+    trip looking farmed out with nothing sent and nothing said — visible only in Django
+    admin. The moment someone types a griddID onto a vendor record (a normal admin
+    action, no deploy) that affiliate's offers would disappear into this hole."""
+    settings.GNET_ACTIVE = False
+    settings.GNET_API_KEY = "lds_testkey1234567890"
+    assignment = _assignment()
+
+    with patch.object(gnet_sync, "send_trip") as mock_send:
+        gnet_sync.push_assignment(assignment)
+
+    assert not mock_send.called
+    notification = Notification.objects.get(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    )
+    assert "preview" in f"{notification.title} {notification.detail}".lower()
+
+
+def test_a_previewed_cancel_alerts_too(settings):
+    settings.GNET_ACTIVE = False
+    settings.GNET_API_KEY = "lds_testkey1234567890"
+    assignment = _assignment(gnet_transaction_id="TX-existing")
+
+    with patch.object(gnet_sync, "cancel_trip") as mock_cancel:
+        gnet_sync.cancel_assignment(assignment)
+
+    assert not mock_cancel.called
+    notification = Notification.objects.get(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    )
+    assert "preview" in f"{notification.title} {notification.detail}".lower()
+
+
 # --- successful send ---
 
 

@@ -80,6 +80,35 @@ def _fail(
     return event
 
 
+def _preview(event: GnetEvent, assignment: Assignment, *, what: str) -> GnetEvent:
+    """Mark `event` PREVIEW — keeping the exact payload the caller staged on it — and
+    tell a human that nothing was sent.
+
+    Preview is otherwise invisible from the portal: the assignment is created OFFERED
+    either way, so a previewed offer looks farmed out while nothing left the building,
+    discoverable only in Django admin. That bites the moment someone types a griddID
+    onto a vendor record — a normal admin action, no deploy — and that affiliate's
+    offers start vanishing. The email channel already alerts when a send fails; this is
+    the same courtesy for a send that never happened.
+
+    Deliberately an alert and NOT a retry: arming GNET_ACTIVE later must not blast real
+    bookings for offers that have gone stale in the meantime.
+    """
+    event.result = GnetEvent.Result.PREVIEW
+    event.response = "Preview — nothing sent to GNet."
+    event.save(update_fields=["payload", "result", "response", "updated_at"])
+    Notification.notify(
+        assignment.reservation.lead,
+        Notification.Kind.SYNC_FAILED,
+        title=f"{what} not sent — GNet is in preview mode"[:160],
+        detail=(
+            f"Assignment #{assignment.pk} for trip #{assignment.reservation_id} was "
+            "recorded but never reached the network. Arrange coverage directly."
+        )[:255],
+    )
+    return event
+
+
 def push_assignment(assignment: Assignment) -> GnetEvent:
     """Send `assignment`'s trip to the GNet gateway (or record a preview).
 
@@ -116,10 +145,7 @@ def push_assignment(assignment: Assignment) -> GnetEvent:
 
     event.payload = payload
     if _is_preview():
-        event.result = GnetEvent.Result.PREVIEW
-        event.response = "Preview — nothing sent to GNet."
-        event.save(update_fields=["payload", "result", "response", "updated_at"])
-        return event
+        return _preview(event, assignment, what="Offer")
 
     try:
         data = send_trip(payload)
@@ -198,10 +224,10 @@ def cancel_assignment(assignment: Assignment) -> GnetEvent | None:
     cancel_payload = {"transactionId": assignment.gnet_transaction_id}
     event.payload = cancel_payload
     if _is_preview():
-        event.result = GnetEvent.Result.PREVIEW
-        event.response = "Preview — nothing sent to GNet."
-        event.save(update_fields=["payload", "result", "response", "updated_at"])
-        return event
+        # Only reachable when a live send preceded a flip of GNET_ACTIVE back off — and
+        # that is exactly the case worth shouting about: a real affiliate is still
+        # holding a trip that this cancel did not release.
+        return _preview(event, assignment, what="Cancel")
 
     try:
         data = cancel_trip(assignment.gnet_transaction_id)

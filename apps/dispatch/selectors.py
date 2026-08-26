@@ -10,7 +10,7 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
 from apps.vendors.models import Vendor, VendorInsurance
 
-from .models import Assignment
+from .models import Assignment, GnetEvent
 
 COVERAGE_UNCOVERED = "uncovered"
 COVERAGE_OFFERED = "offered"
@@ -72,6 +72,20 @@ def strip_counts(trips: list[Reservation]) -> dict[str, int]:
     for trip in trips:
         counts[trip.coverage] += 1
     return counts
+
+
+def offer_was_previewed(assignment: Assignment | None) -> bool:
+    """True when this assignment's farm-out was staged in preview and never sent.
+
+    Read off the `GnetEvent` rather than inferred from a blank `gnet_transaction_id`,
+    which is equally blank after a genuine send failure — a very different situation
+    with a very different alert.
+    """
+    if assignment is None or assignment.channel != Assignment.Channel.GNET:
+        return False
+    return assignment.gnet_events.filter(
+        action=GnetEvent.Action.SEND_TRIP, result=GnetEvent.Result.PREVIEW
+    ).exists()
 
 
 def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> list[dict]:
