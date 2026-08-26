@@ -57,9 +57,9 @@ def _fail(
 
     A 409 means the original send was claimed but its outcome is ambiguous; a
     422/502/503 doesn't prove the trip wasn't created either. Resending under the
-    same requesterResNo (== this assignment's pk, per build_send_payload) risks
-    booking a second real vehicle with a real affiliate, so this function's only
-    job is to surface the failure for a person to resolve — never to retry it.
+    same requesterResNo (`apc-<assignment pk>`, per build_send_payload) risks booking
+    a second real vehicle with a real affiliate, so this function's only job is to
+    surface the failure for a person to resolve — never to retry it.
 
     `payload` is only passed (and only then written to `update_fields`) when the
     caller actually built one before failing — a `GnetNotConfigured` refusal never
@@ -123,8 +123,8 @@ def push_assignment(assignment: Assignment) -> GnetEvent:
     1. If the event already resolved — SUCCESS *or* ERROR — return it untouched,
        sending nothing. The SUCCESS half runs before the preview check so a completed
        trip is never re-sent, not even in preview. The ERROR half exists because a
-       failed send must never be retried under the same requesterResNo (== this
-       assignment's pk): `Assignment` is an append-only model precisely so that
+       failed send must never be retried under the same requesterResNo
+       (`apc-<assignment pk>`): `Assignment` is an append-only model precisely so that
        retrying a farm-out means creating a *new* Assignment row, which gets a new pk
        and therefore a genuinely new, safe requesterResNo — not calling this function
        again on the one that already failed.

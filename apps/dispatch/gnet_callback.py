@@ -89,19 +89,25 @@ def _parse_amount(raw: object) -> Decimal | None:
 def _resno_pk(affiliate_reservation: object) -> int | None:
     """The `Assignment` pk behind `affiliateReservation.requesterResNo`, or None.
 
-    We send `apc-<pk>` (`apps.integrations.gnet.build_send_payload`), so the prefix comes
-    back off here — the two must change together. Anything that isn't a plausible pk
-    (text, the bare prefix, an out-of-range integer, a nested object) is None: an
-    uncorrelatable callback is still recorded as evidence, never a crash.
+    We send `apc-<pk>` (`apps.integrations.gnet.build_send_payload`), so the prefix is
+    required and comes back off here — the two must change together. Anything that isn't
+    a plausible namespaced pk (a bare pk, text, the bare prefix, an out-of-range integer,
+    a nested object) is None: an uncorrelatable callback is still recorded as evidence,
+    never a crash.
     """
     if not isinstance(affiliate_reservation, dict):
         return None
     raw = affiliate_reservation.get("requesterResNo")
     if raw is None or isinstance(raw, (dict, list, bool)):
         return None
-    text = str(raw).strip().removeprefix(RESNO_PREFIX)
+    text = str(raw).strip()
+    # REQUIRED, not merely stripped if present: a `removeprefix` makes the namespace
+    # optional, which enforces it only on the gateway's side of the wire and leaves a
+    # bare pk — every assignment has one — able to correlate here.
+    if not text.startswith(RESNO_PREFIX):
+        return None
     try:
-        value = int(text)
+        value = int(text[len(RESNO_PREFIX) :])
     except ValueError:
         return None
     return value if 0 < value <= _MAX_PK else None
@@ -151,12 +157,20 @@ def _apply_amount(assignment: Assignment, payload: dict, status: str) -> None:
     plausible cancellation charge, and `CANCEL` already withdraws the assignment
     and alerts, so a human sees it either way.
 
-    Every heal that MOVES the payout alerts — not just the `CLOSE` mismatch. A
-    provisional first quote arriving on an earlier status can flip a trip's margin from
-    positive to negative, and if the later `CLOSE` then repeats that same figure it
-    equals what is now on file and would stay silent too, so nobody would ever be told.
+    A pre-`CLOSE` heal alerts only when it moves a payout that was ALREADY quoted. On
+    this send-now-price-later channel the affiliate's first quote lands in an empty
+    payout (`MoneyField` defaults to 0 and a GNet offer is created at 0.00), so alerting
+    on any move would fire on every single farm-out — a `SYNC_FAILED` notification, the
+    same kind that carries "GNet send failed", on the happy path. That is how real
+    alerts get ignored, and a first quote arriving into an empty payout is normal
+    (client decision, 2026-08-25). A SECOND, changed quote is the exception worth
+    raising: it silently moves a margin the dispatcher has already seen.
+
+    The `CLOSE` mismatch alert stays unconditional — a final price is the one pricing
+    event a broker reconciles against, empty prior quote or not.
+
     An amount equal to what is already recorded changes nothing and says nothing, so a
-    run of statuses repeating one price alerts exactly once.
+    run of statuses repeating one price alerts at most once.
     """
     if status in {"REJECT", "FAILED"}:
         return
@@ -175,7 +189,7 @@ def _apply_amount(assignment: Assignment, payload: dict, status: str) -> None:
                 f"affiliate closed at {amount}."
             ),
         )
-    else:
+    elif previous > 0:
         _alert(
             assignment,
             title=f"GNet repriced assignment #{assignment.pk}",
@@ -298,7 +312,11 @@ def handle_callback(payload: object) -> GnetEvent:
         assignment = Assignment.objects.filter(gnet_transaction_id=transaction_id).first()
     elif (res_pk := _resno_pk(payload.get("affiliateReservation"))) is not None:
         correlator = f"resno:{res_pk}"
-        assignment = Assignment.objects.filter(pk=res_pk).first()
+        # Channel-filtered: a pk matches ANY assignment, including one arranged by phone
+        # that never went near the gateway. The transactionId path can't reach those (a
+        # manual assignment's id is blank, which short-circuits above), so this keeps the
+        # fallback's reach identical to the correlator it stands in for.
+        assignment = Assignment.objects.filter(pk=res_pk, channel=Assignment.Channel.GNET).first()
 
     idempotency_key = f"callback-{correlator[:_MAX_KEY_CORRELATOR]}-{status[:_MAX_KEY_STATUS]}"
 

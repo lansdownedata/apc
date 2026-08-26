@@ -154,9 +154,9 @@ def test_deduped_response_is_treated_as_success(settings):
 
 
 def test_second_push_after_error_does_not_resend(settings):
-    """An ERROR must never be retried under the same requesterResNo (== assignment.pk,
-    per build_send_payload). The correct way to retry a failed farm-out is a new
-    Assignment row, not a second push of this one."""
+    """An ERROR must never be retried under the same requesterResNo
+    (`apc-<assignment pk>`, per build_send_payload). The correct way to retry a failed
+    farm-out is a new Assignment row, not a second push of this one."""
     _arm(settings)
     assignment = _assignment()
     error = GnetAPIError(409, "conflict")

@@ -611,6 +611,40 @@ def test_a_pre_close_reprice_that_moves_payout_alerts(client, settings):
     assert "150.00" in notification.detail
 
 
+def test_a_first_quote_landing_in_an_empty_payout_is_silent(client, settings):
+    """`MoneyField` defaults to 0 and a GNet offer is created with payout 0.00, so on a
+    send-now-price-later channel the affiliate's FIRST quote always "moves" the payout.
+    That is the happy path, not an exception — alerting on it would put a SYNC_FAILED
+    notification (the same kind that carries "GNet send failed") on every single
+    farm-out, which is how real alerts get ignored. Client decision, 2026-08-25."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("0.00"))
+
+    resp = _signed_post(
+        client, {"transactionId": "TX-1", "status": "ASSIGNED", "totalAmount": "142.50"}
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.payout == Decimal("142.50")
+    assert not Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
+
+
+def test_a_close_that_moves_an_empty_payout_still_alerts(client, settings):
+    """The CLOSE-mismatch alert is unconditional — a final price arriving with nothing
+    ever quoted is exactly the reconciliation case a broker needs told about."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(payout=Decimal("0.00"))
+
+    _signed_post(client, {"transactionId": "TX-1", "status": "CLOSE", "totalAmount": "142.50"})
+
+    assert Notification.objects.filter(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    ).exists()
+
+
 def test_a_reprice_that_does_not_move_payout_stays_silent(client, settings):
     settings.GNET_CALLBACK_SECRET = SECRET
     assignment = _gnet_assignment(payout=Decimal("150.00"))
@@ -683,6 +717,50 @@ def test_an_unusable_requester_res_no_is_recorded_and_never_crashes(client, sett
     )
 
     assert resp.status_code == 200
+    assert GnetEvent.objects.get().assignment is None
+
+
+def test_a_bare_pk_res_no_does_not_correlate(client, settings):
+    """`removeprefix` made the `apc-` namespace optional, so it was only ever enforced
+    on the gateway's side of the wire. Requiring it here is what makes the prefix an
+    actual guard rather than a convention."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment()
+
+    resp = _signed_post(
+        client,
+        {"status": "CONFIRMED", "affiliateReservation": {"requesterResNo": str(assignment.pk)}},
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.OFFERED
+    assert GnetEvent.objects.get().assignment is None
+
+
+def test_a_manual_assignment_is_never_resolved_by_a_callback(client, settings):
+    """The resNo fallback correlates on pk, which every assignment has — including one
+    arranged by phone that never went near the gateway. The transactionId path could
+    never reach those (their id is blank, which short-circuits), so the channel filter
+    keeps the fallback's reach identical to it."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = AssignmentFactory(
+        vendor=VendorFactory(gnet_grid_id=""),
+        channel=Assignment.Channel.MANUAL,
+        status=Assignment.Status.OFFERED,
+    )
+
+    resp = _signed_post(
+        client,
+        {
+            "status": "CONFIRMED",
+            "affiliateReservation": {"requesterResNo": f"apc-{assignment.pk}"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.OFFERED
     assert GnetEvent.objects.get().assignment is None
 
 
