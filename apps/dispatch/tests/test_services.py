@@ -221,6 +221,21 @@ def test_withdrawing_a_manual_assignment_never_touches_the_gateway():
     mock_sync.cancel_assignment.assert_not_called()
 
 
+def test_withdraw_can_skip_releasing_the_gateway():
+    """For the one caller — an affiliate-initiated CANCEL callback — where the trip is
+    already released on their side and a DELETE would only earn a rejection."""
+    a = AssignmentFactory(
+        status=Assignment.Status.CONFIRMED,
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+    )
+    with patch.object(services, "gnet_sync") as mock_sync:
+        services.withdraw(a, note="cancelled by the affiliate", release_gateway=False)
+    mock_sync.cancel_assignment.assert_not_called()
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
+
+
 def test_a_transport_failure_during_send_offer_does_not_roll_back_or_raise(settings):
     """A real gateway problem — here, a connection that never reaches api.grdd.net at
     all — is handled entirely inside gnet.py/gnet_sync (converted to a terminal

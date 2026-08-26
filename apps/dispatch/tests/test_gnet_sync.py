@@ -424,3 +424,21 @@ def test_cancel_assignment_api_error_records_error_and_alerts(settings):
     assert Notification.objects.filter(
         lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
     ).exists()
+
+
+def test_a_failed_cancel_alert_carries_the_transaction_id(settings):
+    """`reservation_delete` calls `release_trips` and then deletes the reservation,
+    CASCADEing the assignment and its GnetEvents. If the cancel had just failed — a
+    502/503, exactly when failures cluster — the alert was the only surviving record
+    and it named no transaction id, leaving the GNet booking unreconcilable from APC.
+    The id goes ahead of the gateway body so the 255-char truncation can't eat it."""
+    _arm(settings)
+    assignment = _assignment(gnet_transaction_id="TX-existing")
+
+    with patch.object(gnet_sync, "cancel_trip", side_effect=GnetAPIError(503, "x" * 3000)):
+        gnet_sync.cancel_assignment(assignment)
+
+    notification = Notification.objects.get(
+        lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
+    )
+    assert "TX-existing" in notification.detail

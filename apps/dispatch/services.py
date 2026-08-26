@@ -203,8 +203,14 @@ def decline(assignment: Assignment, *, note: str = "") -> Assignment:
     return _resolve(assignment, Assignment.Status.DECLINED, note=note)
 
 
-def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
+def withdraw(assignment: Assignment, *, note: str = "", release_gateway: bool = True) -> Assignment:
     """We pulled the offer, or unassigned confirmed coverage.
+
+    `release_gateway=False` is for the one caller whose trip is ALREADY released on the
+    partner's side: an affiliate-initiated `CANCEL` callback. Echoing a DELETE back
+    there earns a rejection and a spurious "GNet cancel failed" alert alongside the
+    correct one, on every affiliate cancellation — and spends a 10s-timeout outbound
+    call inside the gateway's 15s callback budget. Every other caller keeps the default.
 
     For a GNet-channel assignment this also releases the affiliate on the gateway. The
     state change above has already committed, so a gateway problem must never look like
@@ -219,7 +225,7 @@ def withdraw(assignment: Assignment, *, note: str = "") -> Assignment:
     `cancel_assignment` itself is what guards against sending a second cancel.
     """
     resolved = _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
-    if resolved.channel == Assignment.Channel.GNET:
+    if release_gateway and resolved.channel == Assignment.Channel.GNET:
         gnet_sync.cancel_assignment(resolved)
     return resolved
 

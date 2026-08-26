@@ -18,6 +18,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
 from apps.messaging import touchpoints
 from apps.notifications.models import Notification
@@ -183,6 +184,15 @@ def la_webhook(request, token: str):
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
                 touchpoints.schedule_review_request(lead)
+    if event_name == "reservation.cancelled":
+        # LimoAnywhere is the system of record, so a cancellation there ends the trip —
+        # and an affiliate holding it has to be let go. Without this the assignment stays
+        # active with no screen that lists it, which on the GNet channel means a real
+        # affiliate keeps a live booking for a trip that no longer exists. Best-effort by
+        # construction: `release_trips` isolates and logs each assignment's failure rather
+        # than raising, so a gateway problem can never 500 this webhook into an LA retry
+        # of a cancellation already applied here.
+        dispatch_services.release_trips([reservation], note="Cancelled in LimoAnywhere")
     if event_name in {"reservation.cancelled", "reservation.updated"}:
         Notification.notify(
             reservation.lead,
