@@ -1,4 +1,4 @@
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -14,7 +14,12 @@ from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
 
-DAY = date(2026, 8, 26)
+# Anchored to today rather than pinned to a calendar date. The board hides the "Today" link
+# when you are already viewing today, so a hardcoded DAY breaks the tests that assert on that
+# link on the single day it happens to equal today — which is exactly what happened when this
+# was pinned to 2026-08-26 and that date arrived. Staying a fixed distance from today keeps
+# every test's relationship to "today" the same no matter when the suite runs.
+DAY = timezone.localdate() + timedelta(days=30)
 
 
 def _trip(**kwargs):
