@@ -55,3 +55,11 @@ def test_tampered_body_403(client, settings):
 def test_blank_secret_accepts_unsigned(client, settings):
     settings.PODIUM_WEBHOOK_SECRET = ""
     assert _post(client).status_code == 200
+
+
+def test_non_ascii_signature_header_is_rejected_not_a_500(client, settings):
+    """`hmac.compare_digest` raises TypeError when either str argument is non-ASCII —
+    an unauthenticated 500 on a public endpoint. Compare bytes instead."""
+    settings.PODIUM_WEBHOOK_SECRET = "whsec"
+    resp = _post(client, HTTP_PODIUM_TIMESTAMP="1", HTTP_PODIUM_SIGNATURE="déadbeef")
+    assert resp.status_code == 403
