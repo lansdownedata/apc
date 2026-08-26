@@ -199,3 +199,54 @@ def test_panel_keeps_confirm_and_declined_for_a_manual_offer(logged_in_client):
     assert ">Confirm<" in body
     assert ">Declined<" in body
     assert ">Withdraw<" in body
+
+
+# --- a GNet affiliate needs no email address ---
+
+
+def test_the_send_button_is_not_gated_on_email_for_a_gnet_vendor(logged_in_client):
+    """The GNet channel doesn't use email at all, so gating Send offer on a vendor
+    email blocked exactly the affiliates this channel exists for."""
+    trip = _trip()
+    VendorFactory(name="Grid Co", gnet_grid_id="gnet-1", email="")
+    body = _panel(logged_in_client, trip)
+
+    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
+    grid_label = next(label for label in labels if "Grid Co" in label)
+    assert 'data-gnet="1"' in grid_label
+    # Both the button's :disabled expression and the hint's x-show must let it through.
+    assert body.count("selectedGnet") >= 3
+
+
+def test_a_non_gnet_vendor_still_carries_an_empty_gnet_flag(logged_in_client):
+    trip = _trip()
+    VendorFactory(name="Manual Co", gnet_grid_id="", email="")
+    body = _panel(logged_in_client, trip)
+
+    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
+    manual_label = next(label for label in labels if "Manual Co" in label)
+    assert 'data-gnet=""' in manual_label
+
+
+# --- preview mode must be visible in the drawer, not just in Django admin ---
+
+
+def test_panel_flags_an_offer_that_preview_mode_never_sent(logged_in_client, settings):
+    settings.GNET_ACTIVE = False
+    settings.GNET_API_KEY = "lds_testkey1234567890"
+    trip = _trip()
+    services.send_offer(trip, VendorFactory(gnet_grid_id="gnet-1"), payout=Decimal("100.00"))
+
+    body = _panel(logged_in_client, trip)
+
+    assert "preview" in body.lower()
+
+
+def test_panel_does_not_flag_preview_for_a_manual_offer(logged_in_client, settings):
+    settings.GNET_ACTIVE = False
+    trip = _trip()
+    services.send_offer(trip, VendorFactory(email="ops@x.example"), payout=Decimal("100.00"))
+
+    body = _panel(logged_in_client, trip)
+
+    assert "preview" not in body.lower()

@@ -23,6 +23,11 @@
       <p class="text-[12px] text-muted mt-0.5 num">
         {{ assignment.get_status_display }} · payout ${{ assignment.payout|floatformat:2|intcomma }} · margin ${{ assignment.margin|floatformat:2|intcomma }}
       </p>
+      {% if previewed %}
+        <p class="text-[11.5px] text-rose-600 mt-1">
+          Preview — not sent. GNet is disarmed, so no affiliate has seen this offer.
+        </p>
+      {% endif %}
     </div>
     {% comment %} Confirm/Declined are the fallback for a vendor we can't hear back from.
          A GNet offer resolves from the affiliate's own callback, and marking one declined
@@ -50,13 +55,18 @@
     <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
            value="{{ search }}" x-init="$el.focus()"
            @input.debounce.300ms="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}?q=' + encodeURIComponent($event.target.value)})">
-    <form x-data="{ selectedVendor: '', selectedEmail: '' }" @submit.prevent>{% csrf_token %}
+    {% comment %} `selectedGnet` is why the radio carries data-gnet: the GNet channel
+         sends over the network, not by email, so a griddID affiliate with no email on
+         file must still be offerable — they are precisely who this channel exists for.
+         `|yesno:"1,"` gives a truthy "1" / falsy "" for the dataset read below. {% endcomment %}
+    <form x-data="{ selectedVendor: '', selectedEmail: '', selectedGnet: '' }" @submit.prevent>{% csrf_token %}
       <div class="space-y-1.5">
         {% for option in options %}
           <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
             <input type="radio" name="vendor" value="{{ option.vendor.pk }}" data-email="{{ option.vendor.email }}"
+                   data-gnet="{{ option.is_gnet|yesno:'1,' }}"
                    class="shrink-0"
-                   @change="selectedVendor = $event.target.value; selectedEmail = $event.target.dataset.email">
+                   @change="selectedVendor = $event.target.value; selectedEmail = $event.target.dataset.email; selectedGnet = $event.target.dataset.gnet">
             <span class="min-w-0">
               <span class="block font-semibold text-ink text-[13px] truncate">
                 {{ option.vendor.name }}
@@ -78,12 +88,12 @@
              class="field w-full num text-[13px]">
       <div class="flex gap-2 mt-4">
         <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
-                :disabled="busy || (selectedVendor && !selectedEmail)"
+                :disabled="busy || (selectedVendor && !selectedEmail && !selectedGnet)"
                 @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
                 :disabled="busy" @click="post('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
       </div>
-      <p class="text-[11.5px] text-muted mt-2" x-show="selectedVendor && !selectedEmail">
+      <p class="text-[11.5px] text-muted mt-2" x-show="selectedVendor && !selectedEmail && !selectedGnet">
         Add an email on the vendor page to send offers.
       </p>
     </form>

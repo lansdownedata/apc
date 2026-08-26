@@ -67,6 +67,7 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
         {
             "trip": trip,
             "assignment": assignment,
+            "previewed": selectors.offer_was_previewed(assignment),
             "options": selectors.vendor_options(trip, search=request.GET.get("q", "")),
             "search": request.GET.get("q", ""),
         },
