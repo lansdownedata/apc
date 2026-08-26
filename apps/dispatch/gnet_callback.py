@@ -167,15 +167,24 @@ def _apply_status(assignment: Assignment, status: str, payload: dict) -> None:
         )
 
 
-def handle_callback(payload: dict) -> GnetEvent:
+def handle_callback(payload: object) -> GnetEvent:
     """Apply one GNet farm-out callback and record it, or no-op on a repeat.
 
-    Never raises. `transaction_id` must be read from the BODY, not
+    Never raises — including when `payload` isn't a dict. The view is expected to
+    reject a non-object JSON body before calling this (a syntactically valid
+    `[1,2,3]`, `"str"`, a bare number/bool/`null` all parse fine but have no
+    `.get`), but this function doesn't trust that alone: a non-dict `payload` is
+    treated the same as `{}` rather than crashing.
+
+    `transaction_id`/`status` are read from the BODY, not
     `X-Lansdowne-Transaction-Id` (which can be an empty string when the gateway
-    correlated via `requesterResNo` instead — see the view). A `transactionId` that
-    doesn't match any assignment still gets a `GnetEvent` recorded (uncorrelated,
-    `assignment=None`) rather than being dropped — it's evidence a callback fired
-    for a trip we can't currently place.
+    correlated via `requesterResNo` instead — see the view). Each is checked
+    against `is None` rather than a bare `or ""` — a present-but-falsy value (`0`,
+    `False`) must still count as present, not be silently treated as absent.
+
+    A `transactionId` that doesn't match any assignment still gets a `GnetEvent`
+    recorded (uncorrelated, `assignment=None`) rather than being dropped — it's
+    evidence a callback fired for a trip we can't currently place.
 
     Dedupe is on `transaction_id` + `status` (`f"callback-{transaction_id}-
     {status}"`), per the contract's instruction to dedupe independently of the
@@ -183,8 +192,12 @@ def handle_callback(payload: dict) -> GnetEvent:
     constraint makes `get_or_create` the atomic guard: a repeat delivery finds the
     existing row and returns without reapplying anything.
     """
-    transaction_id = str(payload.get("transactionId") or "")
-    status = str(payload.get("status") or "")
+    if not isinstance(payload, dict):
+        payload = {}
+    raw_transaction_id = payload.get("transactionId")
+    transaction_id = "" if raw_transaction_id is None else str(raw_transaction_id)
+    raw_status = payload.get("status")
+    status = "" if raw_status is None else str(raw_status)
     idempotency_key = f"callback-{transaction_id}-{status}"
 
     assignment = None

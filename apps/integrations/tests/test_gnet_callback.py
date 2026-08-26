@@ -16,6 +16,7 @@ import pytest
 from django.urls import reverse
 
 from apps.dispatch.factories import AssignmentFactory
+from apps.dispatch.gnet_callback import handle_callback
 from apps.dispatch.models import Assignment, GnetEvent
 from apps.notifications.models import Notification
 from apps.vendors.factories import VendorFactory
@@ -422,3 +423,56 @@ def test_cancel_with_totalamount_still_auto_heals(client, settings):
     assignment.refresh_from_db()
     assert assignment.payout == Decimal("160.00")
     assert assignment.status == Assignment.Status.WITHDRAWN
+
+
+# --- valid JSON that isn't an object ---
+#
+# json.loads happily returns a list, string, number, bool, or None for
+# well-formed-but-non-object JSON — none of those raise JSONDecodeError, so the
+# view's except-JSONDecodeError guard alone lets them through to handle_callback,
+# which used to call payload.get(...) unconditionally and crash. A crash here is
+# the worst possible failure shape: the gateway retries a non-2xx 3x plus a
+# sweeper, so one bad delivery turns into a storm of identical crashes.
+
+
+@pytest.mark.parametrize(
+    "body_obj",
+    [[1, 2, 3], [], "just a string", 12345, True, None],
+    ids=["array", "empty-array", "string", "number", "bool", "null"],
+)
+def test_non_object_json_body_does_not_500(client, settings, body_obj):
+    settings.GNET_CALLBACK_SECRET = SECRET
+
+    resp = _signed_post(client, body_obj)
+
+    assert resp.status_code < 500
+    assert not GnetEvent.objects.exists()
+
+
+def test_valid_object_body_still_works(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment()
+
+    resp = _signed_post(client, {"transactionId": "TX-1", "status": "CONFIRMED"})
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
+
+
+def test_handle_callback_never_raises_on_non_dict_payload():
+    """The view is the primary gate, but handle_callback's own docstring promises
+    it never raises — that must hold even when called directly with a non-dict."""
+    for bad_payload in ([1, 2, 3], "oops", None, 12345, True, []):
+        event = handle_callback(bad_payload)
+        assert isinstance(event, GnetEvent)
+
+
+# --- "absent" vs "falsy" ---
+
+
+def test_falsy_but_present_status_is_not_treated_as_absent():
+    """A bare `or ""` would silently treat a present-but-falsy status (0, False)
+    as missing. handle_callback must distinguish "absent" from "falsy"."""
+    event = handle_callback({"transactionId": "TX-falsy-status", "status": 0})
+    assert event.idempotency_key == "callback-TX-falsy-status-0"
