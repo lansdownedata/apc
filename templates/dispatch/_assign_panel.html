@@ -24,8 +24,13 @@
         {{ assignment.get_status_display }} · payout ${{ assignment.payout|floatformat:2|intcomma }} · margin ${{ assignment.margin|floatformat:2|intcomma }}
       </p>
     </div>
+    {% comment %} Confirm/Declined are the fallback for a vendor we can't hear back from.
+         A GNet offer resolves from the affiliate's own callback, and marking one declined
+         by hand would leave a real booking live on the gateway with no way left to cancel
+         it — Withdraw is the only staff action that releases it. Server-side too:
+         dispatch.views.resolve refuses both marks on this channel. {% endcomment %}
     <div class="flex gap-2 mt-4">
-      {% if assignment.status == 'offered' %}
+      {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
         <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
                 :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
@@ -34,6 +39,11 @@
       <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
               :disabled="busy" @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}')">Withdraw</button>
     </div>
+    {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
+      <p class="text-[11.5px] text-muted mt-2">
+        This offer resolves when the affiliate answers over GNet. Withdraw releases it on the network.
+      </p>
+    {% endif %}
   {% else %}
     <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Offer to</p>
     {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}

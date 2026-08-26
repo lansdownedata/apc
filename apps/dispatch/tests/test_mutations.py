@@ -1,10 +1,12 @@
 from datetime import date, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
 
 from apps.dispatch import services, views
+from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
@@ -180,6 +182,56 @@ def test_unknown_resolve_action_is_rejected(logged_in_client):
     a = services.send_offer(_trip(), VendorFactory(), payout=Decimal("100.00"))
     resp = logged_in_client.post(reverse("dispatch_resolve", args=[a.pk]), {"action": "explode"})
     assert resp.status_code == 400
+
+
+# --- a GNet assignment resolves from the affiliate's callback, never a staff click ---
+
+
+def _gnet_offer(**kwargs) -> Assignment:
+    """An offered GNet assignment already live on the gateway."""
+    kwargs.setdefault("reservation", _trip())
+    kwargs.setdefault("vendor", VendorFactory(gnet_grid_id="gnet-partner-1"))
+    kwargs.setdefault("channel", Assignment.Channel.GNET)
+    kwargs.setdefault("gnet_transaction_id", "TX-LIVE")
+    kwargs.setdefault("status", Assignment.Status.OFFERED)
+    kwargs.setdefault("payout", Decimal("140.00"))
+    return AssignmentFactory(**kwargs)
+
+
+@pytest.mark.parametrize("action", ["confirm", "decline"])
+def test_staff_marking_a_gnet_assignment_is_refused(logged_in_client, action):
+    """`decline` never releases the gateway and `_resolve` then refuses a resolved
+    assignment, so one click used to strand a REAL booking with no path in the portal
+    that could ever cancel it — while the board showed the trip uncovered, inviting a
+    re-offer that books a SECOND vehicle. Both staff marks are refused on this channel.
+    """
+    a = _gnet_offer()
+    with patch.object(services, "gnet_sync") as mock_sync:
+        resp = logged_in_client.post(reverse("dispatch_resolve", args=[a.pk]), {"action": action})
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["ok"] is False
+    assert "withdraw" in body["error"].lower()
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.OFFERED
+    assert a.gnet_transaction_id == "TX-LIVE"
+    assert mock_sync.mock_calls == []
+
+
+def test_withdraw_still_resolves_a_gnet_assignment_and_releases_the_gateway(logged_in_client):
+    """Withdraw stays the one staff action on this channel precisely because it is the
+    only one that cancels the trip on the gateway."""
+    a = _gnet_offer()
+    with patch.object(services, "gnet_sync") as mock_sync:
+        resp = logged_in_client.post(
+            reverse("dispatch_resolve", args=[a.pk]), {"action": "withdraw"}
+        )
+
+    assert resp.status_code == 200
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
+    assert mock_sync.cancel_assignment.call_count == 1
 
 
 def test_mutations_reject_get(logged_in_client):

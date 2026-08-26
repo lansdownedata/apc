@@ -7,6 +7,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.dispatch import selectors, services
+from apps.dispatch.factories import AssignmentFactory
+from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
@@ -161,3 +163,39 @@ def test_panel_shows_the_gnet_badge_for_a_gnet_capable_vendor_only(logged_in_cli
     manual_label = next(label for label in labels if "Manual Co" in label)
     assert "GNET" in grid_label
     assert "GNET" not in manual_label
+
+
+# --- staff-marking buttons are for non-GNet vendors only ---
+
+
+def _panel(logged_in_client, trip) -> str:
+    return logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+
+
+def test_panel_hides_confirm_and_declined_for_a_gnet_offer(logged_in_client):
+    """A GNet offer resolves from the affiliate's callback. Staff-marking it declined
+    would strand a real booking (see test_mutations), so the buttons aren't rendered —
+    with a line of copy so their absence isn't a mystery."""
+    trip = _trip()
+    AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="Grid Co", gnet_grid_id="gnet-1"),
+        channel=Assignment.Channel.GNET,
+        status=Assignment.Status.OFFERED,
+    )
+    body = _panel(logged_in_client, trip)
+
+    assert ">Confirm<" not in body
+    assert ">Declined<" not in body
+    assert ">Withdraw<" in body
+    assert "affiliate" in body.lower()
+
+
+def test_panel_keeps_confirm_and_declined_for_a_manual_offer(logged_in_client):
+    trip = _trip()
+    services.send_offer(trip, VendorFactory(name="Manual Co"), payout=Decimal("100.00"))
+    body = _panel(logged_in_client, trip)
+
+    assert ">Confirm<" in body
+    assert ">Declined<" in body
+    assert ">Withdraw<" in body

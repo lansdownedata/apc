@@ -152,15 +152,36 @@ _RESOLVERS = {
     "withdraw": services.withdraw,
 }
 
+# Staff-marking is the fallback for vendors we can't hear back from automatically. On the
+# GNet channel we do hear back, and marking is actively dangerous: `services.decline` only
+# changes local state, so a declined GNet offer keeps a REAL booking live on the gateway
+# while `withdraw` — the only caller of `gnet_sync.cancel_assignment` — then refuses the
+# now-resolved assignment. The trip reads uncovered, the dispatcher re-offers, and a second
+# real vehicle is booked with the first unreachable. Withdraw is the only safe staff exit.
+_GNET_STAFF_MARKS = ("confirm", "decline")
+
 
 @login_required
 @require_POST
 def resolve(request: HttpRequest, pk: int) -> JsonResponse:
-    """Confirm, decline, or withdraw an assignment (staff-marked in v1)."""
+    """Confirm, decline, or withdraw an assignment.
+
+    Staff-marked for the trip-sheet email channel; GNet assignments accept only
+    `withdraw` here and are otherwise resolved by `dispatch.gnet_callback` from the
+    affiliate's own response (see `_GNET_STAFF_MARKS`).
+    """
     assignment = get_object_or_404(Assignment, pk=pk)
-    handler = _RESOLVERS.get(request.POST.get("action", ""))
+    action = request.POST.get("action", "")
+    handler = _RESOLVERS.get(action)
     if handler is None:
         return _fail(services.AssignmentError("Unknown action."))
+    if action in _GNET_STAFF_MARKS and assignment.channel == Assignment.Channel.GNET:
+        return _fail(
+            services.AssignmentError(
+                "A GNet assignment resolves from the affiliate's response, not by hand. "
+                "Use Withdraw to release it on the gateway."
+            )
+        )
     try:
         if handler is services.confirm:
             handler(assignment)
