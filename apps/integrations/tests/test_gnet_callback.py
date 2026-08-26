@@ -162,6 +162,23 @@ def test_cancel_withdraws_and_alerts(client, settings):
     ).exists()
 
 
+def test_an_affiliate_cancel_does_not_echo_a_delete_back_to_the_gateway(client, settings):
+    """The affiliate already cancelled. Echoing a DELETE earns a rejection plus a
+    spurious "GNet cancel failed" alert next to the correct one, on every single
+    affiliate cancellation — and puts a 10s-timeout outbound call inside the gateway's
+    15s callback budget."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(status=Assignment.Status.CONFIRMED)
+
+    with patch.object(gnet_callback.services.gnet_sync, "cancel_assignment") as mock_cancel:
+        resp = _signed_post(client, {"transactionId": "TX-1", "status": "CANCEL"})
+
+    assert resp.status_code == 200
+    assert not mock_cancel.called
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.WITHDRAWN
+
+
 def test_failed_leaves_offered_and_alerts(client, settings):
     settings.GNET_CALLBACK_SECRET = SECRET
     assignment = _gnet_assignment()

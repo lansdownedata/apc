@@ -1,16 +1,22 @@
 """Inbound LA webhook: signed-token auth, status writeback, LA-side change alerts."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 from django.core import signing
 
+from apps.dispatch import services as dispatch_services
+from apps.dispatch.factories import AssignmentFactory
+from apps.dispatch.models import Assignment
 from apps.integrations.factories import LACustomerFactory
 from apps.integrations.models import LAEvent
 from apps.leads.factories import LeadFactory
+from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripStatusEvent
+from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -56,6 +62,65 @@ def test_cancelled_in_la_raises_alert(client):
     res.refresh_from_db()
     assert res.trip_status == Reservation.TripStatus.CANCELLED
     assert Notification.objects.filter(kind=Notification.Kind.LA_CHANGED).exists()
+
+
+def test_cancelled_in_la_releases_the_affiliate(client):
+    """LimoAnywhere is the system of record, so a cancellation there ends the trip —
+    but the branch only wrote trip_status and notified. On the GNet channel that left a
+    real affiliate holding a live booking for a trip that no longer exists."""
+    lac = LACustomerFactory()
+    lead = LeadFactory(contact=lac.contact, status=Lead.Status.BOOKED)
+    res = ReservationFactory(lead=lead, la_reservation_id="3")
+    assignment = AssignmentFactory(
+        reservation=res,
+        vendor=VendorFactory(gnet_grid_id="gnet-1"),
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+        status=Assignment.Status.CONFIRMED,
+    )
+
+    resp = _post(client, _url(lac), {"id": 3, "reservation_event": "reservation.cancelled"})
+
+    assert resp.status_code == 200
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.WITHDRAWN
+
+
+def test_a_gateway_failure_never_500s_the_la_webhook(client):
+    """An LA webhook must not fail because a GNet cancel did — LA would retry a
+    cancellation that has already been applied locally."""
+    lac = LACustomerFactory()
+    lead = LeadFactory(contact=lac.contact, status=Lead.Status.BOOKED)
+    res = ReservationFactory(lead=lead, la_reservation_id="4")
+    AssignmentFactory(
+        reservation=res,
+        vendor=VendorFactory(gnet_grid_id="gnet-1"),
+        channel=Assignment.Channel.GNET,
+        gnet_transaction_id="TX-1",
+        status=Assignment.Status.CONFIRMED,
+    )
+
+    with patch.object(dispatch_services.gnet_sync, "cancel_assignment", side_effect=OSError):
+        resp = _post(client, _url(lac), {"id": 4, "reservation_event": "reservation.cancelled"})
+
+    assert resp.status_code == 200
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.CANCELLED
+
+
+def test_updated_in_la_does_not_release_the_affiliate(client):
+    """An edit is not a cancellation — the affiliate keeps the trip."""
+    lac = LACustomerFactory()
+    lead = LeadFactory(contact=lac.contact, status=Lead.Status.BOOKED)
+    res = ReservationFactory(lead=lead, la_reservation_id="5")
+    assignment = AssignmentFactory(
+        reservation=res, status=Assignment.Status.CONFIRMED, channel=Assignment.Channel.MANUAL
+    )
+
+    _post(client, _url(lac), {"id": 5, "reservation_event": "reservation.updated"})
+
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
 
 
 def test_updated_in_la_raises_alert_without_status_change(client):

@@ -205,7 +205,16 @@ def _apply_status(assignment: Assignment, status: str, payload: dict) -> None:
         elif status == "REJECT":
             services.decline(assignment, note=_notes_text(affiliate_reservation))
         elif status == "CANCEL":
-            services.withdraw(assignment, note="Cancelled by the affiliate via GNet.")
+            # `release_gateway=False`: the affiliate is the one cancelling, so the trip
+            # is already released on their side. A DELETE back would be rejected and
+            # would raise a spurious "GNet cancel failed" alert next to the correct one
+            # below — on every affiliate cancellation — while spending a 10s-timeout
+            # outbound call inside the gateway's 15s callback budget.
+            services.withdraw(
+                assignment,
+                note="Cancelled by the affiliate via GNet.",
+                release_gateway=False,
+            )
             _alert(
                 assignment,
                 title=f"GNet cancelled assignment #{assignment.pk}",

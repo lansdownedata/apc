@@ -51,6 +51,7 @@ def _fail(
     *,
     title: str,
     payload: dict | None = None,
+    subject: str = "",
 ) -> GnetEvent:
     """Record an ERROR on `event` and alert a human. Never retries.
 
@@ -63,6 +64,11 @@ def _fail(
     `payload` is only passed (and only then written to `update_fields`) when the
     caller actually built one before failing — a `GnetNotConfigured` refusal never
     reaches that point, so its event's `payload` field is left exactly as it was.
+
+    `subject` is extra identity for the notification only — never for `event.response`,
+    which stays the verbatim gateway message. It goes BEFORE the message so the 255-char
+    truncation can't eat it: on the cancel path it carries the transaction id, and the
+    alert may end up being the only place that id survives (see `cancel_assignment`).
     """
     event.result = GnetEvent.Result.ERROR
     event.response = message[:2000]
@@ -75,7 +81,7 @@ def _fail(
         assignment.reservation.lead,
         Notification.Kind.SYNC_FAILED,
         title=title[:160],
-        detail=f"Assignment #{assignment.pk}: {message}"[:255],
+        detail=f"Assignment #{assignment.pk}{subject}: {message}"[:255],
     )
     return event
 
@@ -238,6 +244,12 @@ def cancel_assignment(assignment: Assignment) -> GnetEvent | None:
             f"{exc.status}: {exc.body}",
             title="GNet cancel failed",
             payload=cancel_payload,
+            # The alert has to be self-sufficient. `reservation_delete` calls
+            # `release_trips` and then deletes the reservation, which CASCADEs the
+            # Assignment and every GnetEvent with it — so when a cancel has just failed
+            # (a 502/503, exactly when failures cluster) this notification can be the
+            # only surviving copy of the id needed to reconcile the booking in GNet.
+            subject=f" (GNet transaction {assignment.gnet_transaction_id})",
         )
 
     event.result = GnetEvent.Result.SUCCESS
