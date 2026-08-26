@@ -178,6 +178,16 @@ def _fail(event: ZapEvent, reservation, message: str) -> ZapEvent:
     return event
 
 
+def _is_preview() -> bool:
+    """True unless LA is both armed (`LA_ACTIVE`) and credentialed.
+
+    Credentials alone are not consent to book: `LA_BASE_URL` defaults to production, so a
+    send creates a real reservation in the client's LimoAnywhere account. `LA_ACTIVE`
+    defaults False and is armed deliberately when Phase 1 lands.
+    """
+    return not settings.LA_ACTIVE or not limoanywhere.is_configured()
+
+
 def push_reservation(reservation) -> ZapEvent:
     """Create this trip in LA (or record a preview). Idempotent per reservation."""
     event, _ = ZapEvent.objects.get_or_create(
@@ -188,7 +198,18 @@ def push_reservation(reservation) -> ZapEvent:
     if event.result == ZapEvent.Result.SUCCESS:
         return event
 
-    if not limoanywhere.is_configured():
+    if _is_preview():
+        # Logged, not silent: in production this is the difference between "Phase 1 hasn't
+        # landed yet" and "bookings are vanishing". The PREVIEW event holds the exact payload
+        # that would have gone out, so nothing is lost — it is replayed by retry_failed_pushes
+        # once LA_ACTIVE is armed.
+        logger.warning(
+            "LimoAnywhere send skipped for reservation %s — LA_ACTIVE=%s, credentials=%s. "
+            "Recorded as a PREVIEW ZapEvent; nothing was sent.",
+            reservation.pk,
+            settings.LA_ACTIVE,
+            limoanywhere.is_configured(),
+        )
         event.payload = _build_preview_payloads(reservation)
         event.result = ZapEvent.Result.PREVIEW
         event.response = "Preview — nothing sent to LimoAnywhere."
@@ -251,12 +272,12 @@ LA_EVENT_TO_TRIP_STATUS: dict[str, str] = {
 def retry_failed_pushes() -> int:
     """Cron job: re-run every ERROR push (plus PREVIEW ones once LA is configured).
 
-    PREVIEW events are only stale, not failed — retrying them when LA isn't configured
-    would just regenerate the same preview payload, so they're only picked up once
-    credentials land (the credential-day switchover).
+    PREVIEW events are only stale, not failed — retrying them while LA is still previewing
+    would just regenerate the same preview payload, so they're only picked up once LA is
+    armed AND credentialed (the credential-day switchover).
     """
     results = [ZapEvent.Result.ERROR]
-    if limoanywhere.is_configured():
+    if not _is_preview():
         results.append(ZapEvent.Result.PREVIEW)
 
     count = 0
