@@ -112,6 +112,10 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> li
             "used": vendor.used,
             "fits_vehicle": vendor.fits_vehicle,
             "insurance": vendor.insurance_summary(),
+            # `gnet_grid_id` is a plain column on the Vendor row this queryset already
+            # fetched, so `is_gnet_capable` (a property over it) costs nothing extra —
+            # the 2-query bound above still holds.
+            "is_gnet": vendor.is_gnet_capable,
         }
         for vendor in qs
     ]
