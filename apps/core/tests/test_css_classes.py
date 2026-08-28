@@ -110,6 +110,21 @@ def test_quote_form_scope_is_present(rule):
     assert rule in css, f"{rule!r} missing from app.css"
 
 
+def test_quote_form_does_not_paint_the_tom_select_wrapper():
+    """Tom Select copies the source <select>'s `.field` class onto .ts-wrapper. The
+    global `.ts-wrapper.field` reset strips that padding, but `.quote-form .field`
+    has the same specificity and is declared later, so it won it back — painting
+    padding *around* .ts-control and insetting the Occasion box from every other
+    field in the card. The wrapper is layout-only; .ts-control carries the look.
+    """
+    css = (ROOT / "static" / "css" / "app.css").read_text()
+    block = re.search(r"\.quote-form \.ts-wrapper\.field \{(.+?)\}", css, re.S)
+    assert block, "nothing re-strips the Tom Select wrapper inside .quote-form"
+    assert "padding: 0" in block.group(1), (
+        f"wrapper padding not cleared, so the select stays indented: {block.group(1)!r}"
+    )
+
+
 def test_selected_toggle_segment_carries_a_brand_colour():
     """The Transfer/Hourly toggle read as muted/disabled: the selected pill was
     white-on-near-white with plain body text, so neither the selection nor the

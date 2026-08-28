@@ -602,6 +602,15 @@ header, aside, main, .wash-gold {
   font-size: 16px;
   padding: .6rem .85rem;
 }
+/* Tom Select mirrors the source <select>'s `.field` class onto .ts-wrapper, and the
+   rule above matches that wrapper too — same specificity as the global
+   `.ts-wrapper.field` reset but declared later, so it painted padding *around*
+   .ts-control and inset the Occasion box from every other field in the card. */
+.quote-form .ts-wrapper.field {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+}
 .quote-form textarea.field {
   min-height: 0;
   resize: vertical;
