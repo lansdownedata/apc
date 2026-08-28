@@ -129,6 +129,14 @@ def _location(stop: Stop, *, time_iso: str | None = None) -> dict:
     return location
 
 
+def _split_passenger_name(name: str) -> tuple[str, str]:
+    """Same placeholder policy as la_sync._split_name (kept separate: two integrations,
+    two contracts). GNet rejects a send with no passengers ("passenger list missing"),
+    so a blank contact name still has to produce a valid entry."""
+    first, _, last = (name or "").strip().partition(" ")
+    return first or "Customer", (last.strip() or "-")
+
+
 def build_send_payload(assignment: Assignment) -> dict:
     """Build the body for `POST /api/gateway/v1/trips` from one dispatch.Assignment.
 
@@ -168,6 +176,7 @@ def build_send_payload(assignment: Assignment) -> dict:
     reservation = assignment.reservation
     vendor = assignment.vendor
     vehicle_type_code = vehicle_code(reservation.vehicle)
+    passenger_first, passenger_last = _split_passenger_name(reservation.lead.contact.name)
 
     if not vendor.gnet_grid_id:
         raise GnetNotConfigured(
@@ -205,6 +214,9 @@ def build_send_payload(assignment: Assignment) -> dict:
         "preferredVehicleType": vehicle_type_code,
         "reservationType": reservation.trip_type.upper(),
         "passengerCount": str(reservation.passengers),
+        # GNet's rules engine requires the list, not just the count — a send without
+        # it is rejected with "passenger list missing" (learned live, 2026-08-28).
+        "passengers": [{"firstName": passenger_first, "lastName": passenger_last}],
         "locations": {
             "pickup": pickup,
             "dropOff": dropoff,

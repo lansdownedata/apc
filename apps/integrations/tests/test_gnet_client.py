@@ -169,6 +169,41 @@ def test_payload_passenger_count_and_naive_pickup_time():
     assert "Z" not in pickup_time
 
 
+def _with_contact_name(assignment, name):
+    contact = assignment.reservation.lead.contact
+    contact.name = name
+    contact.save()
+    return assignment
+
+
+def test_payload_passengers_come_from_the_lead_contact():
+    """GNet requires an actual `passengers` list — `passengerCount` alone is rejected
+    with "passenger list missing" (live rules-engine answer, 2026-08-28)."""
+    assignment = _with_contact_name(_assignment(), "James Bond")
+    payload = gnet.build_send_payload(assignment)
+    assert payload["passengers"] == [{"firstName": "James", "lastName": "Bond"}]
+
+
+def test_payload_passenger_multi_word_surname_stays_whole():
+    assignment = _with_contact_name(_assignment(), "James Earl Jones")
+    payload = gnet.build_send_payload(assignment)
+    assert payload["passengers"] == [{"firstName": "James", "lastName": "Earl Jones"}]
+
+
+def test_payload_passenger_single_token_name_gets_placeholder_surname():
+    assignment = _with_contact_name(_assignment(), "Cher")
+    payload = gnet.build_send_payload(assignment)
+    assert payload["passengers"] == [{"firstName": "Cher", "lastName": "-"}]
+
+
+def test_payload_blank_contact_name_still_sends_a_passenger():
+    """Same placeholder policy as la_sync._split_name: a blank name must not turn into
+    an empty passengers list, which GNet rejects outright."""
+    assignment = _with_contact_name(_assignment(), "")
+    payload = gnet.build_send_payload(assignment)
+    assert payload["passengers"] == [{"firstName": "Customer", "lastName": "-"}]
+
+
 def test_payload_stops_map_to_pickup_and_dropoff_addresses():
     assignment = _assignment()
     payload = gnet.build_send_payload(assignment)
