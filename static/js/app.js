@@ -150,7 +150,11 @@ function assignPanel() {
     busy: false,
     async send(url, extra) {
       this.busy = true;
-      const form = new FormData(this.$root.querySelector("form") || undefined);
+      // $el/closest, not $root/querySelector: the offer button sits inside the form's own
+      // nested x-data scope, so $root here is the <form> itself and querySelector("form")
+      // finds nothing — the POST goes out empty. The resolve buttons have no enclosing
+      // form and fall through to an empty body, which is all they need (action via extra).
+      const form = new FormData(this.$el.closest("form") || undefined);
       Object.entries(extra || {}).forEach(([k, v]) => form.set(k, v));
       let data;
       try {
