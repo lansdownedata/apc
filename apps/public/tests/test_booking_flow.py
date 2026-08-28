@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -168,6 +169,26 @@ def test_notes_textarea_opens_at_three_rows_and_autogrows(db):
     html = Client().get("/bookings/").content.decode()
     assert 'rows="3"' in html
     assert "data-autogrow" in html
+
+
+def test_autogrow_never_sizes_a_textarea_that_has_no_layout():
+    """The homepage hero hides step 2 behind x-show, and Alpine (deferred) applies
+    that before app.js runs its DOMContentLoaded pass. A display:none textarea
+    reports scrollHeight 0, so sizing it collapsed "Trip details" to its padding —
+    the clipped box — and nothing re-measured it once the step was revealed.
+
+    So the sizer must bail while the field has no layout, and something must
+    re-measure when it gains some.
+    """
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    grow = re.search(r"const grow = \(\) => \{(.+?)\n    \};", js, re.S)
+    assert grow, "no grow() in initAutogrow"
+    assert "offsetParent" in grow.group(1), (
+        f"grow() sizes the textarea without checking it is rendered: {grow.group(1)!r}"
+    )
+    assert "ResizeObserver" in js, (
+        "nothing re-measures the textarea when its step is revealed, so it stays collapsed"
+    )
 
 
 def _order(html, *needles):
