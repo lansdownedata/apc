@@ -763,11 +763,25 @@ function initAutogrow(root = document) {
     const line = parseFloat(getComputedStyle(el).lineHeight) || 20;
     const max = line * 8;
     const grow = () => {
+      // A field with no layout (the hero hides step 2 behind x-show, and deferred
+      // Alpine applies that before this runs) reports scrollHeight 0, so sizing it
+      // pins the textarea to its padding and it never recovers.
+      if (!el.offsetParent && !el.offsetHeight) return;
       el.style.height = "auto";
       el.style.height = Math.min(el.scrollHeight, max) + "px";
       el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
     };
     el.addEventListener("input", grow);
+    // Measure once the field is actually rendered — revealing a step resizes it from
+    // zero, which is the only moment the deferred first measurement can happen.
+    if (typeof ResizeObserver === "function") {
+      const ro = new ResizeObserver(() => {
+        if (!el.offsetParent && !el.offsetHeight) return;
+        ro.disconnect();
+        grow();
+      });
+      ro.observe(el);
+    }
     grow();
   });
 }
