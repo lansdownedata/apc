@@ -109,9 +109,28 @@ def test_send_quote_blocks_when_no_email():
     assert "email" in result.error.lower()
 
 
-def test_send_quote_blocks_when_booked():
+def test_send_quote_allows_booked_when_unpaid():
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=ContactFactory(email="a@b.com"))
     TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
+    with (
+        patch("apps.leads.services.send_html_email", return_value=True),
+        patch("apps.leads.services.podium.send_message"),
+    ):
+        result = services.send_quote(lead, base_url=BASE_URL)
+    assert result.ok
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.BOOKED
+
+
+def test_send_quote_blocks_when_booked_and_paid_in_full():
+    lead = LeadFactory(status=Lead.Status.BOOKED, contact=ContactFactory(email="a@b.com"))
+    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
+    PaymentPlan.objects.create(
+        lead=lead,
+        quote_total=Decimal("185.00"),
+        deposit_status=PaymentPlan.DepositStatus.PAID,
+        balance_status=PaymentPlan.BalanceStatus.PAID,
+    )
     result = services.send_quote(lead, base_url=BASE_URL)
     assert not result.ok and result.http_status == 400
 
@@ -307,4 +326,4 @@ def test_detail_shows_resend_for_quoted(client, agent):
     lead.save(update_fields=["status"])
     client.force_login(agent)
     body = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
-    assert "Resend deposit request" in body
+    assert "Resend payment link" in body

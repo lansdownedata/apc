@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% load humanize json_filters %}
 
+{% block head_extra %}
+{% if user.has_payments_access and stripe_pk %}
+<script src="https://js.stripe.com/v3/"></script>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 {{ reservations_json|json_script:"ws-reservations" }}
 {{ vehicles_json|json_script:"ws-vehicles" }}
@@ -88,11 +94,27 @@
 
     <!-- actions -->
     <div class="flex flex-wrap items-center gap-2.5 mt-5 pt-4 border-t border-line">
-      {% if lead.status == 'new' or lead.status == 'quoted' %}
+      {% if lead.status == 'new' or lead.status == 'quoted' or lead.status == 'booked' and not payment.is_paid_in_full %}
       <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
               @click="openSendQuoteModal()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
         <i class="ti ti-send text-[15px]"></i>
-        {% if lead.status == 'new' %}Send quote{% else %}Resend deposit request{% endif %}
+        {% if lead.status == 'new' %}Send quote{% else %}Resend payment link{% endif %}
+      </button>
+      {% endif %}
+
+      {% if lead.status == 'quoted' %}
+      <form id="form-mark-booked" method="post" action="{% url 'lead_mark_booked' lead.pk %}" class="hidden">
+        {% csrf_token %}
+      </form>
+      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50"
+              @click="$store.modal.confirm({
+                title: 'Mark this quote as booked?',
+                variant: 'gold',
+                confirmText: 'Mark booked',
+                message: 'This books the order without collecting a payment. You can take a card or resend the payment link afterwards.',
+                onConfirm: () => document.getElementById('form-mark-booked').submit()
+              })">
+        <i class="ti ti-circle-check text-[15px]"></i> Mark booked
       </button>
       {% endif %}
 
@@ -357,7 +379,7 @@
     </div>
 
     <!-- Money summary row -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
+    <div class="grid grid-cols-2 sm:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
       <div class="px-5 py-3.5">
         <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Collected</div>
         <div class="num font-semibold text-ink text-[15px]">${{ balances.collected|floatformat:2|intcomma }}</div>
@@ -373,6 +395,10 @@
       <div class="px-5 py-3.5">
         <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">A/R</div>
         <div class="num font-semibold {% if balances.ar %}text-amber-600{% else %}text-ink{% endif %} text-[15px]">${{ balances.ar|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="px-5 py-3.5">
+        <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Remaining</div>
+        <div class="num font-semibold {% if balances.remaining %}text-amber-600{% else %}text-ink{% endif %} text-[15px]">${{ balances.remaining|floatformat:2|intcomma }}</div>
       </div>
     </div>
 

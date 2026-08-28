@@ -219,7 +219,7 @@ def test_deposit_webhook_cancels_pending_touchpoints():
 
     with (
         patch("apps.payments.webhooks.stripe.PaymentIntent.retrieve", return_value=_saved_pm()),
-        patch("apps.payments.webhooks.touchpoints.cancel_pending") as cancel_pending,
+        patch("apps.leads.services.touchpoints.cancel_pending") as cancel_pending,
     ):
         process_stripe_event(_session_event(plan.lead_id))
 

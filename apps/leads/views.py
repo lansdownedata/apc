@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import stripe
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
@@ -36,6 +37,12 @@ from apps.payments import services as payment_services
 from . import services
 from .forms import NewLeadForm
 from .models import Lead, VehicleType
+
+
+def _balances_with_remaining(lead: Lead) -> dict:
+    bals = ledger.order_balances(lead)
+    bals["remaining"] = payment_services.remaining_balance(lead)
+    return bals
 
 
 def _reservation_draft(r) -> dict:
@@ -218,7 +225,8 @@ def lead_detail(request, pk):
         "la_sync_rows": la_sync_rows,
         "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
-        "balances": ledger.order_balances(lead),
+        "balances": _balances_with_remaining(lead),
+        "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
         "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
             "posted_at", "id"
         ),
@@ -356,6 +364,23 @@ def lead_reopen(request, pk: int) -> HttpResponse:
 
 
 @login_required
+@require_POST
+def lead_mark_booked(request, pk: int) -> HttpResponse:
+    lead = get_object_or_404(Lead, pk=pk)
+    if lead.status == Lead.Status.BOOKED:
+        if _wants_json(request):
+            return JsonResponse({"ok": True, "status": lead.status})
+        return redirect("lead_detail", pk=pk)
+    if not lead.can_transition(Lead.Status.BOOKED):
+        return _transition_refused(request, "Only quoted leads can be marked booked.")
+    services.book_lead(lead)
+    if _wants_json(request):
+        return JsonResponse({"ok": True, "status": lead.status})
+    messages.success(request, "Quote marked as booked.")
+    return redirect("lead_detail", pk=pk)
+
+
+@login_required
 @payment_access_required
 @require_POST
 def lead_resend_la(request, pk: int) -> HttpResponse:
@@ -402,8 +427,11 @@ def quote_deposit_cancel(request, token: str) -> HttpResponse:
 
 def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
     plan = getattr(lead, "payment", None)
+    deposit_unpaid = plan is None or plan.deposit_status != plan.DepositStatus.PAID
     is_expired = lead.status == Lead.Status.QUOTED and lead.quote_expired
-    is_active = lead.status == Lead.Status.QUOTED and not lead.quote_expired
+    is_active = (lead.status == Lead.Status.QUOTED and not lead.quote_expired) or (
+        lead.status == Lead.Status.BOOKED and deposit_unpaid
+    )
     return {
         "lead": lead,
         "token": token,
@@ -417,7 +445,7 @@ def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
         "quote_total": plan.quote_total if plan else lead.quote_total,
         "is_active": is_active,
         "is_expired": is_expired,
-        "is_booked": lead.status == Lead.Status.BOOKED,
+        "is_booked": lead.status == Lead.Status.BOOKED and not deposit_unpaid,
         "error": error,
     }
 
@@ -463,17 +491,18 @@ def quote_page(request, token: str) -> HttpResponse:
 
 @require_POST
 def quote_book(request, token: str) -> HttpResponse:
-    """Book-now: kick off the Stripe deposit Checkout for an active QUOTED lead."""
+    """Book-now: kick off the Stripe deposit Checkout for an active quote (or a
+    booked quote whose deposit is still unpaid)."""
     try:
         lead = services.read_deposit_token(token)
     except (BadSignature, Lead.DoesNotExist):
         raise Http404 from None
 
-    if lead.status != Lead.Status.QUOTED or lead.quote_expired:
-        return redirect("quote_page", token=token)
-
     plan = getattr(lead, "payment", None)
-    if plan is None:
+    deposit_unpaid = plan is not None and plan.deposit_status != plan.DepositStatus.PAID
+    quoted_ok = lead.status == Lead.Status.QUOTED and not lead.quote_expired
+    booked_unpaid = lead.status == Lead.Status.BOOKED and deposit_unpaid
+    if plan is None or not (quoted_ok or booked_unpaid):
         return redirect("quote_page", token=token)
 
     success_url = request.build_absolute_uri(reverse("quote_deposit_success", args=[token]))

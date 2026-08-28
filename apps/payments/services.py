@@ -1,6 +1,8 @@
 """Stripe payments service — deposit checkout (saves the card) + off-session
 balance charge. Card data never touches our servers (Checkout + tokens)."""
 
+from decimal import Decimal, InvalidOperation
+
 import stripe
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -9,6 +11,12 @@ from apps.notifications.models import Notification
 
 from . import ledger
 from .models import Charge, JournalEntry, PaymentPlan
+
+ZERO = Decimal("0.00")
+
+
+class PaymentError(Exception):
+    """User-facing payment failure (bad amount, incomplete intent, no card)."""
 
 
 def _stripe():
@@ -165,29 +173,172 @@ def refund_payment(plan, amount):
     return total_refunded
 
 
-def mark_paid_offline(plan, amount, *, memo="Offline payment"):
-    """Record a non-Stripe payment (cash/check) as a capture entry."""
-    from decimal import Decimal
+def remaining_balance(lead) -> Decimal:
+    """Quote total minus collected cash. Never negative."""
+    plan = getattr(lead, "payment", None)
+    total = Decimal(plan.quote_total if plan is not None else lead.quote_total)
+    leftover = total - ledger.order_balances(lead)["collected"]
+    return leftover if leftover > ZERO else ZERO
 
-    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal(amount))
-    charge.status = Charge.Status.SUCCEEDED
-    charge.save(update_fields=["status", "updated_at"])
-    ledger.post_capture(
-        lead=plan.lead,
-        amount=Decimal(amount),
-        kind=JournalEntry.Kind.BALANCE_CAPTURED,
-        idempotency_key=f"capture-charge{charge.pk}",
-        charge=charge,
-        source=JournalEntry.Source.MANUAL,
-        memo=memo,
-    )
-    if plan.balance_status != PaymentPlan.BalanceStatus.PAID:
+
+def ensure_plan(lead) -> PaymentPlan:
+    """PaymentPlan for this lead, snapshotting quote total if new or still $0."""
+    plan, created = PaymentPlan.objects.get_or_create(lead=lead)
+    if created or plan.quote_total == 0:
+        plan.snapshot_total()
+    return plan
+
+
+def sync_plan_from_collected(plan: PaymentPlan) -> None:
+    """Flip deposit/balance flags from ledger collected vs the snapshotted total."""
+    collected = ledger.order_balances(plan.lead)["collected"]
+    total = Decimal(plan.quote_total)
+    fields = ["updated_at"]
+    if total > ZERO and collected >= total:
+        plan.deposit_status = PaymentPlan.DepositStatus.PAID
         plan.balance_status = PaymentPlan.BalanceStatus.PAID
-        plan.save(update_fields=["balance_status", "updated_at"])
-    if plan.lead.has_alert:
+        fields += ["deposit_status", "balance_status"]
+    elif collected >= plan.deposit_amount and plan.deposit_amount > ZERO:
+        plan.deposit_status = PaymentPlan.DepositStatus.PAID
+        if plan.balance_status == PaymentPlan.BalanceStatus.NA:
+            plan.balance_status = PaymentPlan.BalanceStatus.SCHEDULED
+        fields += ["deposit_status", "balance_status"]
+    plan.save(update_fields=fields)
+    if plan.lead.has_alert and plan.balance_status != PaymentPlan.BalanceStatus.FAILED:
         plan.lead.has_alert = False
         plan.lead.save(update_fields=["has_alert", "updated_at"])
+
+
+def _parse_positive_amount(amount) -> Decimal:
+    try:
+        value = Decimal(amount)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise PaymentError("Enter a valid amount.") from exc
+    if value <= ZERO:
+        raise PaymentError("Enter an amount greater than zero.")
+    return value
+
+
+def _store_card(plan: PaymentPlan, payment_method) -> None:
+    if payment_method is None:
+        return
+    plan.stripe_payment_method_id = payment_method.id
+    card = getattr(payment_method, "card", None)
+    plan.card_brand = card.brand if card else ""
+    plan.card_last4 = card.last4 if card else ""
+    plan.save(
+        update_fields=[
+            "stripe_payment_method_id",
+            "card_brand",
+            "card_last4",
+            "updated_at",
+        ]
+    )
+
+
+def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
+    """Create a PaymentIntent for the staff Payment Element. Returns (charge, client_secret)."""
+    amount = _parse_positive_amount(amount)
+    customer = get_or_create_customer(plan)
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
+    intent = _stripe().PaymentIntent.create(
+        amount=_cents(amount),
+        currency="usd",
+        customer=customer,
+        setup_future_usage="off_session",
+        metadata={
+            "lead_id": str(plan.lead_id),
+            "kind": "admin",
+            "charge_id": str(charge.pk),
+        },
+        idempotency_key=charge.idempotency_key,
+    )
+    charge.stripe_payment_intent_id = intent.id
+    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    return charge, intent.client_secret
+
+
+def create_setup_intent(plan: PaymentPlan) -> str:
+    """Client secret so staff can save a card without charging."""
+    customer = get_or_create_customer(plan)
+    intent = _stripe().SetupIntent.create(customer=customer, usage="off_session")
+    return intent.client_secret
+
+
+def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPlan:
+    """Attach a Stripe PaymentMethod to the plan's customer and store brand/last4."""
+    customer = get_or_create_customer(plan)
+    pm = _stripe().PaymentMethod.retrieve(payment_method_id)
+    attached_to = getattr(pm, "customer", None)
+    if attached_to != customer:
+        _stripe().PaymentMethod.attach(payment_method_id, customer=customer)
+    _store_card(plan, pm)
+    return plan
+
+
+def record_admin_payment(plan: PaymentPlan, payment_intent_id: str) -> Charge:
+    """Reconcile a succeeded staff PaymentIntent: ledger, card, statuses, maybe book."""
+    from apps.leads.models import Lead
+    from apps.leads.services import book_lead
+
+    intent = _stripe().PaymentIntent.retrieve(payment_intent_id, expand=["payment_method"])
+    if intent.status != "succeeded":
+        raise PaymentError(f"Payment has not succeeded ({intent.status}).")
+
+    charge = plan.charges.filter(stripe_payment_intent_id=payment_intent_id).first()
+    if charge is None:
+        amount = (Decimal(intent.amount) / Decimal(100)).quantize(Decimal("0.01"))
+        charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
+        charge.stripe_payment_intent_id = payment_intent_id
+        charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+
+    if charge.status != Charge.Status.SUCCEEDED:
+        charge.status = Charge.Status.SUCCEEDED
+        charge.save(update_fields=["status", "updated_at"])
+        ledger.post_capture(
+            lead=plan.lead,
+            amount=charge.amount,
+            kind=JournalEntry.Kind.BALANCE_CAPTURED,
+            idempotency_key=f"capture-charge{charge.pk}",
+            charge=charge,
+            stripe_ref=payment_intent_id,
+            memo="Admin card payment",
+        )
+
+    _store_card(plan, getattr(intent, "payment_method", None))
+    sync_plan_from_collected(plan)
+    plan.lead.refresh_from_db()
+    if plan.lead.status == Lead.Status.QUOTED:
+        book_lead(plan.lead)
     return charge
+
+
+def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
+    """Off-session charge of the card already on the plan."""
+    amount = _parse_positive_amount(amount)
+    if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
+        raise PaymentError("No card on file.")
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
+    try:
+        intent = _stripe().PaymentIntent.create(
+            amount=_cents(amount),
+            currency="usd",
+            customer=plan.stripe_customer_id,
+            payment_method=plan.stripe_payment_method_id,
+            off_session=True,
+            confirm=True,
+            metadata={
+                "lead_id": str(plan.lead_id),
+                "kind": "admin",
+                "charge_id": str(charge.pk),
+            },
+            idempotency_key=charge.idempotency_key,
+        )
+    except stripe.error.CardError as exc:
+        return _record_failure(plan, charge, exc)
+    charge.stripe_payment_intent_id = intent.id
+    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    return record_admin_payment(plan, intent.id)
 
 
 def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:

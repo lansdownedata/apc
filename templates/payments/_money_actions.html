@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize json_filters %}
 {% if user.has_payments_access %}
 <div class="border-t border-line px-5 py-4">
   <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
@@ -72,35 +72,74 @@
       </button>
     </form>
     {% endif %}
-
-    <!-- Mark paid offline -->
-    <form method="post" action="{% url 'order_mark_paid' lead.pk %}" class="contents">
-      {% csrf_token %}
-      <div class="flex items-center gap-1.5">
-        <input
-          type="number"
-          name="amount"
-          step="0.01"
-          min="0.01"
-          class="w-28 text-[12px] num border border-line rounded-lg px-2.5 py-1.5 bg-surface text-ink focus:outline-none focus:ring-2 focus:ring-gold/40"
-          placeholder="Amount"
-        >
-        <button
-          type="button"
-          class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 rounded-lg px-3 py-1.5 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50"
-          @click="$store.modal.confirm({
-            title: 'Record offline payment?',
-            variant: 'info',
-            confirmText: 'Record',
-            message: 'This records a cash or check payment on the ledger without charging Stripe.',
-            onConfirm: () => $el.closest('form').submit()
-          })"
-        >
-          <i class="ti ti-cash text-[14px]"></i> Mark paid (offline)
-        </button>
-      </div>
-    </form>
-
   </div>
+
+  {% if lead.status != 'lost' %}
+  <!-- Take payment (Stripe Payment Element) -->
+  <div class="mt-4 pt-4 border-t border-line"
+       x-data="adminCardPay({
+         pk: {{ stripe_pk|json_string }},
+         remaining: '{{ balances.remaining|floatformat:2 }}',
+         hasCard: {{ payment.stripe_payment_method_id|yesno:'true,false' }},
+         cardBrand: {{ payment.card_brand|default:''|json_string }},
+         cardLast4: {{ payment.card_last4|default:''|json_string }},
+         intentUrl: '{% url 'order_admin_intent' lead.pk %}',
+         completeUrl: '{% url 'order_admin_complete' lead.pk %}',
+         saveCardUrl: '{% url 'order_save_card' lead.pk %}',
+         chargeSavedUrl: '{% url 'order_charge_saved' lead.pk %}'
+       })">
+    <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
+      <i class="ti ti-credit-card text-[14px] text-muted"></i> Take payment
+    </div>
+    <template x-if="hasCard && cardLast4">
+      <p class="text-[12px] text-muted mb-2">
+        Card on file:
+        <span class="text-ink font-medium capitalize" x-text="cardBrand"></span>
+        <span class="num text-ink" x-text="'•••• ' + cardLast4"></span>
+      </p>
+    </template>
+    <div x-show="!hasCard || replacing" x-cloak>
+      <div x-ref="cardMount" class="stripe-element mb-3 rounded-lg border border-line bg-surface px-3 py-2.5"></div>
+    </div>
+    <p class="text-[12px] text-rose-600 mb-2" x-show="error" x-text="error" x-cloak></p>
+    <div class="flex flex-wrap items-center gap-1.5">
+      <input
+        type="number"
+        step="0.01"
+        min="0.01"
+        x-model="amount"
+        @change="onAmountChange()"
+        class="w-28 text-[12px] num border border-line rounded-lg px-2.5 py-1.5 bg-surface text-ink focus:outline-none focus:ring-2 focus:ring-gold/40"
+        placeholder="Amount"
+      >
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 rounded-lg px-3 py-1.5 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50 disabled:opacity-50"
+        :disabled="busy"
+        @click="charge()"
+      >
+        <i class="ti ti-credit-card text-[14px]"></i>
+        <span x-text="busy ? 'Charging…' : 'Charge card'"></span>
+      </button>
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5 disabled:opacity-50"
+        :disabled="busy"
+        @click="saveCard()"
+        x-show="!hasCard || replacing"
+      >
+        <i class="ti ti-device-floppy text-[14px]"></i> Save card
+      </button>
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-muted rounded-lg px-3 py-1.5 hover:text-ink"
+        x-show="hasCard && !replacing"
+        @click="startReplace()"
+      >
+        Replace card
+      </button>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endif %}

@@ -11,7 +11,7 @@ from apps.dispatch.models import Assignment
 from apps.leads.models import Lead
 from apps.payments import ledger, services
 from apps.payments.factories import PaymentPlanFactory
-from apps.payments.models import Charge, JournalEntry, PaymentPlan
+from apps.payments.models import Charge, JournalEntry
 from apps.reservations.factories import TransferReservationFactory
 from apps.vendors.factories import VendorFactory
 
@@ -43,12 +43,6 @@ def test_refund_payment_posts_stripe_and_ledger():
     assert refunded == Decimal("400.00")
     assert plan.charges.filter(kind=Charge.Kind.REFUND, stripe_refund_id="re_1").exists()
     assert ledger.order_balances(plan.lead)["collected"] == Decimal("935.00")
-
-
-def test_mark_paid_offline_posts_capture():
-    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
-    services.mark_paid_offline(plan, Decimal("500.00"))
-    assert ledger.order_balances(plan.lead)["collected"] == Decimal("500.00")
 
 
 def test_refund_endpoint_requires_payment_access(client):
@@ -120,19 +114,6 @@ def test_refund_passes_stripe_idempotency_key():
         services.refund_payment(plan, Decimal("400.00"))
     assert "idempotency_key" in mock_create.call_args.kwargs
     assert mock_create.call_args.kwargs["idempotency_key"].startswith("refund-")
-
-
-def test_mark_paid_offline_clears_failed_status():
-    plan = PaymentPlanFactory(
-        quote_total=Decimal("2670.00"), balance_status=PaymentPlan.BalanceStatus.FAILED
-    )
-    plan.lead.has_alert = True
-    plan.lead.save(update_fields=["has_alert"])
-    services.mark_paid_offline(plan, Decimal("1335.00"))
-    plan.refresh_from_db()
-    plan.lead.refresh_from_db()
-    assert plan.balance_status == PaymentPlan.BalanceStatus.PAID
-    assert plan.lead.has_alert is False
 
 
 def test_cancel_refund_only_booked(client):

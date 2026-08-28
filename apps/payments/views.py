@@ -4,7 +4,7 @@ import stripe
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse, HttpResponseBadRequest
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -124,17 +124,88 @@ def order_retry_balance(request, lead_id):
     return redirect("lead_detail", pk=lead_id)
 
 
+def _json_error(message: str, status: int = 400):
+    return JsonResponse({"ok": False, "error": message}, status=status)
+
+
 @login_required
 @payment_access_required
 @require_POST
-def order_mark_paid(request, lead_id):
+def order_admin_intent(request, lead_id):
     lead, plan = _plan(lead_id)
-    if plan and request.POST.get("amount"):
-        try:
-            amount = Decimal(request.POST["amount"])
-        except (InvalidOperation, TypeError):
-            messages.error(request, "Enter a valid amount.")
-            return redirect("lead_detail", pk=lead_id)
-        services.mark_paid_offline(plan, amount)
-        messages.success(request, "Offline payment recorded.")
-    return redirect("lead_detail", pk=lead_id)
+    plan = plan or services.ensure_plan(lead)
+    try:
+        charge, client_secret = services.create_admin_payment_intent(
+            plan, request.POST.get("amount")
+        )
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    return JsonResponse({"ok": True, "client_secret": client_secret, "charge_id": charge.pk})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_admin_complete(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan is None:
+        return _json_error("No payment plan on this quote.")
+    pi_id = (request.POST.get("payment_intent_id") or "").strip()
+    if not pi_id:
+        return _json_error("Missing payment intent.")
+    try:
+        services.record_admin_payment(plan, pi_id)
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    return JsonResponse({"ok": True, "remaining": str(services.remaining_balance(lead))})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_setup_intent(request, lead_id):
+    lead, plan = _plan(lead_id)
+    plan = plan or services.ensure_plan(lead)
+    try:
+        client_secret = services.create_setup_intent(plan)
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    return JsonResponse({"ok": True, "client_secret": client_secret})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_save_card(request, lead_id):
+    lead, plan = _plan(lead_id)
+    plan = plan or services.ensure_plan(lead)
+    pm_id = (request.POST.get("payment_method_id") or "").strip()
+    if not pm_id:
+        return _json_error("Missing payment method.")
+    try:
+        services.save_payment_method(plan, pm_id)
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    plan.refresh_from_db()
+    return JsonResponse({"ok": True, "card_brand": plan.card_brand, "card_last4": plan.card_last4})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_charge_saved(request, lead_id):
+    lead, plan = _plan(lead_id)
+    if plan is None:
+        return _json_error("No payment plan on this quote.")
+    try:
+        services.charge_saved_card(plan, request.POST.get("amount"))
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    lead.refresh_from_db()
+    return JsonResponse(
+        {
+            "ok": True,
+            "remaining": str(services.remaining_balance(lead)),
+            "status": lead.status,
+        }
+    )

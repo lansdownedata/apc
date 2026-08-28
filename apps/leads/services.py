@@ -6,6 +6,7 @@ the view stays thin.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -16,13 +17,15 @@ from django.core import signing
 from django.urls import reverse
 from django.utils import timezone
 
-if TYPE_CHECKING:
-    from .models import Lead
-
 from apps.integrations import podium
 from apps.messaging import touchpoints
 from apps.notifications.email import send_html_email
 from apps.payments.models import PaymentPlan
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from .models import Lead
 
 _DEPOSIT_SALT = "quote-deposit"
 
@@ -132,11 +135,22 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     selected = channels or {"email", "sms"}
 
     # 1. preconditions — nothing is written on failure
-    if lead.status in (lead.Status.BOOKED, lead.Status.LOST):
+    if lead.status == lead.Status.LOST:
         return SendQuoteResult(
             ok=False,
             http_status=400,
-            error=f"This quote is already {lead.get_status_display().lower()}.",
+            error="This quote is already lost.",
+        )
+    existing_plan = getattr(lead, "payment", None)
+    if (
+        lead.status == lead.Status.BOOKED
+        and existing_plan is not None
+        and existing_plan.is_paid_in_full
+    ):
+        return SendQuoteResult(
+            ok=False,
+            http_status=400,
+            error="This quote is already booked.",
         )
     if lead.quote_total <= 0:
         return SendQuoteResult(
@@ -171,12 +185,14 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         lead.status = lead.Status.QUOTED
         lead.save(update_fields=["status", "updated_at"])
 
-    # 5. stamp the send + expiry, reset the viewed flag, and (re)schedule touch-points
+    # 5. stamp the send + expiry, reset the viewed flag, and (re)schedule touch-points.
+    # Already-booked unpaid resends skip the quote-nurture program — those TPs assume Quoted.
     lead.quote_sent_at = timezone.now()
     lead.quote_expires_at = compute_quote_expiry(lead)
     lead.quote_viewed_at = None
     lead.save(update_fields=["quote_sent_at", "quote_expires_at", "quote_viewed_at", "updated_at"])
-    touchpoints.schedule_quote_sent(lead)
+    if lead.status != lead.Status.BOOKED:
+        touchpoints.schedule_quote_sent(lead)
 
     # 6. deliver on each selected channel — best-effort, never rolls back the transition
     delivery: dict = {}
@@ -211,3 +227,39 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     return SendQuoteResult(
         ok=True, http_status=200, link=link, status=lead.status, delivery=delivery
     )
+
+
+class BookLeadError(Exception):
+    """Raised when a lead cannot be converted to Booked (e.g. it is Lost)."""
+
+
+def book_lead(lead: Lead) -> Lead:
+    """Convert a quote to Booked without recording a payment.
+
+    Same side-effects as the Stripe deposit webhook minus the charge: status,
+    pending touch-points, a PaymentPlan snapshot if missing, and a best-effort
+    LimoAnywhere / Zapier push. Idempotent when already Booked. Lost leads refuse.
+    """
+    from apps.integrations import la_sync
+
+    if lead.status == lead.Status.LOST:
+        raise BookLeadError("Lost leads cannot be booked.")
+
+    already_booked = lead.status == lead.Status.BOOKED
+    if not already_booked:
+        lead.status = lead.Status.BOOKED
+        lead.save(update_fields=["status", "updated_at"])
+        touchpoints.cancel_pending(lead)
+
+    plan, created = PaymentPlan.objects.get_or_create(lead=lead)
+    if created or plan.quote_total == 0:
+        plan.snapshot_total()
+
+    if already_booked:
+        return lead
+
+    try:
+        la_sync.push_lead_bookings(lead)
+    except Exception:
+        logger.exception("LimoAnywhere push failed for lead %s", lead.pk)
+    return lead

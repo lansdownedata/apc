@@ -94,7 +94,7 @@ def test_deposit_capture_pushes_lead_to_la():
     plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
     with (
         patch.object(webhooks.stripe.PaymentIntent, "retrieve", return_value=_saved_pm()),
-        patch("apps.payments.webhooks.la_sync.push_lead_bookings") as push,
+        patch("apps.integrations.la_sync.push_lead_bookings") as push,
     ):
         webhooks.process_stripe_event(_session_event(plan.lead_id))
     push.assert_called_once()
@@ -110,7 +110,7 @@ def test_la_push_crash_never_breaks_stripe_200(client):
         ),
         patch.object(webhooks.stripe.PaymentIntent, "retrieve", return_value=_saved_pm()),
         patch(
-            "apps.payments.webhooks.la_sync.push_lead_bookings",
+            "apps.integrations.la_sync.push_lead_bookings",
             side_effect=RuntimeError("boom"),
         ),
     ):
