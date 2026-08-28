@@ -104,15 +104,29 @@ def test_quote_page_expired_has_no_book_button_and_notifies_once(client):
     assert Notification.objects.filter(lead=lead, kind=Notification.Kind.QUOTE_EXPIRED).count() == 1
 
 
-def test_quote_page_booked_shows_already_booked_note(client):
+def test_quote_page_booked_paid_shows_already_booked_note(client):
+    lead = _quoted_lead()
+    lead.status = Lead.Status.BOOKED
+    lead.save(update_fields=["status"])
+    plan = lead.payment
+    plan.deposit_status = plan.DepositStatus.PAID
+    plan.save(update_fields=["deposit_status", "updated_at"])
+    token = services.make_deposit_token(lead)
+    resp = client.get(reverse("quote_page", args=[token]))
+    assert resp.status_code == 200
+    assert "already booked" in resp.content.decode().lower()
+    assert "Book Now" not in resp.content.decode()
+
+
+def test_quote_page_booked_unpaid_shows_book_now(client):
     lead = _quoted_lead()
     lead.status = Lead.Status.BOOKED
     lead.save(update_fields=["status"])
     token = services.make_deposit_token(lead)
     resp = client.get(reverse("quote_page", args=[token]))
     assert resp.status_code == 200
-    assert "already booked" in resp.content.decode().lower()
-    assert "Book Now" not in resp.content.decode()
+    assert "Book Now" in resp.content.decode()
+    assert "already booked" not in resp.content.decode().lower()
 
 
 def test_quote_book_posts_to_stripe_and_redirects(client):
@@ -148,16 +162,34 @@ def test_quote_book_expired_redirects_without_stripe_call(client):
     create_checkout.assert_not_called()
 
 
-def test_quote_book_booked_redirects_without_stripe_call(client):
+def test_quote_book_booked_paid_redirects_without_stripe_call(client):
     lead = _quoted_lead()
     lead.status = Lead.Status.BOOKED
     lead.save(update_fields=["status"])
+    plan = lead.payment
+    plan.deposit_status = plan.DepositStatus.PAID
+    plan.save(update_fields=["deposit_status", "updated_at"])
     token = services.make_deposit_token(lead)
     with patch("apps.leads.views.payment_services.create_deposit_checkout") as create_checkout:
         resp = client.post(reverse("quote_book", args=[token]))
     assert resp.status_code == 302
     assert resp.url == reverse("quote_page", args=[token])
     create_checkout.assert_not_called()
+
+
+def test_quote_book_booked_unpaid_posts_to_stripe(client):
+    lead = _quoted_lead()
+    lead.status = Lead.Status.BOOKED
+    lead.save(update_fields=["status"])
+    token = services.make_deposit_token(lead)
+    with patch(
+        "apps.leads.views.payment_services.create_deposit_checkout",
+        return_value="https://stripe.test/sess",
+    ) as create_checkout:
+        resp = client.post(reverse("quote_book", args=[token]))
+    assert resp.status_code == 302
+    assert resp.url == "https://stripe.test/sess"
+    create_checkout.assert_called_once()
 
 
 def test_quote_book_stripe_error_rerenders_with_message(client):

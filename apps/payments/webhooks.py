@@ -5,12 +5,10 @@ import logging
 import stripe
 from django.conf import settings
 
-from apps.integrations import la_sync
-from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.leads.services import book_lead
 from apps.notifications.models import Notification
 
-from . import ledger
+from . import ledger, services
 from .models import Charge, JournalEntry, PaymentPlan
 
 logger = logging.getLogger(__name__)
@@ -26,6 +24,8 @@ def process_stripe_event(event) -> None:
     obj = event["data"]["object"]
     if etype == "checkout.session.completed":
         _deposit_completed(obj)
+    elif etype == "payment_intent.succeeded":
+        _admin_payment_succeeded(obj)
     elif etype == "payment_intent.payment_failed":
         _balance_failed(obj)
 
@@ -76,17 +76,19 @@ def _deposit_completed(session) -> None:
         memo="Deposit captured",
     )
 
-    # Auto-book on deposit.
-    lead = plan.lead
-    lead.status = Lead.Status.BOOKED
-    lead.save(update_fields=["status", "updated_at"])
-    touchpoints.cancel_pending(lead)
+    book_lead(plan.lead)
 
-    # Auto-book to LimoAnywhere (best-effort — never fail the Stripe 200).
+
+def _admin_payment_succeeded(intent) -> None:
+    if (intent.get("metadata") or {}).get("kind") != "admin":
+        return
+    plan = _plan_from_metadata(intent)
+    if plan is None:
+        return
     try:
-        la_sync.push_lead_bookings(lead)
+        services.record_admin_payment(plan, intent["id"])
     except Exception:
-        logger.exception("LimoAnywhere push failed for lead %s", lead.pk)
+        logger.exception("Admin payment reconcile failed for intent %s", intent.get("id"))
 
 
 def _saved_card(payment_intent_id):

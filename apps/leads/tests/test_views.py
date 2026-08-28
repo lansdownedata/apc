@@ -111,6 +111,7 @@ def test_lead_detail_shows_ledger_and_balances(client, agent):
     resp = client.get(reverse("lead_detail", args=[lead.pk]))
     assert resp.status_code == 200
     assert resp.context["balances"]["collected"] == Decimal("1000.00")
+    assert resp.context["balances"]["remaining"] == Decimal("0.00")
     assert len(resp.context["ledger_entries"]) == 1
 
 

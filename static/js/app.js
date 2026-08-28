@@ -205,6 +205,160 @@ function escapeHtml(s) {
 }
 window.escapeHtml = escapeHtml;
 
+async function postForm(url, data = {}) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-CSRFToken": getCookie("csrftoken"),
+      Accept: "application/json",
+    },
+    body: new URLSearchParams(data),
+  });
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok || json.ok === false) {
+    throw new Error(json.error || "Request failed.");
+  }
+  return json;
+}
+
+/* -------------------------------------------------- staff card payment (Stripe Payment Element) */
+function adminCardPay(opts) {
+  return {
+    stripe: null,
+    elements: null,
+    paymentElement: null,
+    amount: opts.remaining || "",
+    remaining: opts.remaining || "0.00",
+    hasCard: !!opts.hasCard,
+    cardBrand: opts.cardBrand || "",
+    cardLast4: opts.cardLast4 || "",
+    replacing: false,
+    busy: false,
+    error: "",
+    mounted: false,
+
+    init() {
+      if (!opts.pk || typeof Stripe === "undefined") return;
+      this.stripe = Stripe(opts.pk);
+      if (!this.hasCard) this.mountElement();
+    },
+
+    cents() {
+      const n = Math.round(parseFloat(this.amount || "0") * 100);
+      return Number.isFinite(n) ? n : 0;
+    },
+
+    mountElement() {
+      if (!this.stripe || this.mounted) return;
+      const amount = Math.max(this.cents(), 50);
+      this.elements = this.stripe.elements({
+        mode: "payment",
+        amount,
+        currency: "usd",
+        setupFutureUsage: "off_session",
+        appearance: {
+          theme: "stripe",
+          variables: {
+            colorPrimary: "#C7A24E",
+            colorText: "#17191D",
+            fontFamily: "Inter, system-ui, sans-serif",
+            borderRadius: "8px",
+          },
+        },
+      });
+      this.paymentElement = this.elements.create("payment");
+      this.$nextTick(() => {
+        if (this.$refs.cardMount) this.paymentElement.mount(this.$refs.cardMount);
+      });
+      this.mounted = true;
+    },
+
+    onAmountChange() {
+      if (this.elements && this.cents() >= 50) {
+        this.elements.update({ amount: this.cents() });
+      }
+    },
+
+    startReplace() {
+      this.replacing = true;
+      this.$nextTick(() => this.mountElement());
+    },
+
+    parseAmount() {
+      const value = parseFloat(this.amount);
+      if (!Number.isFinite(value) || value <= 0) {
+        this.error = "Enter an amount greater than zero.";
+        return null;
+      }
+      return this.amount;
+    },
+
+    async charge() {
+      this.error = "";
+      const amount = this.parseAmount();
+      if (amount == null) return;
+      this.busy = true;
+      try {
+        if (this.hasCard && !this.replacing) {
+          await postForm(opts.chargeSavedUrl, { amount });
+          window.location.reload();
+          return;
+        }
+        if (!this.elements) throw new Error("Card field is not ready.");
+        const { error: submitError } = await this.elements.submit();
+        if (submitError) throw new Error(submitError.message);
+        const created = await postForm(opts.intentUrl, { amount });
+        const { error, paymentIntent } = await this.stripe.confirmPayment({
+          elements: this.elements,
+          clientSecret: created.client_secret,
+          confirmParams: { return_url: window.location.href },
+          redirect: "if_required",
+        });
+        if (error) throw new Error(error.message);
+        await postForm(opts.completeUrl, { payment_intent_id: paymentIntent.id });
+        window.location.reload();
+      } catch (err) {
+        this.error = err.message || "Could not charge the card.";
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async saveCard() {
+      this.error = "";
+      if (!this.elements) {
+        this.error = "Card field is not ready.";
+        return;
+      }
+      this.busy = true;
+      try {
+        const { error: submitError } = await this.elements.submit();
+        if (submitError) throw new Error(submitError.message);
+        const { error, paymentMethod } = await this.stripe.createPaymentMethod({
+          elements: this.elements,
+        });
+        if (error) throw new Error(error.message);
+        const saved = await postForm(opts.saveCardUrl, { payment_method_id: paymentMethod.id });
+        this.hasCard = true;
+        this.replacing = false;
+        this.cardBrand = saved.card_brand || this.cardBrand;
+        this.cardLast4 = saved.card_last4 || this.cardLast4;
+        Alpine.store("toast").push({
+          type: "success",
+          title: "Card saved",
+          message: "The card is on file for this quote.",
+        });
+      } catch (err) {
+        this.error = err.message || "Could not save the card.";
+      } finally {
+        this.busy = false;
+      }
+    },
+  };
+}
+window.adminCardPay = adminCardPay;
+
 /* -------------------------------------------------- LA sync payload preview */
 // LA sync: show a recorded payload (json_script element) in the shared modal.
 window.showLaPayload = function (elementId, title) {
@@ -682,15 +836,27 @@ function pipelineBoard() {
       this.dragId = this.dragFrom = null;
       if (!id || from === to) return;
       if (to === "lost" && (from === "new" || from === "quoted")) return this.markLost(id);
-      if (to === "new" && from === "lost") return this.post(`/leads/${id}/reopen/`);
+      if (to === "new" && from === "lost") return this.post(`/portal/leads/${id}/reopen/`);
+      if (to === "booked" && from === "quoted") return this.markBooked(id);
       const why = {
         new: "Leads return to New only by reopening a lost lead.",
         quoted: "Quoted happens when a quote is sent from the workspace.",
-        booked: "Booked happens when the deposit is paid.",
+        booked: "Booked happens when the deposit is paid or an admin marks it booked.",
       }[to];
       const message =
         from === "booked" ? "Booked orders are cancelled from the Orders console." : why;
       Alpine.store("toast").push({ type: "info", title: "Can't move quote", message });
+    },
+
+    markBooked(id) {
+      Alpine.store("modal").confirm({
+        title: "Mark this quote as booked?",
+        variant: "gold",
+        confirmText: "Mark booked",
+        message:
+          "This books the order without collecting a payment. You can take a card or resend the payment link from the quote workspace.",
+        onConfirm: () => this.post(`/portal/leads/${id}/mark-booked/`),
+      });
     },
 
     // Reuses the same $store.modal reason-prompt flow as the lead-detail "Mark lost" button.
@@ -706,7 +872,7 @@ function pipelineBoard() {
         cancelText: "Cancel",
         onConfirm: () => {
           const el = document.getElementById("pipeline-lost-reason");
-          return this.post(`/leads/${id}/mark-lost/`, { reason: el ? el.value : "" });
+          return this.post(`/portal/leads/${id}/mark-lost/`, { reason: el ? el.value : "" });
         },
       });
     },

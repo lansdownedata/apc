@@ -630,3 +630,6 @@ header, aside, main, .wash-gold {
 
 /* The autocomplete panel: exactly the input's width, above the hero scrim. */
 .quote-form .sa-drop { max-height: 16rem; z-index: 60; }
+
+/* Stripe Payment Element on the quote workspace — sit inside the card chrome. */
+.stripe-element { min-height: 48px; }
