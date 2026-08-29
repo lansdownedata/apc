@@ -398,6 +398,8 @@ def lead_mark_booked(request, pk: int) -> HttpResponse:
         return redirect("lead_detail", pk=pk)
     if not lead.can_transition(Lead.Status.BOOKED):
         return _transition_refused(request, "Only new or quoted leads can be booked.")
+    if not lead.reservations.exists():
+        return _transition_refused(request, "Add at least one trip before booking.")
     try:
         services.book_lead(lead)
     except services.BookLeadError as exc:
