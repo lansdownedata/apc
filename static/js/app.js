@@ -1540,10 +1540,11 @@ function bookingStops(opts = {}) {
     search(i) {
       const s = this.stops[i];
       // Not an airport any more → the flight row hides; empty it so a stale value
-      // never reaches the server under a row the visitor can't see.
+      // never reaches the server under a row the visitor can't see. The picker itself
+      // resyncs via the row's x-effect (keyed rows get reused by Alpine when an
+      // earlier stop is removed, so the DOM select must follow this stop's own data,
+      // not stay pinned to whatever stop last owned that row).
       s.airport = ""; s.airline = ""; s.flight = "";
-      const rowSelect = document.querySelectorAll('[x-show="stop.airport"] select')[i];
-      if (rowSelect?.tomselect) rowSelect.tomselect.clear(true);
       const q = (s.address || "").trim();
       if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
       geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {

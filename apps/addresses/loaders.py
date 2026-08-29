@@ -64,9 +64,12 @@ def load_airlines(model, path: Path | str | None = None) -> tuple[int, int]:
     """Upsert every row of the airline CSV keyed on `iata`. Returns (created, updated).
 
     Same contract as `load_airports`: the model is a parameter so the 0004 data
-    migration can pass its historical model.
+    migration can pass its historical model, and `supported` filters the mapped fields
+    down to what that model actually has, so a future field removal from `Airline`
+    cannot break an already-applied migration.
     """
     path = Path(path) if path else AIRLINES_CSV_PATH
+    supported = {f.name for f in model._meta.get_fields()}
     created = updated = 0
     with path.open(newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
@@ -74,8 +77,12 @@ def load_airlines(model, path: Path | str | None = None) -> tuple[int, int]:
             if not iata:
                 continue
             defaults = {
-                "icao": (row["icao"] or "").strip().upper(),
-                "name": (row["name"] or "").strip(),
+                k: v
+                for k, v in {
+                    "icao": (row["icao"] or "").strip().upper(),
+                    "name": (row["name"] or "").strip(),
+                }.items()
+                if k in supported
             }
             _, was_created = model.objects.update_or_create(iata=iata, defaults=defaults)
             if was_created:
