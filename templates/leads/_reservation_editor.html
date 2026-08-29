@@ -80,13 +80,13 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
               <div class="text-[11.5px] text-muted mb-1">Pickup date</div>
               <input type="text" data-flatpickr data-fp-past placeholder="Select a date"
                 x-model="draft.date" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.date)"
-                @input="onHoursChanged(); onDropoffChanged()" class="field text-[13px]">
+                @input="onHoursChanged()" class="field text-[13px]">
             </div>
             <div>
               <div class="text-[11.5px] text-muted mb-1">Pickup time</div>
               <input type="text" data-flatpickr-time placeholder="Select a time"
                 x-model="draft.time" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.time)"
-                @input="onHoursChanged(); onDropoffChanged()" class="field text-[13px]">
+                @input="onHoursChanged()" class="field text-[13px]">
             </div>
 
             <div class="col-span-2 grid grid-cols-2 gap-3" x-show="draft.tripType === 'transfer'">
@@ -94,13 +94,13 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
                 <div class="text-[11.5px] text-muted mb-1">Drop-off date</div>
                 <input type="text" data-flatpickr data-fp-past placeholder="Select a date"
                   x-model="draft.dropoffDate" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.dropoffDate)"
-                  @input="onDropoffChanged()" class="field text-[13px]">
+                  class="field text-[13px]">
               </div>
               <div>
                 <div class="text-[11.5px] text-muted mb-1">Drop-off time</div>
                 <input type="text" data-flatpickr-time placeholder="Select a time"
                   x-model="draft.dropoffTime" x-init="initFlatpickr($el)" x-effect="fpSync($el, draft.dropoffTime)"
-                  @input="onDropoffChanged()" class="field text-[13px]">
+                  class="field text-[13px]">
               </div>
             </div>
 
@@ -195,30 +195,38 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
               <div class="text-[12px] text-muted mb-1" x-text="draft.tripType === 'hourly' ? 'Rate / hr' : 'Rate (flat)'"></div>
               <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
                 <span class="text-muted text-[13px]">$</span>
-                <input x-model.number="draft.rate" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num">
+                <input x-model.number="draft.rate" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
               </div>
             </div>
             <div>
-              <div class="text-[12px] text-muted mb-1">Hours</div>
-              <input x-model.number="draft.hours" type="number" min="0" step="0.25"
-                @input="onHoursChanged()"
-                :readonly="draft.tripType === 'transfer'"
-                :title="draft.tripType === 'transfer' ? 'Derived from the pickup and drop-off times' : ''"
-                class="field text-[13px] num read-only:bg-surface2 read-only:text-muted">
+              <div class="text-[12px] text-muted mb-1">Override hours</div>
+              {% comment %}
+              Not x-model: 0 means "no override" and must show as an empty box, not "0".
+              {% endcomment %}
+              <input type="number" min="0" step="0.25" placeholder="—"
+                :value="draft.hours || ''"
+                @input="draft.hours = $event.target.value === '' ? 0 : Number($event.target.value); onHoursChanged()"
+                class="field text-[13px] num">
             </div>
             <div>
               <div class="text-[12px] text-muted mb-1">Min hours</div>
-              <input x-model.number="draft.minHours" type="number" min="0" class="field text-[13px] num">
+              <input x-model.number="draft.minHours" type="number" readonly
+                title="From the vehicle's rate card"
+                class="field text-[13px] num read-only:bg-surface2 read-only:text-muted">
             </div>
           </div>
           <div x-show="minApplied(draft)"
                class="mt-2 flex items-center gap-1.5 text-[11.5px] text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/15 rounded-lg px-2.5 py-1.5">
-            <i class="ti ti-info-circle text-[14px]"></i> Minimum applied — billing <span class="font-semibold" x-text="billedHours(draft)"></span> hrs
+            <i class="ti ti-info-circle text-[14px]"></i> Minimum applies — billing <span class="font-semibold" x-text="billedHours(draft)"></span> hrs
+          </div>
+          <div x-show="noMinimum(draft)"
+               class="mt-2 flex items-center gap-1.5 text-[11.5px] text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/15 rounded-lg px-2.5 py-1.5">
+            <i class="ti ti-alert-triangle text-[14px]"></i> No minimum on this vehicle — enter override hours
           </div>
           <div class="mt-3">
             <div class="text-[12px] text-muted mb-1">Gratuity %</div>
             <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold w-1/3">
-              <input x-model.number="draft.gratuityPct" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num">
+              <input x-model.number="draft.gratuityPct" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
               <span class="text-muted text-[13px]">%</span>
             </div>
           </div>

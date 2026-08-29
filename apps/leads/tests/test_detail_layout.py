@@ -1,6 +1,8 @@
 """Quote workspace layout — the header carries agent + LA state, reservations own a
 full-width row, and the payment plan lives inside the ledger card."""
 
+import re
+
 import pytest
 from django.urls import reverse
 
@@ -113,3 +115,28 @@ def test_la_chip_reads_not_sent_when_only_some_trips_went_through(page):
     lead, (sent, _) = _order_with_trips(2)
     _event(sent, ZapEvent.Result.SUCCESS)
     assert "LA · Not sent" in page(lead)
+
+
+# --- pricing block: minimum is locked, hours is the override ---
+
+
+def _editor_input(html: str, model: str) -> str:
+    match = re.search(rf"<input[^>]*{re.escape(model)}[^>]*>", html)
+    assert match, f"no input bound to {model}"
+    return match.group(0)
+
+
+def test_editor_locks_min_hours_and_frees_override_hours(page):
+    html = page(LeadFactory())
+    assert "readonly" in _editor_input(html, 'x-model.number="draft.minHours"')
+    assert "Override hours" in html
+    assert 'x-model.number="draft.hours"' not in html  # replaced by the blank-for-0 binding
+    assert ':readonly="draft.tripType' not in html
+
+
+def test_editor_rate_and_gratuity_inputs_paint_no_background_of_their_own(page):
+    """Dark mode: the wrapper is bg-surface; an inner input with the browser default
+    background renders as a light box inside a dark frame."""
+    html = page(LeadFactory())
+    for model in ('x-model.number="draft.rate"', 'x-model.number="draft.gratuityPct"'):
+        assert "bg-transparent" in _editor_input(html, model)
