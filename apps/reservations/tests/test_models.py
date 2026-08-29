@@ -205,3 +205,13 @@ def test_ordered_stops_join_the_airline_and_airport(django_assert_num_queries):
     with django_assert_num_queries(1):
         labels = [s.flight_label for s in res.ordered_stops]
     assert labels == ["UA 123"]
+
+
+def test_flight_factory_defaults(db):
+    from apps.reservations.factories import FlightFactory
+    from apps.reservations.models import Flight
+
+    f = FlightFactory()
+    assert f.status == Flight.Status.SCHEDULED and f.source == Flight.Source.FUTURE
+    assert f.checked_at is not None and f.scheduled_at > f.checked_at
+    assert f.airport.timezone == "America/New_York"
