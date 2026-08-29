@@ -305,3 +305,38 @@ def test_transfer_post_stores_zero_hours(db):
     res = Lead.objects.latest("id").reservations.get()
     assert res.trip_type == "transfer"
     assert res.hours == Decimal("0")
+
+
+def test_full_booking_post_stores_the_pickup_flight(db):
+    from apps.addresses.models import Airline, Airport
+    from apps.leads.models import Lead
+
+    iad = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    united = Airline.objects.get(iata="UA")
+    resp = Client().post(
+        "/bookings/",
+        {
+            "name": "Jane Rider",
+            "email": "jane@example.com",
+            "passengers": 1,
+            "pickup": "Dulles Intl",
+            "pickup_airport": iad.pk,
+            "pickup_airline": united.pk,
+            "pickup_flight": "123",
+            "dropoff": "123 Main St, Ashburn VA",
+        },
+    )
+    assert resp.status_code == 302
+    stop = Lead.objects.latest("id").reservations.get().stops.order_by("sequence").first()
+    assert (stop.airport, stop.airline, stop.flight_number) == (iad, united, "123")
+
+
+def test_widget_renders_flight_fields_for_pickup_and_dropoff(db):
+    html = Client().get("/bookings/").content.decode()
+    for name in ("pickup", "dropoff"):
+        assert f'name="{name}_airport"' in html
+        assert f'name="{name}_airline"' in html
+        assert f'name="{name}_flight"' in html
+    assert "UA — United Airlines</option>" in html
+    assert 'x-model="stop.flight"' in html  # the in-between stop repeater
+    assert "flightVerifyComingSoon" not in html  # Verify is staff-only

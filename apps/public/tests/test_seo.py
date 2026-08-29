@@ -10,7 +10,7 @@ def _jsonld(content: bytes) -> list[dict]:
     return [json.loads(b.decode()) for b in blocks]
 
 
-def test_home_has_seo_metadata(client):
+def test_home_has_seo_metadata(client, db):
     resp = client.get("/")
     assert resp.status_code == 200
     assert b"<title>" in resp.content
@@ -18,13 +18,13 @@ def test_home_has_seo_metadata(client):
     assert b'rel="canonical"' in resp.content
 
 
-def test_home_emits_localbusiness_schema(client):
+def test_home_emits_localbusiness_schema(client, db):
     resp = client.get("/")
     types = {b.get("@type") for b in _jsonld(resp.content)}
     assert "LocalBusiness" in types
 
 
-def test_home_embeds_booking_widget(client):
+def test_home_embeds_booking_widget(client, db):
     resp = client.get("/")
     assert resp.status_code == 200
     bookings_url = reverse("public:bookings")
@@ -32,7 +32,7 @@ def test_home_embeds_booking_widget(client):
     assert b'name="pickup_date"' in resp.content
 
 
-def test_home_title_refined(client):
+def test_home_title_refined(client, db):
     resp = client.get("/")
     assert b"Virginia" in resp.content
     assert b"Transportation" in resp.content
@@ -47,7 +47,7 @@ def test_home_title_refined(client):
         ("/privacy-policy/", b"Privacy"),
     ],
 )
-def test_content_pages_render_with_title_and_canonical(client, url, phrase):
+def test_content_pages_render_with_title_and_canonical(client, db, url, phrase):
     resp = client.get(url)
     assert resp.status_code == 200
     assert phrase in resp.content
@@ -55,14 +55,14 @@ def test_content_pages_render_with_title_and_canonical(client, url, phrase):
     assert b"<title>" in resp.content
 
 
-def test_contact_page_emits_contactpage_schema(client):
+def test_contact_page_emits_contactpage_schema(client, db):
     resp = client.get("/contact/")
     types = {b.get("@type") for b in _jsonld(resp.content)}
     assert "ContactPage" in types
     assert "LocalBusiness" in types
 
 
-def test_contact_jsonld_valid_with_query_string(client):
+def test_contact_jsonld_valid_with_query_string(client, db):
     resp = client.get("/contact/?utm_source=x&utm_medium=y")
     assert resp.status_code == 200
 
@@ -125,7 +125,7 @@ def test_rates_page_drops_stale_covid_banner(client):
         "/reviews/",
     ],
 )
-def test_canonical_is_query_free(client, url):
+def test_canonical_is_query_free(client, db, url):
     resp = client.get(url, {"utm_source": "x", "utm_medium": "y"})
     assert resp.status_code == 200
 
@@ -152,7 +152,7 @@ def test_reviews_no_fabricated_rating(client):
 
 
 @pytest.mark.parametrize("url", ["/", "/fleet/", "/contact/", "/blogs/"])
-def test_public_nav_has_no_staff_portal_link(client, url):
+def test_public_nav_has_no_staff_portal_link(client, db, url):
     """The staff portal is internal-only — client-facing pages must not link to it."""
     resp = client.get(url)
     assert resp.status_code == 200

@@ -40,6 +40,9 @@ def create_lead_from_booking(data: dict) -> Lead:
                     address=s.get("address", ""),
                     latitude=s.get("lat"),
                     longitude=s.get("lng"),
+                    airport_id=s.get("airport_id"),
+                    airline_id=s.get("airline_id"),
+                    flight_number=s.get("flight_number", ""),
                 )
                 for i, s in enumerate(stops)
             ]
