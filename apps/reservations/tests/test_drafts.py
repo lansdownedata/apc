@@ -351,3 +351,89 @@ def test_hourly_endpoint_stop_times_use_the_derived_dropoff():
     stops = list(res.ordered_stops)
     assert stops[0].scheduled_time == time(15, 0)
     assert stops[-1].scheduled_time == time(19, 0)
+
+
+# --- flight info round-trips through the draft --------------------------------
+
+
+@pytest.fixture
+def iad():
+    # Dulles is real seed data (addresses.0003, apps/addresses/data/airports.csv) —
+    # AirportFactory(ident="KIAD", ...) collides with it (ident is unique), so fetch the
+    # seeded row instead, same pattern as `united` below.
+    from apps.addresses.models import Airport
+
+    return Airport.objects.get(iata="IAD")
+
+
+@pytest.fixture
+def united():
+    from apps.addresses.models import Airline
+
+    return Airline.objects.get(iata="UA")  # seeded by addresses.0004
+
+
+def _flight_payload(iad, united, **stop_over):
+    stop = {"address": "Dulles", "airport": iad.pk, "airline": united.pk, "flight": "123"}
+    stop.update(stop_over)
+    return _payload(stops=[stop, {"address": "The Ritz"}])
+
+
+def test_flight_info_round_trips_through_the_draft(iad, united):
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+    stop = res.ordered_stops.first()
+    assert (stop.airport, stop.airline, stop.flight_number) == (iad, united, "123")
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["airport"] == iad.pk
+    assert draft_stop["airportCode"] == "IAD"
+    assert draft_stop["airline"] == united.pk
+    assert draft_stop["flight"] == "123"
+
+
+def test_a_stop_without_flight_info_drafts_empty_strings():
+    res = save_reservation_from_draft(LeadFactory(), _payload())
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert (draft_stop["airport"], draft_stop["airportCode"]) == ("", "")
+    assert (draft_stop["airline"], draft_stop["flight"]) == ("", "")
+
+
+def test_airline_and_flight_are_dropped_without_an_airport(united):
+    payload = _payload(
+        stops=[{"address": "Home", "airline": united.pk, "flight": "123"}, {"address": "B"}]
+    )
+    res = save_reservation_from_draft(LeadFactory(), payload)
+    stop = res.ordered_stops.first()
+    assert stop.airport_id is None and stop.airline_id is None and stop.flight_number == ""
+
+
+def test_parse_rejects_a_non_digit_flight_number(iad, united):
+    with pytest.raises(DraftError, match="digits"):
+        drafts.parse_draft(_flight_payload(iad, united, flight="UA123"))
+
+
+def test_parse_rejects_a_flight_number_longer_than_six_digits(iad, united):
+    with pytest.raises(DraftError, match="digits"):
+        drafts.parse_draft(_flight_payload(iad, united, flight="1234567"))
+
+
+def test_parse_rejects_an_inactive_airline(iad, united):
+    united.is_active = False
+    united.save(update_fields=["is_active"])
+    with pytest.raises(DraftError, match="airline"):
+        drafts.parse_draft(_flight_payload(iad, united))
+
+
+def test_parse_rejects_an_unknown_airport(united):
+    payload = _payload(
+        stops=[{"address": "X", "airport": 999999, "airline": united.pk}, {"address": "B"}]
+    )
+    with pytest.raises(DraftError, match="unknown airport"):
+        drafts.parse_draft(payload)
+
+
+def test_flight_validation_costs_two_queries_however_many_stops(
+    iad, united, django_assert_max_num_queries
+):
+    stops = [{"address": f"S{i}", "airport": iad.pk, "airline": united.pk} for i in range(6)]
+    with django_assert_max_num_queries(2):
+        drafts.parse_draft(_payload(stops=stops))

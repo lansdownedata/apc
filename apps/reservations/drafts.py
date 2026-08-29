@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, time
 from decimal import Decimal, InvalidOperation
 
@@ -63,6 +64,48 @@ def _coord(value, limit: int) -> Decimal | None:
     return coord.quantize(Decimal("0.000001"))
 
 
+_FLIGHT_RE = re.compile(r"^\d{1,6}$")
+
+
+def _pk(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _flight_number(value) -> str:
+    text = str(value or "").strip()
+    if text and not _FLIGHT_RE.match(text):
+        raise DraftError("flight number must be digits (up to 6)")
+    return text
+
+
+def _validate_flight_info(stops: list[dict]) -> None:
+    """Airline / flight only mean anything at an airport, and both the airport and the
+    airline must be real rows — the client only ever sends what search / the picker
+    handed it, so anything else is a stale or forged payload. Two queries, not two per
+    stop.
+    """
+    from apps.addresses.models import Airline, Airport
+
+    for stop in stops:
+        if stop["airport_id"] is None:
+            stop["airline_id"], stop["flight_number"] = None, ""
+    airport_ids = {s["airport_id"] for s in stops if s["airport_id"] is not None}
+    if airport_ids:
+        known = set(Airport.objects.filter(pk__in=airport_ids).values_list("pk", flat=True))
+        if airport_ids - known:
+            raise DraftError("unknown airport")
+    airline_ids = {s["airline_id"] for s in stops if s["airline_id"] is not None}
+    if airline_ids:
+        active = set(
+            Airline.objects.filter(pk__in=airline_ids, is_active=True).values_list("pk", flat=True)
+        )
+        if airline_ids - active:
+            raise DraftError("choose an airline from the list")
+
+
 def parse_draft(payload: dict) -> dict:
     """Validate + normalise a draft into model kwargs (+ a `stops` list)."""
     trip_type = payload.get("tripType") or payload.get("trip_type")
@@ -102,10 +145,14 @@ def parse_draft(payload: dict) -> dict:
                 "scheduled_time": _time(s.get("time")),
                 "latitude": _coord(s.get("lat"), 90),
                 "longitude": _coord(s.get("lng"), 180),
+                "airport_id": _pk(s.get("airport")),
+                "airline_id": _pk(s.get("airline")),
+                "flight_number": _flight_number(s.get("flight")),
             }
             for s in raw_stops
         ],
     }
+    _validate_flight_info(data["stops"])
     _derive_dropoff_and_hours(data, trip_type)
     _derive_endpoint_stop_times(data)
     return data
@@ -173,6 +220,9 @@ def save_reservation_from_draft(
                 scheduled_time=s["scheduled_time"],
                 latitude=s["latitude"],
                 longitude=s["longitude"],
+                airport_id=s["airport_id"],
+                airline_id=s["airline_id"],
+                flight_number=s["flight_number"],
             )
             for i, s in enumerate(stops)
         ]
