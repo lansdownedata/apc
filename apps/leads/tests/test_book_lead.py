@@ -83,12 +83,30 @@ def test_mark_booked_endpoint_books_quoted(logged_in_client):
     assert lead.status == Lead.Status.BOOKED
 
 
-def test_mark_booked_refuses_new(logged_in_client):
+def test_mark_booked_books_a_new_lead_with_trips(logged_in_client):
+    """Phone bookings: no quote email, no payment — straight to Booked."""
+    lead = _quoted_lead(status=Lead.Status.NEW)
+    with patch("apps.integrations.la_sync.push_lead_bookings"):
+        resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
+    assert resp.status_code == 200
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.BOOKED
+
+
+def test_mark_booked_refuses_a_new_lead_with_no_trips(logged_in_client):
     lead = LeadFactory(status=Lead.Status.NEW)
     resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
     assert resp.status_code == 400
+    assert resp.json()["error"] == "Add at least one trip before booking."
     lead.refresh_from_db()
     assert lead.status == Lead.Status.NEW
+
+
+def test_mark_booked_refuses_lost(logged_in_client):
+    lead = LeadFactory(status=Lead.Status.LOST)
+    resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
+    assert resp.status_code == 400
+    assert "new or quoted" in resp.json()["error"]
 
 
 def test_mark_booked_requires_login(client):
@@ -96,6 +114,23 @@ def test_mark_booked_requires_login(client):
     resp = client.post(reverse("lead_mark_booked", args=[lead.pk]))
     assert resp.status_code == 302
     assert "/login" in resp.url
+
+
+def test_book_lead_refuses_a_lead_with_no_trips():
+    lead = LeadFactory(status=Lead.Status.QUOTED)
+    with pytest.raises(services.BookLeadError, match="at least one trip"):
+        services.book_lead(lead)
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.QUOTED
+
+
+def test_book_lead_from_new_creates_an_unsent_deposit_plan():
+    lead = _quoted_lead(status=Lead.Status.NEW)
+    with patch("apps.integrations.la_sync.push_lead_bookings"):
+        services.book_lead(lead)
+    plan = PaymentPlan.objects.get(lead=lead)
+    assert plan.deposit_status == PaymentPlan.DepositStatus.UNSENT
+    assert plan.quote_total == Decimal("500.00")
 
 
 def test_lead_detail_shows_mark_booked_for_quoted(logged_in_client):

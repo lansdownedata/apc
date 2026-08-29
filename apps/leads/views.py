@@ -397,11 +397,14 @@ def lead_mark_booked(request, pk: int) -> HttpResponse:
             return JsonResponse({"ok": True, "status": lead.status})
         return redirect("lead_detail", pk=pk)
     if not lead.can_transition(Lead.Status.BOOKED):
-        return _transition_refused(request, "Only quoted leads can be marked booked.")
-    services.book_lead(lead)
+        return _transition_refused(request, "Only new or quoted leads can be booked.")
+    try:
+        services.book_lead(lead)
+    except services.BookLeadError as exc:
+        return _transition_refused(request, str(exc))
     if _wants_json(request):
         return JsonResponse({"ok": True, "status": lead.status})
-    messages.success(request, "Quote marked as booked.")
+    messages.success(request, "Order booked.")
     return redirect("lead_detail", pk=pk)
 
 

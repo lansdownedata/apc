@@ -138,8 +138,9 @@ class Lead(TimeStampedModel):
 # BOOKED→LOST directly as a system path (with refund handling) and does NOT consult
 # `can_transition`. Don't "fix" this table to allow it; that would let the plain
 # lead-mark-lost path bypass the refund flow.
+# NEW → BOOKED is the phone-booking path (spec 2026-08-29): no quote email, no payment.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    Lead.Status.NEW: {Lead.Status.QUOTED, Lead.Status.LOST},
+    Lead.Status.NEW: {Lead.Status.QUOTED, Lead.Status.LOST, Lead.Status.BOOKED},
     Lead.Status.QUOTED: {Lead.Status.LOST, Lead.Status.BOOKED},
     Lead.Status.LOST: {Lead.Status.NEW},
     Lead.Status.BOOKED: set(),
