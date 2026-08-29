@@ -16,7 +16,7 @@ class VehicleTypeFactory(factory.django.DjangoModelFactory):
     sort_order = 0
     rate = 0
     hourly_min_hours = 0
-    transfer_min_hours = 0
+    transfer_min_hours = 1
 
 
 class LeadFactory(factory.django.DjangoModelFactory):
