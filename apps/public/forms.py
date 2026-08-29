@@ -145,12 +145,16 @@ class BookingRequestForm(forms.Form):
             flight = str(item.get("flight") or "").strip()
             if airport_id and flight and not FLIGHT_RE.match(flight):
                 raise forms.ValidationError("A stop's flight number must be digits (up to 6).")
+            direction = str(item.get("direction") or "").strip().lower()
+            if direction not in ("", "arrival", "departure"):
+                raise forms.ValidationError("A stop's flight must be arriving or departing.")
             cleaned.append(
                 {
                     "address": address,
                     "lat": _to_float(item.get("lat")),
                     "lng": _to_float(item.get("lng")),
                     **_flight_fields(airport_id, _to_int(item.get("airline")), flight),
+                    "flight_direction": direction if airport_id else "",
                 }
             )
         airport_ids = {s["airport_id"] for s in cleaned if s["airport_id"]}
