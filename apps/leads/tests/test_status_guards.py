@@ -14,7 +14,7 @@ JSON_HEADERS = {"HTTP_ACCEPT": "application/json"}
 def test_transition_table_is_exactly_the_spec():
     S = Lead.Status
     assert ALLOWED_TRANSITIONS == {
-        S.NEW: {S.QUOTED, S.LOST},
+        S.NEW: {S.QUOTED, S.LOST, S.BOOKED},
         S.QUOTED: {S.LOST, S.BOOKED},
         S.LOST: {S.NEW},
         S.BOOKED: set(),
