@@ -1,0 +1,13 @@
+{% autoescape off %}Unpaid deposits — {{ today|date:"l, F j, Y" }}
+
+{{ rows|length }} booked order{{ rows|length|pluralize }} with a trip inside {{ window_days }} days and no deposit collected:
+{% for r in rows %}
+  {{ r.quote_no }} · {{ r.customer }}
+    {{ r.trips }} trip{{ r.trips|pluralize }} · first pickup {{ r.earliest_pickup|date:"D M j" }} ({% if r.days_out < 0 %}{{ r.overdue_days }} day{{ r.overdue_days|pluralize }} overdue{% elif r.days_out == 0 %}today{% else %}in {{ r.days_out }} day{{ r.days_out|pluralize }}{% endif %})
+    total ${{ r.total|floatformat:2 }} · collected ${{ r.collected|floatformat:2 }}
+    {{ r.email|default:"no email" }} · {{ r.phone|default:"no phone" }}
+    {{ r.url }}
+{% endfor %}
+--
+{{ company_name }}
+{% endautoescape %}

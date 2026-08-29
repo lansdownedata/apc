@@ -22,6 +22,7 @@ JOBS: dict[str, Callable[[], int]] = {
     "recognize-due-revenue": tasks.recognize_due_revenue,
     "retry-la-sync": la_sync.retry_failed_pushes,
     "run-touchpoints": touchpoints.run_touchpoints,
+    "deposit-report": tasks.send_unpaid_deposit_report,
 }
 
 

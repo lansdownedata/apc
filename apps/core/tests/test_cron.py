@@ -47,8 +47,16 @@ def test_registry_contains_all_jobs():
         "recognize-due-revenue",
         "retry-la-sync",
         "run-touchpoints",
+        "deposit-report",
     }
 
 
 def test_registry_contains_retry_la_sync():
     assert "retry-la-sync" in cron.JOBS
+
+
+def test_deposit_report_job_is_registered():
+    from apps.core.cron import JOBS
+    from apps.payments.tasks import send_unpaid_deposit_report
+
+    assert JOBS["deposit-report"] is send_unpaid_deposit_report
