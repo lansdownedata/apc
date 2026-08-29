@@ -444,3 +444,63 @@ def test_transport_failure_status_is_distinct_from_any_real_http_status():
     """TRANSPORT_FAILED (0) must not collide with a real HTTP status code, since
     callers branch on `.status` to decide retry policy."""
     assert gnet.TRANSPORT_FAILED == 0
+
+
+# --- airport stops carry flightInfo ---
+
+
+def _iad_flight(**over):
+    from apps.addresses.models import Airline, Airport
+
+    fields = {
+        "airport": Airport.objects.get(iata="IAD"),  # seeded by addresses.0003
+        "airline": Airline.objects.get(iata="UA"),
+        "flight_number": "123",
+    }
+    fields.update(over)
+    return fields
+
+
+def test_an_airport_stop_with_a_flight_goes_out_as_the_airport_type():
+    assignment = _assignment_with_stops(
+        {"address": "Dulles Intl", **_iad_flight()}, {"address": "The Jefferson"}
+    )
+    pickup = gnet.build_send_payload(assignment)["locations"]["pickup"]
+    assert pickup["locationType"] == "airport"
+    assert pickup["address"] == "IAD"
+    assert pickup["flightInfo"] == {"flightNumber": "123", "airlineCode": "UA"}
+
+
+def test_airline_code_is_omitted_when_only_the_number_is_known():
+    assignment = _assignment_with_stops(
+        {"address": "Dulles Intl", **_iad_flight(airline=None)}, {"address": "The Jefferson"}
+    )
+    pickup = gnet.build_send_payload(assignment)["locations"]["pickup"]
+    assert pickup["flightInfo"] == {"flightNumber": "123"}
+
+
+def test_an_airport_without_a_flight_number_stays_an_address():
+    """GNet's airport type wants flightInfo; without a number the address + coordinates
+    form is what a driver can actually route on."""
+    assignment = _assignment_with_stops(
+        {"address": "Dulles Intl", **_iad_flight(flight_number="")}, {"address": "The Jefferson"}
+    )
+    pickup = gnet.build_send_payload(assignment)["locations"]["pickup"]
+    assert pickup["locationType"] == "address"
+    assert pickup["address"] == "Dulles Intl"
+    assert "flightInfo" not in pickup
+
+
+def test_airport_type_keeps_the_coordinates():
+    assignment = _assignment_with_stops(
+        {
+            "address": "Dulles Intl",
+            "latitude": Decimal("38.953116"),
+            "longitude": Decimal("-77.456539"),
+            **_iad_flight(),
+        },
+        {"address": "The Jefferson"},
+    )
+    pickup = gnet.build_send_payload(assignment)["locations"]["pickup"]
+    assert pickup["lat"] == pytest.approx(38.953116)
+    assert pickup["lon"] == pytest.approx(-77.456539)

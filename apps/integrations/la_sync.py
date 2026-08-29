@@ -69,6 +69,16 @@ def _address_payload(stop) -> dict:
     }
 
 
+def _flight_info(stop) -> dict:
+    """LA's `*_flight_info` object — only the halves we have; `{}` means "don't send"."""
+    info = {}
+    if stop.airline_id:
+        info["airline_code"] = stop.airline.iata
+    if stop.flight_number:
+        info["flight_number"] = stop.flight_number
+    return info
+
+
 def build_rate_lookup_payload(reservation: Reservation) -> dict:
     stops = list(reservation.stops.all())
     if not stops:
@@ -97,19 +107,26 @@ def build_booking_payload(reservation: Reservation, search_result_id: int | None
     if contact.email:
         passenger["email"] = contact.email
 
-    mid_stops = list(reservation.stops.all())[1:-1]
+    stops = list(reservation.stops.select_related("airline"))
+    mid_stops = stops[1:-1]
     note_lines = [
         f"APC quote #{reservation.lead_id} · {reservation.get_trip_type_display()}",
         f"Service: {reservation.service}" if reservation.service else "",
         *(f"Stop: {s.address}" for s in mid_stops),
         f"Quoted line total: ${reservation.line_total}",
     ]
-    return {
+    payload = {
         "search_result_id": search_result_id,
         "passengers": [passenger],
         "payment_type_id": settings.LA_PAYMENT_TYPE_ID,
         "notes": "\n".join(line for line in note_lines if line),
     }
+    if stops and _flight_info(stops[0]):
+        payload["pickup_flight_info"] = _flight_info(stops[0])
+    if reservation.trip_type == Reservation.TripType.TRANSFER and len(stops) >= 2:
+        if _flight_info(stops[-1]):
+            payload["dropoff_flight_info"] = _flight_info(stops[-1])
+    return payload
 
 
 def webhook_uri(la_customer: LACustomer) -> str:

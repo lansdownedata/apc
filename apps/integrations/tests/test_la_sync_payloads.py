@@ -123,3 +123,36 @@ def test_booking_payload_carries_passenger_payment_and_notes():
     assert "payment_type_id" in payload
     assert f"APC quote #{res.lead_id}" in payload["notes"]
     assert str(res.line_total) in payload["notes"]
+
+
+def _with_flight(reservation, sequence, number):
+    from apps.addresses.factories import AirportFactory
+    from apps.addresses.models import Airline
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = AirportFactory(ident=f"KT{sequence}", iata=f"T{sequence}")
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+
+
+def test_booking_payload_carries_pickup_and_dropoff_flight_info():
+    res = _geocoded_reservation()
+    _with_flight(res, 0, "123")
+    _with_flight(res, 1, "456")
+    payload = la_sync.build_booking_payload(res, search_result_id=1)
+    assert payload["pickup_flight_info"] == {"airline_code": "UA", "flight_number": "123"}
+    assert payload["dropoff_flight_info"] == {"airline_code": "UA", "flight_number": "456"}
+
+
+def test_booking_payload_omits_flight_info_keys_without_a_flight():
+    payload = la_sync.build_booking_payload(_geocoded_reservation(), search_result_id=1)
+    assert "pickup_flight_info" not in payload
+    assert "dropoff_flight_info" not in payload
+
+
+def test_hourly_booking_never_sends_dropoff_flight_info():
+    res = _geocoded_reservation(trip_type=Reservation.TripType.HOURLY, hours=Decimal("3"))
+    _with_flight(res, 1, "456")
+    payload = la_sync.build_booking_payload(res, search_result_id=1)
+    assert "dropoff_flight_info" not in payload
