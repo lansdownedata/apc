@@ -75,8 +75,9 @@ class Reservation(TimeStampedModel):
     pickup_time = models.TimeField(null=True, blank=True)
     passengers = models.PositiveIntegerField(default=1)
 
-    # pricing — rate × billed_hours + gratuity (snapshotted from the vehicle's rate card)
+    # pricing: rate × billed_hours (override hours, else the rate-card minimum) + gratuity
     rate = MoneyField()  # per-hour
+    # override; 0 = none → min_hours bills
     hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gratuity_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)

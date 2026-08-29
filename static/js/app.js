@@ -605,9 +605,10 @@ function quoteWorkspace(opts = {}) {
     closeEditor() { this.editorOpen = false; },
     applyVehicleRateCard() {
       const v = this.vehicles.find((x) => String(x.id) === String(this.draft.vehicle));
-      if (!v) return;
-      this.draft.rate = v.rate;
-      this.draft.minHours = this.draft.tripType === "hourly" ? v.hourlyMin : v.transferMin;
+      // No (active) vehicle → no rate card → no minimum. Min hours is read-only, so a
+      // stale number here would be billed with no way to correct it.
+      this.draft.minHours = v ? (this.draft.tripType === "hourly" ? v.hourlyMin : v.transferMin) : 0;
+      if (v) this.draft.rate = v.rate;
       this.onHoursChanged();   // the minimum is what's billed until overridden → end time moves
     },
     onHoursChanged() {              // hourly: derive drop-off from pickup + billed hours

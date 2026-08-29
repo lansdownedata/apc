@@ -1,5 +1,6 @@
 # A transfer is priced as rate × transfer_min_hours (spec 2026-08-28). A vehicle with a
 # 0 minimum would price every transfer at $0, so 0 becomes 1 = "flat rate".
+# Reverse is a no-op: which 1s were 0s before the backfill isn't recoverable.
 from decimal import Decimal
 
 from django.db import migrations, models

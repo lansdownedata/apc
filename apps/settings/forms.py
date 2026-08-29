@@ -43,7 +43,10 @@ class VehicleTypeForm(forms.ModelForm):
             "image": "Landscape photo, transparent or white background, about 1200px wide.",
             "description": "One line shown under the photo on the customer's quote page.",
             "rate": "Per-hour rate. Pre-fills onto a trip when this vehicle is chosen.",
-            "hourly_min_hours": "Minimum billable hours for hourly trips (0 = none).",
+            "hourly_min_hours": (
+                "Minimum billable hours for hourly trips "
+                "(0 = every hourly trip needs override hours)."
+            ),
             "transfer_min_hours": (
                 "Minimum billable hours for transfers (1 = the rate is the flat price)."
             ),
