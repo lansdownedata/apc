@@ -145,10 +145,16 @@ def test_editor_rate_and_gratuity_inputs_paint_no_background_of_their_own(page):
 # --- the editor's airline picker is fed from context, active carriers only ---
 
 
-def test_airline_options_render_active_carriers_only(page):
+def test_airline_options_offer_active_carriers_only(client):
+    """The editor's airline picker (Task 4) reads this context; retired carriers must not
+    be offered for new stops."""
     from apps.addresses.factories import AirlineFactory
+    from apps.addresses.models import Airline
 
     AirlineFactory(iata="ZZ", name="Retired Air", is_active=False)
-    html = page(LeadFactory())
-    assert "UA — United Airlines</option>" in html
-    assert "Retired Air" not in html
+    client.force_login(UserFactory())
+    resp = client.get(reverse("lead_detail", args=[LeadFactory().pk]))
+    options = list(resp.context["airline_options"])
+    united = Airline.objects.get(iata="UA")
+    assert (united.pk, "UA — United Airlines") in options
+    assert all(label != "ZZ — Retired Air" for _, label in options)
