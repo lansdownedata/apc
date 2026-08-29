@@ -457,7 +457,7 @@ class Flight(TimeStampedModel):
         parts: list[str]
         if state == "verified":
             label = f"{code} · {t} {abbr}"
-            checked = dateformat.format(dj_timezone.localtime(self.checked_at), "M j")
+            checked = dateformat.format(self.local(self.checked_at), "M j")
             parts = [f"{verb} {t} {abbr}", terminal, side, f"checked {checked}"]
         elif state == "on_time":
             label = f"{code} · On time · {t} {abbr}"
