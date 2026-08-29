@@ -127,22 +127,24 @@ def _derive_endpoint_stop_times(data: dict) -> None:
 
 
 def _derive_dropoff_and_hours(data: dict, trip_type: str) -> None:
-    """Hourly: drop-off = pickup + hours. Transfer: hours = drop-off − pickup."""
+    """Hourly: drop-off = pickup + billed hours. Transfer: only sanity-check the times.
+
+    `hours` is the agent's override and is stored exactly as posted for both types; a
+    transfer no longer derives it from drop-off − pickup (it is priced at the rate-card
+    minimum unless overridden — spec 2026-08-28).
+    """
     from datetime import datetime, timedelta
 
     pd, pt = data.get("pickup_date"), data.get("pickup_time")
     if trip_type == Reservation.TripType.HOURLY:
-        if pd and pt and data["hours"]:
-            end = datetime.combine(pd, pt) + timedelta(hours=float(data["hours"]))
+        billed = data["hours"] if data["hours"] > 0 else data["min_hours"]
+        if pd and pt and billed:
+            end = datetime.combine(pd, pt) + timedelta(hours=float(billed))
             data["dropoff_date"], data["dropoff_time"] = end.date(), end.time()
-    else:  # transfer — hours come from the entered drop-off
+    else:
         dd, dt_ = data.get("dropoff_date"), data.get("dropoff_time")
-        if pd and pt and dd and dt_:
-            start = datetime.combine(pd, pt)
-            end = datetime.combine(dd, dt_)
-            if end <= start:
-                raise DraftError("drop-off must be after pickup")
-            data["hours"] = Decimal(str(round((end - start).total_seconds() / 3600, 2)))
+        if pd and pt and dd and dt_ and datetime.combine(dd, dt_) <= datetime.combine(pd, pt):
+            raise DraftError("drop-off must be after pickup")
 
 
 @transaction.atomic
