@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 
+from .flights import link_flights
 from .models import Reservation, Stop
 
 
@@ -79,6 +80,30 @@ def _flight_number(value) -> str:
     if text and not _FLIGHT_RE.match(text):
         raise DraftError("flight number must be digits (up to 6)")
     return text
+
+
+_DIRECTIONS = ("", "arrival", "departure")
+
+
+def _direction(value) -> str:
+    text = str(value or "").strip().lower()
+    if text not in _DIRECTIONS:
+        raise DraftError("choose arriving or departing")
+    return text
+
+
+def _apply_flight_directions(stops: list[dict]) -> None:
+    """The ends are fixed by position — a pickup meets an arrival, a drop-off catches a
+    departure — whatever the client sent; a middle stop keeps its choice (or blank). No
+    airport → no direction (spec §4.2)."""
+    last = len(stops) - 1
+    for i, stop in enumerate(stops):
+        if stop["airport_id"] is None:
+            stop["flight_direction"] = ""
+        elif i == 0:
+            stop["flight_direction"] = "arrival"
+        elif i == last:
+            stop["flight_direction"] = "departure"
 
 
 def _validate_flight_info(
@@ -160,11 +185,17 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
                 "flight_number": (
                     _flight_number(s.get("flight")) if _pk(s.get("airport")) is not None else ""
                 ),
+                # Same rule as the flight number: without an airport it is dropped, so a
+                # garbled value never 400s the save.
+                "flight_direction": (
+                    _direction(s.get("direction")) if _pk(s.get("airport")) is not None else ""
+                ),
             }
             for s in raw_stops
         ],
     }
     _validate_flight_info(data["stops"], grandfathered_airline_ids)
+    _apply_flight_directions(data["stops"])
     _derive_dropoff_and_hours(data, trip_type)
     _derive_endpoint_stop_times(data)
     return data
@@ -218,6 +249,7 @@ def save_reservation_from_draft(
     )
     data = parse_draft(payload, grandfathered_airline_ids=kept)
     stops = data.pop("stops")
+    link_flights(stops, data.get("pickup_date"))
     if instance is None:
         instance = Reservation(lead=lead)
         last = lead.reservations.order_by("-sort_order").first()
@@ -240,6 +272,8 @@ def save_reservation_from_draft(
                 airport_id=s["airport_id"],
                 airline_id=s["airline_id"],
                 flight_number=s["flight_number"],
+                flight_direction=s["flight_direction"],
+                flight_id=s["flight_id"],
             )
             for i, s in enumerate(stops)
         ]

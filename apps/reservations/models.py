@@ -169,8 +169,10 @@ class Reservation(TimeStampedModel):
     # --- routing ---
     @property
     def ordered_stops(self):
-        # Joined so `flight_label` never costs a query in a route loop.
-        return self.stops.select_related("airline", "airport").order_by("sequence")
+        # Joined so `flight_label` and the flight pill never cost a query in a route loop.
+        return self.stops.select_related(
+            "airline", "airport", "flight", "flight__airport", "flight__airline"
+        ).order_by("sequence")
 
     @property
     def pickup(self):
@@ -183,6 +185,63 @@ class Reservation(TimeStampedModel):
     @property
     def is_multi_stop(self) -> bool:
         return self.stops.count() > 2
+
+    # --- flights ---
+    _VERIFIED_STATES = frozenset({"verified", "on_time", "landed"})
+
+    @property
+    def flight_summary(self) -> dict | None:
+        """The trip's one-glance flight roll-up (spec §4.4): the worst state across its
+        airport stops, or None when no stop carries flight info. Iterates `stops.all()` so
+        a prefetched board/card row costs nothing — never `ordered_stops` here, whose
+        `.order_by()` builds a fresh queryset that ignores any prefetch."""
+        states: list[str] = []
+        for stop in self.stops.all():
+            if not stop.airport_id or not (stop.airline_id or stop.flight_number):
+                continue
+            if stop.flight_id is None:
+                states.append("unverified")
+                continue
+            state = stop.flight.pill_state
+            states.append("unverified" if state == "unavailable" else state)
+        if not states:
+            return None
+        n = len(states)
+        plural = "s" if n > 1 else ""
+        for bad, icon, chip, word in (
+            ("cancelled", "ti-plane-off", "chip-danger", "cancelled"),
+            ("delayed", "ti-clock-exclamation", "chip-warn", "delayed"),
+            ("not_found", "ti-help-circle", "chip-warn", "not found"),
+        ):
+            count = states.count(bad)
+            if count:
+                many = (
+                    f"{count} flights"
+                    if count > 1
+                    else ("1 flight" if bad == "delayed" else "Flight")
+                )
+                return {"state": bad, "label": f"{many} {word}", "icon": icon, "chip": chip}
+        verified = sum(1 for s in states if s in self._VERIFIED_STATES)
+        if verified == n:
+            return {
+                "state": "verified",
+                "label": f"Flight{plural} verified",
+                "icon": "ti-circle-check",
+                "chip": "chip-ok",
+            }
+        if verified:
+            return {
+                "state": "partial",
+                "label": f"{verified} of {n} verified",
+                "icon": "ti-plane",
+                "chip": "chip-gold",
+            }
+        return {
+            "state": "unverified",
+            "label": f"Verify flight{plural}",
+            "icon": "ti-plane",
+            "chip": "chip-ring",
+        }
 
     # --- dispatch status ---
     @property

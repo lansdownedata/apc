@@ -215,3 +215,99 @@ def test_flight_factory_defaults(db):
     assert f.status == Flight.Status.SCHEDULED and f.source == Flight.Source.FUTURE
     assert f.checked_at is not None and f.scheduled_at > f.checked_at
     assert f.airport.timezone == "America/New_York"
+
+
+# --- Reservation.flight_summary (spec 2026-08-29 §4.4) ---
+
+
+def _airport_trip(states):
+    """A reservation whose stops carry flights in the given pill states ("" = no flight,
+    "unverified" = flight info but no cache row)."""
+    from datetime import UTC, date, datetime
+
+    from apps.addresses.factories import AirlineFactory, AirportFactory
+    from apps.reservations.factories import FlightFactory, ReservationFactory
+    from apps.reservations.models import Flight
+
+    airport = AirportFactory(iata="IAD")
+    airline = AirlineFactory(iata="UA")
+    res = ReservationFactory(
+        stops=[f"S{i}" for i in range(len(states))], pickup_date=date(2026, 9, 2)
+    )
+    status_for = {
+        "verified": (Flight.Status.SCHEDULED, Flight.Source.FUTURE, None),
+        "on_time": (Flight.Status.ACTIVE, Flight.Source.LIVE, 0),
+        "delayed": (Flight.Status.ACTIVE, Flight.Source.LIVE, 40),
+        "cancelled": (Flight.Status.CANCELLED, Flight.Source.LIVE, None),
+        "not_found": (Flight.Status.NOT_FOUND, Flight.Source.FUTURE, None),
+        "unavailable": (Flight.Status.UNAVAILABLE, "", None),
+    }
+    for stop, state in zip(res.stops.order_by("sequence"), states, strict=True):
+        if not state:
+            continue
+        stop.airport, stop.airline, stop.flight_number = airport, airline, str(stop.sequence)
+        stop.flight_direction = "arrival"
+        if state != "unverified":
+            status, source, delay = status_for[state]
+            stop.flight = FlightFactory(
+                airline=airline,
+                airport=airport,
+                flight_number=str(stop.sequence),
+                flight_date=date(2026, 9, 2),
+                direction="arrival",
+                status=status,
+                source=source,
+                delay_minutes=delay,
+                scheduled_at=datetime(2026, 9, 2, 21, 35, tzinfo=UTC),
+            )
+        stop.save()
+    return res
+
+
+@pytest.mark.parametrize(
+    "states, expected_state, expected_label",
+    [
+        (["", ""], None, None),
+        (["unverified", ""], "unverified", "Verify flight"),
+        (["unverified", "unverified"], "unverified", "Verify flights"),
+        (["verified", ""], "verified", "Flight verified"),
+        (["verified", "on_time"], "verified", "Flights verified"),
+        (["verified", "unverified"], "partial", "1 of 2 verified"),
+        (["verified", "unavailable"], "partial", "1 of 2 verified"),
+        (["delayed", "verified"], "delayed", "1 flight delayed"),
+        (["delayed", "delayed"], "delayed", "2 flights delayed"),
+        (["not_found", "verified"], "not_found", "Flight not found"),
+        (["cancelled", "delayed", "not_found"], "cancelled", "Flight cancelled"),
+    ],
+)
+def test_flight_summary_rolls_up_worst_state_first(db, states, expected_state, expected_label):
+    from apps.reservations.models import Reservation
+
+    res = Reservation.objects.prefetch_related(
+        "stops__flight__airport", "stops__flight__airline"
+    ).get(pk=_airport_trip(states).pk)
+    summary = res.flight_summary
+    if expected_state is None:
+        assert summary is None
+    else:
+        assert summary["state"] == expected_state
+        assert summary["label"] == expected_label
+        assert summary["chip"] and summary["icon"]
+
+
+def test_flight_summary_uses_the_prefetch_not_ordered_stops(db, django_assert_num_queries):
+    from apps.reservations.models import Reservation
+
+    pk = _airport_trip(["verified", "delayed", "verified"]).pk
+    res = Reservation.objects.prefetch_related(
+        "stops__flight__airport", "stops__flight__airline"
+    ).get(pk=pk)
+    with django_assert_num_queries(0):
+        assert res.flight_summary["state"] == "delayed"
+
+
+def test_ordered_stops_joins_the_flight(db, django_assert_num_queries):
+    res = _airport_trip(["verified", ""])
+    stops = list(res.ordered_stops)
+    with django_assert_num_queries(0):
+        assert stops[0].flight.pill()["state"] == "verified"

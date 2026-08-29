@@ -216,3 +216,34 @@ def test_stops_json_garbled_flight_without_an_airport_is_dropped(db):
     )
     assert form.is_valid(), form.errors
     assert form.cleaned_data["stops"][0]["flight_number"] == ""
+
+
+def test_stop_direction_is_accepted_and_bad_values_rejected(iad, united):
+    # NOTE: `_base()` alone has no pickup/dropoff (both default to "" and are dropped by
+    # clean()), so a bare stops_json entry lands at index 0, not 1 — pass pickup/dropoff
+    # explicitly (as the other stops_json tests in this file do) to put the middle stop
+    # at index 1.
+    stop = {"address": "DCA", "airport": iad.pk, "airline": united.pk, "flight": "2071"}
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps([{**stop, "direction": "departure"}]),
+        )
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][1]["flight_direction"] == "departure"
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps([{**stop, "direction": "up"}]),
+        )
+    )
+    assert not form.is_valid() and "stops_json" in form.errors
+    no_airport = {"address": "Reston", "direction": "arrival"}
+    form = BookingRequestForm(
+        _base(pickup="Home", dropoff="Office", stops_json=json.dumps([no_airport]))
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][1]["flight_direction"] == ""
