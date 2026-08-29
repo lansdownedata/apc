@@ -10,6 +10,7 @@ from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
 from apps.integrations.models import ZapEvent
 from apps.leads.factories import LeadFactory
+from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.reservations.factories import ReservationFactory, TransferReservationFactory
 
@@ -103,7 +104,7 @@ def test_resend_pushes_lead(client):
 
 
 def test_detail_shows_preview_badge_and_payload_script(logged_in_client):
-    res = ReservationFactory(lead=LeadFactory())
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
     ZapEvent.objects.create(
         lead=res.lead,
         action=ZapEvent.Action.CREATE_RESERVATION,
@@ -119,7 +120,7 @@ def test_detail_shows_preview_badge_and_payload_script(logged_in_client):
 
 
 def test_detail_shows_sent_confirmation(logged_in_client):
-    res = ReservationFactory(lead=LeadFactory(), la_confirmation="ABC123")
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), la_confirmation="ABC123")
     ZapEvent.objects.create(
         lead=res.lead,
         action=ZapEvent.Action.CREATE_RESERVATION,
@@ -131,7 +132,7 @@ def test_detail_shows_sent_confirmation(logged_in_client):
 
 
 def test_resend_button_hidden_for_preview_when_unconfigured(client):
-    res = ReservationFactory(lead=LeadFactory())
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
     ZapEvent.objects.create(
         lead=res.lead,
         action=ZapEvent.Action.CREATE_RESERVATION,
@@ -148,7 +149,7 @@ def test_resend_button_shown_for_preview_once_configured(client, settings):
     settings.LA_CLIENT_ID = "cid"
     settings.LA_CLIENT_SECRET = "cs"
     settings.LA_COMPANY_ALIAS = "allpro"
-    res = ReservationFactory(lead=LeadFactory())
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
     ZapEvent.objects.create(
         lead=res.lead,
         action=ZapEvent.Action.CREATE_RESERVATION,

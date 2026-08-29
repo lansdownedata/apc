@@ -2,12 +2,13 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, Stop
 from apps.vendors.models import Vendor
 
 from . import selectors, services
@@ -56,9 +57,17 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
-    """Drawer body for one trip — the offer form, or the coverage it already has."""
+    """Drawer body for one trip — a trip sheet, then the offer form or the coverage it has.
+
+    Stops come from one ordered prefetch and are handed to the template as a list:
+    `Reservation.pickup`/`dropoff` build fresh querysets that bypass the cache, so the
+    template must never touch them (same rule as the board selector).
+    """
     trip = get_object_or_404(
-        Reservation.objects.select_related("lead", "lead__contact", "vehicle"), pk=pk
+        Reservation.objects.select_related("lead", "lead__contact", "vehicle").prefetch_related(
+            Prefetch("stops", queryset=Stop.objects.order_by("sequence"))
+        ),
+        pk=pk,
     )
     assignment = services.active_assignment(trip)
     return render(
@@ -66,7 +75,9 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
         "dispatch/_assign_panel.html",
         {
             "trip": trip,
+            "stops": list(trip.stops.all()),
             "assignment": assignment,
+            "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
             "previewed": selectors.offer_was_previewed(assignment),
             "options": selectors.vendor_options(trip, search=request.GET.get("q", "")),
             "search": request.GET.get("q", ""),

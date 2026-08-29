@@ -4,24 +4,123 @@
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
      assignPanel()'s busy flag and post/resolve/confirmWithdraw methods. {% endcomment %}
 <div x-data="assignPanel()">
-  <div class="rounded-xl bg-goldl/40 ring-1 ring-line px-4 py-3 mb-4">
-    <p class="font-semibold text-ink text-[14px]">
-      #{{ trip.la_confirmation|default:trip.pk }} · {% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% endif %} · {{ trip.lead.contact.name }}
-    </p>
-    <p class="text-[12.5px] text-muted mt-1">
-      {{ trip.pickup.address|default:"—" }} → {{ trip.dropoff.address|default:"—" }}
-    </p>
-    <p class="text-[12.5px] text-muted mt-0.5 num">
-      {{ trip.vehicle.name|default:"Any vehicle" }} · customer ${{ trip.line_total|floatformat:2|intcomma }}
-    </p>
+  {% comment %} Trip sheet — read-only, in the same sections as the reservation editor.
+       `stops` is the view's prefetched list; never trip.pickup / trip.dropoff here. {% endcomment %}
+  <div class="flex items-center gap-2 flex-wrap mb-4">
+    <span class="font-mono2 text-[12.5px] font-semibold text-goldd bg-goldl ring-1 ring-gold/25 px-2 py-0.5 rounded-lg num">
+      #{{ trip.la_confirmation|default:trip.pk }}
+    </span>
+    {% include "dispatch/_coverage_badge.html" with coverage=coverage %}
+    <a href="{% url 'lead_detail' trip.lead.pk %}"
+       class="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-goldd hover:underline">
+      Open {{ trip.lead.quote_no }} <i class="ti ti-arrow-up-right text-[14px]"></i>
+    </a>
   </div>
 
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Passenger</p>
+    <p class="font-semibold text-ink text-[14px]">{{ trip.lead.contact.name }}</p>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12.5px] text-muted mt-0.5">
+      {% if trip.lead.contact.phone %}
+        <span class="flex items-center gap-1"><i class="ti ti-phone text-[13px]"></i> <span class="num">{{ trip.lead.contact.phone }}</span></span>
+      {% endif %}
+      {% if trip.lead.contact.email %}
+        <span class="flex items-center gap-1 min-w-0"><i class="ti ti-mail text-[13px]"></i> <span class="truncate">{{ trip.lead.contact.email }}</span></span>
+      {% endif %}
+      <span class="flex items-center gap-1"><i class="ti ti-users text-[13px]"></i> {{ trip.passengers }} pax</span>
+    </div>
+  </section>
+
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Trip</p>
+    <div class="flex items-center gap-2.5">
+      <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if trip.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">
+        <i class="ti {% if trip.trip_type == 'hourly' %}ti-clock-hour-4{% else %}ti-arrow-narrow-right{% endif %} text-[17px]"></i>
+      </span>
+      <div class="min-w-0">
+        <p class="font-semibold text-ink text-[13.5px] truncate">{{ trip.service|default:trip.get_trip_type_display }}</p>
+        <p class="text-[12px] text-muted">{{ trip.get_trip_type_display }} · {{ trip.vehicle.name|default:"Any vehicle" }}</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Schedule</p>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <p class="text-[11.5px] text-muted">Pickup</p>
+        <p class="text-[12.5px] font-medium text-ink num">
+          {% if trip.pickup_date %}{{ trip.pickup_date|date:"M j, Y" }}{% else %}—{% endif %}{% if trip.pickup_time %} · {{ trip.pickup_time|time:"g:i A" }}{% endif %}
+        </p>
+      </div>
+      <div>
+        {% if trip.trip_type == 'hourly' %}
+          <p class="text-[11.5px] text-muted">Booked</p>
+          <p class="text-[12.5px] font-medium text-ink num">
+            {{ trip.billed_hours|floatformat:"-2" }} hrs as directed{% if trip.min_applied %} (min){% endif %}
+          </p>
+        {% else %}
+          <p class="text-[11.5px] text-muted">Drop-off</p>
+          <p class="text-[12.5px] font-medium text-ink num">
+            {% if trip.dropoff_date %}{{ trip.dropoff_date|date:"M j, Y" }}{% if trip.dropoff_time %} · {{ trip.dropoff_time|time:"g:i A" }}{% endif %}{% elif trip.dropoff_time %}{{ trip.dropoff_time|time:"g:i A" }}{% else %}—{% endif %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Route</p>
+    <ol class="space-y-1.5">
+      {% for stop in stops %}
+        <li class="flex gap-2.5">
+          <div class="flex flex-col items-center pt-[5px]">
+            <span class="w-2.5 h-2.5 rounded-full ring-2 ring-white shadow shrink-0 {% if forloop.first %}bg-gold{% elif forloop.last %}bg-charcoal{% else %}bg-slate-300{% endif %}"></span>
+            {% if not forloop.last %}<span class="route-line w-[2px] flex-1 min-h-[0.75rem] mt-1"></span>{% endif %}
+          </div>
+          <div class="min-w-0 flex-1 pb-1.5">
+            <div class="flex items-baseline gap-2">
+              <span class="text-[10px] font-medium uppercase tracking-wide {% if forloop.first %}text-goldd{% elif forloop.last %}text-ink{% else %}text-muted{% endif %}">
+                {% if forloop.first %}Pickup{% elif forloop.last %}Drop-off{% else %}Stop {{ forloop.counter0 }}{% endif %}
+              </span>
+              {% if not forloop.first and not forloop.last and stop.scheduled_time %}
+                <span class="text-[10.5px] text-muted num">{{ stop.scheduled_time|time:"g:i A" }}</span>
+              {% endif %}
+            </div>
+            {% if stop.name %}<p class="text-[13px] font-medium text-ink">{{ stop.name }}</p>{% endif %}
+            <p class="text-[12.5px] {% if stop.name %}text-muted{% else %}text-ink{% endif %}">{{ stop.address|default:"—" }}</p>
+            {% if stop.note %}<p class="text-[11.5px] text-muted italic">{{ stop.note }}</p>{% endif %}
+          </div>
+        </li>
+      {% empty %}
+        <li class="text-[12.5px] text-muted">No route on this trip yet.</li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <section class="rounded-xl bg-surface2 ring-1 ring-line px-4 py-3 mb-5 text-[12.5px]">
+    <div class="flex items-center justify-between">
+      <span class="text-muted">Customer total</span>
+      <span class="font-semibold text-ink text-[14px] num">${{ trip.line_total|floatformat:2|intcomma }}</span>
+    </div>
+    {% if assignment %}
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-muted">Payout</span>
+        <span class="text-ink num">${{ assignment.payout|floatformat:2|intcomma }}</span>
+      </div>
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-muted">Margin</span>
+        <span class="font-medium num {% if assignment.margin < 0 %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ assignment.margin|floatformat:2|intcomma }}</span>
+      </div>
+    {% endif %}
+  </section>
+
   {% if assignment %}
-    <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Coverage</p>
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Coverage</p>
     <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
       <p class="font-semibold text-ink text-[13px]">{{ assignment.vendor.name }}</p>
-      <p class="text-[12px] text-muted mt-0.5 num">
-        {{ assignment.get_status_display }} · payout ${{ assignment.payout|floatformat:2|intcomma }} · margin ${{ assignment.margin|floatformat:2|intcomma }}
+      <p class="text-[12px] text-muted mt-0.5">
+        {{ assignment.get_status_display }} · {{ assignment.get_channel_display }}
       </p>
       {% if previewed %}
         <p class="text-[11.5px] text-rose-600 mt-1">
@@ -50,7 +149,7 @@
       </p>
     {% endif %}
   {% else %}
-    <p class="text-[11px] uppercase tracking-wide text-muted mb-2">Offer to</p>
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Offer to</p>
     {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}
     <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
            value="{{ search }}" x-init="$el.focus()"
@@ -83,7 +182,7 @@
           <p class="text-[13px] text-muted">No active affiliates yet.</p>
         {% endfor %}
       </div>
-      <label class="block text-[11px] uppercase tracking-wide text-muted mt-4 mb-1">Payout</label>
+      <label class="block text-[11px] font-semibold uppercase tracking-wide text-muted mt-4 mb-1">Payout</label>
       <input type="text" name="payout" inputmode="decimal" placeholder="0.00"
              class="field w-full num text-[13px]">
       <div class="flex gap-2 mt-4">

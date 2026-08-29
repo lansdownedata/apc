@@ -1,0 +1,47 @@
+{% comment %}
+LimoAnywhere state for a booked order — a chip in the workspace header. The per-trip
+rows and the gated resend live in its popover, so the page carries no LA card. Only
+included when lead.status == 'booked': a quote has nothing to sync.
+{% endcomment %}
+<div class="relative" x-data="{ laOpen: false }">
+  <button type="button" @click="laOpen = !laOpen" title="LimoAnywhere sync"
+          class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset {% if la_state == 'sent' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% elif la_state == 'error' %}bg-rose-50 text-rose-600 ring-rose-600/20{% elif la_state == 'preview' %}bg-goldl text-goldd ring-gold/25{% else %}bg-slate-100 text-slate-600 ring-slate-500/20{% endif %}">
+    <i class="ti {% if la_state == 'sent' %}ti-cloud-check{% elif la_state == 'error' %}ti-cloud-x{% elif la_state == 'preview' %}ti-cloud-pause{% else %}ti-cloud-off{% endif %} text-[13px]"></i>
+    LA · {% if la_state == 'sent' %}Sent{% elif la_state == 'error' %}Failed{% elif la_state == 'preview' %}Preview{% else %}Not sent{% endif %}
+    <i class="ti ti-chevron-down text-[12px] opacity-70"></i>
+  </button>
+  <div x-show="laOpen" x-cloak @click.outside="laOpen = false" x-transition
+       class="absolute right-0 mt-2 w-[300px] bg-surface rounded-xl shadow-2xl ring-1 ring-line p-4 z-40 text-left">
+    <div class="font-display text-[13px] font-semibold text-ink mb-2.5">LimoAnywhere sync</div>
+    <ul class="space-y-2 text-[12.5px]">
+      {% for row in la_sync_rows %}
+        <li class="flex items-center justify-between gap-2">
+          <span class="text-muted truncate">Trip #{{ row.reservation.pk }}</span>
+          {% if row.event.result == "success" %}
+            <span class="text-emerald-600">
+              Sent ✓ {% if row.reservation.la_confirmation %}#{{ row.reservation.la_confirmation }}{% endif %}
+            </span>
+          {% elif row.event.result == "preview" %}
+            {{ row.event.payload|json_script:row.payload_dom_id }}
+            <button type="button" class="text-goldd underline decoration-dotted"
+                    onclick="showLaPayload('{{ row.payload_dom_id }}', 'LA payload — Trip {{ row.reservation.pk }}')">
+              Preview payload
+            </button>
+          {% elif row.event.result == "error" %}
+            <span class="text-rose-600" title="{{ row.event.response }}">Failed</span>
+          {% else %}
+            <span class="text-muted">Not sent</span>
+          {% endif %}
+        </li>
+      {% empty %}
+        <li class="text-muted">No trips on this order yet.</li>
+      {% endfor %}
+    </ul>
+    {% if request.user.has_payments_access and can_resend_la %}
+      <form method="post" action="{% url 'lead_resend_la' lead.pk %}" class="mt-3">
+        {% csrf_token %}
+        <button type="submit" class="btn-gold w-full text-[12.5px] font-semibold rounded-lg px-3 py-2">Resend to LA</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
