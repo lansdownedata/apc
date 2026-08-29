@@ -245,6 +245,7 @@ def lead_detail(request, pk):
         "nav": "leads",
         "page_title": lead.quote_no,
         "lead": lead,
+        "booking_intent": request.GET.get("booking") == "1",
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
         "la_state": _la_state(la_sync_rows),

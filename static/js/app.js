@@ -840,11 +840,11 @@ function pipelineBoard() {
       if (!id || from === to) return;
       if (to === "lost" && (from === "new" || from === "quoted")) return this.markLost(id);
       if (to === "new" && from === "lost") return this.post(`/portal/leads/${id}/reopen/`);
-      if (to === "booked" && from === "quoted") return this.markBooked(id);
+      if (to === "booked" && (from === "quoted" || from === "new")) return this.markBooked(id);
       const why = {
         new: "Leads return to New only by reopening a lost lead.",
         quoted: "Quoted happens when a quote is sent from the workspace.",
-        booked: "Booked happens when the deposit is paid or an admin marks it booked.",
+        booked: "Booked happens when the deposit is paid or an admin books the lead.",
       }[to];
       const message =
         from === "booked" ? "Booked orders are cancelled from the Orders console." : why;
@@ -853,11 +853,11 @@ function pipelineBoard() {
 
     markBooked(id) {
       Alpine.store("modal").confirm({
-        title: "Mark this quote as booked?",
+        title: "Book this order without a payment?",
         variant: "gold",
-        confirmText: "Mark booked",
+        confirmText: "Book now",
         message:
-          "This books the order without collecting a payment. You can take a card or resend the payment link from the quote workspace.",
+          "The 50% deposit stays due — the customer can pay through the link any time, or you can take a card from the quote workspace.",
         onConfirm: () => this.post(`/portal/leads/${id}/mark-booked/`),
       });
     },
