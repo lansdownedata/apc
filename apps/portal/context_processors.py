@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from django.conf import settings
+from django.utils.functional import SimpleLazyObject
 
 from apps.core.us_states import US_STATES
 from apps.messaging.models import Conversation, Message
@@ -52,6 +53,14 @@ def _inbox_unread_count() -> int:
     )
 
 
+def _airline_options() -> list[tuple[int, str]]:
+    """Active carriers for the airline pickers (reservation editor, booking widget).
+    Lazy: only pages that render a picker pay for the query."""
+    from apps.addresses.models import Airline
+
+    return [(a.pk, a.label) for a in Airline.objects.filter(is_active=True)]
+
+
 def chrome(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return {
@@ -59,6 +68,7 @@ def chrome(request):
             "asset_version": _asset_version(),
             "address_bias_center": settings.ADDRESS_BIAS_CENTER,
             "us_states": US_STATES,
+            "airline_options": SimpleLazyObject(_airline_options),
         }
 
     unread = Notification.objects.unread().select_related("lead", "lead__contact")
@@ -70,4 +80,5 @@ def chrome(request):
         "unread_notifications": list(unread.order_by("-created_at")[:8]),
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
+        "airline_options": SimpleLazyObject(_airline_options),
     }

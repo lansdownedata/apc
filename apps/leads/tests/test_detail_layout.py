@@ -140,3 +140,15 @@ def test_editor_rate_and_gratuity_inputs_paint_no_background_of_their_own(page):
     html = page(LeadFactory())
     for model in ('x-model.number="draft.rate"', 'x-model.number="draft.gratuityPct"'):
         assert "bg-transparent" in _editor_input(html, model)
+
+
+# --- the editor's airline picker is fed from context, active carriers only ---
+
+
+def test_airline_options_render_active_carriers_only(page):
+    from apps.addresses.factories import AirlineFactory
+
+    AirlineFactory(iata="ZZ", name="Retired Air", is_active=False)
+    html = page(LeadFactory())
+    assert "UA — United Airlines</option>" in html
+    assert "Retired Air" not in html

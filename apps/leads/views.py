@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
 from django.db import IntegrityError
-from django.db.models import CharField, F, Q, Value
+from django.db.models import CharField, F, Prefetch, Q, Value
 from django.db.models.functions import Cast, Concat
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -33,6 +33,7 @@ from apps.messaging.models import TouchPoint
 from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import services as payment_services
+from apps.reservations.models import Stop
 
 from . import services
 from .forms import NewLeadForm
@@ -89,6 +90,10 @@ def _reservation_draft(r) -> dict:
                 # doesn't drop coordinates the user already picked.
                 "lat": str(s.latitude) if s.latitude is not None else "",
                 "lng": str(s.longitude) if s.longitude is not None else "",
+                "airport": s.airport_id or "",
+                "airportCode": s.airport.iata if s.airport_id else "",
+                "airline": s.airline_id or "",
+                "flight": s.flight_number,
             }
             for s in r.stops.all()
         ],
@@ -197,7 +202,10 @@ def lead_detail(request, pk):
     lead = get_object_or_404(
         Lead.objects.select_related("contact", "assigned_agent").prefetch_related(
             "reservations__vehicle",
-            "reservations__stops",
+            Prefetch(
+                "reservations__stops",
+                queryset=Stop.objects.select_related("airport", "airline").order_by("sequence"),
+            ),
             "notifications",
         ),
         pk=pk,
