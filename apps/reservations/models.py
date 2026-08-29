@@ -34,7 +34,9 @@ TRIP_PHASE_BY_STATUS = {
     "dispatched_non_la": "Other",
 }
 
-# flightsFuture refuses dates within this many days; /v1/flights covers the rest (spec §6.1).
+# flightsFuture refuses dates within this many days (spec §6.1). Whether the rest of that
+# window has live coverage is a separate call — see flights.LIVE_LOOKAHEAD_DAYS (as of the
+# 2026-08-29 probe, only day 0 does; days 1-7 read as unavailable).
 LIVE_PHASE_DAYS = 7
 
 
