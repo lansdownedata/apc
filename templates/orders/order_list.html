@@ -2,7 +2,7 @@
 {% load humanize %}
 
 {% block content %}
-<div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6">
+<div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6" x-data="{ newLeadOpen: false, newLeadIntent: 'booking' }">
 
   <!-- finance summary strip -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5 stagger">
@@ -40,8 +40,9 @@
     </div>
   </div>
 
-  <!-- filter pills -->
-  <div class="flex items-center gap-0.5 bg-surface rounded-full p-1 ring-1 ring-line shadow-sm mb-4 w-fit">
+  <!-- filter pills + new booking -->
+  <div class="flex items-center gap-3 mb-4">
+  <div class="flex items-center gap-0.5 bg-surface rounded-full p-1 ring-1 ring-line shadow-sm w-fit">
     <a href="?filter=all"
        class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition {% if filter == 'all' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">
       All
@@ -58,6 +59,11 @@
        class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition {% if filter == 'recognized' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">
       Fully recognized
     </a>
+  </div>
+    <button type="button" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
+            @click="newLeadOpen = true">
+      <i class="ti ti-calendar-plus text-[15px]"></i> New booking
+    </button>
   </div>
 
   <!-- table -->
@@ -150,6 +156,8 @@
       </table>
     </div>
   </div>
+
+  {% include "leads/_new_lead_modal.html" %}
 
 </div>
 {% endblock %}

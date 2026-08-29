@@ -2,7 +2,7 @@
 {% load humanize %}
 
 {% block content %}
-<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6" x-data="{ newLeadOpen: false }">
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6" x-data="{ newLeadOpen: false, newLeadIntent: 'lead' }">
 
   <!-- stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-5 stagger">
@@ -61,8 +61,12 @@
       <input name="q" value="{{ q }}" placeholder="Search name, company, service…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
     </div>
 
-    <button type="button" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
-            @click="newLeadOpen = true">
+    <button type="button" class="btn-ghost ml-auto flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-full px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-surface2"
+            @click="newLeadIntent = 'booking'; newLeadOpen = true">
+      <i class="ti ti-calendar-plus text-[15px]"></i> New booking
+    </button>
+    <button type="button" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
+            @click="newLeadIntent = 'lead'; newLeadOpen = true">
       <i class="ti ti-plus text-[15px]"></i> New lead
     </button>
   </form>

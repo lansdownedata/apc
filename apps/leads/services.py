@@ -17,6 +17,7 @@ from django.core import signing
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.accounts.models import User
 from apps.integrations import podium
 from apps.messaging import touchpoints
 from apps.notifications.email import send_html_email
@@ -28,6 +29,14 @@ if TYPE_CHECKING:
     from .models import Lead
 
 _DEPOSIT_SALT = "quote-deposit"
+
+
+def agent_options() -> list[tuple[int, str]]:
+    """`(pk, display name)` for every user, for the assign-to pickers."""
+    return [
+        (u.pk, u.get_full_name() or u.username)
+        for u in User.objects.order_by("first_name", "username")
+    ]
 
 
 def make_deposit_token(lead: Lead) -> str:
