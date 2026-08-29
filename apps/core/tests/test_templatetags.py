@@ -2,7 +2,7 @@
 
 from django.template import Context, Template
 
-from apps.core.templatetags.json_filters import json_string
+from apps.core.templatetags.json_filters import json_attr, json_string
 
 
 def test_json_string_is_html_attribute_safe():
@@ -29,3 +29,13 @@ def test_x_data_attribute_is_not_truncated():
     tpl = Template('{% load json_filters %}<div x-data="f({ name: {{ n|json_string }} })"></div>')
     html = tpl.render(Context({"n": 'A "quoted" name'}))
     assert html.count('"') == 2
+
+
+def test_json_string_escapes_quotes_for_attributes():
+    assert json_string('a"b') == "&quot;a\\&quot;b&quot;"
+
+
+def test_json_attr_encodes_dicts_and_escapes_for_attributes():
+    out = json_attr({"airport": 3, "flight": '12"3', "when": None})
+    assert out.startswith("{&quot;airport&quot;: 3")
+    assert "<" not in out and '"' not in out
