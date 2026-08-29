@@ -90,3 +90,36 @@ def test_committed_csv_loads_completely():
     # The source sheet files Reagan National under DC, not the VA it physically sits in.
     assert dca.state == "DC"
     assert dca.city == "Washington"
+
+
+TZ_HEADER = HEADER.replace("State\n", "State,timezone\n")
+TZ_ROWS = TZ_HEADER + (
+    "1,KDCA,large_airport,Ronald Reagan Washington National Airport,"
+    "38.852083,-77.037722,15,US,Washington,KDCA,DCA,VA,America/New_York\n"
+    "3,KLAX,large_airport,Los Angeles International Airport,33.942501,-118.407997,"
+    "125,US,Los Angeles,KLAX,LAX,CA,America/Los_Angeles\n"
+)
+
+
+def test_timezone_column_is_loaded(tmp_path):
+    load_airports(Airport, _write(tmp_path, TZ_ROWS))
+    assert Airport.objects.get(ident="KDCA").timezone == "America/New_York"
+    assert Airport.objects.get(ident="KLAX").timezone == "America/Los_Angeles"
+
+
+def test_a_csv_without_the_timezone_column_still_loads(tmp_path):
+    load_airports(Airport, _write(tmp_path, TWO_ROWS))
+    assert Airport.objects.get(ident="KDCA").timezone == ""
+
+
+def test_committed_csv_has_a_valid_timezone_for_every_row():
+    import csv
+    from zoneinfo import ZoneInfo
+
+    with CSV_PATH.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows and "timezone" in rows[0]
+    missing = [r["ident"] for r in rows if not (r.get("timezone") or "").strip()]
+    assert missing == []
+    for r in rows:
+        ZoneInfo(r["timezone"])  # raises for anything that isn't a real IANA name

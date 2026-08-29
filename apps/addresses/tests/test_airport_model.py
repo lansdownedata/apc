@@ -32,3 +32,18 @@ def test_enrichment_fields_default_blank():
     assert airport.postal == ""
     assert airport.display_name == ""
     assert airport.enriched_at is None
+
+
+def test_seeded_airports_carry_their_timezone(db):
+    from apps.addresses.models import Airport
+
+    assert Airport.objects.get(iata="IAD").timezone == "America/New_York"
+    assert Airport.objects.get(iata="LAX").timezone == "America/Los_Angeles"
+    assert Airport.objects.get(iata="DEN").timezone == "America/Denver"
+    assert not Airport.objects.filter(timezone="").exists()
+
+
+def test_airport_factory_defaults_to_eastern(db):
+    from apps.addresses.factories import AirportFactory
+
+    assert AirportFactory().timezone == "America/New_York"

@@ -59,6 +59,9 @@ class Airport(TimeStampedModel):
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=10, decimal_places=6)
     elevation_ft = models.IntegerField(null=True, blank=True)
+    # IANA zone, e.g. "America/New_York" — filled from the CSV's `timezone` column (spec
+    # 2026-08-29 §4.1). Flight times arrive airport-local and are stored UTC via this.
+    timezone = models.CharField(max_length=40, blank=True)
     is_active = models.BooleanField(default=True)
 
     # LocationIQ enrichment — blank until `manage.py enrich_airports` runs.
