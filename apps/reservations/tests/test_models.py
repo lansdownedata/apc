@@ -162,3 +162,46 @@ def test_transfer_override_above_the_minimum_bills_the_override():
     )
     assert res.billed_hours == Decimal("2.5")
     assert res.line_total == Decimal("500.00")
+
+
+# --- flight info on an airport stop ----------------------------------------
+def _airport_stop(**kwargs):
+    from apps.addresses.factories import AirlineFactory, AirportFactory
+
+    res = ReservationFactory(stops=[])
+    kwargs.setdefault("airport", AirportFactory(iata="IAD"))
+    if "airline" not in kwargs:
+        kwargs["airline"] = AirlineFactory(iata="UA", name="United Airlines")
+    return StopFactory(reservation=res, sequence=0, address="Dulles", **kwargs)
+
+
+def test_flight_label_is_code_and_number():
+    stop = _airport_stop(flight_number="123")
+    assert stop.flight_label == "UA 123"
+    assert stop.flight_label_long == "United Airlines 123"
+
+
+def test_flight_label_falls_back_to_the_airline_alone():
+    stop = _airport_stop(flight_number="")
+    assert stop.flight_label == "United Airlines"
+    assert stop.flight_label_long == "United Airlines"
+
+
+def test_flight_label_with_only_a_number_says_flight():
+    stop = _airport_stop(airline=None, flight_number="123")
+    assert stop.flight_label == "Flight 123"
+    assert stop.flight_label_long == "Flight 123"
+
+
+def test_flight_label_is_blank_without_flight_info():
+    stop = _airport_stop(airline=None, flight_number="")
+    assert stop.flight_label == ""
+    assert stop.flight_label_long == ""
+
+
+def test_ordered_stops_join_the_airline_and_airport(django_assert_num_queries):
+    stop = _airport_stop(flight_number="123")
+    res = Reservation.objects.get(pk=stop.reservation_id)
+    with django_assert_num_queries(1):
+        labels = [s.flight_label for s in res.ordered_stops]
+    assert labels == ["UA 123"]

@@ -43,6 +43,7 @@ def _serialize(airport: Airport) -> dict:
         ),
         "is_airport": True,
         "airport_code": airport.iata,
+        "airport_id": airport.pk,
     }
 
 
