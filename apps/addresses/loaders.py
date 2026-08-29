@@ -31,6 +31,7 @@ def _row_to_fields(row: dict) -> dict:
         "latitude": Decimal(row["latitude_deg"]),
         "longitude": Decimal(row["longitude_deg"]),
         "elevation_ft": _int(row["elevation_ft"]),
+        "timezone": (row.get("timezone") or "").strip(),
     }
 
 

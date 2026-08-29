@@ -26,6 +26,7 @@ class AirportFactory(factory.django.DjangoModelFactory):
     latitude = Decimal("38.851242")
     longitude = Decimal("-77.037720")
     elevation_ft = 15
+    timezone = "America/New_York"
 
 
 class AirlineFactory(factory.django.DjangoModelFactory):
