@@ -22,7 +22,7 @@ STRETCHED_IMG = re.compile(rb"<img[^>]*\bh-full w-full object-contain\b[^>]*>")
 
 
 @pytest.mark.parametrize("url", PAGES)
-def test_vehicle_photos_are_not_stretched_to_full_height(client, url):
+def test_vehicle_photos_are_not_stretched_to_full_height(client, db, url):
     """No vehicle photo may use `h-full w-full`, which overflows its framed box."""
     resp = client.get(url)
     assert resp.status_code == 200
@@ -36,7 +36,7 @@ def test_vehicle_photos_are_not_stretched_to_full_height(client, url):
 
 
 @pytest.mark.parametrize("url", PAGES)
-def test_vehicle_photo_frames_center_and_clip_consistently(client, url):
+def test_vehicle_photo_frames_center_and_clip_consistently(client, db, url):
     """Every fixed-height photo frame centers its image and clips nothing outside."""
     resp = client.get(url)
     frames = re.findall(rb'<div class="([^"]*\bh-(?:28|32|44)\b[^"]*bg-white[^"]*)"', resp.content)

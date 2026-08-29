@@ -9,9 +9,13 @@
     value       — current one-line value (edit / error re-render)
     hide_label  — render no label; the caller owns the label row (e.g. to sit a
                   control beside it). The caller MUST still render a <label for>.
+    flight      — render the airline / flight # row when the picked address is an
+                  airport; posts name_airport, name_airline, name_flight
+    airport / airline_selected / flight_value — re-render values after a
+                  server-side error
 {% endcomment %}
 {% load json_filters %}
-<div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }}, fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
+<div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }}, fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }}, airport: {{ airport|default:''|json_string }} })">
   {% if not hide_label %}<label for="{{ field_id }}" class="mb-1 block text-[12px] font-medium text-muted">{{ label }}</label>{% endif %}
   <div class="sa-search" @keydown.escape="closeResults()" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="choose(active)">
     <input type="text" id="{{ field_id }}" name="{{ name }}" x-model="value"
@@ -33,5 +37,20 @@
     <input type="hidden" name="{{ name }}_lat" :value="lat">
     <input type="hidden" name="{{ name }}_lng" :value="lng">
     <input type="hidden" name="{{ name }}_display" :value="display">
+    {% if flight %}
+    <input type="hidden" name="{{ name }}_airport" :value="airport">
+    {% comment %}
+    Airline + flight # — visible only once an airport result was picked (`airport` is
+    the Airport pk; typing again clears it). The select is static markup, so the page's
+    DOMContentLoaded initTomSelects() enhances it like every other picker.
+    {% endcomment %}
+    <div x-show="airport" x-cloak class="mt-2 grid grid-cols-[1fr_120px] gap-2">
+      <div class="ts-compact">
+        {% include "components/searchable_select.html" with name=name|add:"_airline" field_id=field_id|add:"-airline" options=airline_options selected=airline_selected empty_label="Airline" %}
+      </div>
+      <input type="text" name="{{ name }}_flight" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+             placeholder="Flight #" value="{{ flight_value|default:'' }}" class="field w-full">
+    </div>
+    {% endif %}
   </div>
 </div>

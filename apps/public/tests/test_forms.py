@@ -1,6 +1,9 @@
 import json
 from decimal import Decimal
 
+import pytest
+
+from apps.addresses.models import Airline, Airport
 from apps.public.forms import OCCASION_CHOICES, BookingRequestForm
 
 
@@ -111,3 +114,89 @@ def test_blank_address_stops_dropped():
     )
     assert form.is_valid(), form.errors
     assert [s["address"] for s in form.cleaned_data["stops"]] == ["Real Stop"]
+
+
+@pytest.fixture
+def iad(db):
+    return Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+
+
+@pytest.fixture
+def united(db):
+    return Airline.objects.get(iata="UA")
+
+
+def test_pickup_flight_fields_land_on_the_pickup_stop(iad, united):
+    form = BookingRequestForm(
+        _base(
+            pickup="Dulles",
+            pickup_airport=iad.pk,
+            pickup_airline=united.pk,
+            pickup_flight="123",
+            dropoff="Home",
+        )
+    )
+    assert form.is_valid(), form.errors
+    pickup, dropoff = form.cleaned_data["stops"]
+    assert pickup["airport_id"] == iad.pk
+    assert pickup["airline_id"] == united.pk
+    assert pickup["flight_number"] == "123"
+    assert dropoff["airport_id"] is None and dropoff["flight_number"] == ""
+
+
+def test_flight_fields_are_dropped_when_the_stop_is_not_an_airport(united):
+    form = BookingRequestForm(
+        _base(pickup="Home", pickup_airline=united.pk, pickup_flight="123", dropoff="Office")
+    )
+    assert form.is_valid(), form.errors
+    pickup = form.cleaned_data["stops"][0]
+    assert pickup["airline_id"] is None and pickup["flight_number"] == ""
+
+
+def test_non_digit_flight_number_is_a_field_error(iad):
+    form = BookingRequestForm(_base(pickup="Dulles", pickup_airport=iad.pk, pickup_flight="UA123"))
+    assert not form.is_valid()
+    assert "pickup_flight" in form.errors
+
+
+def test_unknown_airport_is_a_field_error(db):
+    form = BookingRequestForm(_base(pickup="Dulles", pickup_airport=999999))
+    assert not form.is_valid()
+    assert "pickup_airport" in form.errors
+
+
+def test_inactive_airline_is_rejected(iad, united):
+    united.is_active = False
+    united.save(update_fields=["is_active"])
+    form = BookingRequestForm(
+        _base(pickup="Dulles", pickup_airport=iad.pk, pickup_airline=united.pk)
+    )
+    assert not form.is_valid()
+    assert "pickup_airline" in form.errors
+
+
+def test_stops_json_carries_flight_info(iad, united):
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps(
+                [{"address": "Dulles", "airport": iad.pk, "airline": united.pk, "flight": "456"}]
+            ),
+        )
+    )
+    assert form.is_valid(), form.errors
+    middle = form.cleaned_data["stops"][1]
+    assert (middle["airport_id"], middle["airline_id"], middle["flight_number"]) == (
+        iad.pk,
+        united.pk,
+        "456",
+    )
+
+
+def test_stops_json_rejects_a_bad_flight_number(iad):
+    form = BookingRequestForm(
+        _base(stops_json=json.dumps([{"address": "Dulles", "airport": iad.pk, "flight": "x"}]))
+    )
+    assert not form.is_valid()
+    assert "stops_json" in form.errors

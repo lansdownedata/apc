@@ -1,7 +1,9 @@
 import json
+import re
 
 from django import forms
 
+from apps.addresses.models import Airline, Airport
 from apps.reservations.models import Reservation
 
 # Optional "occasion" for the booking widget's dropdown (no ServiceType model yet).
@@ -18,6 +20,7 @@ OCCASION_CHOICES = [
 
 MAX_STOPS = 4
 ADDRESS_MAXLEN = 255
+FLIGHT_RE = re.compile(r"^\d{1,6}$")
 
 
 def _to_float(v):
@@ -25,6 +28,20 @@ def _to_float(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _to_int(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _flight_fields(airport_id, airline_id, flight) -> dict:
+    """Airline / flight only mean anything at an airport (same rule as drafts.parse_draft)."""
+    if not airport_id:
+        return {"airport_id": None, "airline_id": None, "flight_number": ""}
+    return {"airport_id": airport_id, "airline_id": airline_id, "flight_number": flight or ""}
 
 
 class BookingRequestForm(forms.Form):
@@ -60,8 +77,42 @@ class BookingRequestForm(forms.Form):
     dropoff_lng = forms.FloatField(required=False)
     dropoff_display = forms.CharField(max_length=512, required=False)
 
+    # Flight info (spec 2026-08-28) — set by the widget only when the address was picked
+    # from the airport directory. Validated like reservations.drafts: real airport,
+    # active airline, digits-only flight number; all dropped when there is no airport.
+    pickup_airport = forms.IntegerField(required=False)
+    pickup_airline = forms.ModelChoiceField(
+        queryset=Airline.objects.filter(is_active=True), required=False
+    )
+    pickup_flight = forms.RegexField(
+        regex=FLIGHT_RE,
+        required=False,
+        error_messages={"invalid": "Flight number must be digits (up to 6)."},
+    )
+    dropoff_airport = forms.IntegerField(required=False)
+    dropoff_airline = forms.ModelChoiceField(
+        queryset=Airline.objects.filter(is_active=True), required=False
+    )
+    dropoff_flight = forms.RegexField(
+        regex=FLIGHT_RE,
+        required=False,
+        error_messages={"invalid": "Flight number must be digits (up to 6)."},
+    )
+
     # Optional in-between stops (JSON array from the Alpine repeater).
     stops_json = forms.CharField(required=False)
+
+    def _clean_airport(self, field: str):
+        pk = self.cleaned_data.get(field)
+        if pk is not None and not Airport.objects.filter(pk=pk).exists():
+            raise forms.ValidationError("Unknown airport.")
+        return pk
+
+    def clean_pickup_airport(self):
+        return self._clean_airport("pickup_airport")
+
+    def clean_dropoff_airport(self):
+        return self._clean_airport("dropoff_airport")
 
     def clean_stops_json(self):
         raw = (self.cleaned_data.get("stops_json") or "").strip()
@@ -82,13 +133,31 @@ class BookingRequestForm(forms.Form):
             address = str(item.get("address") or "").strip()[:ADDRESS_MAXLEN]
             if not address:
                 continue
+            flight = str(item.get("flight") or "").strip()
+            if flight and not FLIGHT_RE.match(flight):
+                raise forms.ValidationError("A stop's flight number must be digits (up to 6).")
             cleaned.append(
                 {
                     "address": address,
                     "lat": _to_float(item.get("lat")),
                     "lng": _to_float(item.get("lng")),
+                    **_flight_fields(
+                        _to_int(item.get("airport")), _to_int(item.get("airline")), flight
+                    ),
                 }
             )
+        airport_ids = {s["airport_id"] for s in cleaned if s["airport_id"]}
+        known_airports = set(
+            Airport.objects.filter(pk__in=airport_ids).values_list("pk", flat=True)
+        )
+        if airport_ids - known_airports:
+            raise forms.ValidationError("A stop names an unknown airport.")
+        airline_ids = {s["airline_id"] for s in cleaned if s["airline_id"]}
+        active = set(
+            Airline.objects.filter(pk__in=airline_ids, is_active=True).values_list("pk", flat=True)
+        )
+        if airline_ids - active:
+            raise forms.ValidationError("A stop names an airline that isn't in the list.")
         return cleaned
 
     def clean(self):
@@ -112,21 +181,33 @@ class BookingRequestForm(forms.Form):
         stops = []
         pickup = (cleaned.get("pickup") or "").strip()
         if pickup:
+            airline = cleaned.get("pickup_airline")
             stops.append(
                 {
                     "address": pickup[:ADDRESS_MAXLEN],
                     "lat": cleaned.get("pickup_lat"),
                     "lng": cleaned.get("pickup_lng"),
+                    **_flight_fields(
+                        cleaned.get("pickup_airport"),
+                        airline.pk if airline else None,
+                        cleaned.get("pickup_flight"),
+                    ),
                 }
             )
         stops.extend(cleaned.get("stops_json") or [])
         dropoff = (cleaned.get("dropoff") or "").strip()
         if dropoff:
+            airline = cleaned.get("dropoff_airline")
             stops.append(
                 {
                     "address": dropoff[:ADDRESS_MAXLEN],
                     "lat": cleaned.get("dropoff_lat"),
                     "lng": cleaned.get("dropoff_lng"),
+                    **_flight_fields(
+                        cleaned.get("dropoff_airport"),
+                        airline.pk if airline else None,
+                        cleaned.get("dropoff_flight"),
+                    ),
                 }
             )
         cleaned["stops"] = stops

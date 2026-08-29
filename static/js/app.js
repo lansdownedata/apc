@@ -1362,6 +1362,7 @@ function addressAutocomplete(opts = {}) {
     lat: opts.lat || "",
     lng: opts.lng || "",
     display: opts.display || "",
+    airport: opts.airport || "",
     results: [],
     open: false,
     active: -1,
@@ -1371,6 +1372,7 @@ function addressAutocomplete(opts = {}) {
     _raw: [],
     _ctl: null,
     search() {
+      this.airport = ""; // a fresh keystroke means the value is no longer the picked airport
       const q = this.value.trim();
       this._ctl?.abort();
       if (!q) { this.results = []; this._raw = []; this.open = false; this.loading = false; return; }
@@ -1396,6 +1398,7 @@ function addressAutocomplete(opts = {}) {
       const r = this.results[i]; if (!r) return;
       this.value = formatAddressLine(r);
       this.lat = r.latitude || ""; this.lng = r.longitude || ""; this.display = r.display_name || "";
+      this.airport = r.is_airport ? String(r.airport_id || "") : "";
       this.closeResults();
     },
     closeResults() { this.open = false; this.results = []; this.active = -1; },
@@ -1515,7 +1518,7 @@ function bookingStops(opts = {}) {
     canAdd() { return this.stops.length < this.max; },
     add() {
       if (!this.canAdd()) return;
-      this.stops.push({ address: "", lat: "", lng: "", display: "" });
+      this.stops.push({ address: "", lat: "", lng: "", display: "", airport: "", airline: "", flight: "" });
     },
     remove(i) { this.stops.splice(i, 1); },
     // Reassign rather than mutate: rowState() hands back a throwaway object when the
@@ -1531,6 +1534,7 @@ function bookingStops(opts = {}) {
     },
     search(i) {
       const s = this.stops[i];
+      s.airport = ""; // a fresh keystroke means the value is no longer the picked airport
       const q = (s.address || "").trim();
       if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
       geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
@@ -1544,6 +1548,7 @@ function bookingStops(opts = {}) {
       const s = this.stops[i];
       s.address = formatAddressLine(r);
       s.lat = r.latitude || ""; s.lng = r.longitude || ""; s.display = r.display_name || "";
+      s.airport = r.is_airport ? String(r.airport_id || "") : "";
       this._r[i] = { open: false, list: [], active: -1 };
     },
     closeRow(i) { this._r[i] = { open: false, list: [], active: -1 }; },
@@ -1551,7 +1556,15 @@ function bookingStops(opts = {}) {
       return JSON.stringify(
         this.stops
           .filter((s) => (s.address || "").trim())
-          .map((s) => ({ address: s.address, lat: s.lat || null, lng: s.lng || null, display: s.display })),
+          .map((s) => ({
+            address: s.address,
+            lat: s.lat || null,
+            lng: s.lng || null,
+            display: s.display,
+            airport: s.airport || null,
+            airline: s.airline || null,
+            flight: s.flight || "",
+          })),
       );
     },
   };
