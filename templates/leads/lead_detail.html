@@ -115,7 +115,7 @@
       <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
               @click="openSendQuoteModal()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
         <i class="ti ti-send text-[15px]"></i>
-        {% if lead.status == 'new' %}Send quote{% elif lead.status == 'booked' and payment.deposit_status == 'unsent' %}Send payment link{% else %}Resend payment link{% endif %}
+        {% if lead.status == 'new' %}Send quote{% elif lead.status == 'booked' and not lead.quote_sent_at %}Send payment link{% else %}Resend payment link{% endif %}
       </button>
       {% endif %}
 

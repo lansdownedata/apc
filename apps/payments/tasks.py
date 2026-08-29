@@ -1,9 +1,15 @@
+import logging
+
+from django.conf import settings
 from django.utils import timezone
 
+from apps.notifications.email import send_html_email
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation
 
-from . import ledger, services
+from . import ledger, reports, services
 from .models import PaymentPlan
+
+logger = logging.getLogger(__name__)
 
 
 def charge_due_balances() -> int:
@@ -46,12 +52,6 @@ def recognize_due_revenue() -> int:
 def send_unpaid_deposit_report(today=None) -> int:
     """Email the office every booked order with an unpaid deposit and a trip inside the
     balance window. Nothing goes out on an empty day. Returns the number of orders listed."""
-    from django.conf import settings
-
-    from apps.notifications.email import send_html_email
-
-    from . import reports
-
     rows = reports.unpaid_deposit_rows(today=today)
     if not rows:
         return 0
@@ -65,6 +65,15 @@ def send_unpaid_deposit_report(today=None) -> int:
     }
     plural = "s" if count != 1 else ""
     subject = f"Unpaid deposits — {count} order{plural} with a trip inside {window} days"
+    if not settings.DEPOSIT_REPORT_EMAILS:
+        logger.warning(
+            "deposit report: %d order(s) listed but DEPOSIT_REPORT_EMAILS is empty — nothing sent",
+            count,
+        )
     for recipient in settings.DEPOSIT_REPORT_EMAILS:
-        send_html_email(to=recipient, subject=subject, template="deposit_report", context=context)
+        sent = send_html_email(
+            to=recipient, subject=subject, template="deposit_report", context=context
+        )
+        if not sent:
+            logger.warning("deposit report: delivery to %s failed", recipient)
     return count

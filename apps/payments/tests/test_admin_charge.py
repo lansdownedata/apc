@@ -58,6 +58,32 @@ def test_record_admin_payment_posts_ledger_and_books_quoted():
     assert charge.status == Charge.Status.SUCCEEDED
 
 
+def test_record_admin_payment_books_a_new_lead_too():
+    plan = _plan(lead=LeadFactory(status=Lead.Status.NEW))
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("400.00"))
+    charge.stripe_payment_intent_id = "pi_admin_new"
+    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    intent = MagicMock(
+        id="pi_admin_new",
+        status="succeeded",
+        payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
+    )
+    with (
+        patch.object(services.stripe.PaymentIntent, "retrieve", return_value=intent),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        services.record_admin_payment(plan, "pi_admin_new")
+    plan.refresh_from_db()
+    plan.lead.refresh_from_db()
+    bals = ledger.order_balances(plan.lead)
+    assert bals["collected"] == Decimal("400.00")
+    assert plan.lead.status == Lead.Status.BOOKED
+    assert plan.stripe_payment_method_id == "pm_1"
+    assert plan.card_last4 == "4242"
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.SUCCEEDED
+
+
 def test_record_admin_payment_does_not_rebook_already_booked():
     plan = _plan(lead=LeadFactory(status=Lead.Status.BOOKED))
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("400.00"))
