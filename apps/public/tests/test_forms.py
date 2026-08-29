@@ -200,3 +200,19 @@ def test_stops_json_rejects_a_bad_flight_number(iad):
     )
     assert not form.is_valid()
     assert "stops_json" in form.errors
+
+
+def test_a_garbled_flight_without_an_airport_is_dropped_not_rejected(db):
+    """A stale value can sit in the hidden flight box after the address was retyped; the
+    flight means nothing without an airport, so it is dropped instead of blocking the form."""
+    form = BookingRequestForm(_base(pickup="Home", pickup_flight="ABC", dropoff="Office"))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][0]["flight_number"] == ""
+
+
+def test_stops_json_garbled_flight_without_an_airport_is_dropped(db):
+    form = BookingRequestForm(
+        _base(stops_json=json.dumps([{"address": "Somewhere", "flight": "x"}]))
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][0]["flight_number"] == ""

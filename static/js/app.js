@@ -1372,7 +1372,12 @@ function addressAutocomplete(opts = {}) {
     _raw: [],
     _ctl: null,
     search() {
-      this.airport = ""; // a fresh keystroke means the value is no longer the picked airport
+      // Not an airport any more → the flight row hides; empty it so a stale value
+      // never reaches the server under a field the visitor can't see.
+      this.airport = "";
+      const root = this.$root || this.$el;
+      const flight = root?.querySelector('input[name$="_flight"]'); if (flight) flight.value = "";
+      const sel = root?.querySelector('select[name$="_airline"]'); if (sel?.tomselect) sel.tomselect.clear(true);
       const q = this.value.trim();
       this._ctl?.abort();
       if (!q) { this.results = []; this._raw = []; this.open = false; this.loading = false; return; }
@@ -1534,7 +1539,11 @@ function bookingStops(opts = {}) {
     },
     search(i) {
       const s = this.stops[i];
-      s.airport = ""; // a fresh keystroke means the value is no longer the picked airport
+      // Not an airport any more → the flight row hides; empty it so a stale value
+      // never reaches the server under a row the visitor can't see.
+      s.airport = ""; s.airline = ""; s.flight = "";
+      const rowSelect = document.querySelectorAll('[x-show="stop.airport"] select')[i];
+      if (rowSelect?.tomselect) rowSelect.tomselect.clear(true);
       const q = (s.address || "").trim();
       if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
       geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
