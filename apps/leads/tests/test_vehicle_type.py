@@ -6,6 +6,8 @@ names outside that seed list so they exercise creation rather than silently fetc
 seeded row, and scope their queries so seeded rows don't leak into assertions.
 """
 
+from decimal import Decimal
+
 import pytest
 
 from apps.leads.factories import VehicleTypeFactory
@@ -68,8 +70,6 @@ def test_reservation_fk_survives_the_rename():
 
 
 def test_vehicle_type_has_rate_card_fields():
-    from decimal import Decimal
-
     vt = VehicleTypeFactory(
         name="Rate Card SUV",
         rate=Decimal("125.00"),
@@ -81,6 +81,21 @@ def test_vehicle_type_has_rate_card_fields():
     assert vt.transfer_min_hours == Decimal("2")
 
 
-def test_vehicle_type_rate_card_defaults_to_zero():
-    vt = VehicleTypeFactory(name="Zero Card")
-    assert vt.rate == 0 and vt.hourly_min_hours == 0 and vt.transfer_min_hours == 0
+def test_vehicle_type_rate_card_defaults():
+    """Hourly minimum 0 = 'override required'; transfer minimum 1 = flat rate × 1."""
+    vt = VehicleType(name="Zero Card")  # unsaved: we are asserting the field defaults
+    assert vt.rate == 0 and vt.hourly_min_hours == 0
+    assert vt.transfer_min_hours == Decimal("1")
+
+
+def test_migration_backfills_a_zero_transfer_minimum_to_one():
+    import importlib
+
+    zero = VehicleTypeFactory(name="Legacy Zero", transfer_min_hours=Decimal("0"))
+    two = VehicleTypeFactory(name="Legacy Two", transfer_min_hours=Decimal("2"))
+    module = importlib.import_module("apps.leads.migrations.0007_transfer_min_hours_default_one")
+    module.backfill_transfer_minimum(VehicleType)
+    zero.refresh_from_db()
+    two.refresh_from_db()
+    assert zero.transfer_min_hours == Decimal("1")
+    assert two.transfer_min_hours == Decimal("2")
