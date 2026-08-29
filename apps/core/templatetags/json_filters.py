@@ -1,6 +1,7 @@
 import json
 
 from django import template
+from django.core.serializers.json import DjangoJSONEncoder
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
 
@@ -17,3 +18,11 @@ def json_string(value):
     when it reads the attribute.
     """
     return mark_safe(escape(json.dumps("" if value is None else str(value))))
+
+
+@register.filter
+def json_attr(value):
+    """Encode any JSON-serialisable value (dict, list, scalar) for a double-quoted HTML
+    attribute — an Alpine `x-data="flightStatus({ payload: {{ p|json_attr }} })"` object.
+    Same escaping contract as `json_string`; dates/datetimes go through DjangoJSONEncoder."""
+    return mark_safe(escape(json.dumps(value, cls=DjangoJSONEncoder)))
