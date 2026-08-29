@@ -564,8 +564,8 @@ function quoteWorkspace(opts = {}) {
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
-          { address: "", note: "", name: "", time: "", lat: "", lng: "" },
-          { address: "", note: "", name: "", time: "", lat: "", lng: "" },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" },
         ],
       };
     },
@@ -624,7 +624,7 @@ function quoteWorkspace(opts = {}) {
       this.draft.tripType = t;
       this.applyVehicleRateCard();
     },
-    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "" }); },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
     /* The first and last stop happen at the trip's own times — shown against the row
@@ -661,6 +661,9 @@ function quoteWorkspace(opts = {}) {
       const s = this.draft.stops[i];
       s.address = formatAddressLine(r);
       s.lat = r.latitude || ""; s.lng = r.longitude || "";
+      // Picked from the airport directory → the flight row appears for this stop.
+      s.airport = r.is_airport ? String(r.airport_id || "") : "";
+      s.airportCode = r.is_airport ? (r.airport_code || "") : "";
       this._stopResults[i] = { open: false, list: [], active: -1 };
     },
     closeStopRow(i) { this._stopResults[i] = { open: false, list: [], active: -1 }; },
@@ -1074,6 +1077,17 @@ function time12(hhmm) {
   return (h % 12 || 12) + ":" + String(m).padStart(2, "0") + " " + (h >= 12 ? "PM" : "AM");
 }
 window.time12 = time12;
+
+/* Flight verification is not integrated yet. The button exists so the workflow is
+   visible (spec 2026-08-28); this is all it does until a tracking service is wired up. */
+function flightVerifyComingSoon() {
+  Alpine.store("toast").push({
+    type: "info",
+    title: "Flight verification — coming soon",
+    message: "APC isn't connected to a flight-tracking service yet.",
+  });
+}
+window.flightVerifyComingSoon = flightVerifyComingSoon;
 
 /** YYYY-MM-DD from a Date's LOCAL components. `toISOString()` gives the UTC date,
  *  which is tomorrow for any evening pickup in the US. */

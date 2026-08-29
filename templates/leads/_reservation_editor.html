@@ -140,6 +140,9 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
                     {# the endpoints happen at the trip's own times — echoed, never asked for twice #}
                     <span x-show="stopTime(i, draft.stops.length)" class="text-[10.5px] text-muted num"
                           x-text="stopTime(i, draft.stops.length)"></span>
+                    <span x-show="s.airportCode" x-cloak class="text-[10.5px] text-goldd num flex items-center gap-0.5">
+                      <i class="ti ti-plane text-[12px]"></i><span x-text="s.airportCode"></span>
+                    </span>
                   </div>
                   <div class="flex items-center gap-1.5">
                     <div class="sa-search flex-1" @keydown.escape="closeStopRow(i)"
@@ -148,6 +151,7 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
                       <input x-model="s.address"
                         :placeholder="i === 0 ? 'Pickup address' : (i === draft.stops.length - 1 ? 'Drop-off address' : 'Stop address')"
                         autocomplete="off" data-1p-ignore data-lpignore="true"
+                        @input="s.airport = ''; s.airportCode = ''"
                         @input.debounce.300ms="searchStop(i)"
                         @focus="stopRow(i).list.length && (stopRow(i).open = true)"
                         class="field text-[12.5px]">
@@ -174,6 +178,27 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
                         x-model="s.time" x-init="initFlatpickr($el)" x-effect="fpSync($el, s.time)"
                         class="field text-[12.5px]">
                     </div>
+                  </div>
+                  {% comment %}
+                  Flight row — only for a stop picked from the airport results (s.airport is
+                  the Airport pk; typing in the address clears it). The airline select is a
+                  Tom Select inside this x-for, so each row enhances its own element; the
+                  generated id is dropped first so rows don't share one. x-effect keeps the
+                  picker in step with the draft when a saved stop is opened for editing.
+                  {% endcomment %}
+                  <div x-show="s.airport" x-cloak class="mt-1.5 flex items-center gap-1.5">
+                    <div class="flex-1 min-w-0 ts-compact"
+                         x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"
+                         x-effect="const el = $el.querySelector('select'); if (el && el.tomselect && el.tomselect.getValue() !== String(s.airline || '')) el.tomselect.setValue(String(s.airline || ''), true)"
+                         @change="s.airline = $event.target.value">
+                      {% include "components/searchable_select.html" with name="airline" field_id="f-res-airline" options=airline_options empty_label="Airline" %}
+                    </div>
+                    <input x-model="s.flight" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                      placeholder="Flight #" class="field w-[110px] shrink-0 text-[12.5px] num">
+                    <button type="button" @click="flightVerifyComingSoon()"
+                      class="btn-ghost shrink-0 text-[12px] font-medium text-muted hover:text-ink px-2.5 py-2 rounded-lg ring-1 ring-line">
+                      Verify
+                    </button>
                   </div>
                   <input x-show="i !== 0 && i !== draft.stops.length - 1" x-model="s.note"
                     placeholder="Note (e.g. 20-min photo stop)"
