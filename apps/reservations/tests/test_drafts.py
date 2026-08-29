@@ -406,6 +406,17 @@ def test_airline_and_flight_are_dropped_without_an_airport(united):
     assert stop.airport_id is None and stop.airline_id is None and stop.flight_number == ""
 
 
+def test_a_garbled_flight_without_an_airport_is_dropped_not_rejected(united):
+    """A stale client payload can carry a non-digit flight string after the airport was
+    cleared; the flight is meaningless there, so it is dropped rather than 400-ing."""
+    payload = _payload(
+        stops=[{"address": "Home", "airline": united.pk, "flight": "ABC"}, {"address": "B"}]
+    )
+    res = save_reservation_from_draft(LeadFactory(), payload)
+    stop = res.ordered_stops.first()
+    assert stop.airline_id is None and stop.flight_number == ""
+
+
 def test_parse_rejects_a_non_digit_flight_number(iad, united):
     with pytest.raises(DraftError, match="digits"):
         drafts.parse_draft(_flight_payload(iad, united, flight="UA123"))

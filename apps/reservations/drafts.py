@@ -147,7 +147,11 @@ def parse_draft(payload: dict) -> dict:
                 "longitude": _coord(s.get("lng"), 180),
                 "airport_id": _pk(s.get("airport")),
                 "airline_id": _pk(s.get("airline")),
-                "flight_number": _flight_number(s.get("flight")),
+                # No airport → the flight is dropped anyway, so a stale/garbled value
+                # must not 400 the save (spec: "no airport → airline and flight are dropped").
+                "flight_number": (
+                    _flight_number(s.get("flight")) if _pk(s.get("airport")) is not None else ""
+                ),
             }
             for s in raw_stops
         ],
