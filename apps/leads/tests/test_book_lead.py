@@ -125,14 +125,58 @@ def test_book_lead_from_new_creates_an_unsent_deposit_plan():
     assert plan.quote_total == Decimal("500.00")
 
 
-def test_lead_detail_shows_mark_booked_for_quoted(logged_in_client):
-    lead = _quoted_lead()
-    resp = logged_in_client.get(reverse("lead_detail", args=[lead.pk]))
-    assert resp.status_code == 200
-    body = resp.content.decode()
-    assert "Mark booked" in body
-    assert reverse("lead_mark_booked", args=[lead.pk]) in body
-    assert "Remaining" in body
+def _book_button(html: str) -> str:
+    """The Book now button's tag + attributes. Found from its icon+label, not a regex over
+    the tag: the @click attribute holds an arrow function, so `>` appears inside it."""
+    end = html.find("</i> Book now")
+    assert end != -1, "no Book now button"
+    return html[html.rfind("<button", 0, end) : end]
+
+
+def test_lead_detail_shows_book_now_for_new_and_quoted(logged_in_client):
+    for status in (Lead.Status.NEW, Lead.Status.QUOTED):
+        lead = _quoted_lead(status=status)
+        body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+        assert "Mark booked" not in body
+        assert reverse("lead_mark_booked", args=[lead.pk]) in body
+        assert 'title="Add a trip first"' not in _book_button(body)
+
+
+def test_lead_detail_disables_book_now_without_trips(logged_in_client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert 'disabled title="Add a trip first"' in _book_button(body)
+
+
+def test_lead_detail_hides_book_now_once_booked(logged_in_client):
+    lead = _quoted_lead(status=Lead.Status.BOOKED)
+    body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "Book now" not in body
+
+
+def test_send_link_label_follows_the_deposit_state(logged_in_client):
+    lead = _quoted_lead(status=Lead.Status.BOOKED)
+    plan = PaymentPlan.objects.create(lead=lead, quote_total=Decimal("500.00"))
+    body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "Send payment link" in body and "Resend payment link" not in body
+
+    plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
+    plan.save(update_fields=["deposit_status"])
+    body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "Resend payment link" in body
+
+
+def test_booking_banner_shows_only_with_the_flag_on_a_new_lead(logged_in_client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    url = reverse("lead_detail", args=[lead.pk])
+    assert "Booking in progress" in logged_in_client.get(url, {"booking": "1"}).content.decode()
+    assert "Booking in progress" not in logged_in_client.get(url).content.decode()
+    booked = _quoted_lead(status=Lead.Status.BOOKED)
+    booked_url = reverse("lead_detail", args=[booked.pk])
+    assert (
+        "Booking in progress"
+        not in logged_in_client.get(booked_url, {"booking": "1"}).content.decode()
+    )
 
 
 def test_lead_detail_take_payment_replaces_offline_for_admins(client):

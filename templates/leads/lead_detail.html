@@ -33,6 +33,14 @@
     <i class="ti ti-arrow-left text-[15px]"></i> Leads &amp; Quotes
   </a>
 
+  {% if booking_intent and lead.status == 'new' %}
+  <div class="flex items-center gap-2.5 rounded-xl bg-goldl ring-1 ring-gold/25 px-4 py-3 mb-4 text-[13px] text-goldd">
+    <i class="ti ti-calendar-plus text-[17px]"></i>
+    <span class="font-medium">Booking in progress</span>
+    <span class="text-ink/70">— add the trips, then <span class="font-semibold">Book now</span>.</span>
+  </div>
+  {% endif %}
+
   <!-- header -->
   <div class="card p-5 sm:p-6 mb-4">
     <div class="flex flex-wrap items-start gap-4">
@@ -107,23 +115,28 @@
       <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
               @click="openSendQuoteModal()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
         <i class="ti ti-send text-[15px]"></i>
-        {% if lead.status == 'new' %}Send quote{% else %}Resend payment link{% endif %}
+        {% if lead.status == 'new' %}Send quote{% elif lead.status == 'booked' and payment.deposit_status == 'unsent' %}Send payment link{% else %}Resend payment link{% endif %}
       </button>
       {% endif %}
 
-      {% if lead.status == 'quoted' %}
+      {% if lead.status == 'new' or lead.status == 'quoted' %}
       <form id="form-mark-booked" method="post" action="{% url 'lead_mark_booked' lead.pk %}" class="hidden">
         {% csrf_token %}
       </form>
-      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50"
+      {% comment %}
+      Book now — no quote email, no payment. Disabled until the order has a trip: booking
+      an empty lead would snapshot a $0 plan (the server refuses it too).
+      {% endcomment %}
+      <button class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-700 rounded-lg px-3.5 py-2 ring-1 ring-emerald-200 bg-surface hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              {% if not reservations %}disabled title="Add a trip first"{% endif %}
               @click="$store.modal.confirm({
-                title: 'Mark this quote as booked?',
+                title: 'Book this order without a payment?',
                 variant: 'gold',
-                confirmText: 'Mark booked',
-                message: 'This books the order without collecting a payment. You can take a card or resend the payment link afterwards.',
+                confirmText: 'Book now',
+                message: 'The 50% deposit stays due — the customer can pay through the link any time, or you can take a card here.',
                 onConfirm: () => document.getElementById('form-mark-booked').submit()
               })">
-        <i class="ti ti-circle-check text-[15px]"></i> Mark booked
+        <i class="ti ti-calendar-check text-[15px]"></i> Book now
       </button>
       {% endif %}
 
