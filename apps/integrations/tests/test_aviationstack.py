@@ -347,6 +347,20 @@ def test_live_codeshare_operated_by():
     assert (r.operated_by_iata, r.operated_by_name) == ("UA", "United Airlines")
 
 
+def test_live_several_matches_prefer_closest_to_preferred_time_in_local_time():
+    """`preferred_time` is always airport-local wall-clock (it comes from the stop's naive
+    pickup/scheduled time). IAD is UTC-04:00 in September, so an implementation that compares
+    preferred_time against the candidates' UTC time-of-day (instead of their local
+    time-of-day) picks the wrong flight here: 09:00 EDT (13:00 UTC) is numerically closer to
+    the raw 09:10 target than 09:10 EDT (13:10 UTC) is, even though 09:10 is the exact match."""
+    early = _live_entry(arrival={"iata": "IAD", "scheduled": "2026-09-02T09:00:00-04:00"})
+    exact = _live_entry(arrival={"iata": "IAD", "scheduled": "2026-09-02T09:10:00-04:00"})
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [early, exact]})
+        r = av.live_flight(**LIVE_KW, preferred_time=time(9, 10))
+    assert r.scheduled_at == datetime(2026, 9, 2, 13, 10, tzinfo=UTC)  # 09:10 EDT, the exact match
+
+
 def test_live_no_entry_at_our_airport_is_not_found():
     elsewhere = _live_entry(arrival={"iata": "EWR", "scheduled": "2026-09-02T20:00:00+00:00"})
     with patch.object(av, "requests") as req:
