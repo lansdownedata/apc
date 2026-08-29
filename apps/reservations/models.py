@@ -145,7 +145,8 @@ class Reservation(TimeStampedModel):
     # --- routing ---
     @property
     def ordered_stops(self):
-        return self.stops.order_by("sequence")
+        # Joined so `flight_label` never costs a query in a route loop.
+        return self.stops.select_related("airline", "airport").order_by("sequence")
 
     @property
     def pickup(self):
@@ -184,9 +185,35 @@ class Stop(TimeStampedModel):
     scheduled_time = models.TimeField(null=True, blank=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    # Flight info — meaningful only when the address was picked from the airport
+    # directory (spec 2026-08-28). Airline is PROTECT: retire a carrier, never delete it.
+    airport = models.ForeignKey(
+        "addresses.Airport", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    airline = models.ForeignKey(
+        "addresses.Airline", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    flight_number = models.CharField(max_length=6, blank=True)  # digits only
 
     class Meta:
         ordering = ["sequence"]
+
+    @property
+    def flight_label(self) -> str:
+        """Staff rendering, the same on every surface: "UA 123" · "United Airlines" ·
+        "Flight 123" · ""."""
+        if self.airline_id and self.flight_number:
+            return f"{self.airline.iata} {self.flight_number}"
+        if self.airline_id:
+            return self.airline.name
+        return f"Flight {self.flight_number}" if self.flight_number else ""
+
+    @property
+    def flight_label_long(self) -> str:
+        """Customer rendering (quote page): the carrier's name instead of its code."""
+        if self.airline_id and self.flight_number:
+            return f"{self.airline.name} {self.flight_number}"
+        return self.flight_label
 
     def __str__(self) -> str:
         return self.name or self.address or f"Stop {self.sequence}"

@@ -225,7 +225,7 @@ def test_inactive_airports_excluded(dca):
 def test_payload_keys_match_decompose_exactly(dca):
     locationiq_keys = set(_decompose({"address": {}}))
     payload_keys = set(search_airports("DCA")[0])
-    assert payload_keys == locationiq_keys | {"is_airport", "airport_code"}
+    assert payload_keys == locationiq_keys | {"is_airport", "airport_code", "airport_id"}
 
 
 def test_payload_values(dca):
@@ -265,3 +265,8 @@ def test_coordinates_always_come_from_the_row_not_enrichment(dca):
     Airport.objects.filter(pk=dca.pk).update(display_name="somewhere else entirely")
     r = search_airports("DCA")[0]
     assert float(r["latitude"]) == pytest.approx(38.852083)
+
+
+def test_results_carry_the_airport_pk(dca):
+    """The stop editors store this pk on the stop — it is what makes a stop 'an airport'."""
+    assert search_airports("DCA")[0]["airport_id"] == dca.pk
