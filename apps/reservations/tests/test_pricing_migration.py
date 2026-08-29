@@ -15,6 +15,6 @@ def test_transfer_total_preserved_via_rate_times_one():
     assert r.line_total == Decimal("240.00")
 
 
-def test_hourly_total_matches_old_billed_hours_times_rate():
+def test_hourly_total_uses_the_override_when_one_is_stored():
     r = HourlyReservationFactory(rate=Decimal("295.00"), hours=Decimal("3"), min_hours=Decimal("4"))
-    assert r.line_total == Decimal("1180.00")  # max(3,4) * 295
+    assert r.line_total == Decimal("885.00")  # override 3 replaces the 4-hr minimum

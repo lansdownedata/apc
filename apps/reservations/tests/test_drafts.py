@@ -60,10 +60,10 @@ def test_save_transfer_creates_reservation_with_stops():
 def test_save_hourly_applies_minimum():
     lead = LeadFactory()
     res = drafts.save_reservation_from_draft(
-        lead, _payload(tripType="hourly", hours=3, rate=295, minHours=5)
+        lead, _payload(tripType="hourly", hours=0, rate=295, minHours=5)
     )
     assert res.trip_type == Reservation.TripType.HOURLY
-    assert res.line_total == Decimal("1475.00")  # max(3, 5) * 295
+    assert res.line_total == Decimal("1475.00")  # no override, so minimum 5 applies
 
 
 def test_save_multi_stop_orders_stops():

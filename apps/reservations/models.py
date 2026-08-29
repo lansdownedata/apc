@@ -114,11 +114,17 @@ class Reservation(TimeStampedModel):
 
     @property
     def billed_hours(self) -> Decimal:
-        return max(Decimal(self.hours or 0), Decimal(self.min_hours or 0))
+        """Override hours when the agent set any, else the vehicle's rate-card minimum.
+
+        The override *replaces* the minimum — it may go below it (spec 2026-08-28).
+        """
+        override = Decimal(self.hours or 0)
+        return override if override > 0 else Decimal(self.min_hours or 0)
 
     @property
     def min_applied(self) -> bool:
-        return Decimal(self.hours or 0) < Decimal(self.min_hours or 0)
+        """True when no override is set and the rate-card minimum is what's billed."""
+        return Decimal(self.hours or 0) <= 0 < Decimal(self.min_hours or 0)
 
     @property
     def subtotal(self) -> Decimal:

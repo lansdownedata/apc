@@ -26,11 +26,33 @@ def test_hourly_line_total_is_hours_times_rate():
     assert res.line_total == Decimal("1200.00")
 
 
-def test_hourly_applies_minimum_when_below():
-    res = HourlyReservationFactory(hours=Decimal("2"), rate=Decimal("300"), min_hours=Decimal("4"))
+# --- override hours vs rate-card minimum (spec 2026-08-28) ----------------
+def test_no_override_bills_the_rate_card_minimum():
+    res = HourlyReservationFactory(hours=Decimal("0"), rate=Decimal("300"), min_hours=Decimal("4"))
     assert res.billed_hours == Decimal("4")
     assert res.min_applied is True
     assert res.line_total == Decimal("1200.00")
+
+
+def test_override_replaces_the_minimum_even_when_lower():
+    res = HourlyReservationFactory(hours=Decimal("2"), rate=Decimal("300"), min_hours=Decimal("4"))
+    assert res.billed_hours == Decimal("2")
+    assert res.min_applied is False
+    assert res.line_total == Decimal("600.00")
+
+
+def test_no_override_and_no_minimum_bills_nothing():
+    res = HourlyReservationFactory(hours=Decimal("0"), rate=Decimal("300"), min_hours=Decimal("0"))
+    assert res.billed_hours == Decimal("0")
+    assert res.min_applied is False
+    assert res.line_total == Decimal("0.00")
+
+
+def test_transfer_is_rate_times_its_minimum_by_default():
+    res = TransferReservationFactory(
+        rate=Decimal("240"), hours=Decimal("0"), min_hours=Decimal("1")
+    )
+    assert res.line_total == Decimal("240.00")
 
 
 # --- routing ---------------------------------------------------------------
@@ -107,11 +129,11 @@ def test_line_total_is_rate_times_billed_hours_plus_gratuity():
     assert r.line_total == Decimal("600.00")
 
 
-def test_hourly_minimum_floors_billed_hours():
+def test_hourly_minimum_applies_only_without_an_override():
     r = ReservationFactory(
         trip_type="hourly",
         rate=Decimal("100.00"),
-        hours=Decimal("2"),
+        hours=Decimal("0"),
         min_hours=Decimal("4"),
     )
     assert r.billed_hours == Decimal("4") and r.subtotal == Decimal("400.00")

@@ -82,7 +82,7 @@ def test_hourly_rate_lookup_payload_has_duration_no_dropoff():
         trip_type=Reservation.TripType.HOURLY, hours=Decimal("3"), min_hours=Decimal("4")
     )
     payload = la_sync.build_rate_lookup_payload(res)
-    assert payload["scheduled_duration_in_minutes"] == 240  # billed_hours = max(hours, min)
+    assert payload["scheduled_duration_in_minutes"] == 180  # billed_hours = override 3
     assert "dropoff" not in payload
 
 

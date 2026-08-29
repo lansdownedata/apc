@@ -52,7 +52,7 @@ def test_save_creates_transfer(client):
 def test_save_creates_hourly_with_minimum(client):
     lead = LeadFactory()
     client.force_login(UserFactory())
-    _post(client, _draft(lead, tripType="hourly", rate=295, hours=3, minHours=5))
+    _post(client, _draft(lead, tripType="hourly", rate=295, hours=0, minHours=5))
     assert lead.reservations.get().line_total == Decimal("1475.00")
 
 
