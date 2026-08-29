@@ -1,7 +1,8 @@
 {% comment %}
-  New-lead modal — included in lead_list.html.
-  Requires the parent x-data scope to have `newLeadOpen` (Boolean).
-  Post to `lead_create`; normal form submit — no AJAX.
+  Contact modal — creates a lead (intent "lead") or starts a booking (intent "booking").
+  Included by lead_list.html and orders/order_list.html. The parent x-data scope must
+  provide `newLeadOpen` (Boolean) and `newLeadIntent` ('lead' | 'booking').
+  Posts to `lead_create`; normal form submit — no AJAX.
   Tom Select fields must be in DOM on page load (x-show, not x-if).
 {% endcomment %}
 <div x-show="newLeadOpen" x-cloak
@@ -18,9 +19,10 @@
     <!-- header -->
     <div class="flex items-center gap-3 px-6 py-5 border-b border-line bg-surface2">
       <span class="w-9 h-9 rounded-xl grid place-items-center bg-goldl text-goldd shrink-0">
-        <i class="ti ti-user-plus text-[18px]"></i>
+        <i class="ti text-[18px]" :class="newLeadIntent === 'booking' ? 'ti-calendar-plus' : 'ti-user-plus'"></i>
       </span>
-      <h2 class="font-display text-[19px] font-semibold text-ink tracking-tight">New lead</h2>
+      <h2 class="font-display text-[19px] font-semibold text-ink tracking-tight"
+          x-text="newLeadIntent === 'booking' ? 'New booking' : 'New lead'"></h2>
       <button type="button" class="ml-auto text-muted hover:text-ink transition-colors"
               @click="newLeadOpen = false" aria-label="Close">
         <i class="ti ti-x text-[18px]"></i>
@@ -30,6 +32,11 @@
     <!-- form -->
     <form method="post" action="{% url 'lead_create' %}" class="p-6 space-y-4">
       {% csrf_token %}
+      <input type="hidden" name="intent" :value="newLeadIntent">
+
+      <p x-show="newLeadIntent === 'booking'" x-cloak class="text-[12.5px] text-muted -mt-1">
+        Creates the customer and opens the workspace — add the trips there, then <span class="font-semibold text-ink">Book now</span>. No quote is emailed.
+      </p>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <!-- name -->
@@ -83,7 +90,8 @@
         </button>
         <button type="submit"
                 class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2">
-          <i class="ti ti-plus text-[15px]"></i> Create lead
+          <i class="ti ti-plus text-[15px]"></i>
+          <span x-text="newLeadIntent === 'booking' ? 'Create booking' : 'Create lead'"></span>
         </button>
       </div>
     </form>

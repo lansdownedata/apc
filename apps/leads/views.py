@@ -20,7 +20,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.accounts.models import User
 from apps.accounts.permissions import payment_access_required
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
@@ -157,10 +156,7 @@ def lead_list(request):
         "channel_filter": channel or "",
         "q": query,
         "channels": Channel.choices,
-        "agent_options": [
-            (u.pk, u.get_full_name() or u.username)
-            for u in User.objects.order_by("first_name", "username")
-        ],
+        "agent_options": services.agent_options(),
     }
     return render(request, "leads/lead_list.html", context)
 
@@ -258,10 +254,7 @@ def lead_detail(request, pk):
         ),
         "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
         "channels": Channel.choices,
-        "agents": [
-            (u.pk, u.get_full_name() or u.username)
-            for u in User.objects.order_by("first_name", "username")
-        ],
+        "agents": services.agent_options(),
         "reservations_json": [_reservation_draft(r) for r in lead.reservations.all()],
         "vehicles_json": [
             {
@@ -575,5 +568,7 @@ def lead_create(request) -> HttpResponse:
         assigned_agent=cd["agent"],
         status=Lead.Status.NEW,
     )
+    if cd.get("intent") == "booking":
+        return redirect(f"{reverse('lead_detail', args=[lead.pk])}?booking=1")
     touchpoints.schedule_lead_created(lead)
     return redirect("lead_detail", pk=lead.pk)

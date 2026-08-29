@@ -10,7 +10,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.core.choices import Channel
 from apps.dispatch import services as dispatch_services
+from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
@@ -64,6 +66,8 @@ def orders_list(request):
             "nav": "orders",
             "page_title": "Orders",
             "summary": summary,
+            "channels": Channel.choices,
+            "agent_options": lead_services.agent_options(),
         },
     )
 

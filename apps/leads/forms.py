@@ -14,6 +14,9 @@ class NewLeadForm(forms.Form):
     email = forms.EmailField(required=False)
     channel = forms.ChoiceField(choices=Channel.choices, initial=Channel.WEBSITE)
     agent = forms.ModelChoiceField(queryset=User.objects.all(), required=False)
+    # "booking" = the New booking button: skip the website-worded welcome touch-points and
+    # land on the workspace flagged as a booking in progress (spec 2026-08-29 §5).
+    intent = forms.ChoiceField(choices=[("lead", "lead"), ("booking", "booking")], required=False)
 
     def clean_phone(self) -> str:
         """Store E.164 so the contact matches Podium's inbound identifier."""
