@@ -130,7 +130,7 @@ def test_editor_locks_min_hours_and_frees_override_hours(page):
     html = page(LeadFactory())
     assert "readonly" in _editor_input(html, 'x-model.number="draft.minHours"')
     assert "Override hours" in html
-    assert 'x-model.number="draft.hours"' not in html  # replaced by the blank-for-0 binding
+    assert 'x-model.number="draft.hours"' in html
     assert ':readonly="draft.tripType' not in html
 
 

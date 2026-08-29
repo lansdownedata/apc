@@ -561,7 +561,7 @@ function quoteWorkspace(opts = {}) {
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
         pax: 1,
-        rate: v ? v.rate : 0, hours: 0, minHours: v ? v.transferMin : 0,
+        rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "" },
@@ -594,6 +594,7 @@ function quoteWorkspace(opts = {}) {
       const r = this.reservations.find((x) => x.id === id);
       if (!r) return;
       this.draft = JSON.parse(JSON.stringify(r));
+      if (!(Number(this.draft.hours) > 0)) this.draft.hours = "";  // a stored 0 is "no override" — show an empty box, not "0"
       this.draftIsNew = false;
       this.editorOpen = true;
       // Older rows can predate the derived drop-off — fill it so the hourly
