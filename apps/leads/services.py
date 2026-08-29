@@ -239,13 +239,13 @@ def book_lead(lead: Lead) -> Lead:
     Same side-effects as the Stripe deposit webhook minus the charge: status,
     pending touch-points, a PaymentPlan snapshot if missing, and a best-effort
     LimoAnywhere / Zapier push. Idempotent when already Booked. Lost leads refuse.
+    A lead with no trips is refused by the manual endpoint; the deposit webhook and
+    staff card charge book regardless, since money has arrived.
     """
     from apps.integrations import la_sync
 
     if lead.status == lead.Status.LOST:
         raise BookLeadError("Lost leads cannot be booked.")
-    if not lead.reservations.exists():
-        raise BookLeadError("Add at least one trip before booking.")
 
     already_booked = lead.status == lead.Status.BOOKED
     if not already_booked:

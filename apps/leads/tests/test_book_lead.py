@@ -116,14 +116,6 @@ def test_mark_booked_requires_login(client):
     assert "/login" in resp.url
 
 
-def test_book_lead_refuses_a_lead_with_no_trips():
-    lead = LeadFactory(status=Lead.Status.QUOTED)
-    with pytest.raises(services.BookLeadError, match="at least one trip"):
-        services.book_lead(lead)
-    lead.refresh_from_db()
-    assert lead.status == Lead.Status.QUOTED
-
-
 def test_book_lead_from_new_creates_an_unsent_deposit_plan():
     lead = _quoted_lead(status=Lead.Status.NEW)
     with patch("apps.integrations.la_sync.push_lead_bookings"):
