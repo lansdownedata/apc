@@ -141,8 +141,16 @@ def test_booking_payload_carries_pickup_and_dropoff_flight_info():
     _with_flight(res, 0, "123")
     _with_flight(res, 1, "456")
     payload = la_sync.build_booking_payload(res, search_result_id=1)
-    assert payload["pickup_flight_info"] == {"airline_code": "UA", "flight_number": "123"}
-    assert payload["dropoff_flight_info"] == {"airline_code": "UA", "flight_number": "456"}
+    assert payload["pickup_flight_info"] == {
+        "airport_code": "T0",
+        "airline_code": "UA",
+        "flight_number": "123",
+    }
+    assert payload["dropoff_flight_info"] == {
+        "airport_code": "T1",
+        "airline_code": "UA",
+        "flight_number": "456",
+    }
 
 
 def test_booking_payload_omits_flight_info_keys_without_a_flight():

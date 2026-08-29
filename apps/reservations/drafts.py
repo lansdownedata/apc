@@ -81,11 +81,18 @@ def _flight_number(value) -> str:
     return text
 
 
-def _validate_flight_info(stops: list[dict]) -> None:
+def _validate_flight_info(
+    stops: list[dict], grandfathered_airline_ids: frozenset[int] = frozenset()
+) -> None:
     """Airline / flight only mean anything at an airport, and both the airport and the
     airline must be real rows — the client only ever sends what search / the picker
     handed it, so anything else is a stale or forged payload. Two queries, not two per
     stop.
+
+    A carrier retired (`is_active=False`) after a stop was booked stays on that stop
+    across unrelated edits (spec §3.1): its pk is passed in via
+    `grandfathered_airline_ids` and skips the active-airline check. New choices still
+    come from the active list only.
     """
     from apps.addresses.models import Airline, Airport
 
@@ -98,15 +105,16 @@ def _validate_flight_info(stops: list[dict]) -> None:
         if airport_ids - known:
             raise DraftError("unknown airport")
     airline_ids = {s["airline_id"] for s in stops if s["airline_id"] is not None}
-    if airline_ids:
+    unknown = airline_ids - grandfathered_airline_ids
+    if unknown:
         active = set(
-            Airline.objects.filter(pk__in=airline_ids, is_active=True).values_list("pk", flat=True)
+            Airline.objects.filter(pk__in=unknown, is_active=True).values_list("pk", flat=True)
         )
-        if airline_ids - active:
+        if unknown - active:
             raise DraftError("choose an airline from the list")
 
 
-def parse_draft(payload: dict) -> dict:
+def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = frozenset()) -> dict:
     """Validate + normalise a draft into model kwargs (+ a `stops` list)."""
     trip_type = payload.get("tripType") or payload.get("trip_type")
     if trip_type not in (Reservation.TripType.TRANSFER, Reservation.TripType.HOURLY):
@@ -156,7 +164,7 @@ def parse_draft(payload: dict) -> dict:
             for s in raw_stops
         ],
     }
-    _validate_flight_info(data["stops"])
+    _validate_flight_info(data["stops"], grandfathered_airline_ids)
     _derive_dropoff_and_hours(data, trip_type)
     _derive_endpoint_stop_times(data)
     return data
@@ -203,7 +211,12 @@ def save_reservation_from_draft(
     lead, payload: dict, instance: Reservation | None = None
 ) -> Reservation:
     """Create or update one reservation (+ its ordered stops) from a draft."""
-    data = parse_draft(payload)
+    kept = (
+        frozenset(instance.stops.exclude(airline_id=None).values_list("airline_id", flat=True))
+        if instance is not None
+        else frozenset()
+    )
+    data = parse_draft(payload, grandfathered_airline_ids=kept)
     stops = data.pop("stops")
     if instance is None:
         instance = Reservation(lead=lead)

@@ -57,6 +57,7 @@
     <div class="sm:col-span-2">
       {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value %}
       <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup" x-text="errors.pickup"></p>
+      {% for error in form.pickup_airport.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
       {% for error in form.pickup_flight.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
       {% for error in form.pickup_airline.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
     </div>
@@ -101,6 +102,7 @@
           <div x-show="stop.airport" x-cloak class="mt-2 grid grid-cols-[1fr_120px] gap-2">
             <div class="ts-compact"
                  x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"
+                 x-effect="const el = $el.querySelector('select'); if (el && el.tomselect && el.tomselect.getValue() !== String(stop.airline || '')) el.tomselect.setValue(String(stop.airline || ''), true)"
                  @change="stop.airline = $event.target.value">
               {% include "components/searchable_select.html" with name="stop_airline_ui" field_id="bw-stop-airline" options=airline_options empty_label="Airline" %}
             </div>
@@ -121,6 +123,7 @@
         </div>
         {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value hide_label=1 flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}
         <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
+        {% for error in form.dropoff_airport.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
         {% for error in form.dropoff_flight.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
         {% for error in form.dropoff_airline.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
       </div>

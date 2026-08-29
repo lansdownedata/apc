@@ -448,3 +448,24 @@ def test_flight_validation_costs_two_queries_however_many_stops(
     stops = [{"address": f"S{i}", "airport": iad.pk, "airline": united.pk} for i in range(6)]
     with django_assert_max_num_queries(2):
         drafts.parse_draft(_payload(stops=stops))
+
+
+def test_a_retired_airline_survives_an_unrelated_edit(iad, united):
+    """The editor saves by delete-and-recreate; a carrier retired after booking must not
+    turn every later edit into a 400 (spec §3.1)."""
+    lead = LeadFactory()
+    res = save_reservation_from_draft(lead, _flight_payload(iad, united))
+    united.is_active = False
+    united.save(update_fields=["is_active"])
+    payload = _flight_payload(iad, united)
+    payload["pax"] = 5
+    res = save_reservation_from_draft(lead, payload, instance=res)
+    assert res.passengers == 5
+    assert res.ordered_stops.first().airline_id == united.pk
+
+
+def test_a_retired_airline_is_still_refused_on_a_new_reservation(iad, united):
+    united.is_active = False
+    united.save(update_fields=["is_active"])
+    with pytest.raises(DraftError, match="airline"):
+        save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))

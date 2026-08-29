@@ -70,8 +70,18 @@ def _address_payload(stop) -> dict:
 
 
 def _flight_info(stop) -> dict:
-    """LA's `*_flight_info` object — only the halves we have; `{}` means "don't send"."""
+    """LA's `*_flight_info` object — only the halves we have; `{}` means "don't send".
+
+    An airport with no airline and no flight number sends nothing (matches GNet's
+    rule): the airport alone isn't "flight info". Once there is something to send, LA
+    marks `airport_code` required for airport locations, so it goes first when a stop
+    is linked to one.
+    """
+    if not stop.airline_id and not stop.flight_number:
+        return {}
     info = {}
+    if stop.airport_id:
+        info["airport_code"] = stop.airport.iata or stop.airport.ident
     if stop.airline_id:
         info["airline_code"] = stop.airline.iata
     if stop.flight_number:
@@ -107,7 +117,7 @@ def build_booking_payload(reservation: Reservation, search_result_id: int | None
     if contact.email:
         passenger["email"] = contact.email
 
-    stops = list(reservation.stops.select_related("airline"))
+    stops = list(reservation.stops.select_related("airline", "airport"))
     mid_stops = stops[1:-1]
     note_lines = [
         f"APC quote #{reservation.lead_id} · {reservation.get_trip_type_display()}",

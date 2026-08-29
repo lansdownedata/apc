@@ -331,6 +331,22 @@ def test_full_booking_post_stores_the_pickup_flight(db):
     assert (stop.airport, stop.airline, stop.flight_number) == (iad, united, "123")
 
 
+def test_widget_shows_an_unknown_airport_error(db):
+    resp = Client().post(
+        "/bookings/",
+        {
+            "name": "Jane Rider",
+            "email": "jane@example.com",
+            "passengers": 1,
+            "pickup": "Dulles",
+            "pickup_airport": 999999,
+            "dropoff": "Home",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Unknown airport." in resp.content.decode()
+
+
 def test_widget_renders_flight_fields_for_pickup_and_dropoff(db):
     html = Client().get("/bookings/").content.decode()
     for name in ("pickup", "dropoff"):
