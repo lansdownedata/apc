@@ -171,3 +171,24 @@ def test_the_board_sits_inside_the_shared_page_container(logged_in_client):
     board was the one page that didn't, so it rendered edge-to-edge against the sidebar."""
     body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
     assert b'class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6"' in body
+
+
+# --- the routing cell shows the flight on an airport end ---
+
+
+def _with_flight(reservation, *, sequence=0, number="123"):
+    """Attach IAD + United + `number` to the stop at `sequence` and return it."""
+    from apps.addresses.models import Airline, Airport
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+    return stop
+
+
+def test_routing_cell_shows_the_flight_on_an_airport_end(logged_in_client):
+    _with_flight(_trip())
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+    assert "✈ UA 123" in resp.content.decode()

@@ -199,6 +199,7 @@
               <div class="flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0 {% if forloop.first %}bg-emerald-500{% elif forloop.last %}bg-rose-500{% else %}bg-gold{% endif %}"></span>
                 <span class="truncate">{{ stop.address|default:"—" }}</span>
+                {% if stop.flight_label %}<span class="text-[11px] text-goldd num shrink-0">✈ {{ stop.flight_label }}</span>{% endif %}
               </div>
               {% endfor %}
             </div>

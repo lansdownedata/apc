@@ -93,3 +93,27 @@ def test_a_gnet_capable_vendor_gets_no_trip_sheet_email(mailoutbox):
     with patch.object(services, "gnet_sync"):
         services.send_offer(_trip(), vendor, payout=Decimal("215.00"))
     assert len(mailoutbox) == 0
+
+
+# --- the trip sheet lists the flight on an airport stop ---
+
+
+def _with_flight(reservation, *, sequence=0, number="123"):
+    """Attach IAD + United + `number` to the stop at `sequence` and return it."""
+    from apps.addresses.models import Airline, Airport
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+    return stop
+
+
+def test_offer_email_lists_the_flight_on_an_airport_stop(mailoutbox):
+    trip = _trip()
+    _with_flight(trip)
+    services.send_offer(trip, VendorFactory(email="ops@capital.example"), payout=Decimal("215.00"))
+    text, html = mailoutbox[0].body, mailoutbox[0].alternatives[0][0]
+    assert "flight UA 123" in text
+    assert "✈ UA 123" in html

@@ -168,3 +168,25 @@ def test_editor_renders_the_flight_row_for_airport_stops(page):
     assert 'x-text="s.airportCode"' in html
     assert "flightVerifyComingSoon()" in html
     assert "UA — United Airlines</option>" in html
+
+
+# --- the route loop shows the flight on an airport stop ---
+
+
+def _with_flight(reservation, *, sequence=0, number="123"):
+    """Attach IAD + United + `number` to the stop at `sequence` and return it."""
+    from apps.addresses.models import Airline, Airport
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+    return stop
+
+
+def test_workspace_card_shows_the_flight_on_an_airport_stop(page):
+    lead = LeadFactory()
+    _with_flight(ReservationFactory(lead=lead))
+    html = page(lead)
+    assert "✈ UA 123" in html

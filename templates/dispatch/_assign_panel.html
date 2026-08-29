@@ -89,6 +89,14 @@
             </div>
             {% if stop.name %}<p class="text-[13px] font-medium text-ink">{{ stop.name }}</p>{% endif %}
             <p class="text-[12.5px] {% if stop.name %}text-muted{% else %}text-ink{% endif %}">{{ stop.address|default:"—" }}</p>
+            {% if stop.flight_label %}
+              <p class="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-goldd num">
+                <i class="ti ti-plane text-[12px]"></i>
+                {% if forloop.first %}Arriving · {% elif forloop.last %}Departing · {% endif %}{{ stop.flight_label }}
+                <button type="button" @click="flightVerifyComingSoon()"
+                        class="btn-ghost text-[10.5px] font-medium text-muted hover:text-ink px-1.5 py-0.5 rounded ring-1 ring-line">Verify</button>
+              </p>
+            {% endif %}
             {% if stop.note %}<p class="text-[11.5px] text-muted italic">{{ stop.note }}</p>{% endif %}
           </div>
         </li>

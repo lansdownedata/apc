@@ -309,3 +309,29 @@ def test_vehicle_with_image_renders_img_tag(client, tmp_path, settings):
     content = _get_quote(client, lead).content.decode()
     assert 'alt="Panorama Coach"' in content
     assert "No photo" not in content
+
+
+# --- the quote page reads arriving/departing flights off the route ---
+
+
+def _with_flight(reservation, *, sequence=0, number="123"):
+    """Attach IAD + United + `number` to the stop at `sequence` and return it."""
+    from apps.addresses.models import Airline, Airport
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+    return stop
+
+
+def test_quote_page_reads_arriving_and_departing_flights(client):
+    lead = _quoted_lead()
+    reservation = lead.reservations.first()
+    _with_flight(reservation, sequence=0, number="123")
+    _with_flight(reservation, sequence=1, number="456")
+    token = services.make_deposit_token(lead)
+    html = client.get(reverse("quote_page", args=[token])).content.decode()
+    assert "Arriving on United Airlines 123" in html
+    assert "Departing on United Airlines 456" in html

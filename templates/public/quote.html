@@ -127,6 +127,9 @@
             <li>
               {% if stop.name %}<div class="venue">{{ stop.name }}</div>{% endif %}
               <div class="addr">{{ stop.address }}</div>
+              {% if stop.flight_label_long %}
+              <div class="when">{% if forloop.first %}Arriving on{% elif forloop.last %}Departing on{% endif %} {{ stop.flight_label_long }}</div>
+              {% endif %}
               {% if stop.scheduled_time %}
               <div class="when">{{ stop.scheduled_time|time:"g:i A" }}</div>
               {% endif %}
