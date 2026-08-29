@@ -65,7 +65,7 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
     """
     trip = get_object_or_404(
         Reservation.objects.select_related("lead", "lead__contact", "vehicle").prefetch_related(
-            Prefetch("stops", queryset=Stop.objects.order_by("sequence"))
+            Prefetch("stops", queryset=Stop.objects.select_related("airline").order_by("sequence"))
         ),
         pk=pk,
     )

@@ -338,3 +338,33 @@ def test_panel_route_comes_from_one_stops_query(logged_in_client, django_assert_
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     with django_assert_max_num_queries(9):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
+
+
+# --- the drawer's route rail shows the flight, with a Verify button ---
+
+
+def _with_flight(reservation, *, sequence=0, number="123"):
+    """Attach IAD + United + `number` to the stop at `sequence` and return it."""
+    from apps.addresses.models import Airline, Airport
+
+    stop = reservation.stops.get(sequence=sequence)
+    stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = number
+    stop.save()
+    return stop
+
+
+def test_panel_shows_the_flight_with_a_verify_button(logged_in_client):
+    trip = _trip()
+    _with_flight(trip)
+    body = _panel(logged_in_client, trip)
+    assert "Arriving · UA 123" in body
+    assert "flightVerifyComingSoon()" in body
+
+
+def test_panel_flight_join_adds_no_query(logged_in_client, django_assert_max_num_queries):
+    trip = _trip(stops=[f"Stop {i}" for i in range(8)])
+    _with_flight(trip)
+    with django_assert_max_num_queries(9):
+        logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
