@@ -1,11 +1,17 @@
 """aviationstack client — the HTTP boundary for flight verification (spec 2026-08-29 §5).
 
 Two endpoints, one normalized `FlightResult`; nothing above this module ever sees the JSON
-shapes aviationstack uses (camelCase local `HH:MM` on /v1/flightsFuture, snake_case ISO on
-/v1/flights). Pure functions that make a request only when called — the cache-first,
-rate-limit-aware orchestration lives in apps/reservations/flights.py. Mirrors
-geocoding.py / gnet.py: module constants, one private `_request`, typed public functions,
-one exception carrying enough to branch on. Always mock `requests` in tests.
+shapes aviationstack uses. `/v1/flightsFuture` (more than 7 days out) sends lowercase
+camelCase blocks with a space-separated local `"YYYY-MM-DD HH:MM:SS"` scheduledTime — not
+the bare `HH:MM` the published docs describe (task-3R-brief.md §1, ground truth captured
+2026-08-29). `/v1/flights` (real-time) is not reachable on this subscription — 403
+`function_access_restricted`, confirmed on the live key — so the live path calls
+`/v1/timetable` instead. Its timestamps are naive ISO-T and **airport-local**, never UTC;
+treating them as UTC would be silently wrong by the airport's offset (task-3R-brief.md §2).
+Pure functions that make a request only when called — the cache-first, rate-limit-aware
+orchestration lives in apps/reservations/flights.py. Mirrors geocoding.py / gnet.py: module
+constants, one private `_request`, typed public functions, one exception carrying enough to
+branch on. Always mock `requests` in tests.
 """
 
 from __future__ import annotations
@@ -25,8 +31,14 @@ TIMEOUT = 15
 ARRIVAL = "arrival"
 DEPARTURE = "departure"
 
-# /v1/flights `flight_status` values -> reservations.Flight.Status values (same strings).
+# /v1/timetable `status` values -> reservations.Flight.Status values (same strings).
+# `/v1/flights` is unusable on this plan (403 function_access_restricted) — see live_flight.
 _LIVE_STATUSES = {"scheduled", "active", "landed", "cancelled", "diverted", "incident"}
+
+# aviationstack's `redirected` is a synonym for our `diverted` bucket (task-3R-brief.md §2).
+# `unknown` is deliberately NOT mapped here — it falls through to the warning + scheduled
+# default in live_flight below, same as any other value this client doesn't recognize.
+_STATUS_ALIASES = {"redirected": "diverted"}
 
 
 class AviationstackError(Exception):
@@ -123,13 +135,15 @@ def _s(value) -> str:
 
 
 def _hhmm(value) -> time | None:
-    """`"17:35"` (documented) or an ISO string (older docs) -> local time-of-day."""
+    """flightsFuture's real `scheduledTime` (task-3R-brief.md §1, ground truth 2026-08-29):
+    a full space-separated local datetime, `"2026-09-28 20:00:00"` — not the bare `"HH:MM"`
+    the published docs describe. Both are accepted, along with an ISO-T form some older docs
+    use, so a documentation drift in either direction doesn't silently drop the time again."""
     text = _s(value)
     if not text:
         return None
     try:
-        if "T" in text:
-            log.warning("aviationstack: ISO scheduledTime on flightsFuture (%s) — verify", text)
+        if "T" in text or " " in text:
             return datetime.fromisoformat(text.replace("Z", "+00:00")).time().replace(tzinfo=None)
         return time.fromisoformat(text[:8] if len(text) > 5 else text)
     except ValueError:
@@ -143,7 +157,13 @@ def _local_to_utc(day: date_type, local: time | None, tz_name: str) -> datetime 
     return datetime.combine(day, local, tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
 
 
-def _iso_utc(value) -> datetime | None:
+def _local_iso_to_utc(value, tz_name: str) -> datetime | None:
+    """/v1/timetable's `scheduledTime`/`estimatedTime`/`actualTime`: naive ISO-T
+    (`"2026-08-29T12:06:00.000"`, no offset) that is **airport-local**, not UTC
+    (task-3R-brief.md §2 — the trap that produces silently-wrong times). Splits the parsed
+    value back into day + time-of-day and hands it to `_local_to_utc`, the same fold=0
+    conversion `future_schedule` already uses, rather than treating the naive value as UTC.
+    An aware value (not observed, but tolerated) is trusted and just converted."""
     text = _s(value)
     if not text:
         return None
@@ -151,21 +171,19 @@ def _iso_utc(value) -> datetime | None:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        log.warning("aviationstack: naive timestamp %s treated as UTC", text)
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(UTC)
+    return _local_to_utc(parsed.date(), parsed.time(), tz_name)
 
 
 def _iso_local_time(value) -> time | None:
     """Time-of-day exactly as printed in an ISO 8601 string — the offset, if any, is read
-    and then dropped, never shifted to UTC like `_iso_utc` does. This is the airport-local
-    time-of-day, which is what a `preferred_time` argument (always a stop's naive local
-    pickup/scheduled time) has to be compared against when `_pick` breaks a tie; comparing
-    it against `_iso_utc`'s UTC-shifted clock instead silently favors the wrong flight at
-    any airport that isn't UTC itself. A naive value (no offset) is taken at face value too
-    — for a tie-break there's nothing to gain by guessing an offset, and the printed digits
-    are the best signal available."""
+    and then dropped, never shifted to UTC. This is the airport-local time-of-day, which is
+    what a `preferred_time` argument (always a stop's naive local pickup/scheduled time) has
+    to be compared against when `_pick` breaks a tie; comparing it against a UTC-shifted
+    clock instead silently favors the wrong flight at any airport that isn't UTC itself. A
+    naive value (no offset) is taken at face value too — for a tie-break there's nothing to
+    gain by guessing an offset, and the printed digits are the best signal available."""
     text = _s(value)
     if not text:
         return None
@@ -210,6 +228,17 @@ def _operated_by(cs_iata: str, cs_name: str, airline_iata: str) -> tuple[str, st
     return "", ""
 
 
+def _titled(value) -> str:
+    """flightsFuture prints display text lowercase — `"air canada"`, gate `"c3"`
+    (task-3R-brief.md §4). Title-case it for dispatchers. Only ever applied to
+    flightsFuture's own display strings (carrier name, terminal, gate) — never to the codes
+    used for matching (already `.upper()`-d separately), and never on the /v1/timetable
+    path, which already comes back properly cased (double-applying would mangle a name like
+    "ATI Jet" into "Ati Jet")."""
+    text = _s(value)
+    return text.title() if text else text
+
+
 # --- endpoints ---
 
 
@@ -252,12 +281,12 @@ def future_schedule(
         found=True,
         status="scheduled",
         scheduled_at=_local_to_utc(date, _hhmm(side.get("scheduledTime")), airport_tz),
-        terminal=_s(side.get("terminal")),
-        gate=_s(side.get("gate")),
+        terminal=_titled(side.get("terminal")),
+        gate=_titled(side.get("gate")),
         other_airport_iata=_s(other.get("iataCode")).upper(),
         other_airport_name=_s(other_airport.get("name")),
         operated_by_iata=op_iata,
-        operated_by_name=op_name,
+        operated_by_name=_titled(op_name),
         raw=entry,
     )
 
@@ -269,52 +298,59 @@ def live_flight(
     date: date_type,
     airline_iata: str,
     flight_number: str,
+    airport_tz: str,
     preferred_time: time | None = None,
 ) -> FlightResult:
-    """`/v1/flights` — real-time status. Filtered by `flight_iata` + `flight_date`, then kept
-    only when the flight's arrival (or departure) airport is ours."""
+    """`/v1/timetable` — day-of status, the only live endpoint reachable on this plan
+    (`/v1/flights` 403s — see the module docstring). Filtered server-side by `iataCode` +
+    `type` + `flight_iata`. Times arrive as naive ISO-T airport-local timestamps —
+    `_local_iso_to_utc` converts them with `airport_tz`, the same fold=0 rule
+    `future_schedule` uses for flightsFuture, so a DST-ambiguous moment resolves the same
+    way on both paths."""
     body = _request(
-        "flights",
+        "timetable",
         {
+            "iataCode": airport_iata.upper(),
+            "type": direction,
             "flight_iata": f"{airline_iata.upper()}{flight_number}",
-            "flight_date": date.isoformat(),
         },
     )
     here, there = _sides(direction)
     ours = [
         e
         for e in _entries(body)
-        if _s((e.get(here) or {}).get("iata")).upper() == airport_iata.upper()
+        if _s((e.get(here) or {}).get("iataCode")).upper() == airport_iata.upper()
     ]
 
     def local_time(entry: dict) -> time | None:
-        return _iso_local_time((entry.get(here) or {}).get("scheduled"))
+        return _iso_local_time((entry.get(here) or {}).get("scheduledTime"))
 
     entry = _pick(ours, preferred_time, local_time)
     if entry is None:
         return NOT_FOUND
     side = entry.get(here) or {}
     other = entry.get(there) or {}
-    status = _s(entry.get("flight_status")).lower()
+    status = _s(entry.get("status")).lower()
+    status = _STATUS_ALIASES.get(status, status)
     if status not in _LIVE_STATUSES:
-        log.warning("aviationstack: unknown flight_status %r — treated as scheduled", status)
+        log.warning("aviationstack: unknown timetable status %r — treated as scheduled", status)
         status = "scheduled"
-    codeshare = (entry.get("flight") or {}).get("codeshared") or {}
+    cs_airline = (entry.get("codeshared") or {}).get("airline") or {}
     op_iata, op_name = _operated_by(
-        _s(codeshare.get("airline_iata")).upper(), _s(codeshare.get("airline_name")), airline_iata
+        _s(cs_airline.get("iataCode")).upper(), _s(cs_airline.get("name")), airline_iata
     )
     delay = side.get("delay")
     return FlightResult(
         found=True,
         status=status,
-        scheduled_at=_iso_utc(side.get("scheduled")),
-        estimated_at=_iso_utc(side.get("estimated")),
-        actual_at=_iso_utc(side.get("actual")),
+        scheduled_at=_local_iso_to_utc(side.get("scheduledTime"), airport_tz),
+        estimated_at=_local_iso_to_utc(side.get("estimatedTime"), airport_tz),
+        actual_at=_local_iso_to_utc(side.get("actualTime"), airport_tz),
         delay_minutes=int(delay) if _s(delay) else None,
         terminal=_s(side.get("terminal")),
         gate=_s(side.get("gate")),
-        other_airport_iata=_s(other.get("iata")).upper(),
-        other_airport_name=_s(other.get("airport")),
+        other_airport_iata=_s(other.get("iataCode")).upper(),
+        other_airport_name="",  # timetable has no airport-name field
         operated_by_iata=op_iata,
         operated_by_name=op_name,
         raw=entry,

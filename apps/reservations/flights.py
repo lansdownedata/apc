@@ -21,10 +21,13 @@ from .models import LIVE_PHASE_DAYS, Flight, today_at
 
 log = logging.getLogger(__name__)
 
-# How many days ahead /v1/flights answers for. The docs do not say; Moe's probe (Task 1)
-# does: keep 7 if `--date <today+3d>` returned rows, set 0 if it came back empty (then days
-# 1–7 read "Live on the day" until the day itself).
-LIVE_LOOKAHEAD_DAYS = 7
+# How many days ahead the live path answers for. Settled by Moe's probe on the real key
+# (2026-08-29, task-3R-brief.md): /v1/flights is unusable on this plan (403
+# function_access_restricted) and /v1/flightsFuture hard-refuses inside 7 days (500 "date
+# must be above <today+7>"), so /v1/timetable — day-of only — is the entire live surface.
+# Days 1-7 fall through to UNAVAILABLE with zero calls; its copy ("Live data available on
+# the day of travel") is now literally true rather than aspirational.
+LIVE_LOOKAHEAD_DAYS = 0
 
 # 3-char codes only. Small fields carry local idents like "07FA" in `Airport.iata`; the API
 # cannot look those up, and the factory's "T00"-style codes must still pass in tests.
@@ -115,7 +118,7 @@ def lookup(
         result = aviationstack.future_schedule(airport_tz=airport.timezone, **common)
         source = Flight.Source.FUTURE
     elif days_out <= LIVE_LOOKAHEAD_DAYS:
-        result = aviationstack.live_flight(**common)
+        result = aviationstack.live_flight(airport_tz=airport.timezone, **common)
         source = Flight.Source.LIVE
     else:
         result = aviationstack.FlightResult(found=False, status=Flight.Status.UNAVAILABLE)

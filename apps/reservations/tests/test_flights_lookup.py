@@ -15,7 +15,8 @@ pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 9, 1, 15, 0, tzinfo=UTC)  # Sep 1, 11:00 EDT
 FAR = date(2026, 10, 15)
-NEAR = date(2026, 9, 3)
+TODAY = date(2026, 9, 1)  # 0 days out — the only date LIVE_LOOKAHEAD_DAYS=0 routes live
+NEAR = date(2026, 9, 3)  # 2 days out — a "gap day": no live coverage on this plan (§3)
 FOUND = av.FlightResult(
     found=True,
     status="scheduled",
@@ -79,18 +80,30 @@ def test_far_date_uses_flights_future_and_caches(iad, united, now, client):
     assert Flight.objects.count() == 1
 
 
-def test_near_date_uses_live_flights(iad, united, now, client):
+def test_today_uses_live_flights(iad, united, now, client):
+    """Only day 0 has live coverage on this plan (§3: LIVE_LOOKAHEAD_DAYS=0)."""
     future, live = client
-    row = _lookup(iad, united, flight_date=NEAR)
-    live.assert_called_once()
+    row = _lookup(iad, united, flight_date=TODAY, preferred_time=time(9, 0))
+    live.assert_called_once_with(
+        airport_iata="IAD",
+        direction="arrival",
+        date=TODAY,
+        airline_iata="UA",
+        flight_number="123",
+        airport_tz="America/New_York",
+        preferred_time=time(9, 0),
+    )
     future.assert_not_called()
     assert row.source == Flight.Source.LIVE
 
 
-def test_boundary_seven_days_is_live_eight_is_future(iad, united, now, client):
+def test_boundary_seven_days_is_unavailable_eight_is_future(iad, united, now, client):
+    """7 days out is a gap day (no live coverage, no future coverage — flightsFuture hard
+    refuses inside 7 days); 8 days out is the first day flightsFuture will answer."""
     future, live = client
-    _lookup(iad, united, flight_date=date(2026, 9, 8))
-    assert live.call_count == 1 and future.call_count == 0
+    row = _lookup(iad, united, flight_date=date(2026, 9, 8))
+    assert row.status == Flight.Status.UNAVAILABLE
+    assert future.call_count == 0 and live.call_count == 0
     _lookup(iad, united, flight_date=date(2026, 9, 9))
     assert future.call_count == 1
 
@@ -142,19 +155,25 @@ def test_live_row_refetches_only_after_five_minutes(iad, united, now, client):
         airline=united,
         airport=iad,
         flight_number="123",
-        flight_date=NEAR,
+        flight_date=TODAY,
         direction="arrival",
         source=Flight.Source.LIVE,
         checked_at=NOW - timedelta(minutes=4),
     )
-    _lookup(iad, united, flight_date=NEAR)
+    _lookup(iad, united, flight_date=TODAY)
     live.assert_not_called()
     Flight.objects.update(checked_at=NOW - timedelta(minutes=6))
-    _lookup(iad, united, flight_date=NEAR)
+    _lookup(iad, united, flight_date=TODAY)
     live.assert_called_once()
 
 
-def test_a_future_snapshot_that_aged_into_the_live_window_refreshes_live(iad, united, now, client):
+def test_a_future_snapshot_that_aged_into_the_gap_window_becomes_unavailable(
+    iad, united, now, client
+):
+    """A future-sourced row whose flight_date has aged inside the live phase (§1's
+    LIVE_PHASE_DAYS=7 window) still gets rechecked on the 5-minute cadence — but on this
+    plan only day 0 has live coverage (§3), so a gap day (1-7 days out) that gets rechecked
+    now comes back UNAVAILABLE, not LIVE, and never calls either provider function."""
     future, live = client
     FlightFactory(
         airline=united,
@@ -166,16 +185,13 @@ def test_a_future_snapshot_that_aged_into_the_live_window_refreshes_live(iad, un
         checked_at=NOW - timedelta(days=20),
     )
     row = _lookup(iad, united, flight_date=NEAR)
-    live.assert_called_once()
     future.assert_not_called()
-    assert row.source == Flight.Source.LIVE
+    live.assert_not_called()
+    assert row.status == Flight.Status.UNAVAILABLE and row.source == ""
 
 
-def test_gap_days_are_unavailable_without_a_call_when_lookahead_is_zero(
-    iad, united, now, client, monkeypatch
-):
+def test_gap_days_are_unavailable_without_a_call(iad, united, now, client):
     future, live = client
-    monkeypatch.setattr(flights, "LIVE_LOOKAHEAD_DAYS", 0)
     row = _lookup(iad, united, flight_date=NEAR)
     assert row.status == Flight.Status.UNAVAILABLE and row.source == ""
     # NEAR (2 days out) is inside is_live_phase (today + LIVE_PHASE_DAYS=7), and
@@ -183,11 +199,12 @@ def test_gap_days_are_unavailable_without_a_call_when_lookahead_is_zero(
     # test_flight_model.py::test_recheck_windows) — so this row gets the 5-minute live
     # window, not the 1-hour not-found/unavailable window. A "gap day" is, by construction,
     # always inside the live-phase date range (it's the same days_out <= LIVE_PHASE_DAYS
-    # band that would normally route to live_flight), so it can never hit the 1-hour rule.
+    # band that would route to live_flight if LIVE_LOOKAHEAD_DAYS were still 7), so it can
+    # never hit the 1-hour rule.
     assert row.refresh_allowed_at == NOW + timedelta(minutes=5)
     future.assert_not_called()
     live.assert_not_called()
-    today_row = _lookup(iad, united, flight_number="7", flight_date=date(2026, 9, 1))
+    today_row = _lookup(iad, united, flight_number="7", flight_date=TODAY)
     assert today_row.source == Flight.Source.LIVE  # day-of still goes live
 
 

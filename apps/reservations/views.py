@@ -29,10 +29,7 @@ PROVIDER_MESSAGES = {
     "not_configured": "Flight verification isn't configured — add AVIATIONSTACK_API_KEY.",
     "invalid_key": "Flight service rejected our API key.",
     "plan": "Your aviationstack plan doesn't include this lookup.",
-    "rate_limited": (
-        "Flight service is busy — aviationstack allows one lookup every 10 seconds, "
-        "try again in a moment."
-    ),
+    "rate_limited": "Flight service is busy — please try again in a moment.",
     "quota": "Monthly flight lookups are used up.",
 }
 UNREACHABLE = "Couldn't reach the flight service — try again."
