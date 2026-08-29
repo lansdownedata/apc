@@ -45,6 +45,22 @@ def _balances_with_remaining(lead: Lead) -> dict:
     return bals
 
 
+def _la_state(rows: list[dict]) -> str:
+    """One word for the header chip — the worst thing that happened to any trip.
+
+    "sent" needs every trip through; a booking that was never attempted must not hide
+    behind the ones that were.
+    """
+    results = {row["event"].result if row["event"] else "" for row in rows}
+    if ZapEvent.Result.ERROR in results:
+        return "error"
+    if ZapEvent.Result.PREVIEW in results:
+        return "preview"
+    if rows and results == {ZapEvent.Result.SUCCESS}:
+        return "sent"
+    return "unsent"
+
+
 def _reservation_draft(r) -> dict:
     return {
         "id": r.pk,
@@ -223,6 +239,7 @@ def lead_detail(request, pk):
         "lead": lead,
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
+        "la_state": _la_state(la_sync_rows),
         "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
         "balances": _balances_with_remaining(lead),

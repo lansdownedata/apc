@@ -9,7 +9,7 @@
      @drawer-open.window="load($event.detail.url)"
      @keydown.escape.window="open && close()">
   <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>
-  <aside class="absolute right-0 top-0 h-full w-full max-w-[460px] bg-surface shadow-2xl overflow-y-auto"
+  <aside class="absolute right-0 top-0 h-full w-full max-w-[520px] bg-surface shadow-2xl overflow-y-auto"
          x-transition:enter="transition ease-out duration-200"
          x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
          x-transition:leave="transition ease-in duration-150"

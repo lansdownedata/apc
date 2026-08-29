@@ -6,12 +6,13 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.contacts.factories import ContactFactory
 from apps.dispatch import selectors, services
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead
-from apps.reservations.factories import ReservationFactory
+from apps.reservations.factories import HourlyReservationFactory, ReservationFactory
 from apps.vendors.factories import VendorFactory, VendorInsuranceFactory
 
 pytestmark = pytest.mark.django_db
@@ -250,3 +251,90 @@ def test_panel_does_not_flag_preview_for_a_manual_offer(logged_in_client, settin
     body = _panel(logged_in_client, trip)
 
     assert "preview" not in body.lower()
+
+
+# --- the drawer is a trip sheet, not a three-line recap ---
+
+
+def _stop(trip, sequence: int):
+    return trip.stops.get(sequence=sequence)
+
+
+def test_panel_lists_every_stop_in_sequence(logged_in_client):
+    trip = _trip(stops=["Dulles Airport", "The Jefferson Hotel", "Union Station"])
+    body = _panel(logged_in_client, trip)
+    assert body.index("Dulles Airport") < body.index("The Jefferson Hotel")
+    assert body.index("The Jefferson Hotel") < body.index("Union Station")
+
+
+def test_panel_shows_a_stops_venue_time_and_note(logged_in_client):
+    trip = _trip(stops=["A", "B", "C"])
+    middle = _stop(trip, 1)
+    middle.name = "Lincoln Memorial"
+    middle.scheduled_time = time(7, 45)
+    middle.note = "20-min photo stop"
+    middle.save()
+
+    body = _panel(logged_in_client, trip)
+
+    assert "Lincoln Memorial" in body
+    assert "7:45 AM" in body
+    assert "20-min photo stop" in body
+
+
+def test_panel_shows_the_passenger_contact(logged_in_client):
+    contact = ContactFactory(name="Ada Kavanagh", phone="+1 202 555 0143", email="ada@example.com")
+    trip = _trip(lead=LeadFactory(status=Lead.Status.BOOKED, contact=contact), passengers=4)
+    body = _panel(logged_in_client, trip)
+    assert "Ada Kavanagh" in body
+    assert "+1 202 555 0143" in body
+    assert "ada@example.com" in body
+    assert "4 pax" in body
+
+
+def test_panel_shows_the_schedule_for_a_transfer(logged_in_client):
+    trip = _trip(
+        pickup_date=date(2026, 8, 26),
+        pickup_time=time(6, 15),
+        dropoff_date=date(2026, 8, 26),
+        dropoff_time=time(7, 30),
+    )
+    body = _panel(logged_in_client, trip)
+    assert "Aug 26, 2026" in body
+    assert "6:15 AM" in body
+    assert "7:30 AM" in body
+
+
+def test_panel_shows_the_billed_hours_for_an_hourly_trip(logged_in_client):
+    trip = HourlyReservationFactory(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        pickup_date=date(2026, 8, 26),
+        pickup_time=time(18, 0),
+        hours=5,
+        min_hours=4,
+    )
+    body = _panel(logged_in_client, trip)
+    assert "5 hrs" in body
+
+
+def test_panel_shows_service_trip_type_and_vehicle(logged_in_client):
+    trip = _trip(service="Wedding shuttle", vehicle=VehicleTypeFactory(name="Sprinter"))
+    body = _panel(logged_in_client, trip)
+    assert "Wedding shuttle" in body
+    assert "Transfer" in body
+    assert "Sprinter" in body
+
+
+def test_panel_links_to_the_quote_workspace(logged_in_client):
+    trip = _trip()
+    body = _panel(logged_in_client, trip)
+    assert reverse("lead_detail", args=[trip.lead.pk]) in body
+    assert trip.lead.quote_no in body
+
+
+def test_panel_route_comes_from_one_stops_query(logged_in_client, django_assert_max_num_queries):
+    """The whole route renders from a single prefetch. `Reservation.pickup`/`dropoff` cost a
+    query each, and a per-stop lookup would scale with the route — either pushes this over."""
+    trip = _trip(stops=[f"Stop {i}" for i in range(8)])
+    with django_assert_max_num_queries(9):
+        logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))

@@ -164,3 +164,10 @@ def test_board_query_count_does_not_grow_with_trips(
         services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
     with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+
+def test_the_board_sits_inside_the_shared_page_container(logged_in_client):
+    """Every other page wraps its content in the same padded, centred container. The
+    board was the one page that didn't, so it rendered edge-to-edge against the sidebar."""
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
+    assert b'class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6"' in body
