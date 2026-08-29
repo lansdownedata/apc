@@ -157,6 +157,24 @@ def _iso_utc(value) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _iso_local_time(value) -> time | None:
+    """Time-of-day exactly as printed in an ISO 8601 string — the offset, if any, is read
+    and then dropped, never shifted to UTC like `_iso_utc` does. This is the airport-local
+    time-of-day, which is what a `preferred_time` argument (always a stop's naive local
+    pickup/scheduled time) has to be compared against when `_pick` breaks a tie; comparing
+    it against `_iso_utc`'s UTC-shifted clock instead silently favors the wrong flight at
+    any airport that isn't UTC itself. A naive value (no offset) is taken at face value too
+    — for a tie-break there's nothing to gain by guessing an offset, and the printed digits
+    are the best signal available."""
+    text = _s(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).time()
+    except ValueError:
+        return None
+
+
 def _minutes(t: time | None) -> int | None:
     return None if t is None else t.hour * 60 + t.minute
 
@@ -270,8 +288,7 @@ def live_flight(
     ]
 
     def local_time(entry: dict) -> time | None:
-        parsed = _iso_utc((entry.get(here) or {}).get("scheduled"))
-        return None if parsed is None else parsed.time()
+        return _iso_local_time((entry.get(here) or {}).get("scheduled"))
 
     entry = _pick(ours, preferred_time, local_time)
     if entry is None:
