@@ -78,3 +78,28 @@ class Airport(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.label
+
+
+class Airline(TimeStampedModel):
+    """A carrier that can be attached to an airport stop.
+
+    Seeded from `apps/addresses/data/airlines.csv` (`iata,icao,name`) by migration 0004
+    and `manage.py seed_airlines`. Retire a carrier with `is_active=False` rather than
+    deleting it — stops keep a PROTECT link to the airline they were booked on.
+    """
+
+    iata = models.CharField(max_length=3, unique=True)
+    icao = models.CharField(max_length=4, blank=True)
+    name = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    @property
+    def label(self) -> str:
+        """Picker line: 'UA — United Airlines'."""
+        return f"{self.iata} — {self.name}"
+
+    def __str__(self) -> str:
+        return self.label

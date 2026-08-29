@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import factory
 
-from .models import Address, Airport
+from .models import Address, Airline, Airport
 
 
 class AddressFactory(factory.django.DjangoModelFactory):
@@ -26,3 +26,14 @@ class AirportFactory(factory.django.DjangoModelFactory):
     latitude = Decimal("38.851242")
     longitude = Decimal("-77.037720")
     elevation_ft = 15
+
+
+class AirlineFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Airline
+        django_get_or_create = ("iata",)
+
+    iata = factory.Sequence(lambda n: f"X{n % 100:02d}")
+    icao = ""
+    name = factory.Sequence(lambda n: f"Test Air {n}")
+    is_active = True
