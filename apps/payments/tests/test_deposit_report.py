@@ -96,3 +96,12 @@ def test_one_email_per_recipient_with_the_orders(mailoutbox, settings):
     assert lead.quote_no in body and "Ada Kavanagh" in body and "ada@example.com" in body
     assert "$400.00" in body and "1 trip" in body
     assert "1 order" in mailoutbox[0].subject
+
+
+def test_empty_recipient_list_sends_nothing_and_warns(mailoutbox, settings, caplog):
+    settings.DEPOSIT_REPORT_EMAILS = []
+    _order(4)
+    with caplog.at_level("WARNING"):
+        assert send_unpaid_deposit_report(today=TODAY) == 1
+    assert mailoutbox == []
+    assert "DEPOSIT_REPORT_EMAILS is empty" in caplog.text

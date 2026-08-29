@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.leads import services
 from apps.leads.factories import LeadFactory
@@ -154,14 +155,14 @@ def test_lead_detail_hides_book_now_once_booked(logged_in_client):
     assert "Book now" not in body
 
 
-def test_send_link_label_follows_the_deposit_state(logged_in_client):
+def test_send_link_label_follows_whether_the_link_was_sent(logged_in_client):
     lead = _quoted_lead(status=Lead.Status.BOOKED)
-    plan = PaymentPlan.objects.create(lead=lead, quote_total=Decimal("500.00"))
+    PaymentPlan.objects.create(lead=lead, quote_total=Decimal("500.00"))
     body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
     assert "Send payment link" in body and "Resend payment link" not in body
 
-    plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
-    plan.save(update_fields=["deposit_status"])
+    lead.quote_sent_at = timezone.now()
+    lead.save(update_fields=["quote_sent_at"])
     body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
     assert "Resend payment link" in body
 

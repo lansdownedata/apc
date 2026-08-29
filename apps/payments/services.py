@@ -277,7 +277,8 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
 
 
 def record_admin_payment(plan: PaymentPlan, payment_intent_id: str) -> Charge:
-    """Reconcile a succeeded staff PaymentIntent: ledger, card, statuses, maybe book."""
+    """Reconcile a succeeded staff PaymentIntent: ledger, card, statuses, maybe book
+    (a new or quoted lead — a NEW lead can take a card too)."""
     from apps.leads.models import Lead
     from apps.leads.services import book_lead
 
@@ -308,7 +309,7 @@ def record_admin_payment(plan: PaymentPlan, payment_intent_id: str) -> Charge:
     _store_card(plan, getattr(intent, "payment_method", None))
     sync_plan_from_collected(plan)
     plan.lead.refresh_from_db()
-    if plan.lead.status == Lead.Status.QUOTED:
+    if plan.lead.status in (Lead.Status.NEW, Lead.Status.QUOTED):
         book_lead(plan.lead)
     return charge
 
