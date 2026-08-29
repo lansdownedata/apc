@@ -457,6 +457,34 @@ def test_live_naive_timetable_timestamp_is_airport_local_not_utc():
     assert r.scheduled_at != wrong_if_treated_as_utc
 
 
+def test_live_flight_converts_using_the_airport_it_was_given_not_a_fixed_zone():
+    """Cross-zone regression (fix round 1). Every other live_flight test in this file uses
+    LIVE_KW's `airport_tz="America/New_York"` and never overrides it — a `live_flight` that
+    silently ignored the `airport_tz` parameter and hardcoded Eastern would pass all of them.
+    Pacific/Honolulu has no DST, which additionally pins that the conversion follows the
+    airport's real zone rather than a fixed or seasonally-guessed offset."""
+    entry = _timetable_entry(
+        arrival={"iataCode": "HNL", "scheduledTime": "2026-08-29T08:15:00.000"}
+    )
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [entry]})
+        r = av.live_flight(**{**LIVE_KW, "airport_iata": "HNL", "airport_tz": "Pacific/Honolulu"})
+    assert r.scheduled_at == datetime(2026, 8, 29, 18, 15, tzinfo=UTC)  # 08:15 HST (UTC-10)
+
+
+def test_live_flight_uses_the_winter_offset_not_a_pinned_summer_one():
+    """Every other live_flight fixture in this file is dated in August (EDT, UTC-04:00) —
+    this pins that the conversion re-derives the offset from the flight's own date rather
+    than a summer-pinned or otherwise fixed one. January in New York is EST, UTC-05:00."""
+    entry = _timetable_entry(
+        arrival={"iataCode": "IAD", "scheduledTime": "2026-01-15T08:00:00.000"}
+    )
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [entry]})
+        r = av.live_flight(**LIVE_KW)
+    assert r.scheduled_at == datetime(2026, 1, 15, 13, 0, tzinfo=UTC)  # 08:00 EST -> UTC
+
+
 def test_live_codeshare_operated_by():
     """`codeshared` on /v1/timetable is the nested `{"airline": {...}, "flight": {...}}`
     form (like flightsFuture) — NOT the flat `airline_iata`/`airline_name` keys the old
