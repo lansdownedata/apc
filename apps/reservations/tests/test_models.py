@@ -124,7 +124,7 @@ def test_line_total_is_rate_times_billed_hours_plus_gratuity():
         min_hours=Decimal("4"),
         gratuity_pct=Decimal("20"),
     )
-    assert r.subtotal == Decimal("500.00")  # 100 * max(5,4)
+    assert r.subtotal == Decimal("500.00")  # 100 × override 5
     assert r.gratuity == Decimal("100.00")  # 20% of 500
     assert r.line_total == Decimal("600.00")
 
@@ -154,3 +154,11 @@ def test_gratuity_flat_overrides_percent():
 def test_zero_gratuity_means_line_total_equals_subtotal():
     r = ReservationFactory(rate=Decimal("100"), hours=Decimal("3"), min_hours=0)
     assert r.gratuity == Decimal("0.00") and r.line_total == r.subtotal
+
+
+def test_transfer_override_above_the_minimum_bills_the_override():
+    res = TransferReservationFactory(
+        rate=Decimal("200"), hours=Decimal("2.5"), min_hours=Decimal("1")
+    )
+    assert res.billed_hours == Decimal("2.5")
+    assert res.line_total == Decimal("500.00")
