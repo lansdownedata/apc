@@ -1,7 +1,12 @@
+from datetime import date, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import models
+from django.utils import dateformat
+from django.utils import timezone as dj_timezone
+from django.utils.timesince import timesince
 
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
@@ -28,6 +33,25 @@ TRIP_PHASE_BY_STATUS = {
     "affiliate_assigned": "Affiliate Assigned",
     "dispatched_non_la": "Other",
 }
+
+# flightsFuture refuses dates within this many days; /v1/flights covers the rest (spec §6.1).
+LIVE_PHASE_DAYS = 7
+
+
+def today_at(tz_name: str) -> date:
+    """Today's date in an airport's zone — a lookup at 11 PM Eastern for a Pacific airport
+    must count days from the Pacific date. Blank zone → the project's local date."""
+    if not tz_name:
+        return dj_timezone.localdate()
+    return dj_timezone.now().astimezone(ZoneInfo(tz_name)).date()
+
+
+class FlightDirection(models.TextChoices):
+    """Which side of a flight matters at a stop's airport: a pickup meets an *arrival*,
+    a drop-off catches a *departure*; a middle stop is whichever the user says."""
+
+    ARRIVAL = "arrival", "Arriving"
+    DEPARTURE = "departure", "Departing"
 
 
 class Reservation(TimeStampedModel):
@@ -194,6 +218,23 @@ class Stop(TimeStampedModel):
         "addresses.Airline", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
     flight_number = models.CharField(max_length=6, blank=True)  # digits only
+    # Which side of the flight this stop cares about (spec 2026-08-29 §4.2). First stop →
+    # arrival, last → departure (forced by the draft parser); a middle stop is the user's
+    # choice or blank. Blank whenever there is no airport.
+    FlightDirection = FlightDirection
+    flight_direction = models.CharField(
+        max_length=10, choices=FlightDirection.choices, blank=True, default=""
+    )
+    # The cached aviationstack answer for this stop — *derived* on every save from
+    # (airline, number, trip date, airport, direction), never carried in the draft
+    # (flights.link_flights). SET_NULL: the cache is disposable, the stop is not.
+    flight = models.ForeignKey(
+        "reservations.Flight",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="stops",
+    )
 
     class Meta:
         ordering = ["sequence"]
@@ -215,8 +256,259 @@ class Stop(TimeStampedModel):
             return f"{self.airline.name} {self.flight_number}"
         return self.flight_label
 
+    @property
+    def flight_pill(self) -> dict | None:
+        """The linked cache row's pill (spec §7.1), or None when unverified."""
+        return self.flight.pill() if self.flight_id else None
+
+    @property
+    def flight_verify_payload(self) -> dict:
+        """The body `POST reservations/flights/verify/` expects for this saved stop — what the
+        drawer's Refresh sends. `self.reservation` is cached by the stops prefetch."""
+        res = self.reservation
+        when = self.scheduled_time or res.pickup_time
+        return {
+            "airport": self.airport_id or "",
+            "airline": self.airline_id or "",
+            "flight": self.flight_number,
+            "date": res.pickup_date.isoformat() if res.pickup_date else "",
+            "direction": self.flight_direction,
+            "time": when.strftime("%H:%M") if when else "",
+        }
+
     def __str__(self) -> str:
         return self.name or self.address or f"Stop {self.sequence}"
+
+
+_PILL_CHIP = {
+    "verified": "chip-ok",
+    "on_time": "chip-ok",
+    "landed": "chip-ok",
+    "delayed": "chip-warn",
+    "not_found": "chip-warn",
+    "cancelled": "chip-danger",
+    "unavailable": "chip-ring",
+}
+_PILL_ICON = {
+    "delayed": "ti-clock-exclamation",
+    "cancelled": "ti-plane-off",
+    "not_found": "ti-help-circle",
+    "unavailable": "ti-plane",
+}
+DELAY_THRESHOLD_MINUTES = 10  # at or under this a live flight still reads "On time"
+
+
+class Flight(TimeStampedModel):
+    """One aviationstack answer, cached: this airline + number on this date, as seen from
+    this airport in one direction (spec 2026-08-29 §4.3). Shared by every stop on that
+    flight; `checked_at` + the phase decide when a click may hit the API again.
+
+    All datetimes are UTC and describe the flight's movement *at `airport`* — the arrival
+    for `direction=arrival`, the departure otherwise. They are rendered in
+    `airport.timezone`, never the viewer's.
+    """
+
+    class Status(models.TextChoices):
+        SCHEDULED = "scheduled", "Scheduled"
+        ACTIVE = "active", "Active"
+        LANDED = "landed", "Landed"
+        CANCELLED = "cancelled", "Cancelled"
+        DIVERTED = "diverted", "Diverted"
+        INCIDENT = "incident", "Incident"
+        NOT_FOUND = "not_found", "Not found"
+        UNAVAILABLE = "unavailable", "Unavailable"
+
+    class Source(models.TextChoices):
+        FUTURE = "flightsFuture", "Future schedule"
+        LIVE = "flights", "Live"
+
+    airline = models.ForeignKey("addresses.Airline", on_delete=models.PROTECT, related_name="+")
+    flight_number = models.CharField(max_length=6)  # digits, as on Stop
+    flight_date = models.DateField()  # local date at `airport`
+    airport = models.ForeignKey("addresses.Airport", on_delete=models.PROTECT, related_name="+")
+    direction = models.CharField(max_length=10, choices=FlightDirection.choices)
+
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    estimated_at = models.DateTimeField(null=True, blank=True)
+    actual_at = models.DateTimeField(null=True, blank=True)
+    delay_minutes = models.PositiveIntegerField(null=True, blank=True)
+    terminal = models.CharField(max_length=16, blank=True)
+    gate = models.CharField(max_length=16, blank=True)
+    other_airport_iata = models.CharField(max_length=4, blank=True)
+    other_airport_name = models.CharField(max_length=120, blank=True)
+    operated_by_iata = models.CharField(max_length=3, blank=True)
+    operated_by_name = models.CharField(max_length=120, blank=True)
+
+    source = models.CharField(max_length=14, choices=Source.choices, blank=True, default="")
+    checked_at = models.DateTimeField()
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["airline", "flight_number", "flight_date", "airport", "direction"],
+                name="uniq_flight_lookup",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.code} · {self.airport.iata} {self.direction} · {self.flight_date}"
+
+    # --- phase & windows ---
+    @property
+    def code(self) -> str:
+        return f"{self.airline.iata} {self.flight_number}"
+
+    @property
+    def is_live_phase(self) -> bool:
+        return self.flight_date <= today_at(self.airport.timezone) + timedelta(days=LIVE_PHASE_DAYS)
+
+    @property
+    def recheck_window(self) -> timedelta:
+        """Future & found 24 h · future & not-found / unavailable 1 h · live 5 min. Evaluated
+        against the phase *now*, so a future row that ages into the live window gets the
+        5-minute rule on its own — that is the whole 'moves to the live table' transition."""
+        if self.is_live_phase:
+            return timedelta(minutes=5)
+        if self.status in (self.Status.NOT_FOUND, self.Status.UNAVAILABLE):
+            return timedelta(hours=1)
+        return timedelta(hours=24)
+
+    @property
+    def refresh_allowed_at(self):
+        return self.checked_at + self.recheck_window
+
+    # --- times ---
+    @property
+    def best_at(self):
+        return self.actual_at or self.estimated_at or self.scheduled_at
+
+    @property
+    def effective_delay(self) -> int:
+        """Minutes late: aviationstack's `delay` when it sent one, else estimated − scheduled.
+        Never negative — early is not a state anyone dispatches around."""
+        if self.delay_minutes is not None:
+            return self.delay_minutes
+        if self.estimated_at and self.scheduled_at:
+            return max(0, int((self.estimated_at - self.scheduled_at).total_seconds() // 60))
+        return 0
+
+    def local(self, dt):
+        return dt.astimezone(ZoneInfo(self.airport.timezone)) if dt else None
+
+    def _fmt(self, dt) -> str:
+        return dateformat.format(self.local(dt), "g:i A") if dt else ""
+
+    @property
+    def time_local(self) -> str:
+        return self._fmt(self.best_at)
+
+    @property
+    def scheduled_local(self) -> str:
+        return self._fmt(self.scheduled_at)
+
+    @property
+    def tz_abbr(self) -> str:
+        return self.local(self.best_at).strftime("%Z") if self.best_at else ""
+
+    @property
+    def other_airport_label(self) -> str:
+        if self.other_airport_name and self.other_airport_iata:
+            return f"{self.other_airport_name} ({self.other_airport_iata})"
+        return self.other_airport_iata
+
+    # --- the pill ---
+    @property
+    def pill_state(self) -> str:
+        s = self.status
+        if s in (self.Status.CANCELLED, self.Status.DIVERTED, self.Status.INCIDENT):
+            return "cancelled"
+        if s == self.Status.NOT_FOUND:
+            return "not_found"
+        if s == self.Status.UNAVAILABLE:
+            return "unavailable"
+        if s == self.Status.LANDED or self.actual_at:
+            return "landed"
+        if self.source != self.Source.LIVE:
+            return "verified"  # a schedule snapshot carries no live status
+        return "delayed" if self.effective_delay > DELAY_THRESHOLD_MINUTES else "on_time"
+
+    def pill(self) -> dict:
+        """Everything a surface needs to draw this flight (spec §7.1) — the template include
+        and the verify endpoint both emit exactly this, so the copy lives here once."""
+        arriving = self.direction == FlightDirection.ARRIVAL
+        state = self.pill_state
+        code = self.code
+        t, abbr, sched = self.time_local, self.tz_abbr, self.scheduled_local
+        other = self.other_airport_label
+        verb = "Arrives" if arriving else "Departs"
+        prep = "from" if arriving else "to"
+        side = f"{prep} {other}" if other else ""
+        terminal = f"Terminal {self.terminal}" if self.terminal else ""
+        gate = f"Gate {self.gate}" if self.gate else ""
+        # timesince()'s own `now=None` default calls raw datetime.now(), not
+        # django.utils.timezone.now() — pass it explicitly or frozen-time tests (and any
+        # other timezone.now() patch) silently compute against real wall-clock time instead.
+        # It also wraps its result in a non-breaking space (avoid_wrapping) — normalize back
+        # to a plain space so "3 minutes ago" matches what the copy spec shows.
+        ago = timesince(self.checked_at, dj_timezone.now()).replace("\xa0", " ")
+        updated = f"updated {ago} ago"
+        parts: list[str]
+        if state == "verified":
+            label = f"{code} · {t} {abbr}"
+            checked = dateformat.format(dj_timezone.localtime(self.checked_at), "M j")
+            parts = [f"{verb} {t} {abbr}", terminal, side, f"checked {checked}"]
+        elif state == "on_time":
+            label = f"{code} · On time · {t} {abbr}"
+            parts = [f"{verb} {t} {abbr}", terminal, gate, side, updated]
+        elif state == "delayed":
+            label = f"{code} · +{self.effective_delay}m · {t} {abbr}"
+            parts = [f"{verb} {t} {abbr}", f"scheduled {sched}", terminal, gate, side, updated]
+        elif state == "landed":
+            label = f"{code} · {'Landed' if arriving else 'Departed'} {t} {abbr}"
+            parts = [terminal, gate, side, updated]
+        elif state == "cancelled":
+            word = "Diverted" if self.status == self.Status.DIVERTED else "Cancelled"
+            label = f"{code} · {word}"
+            was = f"was {'arriving' if arriving else 'departing'} {sched} {abbr}" if sched else ""
+            parts = [was, side, updated]
+        elif state == "not_found":
+            label = f"{code} · Not found"
+            when = dateformat.format(self.flight_date, "M j")
+            clause = "" if self.is_live_phase else " — not found, or not published yet"
+            parts = [
+                f"No {code} {'arriving' if arriving else 'departing'} at {self.airport.iata} "
+                f"on {when}{clause}. Check the number, or the flight may use another airport."
+            ]
+        else:
+            label = f"{code} · Live on the day"
+            parts = ["Live data available on the day of travel"]
+        if self.operated_by_iata:
+            parts.append(f"Operated by {self.operated_by_name or self.operated_by_iata}")
+        direction_icon = "ti-plane-arrival" if arriving else "ti-plane-departure"
+        return {
+            "state": state,
+            "chip": _PILL_CHIP[state],
+            "icon": _PILL_ICON.get(state, direction_icon),
+            "label": label,
+            "label_compact": label.replace(f" {abbr}", "") if abbr else label,
+            "detail": " · ".join(p for p in parts if p),
+            "code": code,
+            "direction": self.direction,
+            "status": self.status,
+            "source": self.source,
+            "time_local": t,
+            "scheduled_local": sched,
+            "tz_abbr": abbr,
+            "terminal": self.terminal,
+            "gate": self.gate,
+            "other_airport": other,
+            "operated_by": self.operated_by_name or self.operated_by_iata,
+            "checked_at": self.checked_at.isoformat(),
+            "checked_ago": ago,
+            "refresh_allowed_at": self.refresh_allowed_at.isoformat(),
+        }
 
 
 class TripStatusEvent(TimeStampedModel):
