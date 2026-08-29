@@ -110,15 +110,23 @@ def _combine_iso(date_val: date_type | None, time_val: time_type | None) -> str 
 def _location(stop: Stop, *, time_iso: str | None = None) -> dict:
     """One `locations.*` entry (pickup/dropOff/a `stops[]` element) for `stop`.
 
-    `locationType` is hardcoded to `"address"` everywhere — deliberately, not an
-    oversight: GNet's real `"airport"` type additionally wants `flightInfo`, and
-    `Stop` captures no flight data at all. An address string plus precise
-    coordinates (below) is enough for a driver to route on regardless of pickup
-    type. Keys with no value (`lat`/`lon`, `time`) are omitted rather than sent as
-    null — the payload is passthrough, so an absent key reaches GNet as "we don't
-    have this," not as a value to act on.
+    `locationType` is `"airport"` only when the stop was picked from the airport
+    directory AND carries a flight number: GNet's airport type wants `flightInfo`, and
+    an airport with no flight is more useful to a driver as an address plus precise
+    coordinates. Keys with no value (`lat`/`lon`, `time`, `airlineCode`) are omitted
+    rather than sent as null — the payload is passthrough, so an absent key reaches
+    GNet as "we don't have this," not as a value to act on.
     """
-    location = {"locationType": "address", "address": stop.address}
+    if stop.airport_id and stop.flight_number:
+        location = {
+            "locationType": "airport",
+            "address": stop.airport.iata or stop.airport.ident,
+            "flightInfo": {"flightNumber": stop.flight_number},
+        }
+        if stop.airline_id:
+            location["flightInfo"]["airlineCode"] = stop.airline.iata
+    else:
+        location = {"locationType": "address", "address": stop.address}
     if stop.latitude is not None and stop.longitude is not None:
         # Floats, not strings — this is the one place a number is correct in this
         # payload (see GNET farm-out doc's worked example); money stays a string.
