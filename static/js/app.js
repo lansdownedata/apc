@@ -561,7 +561,7 @@ function quoteWorkspace(opts = {}) {
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
         pax: 1,
-        rate: v ? v.rate : 0, hours: 1, minHours: v ? v.transferMin : 0,
+        rate: v ? v.rate : 0, hours: 0, minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "" },
@@ -607,27 +607,20 @@ function quoteWorkspace(opts = {}) {
       if (!v) return;
       this.draft.rate = v.rate;
       this.draft.minHours = this.draft.tripType === "hourly" ? v.hourlyMin : v.transferMin;
+      this.onHoursChanged();   // the minimum is what's billed until overridden → end time moves
     },
-    onHoursChanged() {              // hourly: derive drop-off from pickup + hours
+    onHoursChanged() {              // hourly: derive drop-off from pickup + billed hours
       if (this.draft.tripType !== "hourly") return;
-      if (!this.draft.date || !this.draft.time || !this.draft.hours) return;
+      const hours = this.billedHours(this.draft);
+      if (!this.draft.date || !this.draft.time || !hours) return;
       const start = new Date(this.draft.date + "T" + this.draft.time);
-      const end = new Date(start.getTime() + Number(this.draft.hours) * 3600000);
-      this.draft.dropoffDate = end.toISOString().slice(0, 10);
+      const end = new Date(start.getTime() + hours * 3600000);
+      this.draft.dropoffDate = localDate(end);  // not toISOString(): that is the UTC date
       this.draft.dropoffTime = end.toTimeString().slice(0, 5);
-    },
-    onDropoffChanged() {            // transfer: derive hours from drop-off − pickup
-      if (this.draft.tripType !== "transfer") return;
-      if (!this.draft.date || !this.draft.time || !this.draft.dropoffDate || !this.draft.dropoffTime) return;
-      const start = new Date(this.draft.date + "T" + this.draft.time);
-      const end = new Date(this.draft.dropoffDate + "T" + this.draft.dropoffTime);
-      this.draft.hours = end > start ? Math.round((end - start) / 3600000 * 100) / 100 : 0;
     },
     setDraftType(t) {
       this.draft.tripType = t;
       this.applyVehicleRateCard();
-      if (t === "hourly") { this.draft.hours = this.draft.hours || 4; this.onHoursChanged(); }
-      else { this.onDropoffChanged(); }
     },
     addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "" }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
@@ -669,8 +662,13 @@ function quoteWorkspace(opts = {}) {
       this._stopResults[i] = { open: false, list: [], active: -1 };
     },
     closeStopRow(i) { this._stopResults[i] = { open: false, list: [], active: -1 }; },
-    billedHours(r) { return Math.max(Number(r.hours) || 0, Number(r.minHours) || 0); },
-    minApplied(r) { return (Number(r.hours) || 0) < (Number(r.minHours) || 0); },
+    /* Override hours replace the rate-card minimum when set — even downward. */
+    billedHours(r) {
+      const override = Number(r.hours) || 0;
+      return override > 0 ? override : (Number(r.minHours) || 0);
+    },
+    minApplied(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) > 0; },
+    noMinimum(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) <= 0; },
     resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },
     resGratuity(r) {
       const flat = Number(r.gratuityFlat) || 0;
@@ -1074,6 +1072,13 @@ function time12(hhmm) {
   return (h % 12 || 12) + ":" + String(m).padStart(2, "0") + " " + (h >= 12 ? "PM" : "AM");
 }
 window.time12 = time12;
+
+/** YYYY-MM-DD from a Date's LOCAL components. `toISOString()` gives the UTC date,
+ *  which is tomorrow for any evening pickup in the US. */
+function localDate(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+window.localDate = localDate;
 
 /* -------------------------------------------------- image upload (settings)
  * A styled dropzone layered over a real <input type="file"> — the input still
