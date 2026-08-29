@@ -188,12 +188,12 @@ def test_hourly_draft_derives_dropoff_from_hours(lead=None):
     )
     assert res.dropoff_date.isoformat() == "2026-08-29"
     assert res.dropoff_time.strftime("%H:%M") == "15:00"  # 10:00 + 5h
-    assert res.line_total == 500 * 1  # 100 * max(5,4) = 500
+    assert res.line_total == 500 * 1  # 100 × override 5
 
 
-def test_transfer_draft_derives_hours_from_dropoff():
-    from apps.leads.factories import LeadFactory
-
+def test_transfer_draft_keeps_hours_as_the_posted_override():
+    """A transfer's hours are never derived from drop-off − pickup any more: no
+    override posted → 0 stored → the rate-card minimum prices it."""
     lead = LeadFactory()
     res = save_reservation_from_draft(
         lead,
@@ -201,6 +201,7 @@ def test_transfer_draft_derives_hours_from_dropoff():
             "tripType": "transfer",
             "pax": 2,
             "rate": "200.00",
+            "minHours": "1",
             "date": "2026-08-29",
             "time": "09:00",
             "dropoffDate": "2026-08-29",
@@ -208,8 +209,45 @@ def test_transfer_draft_derives_hours_from_dropoff():
             "stops": [{"address": "A"}, {"address": "B"}],
         },
     )
-    assert res.hours == Decimal("2.5")
-    assert res.line_total == Decimal("500.00")  # 200 * 2.5
+    assert res.hours == Decimal("0")
+    assert res.line_total == Decimal("200.00")  # 200 × min 1, not 200 × 2.5
+
+
+def test_transfer_draft_still_rejects_a_dropoff_before_pickup():
+    lead = LeadFactory()
+    with pytest.raises(DraftError, match="drop-off must be after pickup"):
+        save_reservation_from_draft(
+            lead,
+            {
+                "tripType": "transfer",
+                "pax": 1,
+                "rate": "200.00",
+                "date": "2026-08-29",
+                "time": "11:00",
+                "dropoffDate": "2026-08-29",
+                "dropoffTime": "09:00",
+                "stops": [{"address": "A"}, {"address": "B"}],
+            },
+        )
+
+
+def test_hourly_draft_without_an_override_ends_after_the_minimum():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        {
+            "tripType": "hourly",
+            "pax": 2,
+            "rate": "100.00",
+            "hours": "0",
+            "minHours": "4",
+            "date": "2026-08-29",
+            "time": "10:00",
+            "stops": [{"address": "A"}, {"address": "B"}],
+        },
+    )
+    assert res.dropoff_time.strftime("%H:%M") == "14:00"  # 10:00 + the 4-hr minimum
+    assert res.line_total == Decimal("400.00")
 
 
 def test_discount_survives_the_draft_round_trip():
