@@ -201,12 +201,11 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
             <div>
               <div class="text-[12px] text-muted mb-1">Override hours</div>
               {% comment %}
-              Not x-model: 0 means "no override" and must show as an empty box, not "0".
+              x-model.number, with '' as "no override": a reactive :value binding re-renders the box
+              mid-keystroke and eats a leading 0 or ".".
               {% endcomment %}
-              <input type="number" min="0" step="0.25" placeholder="—"
-                :value="draft.hours || ''"
-                @input="draft.hours = $event.target.value === '' ? 0 : Number($event.target.value); onHoursChanged()"
-                class="field text-[13px] num">
+              <input x-model.number="draft.hours" type="number" min="0" step="0.25" placeholder="—"
+                @input="onHoursChanged()" class="field text-[13px] num">
             </div>
             <div>
               <div class="text-[12px] text-muted mb-1">Min hours</div>
