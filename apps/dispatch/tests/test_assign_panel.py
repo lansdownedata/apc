@@ -1,5 +1,5 @@
 import re
-from datetime import date, time, timedelta
+from datetime import UTC, date, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -351,20 +351,73 @@ def _with_flight(reservation, *, sequence=0, number="123"):
     stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
     stop.airline = Airline.objects.get(iata="UA")
     stop.flight_number = number
+    stop.flight_direction = "arrival"
     stop.save()
     return stop
 
 
-def test_panel_shows_the_flight_with_a_verify_button(logged_in_client):
+def test_panel_shows_the_flight_with_a_verify_button(logged_in_client, settings):
+    settings.AVIATIONSTACK_API_KEY = "k"
     trip = _trip()
     _with_flight(trip)
     body = _panel(logged_in_client, trip)
-    assert "Arriving · UA 123" in body
-    assert "flightVerifyComingSoon()" in body
+    assert "flightVerifyComingSoon" not in body
+    assert "flightStatus({" in body
+    assert "&quot;direction&quot;: &quot;arrival&quot;" in body  # payload for the endpoint
+    assert "&quot;date&quot;: &quot;2026-08-26&quot;" in body
+    assert "initial: null" in body and "enabled: true" in body
+    assert "UA 123" in body
+
+
+def test_panel_verified_flight_carries_its_pill(logged_in_client):
+    from datetime import datetime
+
+    from apps.reservations.factories import FlightFactory
+
+    trip = _trip()
+    stop = _with_flight(trip)
+    stop.flight = FlightFactory(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number="123",
+        flight_date=date(2026, 8, 26),
+        direction="arrival",
+        scheduled_at=datetime(2026, 8, 26, 10, 15, tzinfo=UTC),
+    )
+    stop.save()
+    body = _panel(logged_in_client, trip)
+    # json_attr encodes with json.dumps' default ensure_ascii=True, so the middle dot comes
+    # through as its \u escape, not the literal character.
+    assert "&quot;label&quot;: &quot;UA 123 \\u00b7 6:15 AM EDT&quot;" in body
+    assert "&quot;refresh_allowed_at&quot;" in body
+
+
+def test_panel_hides_verify_when_not_configured(logged_in_client, settings):
+    settings.AVIATIONSTACK_API_KEY = ""
+    trip = _trip()
+    _with_flight(trip)
+    assert "enabled: false" in _panel(logged_in_client, trip)
 
 
 def test_panel_flight_join_adds_no_query(logged_in_client, django_assert_max_num_queries):
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     _with_flight(trip)
+    with django_assert_max_num_queries(9):
+        logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
+
+
+def test_panel_verified_flight_join_adds_no_query(logged_in_client, django_assert_max_num_queries):
+    from apps.reservations.factories import FlightFactory
+
+    trip = _trip(stops=[f"Stop {i}" for i in range(8)])
+    stop = _with_flight(trip)
+    stop.flight = FlightFactory(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number="123",
+        flight_date=date(2026, 8, 26),
+        direction="arrival",
+    )
+    stop.save()
     with django_assert_max_num_queries(9):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))

@@ -253,6 +253,7 @@ header, aside, main, .wash-gold {
 .chip-warn   { background: rgb(var(--warn-soft));   color: rgb(var(--warn)); }
 .chip-danger { background: rgb(var(--danger-soft)); color: rgb(var(--danger)); }
 .chip-gold   { background: rgb(var(--gold-soft));   color: rgb(var(--gold-deep)); }
+.chip-ring   { background: transparent; color: rgb(var(--muted)); box-shadow: inset 0 0 0 1px rgb(var(--border)); }
 
 /* Dark mode: re-tint the Tailwind status pastels centrally, so the dozens of
    bg-emerald-50 / text-emerald-600 status chips & badges read on dark surfaces
