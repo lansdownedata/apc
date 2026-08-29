@@ -16,7 +16,11 @@ def test_charges_only_due_scheduled_balances():
     # Due: scheduled + earliest pickup within 30 days.
     due_lead = LeadFactory()
     TransferReservationFactory(lead=due_lead, pickup_date=date.today() + timedelta(days=10))
-    due_plan = PaymentPlanFactory(lead=due_lead, balance_status=PaymentPlan.BalanceStatus.SCHEDULED)
+    due_plan = PaymentPlanFactory(
+        lead=due_lead,
+        balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
+        stripe_payment_method_id="pm_123",
+    )
 
     # Not due: scheduled but pickup far out.
     future_lead = LeadFactory()
@@ -27,4 +31,25 @@ def test_charges_only_due_scheduled_balances():
         charged = charge_due_balances()
 
     charge_balance.assert_called_once_with(due_plan)
+    assert charged == 1
+
+
+def test_due_balances_without_a_saved_card_are_left_for_the_report():
+    """A directly booked order may have no card; charging would only ever fail and raise a
+    'balance failed' alert every day. It stays SCHEDULED and shows on the deposit report."""
+    carded = LeadFactory()
+    TransferReservationFactory(lead=carded, pickup_date=date.today() + timedelta(days=10))
+    carded_plan = PaymentPlanFactory(
+        lead=carded,
+        balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
+        stripe_payment_method_id="pm_123",
+    )
+    cardless = LeadFactory()
+    TransferReservationFactory(lead=cardless, pickup_date=date.today() + timedelta(days=10))
+    PaymentPlanFactory(lead=cardless, balance_status=PaymentPlan.BalanceStatus.SCHEDULED)
+
+    with patch("apps.payments.tasks.services.charge_balance") as charge_balance:
+        charged = charge_due_balances()
+
+    charge_balance.assert_called_once_with(carded_plan)
     assert charged == 1
