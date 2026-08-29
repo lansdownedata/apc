@@ -84,20 +84,12 @@ class BookingRequestForm(forms.Form):
     pickup_airline = forms.ModelChoiceField(
         queryset=Airline.objects.filter(is_active=True), required=False
     )
-    pickup_flight = forms.RegexField(
-        regex=FLIGHT_RE,
-        required=False,
-        error_messages={"invalid": "Flight number must be digits (up to 6)."},
-    )
+    pickup_flight = forms.CharField(max_length=6, required=False)
     dropoff_airport = forms.IntegerField(required=False)
     dropoff_airline = forms.ModelChoiceField(
         queryset=Airline.objects.filter(is_active=True), required=False
     )
-    dropoff_flight = forms.RegexField(
-        regex=FLIGHT_RE,
-        required=False,
-        error_messages={"invalid": "Flight number must be digits (up to 6)."},
-    )
+    dropoff_flight = forms.CharField(max_length=6, required=False)
 
     # Optional in-between stops (JSON array from the Alpine repeater).
     stops_json = forms.CharField(required=False)
@@ -113,6 +105,22 @@ class BookingRequestForm(forms.Form):
 
     def clean_dropoff_airport(self):
         return self._clean_airport("dropoff_airport")
+
+    def _clean_flight(self, end: str) -> str:
+        """Digits only, and only meaningful with an airport — without one the value is
+        dropped rather than rejected, so a stale entry in a hidden row can't block the form."""
+        flight = (self.cleaned_data.get(f"{end}_flight") or "").strip()
+        if not self.cleaned_data.get(f"{end}_airport"):
+            return ""
+        if flight and not FLIGHT_RE.match(flight):
+            raise forms.ValidationError("Flight number must be digits (up to 6).")
+        return flight
+
+    def clean_pickup_flight(self):
+        return self._clean_flight("pickup")
+
+    def clean_dropoff_flight(self):
+        return self._clean_flight("dropoff")
 
     def clean_stops_json(self):
         raw = (self.cleaned_data.get("stops_json") or "").strip()
@@ -133,17 +141,16 @@ class BookingRequestForm(forms.Form):
             address = str(item.get("address") or "").strip()[:ADDRESS_MAXLEN]
             if not address:
                 continue
+            airport_id = _to_int(item.get("airport"))
             flight = str(item.get("flight") or "").strip()
-            if flight and not FLIGHT_RE.match(flight):
+            if airport_id and flight and not FLIGHT_RE.match(flight):
                 raise forms.ValidationError("A stop's flight number must be digits (up to 6).")
             cleaned.append(
                 {
                     "address": address,
                     "lat": _to_float(item.get("lat")),
                     "lng": _to_float(item.get("lng")),
-                    **_flight_fields(
-                        _to_int(item.get("airport")), _to_int(item.get("airline")), flight
-                    ),
+                    **_flight_fields(airport_id, _to_int(item.get("airline")), flight),
                 }
             )
         airport_ids = {s["airport_id"] for s in cleaned if s["airport_id"]}
