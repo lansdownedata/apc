@@ -14,7 +14,7 @@
 
 <p style="margin:0 0 6px;font-weight:600">Routing</p>
 <ol style="margin:0 0 16px;padding-left:20px">
-  {% for stop in stops %}<li style="padding:2px 0">{{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}{% if stop.flight_label %} · ✈ {{ stop.flight_label }}{% endif %}</li>{% endfor %}
+  {% for stop in stops %}<li style="padding:2px 0">{{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}{% if stop.flight_label %} · ✈ {{ stop.flight_label }}{% if stop.flight_id and stop.flight.scheduled_at %} · {% if stop.flight_direction == 'departure' %}dep{% else %}arr{% endif %} {{ stop.flight.time_local }} {{ stop.flight.tz_abbr }}{% if stop.flight.terminal %} · Terminal {{ stop.flight.terminal }}{% endif %}{% endif %}{% endif %}</li>{% endfor %}
 </ol>
 
 <p style="font-size:18px;font-weight:700;margin:0 0 16px">Payout offered: ${{ payout }}</p>

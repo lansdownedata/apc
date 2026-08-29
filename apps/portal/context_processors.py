@@ -69,6 +69,7 @@ def chrome(request):
             "address_bias_center": settings.ADDRESS_BIAS_CENTER,
             "us_states": US_STATES,
             "airline_options": SimpleLazyObject(_airline_options),
+            "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
         }
 
     unread = Notification.objects.unread().select_related("lead", "lead__contact")
@@ -81,4 +82,5 @@ def chrome(request):
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
         "airline_options": SimpleLazyObject(_airline_options),
+        "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
     }

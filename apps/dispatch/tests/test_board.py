@@ -1,4 +1,4 @@
-from datetime import time, timedelta
+from datetime import UTC, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -184,6 +184,7 @@ def _with_flight(reservation, *, sequence=0, number="123"):
     stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
     stop.airline = Airline.objects.get(iata="UA")
     stop.flight_number = number
+    stop.flight_direction = "arrival"
     stop.save()
     return stop
 
@@ -191,4 +192,74 @@ def _with_flight(reservation, *, sequence=0, number="123"):
 def test_routing_cell_shows_the_flight_on_an_airport_end(logged_in_client):
     _with_flight(_trip())
     resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
-    assert "✈ UA 123" in resp.content.decode()
+    html = resp.content.decode()
+    assert "✈ UA 123" not in html
+    assert "ti-plane-arrival" in html and "UA 123" in html
+
+
+def _verified_on_board(trip, *, number="123", **over):
+    """`number` distinguishes the cached Flight row — every stop otherwise defaults to the
+    same airport/airline/date/direction, which would collide on Flight's uniq_flight_lookup
+    constraint the moment a test links more than one trip to a "verified" flight on DAY."""
+    from datetime import datetime
+
+    from apps.reservations.factories import FlightFactory
+
+    stop = _with_flight(trip, number=number)
+    kwargs = dict(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number=number,
+        flight_date=DAY,
+        direction="arrival",
+        scheduled_at=datetime.combine(DAY, datetime.min.time()).replace(
+            hour=21, minute=35, tzinfo=UTC
+        ),
+    )
+    kwargs.update(over)
+    stop.flight = FlightFactory(**kwargs)
+    stop.save()
+    return stop
+
+
+def test_board_shows_a_state_icon_and_a_compact_pill(logged_in_client):
+    _verified_on_board(_trip())
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+    html = resp.content.decode()
+    assert 'title="Flight verified"' in html
+    assert "UA 123 · 5:35 PM<" in html  # compact: no tz abbreviation on the board
+    # The pill's title tooltip legitimately carries the full "Arrives ... EDT" detail text —
+    # only the *visible* label must drop the abbreviation, i.e. the full (non-compact) label
+    # must never be what's rendered inside the pill's <span>.
+    assert "5:35 PM EDT<" not in html
+
+
+def test_board_tints_delayed_and_cancelled_rows(logged_in_client):
+    from apps.reservations.models import Flight
+
+    _verified_on_board(
+        _trip(pickup_time=time(9, 0)),
+        number="401",
+        source=Flight.Source.LIVE,
+        status=Flight.Status.ACTIVE,
+        delay_minutes=40,
+    )
+    _verified_on_board(
+        _trip(pickup_time=time(10, 0)),
+        number="402",
+        source=Flight.Source.LIVE,
+        status=Flight.Status.CANCELLED,
+    )
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+    html = resp.content.decode()
+    assert 'title="1 flight delayed"' in html and "bg-amber-50/40" in html
+    assert 'title="Flight cancelled"' in html and "bg-rose-50/40" in html
+
+
+def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert_max_num_queries):
+    for hour in range(8, 20):
+        trip = _trip(pickup_time=time(hour, 0))
+        services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
+        _verified_on_board(trip, number=str(hour))
+    with django_assert_max_num_queries(15):
+        logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})

@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import UTC, date, time
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -117,3 +117,27 @@ def test_offer_email_lists_the_flight_on_an_airport_stop(mailoutbox):
     text, html = mailoutbox[0].body, mailoutbox[0].alternatives[0][0]
     assert "flight UA 123" in text
     assert "✈ UA 123" in html
+
+
+def test_offer_email_carries_the_verified_time_and_terminal(mailoutbox):
+    from datetime import datetime
+
+    from apps.reservations.factories import FlightFactory
+
+    trip = _trip()
+    stop = _with_flight(trip)
+    stop.flight_direction = "arrival"
+    stop.flight = FlightFactory(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number="123",
+        flight_date=date(2026, 8, 26),
+        direction="arrival",
+        terminal="B",
+        scheduled_at=datetime(2026, 8, 26, 14, 35, tzinfo=UTC),
+    )
+    stop.save()
+    services.send_offer(trip, VendorFactory(email="ops@capital.example"), payout=Decimal("215.00"))
+    text, html = mailoutbox[0].body, mailoutbox[0].alternatives[0][0]
+    assert "flight UA 123 arr 10:35 AM EDT, Terminal B" in text
+    assert "✈ UA 123 · arr 10:35 AM EDT · Terminal B" in html
