@@ -26,6 +26,11 @@ def united():
     return AirlineFactory(iata="UA", name="United Airlines")
 
 
+@pytest.fixture
+def lax():
+    return AirportFactory(iata="LAX", name="Los Angeles Intl", timezone="America/Los_Angeles")
+
+
 def _flight(iad, united, **over):
     kwargs = dict(
         airline=united,
@@ -164,6 +169,19 @@ def test_pill_verified_future(iad, united):
     )
     assert p["refresh_allowed_at"] == (NOW + timedelta(hours=24)).isoformat()
     assert p["other_airport"] == "Denver International (DEN)"
+
+
+def test_pill_checked_date_uses_the_airport_zone_not_the_server(lax, united):
+    """The "checked" date in a verified pill must come from the airport's own zone
+    (self.local()), never settings.TIME_ZONE (America/New_York here). 05:30 UTC on
+    2026-09-02 is Sep 2 in Eastern but still Sep 1 in Pacific — pick a non-Eastern airport
+    (LAX) and a checked_at that straddles that boundary to catch a server-zone regression."""
+    checked_at = datetime(2026, 9, 2, 5, 30, tzinfo=UTC)
+    with patch("django.utils.timezone.now", return_value=checked_at):
+        p = _flight(lax, united, checked_at=checked_at).pill()
+    assert p["detail"] == (
+        "Arrives 2:35 PM PDT · Terminal C · from Denver International (DEN) · checked Sep 1"
+    )
 
 
 def test_pill_delayed_live(iad, united):
