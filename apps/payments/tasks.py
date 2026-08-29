@@ -41,3 +41,30 @@ def recognize_due_revenue() -> int:
         ledger.recognize_reservation(reservation)
         count += 1
     return count
+
+
+def send_unpaid_deposit_report(today=None) -> int:
+    """Email the office every booked order with an unpaid deposit and a trip inside the
+    balance window. Nothing goes out on an empty day. Returns the number of orders listed."""
+    from django.conf import settings
+
+    from apps.notifications.email import send_html_email
+
+    from . import reports
+
+    rows = reports.unpaid_deposit_rows(today=today)
+    if not rows:
+        return 0
+    window = settings.BALANCE_CHARGE_DAYS_BEFORE
+    count = len(rows)
+    context = {
+        "rows": rows,
+        "today": today or timezone.localdate(),
+        "window_days": window,
+        "company_name": settings.COMPANY_NAME,
+    }
+    plural = "s" if count != 1 else ""
+    subject = f"Unpaid deposits — {count} order{plural} with a trip inside {window} days"
+    for recipient in settings.DEPOSIT_REPORT_EMAILS:
+        send_html_email(to=recipient, subject=subject, template="deposit_report", context=context)
+    return count
