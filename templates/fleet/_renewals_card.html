@@ -35,4 +35,5 @@
     {% endfor %}
   </div>
   {% endif %}
+  {% if add_url %}<form id="renewal-delete-form" method="post" class="hidden">{% csrf_token %}</form>{% endif %}
 </div>

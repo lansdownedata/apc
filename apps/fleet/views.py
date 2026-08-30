@@ -11,13 +11,14 @@ from django.db.models.functions import Cast
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
 
-from .forms import DriverForm, VehicleForm
-from .models import RENEWAL_PREFETCH, RENEWAL_SEVERITY, Driver, Vehicle
+from .forms import DriverForm, RenewalForm, VehicleForm
+from .models import RENEWAL_PREFETCH, RENEWAL_SEVERITY, Driver, Renewal, RenewalType, Vehicle
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(RENEWAL_SEVERITY)}
 _STATUS_FILTERS = [("active", "Active"), ("inactive", "Inactive"), ("all", "All")]
@@ -197,6 +198,7 @@ def driver_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "history": history,
             "addr_url": reverse("fleet:driver_address_update", args=[driver.pk]),
             "ac_url": reverse("integrations:geocode_autocomplete"),
+            "add_url": reverse("fleet:driver_renewal_create", args=[driver.pk]),
         },
     )
 
@@ -268,5 +270,111 @@ def vehicle_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "summary": vehicle.renewal_summary(),
             "current": current,
             "history": history,
+            "add_url": reverse("fleet:vehicle_renewal_create", args=[vehicle.pk]),
         },
     )
+
+
+def _detail_url(subject: Driver | Vehicle) -> str:
+    if isinstance(subject, Driver):
+        return reverse("fleet:driver_detail", args=[subject.pk])
+    return reverse("fleet:vehicle_detail", args=[subject.pk])
+
+
+def _renewal_form_view(
+    request: HttpRequest,
+    *,
+    subject: Driver | Vehicle,
+    instance: Renewal | None,
+    title: str,
+    initial: dict | None = None,
+    keep_type_id: int | None = None,
+) -> HttpResponse:
+    """One door for add / edit / renew. The subject comes from the URL, never the form,
+    and fixes which half of the type catalog the picker offers."""
+    applies_to = (
+        RenewalType.AppliesTo.DRIVER
+        if isinstance(subject, Driver)
+        else RenewalType.AppliesTo.VEHICLE
+    )
+    form = RenewalForm(
+        request.POST or None,
+        request.FILES or None,
+        instance=instance,
+        initial=initial,
+        applies_to=applies_to,
+        keep_type_id=keep_type_id,
+    )
+    if request.method == "POST" and form.is_valid():
+        row = form.save(commit=False)
+        if instance is None:
+            if isinstance(subject, Driver):
+                row.driver = subject
+            else:
+                row.vehicle = subject
+        row.save()
+        messages.success(request, f"{title} saved.")
+        return redirect(_detail_url(subject))
+    return render(
+        request,
+        "fleet/renewal_form.html",
+        {
+            "nav": "fleet",
+            "page_title": title,
+            "form": form,
+            "subject": subject,
+            "back_url": _detail_url(subject),
+        },
+    )
+
+
+@login_required
+def driver_renewal_create(request: HttpRequest, pk: int) -> HttpResponse:
+    driver = get_object_or_404(Driver, pk=pk)
+    return _renewal_form_view(request, subject=driver, instance=None, title="Add renewal")
+
+
+@login_required
+def vehicle_renewal_create(request: HttpRequest, pk: int) -> HttpResponse:
+    vehicle = get_object_or_404(Vehicle, pk=pk)
+    return _renewal_form_view(request, subject=vehicle, instance=None, title="Add renewal")
+
+
+def _renewal(pk: int) -> Renewal:
+    return get_object_or_404(
+        Renewal.objects.select_related("driver", "vehicle", "renewal_type"), pk=pk
+    )
+
+
+@login_required
+def renewal_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    row = _renewal(pk)
+    return _renewal_form_view(request, subject=row.subject, instance=row, title="Edit renewal")
+
+
+@login_required
+def renewal_renew(request: HttpRequest, pk: int) -> HttpResponse:
+    """A renewal is a NEW row — the old one stays as history. Prefills type + reference."""
+    old = _renewal(pk)
+    return _renewal_form_view(
+        request,
+        subject=old.subject,
+        instance=None,
+        title=f"Renew {old.renewal_type.name}",
+        initial={
+            "renewal_type": old.renewal_type_id,
+            "reference": old.reference,
+            "issued_on": timezone.localdate(),
+        },
+        keep_type_id=old.renewal_type_id,
+    )
+
+
+@login_required
+@require_POST
+def renewal_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    row = _renewal(pk)
+    back = _detail_url(row.subject)
+    row.delete()
+    messages.success(request, "Renewal removed.")
+    return redirect(back)

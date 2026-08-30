@@ -1,0 +1,12 @@
+{% comment %} Renew / edit / delete for one renewal row — included per row by _renewals_card.html. {% endcomment %}
+<div class="flex items-center gap-2 shrink-0 text-[11px]">
+  <a href="{% url 'fleet:renewal_renew' r.pk %}" class="font-semibold" style="color:rgb(var(--gold-deep));">Renew</a>
+  <a href="{% url 'fleet:renewal_edit' r.pk %}" class="text-muted hover:text-ink">Edit</a>
+  <button type="button" class="text-muted hover:text-rose-600"
+          @click="$store.modal.confirm({
+            title: 'Remove this {{ r.renewal_type.name|escapejs }} record?',
+            message: 'Only for a row entered by mistake. To record a renewal, use Renew instead.',
+            variant: 'danger', confirmText: 'Remove',
+            onConfirm: () => { const f = document.getElementById('renewal-delete-form'); f.action = '{% url 'fleet:renewal_delete' r.pk %}'; f.submit(); }
+          })">Delete</button>
+</div>
