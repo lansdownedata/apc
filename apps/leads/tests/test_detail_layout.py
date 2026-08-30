@@ -161,6 +161,17 @@ def test_airline_options_offer_active_carriers_only(client):
     assert all(label != "ZZ — Retired Air" for _, label in options)
 
 
+def test_private_airline_id_context_feeds_the_editors_verify_gate(page):
+    """`quoteWorkspace()` needs the seeded Private carrier's pk client-side to gate its
+    Verify button the same way `Stop.verify_available` gates it server-side (2026-08-29
+    §3) — the airline picker alone only gives a label, not which row is Private."""
+    from apps.addresses.models import Airline
+
+    private = Airline.objects.get(iata="N")
+    html = page(LeadFactory())
+    assert f"privateAirlineId: {private.pk}" in html
+
+
 def test_editor_renders_the_flight_row_for_airport_stops(page, settings):
     settings.AVIATIONSTACK_API_KEY = "k"
     html = page(LeadFactory())

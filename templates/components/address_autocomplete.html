@@ -48,8 +48,11 @@
       <div class="ts-compact">
         {% include "components/searchable_select.html" with name=name|add:"_airline" field_id=field_id|add:"-airline" options=airline_options selected=airline_selected empty_label="Airline" %}
       </div>
-      <input type="text" name="{{ name }}_flight" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-             placeholder="Flight #" value="{{ flight_value|default:'' }}" class="field w-full">
+      {# pattern accepts both digits (a real carrier's flight number) and a tail number like
+         "N561FX" (the Private carrier, e.g. Manassas/Andrews/FBO traffic) — digits-only would
+         block a legitimate tail number at the browser's native form submission. #}
+      <input type="text" name="{{ name }}_flight" pattern="[0-9A-Za-z]*" maxlength="6"
+             placeholder="Flight # / tail #" value="{{ flight_value|default:'' }}" class="field w-full">
     </div>
     {% endif %}
   </div>

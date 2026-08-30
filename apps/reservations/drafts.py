@@ -66,6 +66,10 @@ def _coord(value, limit: int) -> Decimal | None:
 
 
 FLIGHT_RE = re.compile(r"^\d{1,6}$")  # public: imported cross-module by apps/reservations/views.py
+# A US-registered tail number: "N" + up to 5 alphanumerics (e.g. "N561FX") — the only shape
+# `Stop.flight_number` holds for the seeded Private carrier (2026-08-29 §2). `Stop.flight_number`
+# is already `max_length=6`, exactly wide enough, so no column change was needed.
+TAIL_RE = re.compile(r"^N[0-9A-Z]{1,5}$")  # public: imported cross-module by views.py
 
 
 def _pk(value) -> int | None:
@@ -75,11 +79,25 @@ def _pk(value) -> int | None:
         return None
 
 
-def _flight_number(value) -> str:
-    text = str(value or "").strip()
-    if text and not FLIGHT_RE.match(text):
+def _raw_flight_number(value) -> str:
+    """Just the trimmed text — format isn't validated until `_validate_flight_info` knows
+    which airline was chosen (a tail number is only valid for the Private carrier)."""
+    return str(value or "").strip()
+
+
+def _validated_flight_number(value: str, *, is_private: bool) -> str:
+    """Digits only for a real carrier; a tail number (case-insensitive on input, stored
+    upper-case) for the seeded Private one."""
+    if not value:
+        return value
+    if is_private:
+        text = value.upper()
+        if not TAIL_RE.match(text):
+            raise DraftError("tail number must start with N (up to 6 characters)")
+        return text
+    if not FLIGHT_RE.match(value):
         raise DraftError("flight number must be digits (up to 6)")
-    return text
+    return value
 
 
 _DIRECTIONS = ("", "arrival", "departure")
@@ -118,8 +136,14 @@ def _validate_flight_info(
     across unrelated edits (spec §3.1): its pk is passed in via
     `grandfathered_airline_ids` and skips the active-airline check. New choices still
     come from the active list only.
+
+    Each stop's `flight_number` arrives here as trimmed-but-unvalidated text
+    (`_raw_flight_number`) — its format depends on which airline was chosen (a tail
+    number is only valid for the seeded Private carrier), which this function is the
+    first place to actually know, so the digits-vs-tail-number check happens here too,
+    on the same airline query, rather than costing a third.
     """
-    from apps.addresses.models import Airline, Airport
+    from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline, Airport
 
     for stop in stops:
         if stop["airport_id"] is None:
@@ -131,12 +155,21 @@ def _validate_flight_info(
             raise DraftError("unknown airport")
     airline_ids = {s["airline_id"] for s in stops if s["airline_id"] is not None}
     unknown = airline_ids - grandfathered_airline_ids
-    if unknown:
-        active = set(
-            Airline.objects.filter(pk__in=unknown, is_active=True).values_list("pk", flat=True)
-        )
-        if unknown - active:
+    private_ids: set[int] = set()
+    if airline_ids:
+        rows = Airline.objects.filter(pk__in=airline_ids).values_list("pk", "iata", "is_active")
+        active_pks = set()
+        for pk, iata, is_active in rows:
+            if is_active:
+                active_pks.add(pk)
+            if iata == PRIVATE_AIRLINE_IATA:
+                private_ids.add(pk)
+        if unknown - active_pks:
             raise DraftError("choose an airline from the list")
+    for stop in stops:
+        stop["flight_number"] = _validated_flight_number(
+            stop["flight_number"], is_private=stop["airline_id"] in private_ids
+        )
 
 
 def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = frozenset()) -> dict:
@@ -182,8 +215,10 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
                 "airline_id": _pk(s.get("airline")),
                 # No airport → the flight is dropped anyway, so a stale/garbled value
                 # must not 400 the save (spec: "no airport → airline and flight are dropped").
+                # Format (digits vs. tail number) isn't validated until
+                # `_validate_flight_info` knows which airline was chosen.
                 "flight_number": (
-                    _flight_number(s.get("flight")) if _pk(s.get("airport")) is not None else ""
+                    _raw_flight_number(s.get("flight")) if _pk(s.get("airport")) is not None else ""
                 ),
                 # Same rule as the flight number: without an airport it is dropped, so a
                 # garbled value never 400s the save.

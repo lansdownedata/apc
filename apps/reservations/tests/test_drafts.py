@@ -473,6 +473,57 @@ def test_flight_validation_costs_two_queries_however_many_stops(
         drafts.parse_draft(_payload(stops=stops))
 
 
+# --- Private / tail-number flights (2026-08-29) --------------------------------------
+
+
+@pytest.fixture
+def private_airline():
+    from apps.addresses.models import Airline
+
+    return Airline.objects.get(iata="N")  # seeded by addresses.0007
+
+
+def test_parse_accepts_a_tail_number_for_the_private_airline(iad, private_airline):
+    """A lowercase tail number is accepted and stored upper-case (case-insensitive
+    on input, per spec 2026-08-29 §2)."""
+    data = drafts.parse_draft(_flight_payload(iad, private_airline, flight="n561fx"))
+    assert data["stops"][0]["flight_number"] == "N561FX"
+
+
+def test_parse_rejects_a_tail_number_for_a_real_carrier(iad, united):
+    """The shape is only meaningful for the Private carrier — a real airline still gets
+    the digits-only rule."""
+    with pytest.raises(DraftError, match="digits"):
+        drafts.parse_draft(_flight_payload(iad, united, flight="N561FX"))
+
+
+def test_parse_still_accepts_digits_for_a_real_carrier(iad, united):
+    data = drafts.parse_draft(_flight_payload(iad, united, flight="123"))
+    assert data["stops"][0]["flight_number"] == "123"
+
+
+def test_parse_rejects_digits_only_for_the_private_airline(iad, private_airline):
+    """A tail number always starts with N — bare digits aren't a valid tail number either."""
+    with pytest.raises(DraftError, match="tail number"):
+        drafts.parse_draft(_flight_payload(iad, private_airline, flight="12345"))
+
+
+def test_parse_rejects_a_tail_number_longer_than_six_characters(iad, private_airline):
+    with pytest.raises(DraftError, match="tail number"):
+        drafts.parse_draft(_flight_payload(iad, private_airline, flight="N1234567"))
+
+
+def test_flight_validation_with_a_private_stop_still_costs_two_queries(
+    iad, private_airline, django_assert_max_num_queries
+):
+    stops = [
+        {"address": f"S{i}", "airport": iad.pk, "airline": private_airline.pk, "flight": "N561FX"}
+        for i in range(6)
+    ]
+    with django_assert_max_num_queries(2):
+        drafts.parse_draft(_payload(stops=stops))
+
+
 def test_a_retired_airline_survives_an_unrelated_edit(iad, united):
     """The editor saves by delete-and-recreate; a carrier retired after booking must not
     turn every later edit into a 400 (spec §3.1)."""

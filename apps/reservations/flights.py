@@ -158,6 +158,14 @@ def lookup(
     """Return the cached row for this flight-at-airport, refreshing it from aviationstack
     only when its re-check window has passed (spec §6.1). Raises FlightLookupError for
     input we refuse to send, AviationstackError when the provider fails (nothing cached)."""
+    if airline.is_private:
+        # A tail number (e.g. N561FX) has no airline code or flight number — aviationstack
+        # indexes scheduled flights by exactly those, so there is nothing to send it.
+        # Checked first, ahead of the airport/timezone/date guards below: it doesn't
+        # depend on any of them (2026-08-29 §3).
+        raise FlightLookupError(
+            "private_flight", "Private flights aren't in any airline's schedule to verify."
+        )
     iata = (airport.iata or "").upper()
     if not _IATA_RE.match(iata):
         raise FlightLookupError("no_iata", "This airport has no IATA code to look up.")

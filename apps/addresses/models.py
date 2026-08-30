@@ -95,12 +95,21 @@ class Airport(TimeStampedModel):
         return self.label
 
 
+# A tail-numbered private flight (Manassas/Andrews/FBO traffic) has no commercial carrier
+# code — it rides in the airline directory as this one reserved IATA-shaped row so the
+# picker, drafts.py, public/forms.py, and flights.py can all key off it the same way they
+# already key off a real carrier (2026-08-29). "N" is the FAA prefix for a US-registered
+# aircraft's tail number (e.g. "N561FX"), which is what `Stop.flight_number` holds for it.
+PRIVATE_AIRLINE_IATA = "N"
+
+
 class Airline(TimeStampedModel):
     """A carrier that can be attached to an airport stop.
 
     Seeded from `apps/addresses/data/airlines.csv` (`iata,icao,name`) by migration 0004
-    and `manage.py seed_airlines`. Retire a carrier with `is_active=False` rather than
-    deleting it — stops keep a PROTECT link to the airline they were booked on.
+    (+ 0007 for the later-added Private row) and `manage.py seed_airlines`. Retire a
+    carrier with `is_active=False` rather than deleting it — stops keep a PROTECT link to
+    the airline they were booked on.
     """
 
     iata = models.CharField(max_length=3, unique=True)
@@ -115,6 +124,12 @@ class Airline(TimeStampedModel):
     def label(self) -> str:
         """Picker line: 'UA — United Airlines'."""
         return f"{self.iata} — {self.name}"
+
+    @property
+    def is_private(self) -> bool:
+        """True for the seeded tail-number carrier — no scheduled flight number exists to
+        verify, and its stops render just the tail number, not "N <tail>"."""
+        return self.iata == PRIVATE_AIRLINE_IATA
 
     def __str__(self) -> str:
         return self.label
