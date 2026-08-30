@@ -39,7 +39,7 @@
         <i class="ti {% if trip.trip_type == 'hourly' %}ti-clock-hour-4{% else %}ti-arrow-narrow-right{% endif %} text-[17px]"></i>
       </span>
       <div class="min-w-0">
-        <p class="font-semibold text-ink text-[13.5px] truncate">{{ trip.service|default:trip.get_trip_type_display }}</p>
+        <p class="font-semibold text-ink text-[13.5px] truncate">{{ trip.service_label }}</p>
         <p class="text-[12px] text-muted">{{ trip.get_trip_type_display }} · {{ trip.vehicle.name|default:"Any vehicle" }}</p>
       </div>
     </div>

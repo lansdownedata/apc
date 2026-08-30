@@ -21,7 +21,6 @@ def _draft(lead, **over):
     base = {
         "lead_id": lead.pk,
         "tripType": "transfer",
-        "service": "Transfer",
         "date": "2026-07-04",
         "time": "15:00",
         "vehicle": "",

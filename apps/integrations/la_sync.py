@@ -121,7 +121,7 @@ def build_booking_payload(reservation: Reservation, search_result_id: int | None
     mid_stops = stops[1:-1]
     note_lines = [
         f"APC quote #{reservation.lead_id} · {reservation.get_trip_type_display()}",
-        f"Service: {reservation.service}" if reservation.service else "",
+        f"Service: {reservation.service_type.name}" if reservation.service_type else "",
         *(f"Stop: {s.address}" for s in mid_stops),
         f"Quoted line total: ${reservation.line_total}",
     ]

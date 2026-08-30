@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
 from apps.leads import services
-from apps.leads.factories import LeadFactory, VehicleTypeFactory
+from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.payments.factories import PaymentPlanFactory
@@ -24,7 +24,11 @@ def _quoted_lead(**kwargs):
     kwargs.setdefault("contact", ContactFactory(email="rider@example.com"))
     kwargs.setdefault("quote_expires_at", timezone.now() + timezone.timedelta(days=10))
     lead = LeadFactory(**kwargs)
-    TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
+    TransferReservationFactory(
+        lead=lead,
+        rate=Decimal("185.00"),
+        service_type=ServiceTypeFactory(name="Airport Transfer"),
+    )
     PaymentPlanFactory(lead=lead, quote_total=Decimal("185.00"), deposit_pct=50)
     return lead
 
@@ -42,7 +46,7 @@ def test_quote_page_renders_quote_summary(client):
     assert resp.status_code == 200
     body = resp.content.decode()
     assert lead.quote_no in body
-    assert reservation.service in body
+    assert reservation.service_type.name in body
     assert "50% deposit" in body
     assert "92.50" in body  # deposit amount
     assert "Terms &amp; Conditions" in body or "Terms & Conditions" in body

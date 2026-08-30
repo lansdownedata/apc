@@ -68,7 +68,6 @@ def test_full_booking_post_creates_lead_with_stops(db):
             "name": "Jane Rider",
             "email": "jane@example.com",
             "passengers": 3,
-            "service": "Airport Transfer",
             "pickup": "123 Main St, Ashburn VA",
             "pickup_lat": "38.9",
             "pickup_lng": "-77.4",
@@ -107,7 +106,7 @@ def test_widget_renders_hours_field(db):
 
 def test_widget_renders_optional_occasion_select(db):
     html = Client().get("/bookings/").content.decode()
-    assert 'name="service"' in html
+    assert 'name="service_type"' in html
     assert "Occasion" in html
     assert "Hourly Charter" not in html
 

@@ -10,7 +10,7 @@ from apps.contacts.factories import ContactFactory
 from apps.dispatch import selectors, services
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
-from apps.leads.factories import LeadFactory, VehicleTypeFactory
+from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import HourlyReservationFactory, ReservationFactory
 from apps.vendors.factories import VendorFactory, VendorInsuranceFactory
@@ -318,7 +318,10 @@ def test_panel_shows_the_billed_hours_for_an_hourly_trip(logged_in_client):
 
 
 def test_panel_shows_service_trip_type_and_vehicle(logged_in_client):
-    trip = _trip(service="Wedding shuttle", vehicle=VehicleTypeFactory(name="Sprinter"))
+    trip = _trip(
+        service_type=ServiceTypeFactory(name="Wedding shuttle"),
+        vehicle=VehicleTypeFactory(name="Sprinter"),
+    )
     body = _panel(logged_in_client, trip)
     assert "Wedding shuttle" in body
     assert "Transfer" in body

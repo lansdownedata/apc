@@ -14,7 +14,6 @@ pytestmark = pytest.mark.django_db
 def _payload(stops):
     return {
         "tripType": Reservation.TripType.TRANSFER,
-        "service": "Airport transfer",
         "date": "2026-08-01",
         "time": "09:00",
         "dropoffDate": "2026-08-01",
@@ -81,7 +80,7 @@ def test_coordinates_survive_a_save_reload_save_round_trip():
     reservation = save_reservation_from_draft(lead, _payload([AIRPORT_STOP, PLAIN_STOP]))
 
     reloaded = _reservation_draft(Reservation.objects.get(pk=reservation.pk))
-    reloaded["service"] = "Edited after reload"
+    reloaded["pax"] = 6  # any edit — the point is the second save round-trip
     save_reservation_from_draft(lead, reloaded, instance=reservation)
 
     pickup = Reservation.objects.get(pk=reservation.pk).ordered_stops.first()

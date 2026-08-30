@@ -2,7 +2,17 @@ import factory
 
 from apps.contacts.factories import ContactFactory
 
-from .models import Lead, VehicleType
+from .models import Lead, ServiceType, VehicleType
+
+
+class ServiceTypeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = ServiceType
+        django_get_or_create = ("name",)
+
+    name = "Airport Transfer"
+    active = True
+    sort_order = 0
 
 
 class VehicleTypeFactory(factory.django.DjangoModelFactory):

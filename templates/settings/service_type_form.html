@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'service_type_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Service types</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-5">{{ page_title }}</h1>
+    <form method="post" class="space-y-4">
+      {% csrf_token %}
+      {% include "components/form_field.html" with field=form.name %}
+      {% include "components/form_field.html" with field=form.sort_order %}
+      <div class="flex items-center gap-2">
+        {{ form.active }}
+        <label for="{{ form.active.id_for_label }}" class="text-[12.5px] text-ink">Active — offered when booking a trip</label>
+      </div>
+      {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
+      <div class="flex items-center justify-between gap-2.5 pt-2">
+        {% if target %}
+        <button type="button" class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
+                @click="$store.modal.confirm({
+                  title: 'Delete {{ target.name|escapejs }}?',
+                  message: 'Trips already using it keep it — it will just be hidden when booking new ones.',
+                  variant: 'danger', confirmText: 'Delete',
+                  onConfirm: () => document.getElementById('delete-form').submit()
+                })"><i class="ti ti-trash text-[14px]"></i> Delete</button>
+        {% else %}<span></span>{% endif %}
+        <div class="flex items-center gap-2.5">
+          <a href="{% url 'service_type_list' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+          <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if target %}
+  <form id="delete-form" method="post" action="{% url 'service_type_delete' target.pk %}" class="hidden">{% csrf_token %}</form>
+  {% endif %}
+</div>
+{% endblock %}

@@ -26,7 +26,7 @@ def create_lead_from_booking(data: dict) -> Lead:
         lead=lead,
         trip_type=data.get("trip_type") or Reservation.TripType.TRANSFER,
         hours=data.get("hours") or 0,
-        service=data.get("service", ""),
+        service_type=data.get("service_type"),
         pickup_date=data.get("pickup_date"),
         pickup_time=data.get("pickup_time"),
         passengers=data.get("passengers") or 1,
@@ -67,6 +67,6 @@ def create_lead_from_booking(data: dict) -> Lead:
         lead,
         Notification.Kind.NEW_LEAD,
         title=f"New website booking: {contact.name}",
-        detail=data.get("service", ""),
+        detail=service_type.name if (service_type := data.get("service_type")) else "",
     )
     return lead

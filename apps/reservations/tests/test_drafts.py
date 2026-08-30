@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.leads.factories import LeadFactory, VehicleTypeFactory
+from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.views import _reservation_draft
 from apps.reservations import drafts
 from apps.reservations.drafts import DraftError, save_reservation_from_draft
@@ -15,7 +15,6 @@ pytestmark = pytest.mark.django_db
 def _payload(**over):
     base = {
         "tripType": "transfer",
-        "service": "Airport transfer",
         "date": "2026-07-04",
         "time": "15:00",
         "vehicle": "",
@@ -79,13 +78,14 @@ def test_save_multi_stop_orders_stops():
 def test_save_assigns_vehicle_and_updates_in_place():
     lead = LeadFactory()
     veh = VehicleTypeFactory(name="Sprinter Van")
+    service = ServiceTypeFactory(name="Renamed Service")
     res = drafts.save_reservation_from_draft(lead, _payload(vehicle=veh.pk))
     assert res.vehicle == veh
     again = drafts.save_reservation_from_draft(
-        lead, _payload(service="Renamed", vehicle=veh.pk), instance=res
+        lead, _payload(serviceType=service.pk, vehicle=veh.pk), instance=res
     )
     assert again.pk == res.pk
-    assert again.service == "Renamed"
+    assert again.service_type == service
     assert again.stops.count() == 2  # replaced, not duplicated
 
 

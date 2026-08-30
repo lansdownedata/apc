@@ -562,7 +562,7 @@ function quoteWorkspace(opts = {}) {
     blankReservation() {
       const v = this.vehicles.length ? this.vehicles[0] : null;
       return {
-        tripType: "transfer", service: "", date: "", time: "",
+        tripType: "transfer", serviceType: "", date: "", time: "",
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
         pax: 1,
@@ -587,6 +587,10 @@ function quoteWorkspace(opts = {}) {
       this.$nextTick(() => {
         const el = document.getElementById("f-res-vehicle");
         if (el && el.tomselect) el.tomselect.setValue(this.draft.vehicle || "", true);
+        // Same trip: the service picker is a Tom Select too, and setValue() is the only
+        // way to move it — the underlying <select> is not what the widget renders.
+        const st = document.getElementById("f-res-service");
+        if (st && st.tomselect) st.tomselect.setValue(this.draft.serviceType || "", true);
       });
     },
     newReservation() {

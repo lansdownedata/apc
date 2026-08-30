@@ -12,7 +12,7 @@ class StopInline(admin.TabularInline):
 class ReservationAdmin(admin.ModelAdmin):
     list_display = ("__str__", "lead", "trip_type", "trip_status", "pickup_date", "line_total")
     list_filter = ("trip_type", "trip_status")
-    search_fields = ("service", "lead__contact__name")
+    search_fields = ("service_type__name", "lead__contact__name")
     inlines = [StopInline]
     list_select_related = ("lead",)
 

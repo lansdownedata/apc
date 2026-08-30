@@ -109,7 +109,7 @@
               </div>
             </td>
             <td class="px-3 py-3.5">
-              {% if res %}<span class="text-ink">{{ res.service|default:res.get_trip_type_display }}</span>{% else %}<span class="text-slate-400">—</span>{% endif %}
+              {% if res %}<span class="text-ink">{{ res.service_label }}</span>{% else %}<span class="text-slate-400">—</span>{% endif %}
             </td>
             <td class="px-3 py-3.5 num text-muted">{% if res.pickup_date %}{{ res.pickup_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
             <td class="px-3 py-3.5 text-center num">{{ lead.reservation_count }}</td>

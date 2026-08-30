@@ -4,19 +4,21 @@ import re
 from django import forms
 
 from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline, Airport
+from apps.leads.models import ServiceType
 from apps.reservations.models import Reservation
 
-# Optional "occasion" for the booking widget's dropdown (no ServiceType model yet).
-# Reservation.service is a free-text CharField, so the value IS the label. Trip *type*
-# (transfer/hourly) is a separate field posting Reservation.trip_type — these are the
-# occasions that used to be conflated with it in a single six-option select.
-OCCASION_CHOICES = [
-    ("Airport Transfer", "Airport Transfer"),
-    ("Corporate Travel", "Corporate Travel"),
-    ("Wedding Transportation", "Wedding Transportation"),
-    ("Group / Shuttle Service", "Group / Shuttle Service"),
-    ("Other", "Other"),
-]
+
+def occasion_options() -> list[tuple[str, str]]:
+    """The booking widget's "occasion" dropdown, from the Settings catalog.
+
+    Same list the reservation editor offers, so the office and the website can't drift
+    apart. Evaluated per request, not at import, or edits in Settings would need a
+    redeploy to show up. Trip *type* (transfer/hourly) is a separate field posting
+    Reservation.trip_type — these are the occasions that used to be conflated with it.
+    """
+    rows = ServiceType.objects.filter(active=True).values_list("pk", "name")
+    return [(str(pk), name) for pk, name in rows]
+
 
 MAX_STOPS = 4
 ADDRESS_MAXLEN = 255
@@ -82,7 +84,9 @@ class BookingRequestForm(forms.Form):
     # POST that predates the toggle (or omits it) valid instead of erroring.
     trip_type = forms.ChoiceField(choices=Reservation.TripType.choices, required=False)
     hours = forms.DecimalField(min_value=1, max_value=24, required=False)
-    service = forms.CharField(max_length=120, required=False)
+    service_type = forms.ModelChoiceField(
+        queryset=ServiceType.objects.filter(active=True), required=False
+    )
     notes = forms.CharField(widget=forms.Textarea, required=False)
     company = forms.CharField(required=False)  # honeypot — bots fill it
 

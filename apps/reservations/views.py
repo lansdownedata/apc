@@ -79,7 +79,6 @@ def reservation_duplicate(request, pk) -> HttpResponse:
     last = res.lead.reservations.order_by("-sort_order").first()
     clone = Reservation.objects.get(pk=pk)
     clone.pk = None
-    clone.service = f"{res.service or 'Reservation'} (copy)"
     clone.la_reservation_id = ""
     clone.trip_status = ""
     clone.revenue_status = Reservation.RevenueStatus.DEFERRED

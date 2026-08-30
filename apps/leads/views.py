@@ -66,7 +66,7 @@ def _reservation_draft(r) -> dict:
     return {
         "id": r.pk,
         "tripType": r.trip_type,
-        "service": r.service,
+        "serviceType": r.service_type_id or "",
         "date": r.pickup_date.isoformat() if r.pickup_date else "",
         "time": r.pickup_time.strftime("%H:%M") if r.pickup_time else "",
         "vehicle": r.vehicle_id or "",
@@ -141,7 +141,7 @@ def lead_list(request):
                 | Q(contact__name__icontains=query)
                 | Q(contact__company__name__icontains=query)
                 | Q(contact__email__icontains=query)
-                | Q(reservations__service__icontains=query)
+                | Q(reservations__service_type__name__icontains=query)
             )
             .distinct()
         )
@@ -278,6 +278,7 @@ def lead_detail(request, pk):
             for v in _vehicles
         ],
         "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
+        "service_type_options": services.service_type_options(lead),
     }
     return render(request, "leads/lead_detail.html", context)
 
