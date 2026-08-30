@@ -1,5 +1,6 @@
 import factory
 
+from apps.fleet.factories import DriverFactory
 from apps.reservations.factories import ReservationFactory
 from apps.vendors.factories import VendorFactory
 
@@ -13,6 +14,14 @@ class AssignmentFactory(factory.django.DjangoModelFactory):
     reservation = factory.SubFactory(ReservationFactory)
     vendor = factory.SubFactory(VendorFactory)
     payout = 140
+
+    class Params:
+        in_house = factory.Trait(
+            vendor=None,
+            driver=factory.SubFactory(DriverFactory),
+            status=Assignment.Status.CONFIRMED,
+            payout=0,
+        )
 
 
 class GnetEventFactory(factory.django.DjangoModelFactory):
