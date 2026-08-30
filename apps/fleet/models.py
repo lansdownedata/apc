@@ -61,29 +61,10 @@ class Driver(TimeStampedModel):
     @classmethod
     def _next_number(cls) -> int:
         """max + 1, read under a row lock so a retry always sees the latest committed top."""
-        from django.db import connection
-
-        # Lock the table to ensure consistency
-        cls.objects.select_for_update().exists()
-
-        # Query the auto_increment value, which persists across deletions
-        db_name = connection.settings_dict["NAME"]
-        table_name = cls._meta.db_table
-
-        with connection.cursor() as cursor:
-            if connection.vendor == "mysql":
-                cursor.execute(
-                    "SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES"
-                    " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-                    [db_name, table_name],
-                )
-                result = cursor.fetchone()
-                next_id = result[0] if result else 1
-            else:
-                # Fallback: use max(id) + 1 for non-MySQL databases
-                next_id = (cls.objects.aggregate(models.Max("id"))["id__max"] or 0) + 1
-
-        # driver_number = FIRST_NUMBER + (next_id - 1)
-        # So if next_id is 1, driver_number is FIRST_NUMBER
-        # If next_id is 2, driver_number is FIRST_NUMBER + 1, etc.
-        return cls.FIRST_NUMBER + (next_id - 1)
+        top = (
+            cls.objects.select_for_update()
+            .order_by("-driver_number")
+            .values_list("driver_number", flat=True)
+            .first()
+        )
+        return cls.FIRST_NUMBER if top is None else top + 1

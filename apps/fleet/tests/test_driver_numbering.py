@@ -21,10 +21,12 @@ def test_each_new_driver_gets_the_next_number():
 
 
 def test_a_deleted_number_is_never_reused():
-    Driver.objects.create(name="A")
+    Driver.objects.create(name="A")  # 1000
     gone = Driver.objects.create(name="B")  # 1001
+    Driver.objects.create(name="C")  # 1002
     gone.delete()
-    assert Driver.objects.create(name="C").driver_number == 1002
+    assert Driver.objects.create(name="D").driver_number == 1003
+    assert not Driver.objects.filter(driver_number=1001).exists()
 
 
 def test_saving_an_existing_driver_keeps_its_number():
