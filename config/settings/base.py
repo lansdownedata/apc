@@ -42,6 +42,7 @@ LOCAL_APPS = [
     "apps.accounts",
     "apps.contacts",
     "apps.vendors",
+    "apps.fleet",
     "apps.leads",
     "apps.reservations",
     "apps.dispatch",
