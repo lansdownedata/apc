@@ -15,9 +15,16 @@ def test_new_lead_defaults_to_new():
     assert LeadFactory().status == Lead.Status.NEW
 
 
-def test_quote_no_derived_from_pk():
+def test_quote_no_is_the_apc_series():
+    """Six digits from a 100000 base — reads as a real reference number and carries
+    into LimoAnywhere / GNet better than the old four-digit "Q-" form."""
     lead = LeadFactory()
-    assert lead.quote_no == f"Q-{1040 + lead.pk}"
+    assert lead.quote_no == f"APC-{100000 + lead.pk}"
+    assert len(lead.quote_no.split("-")[1]) == 6
+
+
+def test_an_unsaved_lead_has_no_quote_number():
+    assert Lead().quote_no == "APC-—"
 
 
 def test_quote_total_sums_reservation_line_totals():
