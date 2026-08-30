@@ -26,6 +26,7 @@ staff_patterns = [
     path("leads/", include("apps.leads.urls")),
     path("contacts/", include("apps.contacts.urls")),
     path("vendors/", include("apps.vendors.urls")),
+    path("fleet/", include("apps.fleet.urls")),
     path("users/", include("apps.accounts.urls")),
     path("settings/", include("apps.settings.urls")),
     path("orders/", include("apps.payments.urls")),

@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
+from apps.addresses.smart_address import apply_posted_address
 
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
 from .models import (
@@ -27,19 +28,6 @@ from .models import (
 
 _SEVERITY_RANK = {s: i for i, s in enumerate(INSURANCE_SEVERITY)}
 _STATUS_FILTERS = [("active", "Active"), ("inactive", "Archived"), ("all", "All")]
-# Text fields the smart-address widget posts; place_id/lat/lng handled separately below.
-_ADDRESS_FIELDS = (
-    "landmark_name",
-    "line1",
-    "line2",
-    "city",
-    "state",
-    "postal",
-    "country",
-    "place_type",
-    "place_class",
-    "display_name",
-)
 
 
 @login_required
@@ -180,21 +168,7 @@ def vendor_address_update(request: HttpRequest, pk: int) -> JsonResponse:
         vendor.address = address
         vendor.save(update_fields=["address", "updated_at"])
 
-    changed = []
-    for f in _ADDRESS_FIELDS:
-        if f in request.POST:
-            setattr(address, f, request.POST.get(f, "").strip())
-            changed.append(f)
-    if "place_id" in request.POST:
-        address.locationiq_place_id = request.POST.get("place_id", "").strip()
-        changed.append("locationiq_place_id")
-    for coord in ("latitude", "longitude"):
-        if coord in request.POST:
-            raw = request.POST.get(coord, "").strip()
-            setattr(address, coord, raw or None)
-            changed.append(coord)
-    if changed:
-        address.save(update_fields=[*changed, "updated_at"])
+    apply_posted_address(address, request.POST)
     return JsonResponse({"ok": True, "address_id": address.pk})
 
 
