@@ -7,6 +7,7 @@ the view stays thin.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -22,11 +23,12 @@ from apps.integrations import podium
 from apps.messaging import touchpoints
 from apps.notifications.email import send_html_email
 from apps.payments.models import PaymentPlan
+from apps.public.wedding import MAX_COACH_SEATS
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .models import Lead
+    from .models import Lead, VehicleType
 
 _DEPOSIT_SALT = "quote-deposit"
 
@@ -291,3 +293,43 @@ def book_lead(lead: Lead) -> Lead:
     except Exception:
         logger.exception("LimoAnywhere push failed for lead %s", lead.pk)
     return lead
+
+
+def suggest_vehicle(passengers: int, cap: int | None = None) -> VehicleType | None:
+    """The smallest active vehicle that seats one run of this size.
+
+    Matched on capacity, never on the name `wedding.vehicle_for()` produces: those strings
+    are customer-facing copy ("Executive mini coach") and the catalog is edited in
+    Settings, so the two would drift the first time someone renamed a vehicle.
+
+    A group above the per-run limit splits, and it is the *run* that needs seating — 105
+    guests at a 40-cap venue is three 40-seat coaches, not one impossible 105-seater.
+    Returns None when nothing in the catalog fits, so the picker opens unset rather than
+    quietly recommending a vehicle that cannot do the job.
+    """
+    from .models import VehicleType
+
+    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
+    runs = math.ceil(passengers / limit) if passengers > limit else 1
+    per_run = math.ceil(passengers / runs)
+    return (
+        VehicleType.objects.filter(active=True, capacity__gte=per_run)
+        .order_by("capacity", "sort_order")
+        .first()
+    )
+
+
+def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
+    """Snapshot the vehicle's rate and transfer minimum onto the reservation, in place.
+
+    The reservation editor does this in the browser — app.js writes `draft.rate` and
+    `draft.minHours` from the picked vehicle and `drafts.parse_draft` simply persists what
+    was posted — so there has never been a server-side equivalent. Anything that assigns a
+    vehicle outside that editor needs one, or the trip saves at rate 0 and the whole quote
+    totals zero.
+
+    Wedding legs are transfers, so the minimum is `transfer_min_hours`.
+    """
+    reservation.vehicle = vehicle
+    reservation.rate = vehicle.rate if vehicle else 0
+    reservation.min_hours = vehicle.transfer_min_hours if vehicle else 0
