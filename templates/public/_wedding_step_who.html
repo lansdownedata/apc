@@ -1,0 +1,106 @@
+{% comment %}
+  public/_wedding_step_who.html — Step 3 — who is riding, and roughly how many. This step REPLACES a vehicle
+  question: only 26% of inquiries name a vehicle type and the vocabulary is
+  inconsistent, so headcount plus trip shape produces the recommendation instead.
+
+  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
+  builder (leads/_wedding_builder.html). An agent walking a couple through this on
+  the phone must be looking at the same screen they are, so this file has exactly
+  one copy. Requires an enclosing `weddingPlanner()` scope.
+{% endcomment %}
+<fieldset x-show="stepName === 'who'">
+  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+    Step <span x-text="stepNumber"></span> of <span x-text="stepCount"></span>
+  </span>
+  <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+    Who needs a ride?
+  </h2>
+  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+    Pick everyone that applies. We&rsquo;ll work out how many vehicles that takes &mdash;
+    you don&rsquo;t need to know whether it&rsquo;s a shuttle, a coach or a van.
+  </p>
+
+  <div class="mt-6 grid gap-2.5 sm:grid-cols-2">
+    {% comment %}
+      The icon path comes from the component's own GROUP metadata rather than four
+      hand-written SVGs, so the tiles and the leg-generation groups can never drift.
+    {% endcomment %}
+    <template x-for="group in groupsMeta" :key="group.key">
+      <button type="button" @click="toggleGroup(group.key)" :aria-pressed="who.includes(group.key)"
+              :class="who.includes(group.key) ? 'bg-goldl ring-2 ring-gold' : 'bg-surface ring-1 ring-line hover:bg-surface2'"
+              class="relative rounded-xl px-4 py-4 text-left transition-all focus-gold">
+        <span x-cloak x-show="who.includes(group.key)"
+              class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">&check;</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+             class="mb-2 h-[22px] w-[22px] text-goldd" x-html="group.icon"></svg>
+        <span class="block text-[14px] font-semibold text-ink" x-text="group.title"></span>
+        <span class="block text-[12px] text-muted" x-text="group.hint"></span>
+      </button>
+    </template>
+  </div>
+
+  <div x-cloak x-show="who.some(k => k !== 'couple')" class="mt-6">
+    <span class="mb-1 block text-[12px] font-medium text-muted">Roughly how many in each group?</span>
+
+    {% comment %}
+      Guest count and rider count are different numbers, and conflating them is
+      what makes 100-guest weddings quote wrong — hence the label and the hint.
+    {% endcomment %}
+    <div x-cloak x-show="who.includes('guests')" class="flex items-center gap-4 border-b border-line py-3">
+      <span class="min-w-0 flex-1">
+        <label for="wp-count-guests" class="block text-[13.5px] font-semibold text-ink">Guests riding the shuttle</label>
+        <span class="block text-[11.5px] text-muted">Not every guest rides &mdash; most couples see about two thirds</span>
+      </span>
+      <span class="flex shrink-0 items-stretch overflow-hidden rounded-lg ring-1 ring-line">
+        <button type="button" @click="bump('guests', -5)" aria-label="Fewer guests"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">&minus;</button>
+        <input type="number" id="wp-count-guests" min="1" max="400" :value="counts.guests"
+               @change="setCount('guests', $event.target.value)" aria-label="Guests riding the shuttle"
+               class="w-16 border-x border-line bg-surface py-2 text-center font-mono2 text-[14px] font-semibold text-ink focus:outline-none">
+        <button type="button" @click="bump('guests', 5)" aria-label="More guests"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">+</button>
+      </span>
+    </div>
+
+    <div x-cloak x-show="who.includes('party')" class="flex items-center gap-4 border-b border-line py-3">
+      <span class="min-w-0 flex-1">
+        <label for="wp-count-party" class="block text-[13.5px] font-semibold text-ink">Wedding party</label>
+        <span class="block text-[11.5px] text-muted">Bridesmaids, groomsmen, and the two of you</span>
+      </span>
+      <span class="flex shrink-0 items-stretch overflow-hidden rounded-lg ring-1 ring-line">
+        <button type="button" @click="bump('party', -1)" aria-label="Smaller wedding party"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">&minus;</button>
+        <input type="number" id="wp-count-party" min="1" max="400" :value="counts.party"
+               @change="setCount('party', $event.target.value)" aria-label="Wedding party"
+               class="w-16 border-x border-line bg-surface py-2 text-center font-mono2 text-[14px] font-semibold text-ink focus:outline-none">
+        <button type="button" @click="bump('party', 1)" aria-label="Larger wedding party"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">+</button>
+      </span>
+    </div>
+
+    <div x-cloak x-show="who.includes('family')" class="flex items-center gap-4 py-3">
+      <span class="min-w-0 flex-1">
+        <label for="wp-count-family" class="block text-[13.5px] font-semibold text-ink">Family &amp; VIPs</label>
+        <span class="block text-[11.5px] text-muted">Parents, grandparents, close family</span>
+      </span>
+      <span class="flex shrink-0 items-stretch overflow-hidden rounded-lg ring-1 ring-line">
+        <button type="button" @click="bump('family', -1)" aria-label="Fewer family and VIPs"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">&minus;</button>
+        <input type="number" id="wp-count-family" min="1" max="400" :value="counts.family"
+               @change="setCount('family', $event.target.value)" aria-label="Family and VIPs"
+               class="w-16 border-x border-line bg-surface py-2 text-center font-mono2 text-[14px] font-semibold text-ink focus:outline-none">
+        <button type="button" @click="bump('family', 1)" aria-label="More family and VIPs"
+                class="w-9 bg-surface text-[16px] text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">+</button>
+      </span>
+    </div>
+
+    <p class="mt-3 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
+      <span aria-hidden="true">&#9670;</span>
+      <span>An estimate is fine. You can adjust the count right up until we finalise &mdash;
+        nothing here is locked.</span>
+    </p>
+  </div>
+
+  {% include "public/_wedding_actions.html" %}
+</fieldset>

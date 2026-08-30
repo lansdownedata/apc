@@ -133,3 +133,50 @@ class Airline(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.label
+
+
+class Venue(TimeStampedModel):
+    """A wedding venue, guest hotel, or ceremony site — a curated directory, not
+    user-generated (same contract as `Airport`).
+
+    The wedding intake typeaheads search this before falling through to LocationIQ, so
+    a couple picking "The Oak Barn at Loyalty" gets its address, its shuttle cap, and
+    its recurrence hint without typing anything. Seeded names and towns only
+    (`manage.py seed_venues`); coordinates and street lines arrive later from
+    LocationIQ, exactly like `Airport.enriched_at`.
+    """
+
+    class Kind(models.TextChoices):
+        VENUE = "venue", "Venue"
+        HOTEL = "hotel", "Hotel"
+        CHURCH = "church", "Ceremony site"
+
+    name = models.CharField(max_length=160, db_index=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.VENUE)
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=2, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    locationiq_place_id = models.CharField(max_length=64, blank=True)
+    # Some venues cap shuttle size in their own contract — a gravel drive, a small
+    # bridge, a short turning circle. Sizing the run around it up front is the
+    # difference between a quote that works and one that gets rebuilt on site.
+    vehicle_cap = models.PositiveIntegerField(null=True, blank=True)
+    cap_note = models.CharField(max_length=255, blank=True)
+    access_note = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    # How often this place has appeared in inbound leads — drives typeahead ranking
+    # and the "we run here often" hint.
+    lead_hits = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["name"]
+
+    @property
+    def location_line(self) -> str:
+        """The typeahead's second line: a street address once enriched, else the town."""
+        return ", ".join(p for p in (self.address, self.city, self.state) if p)
+
+    def __str__(self) -> str:
+        return self.name

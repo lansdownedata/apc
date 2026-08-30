@@ -1,0 +1,51 @@
+{% comment %}
+  components/wedding_typeahead.html — search over the curated Venue directory
+  (apps.addresses.Venue), used three times in the wedding intake: reception venue,
+  ceremony site, guest hotels.
+
+  Requires an enclosing `weddingPlanner()` scope. Params:
+    field        — "venue" | "ceremony" | "hotel" (the planner's per-field state key)
+    field_id     — the input id the <label> points at
+    placeholder  — input placeholder
+
+  A plain combobox rather than the Tom Select component: the options are fetched per
+  keystroke from a paid endpoint and a free-typed answer is a legitimate result (we
+  have never run to every barn in Loudoun), which is the opposite of what a select is
+  for. Keyboard behaviour matches the address autocomplete: ↑/↓ move, Enter picks,
+  Esc closes.
+{% endcomment %}
+{% comment %}
+  `click.outside` sits on this wrapper, not on the dropdown: Alpine skips the handler
+  while its element is hidden, so with it on the dropdown a click on the *input* would
+  open the list on focus and then close it again on the very same click. Anchored here,
+  the input counts as inside.
+{% endcomment %}
+<div class="relative" @click.outside="closeResults('{{ field }}')">
+  <input type="text" id="{{ field_id }}" placeholder="{{ placeholder }}" autocomplete="off"
+         data-1p-ignore role="combobox" aria-autocomplete="list"
+         :aria-expanded="open.{{ field }}" aria-controls="{{ field_id }}-list"
+         x-model="query.{{ field }}"
+         @input.debounce.200ms="search('{{ field }}')"
+         @focus="results.{{ field }}.length && (open.{{ field }} = true)"
+         @keydown.arrow-down.prevent="move('{{ field }}', 1)"
+         @keydown.arrow-up.prevent="move('{{ field }}', -1)"
+         @keydown.enter.prevent="chooseActive('{{ field }}')"
+         @keydown.escape="closeResults('{{ field }}')"
+         class="field">
+
+  <div id="{{ field_id }}-list" role="listbox" x-cloak x-show="open.{{ field }}"
+       class="absolute left-0 right-0 z-30 mt-1.5 max-h-[17rem] overflow-y-auto rounded-xl bg-surface shadow-xl ring-1 ring-line">
+    <template x-for="(place, i) in results.{{ field }}" :key="place.id || place.name">
+      <button type="button" role="option" :aria-selected="active.{{ field }} === i"
+              @mousedown.prevent="pick('{{ field }}', place)"
+              @mousemove="active.{{ field }} = i"
+              :class="active.{{ field }} === i ? 'bg-goldl' : ''"
+              class="block w-full border-b border-line/60 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-goldl focus-gold">
+        <span class="block text-[13.5px] font-semibold text-ink" x-text="place.name"></span>
+        <span class="block text-[11.5px] text-muted" x-text="place.location_line"></span>
+        <span x-show="place.lead_hits >= 8" x-cloak
+              class="mt-0.5 block text-[11.5px] font-semibold text-goldd">we run here often</span>
+      </button>
+    </template>
+  </div>
+</div>

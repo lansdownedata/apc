@@ -116,6 +116,11 @@ class Lead(TimeStampedModel):
         help_text="Leave blank when the booking contact is also billed.",
     )
     passenger_names = models.CharField(max_length=255, blank=True)
+    # The raw public-form payload this lead arrived on, kept verbatim so the customer's
+    # own signed resume link can rehydrate the form they filled in (spec 2026-08-30 §7.4).
+    # Deliberately generic rather than a set of wedding columns: it is an inbound-request
+    # archive, and `notes` stays the human-readable version an agent may freely edit.
+    intake_payload = models.JSONField(default=dict, blank=True)
     # reserved — promo engine is a later feature
     promo_code = models.CharField(max_length=40, blank=True)
     quote_view_count = models.PositiveIntegerField(default=0)

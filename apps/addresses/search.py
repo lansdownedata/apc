@@ -1,12 +1,13 @@
-"""Airport matching for the address autocompletes.
+"""Directory matching for the public autocompletes.
 
-Results are shaped exactly like `geocoding._decompose()` output so the two geocode
-proxies can prepend them to the LocationIQ list without any consumer knowing.
+Airport results are shaped exactly like `geocoding._decompose()` output so the two
+geocode proxies can prepend them to the LocationIQ list without any consumer knowing.
+Venue results have their own shape — they feed the wedding intake, not an address field.
 """
 
 from django.db.models import Case, IntegerField, Q, Value, When
 
-from .models import Airport
+from .models import Airport, Venue
 
 MIN_QUERY = 2
 # Name/city matches against medium_airport need at least this many characters. 768 of the
@@ -79,3 +80,42 @@ def search_airports(q: str, limit: int = AIRPORT_RESULT_LIMIT) -> list[dict]:
         .order_by("code_rank", "size_rank", "name")[:limit]
     )
     return [_serialize(a) for a in rows]
+
+
+VENUE_RESULT_LIMIT = 8
+MIN_VENUE_QUERY = 2
+
+
+def _serialize_venue(venue: Venue) -> dict:
+    return {
+        "id": venue.pk,
+        "name": venue.name,
+        "kind": venue.kind,
+        "address": venue.address,
+        "city": venue.city,
+        "state": venue.state,
+        "location_line": venue.location_line,
+        "vehicle_cap": venue.vehicle_cap,
+        "cap_note": venue.cap_note,
+        "lead_hits": venue.lead_hits,
+        "latitude": str(venue.latitude) if venue.latitude is not None else None,
+        "longitude": str(venue.longitude) if venue.longitude is not None else None,
+        "source": "directory",
+    }
+
+
+def search_venues(q: str, kind: str = "", limit: int = VENUE_RESULT_LIMIT) -> list[dict]:
+    """Venues/hotels/ceremony sites matching `q`, most-quoted first.
+
+    `-lead_hits` before name so the places the office actually runs to every weekend
+    surface first — a couple searching "hampton" wants the Leesburg one we've quoted 33
+    times, not alphabetical order. An unrecognised `kind` is ignored rather than
+    rejected: a stale value in a query string should narrow nothing, not 400.
+    """
+    q = (q or "").strip()
+    if len(q) < MIN_VENUE_QUERY:
+        return []
+    rows = Venue.objects.filter(is_active=True).filter(Q(name__icontains=q) | Q(city__icontains=q))
+    if kind in Venue.Kind.values:
+        rows = rows.filter(kind=kind)
+    return [_serialize_venue(v) for v in rows.order_by("-lead_hits", "name")[:limit]]

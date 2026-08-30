@@ -182,6 +182,10 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
         reservation = Reservation.objects.create(
             lead=lead,
             sort_order=i,
+            # Which generated leg this is. The office's builder matches on it to update
+            # a trip in place; without it, the first edit in the portal would read every
+            # website-built trip as hand-added and duplicate the whole day.
+            source_leg_id=leg["id"],
             trip_type=Reservation.TripType.TRANSFER,
             service_type=service_type,
             pickup_date=data["wedding_date"],

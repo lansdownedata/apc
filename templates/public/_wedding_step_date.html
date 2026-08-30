@@ -1,0 +1,45 @@
+{% comment %}
+  public/_wedding_step_date.html — Step 1 — the date. The only answer we need before we can check coach availability.
+
+  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
+  builder (leads/_wedding_builder.html). An agent walking a couple through this on
+  the phone must be looking at the same screen they are, so this file has exactly
+  one copy. Requires an enclosing `weddingPlanner()` scope.
+{% endcomment %}
+<fieldset x-show="stepName === 'date'">
+  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Wedding transportation</span>
+  <h1 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+    When&rsquo;s the big day?
+  </h1>
+  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+    Start with the date. It&rsquo;s the only thing we need before we can check whether we
+    have coaches free &mdash; everything else can come later.
+  </p>
+
+  <div class="mt-6 max-w-sm">
+    <label for="wp-date" class="mb-1.5 block text-[12px] font-medium text-muted">Wedding date</label>
+    {% comment %}
+      data-fp-past: a mistyped year is exactly the mistake the "already passed"
+      line below exists to catch, so the picker must let it through rather than
+      silently refusing and leaving the couple wondering what's wrong.
+    {% endcomment %}
+    <input type="text" id="wp-date" data-flatpickr data-fp-past placeholder="Select a date"
+           x-model="date" @change="legs = null" x-effect="fpSync($el, date)" class="field">
+  </div>
+
+  <div x-cloak x-show="date" class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
+    <span aria-hidden="true">&#9670;</span>
+    <span>
+      <b class="font-semibold" x-text="fmtDate(date)"></b>
+      <span x-show="leadTimeNote" class="block" x-text="leadTimeNote && leadTimeNote.text"></span>
+    </span>
+  </div>
+
+  {% comment %} The portal builder has one shared footer instead — see _wedding_builder.html. {% endcomment %}
+  <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
+    <button type="button" @click="next()" :disabled="!canAdvance()"
+            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+      Continue
+    </button>
+  </div>
+</fieldset>

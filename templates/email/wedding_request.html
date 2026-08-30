@@ -1,0 +1,45 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Your wedding transportation plan · {{ lead.quote_no }}{% endblock %}
+{% block preheader %}{{ reservations|length }} movement{{ reservations|length|pluralize }} on file — open the link to adjust the guest count or times.{% endblock %}
+{% block content %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ contact.name|default:"there" }},</p>
+<p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">
+  Your wedding day is with our dispatch team. We'll price all
+  {{ reservations|length }} movement{{ reservations|length|pluralize }} together and come back
+  within one business day. No deposit, nothing locked in.
+</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td style="padding:22px 26px 6px;">
+    <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;">REFERENCE</div>
+    <div class="dm-ink" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:19px;font-weight:600;color:#17191D;padding-top:5px;">{{ lead.quote_no }}</div>
+  </td></tr>
+  {% for res in reservations %}
+  <tr><td style="padding:14px 26px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td width="26%" valign="top" class="dm-ink" style="font-size:15px;font-weight:bold;color:#17191D;">{{ res.pickup_time|time:"g:i A" }}</td>
+      <td width="74%" valign="top" class="dm-muted" style="font-size:14px;color:#4b5563;line-height:1.5;">
+        {{ res.stops.all.0.name }}<br>
+        &rarr; {{ res.stops.all.1.name }}<br>
+        <span class="dm-soft" style="color:#a59e90;font-size:12px;">{{ res.passengers }} passenger{{ res.passengers|pluralize }}</span>
+      </td>
+    </tr></table>
+  </td></tr>
+  {% endfor %}
+  <tr><td style="padding:22px 26px 24px;"></td></tr>
+</table>
+
+<p class="dm-muted" style="margin:26px 0 14px;font-size:15px;color:#4b5563;line-height:1.6;">
+  Plans still firming up? Open your itinerary and change the guest count, the times, or any
+  pickup.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+  <td style="background:#C7A24E;border-radius:999px;">
+    <a href="{{ resume_url }}" style="display:inline-block;padding:13px 26px;font-family:Georgia,serif;font-size:15px;font-weight:bold;color:#1a1407;text-decoration:none;">Open my itinerary</a>
+  </td>
+</tr></table>
+<p class="dm-soft" style="margin:20px 0 0;font-size:13px;color:#a59e90;line-height:1.6;">
+  Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+</p>
+{% endblock %}

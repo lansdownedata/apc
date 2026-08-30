@@ -1,0 +1,158 @@
+{% extends "public/base_public.html" %}
+{% load json_filters %}
+
+{% block meta %}
+<title>{% block title %}Plan your wedding transportation — All Pro Charter{% endblock %}</title>
+<meta name="description" content="Tell us about your wedding and we'll build the whole day's transportation — shuttles, the wedding party, guest hotels and the last run home. No pickup times to work out.">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta name="robots" content="noindex">
+<meta property="og:site_name" content="All Pro Charter">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Plan your wedding transportation — All Pro Charter">
+<meta property="og:description" content="Two times and a guest count is all we need. We'll lay out the whole day for you to check.">
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  THE WEDDING INTAKE (spec 2026-08-30 §5). Seven steps, every one of them client-side,
+  ONE post at the end — the same contract as the hero's two-step widget, just longer.
+  There is no wizard route and no server-side step state; `weddingPlanner()` in
+  static/js/app.js owns the whole thing and mirrors apps/public/wedding.py's rules.
+
+  With Alpine absent every fieldset renders at once and the form still posts, so the
+  page degrades to a long form rather than to nothing.
+{% endcomment %}
+<section class="mx-auto w-full px-4 py-10 sm:px-6 sm:py-14"
+         x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|default:'null'|json_attr }} })"
+         :class="stepName === 'itinerary' ? 'max-w-3xl' : 'max-w-2xl'">
+
+  <form method="post" @submit="onSubmit($event)" class="contents">
+    {% csrf_token %}
+
+    {% comment %} honeypot — invisible to real visitors, irresistible to bots {% endcomment %}
+    <label for="wp-company" class="hidden" aria-hidden="true" tabindex="-1">Leave this field blank</label>
+    <input type="text" id="wp-company" name="company" value="" class="hidden" aria-hidden="true"
+           tabindex="-1" autocomplete="off">
+
+    {% comment %} Everything the browser derived, posted in one go and re-validated server-side. {% endcomment %}
+    <input type="hidden" name="wedding_date" :value="date">
+    <input type="hidden" name="venue_id" :value="venue ? venue.id : ''">
+    <input type="hidden" name="venue_name" :value="venueLabel">
+    <input type="hidden" name="ceremony_venue_id" :value="ceremony ? ceremony.id : ''">
+    <input type="hidden" name="ceremony_venue_name" :value="ceremonyName">
+    <input type="hidden" name="same_site" :value="sameSite ? '1' : ''">
+    <input type="hidden" name="groups" :value="groupsCsv">
+    <input type="hidden" name="guest_count" :value="counts.guests">
+    <input type="hidden" name="party_count" :value="counts.party">
+    <input type="hidden" name="family_count" :value="counts.family">
+    <input type="hidden" name="hotels_json" :value="hotelsJson">
+    <input type="hidden" name="hotels_tbd" :value="hotelsTbd ? '1' : ''">
+    <input type="hidden" name="ceremony_time" :value="timesTbd ? '' : ceremonyTime">
+    <input type="hidden" name="end_time" :value="timesTbd ? '' : endTime">
+    <input type="hidden" name="times_tbd" :value="timesTbd ? '1' : ''">
+    <input type="hidden" name="legs_json" :value="legsJson">
+
+    {% comment %} progress rail — one segment per step this couple will actually see {% endcomment %}
+    <nav class="mb-7 flex gap-1.5" aria-label="Progress">
+      {% comment %}
+        The state class carries the background on its own — a `bg-ink/10` base plus a
+        `bg-gold` override are the same specificity, so which one wins is down to
+        stylesheet order rather than the step you're on.
+      {% endcomment %}
+      <template x-for="name in visibleSteps" :key="name">
+        <span class="h-[3px] flex-1 rounded-full transition-colors"
+              :class="railState(name) === 'on' ? 'bg-gold'
+                    : railState(name) === 'done' ? 'bg-gold/45' : 'bg-ink/10'"></span>
+      </template>
+    </nav>
+
+    <div class="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line sm:p-8">
+
+      {% if form.non_field_errors %}
+      <div class="mb-6 rounded-lg bg-rose-50 px-3.5 py-2.5 text-[12.5px] text-rose-700 ring-1 ring-rose-200">
+        {{ form.non_field_errors|striptags }}
+      </div>
+      {% endif %}
+
+      {% comment %} ----------------------------------------------------- 1 · date {% endcomment %}
+      {% include "public/_wedding_step_date.html" %}
+
+      {% comment %} ---------------------------------------------------- 2 · venue {% endcomment %}
+      {% include "public/_wedding_step_venue.html" %}
+
+      {% comment %} ------------------------------------------------------ 3 · who {% endcomment %}
+      {% include "public/_wedding_step_who.html" %}
+
+      {% comment %} --------------------------------------------------- 4 · hotels {% endcomment %}
+      {% include "public/_wedding_step_hotels.html" %}
+
+      {% comment %} ---------------------------------------------------- 5 · times {% endcomment %}
+      {% include "public/_wedding_step_times.html" %}
+
+      {% comment %} ------------------------------------------------ 6 · itinerary {% endcomment %}
+      {% include "public/_wedding_itinerary.html" %}
+
+      {% comment %} -------------------------------------------------- 7 · contact {% endcomment %}
+      <fieldset x-show="stepName === 'contact'">
+        <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Last step</span>
+        <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+          Where should we send the quote?
+        </h2>
+        <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+          We&rsquo;ll price all <span x-text="legCount"></span>
+          <span x-text="legCount === 1 ? 'movement' : 'movements'"></span> together and come back
+          within one business day. No deposit, nothing locked in.
+        </p>
+
+        <div class="mt-6 grid gap-4">
+          <div>
+            <label for="wp-name" class="mb-1.5 block text-[12px] font-medium text-muted">Your name</label>
+            <input type="text" id="wp-name" name="name" x-model="contact.name" required
+                   autocomplete="name" placeholder="Jane Rider"
+                   class="field{% if form.name.errors %} field-error{% endif %}">
+            {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="wp-email" class="mb-1.5 block text-[12px] font-medium text-muted">Email</label>
+              <input type="email" id="wp-email" name="email" x-model="contact.email"
+                     autocomplete="email" placeholder="you@example.com"
+                     class="field{% if form.email.errors %} field-error{% endif %}">
+              {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+            </div>
+            <div>
+              <label for="wp-phone" class="mb-1.5 block text-[12px] font-medium text-muted">Phone</label>
+              <input type="tel" id="wp-phone" name="phone" x-model="contact.phone"
+                     autocomplete="tel" placeholder="(202) 555-0134"
+                     class="field{% if form.phone.errors %} field-error{% endif %}">
+              {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <p class="mt-4 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
+          <span aria-hidden="true">&#9670;</span>
+          <span>We&rsquo;ll email you a link back to this itinerary so you can update the guest
+            count or times as your plans firm up.</span>
+        </p>
+
+        <div class="mt-7 flex flex-wrap items-center gap-3">
+          <button type="button" @click="back()"
+                  class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
+          <span class="flex-1"></span>
+          <button type="submit" :disabled="!canAdvance() || submitting"
+                  class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+            <span x-text="submitting ? 'Sending…' : 'Send my itinerary'">Send my itinerary</span>
+          </button>
+        </div>
+      </fieldset>
+
+    </div>
+
+    <p class="mt-5 text-center text-[12.5px] text-muted">
+      Prefer to talk it through?
+      <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold">(202) 424-2600</a>
+    </p>
+  </form>
+</section>
+{% endblock %}

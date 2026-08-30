@@ -1,0 +1,21 @@
+{% autoescape off %}Hi {{ contact.name|default:"there" }},
+
+Your wedding day is with our dispatch team. Here's what we have:
+
+  REFERENCE   {{ lead.quote_no }}
+{% for res in reservations %}
+  {{ res.pickup_time|time:"g:i A" }}  {{ res.stops.all.0.name }} -> {{ res.stops.all.1.name }} ({{ res.passengers }} passengers){% endfor %}
+
+We'll price all {{ reservations|length }} movement{{ reservations|length|pluralize }} together and come back within one business day.
+
+Plans still firming up? Open your itinerary and change the guest count, the times, or
+any pickup — nothing is locked in:
+{{ resume_url }}
+
+Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+
+--
+{{ company_name }}
+Luxury charter & chauffeur service
+{% if company_email %}{{ company_email }}{% endif %}{% if company_email and company_phone %} · {% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
+{% endautoescape %}

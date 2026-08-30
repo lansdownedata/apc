@@ -1,0 +1,45 @@
+name,kind,city,state,vehicle_cap,cap_note,lead_hits
+Rose Hill Manor,venue,Leesburg,VA,,,14
+Raspberry Plain Manor,venue,Leesburg,VA,,,15
+Stone Tower Winery,venue,Leesburg,VA,,,13
+Rust Manor House,venue,Leesburg,VA,,,9
+The Oak Barn at Loyalty,venue,Leesburg,VA,40,This venue limits shuttles to 40 passengers.,10
+Lansdowne Resort,venue,Leesburg,VA,,,11
+Westfields Golf Club,venue,Clifton,VA,,,8
+Poplar Springs Manor,venue,Casanova,VA,,,7
+Belmont Country Club,venue,Ashburn,VA,,,7
+Cana Vineyards and Winery,venue,Middleburg,VA,,,4
+Morais Vineyards,venue,Bealeton,VA,,,5
+Fleetwood Farm Winery,venue,Leesburg,VA,,,4
+Breaux Vineyards,venue,Purcellville,VA,,,3
+Shadow Creek Weddings,venue,Purcellville,VA,,,4
+Birkby House,venue,Leesburg,VA,,,4
+Rixey Manor,venue,Rixeyville,VA,,,4
+East Lynn Farm,venue,Round Hill,VA,,,4
+Blue Valley Vineyard,venue,Delaplane,VA,,,4
+Glen Ellen Farm,venue,Ijamsville,MD,,,4
+Springfield Manor,venue,Thurmont,MD,,,4
+Army Navy Country Club,venue,Arlington,VA,,,5
+Meadowlark Botanical Gardens,venue,Vienna,VA,,,3
+Whitehall Estate,venue,Bluemont,VA,,,3
+Fauquier Springs Country Club,venue,Warrenton,VA,,,3
+St. Katharine Drexel Church,church,Haymarket,VA,,,0
+Corpus Christi Catholic Church,church,Stone Ridge,VA,,,0
+St. George Greek Orthodox Church,church,Falls Church,VA,,,0
+Old Presbyterian Meeting House,church,Alexandria,VA,,,0
+St. John the Apostle,church,Leesburg,VA,,,0
+Basilica of St. Mary,church,Alexandria,VA,,,0
+Hampton Inn Leesburg,hotel,Leesburg,VA,,,33
+Homewood Suites Leesburg,hotel,Leesburg,VA,,,18
+Holiday Inn Leesburg,hotel,Leesburg,VA,,,17
+Comfort Suites Leesburg,hotel,Leesburg,VA,,,6
+Best Western Leesburg,hotel,Leesburg,VA,,,6
+Hilton Garden Inn Dulles North,hotel,Ashburn,VA,,,18
+Aloft Dulles Airport North,hotel,Ashburn,VA,,,6
+Courtyard Dulles Town Center,hotel,Sterling,VA,,,16
+SpringHill Suites Ashburn,hotel,Ashburn,VA,,,18
+Lansdowne Resort,hotel,Leesburg,VA,,,11
+Hampton Inn Warrenton,hotel,Warrenton,VA,,,8
+The George Washington Hotel,hotel,Winchester,VA,,,3
+Marriott Dulles Town Center,hotel,Sterling,VA,,,3
+Hilton Garden Inn Frederick,hotel,Frederick,MD,,,5

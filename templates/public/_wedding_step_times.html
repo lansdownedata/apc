@@ -1,0 +1,64 @@
+{% comment %}
+  public/_wedding_step_times.html — Step 5 — the two anchors the whole itinerary is derived from.
+
+  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
+  builder (leads/_wedding_builder.html). An agent walking a couple through this on
+  the phone must be looking at the same screen they are, so this file has exactly
+  one copy. Requires an enclosing `weddingPlanner()` scope.
+{% endcomment %}
+<fieldset x-show="stepName === 'times'">
+  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+    Step <span x-text="stepNumber"></span> of <span x-text="stepCount"></span>
+  </span>
+  <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+    Two times, and we&rsquo;ll build the rest.
+  </h2>
+  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+    You don&rsquo;t need to work out pickup times &mdash; that&rsquo;s our job. Give us the
+    ceremony and the venue&rsquo;s hard end time, and we&rsquo;ll lay out the whole day for
+    you to check.
+  </p>
+
+  <div class="mt-6 grid gap-4 sm:grid-cols-2">
+    <div>
+      <label for="wp-ceremony-time" class="mb-1.5 block text-[12px] font-medium text-muted">Ceremony starts</label>
+      <input type="time" id="wp-ceremony-time" x-model="ceremonyTime" :disabled="timesTbd"
+             @change="legs = null" class="field disabled:opacity-50">
+    </div>
+    <div>
+      <label for="wp-end-time" class="mb-1.5 block text-[12px] font-medium text-muted">Venue requires everyone out by</label>
+      <input type="time" id="wp-end-time" x-model="endTime" :disabled="timesTbd"
+             @change="legs = null" class="field disabled:opacity-50">
+    </div>
+  </div>
+
+  {% comment %}
+    The end time is the single biggest driver of billed hours and only 6.9% of
+    customers volunteer it, so the copy has to earn the answer rather than just
+    ask for it.
+  {% endcomment %}
+  <p class="mt-4 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
+    <span aria-hidden="true">&#9670;</span>
+    <span>Almost every venue has a hard end time in the contract &mdash; it&rsquo;s usually
+      <b class="font-semibold">10:00 or 11:00&nbsp;PM</b>. It&rsquo;s the single biggest thing
+      that changes your price, so it&rsquo;s worth checking.</span>
+  </p>
+
+  <button type="button" @click="toggleTimesTbd()" :aria-pressed="timesTbd"
+          :class="timesTbd ? 'bg-goldl ring-2 ring-gold' : 'bg-surface ring-1 ring-line hover:bg-surface2'"
+          class="relative mt-4 block w-full rounded-xl px-4 py-4 text-left transition-all focus-gold">
+    <span x-cloak x-show="timesTbd"
+          class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">&check;</span>
+    <span class="block text-[14px] font-semibold text-ink">We don&rsquo;t have times yet</span>
+    <span class="block text-[12px] text-muted">We&rsquo;ll build a typical timeline you can adjust later &mdash; a 4:00 PM ceremony and an 11:00 PM end</span>
+  </button>
+
+  {% comment %} The portal builder has one shared footer instead — see _wedding_builder.html. {% endcomment %}
+  <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
+    <button type="button" @click="back()"
+            class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
+    <span class="flex-1"></span>
+    <button type="button" @click="next()"
+            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold">Build my day</button>
+  </div>
+</fieldset>

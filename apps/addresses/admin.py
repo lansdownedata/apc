@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Address, Airline, Airport
+from .models import Address, Airline, Airport, Venue
 
 
 @admin.register(Address)
@@ -22,4 +22,12 @@ class AirlineAdmin(admin.ModelAdmin):
     list_display = ("iata", "name", "icao", "is_active")
     list_filter = ("is_active",)
     search_fields = ("iata", "icao", "name")
+    ordering = ("name",)
+
+
+@admin.register(Venue)
+class VenueAdmin(admin.ModelAdmin):
+    list_display = ("name", "kind", "city", "state", "vehicle_cap", "lead_hits", "is_active")
+    list_filter = ("kind", "is_active", "state")
+    search_fields = ("name", "city")
     ordering = ("name",)

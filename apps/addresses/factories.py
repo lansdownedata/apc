@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import factory
 
-from .models import Address, Airline, Airport
+from .models import Address, Airline, Airport, Venue
 
 
 class AddressFactory(factory.django.DjangoModelFactory):
@@ -43,3 +43,13 @@ class AirlineFactory(factory.django.DjangoModelFactory):
     icao = ""
     name = factory.Sequence(lambda n: f"Test Air {n}")
     is_active = True
+
+
+class VenueFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Venue
+
+    name = factory.Sequence(lambda n: f"Test Venue {n}")
+    kind = Venue.Kind.VENUE
+    city = "Leesburg"
+    state = "VA"
