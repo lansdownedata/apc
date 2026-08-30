@@ -141,6 +141,20 @@ def test_lookup_refusal_is_400_with_its_code(staff, iad, united):
     assert resp.json() == {"error": "The trip date has passed.", "code": "past_date"}
 
 
+def test_an_airport_with_no_scheduled_service_is_400_without_calling_the_provider(
+    staff, iad, united
+):
+    """Real (unmocked) flights.lookup — Andrews-style airports must be refused before any
+    aviationstack call, not just when the caller happens to mock lookup() away."""
+    iad.has_scheduled_service = False
+    iad.save()
+    with patch("apps.integrations.aviationstack.future_schedule") as future:
+        resp = _post(staff, _body(iad, united))
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "no_scheduled_service"
+    future.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "code, message",
     [

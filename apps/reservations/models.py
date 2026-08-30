@@ -323,6 +323,14 @@ class Stop(TimeStampedModel):
         return self.flight.pill() if self.flight_id else None
 
     @property
+    def verify_available(self) -> bool:
+        """True when this stop's airport has scheduled service — gates the drawer's
+        Verify/Refresh button (`flights.lookup` refuses otherwise, 2026-08-29 finding 2).
+        `self.airport` is joined by `Reservation.ordered_stops` / the dispatch prefetch,
+        so this never costs its own query."""
+        return bool(self.airport_id and self.airport.has_scheduled_service)
+
+    @property
     def flight_verify_payload(self) -> dict:
         """The body `POST reservations/flights/verify/` expects for this saved stop — what the
         drawer's Refresh sends. `self.reservation` is cached by the stops prefetch.

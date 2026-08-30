@@ -38,6 +38,15 @@ class Airport(TimeStampedModel):
     Searched alongside LocationIQ so airports rank above street addresses in every
     address input. The CSV's coordinates are authoritative — `enrich_airports` may
     add a street line and place id, but must never touch latitude/longitude.
+
+    Two independent concerns, deliberately kept as separate flags rather than one axis
+    (2026-08-29 data expansion): `serves_ground_transport` is "can a car be sent here" —
+    true for the original 863 curated rows (DC-area + the client's usual destinations,
+    plus US territories) and false for the global set added only so a flight's other
+    endpoint (e.g. a London arrival) has a resolvable name. `has_scheduled_service` is
+    "do scheduled passenger flights exist here" — false for 391 of the curated 863
+    (military fields, GA relievers, private strips like Andrews or Manassas) that are
+    legitimate pickups but can never be looked up with a flight number.
     """
 
     class Size(models.TextChoices):
@@ -63,6 +72,9 @@ class Airport(TimeStampedModel):
     # 2026-08-29 §4.1). Flight times arrive airport-local and are stored UTC via this.
     timezone = models.CharField(max_length=40, blank=True)
     is_active = models.BooleanField(default=True)
+    # See the class docstring — these two are independent axes, not one flag.
+    serves_ground_transport = models.BooleanField(default=False)
+    has_scheduled_service = models.BooleanField(default=False)
 
     # LocationIQ enrichment — blank until `manage.py enrich_airports` runs.
     locationiq_place_id = models.CharField(max_length=64, blank=True)

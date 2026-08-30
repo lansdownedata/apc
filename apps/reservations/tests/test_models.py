@@ -199,6 +199,28 @@ def test_flight_label_is_blank_without_flight_info():
     assert stop.flight_label_long == ""
 
 
+# --- verify_available gates the Verify/Refresh button on has_scheduled_service --------
+
+
+def test_verify_available_true_for_a_scheduled_service_airport():
+    stop = _airport_stop(flight_number="123")  # AirportFactory defaults to True
+    assert stop.verify_available is True
+
+
+def test_verify_available_false_for_a_no_scheduled_service_airport():
+    from apps.addresses.factories import AirportFactory
+
+    stop = _airport_stop(
+        flight_number="123", airport=AirportFactory(iata="ADW", has_scheduled_service=False)
+    )
+    assert stop.verify_available is False
+
+
+def test_verify_available_false_without_an_airport():
+    stop = _airport_stop(airport=None, airline=None, flight_number="123")
+    assert stop.verify_available is False
+
+
 def test_ordered_stops_join_the_airline_and_airport(django_assert_num_queries):
     stop = _airport_stop(flight_number="123")
     res = Reservation.objects.get(pk=stop.reservation_id)

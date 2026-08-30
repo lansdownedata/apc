@@ -94,7 +94,7 @@
               {% comment %} Live block: pill → detail → Refresh, all rendered by flightStatus() (app.js)
                    from `initial` so a refresh re-draws in place. `payload` is what the verify endpoint
                    expects for this saved stop. {% endcomment %}
-              <div class="mt-1" x-data="flightStatus({ payload: {{ stop.flight_verify_payload|json_attr }}, initial: {{ stop.flight_pill|json_attr }}, label: {{ stop.flight_label|json_string }}, enabled: {{ flight_verify_enabled|yesno:'true,false' }} })">
+              <div class="mt-1" x-data="flightStatus({ payload: {{ stop.flight_verify_payload|json_attr }}, initial: {{ stop.flight_pill|json_attr }}, label: {{ stop.flight_label|json_string }}, enabled: {{ flight_verify_enabled|yesno:'true,false' }} && {{ stop.verify_available|yesno:'true,false' }} })">
                 <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full num whitespace-nowrap"
                       :class="pill ? pill.chip : 'chip-gold'" :title="pill ? pill.detail : ''">
                   <i class="ti text-[13px]" :class="pill ? pill.icon : '{% if stop.flight_direction == 'departure' %}ti-plane-departure{% elif stop.flight_direction == 'arrival' %}ti-plane-arrival{% else %}ti-plane{% endif %}'"></i>

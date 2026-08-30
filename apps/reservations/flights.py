@@ -138,6 +138,14 @@ def lookup(
     iata = (airport.iata or "").upper()
     if not _IATA_RE.match(iata):
         raise FlightLookupError("no_iata", "This airport has no IATA code to look up.")
+    if not airport.has_scheduled_service:
+        # 391 of the 863 curated airports are military fields / GA relievers / private
+        # strips with a real IATA code but no scheduled passenger service — refuse before
+        # spending a call against the tightly rate-limited provider (spec 2026-08-29
+        # finding 2, e.g. Andrews/ADW, Manassas/HEF).
+        raise FlightLookupError(
+            "no_scheduled_service", f"{iata} has no scheduled passenger service."
+        )
     if not airport.timezone:
         log.warning("Airport %s has no timezone — flight lookup refused", iata)
         raise FlightLookupError("no_timezone", f"{iata} has no time zone on file.")

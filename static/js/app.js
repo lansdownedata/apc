@@ -564,8 +564,8 @@ function quoteWorkspace(opts = {}) {
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
-          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false },
-          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
         ],
       };
     },
@@ -631,7 +631,7 @@ function quoteWorkspace(opts = {}) {
       this.draft.tripType = t;
       this.applyVehicleRateCard();
     },
-    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false }); },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
     /* The first and last stop happen at the trip's own times — shown against the row
@@ -671,6 +671,9 @@ function quoteWorkspace(opts = {}) {
       // Picked from the airport directory → the flight row appears for this stop.
       s.airport = r.is_airport ? String(r.airport_id || "") : "";
       s.airportCode = r.is_airport ? (r.airport_code || "") : "";
+      // Gates the Verify button (spec 2026-08-29 finding 2) — a real IATA code alone
+      // isn't enough; Andrews/Manassas-style fields have one with no flights to look up.
+      s.hasScheduledService = r.is_airport ? !!r.has_scheduled_service : false;
       this._stopResults[i] = { open: false, list: [], active: -1 };
     },
     closeStopRow(i) { this._stopResults[i] = { open: false, list: [], active: -1 }; },
@@ -694,11 +697,13 @@ function quoteWorkspace(opts = {}) {
     },
     canVerify(i) {
       const s = this.draft.stops[i];
-      return !s.verifying && !!(s.airport && s.airline && s.flight && this.stopDirection(i) && this.draft.date)
+      return !s.verifying
+        && !!(s.airport && s.hasScheduledService && s.airline && s.flight && this.stopDirection(i) && this.draft.date)
         && this.draft.date >= localDate(new Date());
     },
     verifyReason(i) {
       const s = this.draft.stops[i];
+      if (!s.hasScheduledService) return "This airport has no scheduled passenger service";
       if (!s.airline) return "Choose the airline first";
       if (!s.flight) return "Enter the flight number";
       if (!this.stopDirection(i)) return "Choose Arriving or Departing to verify";

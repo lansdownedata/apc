@@ -188,6 +188,15 @@ def test_editor_hides_verify_when_not_configured(page, settings):
     assert "s.direction = 'arrival'" in html  # the toggle stays: direction is data, not a lookup
 
 
+def test_editor_verify_button_is_gated_on_scheduled_service(page, settings):
+    """A stop's airport can lack scheduled service (Andrews, Manassas, ...) even though it
+    has a real 3-char IATA code — the button's x-show must check the draft's
+    hasScheduledService flag, not just the code length (spec 2026-08-29 finding 2)."""
+    settings.AVIATIONSTACK_API_KEY = "k"
+    html = page(LeadFactory())
+    assert "s.hasScheduledService" in html
+
+
 # --- the route loop shows the flight on an airport stop ---
 
 
