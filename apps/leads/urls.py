@@ -9,6 +9,7 @@ urlpatterns = [
     path("<int:pk>/update/", views.lead_update, name="lead_update"),
     path("<int:pk>/mark-lost/", views.lead_mark_lost, name="lead_mark_lost"),
     path("<int:pk>/mark-booked/", views.lead_mark_booked, name="lead_mark_booked"),
+    path("<int:pk>/wedding/", views.lead_wedding_save, name="lead_wedding_save"),
     path("<int:pk>/reopen/", views.lead_reopen, name="lead_reopen"),
     path("<int:pk>/send-quote/", views.lead_send_quote, name="lead_send_quote"),
     path("<int:pk>/resend-la/", views.lead_resend_la, name="lead_resend_la"),
