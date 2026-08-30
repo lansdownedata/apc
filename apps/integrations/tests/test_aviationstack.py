@@ -183,6 +183,22 @@ def test_error_bodies_map_to_codes(status, api_code, expected):
     assert "nope" in exc.value.message
 
 
+def test_error_body_with_a_string_error_does_not_crash():
+    """Live ground truth (browser probe, 2026-08-29): a real rate-limit response on
+    Moe's key came back as `{"error": "..."}` — a plain string, not the documented
+    `{"code": ..., "message": ...}` object. `err.get("code")` on a str blows up with
+    AttributeError, turning a 429 into an unhandled 500 instead of the graceful
+    `rate_limited` the UI's busy-toast path depends on."""
+    body = {"error": "Rate limit exceeded, upgrade your plan for more requests."}
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(status=429, json_data=body)
+        with pytest.raises(av.AviationstackError) as exc:
+            av.future_schedule(**FUTURE_KW)
+    assert exc.value.code == "rate_limited"
+    assert exc.value.status == 429
+    assert "Rate limit exceeded" in exc.value.message
+
+
 def test_transport_failure_maps_to_transport():
     with patch.object(av, "requests") as req:
         req.RequestException = requests.RequestException

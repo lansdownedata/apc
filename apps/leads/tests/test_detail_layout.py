@@ -161,14 +161,31 @@ def test_airline_options_offer_active_carriers_only(client):
     assert all(label != "ZZ — Retired Air" for _, label in options)
 
 
-def test_editor_renders_the_flight_row_for_airport_stops(page):
+def test_editor_renders_the_flight_row_for_airport_stops(page, settings):
+    settings.AVIATIONSTACK_API_KEY = "k"
     html = page(LeadFactory())
     assert 'x-show="s.airport"' in html
     assert 'x-model="s.flight"' in html
     assert "initTomSelects($el)" in html
     assert 'x-text="s.airportCode"' in html
-    assert "flightVerifyComingSoon()" in html
+    assert "flightVerifyComingSoon" not in html
     assert "UA — United Airlines</option>" in html
+    # the middle-stop direction toggle and the Verify → pill pair
+    assert "s.direction = 'arrival'" in html and "s.direction = 'departing'" not in html
+    assert "s.direction = 'departure'" in html
+    assert '@click="verifyStop(i)"' in html
+    assert ':disabled="!canVerify(i)"' in html
+    # x-text is evaluated even while x-show hides the element, so verifyPill(i) must be
+    # guarded here — an unguarded ".label" throws on first render (no flight verified yet)
+    # and kills the whole Alpine component.
+    assert "x-text=\"verifyPill(i) ? verifyPill(i).label : ''\"" in html
+
+
+def test_editor_hides_verify_when_not_configured(page, settings):
+    settings.AVIATIONSTACK_API_KEY = ""
+    html = page(LeadFactory())
+    assert "verifyStop(i)" not in html
+    assert "s.direction = 'arrival'" in html  # the toggle stays: direction is data, not a lookup
 
 
 # --- the route loop shows the flight on an airport stop ---
