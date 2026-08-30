@@ -277,6 +277,16 @@ def test_panel_shows_an_in_house_coverage_with_unassign_only(logged_in_client):
     assert reverse("dispatch_resolve", args=[a.pk]) in body
 
 
+def test_panel_skips_the_in_house_lookup_when_the_trip_is_covered(logged_in_client):
+    """A covered trip never renders the In-house block, so it shouldn't pay for it."""
+    trip = _trip()
+    DriverFactory()
+    VehicleFactory()
+    services.assign_in_house(trip, DriverFactory())
+    resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
+    assert resp.context["in_house"] == {"drivers": [], "vehicles": []}
+
+
 def test_panel_still_shows_payout_for_a_vendor_coverage(logged_in_client):
     trip = _trip()
     services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))

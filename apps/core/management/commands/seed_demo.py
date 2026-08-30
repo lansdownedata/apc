@@ -87,9 +87,7 @@ class Command(BaseCommand):
 
         # In-house fleet: one driver + one unit, with renewals in three states so the
         # chips, the attention strip and the drawer warning all have something to show.
-        unit_class = (
-            VehicleType.objects.filter(name="Luxury SUV").first() or VehicleType.objects.first()
-        )
+        unit_class = vehicles["Luxury SUV"]
         driver = Driver.objects.create(
             name="Marcus Bell",
             phone=to_e164("(571) 555-0177"),

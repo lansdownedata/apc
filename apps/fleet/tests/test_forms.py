@@ -90,3 +90,12 @@ def test_renewal_type_form_fields_and_validity():
     assert list(form.fields) == ["name", "applies_to", "sort_order", "active"]
     assert form.is_valid(), form.errors
     assert form.save().applies_to == RenewalType.AppliesTo.DRIVER
+
+
+def test_renewal_type_form_explains_a_duplicate_name():
+    RenewalTypeFactory(name="Medical card", applies_to=RenewalType.AppliesTo.DRIVER)
+    form = RenewalTypeForm(
+        {"name": "MEDICAL CARD", "applies_to": "driver", "sort_order": 0, "active": "on"}
+    )
+    assert not form.is_valid()
+    assert "already exists" in str(form.errors)

@@ -184,7 +184,7 @@ function assignPanel() {
           copy.message ||
           "The trip goes back to unassigned. The affiliate is not notified automatically.",
         variant: "danger",
-        confirmText: copy.title ? "Unassign" : "Withdraw",
+        confirmText: copy.confirmText || "Withdraw",
         onConfirm: () => this.send(url, { action: "withdraw" }),
       });
     },

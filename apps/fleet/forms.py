@@ -90,7 +90,9 @@ class RenewalForm(forms.ModelForm):
 
     def __init__(self, *args, applies_to: str, keep_type_id: int | None = None, **kwargs):
         super().__init__(*args, **kwargs)
-        keep = Q(active=True) | Q(pk=keep_type_id)
+        keep = Q(active=True)
+        if keep_type_id is not None:
+            keep |= Q(pk=keep_type_id)
         if self.instance.pk:
             keep |= Q(pk=self.instance.renewal_type_id)
         self.fields["renewal_type"].queryset = RenewalType.objects.filter(

@@ -57,7 +57,7 @@
     {% if hidden_count %}
     <div class="px-4 py-3 border-t border-line/60 text-[11.5px] text-muted flex items-center gap-1.5">
       <i class="ti ti-archive text-[14px]"></i> {{ hidden_count }} inactive driver{{ hidden_count|pluralize }} hidden ·
-      <a href="?status=inactive" class="font-semibold" style="color:rgb(var(--gold-deep));">Show inactive</a>
+      <a href="?q={{ q|urlencode }}&amp;status=inactive" class="font-semibold" style="color:rgb(var(--gold-deep));">Show inactive</a>
     </div>
     {% endif %}
   </div>
