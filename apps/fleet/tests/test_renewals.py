@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
 from django.utils import timezone
@@ -156,8 +157,6 @@ def test_vehicle_defaults_and_str():
 
 
 def test_seed_demo_creates_an_in_house_driver_and_unit():
-    from django.core.management import call_command
-
     call_command("seed_demo", "--fresh", verbosity=0)
     driver = Driver.objects.get(driver_number=1000)
     assert driver.needs_attention is True  # licence expiring inside 30 days
