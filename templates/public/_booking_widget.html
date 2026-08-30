@@ -100,7 +100,7 @@
             </div>
           </div>
           <div x-show="stop.airport" x-cloak class="mt-2 grid grid-cols-[1fr_120px] gap-2">
-            <div class="ts-compact"
+            <div
                  x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"
                  x-effect="const el = $el.querySelector('select'); if (el && el.tomselect && el.tomselect.getValue() !== String(stop.airline || '')) el.tomselect.setValue(String(stop.airline || ''), true)"
                  @change="stop.airline = $event.target.value">

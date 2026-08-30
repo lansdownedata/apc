@@ -338,14 +338,19 @@ header, aside, main, .wash-gold {
   border-radius: 0;
   padding: 0;
 }
+/* Vertical metrics are `.field`'s, deliberately: a select sitting next to an input
+   has to be the same height.  Tom Select pins `line-height: 18px` on the control,
+   where an input inherits the 1.5 body line-height (13.5px → 20.25px) — that 2.25px
+   plus the smaller padding left every picker ~4px shorter than the box beside it. */
 .ts-wrapper.single .ts-control,
 .ts-wrapper.multi  .ts-control {
   background: rgb(var(--surface));
   border: 1px solid rgb(var(--border));
   border-radius: 12px;
-  padding: .55rem .85rem;
+  padding: .6rem .85rem;
   min-height: 0;
   font-size: 13.5px;
+  line-height: 1.5;
   color: rgb(var(--text));
   box-shadow: none;
   transition: box-shadow .15s ease, border-color .15s ease;
@@ -355,6 +360,13 @@ header, aside, main, .wash-gold {
   border-color: rgb(var(--gold));
   box-shadow: 0 0 0 3px var(--ring);
 }
+/* Tom Select's own stylesheet repaints the *focused* control white:
+   `.ts-wrapper.single.input-active .ts-control{background:#fff}` — one class more
+   specific than the surface rule above, so it wins however late app.css loads.
+   (`input-active` is toggled on focus.)  In dark mode that put light body text and
+   a gold selected item on a white box — invisible.  Re-assert the surface at
+   matching specificity. */
+.ts-wrapper.single.input-active .ts-control { background: rgb(var(--surface)); }
 .ts-control input { color: rgb(var(--text)); }
 .ts-control input::placeholder { color: rgb(var(--muted) / .7); }
 .ts-wrapper.single .ts-control:after {
@@ -525,6 +537,25 @@ header, aside, main, .wash-gold {
 .flatpickr-time .numInputWrapper span.arrowDown:after { border-top-color: rgb(var(--muted)); }
 .flatpickr-time .numInputWrapper:hover span.arrowUp:after { border-bottom-color: rgb(var(--gold)); }
 .flatpickr-time .numInputWrapper:hover span.arrowDown:after { border-top-color: rgb(var(--gold)); }
+/* Done row (appended by fpAddDone) — the time picker's only visible way out. Sits
+   flush to the panel's bottom edge; the calendar's own overflow:hidden rounds it. */
+.flatpickr-calendar .fp-done {
+  display: block;
+  width: 100%;
+  padding: 0.65rem 0;
+  border: 0;
+  border-top: 1px solid rgb(var(--border));
+  background: rgb(var(--surface-2));
+  color: rgb(var(--gold-deep));
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.flatpickr-calendar .fp-done:hover { background: rgb(var(--gold-soft)); }
+.flatpickr-calendar .fp-done:focus-visible { outline: 2px solid rgb(var(--gold)); outline-offset: -2px; }
 
 /* ---- touch devices: the OS picker, not this calendar ----
    flatpickr matches the phone/tablet UA and steps aside (`setupMobile`): it hides
@@ -597,8 +628,13 @@ header, aside, main, .wash-gold {
    flatpickr's altInput copies the original input's className, so it already picks
    up `.field` here; `input.form-control` is a defensive belt for the altInputClass
    default in case that copying behaviour changes. */
+/* `.ts-wrapper .ts-control` (three classes), not `.ts-control`: the global Tom Select
+   rule is `.ts-wrapper.single .ts-control` and outranked a two-class selector, so none
+   of this reached a picker — the Occasion and airline selects kept portal-scale 13.5px
+   type and sat ~6px shorter than every field beside them, and 13.5px is under the 16px
+   floor that stops iOS zooming the page on focus. */
 .quote-form .field,
-.quote-form .ts-control,
+.quote-form .ts-wrapper .ts-control,
 .quote-form input.form-control {
   min-height: 44px;
   border-radius: 10px;
@@ -623,7 +659,7 @@ header, aside, main, .wash-gold {
 
 @media (min-width: 640px) {
   .quote-form .field,
-  .quote-form .ts-control,
+  .quote-form .ts-wrapper .ts-control,
   .quote-form input.form-control { min-height: 48px; font-size: 15px; }
   .quote-form { row-gap: 14px; }
 }
