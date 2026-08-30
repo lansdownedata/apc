@@ -17,6 +17,7 @@ from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.utils import timezone
 
+from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
@@ -35,32 +36,46 @@ class AssignmentError(Exception):
 
 def active_assignment(reservation: Reservation) -> Assignment | None:
     """The offer in play or the confirmed coverage — at most one per trip."""
-    return reservation.assignments.active().select_related("vendor").first()
+    return reservation.assignments.active().select_related("vendor", "driver", "vehicle").first()
 
 
 def _claim(
     reservation: Reservation,
-    vendor: Vendor,
     *,
-    payout: Decimal,
+    vendor: Vendor | None = None,
+    driver: Driver | None = None,
+    vehicle: Vehicle | None = None,
+    payout: Decimal = Decimal("0"),
     note: str,
     status: str,
     channel: str = Assignment.Channel.MANUAL,
 ) -> Assignment:
-    """Create an assignment, refusing if the trip can't legally be farmed out.
+    """Create an assignment, refusing if the trip can't legally be covered.
 
-    The trip guards live here rather than in the view so both doors (`send_offer` and
-    `assign_direct`) are covered: farming out an unsold quote emails a real affiliate a
-    trip sheet for a trip nobody bought, and a cancelled trip needs no coverage at all.
+    Exactly one provider: an affiliate `vendor` (farm-out) or an in-house `driver`, with an
+    optional fleet `vehicle` only alongside a driver. The DB CHECK constraints back this,
+    but the service refuses first so the dispatcher gets a sentence, not a 500.
+
+    The trip guards live here rather than in the view so every door (`send_offer`,
+    `assign_direct`, `assign_in_house`) is covered: farming out an unsold quote emails a
+    real affiliate a trip sheet for a trip nobody bought, and a cancelled trip needs no
+    coverage at all.
 
     Locks the reservation row so two dispatchers assigning the same trip at the same
     moment can't both pass the already-active check.
 
-    `channel` defaults to MANUAL — `assign_direct` always wants that, and it's the safe
-    default for any future caller. `send_offer` passes GNET explicitly for a GNet-capable
-    vendor, so the assignment's channel is correct from creation rather than patched on
-    afterwards.
+    `channel` defaults to MANUAL — `assign_direct` and `assign_in_house` always want that,
+    and it's the safe default for any future caller. `send_offer` passes GNET explicitly
+    for a GNet-capable vendor, so the assignment's channel is correct from creation.
     """
+    if (vendor is None) == (driver is None):
+        raise AssignmentError("Choose either an affiliate or an in-house driver.")
+    if vehicle is not None and driver is None:
+        raise AssignmentError("A vehicle can only be assigned together with a driver.")
+    if driver is not None and driver.status != Driver.Status.ACTIVE:
+        raise AssignmentError(f"Driver {driver.driver_number} is inactive.")
+    if vehicle is not None and vehicle.status != Vehicle.Status.ACTIVE:
+        raise AssignmentError(f"{vehicle.name} is inactive.")
     if reservation.lead.status != Lead.Status.BOOKED:
         raise AssignmentError(f"Trip #{reservation.pk} isn't on a booked order.")
     if reservation.is_cancelled:
@@ -73,6 +88,8 @@ def _claim(
         return Assignment.objects.create(
             reservation=reservation,
             vendor=vendor,
+            driver=driver,
+            vehicle=vehicle,
             payout=payout,
             note=note,
             status=status,
@@ -128,7 +145,7 @@ def send_offer(
     channel = Assignment.Channel.GNET if vendor.is_gnet_capable else Assignment.Channel.MANUAL
     assignment = _claim(
         reservation,
-        vendor,
+        vendor=vendor,
         payout=payout,
         note=note,
         status=Assignment.Status.OFFERED,
@@ -173,7 +190,22 @@ def assign_direct(
     Always MANUAL, even for a GNet-capable vendor: this is a phone-arranged coverage
     record, not a farm-out, so it never touches the gateway.
     """
-    return _claim(reservation, vendor, payout=payout, note=note, status=Assignment.Status.CONFIRMED)
+    return _claim(
+        reservation, vendor=vendor, payout=payout, note=note, status=Assignment.Status.CONFIRMED
+    )
+
+
+def assign_in_house(
+    reservation: Reservation, driver: Driver, *, vehicle: Vehicle | None = None, note: str = ""
+) -> Assignment:
+    """Cover the trip with one of our own drivers (and optionally a fleet unit).
+
+    Straight to CONFIRMED: there is no offer step for your own driver, no payout, and
+    nothing leaves the building — the trip sheet to the driver is a follow-on feature.
+    """
+    return _claim(
+        reservation, driver=driver, vehicle=vehicle, note=note, status=Assignment.Status.CONFIRMED
+    )
 
 
 def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignment:
@@ -191,8 +223,13 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
     return assignment
 
 
+_IN_HOUSE_ONLY_UNASSIGN = "An in-house assignment can only be unassigned."
+
+
 def confirm(assignment: Assignment) -> Assignment:
     """The affiliate accepted."""
+    if assignment.is_in_house:
+        raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
     if assignment.status == Assignment.Status.CONFIRMED:
         return assignment
     return _resolve(assignment, Assignment.Status.CONFIRMED)
@@ -200,6 +237,8 @@ def confirm(assignment: Assignment) -> Assignment:
 
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:
     """The affiliate said no — the trip goes back to uncovered."""
+    if assignment.is_in_house:
+        raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
     return _resolve(assignment, Assignment.Status.DECLINED, note=note)
 
 
