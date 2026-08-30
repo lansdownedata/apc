@@ -1,6 +1,7 @@
 from django import forms
 
 from apps.accounts.models import User
+from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 
@@ -9,6 +10,14 @@ class NewLeadForm(forms.Form):
     """Capture a new lead + its contact from the Leads list modal."""
 
     name = forms.CharField(max_length=200)
+    # Set when the agent picked someone from the modal's customer search. That contact is
+    # then used as-is — no phone/email dedupe guessing — and the fields above are written
+    # back to their profile. Blank means "create/match a contact from what was typed".
+    contact_id = forms.ModelChoiceField(
+        queryset=Contact.objects.all(),
+        required=False,
+        error_messages={"invalid_choice": "That customer no longer exists."},
+    )
     company = forms.CharField(max_length=200, required=False)
     phone = forms.CharField(max_length=32, required=False)
     email = forms.EmailField(required=False)

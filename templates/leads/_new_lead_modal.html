@@ -30,13 +30,70 @@
     </div>
 
     <!-- form -->
-    <form method="post" action="{% url 'lead_create' %}" class="p-6 space-y-4">
+    <form method="post" action="{% url 'lead_create' %}" class="p-6 space-y-4"
+          x-data="contactPicker({ searchUrl: '{% url 'contact_search' %}' })"
+          x-effect="newLeadOpen || reset()">
       {% csrf_token %}
       <input type="hidden" name="intent" :value="newLeadIntent">
+      {% comment %}
+        Set only when the agent picked someone from the search above. The server then
+        reuses that contact outright and writes the edited fields back to their profile;
+        blank means "match or create from what was typed", the original behaviour.
+      {% endcomment %}
+      <input type="hidden" name="contact_id" :value="selected ? selected.id : ''">
 
       <p x-show="newLeadIntent === 'booking'" x-cloak class="text-[12.5px] text-muted -mt-1">
         Creates the customer and opens the workspace — add the trips there, then <span class="font-semibold text-ink">Book now</span>. No quote is emailed.
       </p>
+
+      {% comment %}
+        Existing-customer search. Escape closes the dropdown without also closing the
+        dialog — the modal listens on window, so the keystroke is stopped here while
+        there's something open to close.
+      {% endcomment %}
+      <div x-show="!selected" class="relative"
+           @keydown.escape="if (open) { $event.stopPropagation(); closeResults() }"
+           @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)"
+           @keydown.enter.prevent="choose(active)">
+        <label for="nl-search" class="block text-[12px] font-medium text-muted mb-1.5">Existing customer</label>
+        <i class="ti ti-search absolute left-3 top-[34px] text-muted text-[15px]"></i>
+        <input id="nl-search" type="text" x-model="query" autocomplete="off"
+               data-1p-ignore data-lpignore="true"
+               @input.debounce.250ms="search()" @focus="results.length && (open = true)"
+               placeholder="Search by name, company, phone or email…"
+               class="field w-full field-icon-left">
+        <div x-show="open" x-cloak @click.outside="closeResults()" role="listbox"
+             class="absolute z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-xl bg-surface ring-1 ring-line shadow-2xl py-1">
+          <template x-if="loading">
+            <div class="px-3 py-2 text-[12.5px] text-muted">Searching…</div>
+          </template>
+          <template x-if="!loading && !results.length">
+            <div class="px-3 py-2 text-[12.5px] text-muted">No match — the details below create a new customer.</div>
+          </template>
+          <template x-for="(r, i) in results" :key="r.id">
+            <button type="button" role="option" @click="choose(i)" @mouseenter="active = i"
+                    class="w-full text-left px-3 py-2 flex items-center gap-3 transition-colors"
+                    :class="active === i ? 'bg-goldl' : 'hover:bg-surface2'">
+              <span class="min-w-0 flex-1">
+                <span class="block text-[13px] font-semibold text-ink truncate" x-text="r.name"></span>
+                <span class="block text-[11.5px] text-muted truncate" x-text="subtitle(r)"></span>
+              </span>
+              <span class="text-[11px] text-muted shrink-0" x-text="leadCount(r)"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- linked chip — shown instead of the search once a customer is picked -->
+      <div x-show="selected" x-cloak class="flex items-center gap-3 rounded-xl ring-1 ring-gold bg-goldl px-3.5 py-3">
+        <i class="ti ti-user-check text-goldd text-[18px] shrink-0"></i>
+        <div class="min-w-0 flex-1">
+          <div class="text-[13px] font-semibold text-ink truncate" x-text="selected && selected.name"></div>
+          <div class="text-[11.5px] text-muted">Existing customer — edits below update their profile.</div>
+        </div>
+        <button type="button" @click="unlink()"
+                class="text-[12px] font-semibold text-goldd hover:underline shrink-0">Change</button>
+      </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <!-- name -->
@@ -57,15 +114,32 @@
                  class="field w-full">
         </div>
 
-        <!-- phone -->
-        {% include "components/phone_input.html" with name="phone" field_id="nl-phone" label="Phone" %}
+        {% comment %}
+          Phone / email drive the "already a customer?" hint. Delegated @input on the
+          wrapper because the phone widget is an include and takes no extra attributes.
+        {% endcomment %}
+        <div @input.debounce.400ms="checkMatch()">
+          {% include "components/phone_input.html" with name="phone" field_id="nl-phone" label="Phone" %}
+        </div>
 
         <!-- email -->
         <div class="sm:col-span-2">
           <label for="nl-email" class="block text-[12px] font-medium text-muted mb-1.5">Email</label>
           <input id="nl-email" name="email" type="email" autocomplete="email"
+                 @input.debounce.400ms="checkMatch()"
                  placeholder="customer@example.com"
                  class="field w-full">
+        </div>
+
+        <!-- what they typed already belongs to someone -->
+        <div x-show="!selected && hint" x-cloak
+             class="sm:col-span-2 -mt-1 flex items-center gap-2 text-[12.5px] text-muted">
+          <i class="ti ti-info-circle text-[15px] text-goldd shrink-0"></i>
+          <span class="min-w-0 truncate">
+            <span class="font-semibold text-ink" x-text="hint && hint.name"></span> is already a customer.
+          </span>
+          <button type="button" @click="useHint()"
+                  class="font-semibold text-goldd hover:underline shrink-0">Use them</button>
         </div>
 
         <!-- channel -->

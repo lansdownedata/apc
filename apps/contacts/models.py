@@ -1,3 +1,5 @@
+import re
+
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Lower
@@ -47,6 +49,24 @@ class Company(TimeStampedModel):
 
 class ContactManager(models.Manager):
     """Dedupe helpers — a Contact mirrors one LimoAnywhere Account."""
+
+    def search(self, query: str) -> models.QuerySet:
+        """Free-text lookup over name / company / email / phone.
+
+        Shared by the contacts directory and the booking modal's type-ahead so the two
+        agree on what "matches" means. Phones are stored E.164 (+16175559271), so match
+        on digits — a query typed as "(617) 555-9271" or "555-9271" still finds them.
+        """
+        query = (query or "").strip()
+        if not query:
+            return self.none()
+        lookup = (
+            Q(name__icontains=query) | Q(company__name__icontains=query) | Q(email__icontains=query)
+        )
+        phone_digits = re.sub(r"\D", "", query)
+        if len(phone_digits) >= 3:
+            lookup |= Q(phone__icontains=phone_digits)
+        return self.filter(lookup)
 
     def find_match(self, *, phone: str = "", email: str = "") -> "Contact | None":
         phone, email = (phone or "").strip(), (email or "").strip()
