@@ -396,10 +396,11 @@ function quoteWorkspace(opts = {}) {
     sending: false,
     editorOpen: false,
     draftIsNew: false,
-    // Set once the agent gives the drop-off its own day (an overnight run); until then
-    // it follows the pickup date.  Component state, not draft state — it must not ride
-    // along in the save payload.
+    // Set once the agent gives the drop-off a day / a time of its own; until then each
+    // follows the pickup.  Component state, not draft state — neither may ride along in
+    // the save payload.
     dropoffPinned: false,
+    dropoffTimePinned: false,
     draft: null,
     _saved: null,
 
@@ -600,6 +601,7 @@ function quoteWorkspace(opts = {}) {
     newReservation() {
       this.draft = this.blankReservation();
       this.dropoffPinned = false;
+      this.dropoffTimePinned = false;
       this.draftIsNew = true;
       this.editorOpen = true;
       this.syncVehicleSelect();
@@ -617,8 +619,11 @@ function quoteWorkspace(opts = {}) {
         delete s.pill;
       });
       this.draftIsNew = false;
-      // A stored trip that already ends on another day keeps that day through pickup edits.
+      // A stored trip that already ends on another day, or at a time of its own, keeps
+      // both through pickup edits.
       this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
+      this.dropoffTimePinned =
+        !!this.draft.dropoffTime && this.draft.dropoffTime !== this.derivedDropoffTime();
       this.editorOpen = true;
       // Older rows can predate the derived drop-off — fill it so the hourly
       // read-out shows the end time instead of the "set a date" prompt.
@@ -638,18 +643,47 @@ function quoteWorkspace(opts = {}) {
        drop-off date with it — one box to fill instead of two.  Give the drop-off its
        own day and it pins: later pickup edits leave it where the agent put it.
        Hourly ignores all of this; there the drop-off is derived from the hours. */
+    mirrorDropoffDate() {
+      if (this.draft.tripType !== "transfer" || this.dropoffPinned || !this.draft.date) return;
+      // Same day — unless the clock has wrapped: an 11:30 PM pickup dropping at 12:30 AM
+      // lands tomorrow.
+      const d = new Date(this.draft.date + "T00:00");
+      if (this.draft.time && this.draft.dropoffTime && this.draft.dropoffTime < this.draft.time) {
+        d.setDate(d.getDate() + 1);
+      }
+      this.draft.dropoffDate = localDate(d);
+    },
     onPickupDateChanged() {
       // A pinned drop-off that now falls before the pickup is an impossible trip — let it follow again.
       if (this.dropoffPinned && this.draft.dropoffDate && this.draft.dropoffDate < this.draft.date) {
         this.dropoffPinned = false;
       }
-      if (this.draft.tripType === "transfer" && !this.dropoffPinned) {
-        this.draft.dropoffDate = this.draft.date;
+      this.mirrorDropoffDate();
+      this.onHoursChanged();
+    },
+    /* An hour covers most point-to-point runs — a starting point to correct, not a
+       claim.  It keeps following the pickup until the agent sets a time of their own;
+       from then on the time is theirs and nothing moves it.  Tracking (rather than
+       filling an empty box once) is what keeps a moved pickup from leaving a drop-off
+       stranded before it — a trip that is invalid and nothing here validates. */
+    derivedDropoffTime() {
+      if (!this.draft.time) return "";
+      const start = new Date("2000-01-01T" + this.draft.time);
+      return isNaN(start) ? "" : new Date(start.getTime() + 3600000).toTimeString().slice(0, 5);
+    },
+    onPickupTimeChanged() {
+      if (this.draft.tripType === "transfer" && !this.dropoffTimePinned) {
+        this.draft.dropoffTime = this.derivedDropoffTime();
       }
+      this.mirrorDropoffDate();
       this.onHoursChanged();
     },
     onDropoffDateChanged() {
       this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
+    },
+    onDropoffTimeChanged() {
+      this.dropoffTimePinned = this.draft.dropoffTime !== this.derivedDropoffTime();
+      this.mirrorDropoffDate();
     },
     onHoursChanged() {              // hourly: derive drop-off from pickup + billed hours
       if (this.draft.tripType !== "hourly") return;
@@ -1014,7 +1048,10 @@ function initTomSelects(root = document) {
       create: el.dataset.create !== undefined,
       placeholder: el.dataset.placeholder || "Select…",
       maxOptions: 1000,
-      hidePlaceholder: false,
+      // hidePlaceholder is deliberately absent: Tom Select's own default resolves it to
+      // `mode !== "multi"`, which is what we want. Hard-coding false left the "Select…"
+      // prompt sitting beside the chosen item on every *searchable* single select (the
+      // search:"off" ones have no control input, so they never showed it).
       onChange() {
         if (el.dataset.autosubmit !== undefined && el.form) el.form.submit();
       },

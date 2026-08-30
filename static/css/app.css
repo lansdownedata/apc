@@ -369,6 +369,10 @@ header, aside, main, .wash-gold {
 .ts-wrapper.single.input-active .ts-control { background: rgb(var(--surface)); }
 .ts-control input { color: rgb(var(--text)); }
 .ts-control input::placeholder { color: rgb(var(--muted) / .7); }
+/* `empty_label` ("Airline", "All channels") is a real option with an empty value, so
+   Tom Select renders it as a chosen item in body colour — it reads as an answer when
+   it is really the prompt. Match the placeholder instead. */
+.ts-control > .item[data-value=""] { color: rgb(var(--muted) / .7); }
 .ts-wrapper.single .ts-control:after {
   border-color: rgb(var(--muted)) transparent transparent transparent;
   border-width: 5px 4px 0 4px;
