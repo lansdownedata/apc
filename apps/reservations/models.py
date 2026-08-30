@@ -125,6 +125,10 @@ class Reservation(TimeStampedModel):
         max_length=32, choices=TripStatus.choices, blank=True, default=""
     )
     sort_order = models.PositiveIntegerField(default=0)
+    # The wedding builder's leg this trip was generated from ("guests-in", "early-out", …).
+    # Blank for every trip an agent added by hand, which is what keeps a rebuild from
+    # touching them. Not a foreign key: legs are derived from the event, never stored.
+    source_leg_id = models.CharField(max_length=40, blank=True, db_index=True)
 
     class RevenueStatus(models.TextChoices):
         DEFERRED = "deferred", "Deferred"
