@@ -378,7 +378,9 @@ header, aside, main, .wash-gold {
 }
 .ts-dropdown .option.active {
   background: linear-gradient(90deg, rgb(var(--gold) / .16), rgb(var(--gold) / .06));
-  color: rgb(var(--gold-deep));
+  /* The gold wash is the highlight; the text stays normal body colour. Gold-on-gold was
+     hard to read in dark mode, where --gold-deep is itself a light gold. */
+  color: rgb(var(--text));
 }
 .ts-dropdown .option:hover { background: rgb(var(--surface-2)); }
 .ts-dropdown .no-results { padding: .6rem .85rem; color: rgb(var(--muted)); }

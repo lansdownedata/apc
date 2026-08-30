@@ -981,17 +981,22 @@ function initTomSelects(root = document) {
   if (typeof TomSelect === "undefined") return;
   root.querySelectorAll("select[data-tom]").forEach((el) => {
     if (el.tomselect) return; // already enhanced
-    new TomSelect(el, {
+    const options = {
       allowEmptyOption: true,
       create: el.dataset.create !== undefined,
       placeholder: el.dataset.placeholder || "Select…",
       maxOptions: 1000,
       hidePlaceholder: false,
-      controlInput: el.dataset.search === "off" ? null : undefined,
       onChange() {
         if (el.dataset.autosubmit !== undefined && el.form) el.form.submit();
       },
-    });
+    };
+    // Only SET controlInput when search is off. Tom Select tests this setting for
+    // truthiness, so passing `undefined` to mean "use the default" disables the typing
+    // input exactly as `null` does — which silently made every "searchable" select in
+    // the app unsearchable. The key must be absent, not undefined.
+    if (el.dataset.search === "off") options.controlInput = null;
+    new TomSelect(el, options);
   });
 }
 document.addEventListener("DOMContentLoaded", () => { initTomSelects(); initAutogrow(); });
