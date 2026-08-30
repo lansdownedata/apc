@@ -3,8 +3,8 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from apps.fleet.factories import DriverFactory, RenewalFactory, RenewalTypeFactory
-from apps.fleet.forms import DriverForm, RenewalForm, VehicleForm
+from apps.fleet.factories import DriverFactory, RenewalFactory, RenewalTypeFactory, VehicleFactory
+from apps.fleet.forms import DriverForm, RenewalForm, RenewalTypeForm, VehicleForm
 from apps.fleet.models import RenewalType
 from apps.leads.factories import VehicleTypeFactory
 
@@ -25,8 +25,6 @@ def test_vehicle_form_offers_active_types_plus_the_current_one():
     live = VehicleTypeFactory(name="Live SUV")
     assert live in VehicleForm().fields["vehicle_type"].queryset
     assert retired not in VehicleForm().fields["vehicle_type"].queryset
-    from apps.fleet.factories import VehicleFactory
-
     unit = VehicleFactory(vehicle_type=retired)
     assert retired in VehicleForm(instance=unit).fields["vehicle_type"].queryset
 
@@ -83,3 +81,12 @@ def test_renewal_form_requires_only_type_and_expiry():
     )
     assert form.is_valid(), form.errors
     DriverFactory()  # keeps the import honest — the form itself never needs a subject
+
+
+def test_renewal_type_form_fields_and_validity():
+    form = RenewalTypeForm(
+        {"name": "Medical card", "applies_to": "driver", "sort_order": 3, "active": "on"}
+    )
+    assert list(form.fields) == ["name", "applies_to", "sort_order", "active"]
+    assert form.is_valid(), form.errors
+    assert form.save().applies_to == RenewalType.AppliesTo.DRIVER
