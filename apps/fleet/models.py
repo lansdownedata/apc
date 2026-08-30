@@ -155,7 +155,14 @@ class RenewalType(TimeStampedModel):
     class Meta:
         ordering = ["sort_order", "name"]
         constraints = [
-            models.UniqueConstraint(Lower("name"), "applies_to", name="uniq_renewal_type_name_ci")
+            models.UniqueConstraint(
+                Lower("name"),
+                "applies_to",
+                name="uniq_renewal_type_name_ci",
+                violation_error_message=(
+                    "A renewal type with that name already exists for that subject."
+                ),
+            )
         ]
 
     def __str__(self) -> str:

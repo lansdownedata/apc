@@ -289,6 +289,7 @@ def _renewal_form_view(
     title: str,
     initial: dict | None = None,
     keep_type_id: int | None = None,
+    success: str = "Renewal saved.",
 ) -> HttpResponse:
     """One door for add / edit / renew. The subject comes from the URL, never the form,
     and fixes which half of the type catalog the picker offers."""
@@ -313,7 +314,7 @@ def _renewal_form_view(
             else:
                 row.vehicle = subject
         row.save()
-        messages.success(request, f"{title} saved.")
+        messages.success(request, success)
         return redirect(_detail_url(subject))
     return render(
         request,
@@ -367,6 +368,7 @@ def renewal_renew(request: HttpRequest, pk: int) -> HttpResponse:
             "issued_on": timezone.localdate(),
         },
         keep_type_id=old.renewal_type_id,
+        success="Renewal recorded.",
     )
 
 

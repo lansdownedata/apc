@@ -147,7 +147,7 @@
       {% if assignment.is_in_house %}
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
                 :disabled="busy"
-                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Unassign this driver?', message: 'The trip goes back to unassigned. Let the driver know yourself.'})">Unassign</button>
+                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Unassign this driver?', message: 'The trip goes back to unassigned. Let the driver know yourself.', confirmText: 'Unassign'})">Unassign</button>
       {% else %}
         {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
           <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"

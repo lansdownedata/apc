@@ -82,7 +82,11 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
             "previewed": selectors.offer_was_previewed(assignment),
             "options": selectors.vendor_options(trip, search=request.GET.get("q", "")),
             "search": request.GET.get("q", ""),
-            "in_house": selectors.in_house_options(trip),
+            "in_house": (
+                selectors.in_house_options(trip)
+                if assignment is None
+                else {"drivers": [], "vehicles": []}
+            ),
         },
     )
 
