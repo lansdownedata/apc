@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import date, time
 from decimal import Decimal
 
 import pytest
@@ -395,6 +395,29 @@ def test_a_stop_without_flight_info_drafts_empty_strings():
     draft_stop = _reservation_draft(res)["stops"][0]
     assert (draft_stop["airport"], draft_stop["airportCode"]) == ("", "")
     assert (draft_stop["airline"], draft_stop["flight"]) == ("", "")
+    assert draft_stop["hasScheduledService"] is False
+
+
+def test_draft_carries_has_scheduled_service_for_an_airport_stop(iad, united):
+    """IAD has real scheduled service — the editor's draft needs this flag to gate the
+    Verify button (spec 2026-08-29 finding 2)."""
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["hasScheduledService"] is True
+
+
+def test_draft_reports_no_scheduled_service_for_a_military_field(united):
+    """Andrews (ADW) is still selectable as a pickup (drafts.py never restricts on this
+    flag) but the draft must say it has no scheduled service, so the client-side gate
+    never offers Verify for it."""
+    from apps.addresses.models import Airport
+
+    adw = Airport.objects.get(iata="ADW")
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(adw, united))
+    stop = res.ordered_stops.first()
+    assert stop.airport_id == adw.pk  # still selectable as a pickup
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["hasScheduledService"] is False
 
 
 def test_airline_and_flight_are_dropped_without_an_airport(united):
@@ -450,6 +473,57 @@ def test_flight_validation_costs_two_queries_however_many_stops(
         drafts.parse_draft(_payload(stops=stops))
 
 
+# --- Private / tail-number flights (2026-08-29) --------------------------------------
+
+
+@pytest.fixture
+def private_airline():
+    from apps.addresses.models import Airline
+
+    return Airline.objects.get(iata="N")  # seeded by addresses.0007
+
+
+def test_parse_accepts_a_tail_number_for_the_private_airline(iad, private_airline):
+    """A lowercase tail number is accepted and stored upper-case (case-insensitive
+    on input, per spec 2026-08-29 §2)."""
+    data = drafts.parse_draft(_flight_payload(iad, private_airline, flight="n561fx"))
+    assert data["stops"][0]["flight_number"] == "N561FX"
+
+
+def test_parse_rejects_a_tail_number_for_a_real_carrier(iad, united):
+    """The shape is only meaningful for the Private carrier — a real airline still gets
+    the digits-only rule."""
+    with pytest.raises(DraftError, match="digits"):
+        drafts.parse_draft(_flight_payload(iad, united, flight="N561FX"))
+
+
+def test_parse_still_accepts_digits_for_a_real_carrier(iad, united):
+    data = drafts.parse_draft(_flight_payload(iad, united, flight="123"))
+    assert data["stops"][0]["flight_number"] == "123"
+
+
+def test_parse_rejects_digits_only_for_the_private_airline(iad, private_airline):
+    """A tail number always starts with N — bare digits aren't a valid tail number either."""
+    with pytest.raises(DraftError, match="tail number"):
+        drafts.parse_draft(_flight_payload(iad, private_airline, flight="12345"))
+
+
+def test_parse_rejects_a_tail_number_longer_than_six_characters(iad, private_airline):
+    with pytest.raises(DraftError, match="tail number"):
+        drafts.parse_draft(_flight_payload(iad, private_airline, flight="N1234567"))
+
+
+def test_flight_validation_with_a_private_stop_still_costs_two_queries(
+    iad, private_airline, django_assert_max_num_queries
+):
+    stops = [
+        {"address": f"S{i}", "airport": iad.pk, "airline": private_airline.pk, "flight": "N561FX"}
+        for i in range(6)
+    ]
+    with django_assert_max_num_queries(2):
+        drafts.parse_draft(_payload(stops=stops))
+
+
 def test_a_retired_airline_survives_an_unrelated_edit(iad, united):
     """The editor saves by delete-and-recreate; a carrier retired after booking must not
     turn every later edit into a 400 (spec §3.1)."""
@@ -469,3 +543,131 @@ def test_a_retired_airline_is_still_refused_on_a_new_reservation(iad, united):
     united.save(update_fields=["is_active"])
     with pytest.raises(DraftError, match="airline"):
         save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+
+
+# --- flight direction + the derived stop→flight link (spec 2026-08-29 §4.2 / §6.2) ---
+
+
+def _three_stop_payload(iad, united, middle_direction=None, **over):
+    middle = {"address": "DCA", "airport": iad.pk, "airline": united.pk, "flight": "2071"}
+    if middle_direction is not None:
+        middle["direction"] = middle_direction
+    stops = [
+        {
+            "address": "Dulles",
+            "airport": iad.pk,
+            "airline": united.pk,
+            "flight": "123",
+            "direction": "departure",
+        },  # ignored: first stop is always an arrival
+        middle,
+        {"address": "BWI", "airport": iad.pk, "airline": united.pk, "flight": "449"},
+    ]
+    return _payload(stops=stops, **over)
+
+
+def test_direction_is_forced_by_position_on_the_ends(iad, united):
+    data = drafts.parse_draft(_three_stop_payload(iad, united))
+    assert [s["flight_direction"] for s in data["stops"]] == ["arrival", "", "departure"]
+
+
+def test_a_middle_stop_keeps_the_chosen_direction(iad, united):
+    data = drafts.parse_draft(_three_stop_payload(iad, united, middle_direction="departure"))
+    assert data["stops"][1]["flight_direction"] == "departure"
+
+
+def test_an_invalid_direction_is_rejected(iad, united):
+    with pytest.raises(DraftError, match="arriving or departing"):
+        drafts.parse_draft(_three_stop_payload(iad, united, middle_direction="sideways"))
+
+
+def test_direction_is_dropped_without_an_airport():
+    payload = _payload(stops=[{"address": "Home", "direction": "arrival"}, {"address": "B"}])
+    data = drafts.parse_draft(payload)
+    assert data["stops"][0]["flight_direction"] == ""
+
+
+def test_direction_round_trips_through_the_draft(iad, united):
+    res = save_reservation_from_draft(LeadFactory(), _three_stop_payload(iad, united, "arrival"))
+    assert [s.flight_direction for s in res.ordered_stops] == ["arrival", "arrival", "departure"]
+    assert [s["direction"] for s in _reservation_draft(res)["stops"]] == [
+        "arrival",
+        "arrival",
+        "departure",
+    ]
+
+
+def _cached(iad, united, **over):
+    from apps.reservations.factories import FlightFactory
+
+    kwargs = dict(
+        airline=united,
+        airport=iad,
+        flight_number="123",
+        flight_date=date(2026, 7, 4),
+        direction="arrival",
+    )
+    kwargs.update(over)
+    return FlightFactory(**kwargs)
+
+
+def test_saving_links_a_stop_to_the_cached_flight(iad, united):
+    cached = _cached(iad, united)
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+    assert res.ordered_stops.first().flight_id == cached.pk
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["pill"]["state"] == "verified"
+
+
+def test_the_link_survives_an_unrelated_edit_and_drops_on_a_changed_flight(iad, united):
+    cached = _cached(iad, united)
+    lead = LeadFactory()
+    res = save_reservation_from_draft(lead, _flight_payload(iad, united))
+    payload = _flight_payload(iad, united)
+    payload["pax"] = 6
+    res = save_reservation_from_draft(lead, payload, instance=res)
+    assert res.ordered_stops.first().flight_id == cached.pk
+    res = save_reservation_from_draft(
+        lead, _flight_payload(iad, united, flight="124"), instance=res
+    )
+    assert res.ordered_stops.first().flight_id is None
+    assert _reservation_draft(res)["stops"][0]["pill"] is None
+
+
+def test_the_link_needs_the_same_date_and_direction(iad, united):
+    # Fixed from the brief: asserting `flight_id is None` with only a wrong-date decoy in
+    # play is vacuously true before `link_flights` exists too (the field already defaults
+    # to None), so it wouldn't have failed for the right reason at step 2. Add a correct
+    # row plus a wrong-direction decoy so the assertion actually exercises the match key.
+    right = _cached(iad, united)  # date 2026-07-04, direction arrival — matches the payload
+    _cached(iad, united, flight_date=date(2026, 7, 5))  # wrong date
+    _cached(iad, united, direction="departure")  # wrong direction
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+    assert res.ordered_stops.first().flight_id == right.pk
+
+
+def test_two_stops_on_one_flight_share_the_cached_row(iad, united):
+    """A group split across two cars books the same flight twice; both stops point at the one
+    row, so refreshing from either drawer updates both (spec §9)."""
+    cached = _cached(iad, united)
+    lead = LeadFactory()
+    a = save_reservation_from_draft(lead, _flight_payload(iad, united))
+    b = save_reservation_from_draft(lead, _flight_payload(iad, united))
+    assert a.ordered_stops.first().flight_id == b.ordered_stops.first().flight_id == cached.pk
+
+
+def test_linking_costs_one_query_however_many_stops(iad, united, django_assert_max_num_queries):
+    from apps.reservations.flights import link_flights
+
+    stops = [
+        {
+            "airport_id": iad.pk,
+            "airline_id": united.pk,
+            "flight_number": str(n),
+            "flight_direction": "arrival",
+        }
+        for n in range(6)
+    ]
+    with django_assert_max_num_queries(1):
+        link_flights(stops, date(2026, 7, 4))
+    assert all(s["flight_id"] is None for s in stops)

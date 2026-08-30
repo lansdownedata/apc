@@ -219,13 +219,42 @@ def test_inactive_airports_excluded(dca):
     assert search_airports("DCA") == []
 
 
+def test_airport_that_does_not_serve_ground_transport_is_excluded():
+    """A foreign airport carried only so a flight's other endpoint has a resolvable name
+    (LHR etc.) must never be selectable as a pickup/drop-off."""
+    AirportFactory(
+        ident="EGLL",
+        iata="LHR",
+        size=Airport.Size.LARGE,
+        name="London Heathrow Airport",
+        city="London",
+        state="",
+        serves_ground_transport=False,
+    )
+    assert search_airports("LHR") == []
+    assert search_airports("Heathrow") == []
+
+
 # ---- payload shape ----
 
 
 def test_payload_keys_match_decompose_exactly(dca):
     locationiq_keys = set(_decompose({"address": {}}))
     payload_keys = set(search_airports("DCA")[0])
-    assert payload_keys == locationiq_keys | {"is_airport", "airport_code", "airport_id"}
+    assert payload_keys == locationiq_keys | {
+        "is_airport",
+        "airport_code",
+        "airport_id",
+        "has_scheduled_service",
+    }
+
+
+def test_payload_carries_has_scheduled_service(dca):
+    """The editor's draft needs this to gate the Verify button (spec 2026-08-29 finding 2)."""
+    Airport.objects.filter(pk=dca.pk).update(has_scheduled_service=True)
+    assert search_airports("DCA")[0]["has_scheduled_service"] is True
+    Airport.objects.filter(pk=dca.pk).update(has_scheduled_service=False)
+    assert search_airports("DCA")[0]["has_scheduled_service"] is False
 
 
 def test_payload_values(dca):

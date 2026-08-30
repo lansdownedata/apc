@@ -1,8 +1,12 @@
-import factory
+from datetime import timedelta
 
+import factory
+from django.utils import timezone
+
+from apps.addresses.factories import AirlineFactory, AirportFactory
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 
-from .models import Reservation, Stop
+from .models import Flight, FlightDirection, Reservation, Stop
 
 
 class ReservationFactory(factory.django.DjangoModelFactory):
@@ -49,3 +53,18 @@ class StopFactory(factory.django.DjangoModelFactory):
     reservation = factory.SubFactory(TransferReservationFactory)
     sequence = 1
     address = factory.Faker("street_address")
+
+
+class FlightFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Flight
+
+    airline = factory.SubFactory(AirlineFactory)
+    flight_number = "123"
+    flight_date = factory.LazyFunction(lambda: timezone.localdate() + timedelta(days=30))
+    airport = factory.SubFactory(AirportFactory)
+    direction = FlightDirection.ARRIVAL
+    status = Flight.Status.SCHEDULED
+    scheduled_at = factory.LazyFunction(lambda: timezone.now() + timedelta(hours=1))
+    source = Flight.Source.FUTURE
+    checked_at = factory.LazyFunction(timezone.now)

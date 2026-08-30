@@ -91,8 +91,16 @@ def _reservation_draft(r) -> dict:
                 "lng": str(s.longitude) if s.longitude is not None else "",
                 "airport": s.airport_id or "",
                 "airportCode": s.airport.iata if s.airport_id else "",
+                # Gates the editor's Verify button (spec 2026-08-29 finding 2) — a stop's
+                # airport can have a real IATA code and still have no scheduled service
+                # (Andrews, Manassas, ...).
+                "hasScheduledService": bool(s.airport_id and s.airport.has_scheduled_service),
                 "airline": s.airline_id or "",
                 "flight": s.flight_number,
+                "direction": s.flight_direction,
+                # Pre-rendered pill for a stop already linked to a cached flight, so the
+                # editor opens with the check shown. Client-only; the parser ignores it.
+                "pill": s.flight_pill,
             }
             for s in r.stops.all()
         ],
@@ -200,7 +208,9 @@ def lead_detail(request, pk):
             "reservations__vehicle",
             Prefetch(
                 "reservations__stops",
-                queryset=Stop.objects.select_related("airport", "airline").order_by("sequence"),
+                queryset=Stop.objects.select_related(
+                    "airport", "airline", "flight", "flight__airport", "flight__airline"
+                ).order_by("sequence"),
             ),
             "notifications",
         ),

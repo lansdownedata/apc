@@ -106,8 +106,19 @@
                  @change="stop.airline = $event.target.value">
               {% include "components/searchable_select.html" with name="stop_airline_ui" field_id="bw-stop-airline" options=airline_options empty_label="Airline" %}
             </div>
-            <input type="text" x-model="stop.flight" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-                   placeholder="Flight #" class="field w-full">
+            {# pattern accepts both digits and a tail number like "N561FX" (Private carrier) —
+               digits-only would block a legitimate tail number at native form submission. #}
+            <input type="text" x-model="stop.flight" pattern="[0-9A-Za-z]*" maxlength="6"
+                   placeholder="Flight # / tail #" class="field w-full">
+          </div>
+          {# A middle stop tells us which side of the flight it meets (optional; staff can set it later) #}
+          <div x-show="stop.airport" x-cloak class="mt-2 inline-flex rounded-lg ring-1 ring-line overflow-hidden text-[12.5px]">
+            <button type="button" @click="stop.direction = 'arrival'"
+                    :class="stop.direction === 'arrival' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
+                    class="px-3 py-1.5 font-medium">Arriving</button>
+            <button type="button" @click="stop.direction = 'departure'"
+                    :class="stop.direction === 'departure' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
+                    class="px-3 py-1.5 font-medium">Departing</button>
           </div>
         </div>
       </template>

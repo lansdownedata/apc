@@ -3,7 +3,7 @@ import re
 
 from django import forms
 
-from apps.addresses.models import Airline, Airport
+from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline, Airport
 from apps.reservations.models import Reservation
 
 # Optional "occasion" for the booking widget's dropdown (no ServiceType model yet).
@@ -21,6 +21,9 @@ OCCASION_CHOICES = [
 MAX_STOPS = 4
 ADDRESS_MAXLEN = 255
 FLIGHT_RE = re.compile(r"^\d{1,6}$")
+# A US-registered tail number: "N" + up to 5 alphanumerics (e.g. "N561FX") — mirrors
+# apps.reservations.drafts.TAIL_RE for the seeded Private carrier (2026-08-29 §2).
+TAIL_RE = re.compile(r"^N[0-9A-Z]{1,5}$")
 
 
 def _to_float(v):
@@ -42,6 +45,22 @@ def _flight_fields(airport_id, airline_id, flight) -> dict:
     if not airport_id:
         return {"airport_id": None, "airline_id": None, "flight_number": ""}
     return {"airport_id": airport_id, "airline_id": airline_id, "flight_number": flight or ""}
+
+
+def _valid_flight_number(value: str, *, is_private: bool) -> str:
+    """Same shape rule as apps.reservations.drafts: digits only for a real carrier, an
+    N-prefixed tail number (case-insensitive on input, stored upper-case) for the seeded
+    Private one. `value` is already trimmed; blank is returned as-is (nothing to validate)."""
+    if not value:
+        return value
+    if is_private:
+        text = value.upper()
+        if not TAIL_RE.match(text):
+            raise forms.ValidationError("Enter a tail number starting with N (up to 6 characters).")
+        return text
+    if not FLIGHT_RE.match(value):
+        raise forms.ValidationError("Flight number must be digits (up to 6).")
+    return value
 
 
 class BookingRequestForm(forms.Form):
@@ -107,14 +126,16 @@ class BookingRequestForm(forms.Form):
         return self._clean_airport("dropoff_airport")
 
     def _clean_flight(self, end: str) -> str:
-        """Digits only, and only meaningful with an airport — without one the value is
-        dropped rather than rejected, so a stale entry in a hidden row can't block the form."""
+        """Digits only for a real carrier, a tail number for the seeded Private one — and
+        only meaningful with an airport; without one the value is dropped rather than
+        rejected, so a stale entry in a hidden row can't block the form. `{end}_airline` is
+        declared earlier on the form than `{end}_flight`, so its cleaned (model) value is
+        already in `cleaned_data` by the time this runs."""
         flight = (self.cleaned_data.get(f"{end}_flight") or "").strip()
         if not self.cleaned_data.get(f"{end}_airport"):
             return ""
-        if flight and not FLIGHT_RE.match(flight):
-            raise forms.ValidationError("Flight number must be digits (up to 6).")
-        return flight
+        airline = self.cleaned_data.get(f"{end}_airline")
+        return _valid_flight_number(flight, is_private=bool(airline and airline.is_private))
 
     def clean_pickup_flight(self):
         return self._clean_flight("pickup")
@@ -134,6 +155,20 @@ class BookingRequestForm(forms.Form):
             raise forms.ValidationError("Stops must be a list.")
         if len(data) > MAX_STOPS:
             raise forms.ValidationError(f"Too many stops (max {MAX_STOPS}).")
+        # Lazy + cached: the seeded Private carrier's pk, queried at most once and only if
+        # some stop actually carries flight info (most bookings have none in stops_json at
+        # all — `test_blank_address_stops_dropped` runs with no `db` fixture on purpose).
+        private_id_cache: list[int | None] = []
+
+        def private_airline_id() -> int | None:
+            if not private_id_cache:
+                private_id_cache.append(
+                    Airline.objects.filter(iata=PRIVATE_AIRLINE_IATA)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+            return private_id_cache[0]
+
         cleaned = []
         for item in data:
             if not isinstance(item, dict):
@@ -142,15 +177,22 @@ class BookingRequestForm(forms.Form):
             if not address:
                 continue
             airport_id = _to_int(item.get("airport"))
+            airline_id = _to_int(item.get("airline"))
             flight = str(item.get("flight") or "").strip()
-            if airport_id and flight and not FLIGHT_RE.match(flight):
-                raise forms.ValidationError("A stop's flight number must be digits (up to 6).")
+            if airport_id and flight:
+                flight = _valid_flight_number(
+                    flight, is_private=airline_id is not None and airline_id == private_airline_id()
+                )
+            direction = str(item.get("direction") or "").strip().lower()
+            if direction not in ("", "arrival", "departure"):
+                raise forms.ValidationError("A stop's flight must be arriving or departing.")
             cleaned.append(
                 {
                     "address": address,
                     "lat": _to_float(item.get("lat")),
                     "lng": _to_float(item.get("lng")),
-                    **_flight_fields(airport_id, _to_int(item.get("airline")), flight),
+                    **_flight_fields(airport_id, airline_id, flight),
+                    "flight_direction": direction if airport_id else "",
                 }
             )
         airport_ids = {s["airport_id"] for s in cleaned if s["airport_id"]}

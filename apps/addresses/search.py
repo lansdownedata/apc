@@ -44,6 +44,9 @@ def _serialize(airport: Airport) -> dict:
         "is_airport": True,
         "airport_code": airport.iata,
         "airport_id": airport.pk,
+        # Carried through to the editor's draft so its Verify button can gate on it
+        # without a round trip (spec 2026-08-29 finding 2).
+        "has_scheduled_service": airport.has_scheduled_service,
     }
 
 
@@ -59,7 +62,7 @@ def search_airports(q: str, limit: int = AIRPORT_RESULT_LIMIT) -> list[dict]:
         name_match &= Q(size=Airport.Size.LARGE)
 
     rows = (
-        Airport.objects.filter(is_active=True)
+        Airport.objects.filter(is_active=True, serves_ground_transport=True)
         .filter(code_match | name_match)
         .annotate(
             code_rank=Case(

@@ -1,4 +1,5 @@
 {% load humanize %}
+{% load json_filters %}
 {% comment %} Drawer body — injected via x-html, so this is a fragment with no {% extends %}. {% endcomment %}
 {% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
@@ -90,12 +91,24 @@
             {% if stop.name %}<p class="text-[13px] font-medium text-ink">{{ stop.name }}</p>{% endif %}
             <p class="text-[12.5px] {% if stop.name %}text-muted{% else %}text-ink{% endif %}">{{ stop.address|default:"—" }}</p>
             {% if stop.flight_label %}
-              <p class="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-goldd num">
-                <i class="ti ti-plane text-[12px]"></i>
-                {% if forloop.first %}Arriving · {% elif forloop.last %}Departing · {% endif %}{{ stop.flight_label }}
-                <button type="button" @click="flightVerifyComingSoon()"
-                        class="btn-ghost text-[10.5px] font-medium text-muted hover:text-ink px-1.5 py-0.5 rounded ring-1 ring-line">Verify</button>
-              </p>
+              {% comment %} Live block: pill → detail → Refresh, all rendered by flightStatus() (app.js)
+                   from `initial` so a refresh re-draws in place. `payload` is what the verify endpoint
+                   expects for this saved stop. {% endcomment %}
+              <div class="mt-1" x-data="flightStatus({ payload: {{ stop.flight_verify_payload|json_attr }}, initial: {{ stop.flight_pill|json_attr }}, label: {{ stop.flight_label|json_string }}, enabled: {{ flight_verify_enabled|yesno:'true,false' }} && {{ stop.verify_available|yesno:'true,false' }} })">
+                <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full num whitespace-nowrap"
+                      :class="pill ? pill.chip : 'chip-gold'" :title="pill ? pill.detail : ''">
+                  <i class="ti text-[13px]" :class="pill ? pill.icon : '{% if stop.flight_direction == 'departure' %}ti-plane-departure{% elif stop.flight_direction == 'arrival' %}ti-plane-arrival{% else %}ti-plane{% endif %}'"></i>
+                  <span x-text="pill ? pill.label : label"></span>
+                </span>
+                <p x-show="pill && pill.detail" x-cloak class="mt-0.5 text-[11.5px] text-muted" x-text="pill ? pill.detail : ''"></p>
+                <div x-show="enabled" x-cloak class="mt-1 flex items-center gap-2">
+                  <button type="button" @click="check()" :disabled="!canCheck" :title="reason"
+                          class="btn-ghost text-[11px] font-medium text-muted hover:text-ink px-2 py-1 rounded-lg ring-1 ring-line inline-flex items-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed">
+                    <i class="ti text-[13px]" :class="busy ? 'ti-loader-2 animate-spin' : 'ti-refresh'"></i> <span x-text="buttonLabel"></span>
+                  </button>
+                  <span x-show="pill" class="text-[11px] text-muted" x-text="pill ? 'updated ' + pill.checked_ago + ' ago' : ''"></span>
+                </div>
+              </div>
             {% endif %}
             {% if stop.note %}<p class="text-[11.5px] text-muted italic">{{ stop.note }}</p>{% endif %}
           </div>

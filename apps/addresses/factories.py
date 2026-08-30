@@ -26,6 +26,12 @@ class AirportFactory(factory.django.DjangoModelFactory):
     latitude = Decimal("38.851242")
     longitude = Decimal("-77.037720")
     elevation_ft = 15
+    timezone = "America/New_York"
+    # A plain factory-built airport represents an ordinary commercial one, matching the
+    # existing test suite's assumption that it's both selectable and verifiable — tests
+    # for the Andrews-style "no scheduled service" case override this explicitly.
+    serves_ground_transport = True
+    has_scheduled_service = True
 
 
 class AirlineFactory(factory.django.DjangoModelFactory):
