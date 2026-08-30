@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[960px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'fleet:vehicle_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4"><i class="ti ti-arrow-left text-[15px]"></i> Vehicles</a>
+
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <p class="text-[12px] font-semibold text-goldd">{{ vehicle.vehicle_type.name }}</p>
+      <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ vehicle.name }}</h1>
+      <p class="text-[12.5px] text-muted mt-1 font-mono2">{{ vehicle.year|default:"" }} {{ vehicle.make }} {{ vehicle.model_name }}{% if vehicle.color %} · {{ vehicle.color }}{% endif %}{% if vehicle.license_plate %} · {{ vehicle.license_plate }}{% endif %}{% if vehicle.vin %} · VIN {{ vehicle.vin }}{% endif %}</p>
+      <div class="mt-2 flex items-center gap-2 text-[11.5px]">{% include "vendors/_insurance_cell.html" with summary=summary %}{% if vehicle.status != 'active' %}<span class="text-[9.5px] font-bold uppercase tracking-wide text-muted ring-1 ring-line rounded px-1.5 py-0.5">Inactive</span>{% endif %}</div>
+    </div>
+    <a href="{% url 'fleet:vehicle_edit' vehicle.pk %}" class="btn-gold text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0"><i class="ti ti-pencil text-[14px]"></i> Edit</a>
+  </div>
+
+  {% include "fleet/_renewals_card.html" %}
+  {% if vehicle.notes %}<div class="card p-4 mt-4 text-[13px] text-ink whitespace-pre-line">{{ vehicle.notes }}</div>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% comment %} Fleet header: title, Drivers | Vehicles tabs, the New button for the active tab. {% endcomment %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Fleet</h1>
+    <p class="text-[12.5px] text-muted mt-1 flex items-center gap-2 flex-wrap">
+      <span>{{ active_count }} active {% if tab == 'drivers' %}driver{% else %}vehicle{% endif %}{{ active_count|pluralize }}</span>
+      {% if attention %}<span class="text-line">·</span>
+      <span class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-0.5 rounded-full" style="color:rgb(var(--danger));background:rgb(var(--danger-soft));">
+        <i class="ti ti-alert-triangle text-[12px]"></i> {{ attention|length }} need attention</span>{% endif %}
+      {% if hidden_count %}<span class="text-line">·</span><span>{{ hidden_count }} inactive</span>{% endif %}
+    </p>
+  </div>
+  {% if tab == 'drivers' %}
+  <a href="{% url 'fleet:driver_create' %}" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0"><i class="ti ti-plus text-[15px]"></i> New driver</a>
+  {% else %}
+  <a href="{% url 'fleet:vehicle_create' %}" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0"><i class="ti ti-plus text-[15px]"></i> New vehicle</a>
+  {% endif %}
+</div>
+<div class="flex items-center gap-1 mb-4 text-[13px]">
+  <a href="{% url 'fleet:driver_list' %}" class="px-3 py-1.5 rounded-full {% if tab == 'drivers' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">Drivers</a>
+  <a href="{% url 'fleet:vehicle_list' %}" class="px-3 py-1.5 rounded-full {% if tab == 'vehicles' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">Vehicles</a>
+</div>
+<form method="get" class="flex flex-wrap items-center gap-2 mb-4">
+  <input type="search" name="q" value="{{ q }}" placeholder="{% if tab == 'drivers' %}Search name, number, phone{% else %}Search name, plate, make{% endif %}"
+         class="field w-full sm:w-72" onchange="this.form.submit()">
+  {% include "components/searchable_select.html" with name="status" field_id="f-status" options=status_options selected=status_filter autosubmit=1 search="off" %}
+</form>

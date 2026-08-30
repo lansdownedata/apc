@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[960px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'fleet:driver_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4"><i class="ti ti-arrow-left text-[15px]"></i> Drivers</a>
+
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <p class="num text-[12px] font-semibold text-goldd">Driver {{ driver.driver_number }}</p>
+      <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ driver.name }}</h1>
+      <p class="text-[12.5px] text-muted mt-1">{{ driver.phone|default:"" }}{% if driver.phone and driver.email %} · {% endif %}{{ driver.email|default:"" }}</p>
+      <div class="mt-2 flex items-center gap-2 text-[11.5px]">{% include "vendors/_insurance_cell.html" with summary=summary %}{% if driver.status != 'active' %}<span class="text-[9.5px] font-bold uppercase tracking-wide text-muted ring-1 ring-line rounded px-1.5 py-0.5">Inactive</span>{% endif %}</div>
+    </div>
+    <a href="{% url 'fleet:driver_edit' driver.pk %}" class="btn-gold text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0"><i class="ti ti-pencil text-[14px]"></i> Edit</a>
+  </div>
+
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="sm:col-span-2">{% include "fleet/_renewals_card.html" %}</div>
+    <div class="card p-4 sm:col-span-2">
+      <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2 mb-3"><i class="ti ti-home text-[16px]" style="color:rgb(var(--gold-deep));"></i>Home address</h2>
+      {% include "components/smart_address.html" with address=driver.home_address update_url=addr_url autocomplete_url=ac_url prefix="driver" %}
+    </div>
+    {% if driver.notes %}<div class="card p-4 sm:col-span-2 text-[13px] text-ink whitespace-pre-line">{{ driver.notes }}</div>{% endif %}
+  </div>
+</div>
+{% endblock %}

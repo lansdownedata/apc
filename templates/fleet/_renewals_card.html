@@ -1,0 +1,38 @@
+{% comment %} Renewals card — current record per type first, history collapsed. {% endcomment %}
+<div class="card overflow-hidden" x-data="{ showHistory: false }">
+  <div class="flex items-center justify-between px-4 pt-4 pb-3">
+    <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-calendar-check text-[16px]" style="color:rgb(var(--gold-deep));"></i>Renewals</h2>
+    {% if add_url %}<a href="{{ add_url }}" class="text-[12px] font-semibold" style="color:rgb(var(--gold-deep));">+ Add renewal</a>{% endif %}
+  </div>
+  {% for r in current %}
+  <div class="flex items-start justify-between gap-3 px-4 py-3 border-t border-line/60 hover:wash-gold">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-ink">{{ r.renewal_type.name }}</span>
+        {% if r.reference %}<span class="text-[11px] text-muted font-mono2">{{ r.reference }}</span>{% endif %}
+        {% include "vendors/_insurance_pill.html" with status=r.status %}
+      </div>
+      <div class="text-[11.5px] text-muted mt-1 flex items-center gap-2 flex-wrap num">
+        {% if r.issued_on %}<span>{{ r.issued_on|date:"M j, Y" }} – </span>{% endif %}<span>exp {{ r.expires_on|date:"M j, Y" }}</span>
+        {% if r.document %}<a href="{{ r.document.url }}" class="font-semibold" style="color:rgb(var(--gold-deep));"><i class="ti ti-file-text text-[12px]"></i> Scan</a>{% endif %}
+      </div>
+    </div>
+    {% if add_url %}{% include "fleet/_renewal_actions.html" with r=r %}{% endif %}
+  </div>
+  {% empty %}
+  <p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">Nothing on file yet.{% if add_url %} <a href="{{ add_url }}" class="font-semibold" style="color:rgb(var(--gold-deep));">Add the first renewal</a>.{% endif %}</p>
+  {% endfor %}
+  {% if history %}
+  <button type="button" @click="showHistory = !showHistory" class="w-full text-left px-4 py-2.5 border-t border-line/60 text-[11.5px] text-muted hover:text-ink">
+    <i class="ti ti-history text-[13px]"></i> <span x-text="showHistory ? 'Hide history' : 'Show history ({{ history|length }})'"></span>
+  </button>
+  <div x-show="showHistory" x-cloak>
+    {% for r in history %}
+    <div class="flex items-center justify-between gap-3 px-4 py-2 border-t border-line/40 text-[12px] text-muted">
+      <span>{{ r.renewal_type.name }}{% if r.reference %} · <span class="font-mono2">{{ r.reference }}</span>{% endif %}</span>
+      <span class="num">exp {{ r.expires_on|date:"M j, Y" }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

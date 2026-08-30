@@ -29,6 +29,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
+from apps.addresses.smart_address import apply_posted_address
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead
@@ -305,21 +306,6 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
     return JsonResponse({"ok": True})
 
 
-# POST param -> model field. `place_id` is the wire name; the column is `locationiq_place_id`.
-_ADDRESS_FIELDS = (
-    "landmark_name",
-    "line1",
-    "line2",
-    "city",
-    "state",
-    "postal",
-    "country",
-    "place_type",
-    "place_class",
-    "display_name",
-)
-
-
 @login_required
 @require_POST
 def contact_address_update(request: HttpRequest, pk: int, slot: str) -> HttpResponse:
@@ -335,19 +321,5 @@ def contact_address_update(request: HttpRequest, pk: int, slot: str) -> HttpResp
         setattr(contact, fk, address)
         contact.save(update_fields=[fk, "updated_at"])
 
-    changed = []
-    for f in _ADDRESS_FIELDS:
-        if f in request.POST:
-            setattr(address, f, request.POST.get(f, "").strip())
-            changed.append(f)
-    if "place_id" in request.POST:
-        address.locationiq_place_id = request.POST.get("place_id", "").strip()
-        changed.append("locationiq_place_id")
-    for coord in ("latitude", "longitude"):
-        if coord in request.POST:
-            raw = request.POST.get(coord, "").strip()
-            setattr(address, coord, raw or None)
-            changed.append(coord)
-    if changed:
-        address.save(update_fields=[*changed, "updated_at"])
+    apply_posted_address(address, request.POST)
     return JsonResponse({"ok": True, "address_id": address.pk})
