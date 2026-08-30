@@ -112,9 +112,16 @@ def _request(path: str, params: dict) -> dict:
     if not isinstance(body, dict):
         raise AviationstackError("bad_response", "unexpected body", resp.status_code)
     if resp.status_code >= 400 or "error" in body:
+        # Documented shape is {"code": ..., "message": ...}, but a live 429 (browser
+        # probe, 2026-08-29) came back as a bare string instead — accept either so a
+        # plan/rate-limit hiccup degrades to a mapped AviationstackError, never a 500.
         err = body.get("error") or {}
-        api_code = str(err.get("code") or "")
-        message = str(err.get("message") or resp.text or "")
+        if isinstance(err, dict):
+            api_code = str(err.get("code") or "")
+            message = str(err.get("message") or resp.text or "")
+        else:
+            api_code = ""
+            message = str(err or resp.text or "")
         raise AviationstackError(_map_error(resp.status_code, api_code), message, resp.status_code)
     return body
 

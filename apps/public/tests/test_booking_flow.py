@@ -356,6 +356,8 @@ def test_widget_renders_flight_fields_for_pickup_and_dropoff(db):
     assert "UA — United Airlines</option>" in html
     assert 'x-model="stop.flight"' in html  # the in-between stop repeater
     assert "flightVerifyComingSoon" not in html  # Verify is staff-only
+    assert "stop.direction = 'arrival'" in html and "stop.direction = 'departure'" in html
+    assert "verifyStop" not in html and "flightStatus" not in html  # Verify is staff-only
 
 
 def test_full_booking_post_sets_direction_and_links_a_cached_flight(db):

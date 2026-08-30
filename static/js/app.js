@@ -564,8 +564,8 @@ function quoteWorkspace(opts = {}) {
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
-          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" },
-          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false },
+          { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false },
         ],
       };
     },
@@ -595,6 +595,13 @@ function quoteWorkspace(opts = {}) {
       if (!r) return;
       this.draft = JSON.parse(JSON.stringify(r));
       if (!(Number(this.draft.hours) > 0)) this.draft.hours = "";  // a stored 0 is "no override" — show an empty box, not "0"
+      // A stop already linked to a cached flight opens with its pill shown. `pill` comes
+      // from the server draft; `verify` is client-only and keyed so any edit reverts it.
+      this.draft.stops.forEach((s, i) => {
+        s.verify = s.pill ? { key: this.flightKey(i), pill: s.pill } : null;
+        s.verifying = false;
+        delete s.pill;
+      });
       this.draftIsNew = false;
       this.editorOpen = true;
       // Older rows can predate the derived drop-off — fill it so the hourly
@@ -624,7 +631,7 @@ function quoteWorkspace(opts = {}) {
       this.draft.tripType = t;
       this.applyVehicleRateCard();
     },
-    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "" }); },
+    addStop() { this.draft.stops.splice(this.draft.stops.length - 1, 0, { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", airline: "", flight: "", direction: "", verify: null, verifying: false }); },
     removeStop(i) { if (this.draft.stops.length > 2) this.draft.stops.splice(i, 1); },
     stopLabel(i, len) { return i === 0 ? "Pickup" : i === len - 1 ? "Drop-off" : "Stop " + i; },
     /* The first and last stop happen at the trip's own times — shown against the row
@@ -667,6 +674,52 @@ function quoteWorkspace(opts = {}) {
       this._stopResults[i] = { open: false, list: [], active: -1 };
     },
     closeStopRow(i) { this._stopResults[i] = { open: false, list: [], active: -1 }; },
+
+    /* ---- flight verification (spec 2026-08-29 §7.3) ---- */
+    /* The ends are fixed by position — a pickup meets an arrival, a drop-off catches a
+       departure; a middle stop is whatever the user toggled. Mirrors drafts.parse_draft. */
+    stopDirection(i) {
+      if (i === 0) return "arrival";
+      if (i === this.draft.stops.length - 1) return "departure";
+      return this.draft.stops[i].direction || "";
+    },
+    flightKey(i) {
+      const s = this.draft.stops[i];
+      return [s.airport, s.airline, s.flight, this.stopDirection(i), this.draft.date].join("|");
+    },
+    /* The pill shown for a row — only while every value it was checked against is unchanged. */
+    verifyPill(i) {
+      const v = this.draft.stops[i].verify;
+      return v && v.key === this.flightKey(i) ? v.pill : null;
+    },
+    canVerify(i) {
+      const s = this.draft.stops[i];
+      return !s.verifying && !!(s.airport && s.airline && s.flight && this.stopDirection(i) && this.draft.date)
+        && this.draft.date >= localDate(new Date());
+    },
+    verifyReason(i) {
+      const s = this.draft.stops[i];
+      if (!s.airline) return "Choose the airline first";
+      if (!s.flight) return "Enter the flight number";
+      if (!this.stopDirection(i)) return "Choose Arriving or Departing to verify";
+      if (!this.draft.date) return "Set the trip date first";
+      if (this.draft.date < localDate(new Date())) return "Trip date has passed";
+      return "Check this flight with aviationstack";
+    },
+    async verifyStop(i) {
+      if (!this.canVerify(i)) return;
+      const s = this.draft.stops[i];
+      const key = this.flightKey(i);
+      s.verifying = true;
+      const pill = await verifyFlight({
+        airport: s.airport, airline: s.airline, flight: s.flight,
+        direction: this.stopDirection(i), date: this.draft.date,
+        time: (i === 0 ? this.draft.time : s.time) || this.draft.time || "",
+      });
+      s.verifying = false;
+      if (pill) s.verify = { key, pill };
+    },
+
     /* Override hours replace the rate-card minimum when set — even downward. */
     billedHours(r) {
       const override = Number(r.hours) || 0;
@@ -683,6 +736,7 @@ function quoteWorkspace(opts = {}) {
     resTotal(r) { return this.resSubtotal(r) + this.resGratuity(r); },
     saveReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
+      d.stops.forEach((s) => { delete s.verify; delete s.verifying; delete s.pill; });  // client-only
       d.lead_id = this.leadId;
       if (this.draftIsNew) delete d.id;
       fetch(this.saveUrl, {
@@ -1078,16 +1132,85 @@ function time12(hhmm) {
 }
 window.time12 = time12;
 
-/* Flight verification is not integrated yet. The button exists so the workflow is
-   visible (spec 2026-08-28); this is all it does until a tracking service is wired up. */
-function flightVerifyComingSoon() {
-  Alpine.store("toast").push({
-    type: "info",
-    title: "Flight verification — coming soon",
-    message: "APC isn't connected to a flight-tracking service yet.",
-  });
+/* ---------------------------------------------- flight verification (spec 2026-08-29) */
+/* Tailwind only emits classes it finds as literals: keep every chip/icon class string
+   whole here, never assembled. The server picks `chip`/`icon` per state (Flight.pill()). */
+const FLIGHT_CHIP_BASE =
+  "inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full num whitespace-nowrap";
+window.FLIGHT_CHIP_BASE = FLIGHT_CHIP_BASE;
+
+/** POST one flight to the verify endpoint. Resolves to the pill dict, or null after a toast. */
+async function verifyFlight(payload) {
+  const meta = document.querySelector('meta[name="flight-verify-url"]');
+  if (!meta || !meta.content) return null;
+  let status = 0, data = {};
+  try {
+    const resp = await fetch(meta.content, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body: JSON.stringify(payload),
+    });
+    status = resp.status;
+    data = await resp.json().catch(() => ({}));
+  } catch (e) {
+    Alpine.store("toast").push({ type: "danger", title: "Network error — could not verify the flight" });
+    return null;
+  }
+  if (status !== 200) {
+    Alpine.store("toast").push({
+      type: status === 503 ? "info" : "danger",
+      title: data.error || "Could not verify the flight",
+      timeout: 7000,
+    });
+    return null;
+  }
+  return data;
 }
-window.flightVerifyComingSoon = flightVerifyComingSoon;
+window.verifyFlight = verifyFlight;
+
+/** Dispatch drawer block: pill + detail + a Refresh that honours the re-check window. */
+function flightStatus(opts = {}) {
+  return {
+    payload: opts.payload || {},
+    pill: opts.initial || null,
+    label: opts.label || "",
+    enabled: !!opts.enabled,
+    busy: false,
+    now: Date.now(),
+    _timer: null,
+    init() { this._timer = setInterval(() => { this.now = Date.now(); }, 15000); },
+    destroy() { clearInterval(this._timer); },
+    get waitMinutes() {
+      if (!this.pill || !this.pill.refresh_allowed_at) return 0;
+      const ms = Date.parse(this.pill.refresh_allowed_at) - this.now;
+      return ms > 0 ? Math.ceil(ms / 60000) : 0;
+    },
+    get canCheck() {
+      return this.enabled && !this.busy && !!this.payload.direction && !!this.payload.date && this.waitMinutes === 0;
+    },
+    get reason() {
+      if (!this.payload.direction) return "Set Arriving/Departing in the editor";
+      if (!this.payload.date) return "Set the trip date first";
+      if (this.waitMinutes) return "Cached — next check allowed in " + this.waitMinutes + " min";
+      return "Check this flight with aviationstack";
+    },
+    get buttonLabel() {
+      if (!this.pill) return "Verify";
+      const verb = this.pill.source === "flights" ? "Refresh" : "Re-check";
+      const m = this.waitMinutes;
+      if (!m) return verb;
+      return verb + " in " + (m >= 60 ? Math.ceil(m / 60) + " h" : m + " min");
+    },
+    async check() {
+      if (!this.canCheck) return;
+      this.busy = true;
+      const pill = await verifyFlight(this.payload);
+      this.busy = false;
+      if (pill) this.pill = pill;
+    },
+  };
+}
+window.flightStatus = flightStatus;
 
 /** YYYY-MM-DD from a Date's LOCAL components. `toISOString()` gives the UTC date,
  *  which is tomorrow for any evening pickup in the US. */
@@ -1523,7 +1646,7 @@ function bookingStops(opts = {}) {
     canAdd() { return this.stops.length < this.max; },
     add() {
       if (!this.canAdd()) return;
-      this.stops.push({ address: "", lat: "", lng: "", display: "", airport: "", airline: "", flight: "" });
+      this.stops.push({ address: "", lat: "", lng: "", display: "", airport: "", airline: "", flight: "", direction: "" });
     },
     remove(i) { this.stops.splice(i, 1); },
     // Reassign rather than mutate: rowState() hands back a throwaway object when the
@@ -1544,7 +1667,7 @@ function bookingStops(opts = {}) {
       // resyncs via the row's x-effect (keyed rows get reused by Alpine when an
       // earlier stop is removed, so the DOM select must follow this stop's own data,
       // not stay pinned to whatever stop last owned that row).
-      s.airport = ""; s.airline = ""; s.flight = "";
+      s.airport = ""; s.airline = ""; s.flight = ""; s.direction = "";
       const q = (s.address || "").trim();
       if (!q) { this._r[i] = { open: false, list: [], active: -1 }; return; }
       geocodeSearch(this.acUrl, q, this.biasLat, this.biasLon).then((rs) => {
@@ -1574,6 +1697,7 @@ function bookingStops(opts = {}) {
             airport: s.airport || null,
             airline: s.airline || null,
             flight: s.flight || "",
+            direction: s.direction || "",
           })),
       );
     },
