@@ -154,3 +154,24 @@ def test_a_wedding_inside_the_alert_window_flags_the_lead(lead):
     rebuild_wedding_trips(lead, _clean(wedding_date=soon))
     lead.refresh_from_db()
     assert lead.has_alert is True
+
+
+def test_a_website_wedding_survives_the_offices_first_edit(db):
+    """The end-to-end case the two flows meet on: a customer builds the day, the office
+    reopens it and changes something. The trips must be updated, never duplicated."""
+    from apps.public.forms import WeddingRequestForm
+    from apps.public.services import create_lead_from_wedding
+
+    public = WeddingRequestForm(_post())
+    assert public.is_valid(), public.errors
+    lead = create_lead_from_wedding(public.cleaned_data)
+    original = {r.source_leg_id: r.pk for r in lead.reservations.all()}
+    assert len(original) == 2
+
+    legs = _legs()
+    legs[0]["pax"] = 130
+    rebuild_wedding_trips(lead, _clean(legs_json=json.dumps(legs)))
+
+    assert lead.reservations.count() == 2
+    assert {r.source_leg_id: r.pk for r in lead.reservations.all()} == original
+    assert lead.reservations.get(source_leg_id="guests-in").passengers == 130

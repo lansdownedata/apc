@@ -22,7 +22,8 @@
         <i class="ti text-[18px]" :class="newLeadIntent === 'booking' ? 'ti-calendar-plus' : 'ti-user-plus'"></i>
       </span>
       <h2 class="font-display text-[19px] font-semibold text-ink tracking-tight"
-          x-text="newLeadIntent === 'booking' ? 'New booking' : 'New lead'"></h2>
+          x-text="newLeadIntent === 'booking' ? 'New booking'
+                : newLeadIntent === 'wedding' ? 'New wedding' : 'New lead'"></h2>
       <button type="button" class="ml-auto text-muted hover:text-ink transition-colors"
               @click="newLeadOpen = false" aria-label="Close">
         <i class="ti ti-x text-[18px]"></i>

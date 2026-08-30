@@ -1,0 +1,36 @@
+{% comment %}
+  leads/_wedding_summary.html — the always-visible face of a wedding on the quote
+  workspace. Reads Lead.intake_payload and never re-derives anything, so it shows what
+  was actually saved rather than what the rules would produce today.
+
+  Requires: wedding_state (from apps.leads.views._wedding_state). Sits inside the
+  quoteWorkspace() scope, which owns `weddingOpen`.
+{% endcomment %}
+{% if wedding_state %}
+<div class="card p-4 sm:p-5 mb-4">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <span class="chip-gold inline-flex items-center rounded-full px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em]">Wedding</span>
+    <span class="text-[13.5px] font-semibold text-ink">{{ wedding_state.venue_name }}</span>
+    <span class="text-[12.5px] text-muted">
+      {{ wedding_state.legs|length }} movement{{ wedding_state.legs|length|pluralize }}
+      {% if wedding_state.guest_count %}&middot; {{ wedding_state.guest_count }} guests{% endif %}
+    </span>
+
+    {% comment %}
+      The same two flags Lead.notes leads with. An agent must see "these times are a
+      guess" before quoting, not only if they open the notes.
+    {% endcomment %}
+    {% if wedding_state.times_tbd %}
+    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">times estimated</span>
+    {% endif %}
+    {% if wedding_state.hotels_tbd %}
+    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">hotels not booked</span>
+    {% endif %}
+
+    <button type="button" @click="weddingOpen = true"
+            class="ml-auto shrink-0 rounded text-[12.5px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">
+      Edit the day
+    </button>
+  </div>
+</div>
+{% endif %}

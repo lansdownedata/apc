@@ -147,3 +147,74 @@ def test_an_ordinary_new_lead_still_schedules_touch_points(client, agent, monkey
         {"name": "Jane Rider", "email": "jane@example.com", "channel": "website"},
     )
     assert len(called) == 1
+
+
+# --- the markup itself --------------------------------------------------------------
+
+
+def test_the_builder_posts_to_the_wedding_route(client, agent):
+    lead = LeadFactory()
+    body = client.get(f"{reverse('lead_detail', args=[lead.pk])}?wedding=1").content.decode()
+    assert reverse("lead_wedding_save", args=[lead.pk]) in body
+    assert "weddingPlanner(" in body
+
+
+def test_the_builder_uses_no_native_dialog(client, agent):
+    body = client.get(
+        f"{reverse('lead_detail', args=[LeadFactory().pk])}?wedding=1"
+    ).content.decode()
+    assert "window.confirm" not in body
+    assert "window.alert" not in body
+    assert "<dialog" not in body
+
+
+def test_the_vehicle_picker_is_a_tom_select(client, agent):
+    """Never a bare <select> for an option input."""
+    body = client.get(
+        f"{reverse('lead_detail', args=[LeadFactory().pk])}?wedding=1"
+    ).content.decode()
+    assert "leg_vehicle_ui" in body  # a Tom Select, never a bare option input
+    assert "data-tom" in body
+    assert "Motor Coach" in body  # options rendered server-side, not by x-for
+
+
+def test_the_office_and_the_customer_share_one_copy_of_every_step(client, agent):
+    """The steps are included from public/, never duplicated — two copies would drift."""
+    from pathlib import Path
+
+    builder = Path("templates/leads/_wedding_builder.html").read_text()
+    for step in ("date", "venue", "who", "hotels", "times"):
+        assert f'include "public/_wedding_step_{step}.html"' in builder
+    assert 'include "public/_wedding_itinerary.html"' in builder
+
+
+def test_new_wedding_appears_on_the_leads_and_orders_lists(client, agent):
+    for url in (reverse("lead_list"), reverse("orders_list")):
+        assert "New wedding" in client.get(url).content.decode()
+
+
+def test_a_trip_row_reads_a_stop_by_name_when_it_has_no_street_address(client, agent):
+    """A generated stop carries its meaning in `name` — "2 hotels — Hampton Inn, …" has
+    no street address of its own, and the row rendered a bare dash for it."""
+    from apps.reservations.factories import ReservationFactory
+    from apps.reservations.models import Stop
+
+    lead = LeadFactory()
+    res = ReservationFactory(lead=lead)
+    res.stops.all().delete()
+    Stop.objects.create(reservation=res, sequence=0, name="2 hotels — Hampton Inn", address="")
+    Stop.objects.create(reservation=res, sequence=1, name="The Oak Barn", address="")
+
+    route = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "2 hotels — Hampton Inn" in route
+    assert "The Oak Barn" in route
+
+
+def test_a_brand_new_wedding_still_opens_in_portal_mode(client, agent):
+    """`portal` is an explicit option, not something read off a saved plan — a wedding
+    started from the New wedding button has no plan yet and rendered two Continue
+    buttons: the step's own and the modal's shared footer."""
+    body = client.get(
+        f"{reverse('lead_detail', args=[LeadFactory().pk])}?wedding=1"
+    ).content.decode()
+    assert "portal: true" in body
