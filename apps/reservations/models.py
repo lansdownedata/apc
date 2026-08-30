@@ -325,10 +325,17 @@ class Stop(TimeStampedModel):
     @property
     def flight_verify_payload(self) -> dict:
         """The body `POST reservations/flights/verify/` expects for this saved stop — what the
-        drawer's Refresh sends. `self.reservation` is cached by the stops prefetch."""
+        drawer's Refresh sends. `self.reservation` is cached by the stops prefetch.
+
+        Carries `stop: self.pk` so the endpoint can link the verified flight back to this
+        row — the drawer has no other save path to do it. The editor builds its own payload
+        by hand in `verifyStop` (static/js/app.js) and must never send `stop`: it verifies
+        an unsaved draft that may have no Stop row at all.
+        """
         res = self.reservation
         when = self.scheduled_time or res.pickup_time
         return {
+            "stop": self.pk,
             "airport": self.airport_id or "",
             "airline": self.airline_id or "",
             "flight": self.flight_number,

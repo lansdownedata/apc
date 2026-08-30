@@ -304,6 +304,18 @@ def test_stop_fields_default_blank_and_link_is_nullable(iad, united):
     assert Stop.objects.get(pk=stop.pk).flight_pill["state"] == "verified"
 
 
+def test_flight_verify_payload_includes_the_stop_id(iad, united):
+    """The drawer's Refresh posts this verbatim (templates/dispatch/_assign_panel.html) —
+    `stop` is what lets the verify endpoint link the answer back to this row."""
+    stop = StopFactory(
+        reservation=ReservationFactory(pickup_date=date(2026, 10, 15)),
+        airport=iad,
+        airline=united,
+        flight_number="123",
+    )
+    assert stop.flight_verify_payload["stop"] == stop.pk
+
+
 def test_deleting_a_flight_row_unlinks_stops_rather_than_cascading(iad, united):
     f = _flight(iad, united)
     stop = StopFactory(

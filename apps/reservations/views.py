@@ -126,7 +126,11 @@ def flight_verify(request) -> JsonResponse:
     """Check one flight against aviationstack (through the cache) and return its pill.
 
     Serves the editor (values from an unsaved draft) and the drawer (values from a saved
-    stop) alike — the stop→flight link is derived on the next save, never written here.
+    stop) alike. The editor's payload carries no `stop` id — its stop→flight link is
+    derived on the next save (`flights.link_flights`), never written here, because the
+    draft it verifies may have no saved Stop at all. The drawer's payload does carry
+    `stop` (`Stop.flight_verify_payload`) since it has no editor save path back — when
+    present, `flights.link_stop` links that one stop, guarded against a stale drawer.
     """
     try:
         payload = json.loads(request.body)
@@ -171,4 +175,7 @@ def flight_verify(request) -> JsonResponse:
             {"error": PROVIDER_MESSAGES.get(exc.code, UNREACHABLE), "code": exc.code},
             status=503,
         )
+    stop_id = _pk(payload.get("stop"))
+    if stop_id is not None:
+        flights.link_stop(stop_id, flight)
     return JsonResponse(flight.pill())
