@@ -12,6 +12,7 @@
 {{ vehicles_json|json_script:"ws-vehicles" }}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="quoteWorkspace({
+       weddingOpen: {% if wedding_open %}true{% else %}false{% endif %},
        leadId: {{ lead.pk }},
        updateUrl: '{% url 'lead_update' lead.pk %}',
        saveUrl: '{% url 'reservation_save' %}',
@@ -33,6 +34,23 @@
   <a href="{% url 'lead_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
     <i class="ti ti-arrow-left text-[15px]"></i> Leads &amp; Quotes
   </a>
+
+  {% comment %}
+    Django messages, rendered here because the portal shell doesn't render them anywhere.
+    The wedding builder's "these trips are no longer in the plan" warning lands on this
+    page and must not be swallowed. (Wider gap: messages posted before a redirect to any
+    other portal page are still dropped — worth fixing centrally in base.html.)
+  {% endcomment %}
+  {% if messages %}
+  {% for message in messages %}
+  <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mb-4 text-[13px]">
+    <span class="tone-ic"><i class="ti ti-alert-triangle text-[17px]"></i></span>
+    <span>{{ message }}</span>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% include "leads/_wedding_summary.html" %}
 
   {% if booking_intent and lead.status == 'new' %}
   <div class="flex items-center gap-2.5 rounded-xl bg-goldl ring-1 ring-gold/25 px-4 py-3 mb-4 text-[13px] text-goldd">
@@ -212,7 +230,9 @@
               {% for stop in res.ordered_stops %}
               <div class="flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0 {% if forloop.first %}bg-emerald-500{% elif forloop.last %}bg-rose-500{% else %}bg-gold{% endif %}"></span>
-                <span class="truncate">{{ stop.address|default:"—" }}</span>
+                {% comment %} name first: a wedding builder stop ("2 hotels — Hampton Inn, …")
+                   is a place we name, not one with a street line of its own. {% endcomment %}
+                <span class="truncate">{{ stop.name|default:stop.address|default:"—" }}</span>
                 {% include "components/flight_pill.html" with stop=stop %}
               </div>
               {% endfor %}
@@ -425,6 +445,7 @@
   </div>
 
   {% include "leads/_reservation_editor.html" %}
+  {% include "leads/_wedding_builder.html" %}
 
 </div>
 {% endblock %}
