@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
+from apps.fleet.models import Driver, Renewal, RenewalType, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.messaging.models import Conversation, Message, Review
 from apps.notifications.models import Notification
@@ -44,6 +45,9 @@ class Command(BaseCommand):
                 PaymentPlan,
                 Stop,
                 Reservation,
+                Renewal,
+                Vehicle,
+                Driver,
                 Lead,
                 Contact,
             ):
@@ -80,6 +84,45 @@ class Command(BaseCommand):
                 },
             )
             vehicles[name] = vt
+
+        # In-house fleet: one driver + one unit, with renewals in three states so the
+        # chips, the attention strip and the drawer warning all have something to show.
+        unit_class = (
+            VehicleType.objects.filter(name="Luxury SUV").first() or VehicleType.objects.first()
+        )
+        driver = Driver.objects.create(
+            name="Marcus Bell",
+            phone=to_e164("(571) 555-0177"),
+            email="marcus@allprocharter.com",
+        )
+        unit = Vehicle.objects.create(
+            name="Unit 1 – Black Suburban",
+            vehicle_type=unit_class,
+            year=2023,
+            make="Chevrolet",
+            model_name="Suburban",
+            color="Black",
+            license_plate="APC-0001",
+        )
+        types = {(t.name, t.applies_to): t for t in RenewalType.objects.all()}
+        Renewal.objects.create(
+            renewal_type=types[("Driver's license", "driver")],
+            driver=driver,
+            reference="D-4471-2210",
+            issued_on=today - timedelta(days=353),
+            expires_on=today + timedelta(days=12),
+        )
+        Renewal.objects.create(
+            renewal_type=types[("Registration", "vehicle")],
+            vehicle=unit,
+            reference="VA 8827-Q",
+            expires_on=today + timedelta(days=240),
+        )
+        Renewal.objects.create(
+            renewal_type=types[("State inspection", "vehicle")],
+            vehicle=unit,
+            expires_on=today + timedelta(days=25),
+        )
 
         def new_lead(name, company, phone, email, channel, status, notes=""):
             contact = Contact.objects.match_or_create(
@@ -523,6 +566,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"Seeded {leads} leads, {res} reservations, "
                 f"{PaymentPlan.objects.count()} payment plans, "
+                f"{Driver.objects.count()} driver(s), {Vehicle.objects.count()} unit(s), "
                 f"{Notification.objects.count()} notification(s), "
                 f"{Review.objects.count()} review invite(s), "
                 f"{Conversation.objects.count()} conversation(s)."

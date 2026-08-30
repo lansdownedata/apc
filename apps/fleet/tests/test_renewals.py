@@ -153,3 +153,17 @@ def test_vehicle_defaults_and_str():
     v = VehicleFactory(name="Unit 1")
     assert v.status == Vehicle.Status.ACTIVE
     assert str(v) == "Unit 1"
+
+
+def test_seed_demo_creates_an_in_house_driver_and_unit():
+    from django.core.management import call_command
+
+    call_command("seed_demo", "--fresh", verbosity=0)
+    driver = Driver.objects.get(driver_number=1000)
+    assert driver.needs_attention is True  # licence expiring inside 30 days
+    unit = Vehicle.objects.get()
+    assert unit.renewals.count() == 2
+    assert {r.renewal_type.name for r in unit.renewals.all()} == {
+        "Registration",
+        "State inspection",
+    }
