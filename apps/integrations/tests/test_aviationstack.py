@@ -255,8 +255,26 @@ def test_future_arrival_reads_the_arrival_block_in_the_airport_zone():
     assert r.scheduled_at == datetime(2026, 10, 15, 21, 35, tzinfo=UTC)  # 17:35 EDT
     assert (r.terminal, r.gate) == ("C", "C7")
     assert r.other_airport_iata == "DEN"
+    assert r.other_airport_icao == "KDEN"  # DEN's ICAO, from the departure block
     assert r.estimated_at is None and r.actual_at is None and r.delay_minutes is None
     assert r.raw["flight"]["iataNumber"] == "UA123"
+
+
+def test_future_other_airport_icao_is_upper_cased():
+    """flightsFuture prints codes lowercase (task-3R-brief.md §4) — icaoCode must be
+    upper-cased the same way other_airport_iata already is, so ICAO-based matching in
+    `apps/reservations/flights.py::_other_airport_name` can rely on an exact-case match."""
+    entry = _future_entry(
+        departure={
+            "iataCode": "lhr",
+            "icaoCode": "egll",
+            "scheduledTime": "2026-10-15 12:20:00",
+        }
+    )
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [[entry]]})
+        r = av.future_schedule(**FUTURE_KW)
+    assert r.other_airport_icao == "EGLL"
 
 
 def test_future_departure_reads_the_departure_block():
@@ -421,6 +439,7 @@ def test_live_arrival_reads_status_times_delay_and_keeps_only_our_airport():
     assert r.delay_minutes == 11
     assert (r.terminal, r.gate) == ("", "B73")
     assert (r.other_airport_iata, r.other_airport_name) == ("TEB", "")  # no airport-name field
+    assert r.other_airport_icao == "KTEB"  # TEB's ICAO, from the departure block
 
 
 def test_live_departure_reads_the_departure_block():

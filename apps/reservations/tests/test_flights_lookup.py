@@ -273,15 +273,17 @@ def test_other_airport_name_is_resolved_from_our_airport_table(iad, united, now)
     """Neither aviationstack endpoint ever sends an airport-name field (aviationstack.py's
     future_schedule/live_flight both leave FlightResult.other_airport_name blank) — lookup
     resolves it itself from addresses.Airport by other_airport_iata, one query, only on the
-    API path."""
+    API path. A fake IATA code ("ZZ8", not in the real seeded 3,637-row table) keeps this
+    deterministic — the real table now has several duplicate codes (see below), so a
+    factory row sharing a real code is no longer safe to build a single-result test on."""
     from apps.addresses.factories import AirportFactory as _AirportFactory
 
-    _AirportFactory(iata="DEN", name="Denver International")
+    _AirportFactory(iata="ZZ8", name="Denver International")
     found = av.FlightResult(
         found=True,
         status="scheduled",
         scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
-        other_airport_iata="DEN",
+        other_airport_iata="ZZ8",
     )
     with patch.object(flights.aviationstack, "future_schedule", return_value=found):
         row = _lookup(iad, united)
@@ -299,6 +301,92 @@ def test_other_airport_name_falls_back_to_blank_for_an_unknown_iata(iad, united,
     with patch.object(flights.aviationstack, "future_schedule", return_value=found):
         row = _lookup(iad, united)
     assert row.other_airport_name == ""
+
+
+# --- 3,637-row expansion introduced 16 duplicate IATA codes; ICAO disambiguates (2026-08-29) ---
+
+
+def test_other_airport_name_resolves_akr_by_icao_not_the_arbitrary_iata_match(iad, united, now):
+    """The real, already-seeded table: AKR is shared by Akron Fulton (curated US row,
+    `has_scheduled_service=False`, alphabetically-first name) and Akure, Nigeria (added by
+    the global-airport expansion, `has_scheduled_service=True`). With no ordering at all,
+    `Airport.objects.filter(iata="AKR").first()` returns Akron — confirmed live against the
+    merged code, 2026-08-29 ("flight from Akure, Nigeria (AKR) -> Akron Fulton International
+    Airport WRONG"). Passing the flight's real ICAO (Akure's is DNAK) must resolve it right."""
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="AKR",
+        other_airport_icao="DNAK",
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == "Akure Airport"
+
+
+def test_other_airport_name_resolves_saw_to_istanbul_not_marquette(iad, united, now):
+    """The real, already-seeded table: SAW is shared by Marquette/Sawyer (curated US row)
+    and Istanbul Sabiha Gökçen (global expansion) — both carry `has_scheduled_service=True`,
+    so preferring that flag alone (the fix for 9 of the 16 collisions) cannot disambiguate
+    this one; ordering ties on a tied `-has_scheduled_service` sort resolve to Marquette,
+    the lower-pk curated row (confirmed empirically against this table) — exactly the "loses
+    to Marquette/Sawyer" failure mode described in the bug report. Only the globally-unique
+    ICAO code can get Istanbul, a genuine JFK long-haul origin, right."""
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="SAW",
+        other_airport_icao="LTFJ",
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == "Istanbul Sabiha Gökçen International Airport"
+
+
+def test_other_airport_name_falls_back_to_iata_preferring_scheduled_service(iad, united, now):
+    """No ICAO on the result (the provider sent none, or it doesn't match any row we hold)
+    — fall back to IATA, and when that's ambiguous, prefer the row with scheduled service
+    (fixes 9 of the 16 collisions per the correctness-bug report). A fake IATA code keeps
+    this deterministic (no collision with the real table's own duplicates); the
+    non-scheduled row's name sorts first alphabetically, so this only passes if the
+    preference is real, not an alphabetical accident."""
+    from apps.addresses.factories import AirportFactory as _AirportFactory
+
+    _AirportFactory(iata="QQ1", name="Aaa Non-Scheduled Strip", has_scheduled_service=False)
+    _AirportFactory(iata="QQ1", name="Zzz Scheduled Airport", has_scheduled_service=True)
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="QQ1",
+        other_airport_icao="",
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == "Zzz Scheduled Airport"
+
+
+def test_other_airport_name_falls_back_to_iata_when_icao_has_no_match(iad, united, now):
+    """The result carries an ICAO code, but it isn't one we hold (e.g. a foreign airport
+    outside our table) — degrade to the IATA path rather than coming back blank. Fake codes
+    throughout, so a real duplicate can't interfere with the assertion."""
+    from apps.addresses.factories import AirportFactory as _AirportFactory
+
+    _AirportFactory(
+        iata="QQ2", icao="KQQ2", name="Test Junction Airport", has_scheduled_service=True
+    )
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="QQ2",
+        other_airport_icao="ZZZZ",  # no row on file has this ICAO
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == "Test Junction Airport"
 
 
 # --- a day-of refresh must not erase richer detail timetable doesn't send (review #2) ---
