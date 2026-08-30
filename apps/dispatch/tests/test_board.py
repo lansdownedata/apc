@@ -57,11 +57,12 @@ def test_a_trip_with_no_pickup_time_sorts_first(logged_in_client):
 
 
 def test_the_grid_columns_are_labelled_for_what_they_hold(logged_in_client):
-    """The pill column is coverage state; the vendor column is the affiliate."""
+    """The pill column is coverage state; the provider column names whoever covers it."""
     _trip()
     body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
     assert b">Coverage<" in body
-    assert b">Affiliate<" in body
+    assert b">Covered by<" in body
+    assert b">Affiliate<" not in body
     assert b">Status<" not in body
 
 

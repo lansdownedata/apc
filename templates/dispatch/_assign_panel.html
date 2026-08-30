@@ -111,7 +111,7 @@
       <span class="text-muted">Customer total</span>
       <span class="font-semibold text-ink text-[14px] num">${{ trip.line_total|floatformat:2|intcomma }}</span>
     </div>
-    {% if assignment %}
+    {% if assignment and not assignment.is_in_house %}
       <div class="flex items-center justify-between mt-1">
         <span class="text-muted">Payout</span>
         <span class="text-ink num">${{ assignment.payout|floatformat:2|intcomma }}</span>
@@ -126,9 +126,11 @@
   {% if assignment %}
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Coverage</p>
     <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
-      <p class="font-semibold text-ink text-[13px]">{{ assignment.vendor.name }}</p>
+      <p class="font-semibold text-ink text-[13px]">
+        {% if assignment.is_in_house %}<span class="num">{{ assignment.driver.driver_number }}</span> · {{ assignment.driver.name }}{% if assignment.vehicle %} · {{ assignment.vehicle.name }}{% endif %}{% else %}{{ assignment.vendor.name }}{% endif %}
+      </p>
       <p class="text-[12px] text-muted mt-0.5">
-        {{ assignment.get_status_display }} · {{ assignment.get_channel_display }}
+        {{ assignment.get_status_display }} · {% if assignment.is_in_house %}In-house{% else %}{{ assignment.get_channel_display }}{% endif %}
       </p>
       {% if previewed %}
         <p class="text-[11.5px] text-rose-600 mt-1">
@@ -142,14 +144,20 @@
          it — Withdraw is the only staff action that releases it. Server-side too:
          dispatch.views.resolve refuses both marks on this channel. {% endcomment %}
     <div class="flex gap-2 mt-4">
-      {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
-        <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
-                :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
-        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
-                :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
+      {% if assignment.is_in_house %}
+        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
+                :disabled="busy"
+                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Unassign this driver?', message: 'The trip goes back to unassigned. Let the driver know yourself.'})">Unassign</button>
+      {% else %}
+        {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
+          <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+                  :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
+          <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+                  :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
+        {% endif %}
+        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
+                :disabled="busy" @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}')">Withdraw</button>
       {% endif %}
-      <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
-              :disabled="busy" @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}')">Withdraw</button>
     </div>
     {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
       <p class="text-[11.5px] text-muted mt-2">
@@ -157,6 +165,51 @@
       </p>
     {% endif %}
   {% else %}
+    {% if in_house.drivers %}
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">In-house</p>
+    {% comment %} Own driver + optional unit → confirmed directly. No payout, no offer step.
+         The button sits inside this form so assignPanel().send() posts these radios. {% endcomment %}
+    <form x-data="{ selectedDriver: '' }" @submit.prevent class="mb-5 pb-5 border-b border-line/60">{% csrf_token %}
+      <div class="space-y-1.5">
+        {% for option in in_house.drivers %}
+          <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
+            <input type="radio" name="driver" value="{{ option.driver.pk }}" class="shrink-0"
+                   @change="selectedDriver = $event.target.value">
+            <span class="min-w-0">
+              <span class="block font-semibold text-ink text-[13px] truncate"><span class="num">{{ option.driver.driver_number }}</span> · {{ option.driver.name }}</span>
+              <span class="block text-[11.5px] text-muted truncate">
+                used {{ option.used }}×
+                {% if option.renewal.status != 'none' and option.renewal.status != 'valid' %} · <span class="ins ins-{{ option.renewal.status }}"><i class="ti ti-alert-triangle"></i>{{ option.renewal.type }}: {{ option.renewal.label }}</span>{% endif %}
+              </span>
+            </span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mt-3 mb-1.5">Vehicle</p>
+      <div class="space-y-1.5">
+        <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
+          <input type="radio" name="vehicle" value="" checked class="shrink-0">
+          <span class="text-[13px] text-ink">No vehicle</span>
+        </label>
+        {% for option in in_house.vehicles %}
+          <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2">
+            <input type="radio" name="vehicle" value="{{ option.vehicle.pk }}" class="shrink-0">
+            <span class="min-w-0">
+              <span class="block font-semibold text-ink text-[13px] truncate">{{ option.vehicle.name }}{% if option.vehicle.license_plate %} <span class="text-[11px] text-muted font-mono2">{{ option.vehicle.license_plate }}</span>{% endif %}</span>
+              <span class="block text-[11.5px] text-muted truncate">
+                {{ option.vehicle.vehicle_type.name }}{% if option.fits_vehicle %} ✓{% endif %}
+                {% if option.renewal.status != 'none' and option.renewal.status != 'valid' %} · <span class="ins ins-{{ option.renewal.status }}"><i class="ti ti-alert-triangle"></i>{{ option.renewal.type }}: {{ option.renewal.label }}</span>{% endif %}
+              </span>
+            </span>
+          </label>
+        {% endfor %}
+      </div>
+      <div class="mt-3"><input type="text" name="note" placeholder="Note (optional)" class="field text-[13px]"></div>
+      <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold mt-3"
+              :disabled="busy || !selectedDriver"
+              @click="post('{% url 'dispatch_assign_driver' trip.pk %}')">Assign driver</button>
+    </form>
+    {% endif %}
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Offer to</p>
     {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}
     <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"

@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.fleet.models import Driver, Vehicle
 from apps.reservations.models import Reservation, Stop
 from apps.vendors.models import Vendor
 
@@ -81,6 +82,7 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
             "previewed": selectors.offer_was_previewed(assignment),
             "options": selectors.vendor_options(trip, search=request.GET.get("q", "")),
             "search": request.GET.get("q", ""),
+            "in_house": selectors.in_house_options(trip),
         },
     )
 
@@ -120,6 +122,25 @@ def _vendor(request: HttpRequest) -> Vendor:
         raise services.AssignmentError("Choose an active affiliate.") from exc
 
 
+def _driver(request: HttpRequest) -> Driver:
+    """The posted in-house driver — active only, matching what the picker offers."""
+    try:
+        return Driver.objects.get(pk=request.POST.get("driver"), status=Driver.Status.ACTIVE)
+    except (Driver.DoesNotExist, ValueError, TypeError) as exc:
+        raise services.AssignmentError("Choose an active driver.") from exc
+
+
+def _vehicle(request: HttpRequest) -> Vehicle | None:
+    """The posted unit, or None — 'No vehicle' is the drawer's default choice."""
+    raw = (request.POST.get("vehicle") or "").strip()
+    if not raw:
+        return None
+    try:
+        return Vehicle.objects.get(pk=raw, status=Vehicle.Status.ACTIVE)
+    except (Vehicle.DoesNotExist, ValueError, TypeError) as exc:
+        raise services.AssignmentError("Choose an active vehicle, or none.") from exc
+
+
 def _fail(exc: Exception) -> JsonResponse:
     return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
@@ -151,6 +172,23 @@ def assign(request: HttpRequest, pk: int) -> JsonResponse:
             trip,
             _vendor(request),
             payout=_payout(request),
+            note=(request.POST.get("note") or "").strip(),
+        )
+    except services.AssignmentError as exc:
+        return _fail(exc)
+    return JsonResponse({"ok": True, "assignment": assignment.pk})
+
+
+@login_required
+@require_POST
+def assign_driver(request: HttpRequest, pk: int) -> JsonResponse:
+    """Cover the trip with one of our own drivers — straight to confirmed, no payout."""
+    trip = get_object_or_404(Reservation, pk=pk)
+    try:
+        assignment = services.assign_in_house(
+            trip,
+            _driver(request),
+            vehicle=_vehicle(request),
             note=(request.POST.get("note") or "").strip(),
         )
     except services.AssignmentError as exc:

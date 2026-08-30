@@ -177,12 +177,14 @@ function assignPanel() {
     resolve(url, action) {
       return this.send(url, { action });
     },
-    confirmWithdraw(url) {
+    confirmWithdraw(url, copy = {}) {
       Alpine.store("modal").confirm({
-        title: "Withdraw this assignment?",
-        message: "The trip goes back to unassigned. The affiliate is not notified automatically.",
+        title: copy.title || "Withdraw this assignment?",
+        message:
+          copy.message ||
+          "The trip goes back to unassigned. The affiliate is not notified automatically.",
         variant: "danger",
-        confirmText: "Withdraw",
+        confirmText: copy.title ? "Unassign" : "Withdraw",
         onConfirm: () => this.send(url, { action: "withdraw" }),
       });
     },
