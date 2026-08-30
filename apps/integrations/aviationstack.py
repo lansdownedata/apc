@@ -66,6 +66,7 @@ class FlightResult:
     terminal: str = ""
     gate: str = ""
     other_airport_iata: str = ""
+    other_airport_icao: str = ""
     other_airport_name: str = ""
     operated_by_iata: str = ""
     operated_by_name: str = ""
@@ -321,6 +322,7 @@ def future_schedule(
         terminal=_titled(side.get("terminal")),
         gate=_titled(side.get("gate")),
         other_airport_iata=_s(other.get("iataCode")).upper(),
+        other_airport_icao=_s(other.get("icaoCode")).upper(),
         other_airport_name="",  # flightsFuture has no airport-name field either — see
         # apps/reservations/flights.py::lookup, which resolves it from our own Airport table
         operated_by_iata=op_iata,
@@ -393,6 +395,7 @@ def live_flight(
         terminal=_s(side.get("terminal")),
         gate=_s(side.get("gate")),
         other_airport_iata=_s(other.get("iataCode")).upper(),
+        other_airport_icao=_s(other.get("icaoCode")).upper(),
         other_airport_name="",  # timetable has no airport-name field
         operated_by_iata=op_iata,
         operated_by_name=op_name,

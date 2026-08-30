@@ -45,15 +45,38 @@ class FlightLookupError(ValueError):
         super().__init__(message)
 
 
-def _other_airport_name(iata: str) -> str:
-    """Resolve the far-end airport's name from our own 863-row `addresses.Airport` table.
+def _other_airport_name(iata: str, icao: str = "") -> str:
+    """Resolve the far-end airport's name from our own `addresses.Airport` table (3,637 rows
+    since the 2026-08-29 global expansion for name resolution).
 
-    Neither aviationstack endpoint ever sends an airport-name field (final review #1) — one
-    indexed query, only reached when a call actually returned an IATA code, never per render.
-    Blank when the code isn't in our table (a foreign airport, or no code at all)."""
+    Neither aviationstack endpoint ever sends an airport-name field (final review #1) — this
+    is only ever reached when a call actually returned an airport code, never per render.
+
+    Resolved by ICAO first: the global expansion introduced 16 duplicate IATA codes because
+    the curated US rows put a local ident in `iata` for small fields (see `Airport`'s own
+    docstring) — `iata` alone is not a safe key any more, and both aviationstack endpoints
+    send `icaoCode` beside `iataCode` in every payload captured (task-3R-brief.md), so ICAO
+    (globally unique) is tried first, one indexed query. Falls back to IATA only when there
+    is no ICAO to try or it matches nothing we hold (a foreign airport outside our table) —
+    on that fallback, a row with `has_scheduled_service` is preferred, which alone resolves 9
+    of the 16 collisions (a live/military-field pair sharing a code); the remaining 7, where
+    both rows have scheduled service (e.g. SAW: Istanbul Sabiha Gökçen vs. Marquette/Sawyer),
+    need the ICAO match to disambiguate correctly.
+
+    Blank when neither code is on file at all."""
+    if icao:
+        name = Airport.objects.filter(icao=icao).values_list("name", flat=True).first()
+        if name:
+            return name
     if not iata:
         return ""
-    return Airport.objects.filter(iata=iata).values_list("name", flat=True).first() or ""
+    return (
+        Airport.objects.filter(iata=iata)
+        .order_by("-has_scheduled_service")
+        .values_list("name", flat=True)
+        .first()
+        or ""
+    )
 
 
 def _keep(new: str, old: str) -> str:
@@ -190,7 +213,9 @@ def lookup(
         status = Flight.Status.UNAVAILABLE
     else:
         status = Flight.Status.NOT_FOUND
-    other_airport_name = result.other_airport_name or _other_airport_name(result.other_airport_iata)
+    other_airport_name = result.other_airport_name or _other_airport_name(
+        result.other_airport_iata, result.other_airport_icao
+    )
     row, _ = Flight.objects.update_or_create(
         **key,
         defaults={
