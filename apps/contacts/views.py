@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -17,7 +16,6 @@ from django.db.models import (
     Exists,
     Max,
     OuterRef,
-    Q,
     Subquery,
     Sum,
     Value,
@@ -26,7 +24,7 @@ from django.db.models.functions import Coalesce
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
@@ -36,6 +34,22 @@ from apps.leads.models import Lead
 from apps.payments.models import PaymentPlan
 
 from .models import Company, Contact
+
+# Type-ahead results the modal shows at once — more than this is a search, not a pick.
+SEARCH_LIMIT = 8
+
+
+def _search_row(contact: Contact, leads: int) -> dict[str, object]:
+    """One type-ahead row: exactly the fields the modal fills in, plus a trust signal."""
+    return {
+        "id": contact.pk,
+        "name": contact.name,
+        "company": contact.company.name if contact.company else "",
+        "phone": contact.phone or "",
+        "email": contact.email or "",
+        "leads": leads,
+    }
+
 
 # Sentinel so contacts with no activity sort last (None isn't orderable against datetimes).
 _NO_ACTIVITY = datetime.min.replace(tzinfo=UTC)
@@ -79,15 +93,8 @@ def contact_list(request: HttpRequest) -> HttpResponse:
 
     query = request.GET.get("q", "").strip()
     if query:
-        # Phones are stored E.164 (+16175559271); match on digits so a formatted
-        # query like "(617) 555-9271" or "555-9271" still finds them.
-        lookup = (
-            Q(name__icontains=query) | Q(company__name__icontains=query) | Q(email__icontains=query)
-        )
-        phone_digits = re.sub(r"\D", "", query)
-        if len(phone_digits) >= 3:
-            lookup |= Q(phone__icontains=phone_digits)
-        contacts = contacts.filter(lookup)
+        # Same matching rule as the booking modal's type-ahead — see ContactManager.search.
+        contacts = contacts.filter(pk__in=Contact.objects.search(query).values("pk"))
 
     rows = list(contacts)
     for c in rows:
@@ -113,6 +120,32 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "channels": Channel.choices,
             "company_names": company_names,
         },
+    )
+
+
+@login_required
+@require_GET
+def contact_search(request: HttpRequest) -> JsonResponse:
+    """Customer lookup for the New booking / New lead modal.
+
+    `?q=` feeds the type-ahead dropdown. `?phone=&email=` answers "does this already
+    exist?" for the inline hint — that arm goes through `find_match` so the E.164-vs-raw
+    rules stay on the server instead of being re-implemented in the browser.
+    """
+    rows = (
+        Contact.objects.search(request.GET.get("q", ""))
+        .select_related("company")
+        .annotate(lead_count=Count("leads", distinct=True))
+        .order_by("name")[:SEARCH_LIMIT]
+    )
+    match = Contact.objects.find_match(
+        phone=request.GET.get("phone", ""), email=request.GET.get("email", "")
+    )
+    return JsonResponse(
+        {
+            "results": [_search_row(c, c.lead_count) for c in rows],
+            "match": _search_row(match, match.leads.count()) if match else None,
+        }
     )
 
 

@@ -1730,3 +1730,114 @@ function bookingStops(opts = {}) {
 window.bookingStops = bookingStops;
 
 window.smartAddress = smartAddress;
+
+/* ------------------------------------------- customer search (contact modal)
+ * Type-ahead over existing customers for the New booking / New lead modal.
+ * Picking one links the lead to that contact (hidden `contact_id`) and pre-fills the
+ * form; the server then treats any edit as a deliberate profile update.
+ *
+ * The fields are plain inputs shared with the create-a-new-customer path, so this
+ * writes to them by id rather than owning them with x-model. The phone box is an
+ * intl-tel-input, which only repaints its flag/formatting via setNumber().
+ */
+function contactPicker(opts = {}) {
+  return {
+    searchUrl: opts.searchUrl,
+    query: "",
+    results: [],
+    open: false,
+    loading: false,
+    active: -1,
+    selected: null,
+    hint: null, // an existing customer matching the typed phone/email
+
+    fieldEl(name) {
+      return document.getElementById(`nl-${name}`);
+    },
+    setField(name, value) {
+      const el = this.fieldEl(name);
+      if (!el) return;
+      // setNumber() so the country flag and formatting follow the number; a bare
+      // .value assignment leaves the widget showing the previous country.
+      if (el.iti) el.iti.setNumber(value || "");
+      else el.value = value || "";
+    },
+    readField(name) {
+      const el = this.fieldEl(name);
+      return el ? el.value.trim() : "";
+    },
+
+    subtitle(r) {
+      return [r.company, r.phone, r.email].filter(Boolean).join(" · ");
+    },
+    leadCount(r) {
+      if (!r || !r.leads) return "New contact";
+      return r.leads === 1 ? "1 lead" : `${r.leads} leads`;
+    },
+
+    search() {
+      const q = this.query.trim();
+      if (!q) { this.closeResults(); return; }
+      this.loading = true; this.open = true;
+      fetch(`${this.searchUrl}?q=${encodeURIComponent(q)}`, { headers: { "X-Requested-With": "fetch" } })
+        .then((r) => r.json())
+        .then((d) => { this.results = d.results || []; this.active = this.results.length ? 0 : -1; })
+        .catch(() => { this.results = []; this.active = -1; })
+        .finally(() => { this.loading = false; });
+    },
+
+    /* Does the typed phone/email already belong to someone? Answered server-side —
+     * find_match owns the E.164-vs-raw rules and must not be reimplemented here. */
+    checkMatch() {
+      if (this.selected) return;
+      const phone = this.readField("phone");
+      const email = this.readField("email");
+      if (!phone && !email) { this.hint = null; return; }
+      const qs = new URLSearchParams({ phone, email });
+      fetch(`${this.searchUrl}?${qs}`, { headers: { "X-Requested-With": "fetch" } })
+        .then((r) => r.json())
+        .then((d) => { this.hint = d.match || null; })
+        .catch(() => { this.hint = null; });
+    },
+
+    move(delta) {
+      if (!this.results.length) return;
+      this.active = (this.active + delta + this.results.length) % this.results.length;
+    },
+    choose(i) {
+      const r = this.results[i];
+      if (!r) return;
+      this.link(r);
+    },
+    useHint() {
+      if (this.hint) this.link(this.hint);
+    },
+    link(r) {
+      this.selected = r;
+      this.hint = null;
+      this.setField("name", r.name);
+      this.setField("company", r.company);
+      this.setField("phone", r.phone);
+      this.setField("email", r.email);
+      this.query = "";
+      this.closeResults();
+    },
+    /* Unlink keeps the fields: the usual reason to unlink is "same details, different
+     * person", so what's on screen is the start of a new customer. */
+    unlink() {
+      this.selected = null;
+      this.$nextTick(() => this.fieldEl("name")?.focus());
+    },
+
+    closeResults() { this.open = false; this.results = []; this.active = -1; },
+
+    /* A reopened modal starts clean — otherwise the next booking silently inherits the
+     * last one's customer, which is the one mistake this feature must not introduce. */
+    reset() {
+      this.selected = null; this.hint = null; this.query = "";
+      this.closeResults();
+      for (const f of ["name", "company", "phone", "email"]) this.setField(f, "");
+    },
+  };
+}
+window.contactPicker = contactPicker;

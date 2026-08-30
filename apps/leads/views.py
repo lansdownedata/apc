@@ -21,6 +21,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.contacts import services as contact_services
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
@@ -565,13 +566,28 @@ def lead_create(request) -> HttpResponse:
         )
         return redirect("lead_list")
     cd = form.cleaned_data
-    contact = Contact.objects.match_or_create(
-        name=cd["name"],
-        company_name=cd["company"],
-        phone=cd["phone"],
-        email=cd["email"],
-        channel=cd["channel"],
-    )
+    picked = cd.get("contact_id")
+    if picked is not None:
+        # The agent explicitly said "this is that customer", so their edits are an
+        # intentional profile update. `channel` stays out of it — see apply_booking_edits.
+        contact = picked
+        warning = contact_services.apply_booking_edits(
+            contact,
+            name=cd["name"],
+            company=cd["company"],
+            phone=cd["phone"],
+            email=cd["email"],
+        )
+        if warning:
+            messages.warning(request, warning)
+    else:
+        contact = Contact.objects.match_or_create(
+            name=cd["name"],
+            company_name=cd["company"],
+            phone=cd["phone"],
+            email=cd["email"],
+            channel=cd["channel"],
+        )
     lead = Lead.objects.create(
         contact=contact,
         channel=cd["channel"],
