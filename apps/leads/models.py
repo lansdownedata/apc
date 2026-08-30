@@ -62,6 +62,16 @@ class VehicleType(TimeStampedModel):
         return self.name
 
 
+# Customer-facing quote/order reference: "APC-100068" for lead 68. Six digits from a
+# 100000 base so the number reads as a real reference and transfers cleanly into
+# LimoAnywhere / GNet, which is what the old four-digit "Q-1108" form did badly.
+# Derived from the pk, never stored — change the base and every reference moves with it.
+# The Leads-list search rebuilds this same expression in SQL (see lead_list); keep them
+# in step or searching by quote number silently stops matching.
+QUOTE_PREFIX = "APC"
+QUOTE_NUMBER_BASE = 100_000
+
+
 class LeadQuerySet(models.QuerySet):
     def open(self):
         """Leads still in play (new or quoted)."""
@@ -115,7 +125,7 @@ class Lead(TimeStampedModel):
 
     @property
     def quote_no(self) -> str:
-        return f"Q-{1040 + self.pk}" if self.pk else "Q-—"
+        return f"{QUOTE_PREFIX}-{QUOTE_NUMBER_BASE + self.pk}" if self.pk else f"{QUOTE_PREFIX}-—"
 
     @property
     def quote_total(self) -> Decimal:

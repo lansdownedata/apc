@@ -54,12 +54,12 @@ def test_lead_list_search_matches_quote_number(client, agent):
     LeadFactory(contact=ContactFactory(name="Someone Else"))
     client.force_login(agent)
 
-    # quote_no is the computed "Q-{1040+pk}"; searching the bare number must find it.
-    number = match.quote_no.split("-")[1]  # e.g. "1065"
+    # quote_no is the computed "APC-{100000+pk}"; the bare number must find it.
+    number = match.quote_no.split("-")[1]  # e.g. "100065"
     resp = client.get(reverse("lead_list"), {"q": number})
     assert list(resp.context["leads"]) == [match]
 
-    # The "Q-" prefixed form works too.
+    # The "APC-" prefixed form works too.
     resp = client.get(reverse("lead_list"), {"q": match.quote_no})
     assert list(resp.context["leads"]) == [match]
 

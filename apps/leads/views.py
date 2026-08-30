@@ -37,7 +37,7 @@ from apps.reservations.models import Stop
 
 from . import services
 from .forms import NewLeadForm
-from .models import Lead, VehicleType
+from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, VehicleType
 
 
 def _balances_with_remaining(lead: Lead) -> dict:
@@ -126,13 +126,14 @@ def lead_list(request):
 
     query = request.GET.get("q", "").strip()
     if query:
-        # quote_no is a computed property ("Q-{1040+pk}"), not a column — rebuild it
-        # in SQL so the grid is searchable by "1065", "Q-1065", or a partial.
+        # quote_no is a computed property (Lead.QUOTE_PREFIX + QUOTE_NUMBER_BASE + pk),
+        # not a column — rebuild it in SQL so the grid is searchable by "100065",
+        # "APC-100065", or a partial. Must mirror Lead.quote_no exactly.
         leads = (
             leads.annotate(
                 quote_ref=Concat(
-                    Value("Q-"),
-                    Cast(1040 + F("id"), output_field=CharField()),
+                    Value(f"{QUOTE_PREFIX}-"),
+                    Cast(QUOTE_NUMBER_BASE + F("id"), output_field=CharField()),
                     output_field=CharField(),
                 )
             )

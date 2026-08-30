@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db
 
 BASE_CONTEXT = {
     "contact_name": "Shane Thomas",
-    "quote_no": "Q-1041",
+    "quote_no": "APC-100041",
     "quote_total": "2118.90",
     "deposit_amount": "1059.45",
     "deposit_pct": 50,
@@ -29,7 +29,7 @@ BASE_CONTEXT = {
 def _send(*, context=None, **overrides):
     kwargs = {
         "to": "customer@example.com",
-        "subject": "Your All Pro Charter quote Q-1041",
+        "subject": "Your All Pro Charter quote APC-100041",
         "template": "quote_sent",
         "context": {**BASE_CONTEXT, **(context or {})},
     }
@@ -45,7 +45,7 @@ def test_sends_and_returns_true():
 def test_sends_both_a_text_and_an_html_part():
     _send()
     message = mail.outbox[0]
-    assert "Q-1041" in message.body, "the plain-text part must carry the quote number"
+    assert "APC-100041" in message.body, "the plain-text part must carry the quote number"
     html, mimetype = message.alternatives[0]
     assert mimetype == "text/html"
     assert "https://example.com/quote/abc123/" in html
@@ -65,7 +65,7 @@ def test_plain_text_part_is_not_html_escaped():
 
 def test_subject_and_recipient():
     _send()
-    assert mail.outbox[0].subject == "Your All Pro Charter quote Q-1041"
+    assert mail.outbox[0].subject == "Your All Pro Charter quote APC-100041"
     assert mail.outbox[0].to == ["customer@example.com"]
 
 
