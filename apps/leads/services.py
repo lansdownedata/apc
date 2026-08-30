@@ -333,3 +333,102 @@ def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
     reservation.vehicle = vehicle
     reservation.rate = vehicle.rate if vehicle else 0
     reservation.min_hours = vehicle.transfer_min_hours if vehicle else 0
+
+
+@dataclass
+class WeddingRebuild:
+    """What a rebuild did, so the view can tell the agent."""
+
+    updated: list
+    created: list
+    # Generated trips the plan no longer contains. Deliberately NOT deleted — see below.
+    orphans: list
+
+
+def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
+    """Reconcile a lead's wedding trips against the posted plan.
+
+    Matched on `Reservation.source_leg_id`, so an unchanged leg keeps its row — and with
+    it its pricing, its LimoAnywhere reservation id and its dispatch assignment. The
+    public `create_lead_from_wedding(lead=…)` path deletes and recreates, which is fine
+    for a customer resending their own request pre-quote and catastrophic once the office
+    has priced or booked it.
+
+    A trip with a blank `source_leg_id` was added by hand in the reservation editor: it is
+    never matched, never updated and never reported. The builder owns what it generated
+    and nothing else.
+
+    Removed legs come back as `orphans` rather than being deleted — the view asks.
+    """
+    from apps.public.services import (
+        wedding_payload,
+        wedding_service_type,
+        wedding_sites,
+        wedding_stop,
+    )
+    from apps.public.wedding import build_notes, is_time_sensitive
+    from apps.reservations.models import Reservation, Stop
+
+    service_type = wedding_service_type()
+    sites = wedding_sites(data)
+    vehicles = data.get("vehicles") or {}
+    existing = {r.source_leg_id: r for r in lead.reservations.exclude(source_leg_id="")}
+    seen: set[str] = set()
+    updated: list = []
+    created: list = []
+
+    for i, leg in enumerate(data["legs"]):
+        leg_id = leg["id"]
+        seen.add(leg_id)
+        res = existing.get(leg_id)
+        is_new = res is None
+        if is_new:
+            res = Reservation(
+                lead=lead, source_leg_id=leg_id, trip_type=Reservation.TripType.TRANSFER
+            )
+        res.sort_order = i
+        res.service_type = service_type
+        res.pickup_date = data["wedding_date"]
+        res.pickup_time = leg["time"]
+        res.passengers = leg["pax"]
+        # Only when the agent actually chose one: a rebuild after a time change must not
+        # silently un-price a trip whose vehicle was set on an earlier pass.
+        if leg_id in vehicles:
+            apply_vehicle_rate_card(res, vehicles[leg_id])
+        res.save()
+        # Stops are cheap and fully derived; rewriting both is simpler and safer than
+        # diffing two rows, and nothing downstream holds on to a Stop pk.
+        res.stops.all().delete()
+        Stop.objects.bulk_create(
+            [
+                wedding_stop(res, 0, leg["from"], leg.get("from_sub", ""), sites),
+                wedding_stop(res, 1, leg["to"], leg.get("to_sub", ""), sites),
+            ]
+        )
+        (created if is_new else updated).append(res)
+
+    orphans = [res for leg_id, res in existing.items() if leg_id not in seen]
+
+    lead.notes = build_notes(
+        wedding_date=data["wedding_date"],
+        venue=data.get("venue"),
+        ceremony=data.get("ceremony"),
+        hotels=data.get("hotels") or [],
+        hotels_tbd=bool(data.get("hotels_tbd")),
+        groups=data["groups"],
+        times_tbd=bool(data.get("times_tbd")),
+        legs=data["legs"],
+    )
+    # The portal form has no contact fields, so the payload takes them off the lead —
+    # the customer's resume link rehydrates from this same blob.
+    lead.intake_payload = wedding_payload(
+        {
+            **data,
+            "name": lead.contact.name,
+            "email": lead.contact.email,
+            "phone": lead.contact.phone,
+        }
+    )
+    lead.has_alert = is_time_sensitive(data["wedding_date"], timezone.localdate())
+    lead.save(update_fields=["notes", "intake_payload", "has_alert", "updated_at"])
+    return WeddingRebuild(updated=updated, created=created, orphans=orphans)
