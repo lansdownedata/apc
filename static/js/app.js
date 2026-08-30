@@ -396,6 +396,10 @@ function quoteWorkspace(opts = {}) {
     sending: false,
     editorOpen: false,
     draftIsNew: false,
+    // Set once the agent gives the drop-off its own day (an overnight run); until then
+    // it follows the pickup date.  Component state, not draft state — it must not ride
+    // along in the save payload.
+    dropoffPinned: false,
     draft: null,
     _saved: null,
 
@@ -595,6 +599,7 @@ function quoteWorkspace(opts = {}) {
     },
     newReservation() {
       this.draft = this.blankReservation();
+      this.dropoffPinned = false;
       this.draftIsNew = true;
       this.editorOpen = true;
       this.syncVehicleSelect();
@@ -612,6 +617,8 @@ function quoteWorkspace(opts = {}) {
         delete s.pill;
       });
       this.draftIsNew = false;
+      // A stored trip that already ends on another day keeps that day through pickup edits.
+      this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
       this.editorOpen = true;
       // Older rows can predate the derived drop-off — fill it so the hourly
       // read-out shows the end time instead of the "set a date" prompt.
@@ -626,6 +633,23 @@ function quoteWorkspace(opts = {}) {
       this.draft.minHours = v ? (this.draft.tripType === "hourly" ? v.hourlyMin : v.transferMin) : 0;
       if (v) this.draft.rate = v.rate;
       this.onHoursChanged();   // the minimum is what's billed until overridden → end time moves
+    },
+    /* Transfers are same-day unless told otherwise, so the pickup date carries the
+       drop-off date with it — one box to fill instead of two.  Give the drop-off its
+       own day and it pins: later pickup edits leave it where the agent put it.
+       Hourly ignores all of this; there the drop-off is derived from the hours. */
+    onPickupDateChanged() {
+      // A pinned drop-off that now falls before the pickup is an impossible trip — let it follow again.
+      if (this.dropoffPinned && this.draft.dropoffDate && this.draft.dropoffDate < this.draft.date) {
+        this.dropoffPinned = false;
+      }
+      if (this.draft.tripType === "transfer" && !this.dropoffPinned) {
+        this.draft.dropoffDate = this.draft.date;
+      }
+      this.onHoursChanged();
+    },
+    onDropoffDateChanged() {
+      this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
     },
     onHoursChanged() {              // hourly: derive drop-off from pickup + billed hours
       if (this.draft.tripType !== "hourly") return;
@@ -1108,8 +1132,25 @@ let fpClosedAt = 0;
 const FP_BASE = { onClose: () => { fpClosedAt = Date.now(); } };
 window.fpJustClosed = () => Date.now() - fpClosedAt < 250;
 
+/* A calendar closes itself the moment you click a day; the time row has no such
+ * gesture — nudging hours and minutes never ends, so Escape or a click outside was
+ * the only way out and agents sat there looking for the exit. Give every time picker
+ * an explicit Done. Mobile takes the OS picker instead (`setupMobile` skips build(),
+ * so there is no calendarContainer to append to) — onReady still fires there. */
+function fpAddDone(fp) {
+  const panel = fp.calendarContainer;
+  if (!panel || panel.querySelector(".fp-done")) return;
+  const done = document.createElement("button");
+  done.type = "button";
+  done.className = "fp-done";
+  done.textContent = "Done";
+  done.addEventListener("click", () => fp.close());
+  panel.appendChild(done);
+}
+
 const FP_DATE = { ...FP_BASE, altInput: true, altFormat: "F j, Y", dateFormat: "Y-m-d", minDate: "today" };
-const FP_TIME = { ...FP_BASE, enableTime: true, noCalendar: true, dateFormat: "H:i", altInput: true, altFormat: "h:i K", time_24hr: false };
+const FP_TIME = { ...FP_BASE, enableTime: true, noCalendar: true, dateFormat: "H:i", altInput: true, altFormat: "h:i K", time_24hr: false,
+                  onReady: (dates, str, fp) => fpAddDone(fp) };
 
 /** Matches inside `root` plus `root` itself, so x-for rows can pass their own input. */
 function fpTargets(root, selector) {
