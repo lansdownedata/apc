@@ -106,8 +106,8 @@
                  @change="stop.airline = $event.target.value">
               {% include "components/searchable_select.html" with name="stop_airline_ui" field_id="bw-stop-airline" options=airline_options empty_label="Airline" %}
             </div>
-            {# pattern accepts both digits and a tail number like "N561FX" (Private carrier) —
-               digits-only would block a legitimate tail number at native form submission. #}
+            {% comment %} pattern accepts both digits and a tail number like "N561FX" (Private carrier) —
+               digits-only would block a legitimate tail number at native form submission. {% endcomment %}
             <input type="text" x-model="stop.flight" pattern="[0-9A-Za-z]*" maxlength="6"
                    placeholder="Flight # / tail #" class="field w-full">
           </div>
