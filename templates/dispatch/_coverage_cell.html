@@ -1,6 +1,6 @@
-{% comment %} Vendor covering the trip — trip.active is set by the selector, no per-row query. {% endcomment %}
+{% comment %} Who covers the trip — trip.active is set by the selector, no per-row query. {% endcomment %}
 {% if trip.active %}
-  <span class="text-muted">↗ {{ trip.active.vendor.name }}{% if trip.coverage == 'offered' %} <i class="ti ti-clock text-[13px]"></i>{% endif %}</span>
+  <span class="text-muted">{% if trip.active.is_in_house %}<i class="ti ti-home text-[13px]" title="In-house"></i>{% else %}↗{% endif %} {{ trip.active.provider_name }}{% if trip.coverage == 'offered' %} <i class="ti ti-clock text-[13px]"></i>{% endif %}</span>
 {% else %}
   <span class="text-muted">—</span>
 {% endif %}

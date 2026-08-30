@@ -6,6 +6,7 @@ from datetime import date
 
 from django.db.models import Count, Exists, F, OuterRef, Prefetch
 
+from apps.fleet.models import RENEWAL_PREFETCH, Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
 from apps.vendors.models import Vendor, VendorInsurance
@@ -51,7 +52,7 @@ def board_trips(day: date) -> list[Reservation]:
             Prefetch("stops", queryset=Stop.objects.select_related("airline").order_by("sequence")),
             Prefetch(
                 "assignments",
-                queryset=Assignment.objects.active().select_related("vendor"),
+                queryset=Assignment.objects.active().select_related("vendor", "driver", "vehicle"),
                 to_attr="active_list",
             ),
         )
@@ -133,3 +134,45 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> li
         }
         for vendor in qs
     ]
+
+
+def in_house_options(trip: Reservation) -> dict:
+    """Our own drivers and units for the drawer's In-house block.
+
+    Drivers rank most-used first (every past assignment counts, the same basis as the
+    vendor ranking), ties by name. Units that match the trip's vehicle class come first
+    and are flagged; when the trip has no class set, nothing is flagged and they list by
+    name. Each row carries its renewal roll-up so the drawer can warn — never block.
+
+    Four queries whatever the fleet size (drivers + their renewals, units + theirs), and
+    one when there are no active drivers, since an empty base queryset skips its
+    prefetch — the panel's own query budget relies on that.
+    """
+    drivers = list(
+        Driver.objects.filter(status=Driver.Status.ACTIVE)
+        .annotate(used=Count("assignments"))
+        .prefetch_related(RENEWAL_PREFETCH)
+        .order_by("-used", "name")
+    )
+    if not drivers:
+        return {"drivers": [], "vehicles": []}
+    vehicles = list(
+        Vehicle.objects.filter(status=Vehicle.Status.ACTIVE)
+        .select_related("vehicle_type")
+        .prefetch_related(RENEWAL_PREFETCH)
+        .order_by("name")
+    )
+    if trip.vehicle_id is not None:
+        vehicles.sort(key=lambda v: (v.vehicle_type_id != trip.vehicle_id, v.name.lower()))
+    return {
+        "drivers": [{"driver": d, "used": d.used, "renewal": d.renewal_summary()} for d in drivers],
+        "vehicles": [
+            {
+                "vehicle": v,
+                "fits_vehicle": trip.vehicle_id is not None
+                and v.vehicle_type_id == trip.vehicle_id,
+                "renewal": v.renewal_summary(),
+            }
+            for v in vehicles
+        ],
+    }

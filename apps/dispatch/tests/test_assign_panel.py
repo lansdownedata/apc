@@ -336,7 +336,9 @@ def test_panel_route_comes_from_one_stops_query(logged_in_client, django_assert_
     """The whole route renders from a single prefetch. `Reservation.pickup`/`dropoff` cost a
     query each, and a per-stop lookup would scale with the route — either pushes this over."""
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
-    with django_assert_max_num_queries(9):
+    # Budget 10, not 9: selectors.in_house_options adds one query (the active-drivers read)
+    # even when there are no drivers to show.
+    with django_assert_max_num_queries(10):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
 
@@ -366,5 +368,7 @@ def test_panel_shows_the_flight_with_a_verify_button(logged_in_client):
 def test_panel_flight_join_adds_no_query(logged_in_client, django_assert_max_num_queries):
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     _with_flight(trip)
-    with django_assert_max_num_queries(9):
+    # Budget 10, not 9: selectors.in_house_options adds one query (the active-drivers read)
+    # even when there are no drivers to show.
+    with django_assert_max_num_queries(10):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
