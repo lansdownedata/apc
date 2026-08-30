@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Renewal types</h1>
+      <p class="text-[12.5px] text-muted mt-0.5">The paperwork each driver and vehicle carries. Inactive types stay on existing records.</p>
+    </div>
+    <a href="{% url 'renewal_type_create' %}" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"><i class="ti ti-plus text-[15px]"></i> New type</a>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[560px]">
+        <thead>
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-5 py-3">Name</th>
+            <th class="font-medium px-3 py-3">Applies to</th>
+            <th class="font-medium px-3 py-3 text-center">Sort order</th>
+            <th class="font-medium px-3 py-3 text-center">Active</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for t in renewal_types %}
+          <tr onclick="window.location='{% url 'renewal_type_edit' t.pk %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
+            <td class="px-5 py-3.5 font-semibold text-ink">{{ t.name }}</td>
+            <td class="px-3 py-3.5 text-muted">{{ t.get_applies_to_display }}</td>
+            <td class="px-3 py-3.5 text-center text-muted">{{ t.sort_order }}</td>
+            <td class="px-3 py-3.5 text-center">
+              {% if t.active %}<span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><i class="ti ti-check text-[11px]"></i> Active</span>
+              {% else %}<span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">Inactive</span>{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="px-5 py-16 text-center text-muted"><i class="ti ti-calendar-off text-[28px] text-slate-300"></i><div class="mt-2 text-[13px]">No renewal types yet.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
