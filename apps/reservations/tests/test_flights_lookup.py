@@ -233,6 +233,24 @@ def test_refuses_an_airport_with_no_scheduled_service_before_any_call(iad, unite
     assert Flight.objects.count() == 0
 
 
+def test_refuses_a_private_flight_before_any_call(iad, now, client):
+    """A tail number (e.g. N561FX) can't be indexed by aviationstack — it has no airline
+    code or flight number to look up. Refused before touching the airport/timezone/date
+    guards at all, mirroring the airport's own no_iata / no_timezone / no_scheduled_service
+    refusals (2026-08-29 §3)."""
+    from apps.addresses.models import Airline
+
+    future, live = client
+    private = Airline.objects.get(iata="N")
+    with pytest.raises(flights.FlightLookupError) as exc:
+        _lookup(iad, private, flight_number="N561FX")
+    assert exc.value.code == "private_flight"
+    assert exc.value.message
+    future.assert_not_called()
+    live.assert_not_called()
+    assert Flight.objects.count() == 0
+
+
 @pytest.mark.parametrize(
     "over, code",
     [

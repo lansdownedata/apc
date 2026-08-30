@@ -303,7 +303,11 @@ class Stop(TimeStampedModel):
     @property
     def flight_label(self) -> str:
         """Staff rendering, the same on every surface: "UA 123" · "United Airlines" ·
-        "Flight 123" · ""."""
+        "Flight 123" · "". For the seeded Private carrier, `flight_number` IS the tail
+        number (e.g. "N561FX") — "{iata} {flight_number}" would double up the leading N
+        ("N N561FX"), so just the tail number is shown (2026-08-29 §4)."""
+        if self.airline_id and self.airline.is_private and self.flight_number:
+            return self.flight_number
         if self.airline_id and self.flight_number:
             return f"{self.airline.iata} {self.flight_number}"
         if self.airline_id:
@@ -312,7 +316,10 @@ class Stop(TimeStampedModel):
 
     @property
     def flight_label_long(self) -> str:
-        """Customer rendering (quote page): the carrier's name instead of its code."""
+        """Customer rendering (quote page): the carrier's name instead of its code — except
+        Private, which has no carrier name to show, only the tail number."""
+        if self.airline_id and self.airline.is_private and self.flight_number:
+            return self.flight_number
         if self.airline_id and self.flight_number:
             return f"{self.airline.name} {self.flight_number}"
         return self.flight_label
@@ -324,11 +331,16 @@ class Stop(TimeStampedModel):
 
     @property
     def verify_available(self) -> bool:
-        """True when this stop's airport has scheduled service — gates the drawer's
-        Verify/Refresh button (`flights.lookup` refuses otherwise, 2026-08-29 finding 2).
-        `self.airport` is joined by `Reservation.ordered_stops` / the dispatch prefetch,
-        so this never costs its own query."""
-        return bool(self.airport_id and self.airport.has_scheduled_service)
+        """True when this stop's airport has scheduled service and the flight isn't a
+        Private tail number — gates the drawer's Verify/Refresh button (`flights.lookup`
+        refuses either case, 2026-08-29 finding 2 and §3). `self.airport` / `self.airline`
+        are joined by `Reservation.ordered_stops` / the dispatch prefetch, so this never
+        costs its own query."""
+        return bool(
+            self.airport_id
+            and self.airport.has_scheduled_service
+            and not (self.airline_id and self.airline.is_private)
+        )
 
     @property
     def flight_verify_payload(self) -> dict:

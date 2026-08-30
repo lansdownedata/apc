@@ -384,6 +384,9 @@ function quoteWorkspace(opts = {}) {
     saveUrl: opts.saveUrl,
     sendQuoteUrl: opts.sendQuoteUrl,
     acUrl: opts.acUrl,
+    // The seeded Private/tail-number carrier's pk (2026-08-29 §3) — lets the Verify gate
+    // recognise it client-side the same way `Stop.verify_available` does server-side.
+    privateAirlineId: opts.privateAirlineId ?? null,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
@@ -695,15 +698,24 @@ function quoteWorkspace(opts = {}) {
       const v = this.draft.stops[i].verify;
       return v && v.key === this.flightKey(i) ? v.pill : null;
     },
+    /* A tail number (the seeded Private carrier) has no scheduled flight number for
+       aviationstack to look up — Verify must not be offered (2026-08-29 §3), mirroring
+       `Stop.verify_available` server-side. */
+    isPrivateAirline(i) {
+      const s = this.draft.stops[i];
+      return this.privateAirlineId != null && String(s.airline || "") === String(this.privateAirlineId);
+    },
     canVerify(i) {
       const s = this.draft.stops[i];
       return !s.verifying
+        && !this.isPrivateAirline(i)
         && !!(s.airport && s.hasScheduledService && s.airline && s.flight && this.stopDirection(i) && this.draft.date)
         && this.draft.date >= localDate(new Date());
     },
     verifyReason(i) {
       const s = this.draft.stops[i];
       if (!s.hasScheduledService) return "This airport has no scheduled passenger service";
+      if (this.isPrivateAirline(i)) return "Private flights aren't in any airline's schedule to verify";
       if (!s.airline) return "Choose the airline first";
       if (!s.flight) return "Enter the flight number";
       if (!this.stopDirection(i)) return "Choose Arriving or Departing to verify";

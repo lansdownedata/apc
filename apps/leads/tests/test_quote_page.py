@@ -335,3 +335,21 @@ def test_quote_page_reads_arriving_and_departing_flights(client):
     html = client.get(reverse("quote_page", args=[token])).content.decode()
     assert "Arriving on United Airlines 123" in html
     assert "Departing on United Airlines 456" in html
+
+
+def test_quote_page_renders_a_private_tail_number_alone(client):
+    """`flight_label_long` would otherwise read "Private / Tail number N561FX" — for the
+    seeded Private carrier, just the tail number is customer-facing-correct (2026-08-29 §4)."""
+    from apps.addresses.models import Airline, Airport
+
+    lead = _quoted_lead()
+    reservation = lead.reservations.first()
+    stop = reservation.stops.get(sequence=0)
+    stop.airport = Airport.objects.get(iata="IAD")
+    stop.airline = Airline.objects.get(iata="N")
+    stop.flight_number = "N561FX"
+    stop.save()
+    token = services.make_deposit_token(lead)
+    html = client.get(reverse("quote_page", args=[token])).content.decode()
+    assert "Arriving on N561FX" in html
+    assert "Private" not in html

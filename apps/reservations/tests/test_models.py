@@ -221,6 +221,31 @@ def test_verify_available_false_without_an_airport():
     assert stop.verify_available is False
 
 
+# --- Private / tail-number flights (2026-08-29) --------------------------------------
+
+
+def _private_airline():
+    from apps.addresses.models import Airline
+
+    return Airline.objects.get(iata="N")  # seeded by addresses.0007
+
+
+def test_verify_available_false_for_a_private_flight():
+    """A tail number can't be indexed by aviationstack — Verify must not be offered even
+    though the airport itself has scheduled service (mirrors the has_scheduled_service
+    gate, which alone isn't enough here)."""
+    stop = _airport_stop(airline=_private_airline(), flight_number="N561FX")
+    assert stop.verify_available is False
+
+
+def test_flight_label_for_private_is_just_the_tail_number():
+    """`{airline.iata} {flight_number}` would render "N N561FX" — wrong. The tail number
+    already says everything there is to say."""
+    stop = _airport_stop(airline=_private_airline(), flight_number="N561FX")
+    assert stop.flight_label == "N561FX"
+    assert stop.flight_label_long == "N561FX"
+
+
 def test_ordered_stops_join_the_airline_and_airport(django_assert_num_queries):
     stop = _airport_stop(flight_number="123")
     res = Reservation.objects.get(pk=stop.reservation_id)

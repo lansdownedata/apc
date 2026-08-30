@@ -155,6 +155,20 @@ def test_an_airport_with_no_scheduled_service_is_400_without_calling_the_provide
     future.assert_not_called()
 
 
+def test_a_private_tail_number_is_400_without_calling_the_provider(staff, iad):
+    """Real (unmocked) flights.lookup — a well-formed tail number must reach it (and get
+    refused there with a clear message) rather than being rejected earlier by the view's
+    own digits-only format check, which would surface the wrong ('digits only') reason."""
+    from apps.addresses.models import Airline
+
+    private = Airline.objects.get(iata="N")
+    with patch("apps.integrations.aviationstack.future_schedule") as future:
+        resp = _post(staff, _body(iad, private, flight="N561FX"))
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "private_flight"
+    future.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "code, message",
     [

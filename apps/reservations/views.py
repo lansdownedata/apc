@@ -18,7 +18,7 @@ from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
 from . import flights
-from .drafts import FLIGHT_RE, DraftError, save_reservation_from_draft
+from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .models import FlightDirection, Reservation, Stop
 
@@ -145,8 +145,18 @@ def flight_verify(request) -> JsonResponse:
     if airline is None:
         return _bad("Choose the airline first.", "airline")
     flight_number = str(payload.get("flight") or "").strip()
-    if not FLIGHT_RE.match(flight_number):
-        return _bad("Enter the flight number (digits only).", "flight")
+    # A tail number's shape (TAIL_RE) only applies to the Private carrier — checked here
+    # so a real one reaches `flights.lookup` below, whose own `private_flight` refusal is
+    # the actual, clearer reason ("private flights aren't in any airline's schedule"), not
+    # a misleading "digits only" one.
+    pattern = TAIL_RE if airline.is_private else FLIGHT_RE
+    if not pattern.match(flight_number.upper() if airline.is_private else flight_number):
+        message = (
+            "Enter the tail number (e.g. N561FX)."
+            if airline.is_private
+            else "Enter the flight number (digits only)."
+        )
+        return _bad(message, "flight")
     direction = str(payload.get("direction") or "")
     if direction not in FlightDirection.values:
         return _bad("Choose Arriving or Departing to verify.", "direction")
