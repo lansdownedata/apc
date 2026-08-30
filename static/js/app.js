@@ -395,6 +395,9 @@ function quoteWorkspace(opts = {}) {
     depositPct: 50,
     sending: false,
     editorOpen: false,
+    // The wedding builder modal (spec 2026-08-30 §5.2). Opens itself when the workspace
+    // was reached with ?wedding=1, i.e. straight from the New wedding button.
+    weddingOpen: !!opts.weddingOpen,
     draftIsNew: false,
     // Set once the agent gives the drop-off a day / a time of its own; until then each
     // follows the pickup.  Component state, not draft state — neither may ride along in
@@ -1923,3 +1926,447 @@ function contactPicker(opts = {}) {
   };
 }
 window.contactPicker = contactPicker;
+
+/* ------------------------------------------------------- wedding intake (2026-08-30)
+ * The customer describes their wedding; this derives the trips. Seven steps, all state
+ * client-side, ONE post at the end — the same shape as quoteSteps() above, just longer.
+ *
+ * The generation rules below MIRROR apps/public/wedding.py, which is the authority: the
+ * server re-derives every vehicle recommendation on submit and ignores whatever this
+ * sends. Change one and change the other, or the preview and the quote drift apart.
+ */
+const WEDDING_STEPS = ["date", "venue", "who", "hotels", "times", "itinerary", "contact"];
+const WEDDING_GROUPS = [
+  {
+    key: "guests", title: "Our guests", hint: "Shuttles between hotels and the venue",
+    icon: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17.5" cy="9.5" r="2.2"/><path d="M16 15.6A5 5 0 0 1 22 20"/>',
+  },
+  {
+    key: "party", title: "The wedding party", hint: "Bridesmaids, groomsmen, the two of you",
+    icon: '<circle cx="9" cy="14" r="4.2"/><circle cx="15" cy="14" r="4.2"/><path d="M9 9.8 11 5h2l2 4.8"/>',
+  },
+  {
+    key: "family", title: "Family & VIPs", hint: "Parents, grandparents, close family",
+    icon: '<path d="M7 3h10l-1.2 6.2A4 4 0 0 1 11.9 12h-.2A4 4 0 0 1 8.2 9.2Z"/><path d="M12 12v6"/><path d="M8.5 21h7"/><path d="M9 18h6"/>',
+  },
+  {
+    key: "couple", title: "Just the two of us", hint: "A private car for the exit",
+    icon: '<path d="M4 16v-3.2L6 8h12l2 4.8V16"/><path d="M4 16h16"/><circle cx="7.5" cy="17.6" r="1.6"/><circle cx="16.5" cy="17.6" r="1.6"/><path d="M9 8V6.2A1.2 1.2 0 0 1 10.2 5h3.6A1.2 1.2 0 0 1 15 6.2V8"/>',
+  },
+];
+const WEDDING_MAX_LEGS = 12;
+
+function weddingPlanner(opts = {}) {
+  const saved = opts.resume || null;
+  return {
+    venuesUrl: opts.venuesUrl,
+    groupsMeta: WEDDING_GROUPS,
+    steps: WEDDING_STEPS,
+    resumed: !!(saved && saved.resume),
+    quoteNo: (saved && saved.quote_no) || "",
+    // Portal mode (the office's builder): the lead already has a contact, so that step
+    // is dropped, the per-step footers give way to one shared one, and each leg carries
+    // a real VehicleType the agent picked. An explicit option, NOT something read off
+    // the saved plan — a brand-new wedding started from the New wedding button has no
+    // saved plan at all, and it is just as much the office's builder.
+    portal: !!opts.portal,
+    vehicleOptions: opts.vehicleOptions || [],
+
+    step: 0,
+    date: (saved && saved.wedding_date) || "",
+    venue: (saved && saved.venue) || null,
+    venueName: (saved && saved.venue_name) || "",
+    sameSite: saved ? saved.same_site !== false : true,
+    ceremony: (saved && saved.ceremony) || null,
+    ceremonyName: (saved && saved.ceremony && saved.ceremony.name) || "",
+    who: (saved && saved.groups) || [],
+    counts: {
+      guests: (saved && saved.guest_count) || 100,
+      party: (saved && saved.party_count) || 12,
+      family: (saved && saved.family_count) || 8,
+    },
+    hotels: (saved && saved.hotels) || [],
+    hotelsTbd: !!(saved && saved.hotels_tbd),
+    ceremonyTime: (saved && saved.ceremony_time) || "16:00",
+    endTime: (saved && saved.end_time) || "23:00",
+    timesTbd: !!(saved && saved.times_tbd),
+    legs: (saved && saved.legs && saved.legs.length) ? saved.legs.map((l) => ({ ...l })) : null,
+    contact: {
+      name: (saved && saved.name) || "",
+      email: (saved && saved.email) || "",
+      phone: (saved && saved.phone) || "",
+    },
+    submitting: false,
+
+    // typeahead
+    query: { venue: "", ceremony: "", hotel: "" },
+    results: { venue: [], ceremony: [], hotel: [] },
+    open: { venue: false, ceremony: false, hotel: false },
+    active: { venue: -1, ceremony: -1, hotel: -1 },
+    _ctl: {},
+
+    init() {
+      // A plan that already has an itinerary — a customer's resume link, or the office
+      // reopening a saved wedding — drops straight onto it. A brand-new one starts at
+      // step 1.
+      if ((this.resumed || this.portal) && this.legs) {
+        this.step = WEDDING_STEPS.indexOf("itinerary");
+      }
+      this.track(this.stepName);
+    },
+
+    /* ------------------------------------------------------------------ step model */
+    get stepName() { return WEDDING_STEPS[this.step]; },
+    get visibleSteps() {
+      // Nobody is being collected from a hotel, so don't ask which hotel.
+      const needsHotels = this.who.includes("guests") || this.who.includes("family");
+      return WEDDING_STEPS.filter((s) => {
+        if (s === "hotels") return needsHotels;
+        if (s === "contact") return !this.portal; // the lead already has one
+        return true;
+      });
+    },
+    get stepNumber() { return this.visibleSteps.indexOf(this.stepName) + 1; },
+    get stepCount() { return this.visibleSteps.length; },
+    railState(name) {
+      const here = this.visibleSteps.indexOf(this.stepName);
+      const i = this.visibleSteps.indexOf(name);
+      return i < here ? "done" : i === here ? "on" : "";
+    },
+
+    canAdvance() {
+      switch (this.stepName) {
+        case "date": return !!this.date;
+        case "venue": return !!(this.venue || this.venueName.trim());
+        case "who": return this.who.length > 0;
+        // "We haven't booked hotels yet" is a real answer, not a skip — 43% of
+        // inquiries are six months out and genuinely cannot answer this.
+        case "hotels": return this.hotelsTbd || this.hotels.length > 0;
+        case "contact":
+          return !!(this.contact.name.trim() &&
+            (this.contact.email.trim() || this.contact.phone.trim()));
+        default: return true;
+      }
+    },
+
+    next() {
+      if (!this.canAdvance()) return;
+      let i = this.step + 1;
+      while (i < WEDDING_STEPS.length && !this.visibleSteps.includes(WEDDING_STEPS[i])) i++;
+      if (WEDDING_STEPS[i] === "itinerary" && !this.legs) this.legs = this.generateLegs();
+      this.track(this.stepName, "completed");
+      this.step = Math.min(i, WEDDING_STEPS.length - 1);
+      this.track(this.stepName);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    back() {
+      let i = this.step - 1;
+      while (i > 0 && !this.visibleSteps.includes(WEDDING_STEPS[i])) i--;
+      this.step = Math.max(0, i);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+
+    /* Step-level drop-off is the only way to tell whether the deep path is worth its
+     * length (spec §7.3). No analytics vendor is installed yet, so this pushes to a
+     * dataLayer and fires a DOM event — whatever tag manager arrives later picks both up
+     * with no further work here. */
+    track(step, phase = "viewed") {
+      const detail = { event: "wedding_step", step, phase };
+      (window.dataLayer = window.dataLayer || []).push(detail);
+      window.dispatchEvent(new CustomEvent("wedding-step", { detail }));
+    },
+
+    /* ------------------------------------------------------------------- formatting */
+    pad(n) { return String(n).padStart(2, "0"); },
+    fmtTime(hhmm) {
+      if (!hhmm) return "—";
+      const [h, m] = hhmm.split(":").map(Number);
+      const hour = h % 12 || 12;
+      return `${hour}:${this.pad(m)} ${h >= 12 ? "PM" : "AM"}`;
+    },
+    fmtDate(iso) {
+      if (!iso) return "—";
+      // Noon, not midnight: a date-only string parses as UTC, and midnight UTC is the
+      // previous day everywhere west of Greenwich — including every customer we have.
+      return new Date(`${iso}T12:00:00`).toLocaleDateString("en-US",
+        { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    },
+    daysOut(iso) {
+      if (!iso) return null;
+      const then = new Date(`${iso}T12:00:00`);
+      const now = new Date();
+      return Math.round((then - new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12))
+        / 86400000);
+    },
+    get leadTimeNote() {
+      const days = this.daysOut(this.date);
+      if (days === null) return null;
+      if (days < 0) return { tone: "warn", text: "That date has already passed — double-check the year." };
+      if (days < 45) return { tone: "warn", text: `That's ${days} days away. We'll flag this as time-sensitive and call you today.` };
+      if (days < 200) return { tone: "gold", text: `About ${Math.round(days / 30)} months out — a good time to lock in a Saturday.` };
+      return { tone: "info", text: "That's over a year out. We'll only ask what you already know — you can fill in the rest later." };
+    },
+
+    /* ---------------------------------------------------------------- the rules */
+    shift(hhmm, mins) {
+      const [h, m] = hhmm.split(":").map(Number);
+      const t = (((h * 60 + m + mins) % 1440) + 1440) % 1440;
+      return `${this.pad(Math.floor(t / 60))}:${this.pad(t % 60)}`;
+    },
+    vehicleFor(count) {
+      const cap = (this.venue && this.venue.vehicle_cap) || null;
+      const limit = Math.min(cap || 56, 56);
+      if (count <= 6) return "Executive SUV";
+      if (count <= 14) return "Sprinter van";
+      if (count <= 24) return "Mini bus";
+      if (count <= 38) return "Executive mini coach";
+      const runs = Math.ceil(count / limit);
+      return runs <= 1 ? "Motorcoach" : `${runs} × ${limit}-passenger coach`;
+    },
+    shortName(place) {
+      const suffix = ` ${place.city || ""}`;
+      return place.city && place.name.endsWith(suffix)
+        ? place.name.slice(0, -suffix.length) : place.name;
+    },
+    get hotelLabel() {
+      if (this.hotelsTbd || !this.hotels.length) return "Guest hotels (to be confirmed)";
+      if (this.hotels.length === 1) return this.hotels[0].name;
+      return `${this.hotels.length} hotels — ${this.hotels.map((h) => this.shortName(h)).join(", ")}`;
+    },
+    siteName(place, typed, fallback) {
+      if (place) return place.name;
+      return (typed || "").trim() || fallback;
+    },
+    siteLine(place) {
+      return place ? (place.location_line || place.sub || "") : "";
+    },
+    get venueLabel() { return this.siteName(this.venue, this.venueName, "Your venue"); },
+    get ceremonyLabel() {
+      if (this.sameSite) return this.venueLabel;
+      return this.siteName(this.ceremony, this.ceremonyName, "Ceremony site");
+    },
+    get venueCap() { return (this.venue && this.venue.vehicle_cap) || null; },
+
+    generateLegs() {
+      const cer = this.timesTbd ? "16:00" : (this.ceremonyTime || "16:00");
+      const end = this.timesTbd ? "23:00" : (this.endTime || "23:00");
+      const venue = { name: this.venueLabel, sub: this.siteLine(this.venue) };
+      const site = { name: this.ceremonyLabel, sub: this.sameSite ? venue.sub : this.siteLine(this.ceremony) };
+      const hotel = {
+        name: this.hotelLabel,
+        sub: (this.hotelsTbd || !this.hotels.length) ? "hotel not booked yet"
+          : (this.hotels.length === 1 ? this.siteLine(this.hotels[0]) : ""),
+      };
+      const has = (k) => this.who.includes(k);
+      const legs = [];
+      if (has("party")) legs.push({
+        id: "party-in", time: this.shift(cer, -75), title: "Wedding party to the ceremony",
+        from: "Getting-ready location", from_sub: "we'll confirm the address with you",
+        to: site.name, to_sub: site.sub, pax: this.counts.party, optional: false,
+      });
+      if (has("family")) legs.push({
+        id: "family-in", time: this.shift(cer, -70), title: "Family & VIPs to the ceremony",
+        from: hotel.name, from_sub: hotel.sub, to: site.name, to_sub: site.sub,
+        pax: this.counts.family, optional: false,
+      });
+      if (has("guests")) legs.push({
+        id: "guests-in", time: this.shift(cer, -60), title: "Guests to the ceremony",
+        from: hotel.name, from_sub: hotel.sub, to: site.name, to_sub: site.sub,
+        pax: this.counts.guests, optional: false,
+      });
+      if (!this.sameSite) {
+        const aboard = (has("guests") ? this.counts.guests : 0) + (has("party") ? this.counts.party : 0)
+          + (has("family") ? this.counts.family : 0);
+        legs.push({
+          id: "hop", time: this.shift(cer, 45), title: "Ceremony to reception",
+          from: site.name, from_sub: site.sub, to: venue.name, to_sub: venue.sub,
+          pax: aboard || this.counts.guests, optional: false,
+        });
+      }
+      if (has("guests")) {
+        legs.push({
+          id: "early-out", time: this.shift(end, -45), title: "Early return run",
+          from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
+          pax: Math.max(12, Math.round(this.counts.guests * 0.4)), optional: true,
+          why: "Guests with young kids and older family almost always leave before the end.",
+        });
+        legs.push({
+          id: "final-out", time: end, title: "Final return — last call",
+          from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
+          pax: this.counts.guests, optional: false,
+        });
+      }
+      if (has("couple")) legs.push({
+        id: "exit", time: end, title: "Your exit", from: venue.name, from_sub: venue.sub,
+        to: "Hotel or home", to_sub: "we'll confirm with you", pax: 2, optional: false,
+      });
+      legs.sort((a, b) => a.time.localeCompare(b.time));
+      return legs;
+    },
+
+    /* ------------------------------------------------------------ itinerary edits */
+    get liveLegs() { return (this.legs || []).filter((l) => !l.skip); },
+    get legCount() { return this.liveLegs.length; },
+    get canAddLeg() { return this.legCount < WEDDING_MAX_LEGS; },
+    resort() { this.legs.sort((a, b) => a.time.localeCompare(b.time)); },
+    setLegTime(leg, value) {
+      if (!value) return;
+      leg.time = value;
+      this.timesTbd = false;
+      this.resort();
+    },
+    setLegPax(leg, value) {
+      leg.pax = Math.max(1, Math.min(400, parseInt(value, 10) || 1));
+    },
+    dropLeg(leg) { leg.skip = true; },
+    restoreLeg(leg) { leg.skip = false; },
+    regenerate() { this.legs = this.generateLegs(); },
+    bump(key, delta) {
+      this.counts[key] = Math.max(1, Math.min(400, (this.counts[key] || 1) + delta));
+      this.legs = null;
+    },
+    setCount(key, value) {
+      this.counts[key] = Math.max(1, Math.min(400, parseInt(value, 10) || 1));
+      this.legs = null;
+    },
+    toggleGroup(key) {
+      this.who = this.who.includes(key) ? this.who.filter((k) => k !== key) : this.who.concat(key);
+      this.legs = null;
+    },
+    setSameSite(value) {
+      this.sameSite = value;
+      if (value) { this.ceremony = null; this.ceremonyName = ""; }
+      this.legs = null;
+    },
+    toggleHotelsTbd() {
+      this.hotelsTbd = !this.hotelsTbd;
+      if (this.hotelsTbd) this.hotels = [];
+      this.legs = null;
+    },
+    toggleTimesTbd() {
+      this.timesTbd = !this.timesTbd;
+      if (this.timesTbd) { this.ceremonyTime = "16:00"; this.endTime = "23:00"; }
+      this.legs = null;
+    },
+    removeHotel(i) { this.hotels.splice(i, 1); this.legs = null; },
+    clearPlace(kind) {
+      if (kind === "venue") { this.venue = null; this.venueName = ""; }
+      else { this.ceremony = null; this.ceremonyName = ""; }
+      this.legs = null;
+    },
+
+    /* ------------------------------------------------------------------ typeahead */
+    kindFor(field) { return field === "hotel" ? "hotel" : field === "ceremony" ? "church" : "venue"; },
+    search(field) {
+      if (field === "venue") this.venueName = this.query.venue;
+      if (field === "ceremony") this.ceremonyName = this.query.ceremony;
+      const q = (this.query[field] || "").trim();
+      this._ctl[field]?.abort();
+      if (q.length < 2) { this.results[field] = []; this.open[field] = false; return; }
+      this._ctl[field] = new AbortController();
+      const params = new URLSearchParams({ q, kind: this.kindFor(field) });
+      fetch(`${this.venuesUrl}?${params}`, { signal: this._ctl[field].signal })
+        .then((r) => r.json())
+        .then((d) => {
+          this.results[field] = d.results || [];
+          this.active[field] = this.results[field].length ? 0 : -1;
+          this.open[field] = this.results[field].length > 0;
+        })
+        .catch(() => { /* superseded by a newer keystroke — leave state alone */ });
+    },
+    move(field, delta) {
+      const list = this.results[field];
+      if (!list.length) return;
+      this.active[field] = (this.active[field] + delta + list.length) % list.length;
+    },
+    chooseActive(field) {
+      if (this.active[field] >= 0) this.pick(field, this.results[field][this.active[field]]);
+    },
+    pick(field, place) {
+      if (!place) return;
+      if (field === "venue") { this.venue = place; this.venueName = place.name; }
+      else if (field === "ceremony") { this.ceremony = place; this.ceremonyName = place.name; }
+      else if (!this.hotels.some((h) => h.name === place.name)) {
+        this.hotels.push(place);
+        this.hotelsTbd = false;
+      }
+      this.query[field] = field === "hotel" ? "" : place.name;
+      this.closeResults(field);
+      this.legs = null;
+    },
+    closeResults(field) { this.open[field] = false; this.active[field] = -1; },
+
+    /* ----------------------------------------------------------------- submission */
+    get groupsCsv() { return this.who.join(","); },
+    get hotelsJson() {
+      return JSON.stringify(this.hotels.map((h) => ({ venue_id: h.id || null, name: h.name })));
+    },
+    /* {leg_id: VehicleType pk} for the office's builder. Only assigned legs are sent:
+     * an absent key means "leave whatever this trip already had", which is what stops a
+     * rebuild after a time change from silently un-pricing the day. */
+    get vehiclesJson() {
+      const out = {};
+      for (const leg of this.liveLegs) if (leg.vehicle_id) out[leg.id] = leg.vehicle_id;
+      return JSON.stringify(out);
+    },
+
+    get legsJson() {
+      return JSON.stringify(this.liveLegs.map((l) => ({
+        id: l.id, time: l.time, title: l.title,
+        from: l.from, from_sub: l.from_sub || "",
+        to: l.to, to_sub: l.to_sub || "",
+        pax: l.pax, optional: !!l.optional,
+      })));
+    },
+    onSubmit(e) {
+      if (!this.canAdvance()) { e.preventDefault(); return; }
+      this.track("contact", "completed");
+      this.submitting = true;
+    },
+  };
+}
+window.weddingPlanner = weddingPlanner;
+
+/* --------------------------------------------------- hero service picker (2026-08-30)
+ * Four cards; two of them swap the EXISTING booking widget in place rather than
+ * navigating, so a visitor can still request a quote without leaving the hero.
+ *
+ * The cards are real links (see components/service_picker.html) — this only intercepts
+ * the two that have somewhere in-page to go.
+ */
+const SERVICE_HEADINGS = {
+  airport: "Your airport transfer",
+  corporate: "Your corporate trip",
+};
+
+function servicePicker(opts = {}) {
+  return {
+    services: opts.services || {},
+    mode: "picker",
+    heading: "Get a quote",
+
+    choose(slug) {
+      this.mode = "form";
+      this.heading = SERVICE_HEADINGS[slug] || "Get a quote";
+      // $nextTick, not immediately: the widget is inside an x-show that has only just
+      // flipped, and Tom Select measures a hidden control as zero-width.
+      this.$nextTick(() => this.preselect(this.services[slug]));
+    },
+
+    /* Set the widget's occasion. Tom Select owns the rendered control, so a bare
+     * select.value assignment would update the form but leave the visible item on
+     * "Select an occasion". */
+    preselect(pk) {
+      const select = this.$refs.widget?.querySelector('select[name="service_type"]');
+      if (!select) return;
+      if (select.tomselect) select.tomselect.setValue(String(pk || ""), true);
+      else select.value = String(pk || "");
+    },
+
+    reset() {
+      this.mode = "picker";
+      this.preselect("");
+    },
+  };
+}
+window.servicePicker = servicePicker;

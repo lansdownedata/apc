@@ -10,6 +10,11 @@ urlpatterns = [
     path("bookings/", views.bookings, name="bookings"),
     path("bookings/thanks/", views.booking_thanks, name="booking_thanks"),
     path("bookings/geocode/", views.geocode, name="geocode"),
+    path("weddings/plan/", views.wedding_plan, name="wedding_plan"),
+    # The emailed resume link. A signed token in the path, never the couple's own
+    # details in a query string.
+    path("weddings/plan/<str:token>/", views.wedding_plan, name="wedding_resume"),
+    path("weddings/venues/", views.venue_search, name="wedding_venues"),
     path("about-us/", views.about, name="about"),
     path("fleet/", views.fleet, name="fleet"),
     path("contact/", views.contact, name="contact"),

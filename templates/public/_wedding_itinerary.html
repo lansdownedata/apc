@@ -1,0 +1,192 @@
+{% comment %}
+  Step 6 — the generated itinerary. This is the screen the whole design exists for: the
+  customer never typed a pickup time, they confirm one. Requires an enclosing
+  `weddingPlanner()` scope.
+
+  A removed leg collapses to a one-line "removed / Add back" row rather than vanishing,
+  so nothing is lost by accident — the early return run in particular is the one couples
+  drop and then need.
+{% endcomment %}
+<fieldset x-show="stepName === 'itinerary'">
+  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Your wedding day</span>
+  <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+    Here&rsquo;s how we&rsquo;d run it.
+  </h2>
+  <p class="mt-2 max-w-[62ch] text-[13.5px] leading-relaxed text-muted" x-show="!timesTbd">
+    Built from your ceremony and end times. Change any pickup, drop what you don&rsquo;t need,
+    and add anything we&rsquo;ve missed.
+  </p>
+  <p class="mt-2 max-w-[62ch] text-[13.5px] leading-relaxed text-muted" x-cloak x-show="timesTbd">
+    You told us the times aren&rsquo;t set, so this is a typical day for a venue like yours.
+    Adjust anything &mdash; it&rsquo;s a starting point, not a commitment.
+  </p>
+
+  <p x-cloak x-show="resumed"
+     class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
+    <span aria-hidden="true">&#9670;</span>
+    <span><b class="font-semibold">Welcome back.</b> This is the plan we have on file
+      (<span class="font-mono2" x-text="quoteNo"></span>). Change anything and send it again &mdash;
+      it replaces what we&rsquo;re holding, it doesn&rsquo;t start a second request.</span>
+  </p>
+
+  <dl class="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-2xl bg-surface2 px-4 py-4 ring-1 ring-line sm:px-5">
+    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Date</dt>
+    <dd class="text-[13px] font-medium text-ink" x-text="fmtDate(date)"></dd>
+
+    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Venue</dt>
+    <dd class="text-[13px] font-medium text-ink">
+      <span x-text="venueLabel"></span>
+      <span x-cloak x-show="!sameSite" class="chip chip-ring ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            x-text="`+ ceremony at ${ceremonyLabel}`"></span>
+    </dd>
+
+    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Riding</dt>
+    <dd class="text-[13px] font-medium text-ink"
+        x-text="groupsMeta.filter(g => who.includes(g.key)).map(g => g.title).join(' · ')"></dd>
+
+    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Legs</dt>
+    <dd class="text-[13px] font-medium text-ink">
+      <span x-text="legCount"></span>
+      <span x-text="legCount === 1 ? 'movement' : 'movements'"></span>
+      <span x-cloak x-show="timesTbd"
+            class="chip chip-warn ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">times estimated</span>
+    </dd>
+  </dl>
+
+  {% comment %} the timeline — a gold rail with a node per movement {% endcomment %}
+  <div class="relative mt-6 pl-8">
+    <span aria-hidden="true"
+          class="absolute bottom-7 left-[6px] top-3 w-0.5 bg-gradient-to-b from-gold/55 to-gold/20"></span>
+
+    <template x-for="leg in legs" :key="leg.id">
+      <div class="relative mb-3">
+        <span aria-hidden="true"
+              class="absolute -left-8 top-[1.15rem] h-3.5 w-3.5 rounded-full border-[2.5px] bg-surface"
+              :class="leg.optional ? 'border-dashed border-muted/50' : 'border-gold'"></span>
+
+        {% comment %} removed — kept visible so it can be put back {% endcomment %}
+        <div x-cloak x-show="leg.skip"
+             class="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-line px-4 py-3">
+          <span class="text-[13px] text-muted" x-text="`${leg.title} — removed`"></span>
+          <button type="button" @click="restoreLeg(leg)"
+                  class="rounded text-[13px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Add back</button>
+        </div>
+
+        <div x-show="!leg.skip"
+             :class="leg.optional ? 'border border-dashed border-line' : 'ring-1 ring-line'"
+             class="rounded-2xl bg-surface p-4 shadow-sm">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <label class="sr-only" :for="`leg-time-${leg.id}`" x-text="`Pickup time for ${leg.title}`"></label>
+            <input type="time" :id="`leg-time-${leg.id}`" :value="leg.time"
+                   @change="setLegTime(leg, $event.target.value)"
+                   class="rounded-lg bg-goldl px-2 py-1 font-mono2 text-[13px] font-semibold text-goldd ring-1 ring-gold/35 focus-gold">
+            <span class="min-w-[7rem] flex-1 text-[13.5px] font-semibold text-ink" x-text="leg.title"></span>
+            <button type="button" @click="dropLeg(leg)" :aria-label="`Remove ${leg.title}`"
+                    class="shrink-0 rounded-md px-1.5 py-0.5 text-[15px] leading-none text-muted transition-colors focus-gold hover:bg-surface2 hover:text-ink">&times;</button>
+          </div>
+
+          <div class="mt-2.5 space-y-1 text-[12.5px] leading-relaxed">
+            <div class="flex gap-2">
+              <span aria-hidden="true" class="pt-0.5 text-[11px] text-gold">&#9679;</span>
+              <span class="text-ink">
+                <span x-text="leg.from"></span>
+                <small x-cloak x-show="leg.from_sub" class="block text-muted" x-text="leg.from_sub"></small>
+              </span>
+            </div>
+            <div class="flex gap-2">
+              <span aria-hidden="true" class="pt-0.5 text-[11px] text-gold">&#9660;</span>
+              <span class="text-ink">
+                <span x-text="leg.to"></span>
+                <small x-cloak x-show="leg.to_sub" class="block text-muted" x-text="leg.to_sub"></small>
+              </span>
+            </div>
+          </div>
+
+          <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+            {% comment %}
+              Passengers is a real input, not a display: the guest count is the number a
+              couple firms up last, and the resume link exists precisely so they can come
+              back and change it. Editing it re-derives the vehicle chip beside it.
+            {% endcomment %}
+            <span class="chip-ring inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+              <label class="sr-only" :for="`leg-pax-${leg.id}`" x-text="`Passengers on ${leg.title}`"></label>
+              {% comment %} Fixed width, not one sized from the value: a `ch`-based width
+                 clipped "12" in the mono face once the number input's own spinner took
+                 its share. 2.25rem comfortably fits three digits. {% endcomment %}
+              <input type="number" :id="`leg-pax-${leg.id}`" min="1" max="400" :value="leg.pax"
+                     @change="setLegPax(leg, $event.target.value)"
+                     class="w-9 border-0 bg-transparent p-0 text-right font-mono2 text-[11px] font-semibold text-ink focus:outline-none">
+              passengers
+            </span>
+            <span class="chip-gold inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                  x-text="vehicleFor(leg.pax)"></span>
+            <span x-cloak x-show="leg.optional"
+                  class="chip-ring inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">optional</span>
+          </div>
+
+          {% comment %}
+            Office only, and gated by the include rather than by x-show: the public page
+            must not ship a picker no customer can ever see. The public flow never assigns
+            a vehicle on purpose — doing so would snapshot a rate card off a guess — but an
+            agent should, and the pick seeds from the recommendation shown beside it.
+            Tom Select, never a bare <select>; initialised on the wrapper because x-for
+            clones this row.
+          {% endcomment %}
+          {% if vehicle_picker %}
+          {% comment %}
+            The options are rendered by Django, not by an x-for: `<template>` is not a
+            legal child of `<select>`, so the parser hoists it out and Tom Select
+            initialises against an empty list. This is the same idiom the booking
+            widget's per-stop airline picker uses — drop the duplicated id that x-for
+            would clone, initialise on the wrapper, and push this leg's value in through
+            x-effect, because Tom Select owns the rendered control and will not notice a
+            bare `.value` assignment.
+          {% endcomment %}
+          <div class="mt-3">
+            <span class="mb-1 block text-[11.5px] font-medium text-muted">Vehicle</span>
+            <div x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"
+                 x-effect="const el = $el.querySelector('select');
+                           if (el && el.tomselect && el.tomselect.getValue() !== String(leg.vehicle_id || ''))
+                             el.tomselect.setValue(String(leg.vehicle_id || ''), true)"
+                 @change="leg.vehicle_id = $event.target.value ? Number($event.target.value) : null">
+              {% include "components/searchable_select.html" with name="leg_vehicle_ui" field_id="leg-vehicle" options=vehicle_options empty_label="Not assigned" search="off" %}
+            </div>
+          </div>
+          {% endif %}
+
+          <p x-cloak x-show="leg.optional && leg.why"
+             class="mt-2.5 flex gap-2.5 rounded-xl bg-sky-50 px-3 py-2.5 text-[12.5px] leading-relaxed text-sky-700">
+            <span aria-hidden="true">&#9670;</span><span x-text="leg.why"></span>
+          </p>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <p x-cloak x-show="venueCap"
+     class="mt-4 flex gap-2.5 rounded-xl bg-amber-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-amber-700">
+    <span aria-hidden="true">&#9873;</span>
+    <span><b class="font-semibold" x-text="`${venueLabel} caps vehicles at ${venueCap} passengers.`"></b>
+      Every run above is already sized to fit &mdash; that&rsquo;s why the larger groups show more
+      than one coach.</span>
+  </p>
+
+  {% comment %} Recommendations, never a number — quoting stays with the office. {% endcomment %}
+  <p class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
+    <span aria-hidden="true">&#9670;</span>
+    <span>Vehicle types are our recommendation, not a fixed quote. If a smaller coach running
+      twice works out cheaper for you, we&rsquo;ll say so.</span>
+  </p>
+
+  <div class="mt-7 flex flex-wrap items-center gap-3">
+    <button type="button" @click="back()"
+            class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
+    <button type="button" @click="regenerate()"
+            class="rounded text-[13px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Reset to our suggestion</button>
+    <span class="flex-1"></span>
+    <button type="button" @click="next()" :disabled="!legCount"
+            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+      Looks right &mdash; continue
+    </button>
+  </div>
+</fieldset>

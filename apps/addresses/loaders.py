@@ -99,3 +99,48 @@ def load_airlines(model, path: Path | str | None = None) -> tuple[int, int]:
             else:
                 updated += 1
     return created, updated
+
+
+VENUES_CSV_PATH = Path(__file__).resolve().parent / "data" / "venues.csv"
+
+
+def load_venues(model, path: Path | str | None = None) -> tuple[int, int]:
+    """Upsert every row of the venue CSV keyed on (name, kind). Returns (created, updated).
+
+    Same contract as `load_airports` / `load_airlines`: the model is a parameter so a data
+    migration can pass its own historical model, and `supported` filters the mapped fields
+    down to what that model actually has.
+
+    (name, kind) rather than name alone because a place can legitimately be two things —
+    Lansdowne Resort is both a reception venue and a room-block hotel, and the two rows
+    carry different cap notes and rank in different typeaheads.
+
+    `address` is deliberately never written: the seed carries names and towns only, and
+    the street line belongs to LocationIQ.
+    """
+    path = Path(path) if path else VENUES_CSV_PATH
+    supported = {f.name for f in model._meta.get_fields()}
+    created = updated = 0
+    with path.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
+            kind = (row.get("kind") or "venue").strip()
+            defaults = {
+                k: v
+                for k, v in {
+                    "city": (row.get("city") or "").strip(),
+                    "state": (row.get("state") or "").strip().upper(),
+                    "vehicle_cap": _int(row.get("vehicle_cap")),
+                    "cap_note": (row.get("cap_note") or "").strip(),
+                    "lead_hits": _int(row.get("lead_hits")) or 0,
+                }.items()
+                if k in supported
+            }
+            _, was_created = model.objects.update_or_create(name=name, kind=kind, defaults=defaults)
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+    return created, updated

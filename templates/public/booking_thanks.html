@@ -7,23 +7,70 @@
 {% endblock %}
 
 {% block content %}
-<section class="mx-auto max-w-xl px-4 py-20 text-center sm:px-6 lg:px-8">
+{% comment %}
+  One thanks route for both public forms (spec §7.1). A wedding arrives here with a
+  signed `?w=` token, which turns the page into the variant listing the confirmed
+  movements and the quote reference; everything else gets the short version. A stale or
+  forged token simply falls through to the short version rather than erroring.
+{% endcomment %}
+<section class="mx-auto px-4 py-20 sm:px-6 lg:px-8 {% if wedding_lead %}max-w-2xl{% else %}max-w-xl text-center{% endif %}">
   <div class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/[0.14] text-gold">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-7 w-7">
       <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
     </svg>
   </div>
 
-  <h1 class="mt-5 font-display text-[28px] font-semibold tracking-tight text-ink">
-    Got it. We will follow up within one business day.
-  </h1>
-  <p class="mt-3 text-[15px] leading-relaxed text-muted">
-    Need us sooner? Call
-    <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold">(202) 424-2600</a>.
-  </p>
+  {% if wedding_lead %}
+    <h1 class="mt-5 text-center font-display text-[28px] font-semibold tracking-tight text-ink">
+      Your day is with our dispatch team.
+    </h1>
+    <p class="mx-auto mt-3 max-w-lg text-center text-[15px] leading-relaxed text-muted">
+      We&rsquo;ve got all
+      {{ reservations|length }} movement{{ reservations|length|pluralize }} for
+      {{ reservations.0.pickup_date|date:"l, F j, Y" }}. You&rsquo;ll have a full quote within one
+      business day{% if wedding_lead.contact.email %} — and a link to change anything before then{% endif %}.
+    </p>
 
-  <a href="/" class="btn-gold focus-gold mt-8 inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">
-    Back to home
-  </a>
+    <dl class="mt-8 grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 rounded-2xl bg-surface2 px-5 py-5 ring-1 ring-line">
+      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Reference</dt>
+      <dd class="font-mono2 text-[13px] font-semibold text-ink">{{ wedding_lead.quote_no }}</dd>
+
+      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Contact</dt>
+      <dd class="text-[13px] text-ink">
+        {{ wedding_lead.contact.name }}{% if wedding_lead.contact.email %} · {{ wedding_lead.contact.email }}{% endif %}
+      </dd>
+
+      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Movements</dt>
+      <dd class="space-y-1.5 text-[13px] text-ink">
+        {% for res in reservations %}
+        <div class="flex flex-wrap items-baseline gap-x-2">
+          <span class="font-mono2 font-semibold">{{ res.pickup_time|time:"g:i A" }}</span>
+          <span>{{ res.stops.all.0.name }} &rarr; {{ res.stops.all.1.name }}</span>
+          <span class="text-[11.5px] text-muted">{{ res.passengers }} passenger{{ res.passengers|pluralize }}</span>
+        </div>
+        {% endfor %}
+      </dd>
+    </dl>
+
+    <p class="mt-6 text-center text-[13.5px] text-muted">
+      Need us sooner? Call
+      <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold">(202) 424-2600</a>.
+    </p>
+    <div class="mt-8 text-center">
+      <a href="/" class="btn-gold focus-gold inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">Back to home</a>
+    </div>
+  {% else %}
+    <h1 class="mt-5 font-display text-[28px] font-semibold tracking-tight text-ink">
+      Got it. We will follow up within one business day.
+    </h1>
+    <p class="mt-3 text-[15px] leading-relaxed text-muted">
+      Need us sooner? Call
+      <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold">(202) 424-2600</a>.
+    </p>
+
+    <a href="/" class="btn-gold focus-gold mt-8 inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">
+      Back to home
+    </a>
+  {% endif %}
 </section>
 {% endblock %}

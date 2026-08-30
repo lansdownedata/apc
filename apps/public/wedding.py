@@ -1,0 +1,380 @@
+"""Wedding intake: turn what a couple knows into the trips we actually run.
+
+The whole point of the flow (spec 2026-08-30) is that the customer describes an *event*
+and the system derives the *trips*. They give a date, a venue, who is riding, where
+people are staying and two clock times; everything below turns that into the full set of
+legs and hands them back for confirmation. No customer ever types a pickup time.
+
+Every number here comes from the 1,491-inquiry analysis in
+`docs/specs/2026-08-30-wedding-intake/wedding-intake-findings.html`:
+
+* the inbound offsets are the median gap couples wrote between pickup and ceremony,
+* 4:00 PM / 11:00 PM are the medians in the message corpus,
+* the 40% early-return share is the one number that is still a guess (spec §10.1).
+
+This module is deliberately pure — no models, no request, no I/O — because it is the
+single source of every wedding quote and both the server (validation) and the browser
+(live preview) run the same rules. `static/js/app.js:weddingPlanner()` mirrors it; change
+one and change the other.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from datetime import date, time
+
+# Medians in the message corpus. Only 6.9% of customers volunteer an end time, so the
+# fallback carries real weight — it is what the "we don't have times yet" path bills on.
+DEFAULT_CEREMONY_TIME = time(16, 0)
+DEFAULT_END_TIME = time(23, 0)
+
+# Minutes before/after an anchor. Median stated gap between pickup and ceremony was 50;
+# the wedding party leaves earliest because photographs run before the ceremony.
+PARTY_LEAD_MINUTES = 75
+FAMILY_LEAD_MINUTES = 70
+GUESTS_LEAD_MINUTES = 60
+HOP_DELAY_MINUTES = 45
+EARLY_RETURN_MINUTES = 45
+
+# Guests who leave before the end. A guess, not a measurement — see spec §10.1.
+EARLY_RETURN_SHARE = 0.4
+EARLY_RETURN_FLOOR = 12
+
+# Our largest coach. A venue may cap lower; it can never raise this.
+MAX_COACH_SEATS = 56
+
+GROUP_GUESTS = "guests"
+GROUP_PARTY = "party"
+GROUP_FAMILY = "family"
+GROUP_COUPLE = "couple"
+GROUPS = (GROUP_GUESTS, GROUP_PARTY, GROUP_FAMILY, GROUP_COUPLE)
+GROUP_LABELS = {
+    GROUP_GUESTS: "Our guests",
+    GROUP_PARTY: "The wedding party",
+    GROUP_FAMILY: "Family & VIPs",
+    GROUP_COUPLE: "Just the two of us",
+}
+
+MAX_LEGS = 12
+MIN_PASSENGERS = 1
+MAX_PASSENGERS = 400
+
+HOTELS_TBD_LABEL = "Guest hotels (to be confirmed)"
+GETTING_READY_LABEL = "Getting-ready location"
+GETTING_READY_SUB = "we'll confirm the address with you"
+EXIT_LABEL = "Hotel or home"
+EXIT_SUB = "we'll confirm with you"
+VENUE_FALLBACK = "Your venue"
+CEREMONY_FALLBACK = "Ceremony site"
+
+
+@dataclass(frozen=True)
+class Site:
+    """One end of a leg — a directory Venue, a typed name, or a derived label.
+
+    `venue_id` is set only for a curated directory row; a free-typed or LocationIQ site
+    keeps its name and whatever address came back, which is all a Stop needs.
+    """
+
+    name: str
+    sub: str = ""
+    city: str = ""
+    state: str = ""
+    address: str = ""
+    latitude: str | None = None
+    longitude: str | None = None
+    vehicle_cap: int | None = None
+    cap_note: str = ""
+    venue_id: int | None = None
+
+    @property
+    def line(self) -> str:
+        """The display sub-line: whatever the directory gave us, else town and state."""
+        return self.sub or ", ".join(p for p in (self.address, self.city, self.state) if p)
+
+    @property
+    def short_name(self) -> str:
+        """ "Hampton Inn Leesburg" in Leesburg is just "Hampton Inn" once the town is
+        already implied by the label around it."""
+        suffix = f" {self.city}"
+        if self.city and self.name.endswith(suffix):
+            return self.name[: -len(suffix)]
+        return self.name
+
+
+@dataclass
+class Leg:
+    """One movement: a vehicle, a clock time, and two ends."""
+
+    id: str
+    time: time
+    title: str
+    origin: Site
+    destination: Site
+    passengers: int
+    optional: bool = False
+    why: str = ""
+    estimated: bool = False
+    vehicle: str = ""
+
+
+@dataclass
+class WeddingPlan:
+    """Everything the seven steps collect, before any trip exists."""
+
+    wedding_date: date | None = None
+    venue: Site | None = None
+    ceremony: Site | None = None
+    same_site: bool = True
+    groups: list[str] = field(default_factory=list)
+    guest_count: int = 100
+    party_count: int = 12
+    family_count: int = 8
+    hotels: list[Site] = field(default_factory=list)
+    hotels_tbd: bool = False
+    ceremony_time: time | None = None
+    end_time: time | None = None
+    times_tbd: bool = False
+
+    def riding(self, group: str) -> bool:
+        return group in self.groups
+
+    @property
+    def anchor_ceremony(self) -> time:
+        return self.ceremony_time or DEFAULT_CEREMONY_TIME
+
+    @property
+    def anchor_end(self) -> time:
+        return self.end_time or DEFAULT_END_TIME
+
+
+def shift(anchor: time, minutes: int) -> time:
+    """Clock arithmetic that wraps at midnight rather than underflowing.
+
+    A wedding is one calendar date in the model, so a 12:30 AM ceremony putting the
+    party pickup at 11:15 PM is the wrap the prototype does and the office reads as
+    "the night before" — not an error to reject mid-flow.
+    """
+    total = (anchor.hour * 60 + anchor.minute + minutes) % (24 * 60)
+    return time(total // 60, total % 60)
+
+
+def vehicle_for(count: int, cap: int | None = None) -> str:
+    """The vehicle class we'd send for `count` riders, capped by the venue's own limit.
+
+    A *recommendation*, never a quote — the itinerary screen says so out loud. Below 39
+    the class is the answer and a cap is irrelevant (no venue bans a mini bus); above it
+    the answer is how many coaches, and the cap is what decides that.
+    """
+    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
+    if count <= 6:
+        return "Executive SUV"
+    if count <= 14:
+        return "Sprinter van"
+    if count <= 24:
+        return "Mini bus"
+    if count <= 38:
+        return "Executive mini coach"
+    runs = math.ceil(count / limit)
+    return "Motorcoach" if runs <= 1 else f"{runs} × {limit}-passenger coach"
+
+
+def hotel_label(hotels: list[Site], hotels_tbd: bool) -> str:
+    """One label for however many room blocks there are.
+
+    Multiple pickups run as one route in sequence, so they read as one origin on the
+    timeline rather than as separate trips the customer would think they're paying for.
+    """
+    if hotels_tbd or not hotels:
+        return HOTELS_TBD_LABEL
+    if len(hotels) == 1:
+        return hotels[0].name
+    return f"{len(hotels)} hotels — {', '.join(h.short_name for h in hotels)}"
+
+
+def _venue_site(plan: WeddingPlan) -> Site:
+    return plan.venue or Site(name=VENUE_FALLBACK)
+
+
+def _ceremony_site(plan: WeddingPlan) -> Site:
+    if plan.same_site:
+        return _venue_site(plan)
+    return plan.ceremony or Site(name=CEREMONY_FALLBACK)
+
+
+def _hotel_site(plan: WeddingPlan) -> Site:
+    label = hotel_label(plan.hotels, plan.hotels_tbd)
+    if len(plan.hotels) == 1 and not plan.hotels_tbd:
+        return plan.hotels[0]
+    sub = "hotel not booked yet" if (plan.hotels_tbd or not plan.hotels) else ""
+    return Site(name=label, sub=sub)
+
+
+def generate_legs(plan: WeddingPlan) -> list[Leg]:
+    """Two time anchors plus who is riding => the full day, in time order.
+
+    Returned sorted so the timeline reads top-to-bottom even for anchors that put an
+    inbound run after an outbound one (a very late ceremony, say).
+    """
+    ceremony_at = plan.anchor_ceremony
+    end_at = plan.anchor_end
+    venue = _venue_site(plan)
+    ceremony = _ceremony_site(plan)
+    hotels = _hotel_site(plan)
+    legs: list[Leg] = []
+
+    if plan.riding(GROUP_PARTY):
+        legs.append(
+            Leg(
+                id="party-in",
+                time=shift(ceremony_at, -PARTY_LEAD_MINUTES),
+                title="Wedding party to the ceremony",
+                origin=Site(name=GETTING_READY_LABEL, sub=GETTING_READY_SUB),
+                destination=ceremony,
+                passengers=plan.party_count,
+            )
+        )
+    if plan.riding(GROUP_FAMILY):
+        legs.append(
+            Leg(
+                id="family-in",
+                time=shift(ceremony_at, -FAMILY_LEAD_MINUTES),
+                title="Family & VIPs to the ceremony",
+                origin=hotels,
+                destination=ceremony,
+                passengers=plan.family_count,
+            )
+        )
+    if plan.riding(GROUP_GUESTS):
+        legs.append(
+            Leg(
+                id="guests-in",
+                time=shift(ceremony_at, -GUESTS_LEAD_MINUTES),
+                title="Guests to the ceremony",
+                origin=hotels,
+                destination=ceremony,
+                passengers=plan.guest_count,
+            )
+        )
+    if not plan.same_site:
+        aboard = sum(
+            (
+                plan.guest_count if plan.riding(GROUP_GUESTS) else 0,
+                plan.party_count if plan.riding(GROUP_PARTY) else 0,
+                plan.family_count if plan.riding(GROUP_FAMILY) else 0,
+            )
+        )
+        legs.append(
+            Leg(
+                id="hop",
+                time=shift(ceremony_at, HOP_DELAY_MINUTES),
+                title="Ceremony to reception",
+                origin=ceremony,
+                destination=venue,
+                passengers=aboard or plan.guest_count,
+            )
+        )
+    if plan.riding(GROUP_GUESTS):
+        legs.append(
+            Leg(
+                id="early-out",
+                time=shift(end_at, -EARLY_RETURN_MINUTES),
+                title="Early return run",
+                origin=venue,
+                destination=hotels,
+                passengers=max(EARLY_RETURN_FLOOR, round(plan.guest_count * EARLY_RETURN_SHARE)),
+                optional=True,
+                why=("Guests with young kids and older family almost always leave before the end."),
+            )
+        )
+        legs.append(
+            Leg(
+                id="final-out",
+                time=end_at,
+                title="Final return — last call",
+                origin=venue,
+                destination=hotels,
+                passengers=plan.guest_count,
+            )
+        )
+    if plan.riding(GROUP_COUPLE):
+        legs.append(
+            Leg(
+                id="exit",
+                time=end_at,
+                title="Your exit",
+                origin=venue,
+                destination=Site(name=EXIT_LABEL, sub=EXIT_SUB),
+                passengers=2,
+            )
+        )
+
+    for leg in legs:
+        leg.vehicle = vehicle_for(leg.passengers, venue.vehicle_cap)
+        leg.estimated = plan.times_tbd
+    legs.sort(key=lambda leg: leg.time)
+    return legs
+
+
+# Weddings inside this many days are the ones that go cold fastest (11% of inquiries
+# arrive inside a month) — they raise a Lead alert so the pipeline surfaces them today.
+ALERT_WINDOW_DAYS = 45
+
+
+def is_time_sensitive(wedding_date: date, today: date) -> bool:
+    """True for a wedding inside the alert window — a past date included, because a
+    typo'd year is still something the office has to phone about."""
+    return (wedding_date - today).days < ALERT_WINDOW_DAYS
+
+
+def format_clock(value: time) -> str:
+    """ "3:00 PM" — no leading zero, no platform-specific strftime directive."""
+    hour = value.hour % 12 or 12
+    return f"{hour}:{value.minute:02d} {'PM' if value.hour >= 12 else 'AM'}"
+
+
+def format_long_date(value: date) -> str:
+    """ "Saturday, October 16, 2027" — the weekday matters; couples check it."""
+    return f"{value:%A, %B} {value.day}, {value.year}"
+
+
+def build_notes(
+    *,
+    wedding_date: date,
+    venue: Site | None,
+    ceremony: Site | None,
+    hotels: list[Site],
+    hotels_tbd: bool,
+    groups: list[str],
+    times_tbd: bool,
+    legs: list[dict],
+) -> str:
+    """The block an agent reads before quoting (spec §6.3).
+
+    The `!!` lines are the whole point of the format: they are what stops someone
+    quoting an estimated timeline as if the customer had confirmed it.
+    """
+    lines = [f"WEDDING — {format_long_date(wedding_date)}"]
+    venue_name = venue.name if venue else "TBD"
+    cap = f" (vehicle cap {venue.vehicle_cap} pax)" if venue and venue.vehicle_cap else ""
+    lines.append(f"Venue: {venue_name}{cap}")
+    if ceremony is not None:
+        lines.append(f"Ceremony: {ceremony.name}")
+    if hotels_tbd:
+        lines.append("Hotels: not booked yet")
+    else:
+        lines.append(f"Hotels: {' / '.join(h.name for h in hotels) or 'n/a'}")
+    lines.append(f"Riding: {', '.join(GROUP_LABELS[g] for g in groups)}")
+    if times_tbd:
+        lines.append("!! Times ESTIMATED — customer had no timeline yet. Confirm before quoting.")
+    if hotels_tbd:
+        lines.append(
+            "!! Hotels NOT BOOKED — guest pickup points unconfirmed. Confirm before quoting."
+        )
+    movements = " | ".join(
+        f"{format_clock(leg['time'])} {leg['title']} ({leg['pax']}p · {leg['vehicle']})"
+        for leg in legs
+    )
+    lines.append(f"Legs: {movements}")
+    return "\n".join(lines)

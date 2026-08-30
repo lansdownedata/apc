@@ -15,9 +15,12 @@
 
 {% comment %}
   HERO — full-bleed chauffeur photo with a charcoal scrim so the headline
-  stays legible, and the booking widget itself embedded as a floating light
-  card. This is the flagship conversion surface for the whole site: a
-  visitor should be able to request a quote without leaving the hero.
+  stays legible, and the service picker embedded as a floating light card.
+  This is the flagship conversion surface for the whole site: a visitor
+  should be able to request a quote without leaving the hero. Airport and
+  Corporate keep that promise by swapping the existing booking widget in
+  place (components/service_picker.html); Wedding is an event rather than a
+  trip, so it opens its own intake at /weddings/plan/.
 {% endcomment %}
 <section class="relative overflow-hidden bg-charcoal">
   <img src="{% static 'public/img/qtq80-q798pp.jpeg' %}"
@@ -38,8 +41,7 @@
       </h1>
       <p class="mt-5 max-w-lg text-[15.5px] leading-relaxed text-slate-300 sm:text-[16.5px]">
         For any occasion — corporate travel, weddings, airport transfers, and private
-        charters. Tell us about your trip below and a member of our team will follow up
-        with a quote within one business day.
+        charters. Tell us what the occasion is and we'll take it from there.
       </p>
       <div class="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-[13px] text-slate-300">
         <span class="inline-flex items-center gap-2">
@@ -73,11 +75,7 @@
     </div>
 
     <div id="quote" class="mx-auto w-full max-w-[34rem] rounded-2xl bg-paper/[0.97] p-4 shadow-2xl ring-1 ring-black/5 backdrop-blur sm:p-6 lg:col-span-6 lg:col-start-7 lg:max-w-[30rem] lg:p-7 xl:max-w-[32rem]">
-      <h2 class="font-display text-[19px] font-semibold text-ink">Get a quote</h2>
-      <p class="mt-1 text-[13px] text-muted">A real person replies within one business day.</p>
-      <div class="mt-5">
-        {% include "public/_booking_widget.html" with two_step=1 %}
-      </div>
+      {% include "components/service_picker.html" %}
     </div>
 
   </div>
