@@ -356,3 +356,51 @@ def test_widget_renders_flight_fields_for_pickup_and_dropoff(db):
     assert "UA — United Airlines</option>" in html
     assert 'x-model="stop.flight"' in html  # the in-between stop repeater
     assert "flightVerifyComingSoon" not in html  # Verify is staff-only
+    assert "stop.direction = 'arrival'" in html and "stop.direction = 'departure'" in html
+    assert "verifyStop" not in html and "flightStatus" not in html  # Verify is staff-only
+
+
+def test_full_booking_post_sets_direction_and_links_a_cached_flight(db):
+    from datetime import date
+
+    from django.core.cache import cache
+
+    from apps.addresses.models import Airline, Airport
+    from apps.leads.models import Lead
+    from apps.reservations.factories import FlightFactory
+
+    # The per-IP bookings throttle (views._booking_throttle_*) lives in the process
+    # cache, not the DB, so it survives the db fixture's rollback and carries over
+    # from whatever else in this test run already posted to /bookings/ from this
+    # same client IP — clear it so this test's own single POST is never the one
+    # that trips a limit some earlier, unrelated test left primed (see
+    # test_booking.py's own throttle tests, which do the same before asserting on it).
+    cache.clear()
+
+    iad = Airport.objects.get(iata="IAD")
+    united = Airline.objects.get(iata="UA")
+    cached = FlightFactory(
+        airline=united,
+        airport=iad,
+        flight_number="123",
+        flight_date=date(2026, 10, 15),
+        direction="arrival",
+    )
+    resp = Client().post(
+        "/bookings/",
+        {
+            "name": "Jane Rider",
+            "email": "jane@example.com",
+            "passengers": 1,
+            "pickup_date": "2026-10-15",
+            "pickup": "Dulles Intl",
+            "pickup_airport": iad.pk,
+            "pickup_airline": united.pk,
+            "pickup_flight": "123",
+            "dropoff": "123 Main St, Ashburn VA",
+        },
+    )
+    assert resp.status_code == 302
+    stop = Lead.objects.latest("id").reservations.get().stops.order_by("sequence").first()
+    assert stop.flight_direction == "arrival"
+    assert stop.flight_id == cached.pk

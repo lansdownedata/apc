@@ -216,3 +216,135 @@ def test_stops_json_garbled_flight_without_an_airport_is_dropped(db):
     )
     assert form.is_valid(), form.errors
     assert form.cleaned_data["stops"][0]["flight_number"] == ""
+
+
+# --- Private / tail-number flights (2026-08-29), mirroring reservations.drafts ---------
+
+
+@pytest.fixture
+def private_airline(db):
+    return Airline.objects.get(iata="N")  # seeded by addresses.0007
+
+
+def test_pickup_tail_number_is_accepted_for_private_and_stored_upper_case(iad, private_airline):
+    form = BookingRequestForm(
+        _base(
+            pickup="Manassas",
+            pickup_airport=iad.pk,
+            pickup_airline=private_airline.pk,
+            pickup_flight="n561fx",
+            dropoff="Home",
+        )
+    )
+    assert form.is_valid(), form.errors
+    pickup = form.cleaned_data["stops"][0]
+    assert pickup["flight_number"] == "N561FX"
+
+
+def test_pickup_tail_number_is_rejected_for_a_real_carrier(iad, united):
+    form = BookingRequestForm(
+        _base(
+            pickup="Dulles",
+            pickup_airport=iad.pk,
+            pickup_airline=united.pk,
+            pickup_flight="N561FX",
+            dropoff="Home",
+        )
+    )
+    assert not form.is_valid()
+    assert "pickup_flight" in form.errors
+
+
+def test_pickup_digits_still_accepted_for_a_real_carrier(iad, united):
+    form = BookingRequestForm(
+        _base(
+            pickup="Dulles",
+            pickup_airport=iad.pk,
+            pickup_airline=united.pk,
+            pickup_flight="123",
+            dropoff="Home",
+        )
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][0]["flight_number"] == "123"
+
+
+def test_pickup_digits_only_rejected_for_private(iad, private_airline):
+    """A tail number always starts with N — bare digits aren't valid for Private either."""
+    form = BookingRequestForm(
+        _base(
+            pickup="Manassas",
+            pickup_airport=iad.pk,
+            pickup_airline=private_airline.pk,
+            pickup_flight="12345",
+            dropoff="Home",
+        )
+    )
+    assert not form.is_valid()
+    assert "pickup_flight" in form.errors
+
+
+def test_stops_json_tail_number_is_accepted_for_private_and_stored_upper_case(iad, private_airline):
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps(
+                [
+                    {
+                        "address": "Manassas",
+                        "airport": iad.pk,
+                        "airline": private_airline.pk,
+                        "flight": "n561fx",
+                    }
+                ]
+            ),
+        )
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][1]["flight_number"] == "N561FX"
+
+
+def test_stops_json_tail_number_is_rejected_for_a_real_carrier(iad, united):
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps(
+                [{"address": "Dulles", "airport": iad.pk, "airline": united.pk, "flight": "N561FX"}]
+            ),
+        )
+    )
+    assert not form.is_valid()
+    assert "stops_json" in form.errors
+
+
+def test_stop_direction_is_accepted_and_bad_values_rejected(iad, united):
+    # NOTE: `_base()` alone has no pickup/dropoff (both default to "" and are dropped by
+    # clean()), so a bare stops_json entry lands at index 0, not 1 — pass pickup/dropoff
+    # explicitly (as the other stops_json tests in this file do) to put the middle stop
+    # at index 1.
+    stop = {"address": "DCA", "airport": iad.pk, "airline": united.pk, "flight": "2071"}
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps([{**stop, "direction": "departure"}]),
+        )
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][1]["flight_direction"] == "departure"
+    form = BookingRequestForm(
+        _base(
+            pickup="Home",
+            dropoff="Office",
+            stops_json=json.dumps([{**stop, "direction": "up"}]),
+        )
+    )
+    assert not form.is_valid() and "stops_json" in form.errors
+    no_airport = {"address": "Reston", "direction": "arrival"}
+    form = BookingRequestForm(
+        _base(pickup="Home", dropoff="Office", stops_json=json.dumps([no_airport]))
+    )
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["stops"][1]["flight_direction"] == ""

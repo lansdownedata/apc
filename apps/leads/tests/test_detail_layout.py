@@ -2,6 +2,7 @@
 full-width row, and the payment plan lives inside the ledger card."""
 
 import re
+from datetime import UTC
 
 import pytest
 from django.urls import reverse
@@ -160,14 +161,51 @@ def test_airline_options_offer_active_carriers_only(client):
     assert all(label != "ZZ — Retired Air" for _, label in options)
 
 
-def test_editor_renders_the_flight_row_for_airport_stops(page):
+def test_private_airline_id_context_feeds_the_editors_verify_gate(page):
+    """`quoteWorkspace()` needs the seeded Private carrier's pk client-side to gate its
+    Verify button the same way `Stop.verify_available` gates it server-side (2026-08-29
+    §3) — the airline picker alone only gives a label, not which row is Private."""
+    from apps.addresses.models import Airline
+
+    private = Airline.objects.get(iata="N")
+    html = page(LeadFactory())
+    assert f"privateAirlineId: {private.pk}" in html
+
+
+def test_editor_renders_the_flight_row_for_airport_stops(page, settings):
+    settings.AVIATIONSTACK_API_KEY = "k"
     html = page(LeadFactory())
     assert 'x-show="s.airport"' in html
     assert 'x-model="s.flight"' in html
     assert "initTomSelects($el)" in html
     assert 'x-text="s.airportCode"' in html
-    assert "flightVerifyComingSoon()" in html
+    assert "flightVerifyComingSoon" not in html
     assert "UA — United Airlines</option>" in html
+    # the middle-stop direction toggle and the Verify → pill pair
+    assert "s.direction = 'arrival'" in html and "s.direction = 'departing'" not in html
+    assert "s.direction = 'departure'" in html
+    assert '@click="verifyStop(i)"' in html
+    assert ':disabled="!canVerify(i)"' in html
+    # x-text is evaluated even while x-show hides the element, so verifyPill(i) must be
+    # guarded here — an unguarded ".label" throws on first render (no flight verified yet)
+    # and kills the whole Alpine component.
+    assert "x-text=\"verifyPill(i) ? verifyPill(i).label : ''\"" in html
+
+
+def test_editor_hides_verify_when_not_configured(page, settings):
+    settings.AVIATIONSTACK_API_KEY = ""
+    html = page(LeadFactory())
+    assert "verifyStop(i)" not in html
+    assert "s.direction = 'arrival'" in html  # the toggle stays: direction is data, not a lookup
+
+
+def test_editor_verify_button_is_gated_on_scheduled_service(page, settings):
+    """A stop's airport can lack scheduled service (Andrews, Manassas, ...) even though it
+    has a real 3-char IATA code — the button's x-show must check the draft's
+    hasScheduledService flag, not just the code length (spec 2026-08-29 finding 2)."""
+    settings.AVIATIONSTACK_API_KEY = "k"
+    html = page(LeadFactory())
+    assert "s.hasScheduledService" in html
 
 
 # --- the route loop shows the flight on an airport stop ---
@@ -181,12 +219,92 @@ def _with_flight(reservation, *, sequence=0, number="123"):
     stop.airport = Airport.objects.get(iata="IAD")  # seeded by addresses.0003
     stop.airline = Airline.objects.get(iata="UA")
     stop.flight_number = number
+    stop.flight_direction = "arrival"
     stop.save()
     return stop
+
+
+def _verified(stop, **over):
+    """Link `stop` to a cached, verified aviationstack row."""
+    from datetime import datetime
+
+    from apps.reservations.factories import FlightFactory
+
+    kwargs = dict(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number=stop.flight_number,
+        flight_date=stop.reservation.pickup_date,
+        direction=stop.flight_direction or "arrival",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        terminal="C",
+    )
+    kwargs.update(over)
+    stop.flight = FlightFactory(**kwargs)
+    stop.save()
+    return stop.flight
 
 
 def test_workspace_card_shows_the_flight_on_an_airport_stop(page):
     lead = LeadFactory()
     _with_flight(ReservationFactory(lead=lead))
     html = page(lead)
-    assert "✈ UA 123" in html
+    assert "✈ UA 123" not in html  # the plain text is gone; the pill replaces it
+    assert "ti-plane-arrival" in html and "UA 123" in html
+    assert "chip-gold" in html  # unverified → gold pill
+
+
+def test_workspace_card_shows_the_verified_pill_with_the_airport_local_time(page):
+    from datetime import date
+
+    lead = LeadFactory()
+    res = ReservationFactory(lead=lead, pickup_date=date(2026, 10, 15))
+    _verified(_with_flight(res))
+    html = page(lead)
+    assert "UA 123 · 5:35 PM EDT" in html
+    assert "chip-ok" in html
+    assert 'title="Arrives 5:35 PM EDT · Terminal C' in html
+
+
+def test_workspace_card_rollup_chip(page):
+    from datetime import date
+
+    lead = LeadFactory()
+    res = ReservationFactory(lead=lead, pickup_date=date(2026, 10, 15))
+    stop = _with_flight(res)
+    html = page(lead)
+    assert "Verify flight" in html
+    assert f"editReservation({res.pk})" in html.split("Verify flight")[0][-400:]
+    _verified(stop)
+    html = page(lead)
+    assert "Flight verified" in html and "ti-circle-check" in html
+
+
+def test_staff_pages_carry_the_verify_url_and_flag(page, settings):
+    settings.AVIATIONSTACK_API_KEY = "k"
+    html = page(LeadFactory())
+    assert '<meta name="flight-verify-url" content="/portal/reservations/flights/verify/">' in html
+
+
+def test_card_pill_costs_no_extra_query(page, django_assert_max_num_queries):
+    from datetime import date
+
+    lead = LeadFactory()
+    for i in range(3):
+        # Distinct flight_number per stop — three reservations that all default to the
+        # same airport/airline/date/direction would otherwise collide on Flight's
+        # uniq_flight_lookup constraint (airline, flight_number, flight_date, airport,
+        # direction) trying to create three separate cache rows for "the same" flight.
+        res = ReservationFactory(lead=lead, pickup_date=date(2026, 10, 15))
+        _verified(_with_flight(res, number=str(100 + i)))
+    baseline_lead = LeadFactory()
+    for _ in range(3):
+        ReservationFactory(lead=baseline_lead, pickup_date=date(2026, 10, 15))
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as plain:
+        page(baseline_lead)
+    with CaptureQueriesContext(connection) as with_flights:
+        page(lead)
+    assert len(with_flights) <= len(plain)

@@ -1,0 +1,12 @@
+{% comment %} One pill per flight (spec 2026-08-29 §7.1). Usage:
+  {% include "components/flight_pill.html" with stop=stop %}            card / drawer
+  {% include "components/flight_pill.html" with stop=stop compact=1 %}  board (no tz abbr)
+Renders from stop.flight.pill() when the stop is linked to a cached row, else the gold
+"unverified" form. Never queries: every caller select_relates flight__airport/__airline. {% endcomment %}
+{% if stop.airport_id and stop.flight_label %}
+  {% if stop.flight_id %}{% with p=stop.flight_pill %}
+    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full num whitespace-nowrap {{ p.chip }}" title="{{ p.detail }}"><i class="ti {{ p.icon }} text-[13px]"></i>{% if compact %}{{ p.label_compact }}{% else %}{{ p.label }}{% endif %}</span>
+  {% endwith %}{% else %}
+    <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full num whitespace-nowrap chip-gold"><i class="ti {% if stop.flight_direction == 'departure' %}ti-plane-departure{% elif stop.flight_direction == 'arrival' %}ti-plane-arrival{% else %}ti-plane{% endif %} text-[13px]"></i>{{ stop.flight_label }}</span>
+  {% endif %}
+{% endif %}

@@ -61,6 +61,16 @@ def _airline_options() -> list[tuple[int, str]]:
     return [(a.pk, a.label) for a in Airline.objects.filter(is_active=True)]
 
 
+def _private_airline_id() -> int | None:
+    """The seeded Private/tail-number carrier's pk (2026-08-29) — `quoteWorkspace()`'s
+    client-side Verify gate needs it to recognise the row the same way
+    `Stop.verify_available` does server-side; the airline picker's options alone only
+    carry a label, not which one is Private. Lazy, same as `_airline_options`."""
+    from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline
+
+    return Airline.objects.filter(iata=PRIVATE_AIRLINE_IATA).values_list("pk", flat=True).first()
+
+
 def chrome(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return {
@@ -69,6 +79,7 @@ def chrome(request):
             "address_bias_center": settings.ADDRESS_BIAS_CENTER,
             "us_states": US_STATES,
             "airline_options": SimpleLazyObject(_airline_options),
+            "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
         }
 
     unread = Notification.objects.unread().select_related("lead", "lead__contact")
@@ -81,4 +92,6 @@ def chrome(request):
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
         "airline_options": SimpleLazyObject(_airline_options),
+        "private_airline_id": SimpleLazyObject(_private_airline_id),
+        "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
     }
