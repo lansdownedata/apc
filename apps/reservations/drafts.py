@@ -189,7 +189,7 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
 
     data = {
         "trip_type": trip_type,
-        "service": (payload.get("service") or "").strip()[:120],
+        "service_type_id": _pk(payload.get("serviceType")),
         "pickup_date": _date(payload.get("date")),
         "pickup_time": _time(payload.get("time")),
         "vehicle_id": _vehicle_id(payload.get("vehicle")),

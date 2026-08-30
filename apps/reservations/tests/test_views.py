@@ -5,7 +5,7 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
-from apps.leads.factories import LeadFactory
+from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import TransferReservationFactory
 from apps.reservations.models import Reservation, Stop
@@ -17,7 +17,6 @@ def _draft(lead, **over):
     base = {
         "lead_id": lead.pk,
         "tripType": "transfer",
-        "service": "Transfer",
         "date": "2026-07-04",
         "time": "15:00",
         "vehicle": "",
@@ -57,11 +56,12 @@ def test_save_creates_hourly_with_minimum(client):
 
 
 def test_save_updates_existing(client):
-    res = TransferReservationFactory(service="Old")
+    res = TransferReservationFactory(service_type=ServiceTypeFactory(name="Old Service"))
     client.force_login(UserFactory())
-    _post(client, _draft(res.lead, id=res.pk, service="New", rate=200))
+    new_service = ServiceTypeFactory(name="New Service")
+    _post(client, _draft(res.lead, id=res.pk, serviceType=new_service.pk, rate=200))
     res.refresh_from_db()
-    assert res.service == "New"
+    assert res.service_type == new_service
     assert res.lead.reservations.count() == 1
 
 
@@ -93,7 +93,8 @@ def test_save_requires_login(client):
 
 
 def test_duplicate_clones_reservation_and_stops(client):
-    res = TransferReservationFactory(service="Wedding", la_reservation_id="LA-1")
+    wedding = ServiceTypeFactory(name="Wedding Transportation")
+    res = TransferReservationFactory(service_type=wedding, la_reservation_id="LA-1")
     Stop.objects.filter(reservation=res).delete()
     Stop.objects.create(reservation=res, sequence=0, address="A")
     Stop.objects.create(reservation=res, sequence=1, address="B", note="wait")
@@ -101,7 +102,7 @@ def test_duplicate_clones_reservation_and_stops(client):
     resp = client.post(reverse("reservation_duplicate", args=[res.pk]))
     assert resp.status_code == 302
     clone = res.lead.reservations.exclude(pk=res.pk).get()
-    assert clone.service == "Wedding (copy)"
+    assert clone.service_type == wedding  # the copy keeps the same catalog entry
     assert clone.la_reservation_id == ""
     assert [s.address for s in clone.ordered_stops] == ["A", "B"]
     assert clone.ordered_stops[1].note == "wait"

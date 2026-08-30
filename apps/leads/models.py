@@ -2,12 +2,42 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
+
+
+class ServiceType(TimeStampedModel):
+    """What a trip is for — Airport Transfer, Wedding, Corporate, and so on.
+
+    Replaced the free-text `Reservation.service`, where the same six jobs were spelled
+    six different ways. Edited in Settings; the same catalog feeds the reservation editor
+    and the public booking widget's occasion picker, so the two can't drift apart.
+
+    Separate axis from `Reservation.trip_type` (transfer vs hourly), which is how a trip
+    is *priced*: a wedding can be either.
+    """
+
+    name = models.CharField(max_length=120)
+    active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="uniq_service_type_name_ci",
+                violation_error_message="A service type with that name already exists.",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class VehicleType(TimeStampedModel):

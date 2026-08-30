@@ -16,7 +16,7 @@ from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.fleet.models import Driver, Renewal, RenewalType, Vehicle
-from apps.leads.models import Lead, VehicleType
+from apps.leads.models import Lead, ServiceType, VehicleType
 from apps.messaging.models import Conversation, Message, Review
 from apps.notifications.models import Notification
 from apps.payments.models import Charge, PaymentPlan
@@ -134,12 +134,17 @@ class Command(BaseCommand):
                 notes=notes,
             )
 
+        def service_type(name):
+            """Demo services join the catalog, so the seeded editor has real options."""
+            st, _ = ServiceType.objects.get_or_create(name=name)
+            return st
+
         def transfer(lead, service, vehicle, days_out, t, pax, rate, stops, status=""):
             res = Reservation.objects.create(
                 lead=lead,
                 vehicle=vehicles[vehicle],
                 trip_type=Reservation.TripType.TRANSFER,
-                service=service,
+                service_type=service_type(service),
                 pickup_date=today + timedelta(days=days_out),
                 pickup_time=t,
                 passengers=pax,
@@ -156,7 +161,7 @@ class Command(BaseCommand):
                 lead=lead,
                 vehicle=vehicles[vehicle],
                 trip_type=Reservation.TripType.HOURLY,
-                service=service,
+                service_type=service_type(service),
                 pickup_date=today + timedelta(days=days_out),
                 pickup_time=t,
                 passengers=pax,

@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from apps.addresses.models import Airline, Airport
-from apps.public.forms import OCCASION_CHOICES, BookingRequestForm
+from apps.public.forms import BookingRequestForm, occasion_options
 
 
 def _base(**over):
@@ -13,10 +13,24 @@ def _base(**over):
     return data
 
 
-def test_occasion_choices_drop_hourly_charter():
+@pytest.mark.django_db
+def test_occasion_options_come_from_the_service_type_catalog():
+    """One catalog for the website and the office — edited in Settings, not in code."""
+    from apps.leads.factories import ServiceTypeFactory
+
+    retired = ServiceTypeFactory(name="Retired Occasion", active=False)
+    live = ServiceTypeFactory(name="Live Occasion")
+    options = occasion_options()
+    assert (str(live.pk), "Live Occasion") in options
+    assert all(pk != str(retired.pk) for pk, _ in options)
+
+
+@pytest.mark.django_db
+def test_occasion_options_drop_hourly_charter():
     """Hourly is a trip_type now, not an occasion."""
-    assert all(v != "Hourly Charter" for v, _ in OCCASION_CHOICES)
-    assert all(v != "Special Event" for v, _ in OCCASION_CHOICES)
+    labels = [label for _, label in occasion_options()]
+    assert "Hourly Charter" not in labels
+    assert "Special Event" not in labels
 
 
 def test_trip_type_defaults_to_transfer_when_absent():

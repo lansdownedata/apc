@@ -120,7 +120,7 @@
         </div>
         <div class="trip-detail">
           <h3>
-            Trip {{ forloop.counter }}{% if r.service %} &middot; {{ r.service }}{% endif %}{% if r.pickup_date %} &mdash; {{ r.pickup_date|date:"M j, Y" }}{% endif %}
+            Trip {{ forloop.counter }}{% if r.service_type %} &middot; {{ r.service_type.name }}{% endif %}{% if r.pickup_date %} &mdash; {{ r.pickup_date|date:"M j, Y" }}{% endif %}
           </h3>
           <ul class="itinerary">
             {% for stop in r.stops.all %}

@@ -39,6 +39,23 @@ def agent_options() -> list[tuple[int, str]]:
     ]
 
 
+def service_type_options(lead: Lead | None = None) -> list[tuple[int, str]]:
+    """`(pk, name)` for the reservation editor's Service picker.
+
+    Active catalog entries, plus any retired one this lead's trips already use. Without
+    that second half, opening a legacy trip whose type has since been deactivated would
+    show an empty picker — and Tom Select only displays values that are registered
+    options — so saving would silently blank the service the trip had.
+    """
+    from .models import ServiceType
+
+    active = ServiceType.objects.filter(active=True)
+    if lead is not None:
+        in_use = ServiceType.objects.filter(reservation__lead=lead)
+        active = ServiceType.objects.filter(pk__in=active.union(in_use).values("pk"))
+    return list(active.values_list("pk", "name"))
+
+
 def make_deposit_token(lead: Lead) -> str:
     """An opaque, signed token encoding the lead id for the public deposit pages."""
     return signing.dumps({"lead": lead.pk}, salt=_DEPOSIT_SALT)

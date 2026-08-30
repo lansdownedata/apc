@@ -13,7 +13,6 @@ VALID = {
     "pickup_date": "2026-09-01",
     "pickup_time": "14:30",
     "passengers": "12",
-    "service": "Wedding Transportation",
     "notes": "DCA to venue",
     "company": "",  # honeypot — must stay empty
 }
@@ -80,3 +79,15 @@ def test_invalid_submissions_never_trip_throttle(client):
     resp = client.post("/bookings/", {**VALID, "email": "still-fine@example.com"})
     assert resp.status_code == 302
     assert Lead.objects.count() == 1
+
+
+def test_the_chosen_occasion_lands_on_the_reservation(client):
+    """The widget posts a ServiceType id; it must reach the trip, not just validate."""
+    from apps.leads.factories import ServiceTypeFactory
+
+    # The per-IP booking throttle lives in the process-wide cache, so every booking POST
+    # in the suite counts toward the same window — clear it or this test starves a later one.
+    cache.clear()
+    wedding = ServiceTypeFactory(name="Wedding Transportation")
+    client.post("/bookings/", {**VALID, "service_type": wedding.pk})
+    assert Lead.objects.get().reservations.get().service_type == wedding

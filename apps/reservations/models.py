@@ -96,7 +96,11 @@ class Reservation(TimeStampedModel):
         "leads.VehicleType", null=True, blank=True, on_delete=models.SET_NULL
     )
     trip_type = models.CharField(max_length=20, choices=TripType.choices, default=TripType.TRANSFER)
-    service = models.CharField(max_length=120, blank=True)
+    # What the trip is for, from the Settings catalog. SET_NULL: retiring a service type
+    # must never take a booked trip with it.
+    service_type = models.ForeignKey(
+        "leads.ServiceType", null=True, blank=True, on_delete=models.SET_NULL
+    )
     pickup_date = models.DateField(null=True, blank=True)
     pickup_time = models.TimeField(null=True, blank=True)
     passengers = models.PositiveIntegerField(default=1)
@@ -254,8 +258,15 @@ class Reservation(TimeStampedModel):
     def is_cancelled(self) -> bool:
         return self.trip_phase == "Cancelled"
 
+    @property
+    def service_label(self) -> str:
+        """What to call this trip in a list. Falls back to the trip type, which every
+        reservation has — the catalog entry is optional and can be retired underneath one.
+        """
+        return self.service_type.name if self.service_type else self.get_trip_type_display()
+
     def __str__(self) -> str:
-        return f"{self.get_trip_type_display()} · {self.service or 'Reservation'}"
+        return f"{self.get_trip_type_display()} · {self.service_label}"
 
 
 class Stop(TimeStampedModel):

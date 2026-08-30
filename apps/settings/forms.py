@@ -2,7 +2,7 @@
 
 from django import forms
 
-from apps.leads.models import VehicleType
+from apps.leads.models import ServiceType, VehicleType
 
 
 class VehicleTypeForm(forms.ModelForm):
@@ -52,3 +52,33 @@ class VehicleTypeForm(forms.ModelForm):
             ),
             "sort_order": "Lower numbers appear first.",
         }
+
+
+class ServiceTypeForm(forms.ModelForm):
+    class Meta:
+        model = ServiceType
+        fields = ["name", "sort_order", "active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "field w-full"}),
+            "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
+        }
+        help_texts = {
+            "sort_order": "Lower numbers appear first.",
+            "active": "Inactive types stay on the trips that use them, but aren't offered.",
+        }
+
+    def validate_unique(self) -> None:
+        """Surface the case-insensitive name constraint as a form error.
+
+        ModelForm only checks constraints it can map to fields; the UniqueConstraint is on
+        Lower("name"), so without this the duplicate reaches the database and 500s.
+        """
+        super().validate_unique()
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            return
+        clash = ServiceType.objects.filter(name__iexact=name)
+        if self.instance.pk:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            self.add_error("name", "A service type with that name already exists.")

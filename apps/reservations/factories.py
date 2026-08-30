@@ -17,7 +17,6 @@ class ReservationFactory(factory.django.DjangoModelFactory):
     lead = factory.SubFactory(LeadFactory)
     vehicle = factory.SubFactory(VehicleTypeFactory)
     trip_type = Reservation.TripType.TRANSFER
-    service = "Transfer"
     passengers = 2
     rate = 185
     hours = 1  # transfer default → subtotal = rate * 1
@@ -40,7 +39,6 @@ class TransferReservationFactory(ReservationFactory):
 
 class HourlyReservationFactory(ReservationFactory):
     trip_type = Reservation.TripType.HOURLY
-    service = "As-directed"
     rate = 295
     hours = 5
     min_hours = 4

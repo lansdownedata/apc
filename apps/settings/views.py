@@ -9,9 +9,9 @@ from django.views.decorators.http import require_POST
 from apps.accounts.permissions import owner_admin_required
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
-from apps.leads.models import VehicleType
+from apps.leads.models import ServiceType, VehicleType
 
-from .forms import VehicleTypeForm
+from .forms import ServiceTypeForm, VehicleTypeForm
 
 
 def _fleet_attention_count() -> int:
@@ -33,6 +33,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             "nav": "settings",
             "page_title": "Settings",
             "vehicle_type_count": VehicleType.objects.filter(active=True).count(),
+            "service_type_count": ServiceType.objects.filter(active=True).count(),
             "renewal_type_count": RenewalType.objects.filter(active=True).count(),
             "fleet_attention_count": _fleet_attention_count(),
         },
@@ -101,6 +102,69 @@ def vehicle_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
         target.delete()
         messages.success(request, f"{name} deleted.")
     return redirect("vehicle_type_list")
+
+
+@login_required
+@owner_admin_required
+def service_type_list(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "settings/service_type_list.html",
+        {
+            "nav": "settings",
+            "page_title": "Service types",
+            "service_types": ServiceType.objects.all(),
+        },
+    )
+
+
+@login_required
+@owner_admin_required
+def service_type_create(request: HttpRequest) -> HttpResponse:
+    form = ServiceTypeForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Service type added.")
+        return redirect("service_type_list")
+    return render(
+        request,
+        "settings/service_type_form.html",
+        {"nav": "settings", "page_title": "New service type", "form": form, "target": None},
+    )
+
+
+@login_required
+@owner_admin_required
+def service_type_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    target = get_object_or_404(ServiceType, pk=pk)
+    form = ServiceTypeForm(request.POST or None, instance=target)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Service type updated.")
+        return redirect("service_type_list")
+    return render(
+        request,
+        "settings/service_type_form.html",
+        {"nav": "settings", "page_title": target.name, "form": form, "target": target},
+    )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def service_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Deactivate when trips reference this type — SET_NULL means a hard delete would
+    silently blank the service on historical quotes."""
+    target = get_object_or_404(ServiceType, pk=pk)
+    if target.reservation_set.exists():
+        target.active = False
+        target.save(update_fields=["active", "updated_at"])
+        messages.success(request, f"{target.name} deactivated (it's used by existing trips).")
+    else:
+        name = target.name
+        target.delete()
+        messages.success(request, f"{name} deleted.")
+    return redirect("service_type_list")
 
 
 @login_required

@@ -220,8 +220,8 @@
 
     <div class="sm:col-span-2">
       <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Occasion <span class="text-muted/70">(optional)</span></label>
-      {% include "components/searchable_select.html" with name="service" field_id="bw-service" options=occasion_options selected=form.service.value empty_label="Select an occasion" search="off" %}
-      {% for error in form.service.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      {% include "components/searchable_select.html" with name="service_type" field_id="bw-service" options=occasion_options selected=form.service_type.value empty_label="Select an occasion" search="off" %}
+      {% for error in form.service_type.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
     </div>
 
     <div class="sm:col-span-2">

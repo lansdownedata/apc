@@ -8,7 +8,7 @@ from django.views.decorators.http import require_GET
 
 from apps.integrations.geocoding import merged_autocomplete
 
-from .forms import OCCASION_CHOICES, BookingRequestForm
+from .forms import BookingRequestForm, occasion_options
 from .services import create_lead_from_booking
 
 # Coarse per-IP throttle for the unauthenticated bookings POST — caps mass Lead
@@ -66,7 +66,7 @@ def home(request):
     return render(
         request,
         "public/home.html",
-        {"form": BookingRequestForm(), "occasion_options": OCCASION_CHOICES},
+        {"form": BookingRequestForm(), "occasion_options": occasion_options()},
     )
 
 
@@ -87,7 +87,7 @@ def bookings(request):
     else:
         form = BookingRequestForm()
     return render(
-        request, "public/bookings.html", {"form": form, "occasion_options": OCCASION_CHOICES}
+        request, "public/bookings.html", {"form": form, "occasion_options": occasion_options()}
     )
 
 
@@ -107,7 +107,7 @@ def contact(request):
     return render(
         request,
         "public/contact.html",
-        {"form": BookingRequestForm(), "occasion_options": OCCASION_CHOICES},
+        {"form": BookingRequestForm(), "occasion_options": occasion_options()},
     )
 
 

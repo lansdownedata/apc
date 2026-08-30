@@ -50,7 +50,7 @@
               {% if res.pickup_date %}<span class="ml-auto num">{{ res.pickup_date|date:"M j, Y" }}</span>{% endif %}
             </div>
             {% if res %}
-            <div class="text-[11px] text-muted mt-1.5 truncate">{{ res.service|default:res.get_trip_type_display }}</div>
+            <div class="text-[11px] text-muted mt-1.5 truncate">{{ res.service_label }}</div>
             {% endif %}
             {% if lead.payment_chip %}
             <span class="mt-2 inline-flex items-center gap-1 text-[9.5px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset

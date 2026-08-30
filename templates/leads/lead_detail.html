@@ -197,7 +197,7 @@
           </span>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-semibold text-ink text-[13.5px]">{{ res.service|default:res.get_trip_type_display }}</span>
+              <span class="font-semibold text-ink text-[13.5px]">{{ res.service_label }}</span>
               <span class="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded {% if res.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">{{ res.get_trip_type_display }}</span>
               {% if res.is_multi_stop %}<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-goldl text-goldd">Multi-stop</span>{% endif %}
               {% if res.trip_status %}
@@ -385,7 +385,7 @@
       <div class="space-y-2">
         {% for res in reservations %}
         <div class="flex items-center gap-3 text-[12px]">
-          <span class="text-ink font-medium min-w-0 flex-1 truncate">{{ res.service|default:res.get_trip_type_display }}</span>
+          <span class="text-ink font-medium min-w-0 flex-1 truncate">{{ res.service_label }}</span>
           <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold
             {% if res.revenue_status == 'recognized' %}bg-emerald-50 text-emerald-700{% elif res.revenue_status == 'pending' %}bg-amber-50 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">
             {{ res.get_revenue_status_display }}
