@@ -18,7 +18,7 @@ from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
 from . import flights
-from .drafts import _FLIGHT_RE, DraftError, save_reservation_from_draft
+from .drafts import FLIGHT_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .models import FlightDirection, Reservation, Stop
 
@@ -141,7 +141,7 @@ def flight_verify(request) -> JsonResponse:
     if airline is None:
         return _bad("Choose the airline first.", "airline")
     flight_number = str(payload.get("flight") or "").strip()
-    if not _FLIGHT_RE.match(flight_number):
+    if not FLIGHT_RE.match(flight_number):
         return _bad("Enter the flight number (digits only).", "flight")
     direction = str(payload.get("direction") or "")
     if direction not in FlightDirection.values:

@@ -491,14 +491,55 @@ def test_live_flight_converts_using_the_airport_it_was_given_not_a_fixed_zone():
 def test_live_flight_uses_the_winter_offset_not_a_pinned_summer_one():
     """Every other live_flight fixture in this file is dated in August (EDT, UTC-04:00) —
     this pins that the conversion re-derives the offset from the flight's own date rather
-    than a summer-pinned or otherwise fixed one. January in New York is EST, UTC-05:00."""
+    than a summer-pinned or otherwise fixed one. January in New York is EST, UTC-05:00.
+    `date` is overridden to match the entry's own day — live_flight now filters entries by
+    requested date (see test_live_filters_out_an_entry_from_an_adjacent_day below), so an
+    August request would no longer match a January entry at all."""
     entry = _timetable_entry(
         arrival={"iataCode": "IAD", "scheduledTime": "2026-01-15T08:00:00.000"}
     )
     with patch.object(av, "requests") as req:
         req.get.return_value = _response(json_data={"data": [entry]})
+        r = av.live_flight(**{**LIVE_KW, "date": date(2026, 1, 15)})
+    assert r.scheduled_at == datetime(2026, 1, 15, 13, 0, tzinfo=UTC)
+
+
+def test_live_filters_out_an_entry_from_an_adjacent_day():
+    """live_flight accepts a `date` parameter but (until this fix) never used it — a stale
+    timetable entry from an adjacent day would happily be returned and normalized, keeping
+    Flight.flight_date aligned with scheduled_at only by the accident that
+    LIVE_LOOKAHEAD_DAYS=0 means live_flight is only ever called for today. Raising that
+    constant later (an aviationstack plan upgrade) must not silently misdate a row."""
+    entry = _timetable_entry(
+        arrival={"iataCode": "IAD", "scheduledTime": "2026-08-30T12:06:00.000"}
+    )
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [entry]})
+        r = av.live_flight(**LIVE_KW)  # LIVE_KW's date is 2026-08-29
+    assert r == av.NOT_FOUND  # the entry is real, but for the wrong day  # 08:00 EST -> UTC
+
+
+def test_live_malformed_delay_does_not_raise_and_becomes_none():
+    """timetable sends `delay` as a string, and a live probe (2026-08-29) has already shown
+    this API sends non-numeric junk in fields we expect to be clean (see the string-`error`
+    429 test above). `int("n/a")` raises ValueError, which escaped live_flight (and lookup,
+    and the view — only FlightLookupError/AviationstackError are caught there) as an
+    unhandled 500 with no toast."""
+    entry = _timetable_entry(arrival={**_timetable_entry()["arrival"], "delay": "n/a"})
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [entry]})
         r = av.live_flight(**LIVE_KW)
-    assert r.scheduled_at == datetime(2026, 1, 15, 13, 0, tzinfo=UTC)  # 08:00 EST -> UTC
+    assert r.delay_minutes is None
+
+
+def test_live_negative_delay_clamps_to_zero():
+    """A negative `delay` would otherwise pass `int()` cleanly and then fail on save against
+    Flight.delay_minutes's PositiveIntegerField."""
+    entry = _timetable_entry(arrival={**_timetable_entry()["arrival"], "delay": "-5"})
+    with patch.object(av, "requests") as req:
+        req.get.return_value = _response(json_data={"data": [entry]})
+        r = av.live_flight(**LIVE_KW)
+    assert r.delay_minutes == 0
 
 
 def test_live_codeshare_operated_by():

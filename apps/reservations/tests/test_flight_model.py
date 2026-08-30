@@ -184,6 +184,29 @@ def test_pill_checked_date_uses_the_airport_zone_not_the_server(lax, united):
     )
 
 
+def test_pill_other_airport_renders_bare_code_when_name_is_blank(iad, united):
+    """Neither aviationstack endpoint sends an airport-name field, so a row whose far-end
+    IATA code isn't in our own Airport table (final review #1) has a blank
+    `other_airport_name` — the label must fall back to the bare code cleanly, never
+    'from  (DEN)' or a stray trailing separator."""
+    with patch("django.utils.timezone.now", return_value=NOW):
+        p = _flight(iad, united, other_airport_name="").pill()
+    assert p["other_airport"] == "DEN"
+    assert "from DEN" in p["detail"]
+    assert "(DEN)" not in p["detail"]
+
+
+def test_pill_guards_a_found_flight_with_no_parseable_time(iad, united):
+    """found=True but scheduled/estimated/actual all blank (a malformed provider time) must
+    not leave a trailing ' · ' in the label or a double space in the detail (final review
+    #8's pill() guard)."""
+    with patch("django.utils.timezone.now", return_value=NOW):
+        p = _flight(iad, united, scheduled_at=None).pill()
+    assert p["label"] == "UA 123"
+    assert "  " not in p["detail"]
+    assert p["detail"] == ("Arrives · Terminal C · from Denver International (DEN) · checked Sep 1")
+
+
 def test_pill_delayed_live(iad, united):
     with patch("django.utils.timezone.now", return_value=NOW):
         p = _flight(

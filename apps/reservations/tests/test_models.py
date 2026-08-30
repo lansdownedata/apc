@@ -277,6 +277,9 @@ def _airport_trip(states):
         (["delayed", "verified"], "delayed", "1 flight delayed"),
         (["delayed", "delayed"], "delayed", "2 flights delayed"),
         (["not_found", "verified"], "not_found", "Flight not found"),
+        # Pins the precedence order itself: delayed must outrank not_found (final review
+        # #7a — swapping the two in the precedence tuple left this whole file green).
+        (["not_found", "delayed"], "delayed", "1 flight delayed"),
         (["cancelled", "delayed", "not_found"], "cancelled", "Flight cancelled"),
     ],
 )

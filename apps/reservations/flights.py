@@ -45,6 +45,26 @@ class FlightLookupError(ValueError):
         super().__init__(message)
 
 
+def _other_airport_name(iata: str) -> str:
+    """Resolve the far-end airport's name from our own 863-row `addresses.Airport` table.
+
+    Neither aviationstack endpoint ever sends an airport-name field (final review #1) — one
+    indexed query, only reached when a call actually returned an IATA code, never per render.
+    Blank when the code isn't in our table (a foreign airport, or no code at all)."""
+    if not iata:
+        return ""
+    return Airport.objects.filter(iata=iata).values_list("name", flat=True).first() or ""
+
+
+def _keep(new: str, old: str) -> str:
+    """A blank on a refresh means "not reported," never "erase" (final review #2) — timetable
+    frequently sends null terminal/gate and no airport-name field at all, and overwriting a
+    richer flightsFuture-sourced row with those blanks would drop detail a dispatcher already
+    had. `old` is only ever the previously cached value, so there's nothing to keep on a
+    first-ever lookup."""
+    return new or old
+
+
 def link_flights(stops: list[dict], pickup_date: date | None) -> None:
     """Set `flight_id` on each parsed stop dict from the cache — one query per save.
 
@@ -101,9 +121,9 @@ def lookup(
         "direction": direction,
     }
     now = timezone.now()
-    row = Flight.objects.select_related("airline", "airport").filter(**key).first()
-    if row is not None and now < row.refresh_allowed_at:
-        return row  # the window decides; there is no force flag
+    existing = Flight.objects.select_related("airline", "airport").filter(**key).first()
+    if existing is not None and now < existing.refresh_allowed_at:
+        return existing  # the window decides; there is no force flag
 
     days_out = (flight_date - today).days
     common = {
@@ -130,6 +150,7 @@ def lookup(
         status = Flight.Status.UNAVAILABLE
     else:
         status = Flight.Status.NOT_FOUND
+    other_airport_name = result.other_airport_name or _other_airport_name(result.other_airport_iata)
     row, _ = Flight.objects.update_or_create(
         **key,
         defaults={
@@ -138,10 +159,14 @@ def lookup(
             "estimated_at": result.estimated_at,
             "actual_at": result.actual_at,
             "delay_minutes": result.delay_minutes,
-            "terminal": result.terminal,
-            "gate": result.gate,
-            "other_airport_iata": result.other_airport_iata,
-            "other_airport_name": result.other_airport_name,
+            "terminal": _keep(result.terminal, existing.terminal if existing else ""),
+            "gate": _keep(result.gate, existing.gate if existing else ""),
+            "other_airport_iata": _keep(
+                result.other_airport_iata, existing.other_airport_iata if existing else ""
+            ),
+            "other_airport_name": _keep(
+                other_airport_name, existing.other_airport_name if existing else ""
+            ),
             "operated_by_iata": result.operated_by_iata,
             "operated_by_name": result.operated_by_name,
             "source": source,

@@ -244,3 +244,71 @@ def test_today_is_counted_in_the_airport_zone(united, client):
     with patch("django.utils.timezone.now", return_value=datetime(2026, 9, 2, 3, 0, tzinfo=UTC)):
         row = _lookup(airport, united, flight_date=date(2026, 9, 1))
     assert row.source == Flight.Source.LIVE
+
+
+# --- other_airport_name is resolved from our own Airport table (final review #1) ---
+
+
+def test_other_airport_name_is_resolved_from_our_airport_table(iad, united, now):
+    """Neither aviationstack endpoint ever sends an airport-name field (aviationstack.py's
+    future_schedule/live_flight both leave FlightResult.other_airport_name blank) — lookup
+    resolves it itself from addresses.Airport by other_airport_iata, one query, only on the
+    API path."""
+    from apps.addresses.factories import AirportFactory as _AirportFactory
+
+    _AirportFactory(iata="DEN", name="Denver International")
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="DEN",
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == "Denver International"
+
+
+def test_other_airport_name_falls_back_to_blank_for_an_unknown_iata(iad, united, now):
+    """A foreign airport is not in our (US-only) table — no crash, just no name."""
+    found = av.FlightResult(
+        found=True,
+        status="scheduled",
+        scheduled_at=datetime(2026, 10, 15, 21, 35, tzinfo=UTC),
+        other_airport_iata="ZZZ",
+    )
+    with patch.object(flights.aviationstack, "future_schedule", return_value=found):
+        row = _lookup(iad, united)
+    assert row.other_airport_name == ""
+
+
+# --- a day-of refresh must not erase richer detail timetable doesn't send (review #2) ---
+
+
+def test_live_refresh_does_not_erase_terminal_gate_and_other_airport(iad, united, now):
+    """timetable often sends null terminal/gate (2 of 3 rows in the captured sample) and
+    never an airport-name field — a blank value on a refresh means "not reported," never
+    "erase." Seed a future-phase row carrying the richer detail, refresh it through the live
+    path with a thin (blank-everything-but-schedule) result, and confirm the dispatcher-facing
+    detail survives instead of being wiped."""
+    FlightFactory(
+        airline=united,
+        airport=iad,
+        flight_number="123",
+        flight_date=TODAY,
+        direction="arrival",
+        source=Flight.Source.FUTURE,
+        checked_at=NOW - timedelta(hours=25),
+        terminal="C",
+        gate="C7",
+        other_airport_iata="DEN",
+        other_airport_name="Denver International",
+    )
+    thin = av.FlightResult(
+        found=True, status="scheduled", scheduled_at=datetime(2026, 9, 1, 21, 35, tzinfo=UTC)
+    )
+    with patch.object(flights.aviationstack, "live_flight", return_value=thin):
+        row = _lookup(iad, united, flight_date=TODAY)
+    assert row.source == Flight.Source.LIVE
+    assert (row.terminal, row.gate) == ("C", "C7")
+    assert row.other_airport_iata == "DEN"
+    assert row.other_airport_name == "Denver International"

@@ -502,6 +502,11 @@ class Flight(TimeStampedModel):
         state = self.pill_state
         code = self.code
         t, abbr, sched = self.time_local, self.tz_abbr, self.scheduled_local
+        # "" when a found flight has no parseable time (scheduled/estimated/actual all
+        # blank — a malformed provider time). Every branch below must drop the trailing
+        # " · "/" " it would otherwise leave rather than fall through to a bare double
+        # space, e.g. "UA 123 ·  " instead of just "UA 123".
+        time_word = f"{t} {abbr}".strip()
         other = self.other_airport_label
         verb = "Arrives" if arriving else "Departs"
         prep = "from" if arriving else "to"
@@ -517,17 +522,25 @@ class Flight(TimeStampedModel):
         updated = f"updated {ago} ago"
         parts: list[str]
         if state == "verified":
-            label = f"{code} · {t} {abbr}"
+            label = f"{code} · {time_word}" if time_word else code
             checked = dateformat.format(self.local(self.checked_at), "M j")
-            parts = [f"{verb} {t} {abbr}", terminal, side, f"checked {checked}"]
+            parts = [f"{verb} {time_word}".strip(), terminal, side, f"checked {checked}"]
         elif state == "on_time":
-            label = f"{code} · On time · {t} {abbr}"
-            parts = [f"{verb} {t} {abbr}", terminal, gate, side, updated]
+            label = f"{code} · On time" + (f" · {time_word}" if time_word else "")
+            parts = [f"{verb} {time_word}".strip(), terminal, gate, side, updated]
         elif state == "delayed":
-            label = f"{code} · +{self.effective_delay}m · {t} {abbr}"
-            parts = [f"{verb} {t} {abbr}", f"scheduled {sched}", terminal, gate, side, updated]
+            label = f"{code} · +{self.effective_delay}m" + (f" · {time_word}" if time_word else "")
+            parts = [
+                f"{verb} {time_word}".strip(),
+                f"scheduled {sched}",
+                terminal,
+                gate,
+                side,
+                updated,
+            ]
         elif state == "landed":
-            label = f"{code} · {'Landed' if arriving else 'Departed'} {t} {abbr}"
+            word = "Landed" if arriving else "Departed"
+            label = f"{code} · {word}" + (f" {time_word}" if time_word else "")
             parts = [terminal, gate, side, updated]
         elif state == "cancelled":
             word = "Diverted" if self.status == self.Status.DIVERTED else "Cancelled"

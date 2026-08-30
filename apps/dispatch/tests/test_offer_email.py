@@ -141,3 +141,30 @@ def test_offer_email_carries_the_verified_time_and_terminal(mailoutbox):
     text, html = mailoutbox[0].body, mailoutbox[0].alternatives[0][0]
     assert "flight UA 123 arr 10:35 AM EDT, Terminal B" in text
     assert "✈ UA 123 · arr 10:35 AM EDT · Terminal B" in html
+
+
+def test_offer_email_shows_the_departure_direction_word(mailoutbox):
+    """Final review #7b: a hardcoded 'arr' in both templates left all other offer-email
+    tests (including the arrival case above) passing — nothing exercised a departure stop
+    with a flight attached."""
+    from datetime import datetime
+
+    from apps.reservations.factories import FlightFactory
+
+    trip = _trip()
+    stop = _with_flight(trip)
+    stop.flight_direction = "departure"
+    stop.flight = FlightFactory(
+        airline=stop.airline,
+        airport=stop.airport,
+        flight_number="123",
+        flight_date=date(2026, 8, 26),
+        direction="departure",
+        terminal="B",
+        scheduled_at=datetime(2026, 8, 26, 14, 35, tzinfo=UTC),
+    )
+    stop.save()
+    services.send_offer(trip, VendorFactory(email="ops@capital.example"), payout=Decimal("215.00"))
+    text, html = mailoutbox[0].body, mailoutbox[0].alternatives[0][0]
+    assert "flight UA 123 dep 10:35 AM EDT, Terminal B" in text
+    assert "✈ UA 123 · dep 10:35 AM EDT · Terminal B" in html
