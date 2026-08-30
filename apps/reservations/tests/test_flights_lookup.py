@@ -217,12 +217,29 @@ def test_provider_error_propagates_and_caches_nothing(iad, united, now, client):
     assert Flight.objects.count() == 0
 
 
+def test_refuses_an_airport_with_no_scheduled_service_before_any_call(iad, united, now, client):
+    """Andrews (ADW) has a real 3-char IATA code and a timezone — it would sail past the
+    other two guards. 391 of the 863 curated airports have no scheduled passenger service
+    (military fields, GA relievers); Verify must refuse them without spending a call
+    against the rate-limited provider."""
+    future, live = client
+    iad.has_scheduled_service = False
+    iad.save()
+    with pytest.raises(flights.FlightLookupError) as exc:
+        _lookup(iad, united)
+    assert exc.value.code == "no_scheduled_service"
+    future.assert_not_called()
+    live.assert_not_called()
+    assert Flight.objects.count() == 0
+
+
 @pytest.mark.parametrize(
     "over, code",
     [
         ({"flight_date": date(2026, 8, 31)}, "past_date"),
         ({}, "no_iata"),
         ({}, "no_timezone"),
+        ({}, "no_scheduled_service"),
     ],
 )
 def test_validation_errors(iad, united, now, client, over, code):
@@ -231,6 +248,9 @@ def test_validation_errors(iad, united, now, client, over, code):
         iad.save()
     if code == "no_timezone":
         iad.timezone = ""
+        iad.save()
+    if code == "no_scheduled_service":
+        iad.has_scheduled_service = False
         iad.save()
     with pytest.raises(flights.FlightLookupError) as exc:
         _lookup(iad, united, **over)

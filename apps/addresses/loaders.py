@@ -18,6 +18,10 @@ def _int(value):
     return int(value) if value else None
 
 
+def _bool(value) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes")
+
+
 def _row_to_fields(row: dict) -> dict:
     return {
         "ourairports_id": int(row["id"]),
@@ -32,6 +36,10 @@ def _row_to_fields(row: dict) -> dict:
         "longitude": Decimal(row["longitude_deg"]),
         "elevation_ft": _int(row["elevation_ft"]),
         "timezone": (row.get("timezone") or "").strip(),
+        # Both default false on a CSV that predates these columns — a fixture missing them
+        # must never silently grant ground-transport or Verify eligibility (2026-08-29).
+        "serves_ground_transport": _bool(row.get("serves_ground_transport")),
+        "has_scheduled_service": _bool(row.get("has_scheduled_service")),
     }
 
 

@@ -399,6 +399,20 @@ def test_panel_hides_verify_when_not_configured(logged_in_client, settings):
     assert "enabled: false" in _panel(logged_in_client, trip)
 
 
+def test_panel_hides_verify_when_airport_has_no_scheduled_service(logged_in_client, settings):
+    """Andrews (ADW) has a real IATA code, so the old code-length gate would have offered
+    Verify here — flights.lookup would then refuse it after the round trip. The drawer
+    must never even show the button (spec 2026-08-29 finding 2)."""
+    from apps.addresses.models import Airport
+
+    settings.AVIATIONSTACK_API_KEY = "k"
+    trip = _trip()
+    stop = _with_flight(trip)
+    stop.airport = Airport.objects.get(iata="ADW")
+    stop.save()
+    assert "enabled: true && false" in _panel(logged_in_client, trip)
+
+
 def test_panel_flight_join_adds_no_query(logged_in_client, django_assert_max_num_queries):
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     _with_flight(trip)

@@ -395,6 +395,29 @@ def test_a_stop_without_flight_info_drafts_empty_strings():
     draft_stop = _reservation_draft(res)["stops"][0]
     assert (draft_stop["airport"], draft_stop["airportCode"]) == ("", "")
     assert (draft_stop["airline"], draft_stop["flight"]) == ("", "")
+    assert draft_stop["hasScheduledService"] is False
+
+
+def test_draft_carries_has_scheduled_service_for_an_airport_stop(iad, united):
+    """IAD has real scheduled service — the editor's draft needs this flag to gate the
+    Verify button (spec 2026-08-29 finding 2)."""
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["hasScheduledService"] is True
+
+
+def test_draft_reports_no_scheduled_service_for_a_military_field(united):
+    """Andrews (ADW) is still selectable as a pickup (drafts.py never restricts on this
+    flag) but the draft must say it has no scheduled service, so the client-side gate
+    never offers Verify for it."""
+    from apps.addresses.models import Airport
+
+    adw = Airport.objects.get(iata="ADW")
+    res = save_reservation_from_draft(LeadFactory(), _flight_payload(adw, united))
+    stop = res.ordered_stops.first()
+    assert stop.airport_id == adw.pk  # still selectable as a pickup
+    draft_stop = _reservation_draft(res)["stops"][0]
+    assert draft_stop["hasScheduledService"] is False
 
 
 def test_airline_and_flight_are_dropped_without_an_airport(united):
