@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.addresses.models import Airline, Airport
 from apps.integrations import aviationstack
 
-from .models import LIVE_PHASE_DAYS, Flight, today_at
+from .models import LIVE_PHASE_DAYS, Flight, Stop, today_at
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +89,38 @@ def link_flights(stops: list[dict], pickup_date: date | None) -> None:
             stop["flight_direction"],
         )
         stop["flight_id"] = index.get(key)
+
+
+def link_stop(stop_id: int, flight: Flight) -> None:
+    """Link one saved stop to the flight just verified — the drawer's own save path, since
+    it has none through the editor (dispatch gap fix, 2026-08-29). Only called when the
+    request carried a `stop` id; the editor's payload never does.
+
+    Never raises and never fails the request it's called from: the lookup already
+    succeeded and its pill is valid regardless of this write. A stop that no longer
+    matches what was verified — most likely a stale drawer (the editor saves stops by
+    delete-and-recreate, so ids churn on every save), possibly a forged id — is logged and
+    skipped rather than linking an arbitrary stop to an arbitrary flight.
+    """
+    stop = Stop.objects.select_related("reservation").filter(pk=stop_id).first()
+    if stop is None:
+        log.warning("flight_verify: stop %s not found — not linking", stop_id)
+        return
+    if (
+        stop.airport_id != flight.airport_id
+        or stop.airline_id != flight.airline_id
+        or stop.flight_number != flight.flight_number
+        or stop.flight_direction != flight.direction
+        or stop.reservation.pickup_date != flight.flight_date
+    ):
+        log.warning(
+            "flight_verify: stop %s no longer matches flight %s — not linking (stale drawer?)",
+            stop_id,
+            flight.pk,
+        )
+        return
+    stop.flight = flight
+    stop.save(update_fields=["flight"])
 
 
 def lookup(
