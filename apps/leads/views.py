@@ -36,7 +36,7 @@ from apps.payments import services as payment_services
 from apps.reservations.models import Stop
 
 from . import services
-from .forms import NewLeadForm
+from .forms import NewLeadForm, PortalWeddingForm
 from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, VehicleType
 
 
@@ -203,6 +203,24 @@ def pipeline(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _wedding_state(lead) -> dict | None:
+    """The saved wedding plan, ready for `weddingPlanner()`, or None when this is not one.
+
+    Each leg is seeded with the vehicle already assigned to its reservation, so reopening
+    the builder shows what the agent chose rather than recommending all over again.
+    """
+    payload = lead.intake_payload or {}
+    if not payload.get("legs"):
+        return None
+    assigned = {
+        r.source_leg_id: r.vehicle_id
+        for r in lead.reservations.exclude(source_leg_id="")
+        if r.vehicle_id
+    }
+    legs = [{**leg, "vehicle_id": assigned.get(leg.get("id"))} for leg in payload["legs"]]
+    return {**payload, "legs": legs, "portal": True}
+
+
 @login_required
 def lead_detail(request, pk):
     lead = get_object_or_404(
@@ -254,6 +272,8 @@ def lead_detail(request, pk):
         "page_title": lead.quote_no,
         "lead": lead,
         "booking_intent": request.GET.get("booking") == "1",
+        "wedding_state": _wedding_state(lead),
+        "wedding_open": request.GET.get("wedding") == "1",
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
         "la_state": _la_state(la_sync_rows),
@@ -596,7 +616,41 @@ def lead_create(request) -> HttpResponse:
         assigned_agent=cd["agent"],
         status=Lead.Status.NEW,
     )
-    if cd.get("intent") == "booking":
+    intent = cd.get("intent")
+    if intent == "booking":
         return redirect(f"{reverse('lead_detail', args=[lead.pk])}?booking=1")
+    if intent == "wedding":
+        return redirect(f"{reverse('lead_detail', args=[lead.pk])}?wedding=1")
     touchpoints.schedule_lead_created(lead)
+    return redirect("lead_detail", pk=lead.pk)
+
+
+@login_required
+@require_POST
+def lead_wedding_save(request, pk: int) -> HttpResponse:
+    """Rebuild a lead's wedding trips from the builder's plan (spec 2026-08-30 §6.1).
+
+    No honeypot and no throttle, unlike the public POST — this one is behind auth.
+    """
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=pk)
+    form = PortalWeddingForm(request.POST)
+    if not form.is_valid():
+        messages.error(
+            request,
+            "; ".join(f"{k}: {e[0]}" for k, e in form.errors.items()) or "Could not save the day.",
+        )
+        return redirect("lead_detail", pk=lead.pk)
+    result = services.rebuild_wedding_trips(lead, form.cleaned_data)
+    if result.orphans:
+        # Never deleted for the agent — a trip may already be priced, pushed to
+        # LimoAnywhere or assigned to an affiliate.
+        names = ", ".join(
+            f"{r.pickup_time:%-I:%M %p} {stop.name}" if (stop := r.stops.first()) else "a trip"
+            for r in result.orphans
+        )
+        messages.warning(
+            request,
+            f"No longer in the plan: {names}. They're still on the quote — remove them "
+            "from the trip list if they're off.",
+        )
     return redirect("lead_detail", pk=lead.pk)
