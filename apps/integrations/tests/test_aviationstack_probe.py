@@ -48,7 +48,9 @@ def test_probe_hits_flights_future_for_a_far_date_and_saves_the_body(settings, t
     assert saved["data"][0][0]["flight"]["iataNumber"] == "UA123"
 
 
-def test_probe_uses_flights_for_a_near_date(settings, tmp_path):
+def test_probe_uses_timetable_for_a_near_date(settings, tmp_path):
+    """/v1/flights is 403 on this subscription; /v1/timetable is the day-of source that
+    actually answers within the 7-day flightsFuture window (task-3R-brief.md)."""
     settings.AVIATIONSTACK_API_KEY = "k"
     resp = MagicMock(status_code=200, text="{}")
     resp.json.return_value = {"data": []}
@@ -59,5 +61,8 @@ def test_probe_uses_flights_for_a_near_date(settings, tmp_path):
     ):
         req.get.return_value = resp
         call_command("aviationstack_probe", *ARGS, stdout=StringIO())
-    assert req.get.call_args.args[0].endswith("/v1/flights")
-    assert req.get.call_args.kwargs["params"]["flight_iata"] == "UA123"
+    assert req.get.call_args.args[0].endswith("/v1/timetable")
+    params = req.get.call_args.kwargs["params"]
+    assert params["iataCode"] == "IAD" and params["type"] == "arrival"
+    assert params["flight_iata"] == "UA123"
+    assert "date" not in params  # /v1/timetable takes no date param — see live_flight

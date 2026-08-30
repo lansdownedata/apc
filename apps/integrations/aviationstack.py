@@ -200,8 +200,38 @@ def _iso_local_time(value) -> time | None:
         return None
 
 
+def _iso_local_date(value) -> date_type | None:
+    """The calendar date printed in an ISO 8601 string, exactly as printed — same rule as
+    `_iso_local_time`, no UTC shift. Used to filter `/v1/timetable` entries down to the date
+    `live_flight` was actually asked for (see the docstring there)."""
+    text = _s(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
 def _minutes(t: time | None) -> int | None:
     return None if t is None else t.hour * 60 + t.minute
+
+
+def _delay_minutes(value) -> int | None:
+    """timetable's `delay` is a string, not a number, and a live probe already proved this
+    API sends junk in fields the docs describe as clean (the string-`error` 429 above is the
+    same family of surprise). `int("n/a")` used to raise ValueError, which escaped live_flight
+    and lookup as an unhandled 500 with no toast. Junk -> None (unknown); a negative value
+    clamps to 0 rather than failing to save against Flight.delay_minutes's
+    PositiveIntegerField — early is not a state anyone dispatches around anyway."""
+    text = _s(value)
+    if not text:
+        return None
+    try:
+        minutes = int(text)
+    except ValueError:
+        return None
+    return max(0, minutes)
 
 
 def _pick(entries: list[dict], preferred_time: time | None, local_time) -> dict | None:
@@ -259,8 +289,9 @@ def future_schedule(
     airport_tz: str,
     preferred_time: time | None = None,
 ) -> FlightResult:
-    """`/v1/flightsFuture` — scheduled flights more than 7 days out. Times arrive as bare
-    airport-local `HH:MM`; `airport_tz` turns them into UTC."""
+    """`/v1/flightsFuture` — scheduled flights more than 7 days out. Times arrive as a
+    space-separated local `"YYYY-MM-DD HH:MM:SS"` (not the bare `HH:MM` the published docs
+    describe — see `_hhmm` and the module docstring); `airport_tz` turns them into UTC."""
     body = _request(
         "flightsFuture",
         {
@@ -279,7 +310,6 @@ def future_schedule(
         return NOT_FOUND
     side = entry.get(here) or {}
     other = entry.get(there) or {}
-    other_airport = other.get("airport") if isinstance(other.get("airport"), dict) else {}
     cs_airline = (entry.get("codeshared") or {}).get("airline") or {}
     op_iata, op_name = _operated_by(
         _s(cs_airline.get("iataCode")).upper(), _s(cs_airline.get("name")), airline_iata
@@ -291,7 +321,8 @@ def future_schedule(
         terminal=_titled(side.get("terminal")),
         gate=_titled(side.get("gate")),
         other_airport_iata=_s(other.get("iataCode")).upper(),
-        other_airport_name=_s(other_airport.get("name")),
+        other_airport_name="",  # flightsFuture has no airport-name field either — see
+        # apps/reservations/flights.py::lookup, which resolves it from our own Airport table
         operated_by_iata=op_iata,
         operated_by_name=_titled(op_name),
         raw=entry,
@@ -310,7 +341,11 @@ def live_flight(
 ) -> FlightResult:
     """`/v1/timetable` — day-of status, the only live endpoint reachable on this plan
     (`/v1/flights` 403s — see the module docstring). Filtered server-side by `iataCode` +
-    `type` + `flight_iata`. Times arrive as naive ISO-T airport-local timestamps —
+    `type` + `flight_iata` only — the API takes no `date` param here, so `date` is enforced
+    client-side against each entry's own local scheduled date. That matters because
+    `LIVE_LOOKAHEAD_DAYS = 0` is the only thing keeping this endpoint same-day today; if that
+    constant is ever raised (a plan upgrade), a stale entry from an adjacent day must not be
+    silently accepted. Times arrive as naive ISO-T airport-local timestamps —
     `_local_iso_to_utc` converts them with `airport_tz`, the same fold=0 rule
     `future_schedule` uses for flightsFuture, so a DST-ambiguous moment resolves the same
     way on both paths."""
@@ -327,6 +362,7 @@ def live_flight(
         e
         for e in _entries(body)
         if _s((e.get(here) or {}).get("iataCode")).upper() == airport_iata.upper()
+        and _iso_local_date((e.get(here) or {}).get("scheduledTime")) == date
     ]
 
     def local_time(entry: dict) -> time | None:
@@ -353,7 +389,7 @@ def live_flight(
         scheduled_at=_local_iso_to_utc(side.get("scheduledTime"), airport_tz),
         estimated_at=_local_iso_to_utc(side.get("estimatedTime"), airport_tz),
         actual_at=_local_iso_to_utc(side.get("actualTime"), airport_tz),
-        delay_minutes=int(delay) if _s(delay) else None,
+        delay_minutes=_delay_minutes(delay),
         terminal=_s(side.get("terminal")),
         gate=_s(side.get("gate")),
         other_airport_iata=_s(other.get("iataCode")).upper(),

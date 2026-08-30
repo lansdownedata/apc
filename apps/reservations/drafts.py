@@ -65,7 +65,7 @@ def _coord(value, limit: int) -> Decimal | None:
     return coord.quantize(Decimal("0.000001"))
 
 
-_FLIGHT_RE = re.compile(r"^\d{1,6}$")
+FLIGHT_RE = re.compile(r"^\d{1,6}$")  # public: imported cross-module by apps/reservations/views.py
 
 
 def _pk(value) -> int | None:
@@ -77,7 +77,7 @@ def _pk(value) -> int | None:
 
 def _flight_number(value) -> str:
     text = str(value or "").strip()
-    if text and not _FLIGHT_RE.match(text):
+    if text and not FLIGHT_RE.match(text):
         raise DraftError("flight number must be digits (up to 6)")
     return text
 

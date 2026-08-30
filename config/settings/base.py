@@ -194,7 +194,8 @@ LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 
 # aviationstack — flight verification (spec 2026-08-29). Blank key = Verify hidden everywhere
 # and the endpoint answers 503 `not_configured`. Needs the Basic plan or higher for
-# /v1/flightsFuture; that endpoint is rate-limited to 1 request per 10 s.
+# /v1/flightsFuture. Documented as 1 request per 10 s, but a live probe (2026-08-29) hit 429
+# with an 11 s gap between calls — treat the real limit as tighter than advertised.
 AVIATIONSTACK_API_KEY = env("AVIATIONSTACK_API_KEY", default="")
 AVIATIONSTACK_BASE_URL = env("AVIATIONSTACK_BASE_URL", default="https://api.aviationstack.com")
 
