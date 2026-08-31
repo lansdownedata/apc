@@ -13,6 +13,7 @@ urlpatterns = [
     path("schedule/thanks/", views.schedule_thanks, name="schedule_thanks"),
     # Our own booking UI over Calendly — the grid's data source.
     path("schedule/slots/", views.schedule_slots, name="schedule_slots"),
+    path("schedule/book/", views.schedule_book, name="schedule_book"),
     path("bookings/geocode/", views.geocode, name="geocode"),
     path("weddings/plan/", views.wedding_plan, name="wedding_plan"),
     # The emailed resume link. A signed token in the path, never the couple's own

@@ -302,3 +302,31 @@ def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
             "company_email": settings.COMPANY_EMAIL,
         },
     )
+
+
+_BOOKING_SALT = "public.schedule.booking"
+# Only has to outlive the redirect from the booking POST to the thanks page.
+BOOKING_TOKEN_MAX_AGE_SECONDS = 60 * 60
+
+
+def make_booking_token(*, name: str, start_time: str, timezone: str) -> str:
+    """A signed token for the discovery-call thanks page.
+
+    Carries the three things the confirmation has to say and nothing more. The token
+    lands in a URL — which ends up in history, referrer headers and access logs — so
+    the invitee's email and phone stay out of it.
+
+    The timezone rides along because the confirmation must agree with the slot the
+    visitor clicked and with the calendar invite Calendly emails them, both of which
+    are in THEIR zone. This is the one page on the site that does not render in
+    TIME_ZONE: showing 1:45 PM EDT to someone who booked 10:45 AM PDT reads as a
+    different appointment entirely.
+    """
+    return signing.dumps(
+        {"name": name, "start_time": start_time, "timezone": timezone}, salt=_BOOKING_SALT
+    )
+
+
+def read_booking_token(token: str) -> dict:
+    """The payload behind a booking token. Raises BadSignature or SignatureExpired."""
+    return signing.loads(token, salt=_BOOKING_SALT, max_age=BOOKING_TOKEN_MAX_AGE_SECONDS)
