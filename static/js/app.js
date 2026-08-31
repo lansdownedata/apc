@@ -2439,7 +2439,9 @@ function scheduleBooking(opts = {}) {
         this.syncTimezonePicker();
         if (window.initPhoneInputs) window.initPhoneInputs(this.$el);
       });
-      if (this.phase === "idle") this.loadSlots();
+      // "error" retries too: a visitor who hit a blip and came back deserves a fresh
+      // attempt rather than the state that failed them.
+      if (this.phase === "idle" || this.phase === "error") this.loadSlots();
     },
 
     closePanel() {
@@ -2552,6 +2554,9 @@ function scheduleBooking(opts = {}) {
     /** Hand over to Calendly's own popup. Returns false if its script never loaded. */
     fallbackToPopup() {
       if (window.openCalendlyPopup && window.openCalendlyPopup()) {
+        // Back to idle before closing, or reopening our panel later would find it
+        // parked on whatever phase failed — a loading skeleton that never resolves.
+        this.phase = "idle";
         this.closePanel();
         return true;
       }

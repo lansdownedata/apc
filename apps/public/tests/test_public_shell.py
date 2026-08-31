@@ -197,3 +197,16 @@ def test_no_booking_panel_when_calendly_is_switched_off(db):
         html = Client().get(path).content.decode()
         assert "scheduleBooking(" not in html
         assert "openScheduler()" not in html
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_no_unstripped_django_comments_leak_into_the_page(db):
+    """Django's {# #} lexer regex is not re.DOTALL, so a multi-line {# … #} is NOT a
+    comment — its body renders as literal text, and any markup inside it becomes real
+    HTML. It has bitten this repo repeatedly and it bit this panel; {% comment %} is
+    the only safe form for anything spanning a line. Cheap to assert, so assert it.
+    """
+    for path in MARKETING_PAGES:
+        html = Client().get(path).content.decode()
+        assert "{#" not in html, f"unstripped Django comment rendering on {path}"
+        assert "{%" not in html, f"unrendered template tag on {path}"
