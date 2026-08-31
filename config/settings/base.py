@@ -222,6 +222,13 @@ CALENDLY_API_TOKEN = env("CALENDLY_API_TOKEN", default="")
 # The HMAC key WE choose and hand Calendly at subscription time. Blank => accept
 # unsigned deliveries (dev); set => fail closed. Same rule as PODIUM_WEBHOOK_SECRET.
 CALENDLY_WEBHOOK_SIGNING_KEY = env("CALENDLY_WEBHOOK_SIGNING_KEY", default="")
+# A webhook subscription is account-wide: it fires for EVERY meeting booked on the
+# Calendly account, not just the quick-chat event type. Pin the event type URI here
+# and anything else (a vendor call, an internal 1:1) is ignored instead of landing in
+# the sales pipeline. Blank => accept every booking.
+# The account's only event type today is the quick chat:
+#   https://api.calendly.com/event_types/EAFTEGE2V6TLJSZT
+CALENDLY_EVENT_TYPE_URI = env("CALENDLY_EVENT_TYPE_URI", default="")
 
 # Geolocation & address bias
 from apps.core.geo import parse_latlon  # noqa: E402 settings-safe (no Django imports)

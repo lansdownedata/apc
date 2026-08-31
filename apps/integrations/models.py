@@ -101,6 +101,45 @@ class PodiumEvent(TimeStampedModel):
         return f"{self.event_type} · {'processed' if self.processed else 'pending'}"
 
 
+class CalendlyEvent(TimeStampedModel):
+    """Inbound Calendly webhook log (invitee.created / invitee.canceled).
+
+    Mirrors PodiumEvent: the raw payload is stored whatever happens, so the shape can
+    be refined against real traffic rather than guessed at, and the key is unique so
+    Calendly's retries are no-ops at the database level.
+
+    Not ZapEvent, which looks close: that model requires a `lead` FK, and on
+    invitee.created the Lead does not exist yet — it is what this event creates.
+    """
+
+    class EventType(models.TextChoices):
+        INVITEE_CREATED = "invitee.created", "Invitee created"
+        INVITEE_CANCELED = "invitee.canceled", "Invitee canceled"
+
+    lead = models.ForeignKey(
+        "leads.Lead",
+        related_name="calendly_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    # "<event type>:<invitee uri>", e.g.
+    # "invitee.created:https://api.calendly.com/scheduled_events/<uuid>/invitees/<uuid>".
+    # The URI is stable across delivery retries; the event type is part of the key
+    # because a booking and its later cancellation share one invitee URI.
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    payload = models.JSONField(default=dict, blank=True)
+    processed = models.BooleanField(default=False)
+
+    def mark_processed(self) -> None:
+        self.processed = True
+        self.save(update_fields=["processed", "updated_at"])
+
+    def __str__(self) -> str:
+        return f"{self.event_type} · {'processed' if self.processed else 'pending'}"
+
+
 class LACustomer(TimeStampedModel):
     """Our Contact's customer record in LimoAnywhere (backend-proxy pattern).
 

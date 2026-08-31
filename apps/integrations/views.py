@@ -98,6 +98,68 @@ def _gnet_signature_ok(request: HttpRequest) -> bool:
     return _digests_equal(expected, header.removeprefix("sha256="))
 
 
+def _calendly_signature_ok(request: HttpRequest) -> bool:
+    """HMAC-SHA256 over '{t}.{raw_body}' with CALENDLY_WEBHOOK_SIGNING_KEY.
+
+    Calendly sends `Calendly-Webhook-Signature: t=<unix seconds>,v1=<hex digest>`
+    (confirmed against its webhook-signatures docs, 2026-08-31). Blank key => accept
+    (dev); set => fail closed, as for Podium and GNet. The HMAC covers the RAW bytes:
+    re-serialising the JSON changes key order and whitespace and will never match.
+
+    No timestamp-tolerance check, deliberately. Calendly suggests one, but a valid
+    signature only ever replays a genuine past payload and the unique idempotency key
+    already makes that a no-op — while retries use exponential backoff across 24
+    hours, so a strict window would reject every retry after an outage and get the
+    subscription disabled. Availability is the bigger risk here than replay.
+    """
+    key = settings.CALENDLY_WEBHOOK_SIGNING_KEY
+    if not key:
+        return True
+    header = request.headers.get("Calendly-Webhook-Signature", "")
+    parts = dict(piece.split("=", 1) for piece in header.split(",") if "=" in piece)
+    timestamp, signature = parts.get("t", ""), parts.get("v1", "")
+    if not timestamp or not signature:
+        logger.warning("Calendly webhook: unusable signature header %r", header[:200])
+        return False
+    expected = hmac.new(
+        key.encode(), f"{timestamp}.".encode() + request.body, hashlib.sha256
+    ).hexdigest()
+    if _digests_equal(expected, signature):
+        return True
+    # The header format is the one thing untestable until real traffic arrives; a bare
+    # 403 with no record of what was sent makes the first live delivery useless as
+    # evidence. The key itself is never logged.
+    logger.warning("Calendly webhook: signature mismatch for header %r", header[:200])
+    return False
+
+
+@csrf_exempt
+def calendly_webhook(request):
+    """Receive Calendly invitee webhooks (invitee.created / invitee.canceled).
+
+    Answers 200 for anything structurally unusable rather than 4xx: Calendly retries
+    a non-2xx for 24 hours and then DISABLES the subscription, so a payload that can
+    never be processed must not be refused. Only a bad signature and unparseable JSON
+    are turned away.
+    """
+    if request.method != "POST":
+        return HttpResponseBadRequest("POST only.")
+    if not _calendly_signature_ok(request):
+        return HttpResponse(status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return HttpResponseBadRequest("Invalid JSON.")
+    if not isinstance(payload, dict):
+        logger.warning(
+            "Calendly webhook: valid JSON but not an object (got %s) — ignored.",
+            type(payload).__name__,
+        )
+        return HttpResponse(status=200)
+    webhooks.process_calendly_webhook(payload)
+    return HttpResponse(status=200)
+
+
 def podium_authorize(request):
     """Kick off the Podium OAuth flow — redirect the user to grant access."""
     if not settings.PODIUM_CLIENT_ID:
