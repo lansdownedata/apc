@@ -1,6 +1,7 @@
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.signing import BadSignature
@@ -224,6 +225,20 @@ def test_compute_quote_expiry_no_pickup_date_returns_now_plus_days():
     expiry = services.compute_quote_expiry(lead)
     after = timezone.now()
     assert before + timedelta(days=14) <= expiry <= after + timedelta(days=14)
+
+
+@override_settings(QUOTE_EXPIRY_DAYS_BEFORE_PICKUP=14)
+def test_compute_quote_expiry_pacific_pickup_uses_the_pacific_instant():
+    """Reproduction: make_aware() used TIME_ZONE, so a Pacific 9 AM pickup's
+    14-day cutoff was computed as 9 AM Eastern."""
+    lead = _quotable_lead()
+    pickup_date = (timezone.now() + timedelta(days=30)).date()
+    res = TransferReservationFactory(lead=lead, pickup_date=pickup_date, pickup_time=time(9, 0))
+    res.pickup_timezone = "America/Los_Angeles"
+    res.save(update_fields=["pickup_timezone"])
+    expiry = services.compute_quote_expiry(lead)
+    pickup = datetime.combine(pickup_date, time(9, 0), tzinfo=ZoneInfo("America/Los_Angeles"))
+    assert expiry == pickup - timedelta(days=14)
 
 
 # ---------------------------------------------------------------------------
