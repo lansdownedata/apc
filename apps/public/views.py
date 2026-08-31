@@ -1,6 +1,7 @@
 import hashlib
 import logging
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC as dt_timezone_utc
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -458,8 +459,13 @@ def _payload_from_reservations(lead) -> dict:
 # Calendly caps a single availability call at 7 days, so a longer view is several
 # calls. Capped so a hand-built ?days=3650 cannot turn one unauthenticated GET into
 # hundreds of upstream requests against a rate limit that is tighter than documented.
-SLOT_DAYS_DEFAULT = 14
-SLOT_DAYS_MAX = 28
+# The panel opens with one rolling fetch wide enough to find the first month that has
+# anything in it, so it never pays for a round trip that only proves a month is spent.
+SLOT_DAYS_DEFAULT = 45
+SLOT_DAYS_MAX = 62
+# Enough to put a month's five chunks in flight at once without hammering an API whose
+# rate limits are tighter than documented.
+SLOT_FETCH_WORKERS = 5
 # Calendly rejects a start_time in the past, and `now` is already past by the time the
 # request reaches them.
 SLOT_WINDOW_LEAD = timedelta(minutes=2)
@@ -535,16 +541,25 @@ def _fetch_window(start: datetime, end: datetime, *, key: str) -> list[str]:
     if cached is not None:
         return cached
 
-    starts: list[str] = []
+    chunks = []
     window_start = start
     while window_start < end:
         window_end = min(window_start + calendly.MAX_SLOT_RANGE, end)
-        for slot in calendly.available_times(start=window_start, end=window_end):
-            if slot.get("status") and slot["status"] != "available":
-                continue
-            if slot.get("start_time"):
-                starts.append(slot["start_time"])
+        chunks.append((window_start, window_end))
         window_start = window_end
+
+    # Calendly's 7-day cap means a month is five calls, and run end to end that was
+    # three seconds of a visitor watching a spinner. The chunks do not depend on each
+    # other, so they go out together. `map` preserves order and re-raises the first
+    # exception, so a CalendlyAPIError still reaches the 503 handler intact.
+    starts: list[str] = []
+    with ThreadPoolExecutor(max_workers=SLOT_FETCH_WORKERS) as pool:
+        for slots in pool.map(lambda w: calendly.available_times(start=w[0], end=w[1]), chunks):
+            for slot in slots:
+                if slot.get("status") and slot["status"] != "available":
+                    continue
+                if slot.get("start_time"):
+                    starts.append(slot["start_time"])
 
     cache.set(cache_key, starts, settings.CALENDLY_SLOT_CACHE_SECONDS)
     return starts

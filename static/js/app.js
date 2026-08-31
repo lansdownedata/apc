@@ -2436,7 +2436,7 @@ function scheduleBooking(opts = {}) {
   return {
     slotsUrl: opts.slotsUrl || "",
     bookUrl: opts.bookUrl || "",
-    days: 14,
+    days: 45,
 
     isOpen: false,
     phase: "idle", // idle | loading | ready | error | done
@@ -2483,7 +2483,7 @@ function scheduleBooking(opts = {}) {
       });
       // "error" retries too: a visitor who hit a blip and came back deserves a fresh
       // attempt rather than the state that failed them.
-      if (this.phase === "idle" || this.phase === "error") this.loadMonth({ skipEmpty: 2 });
+      if (this.phase === "idle" || this.phase === "error") this.loadInitial();
     },
 
     closePanel() {
@@ -2678,11 +2678,45 @@ function scheduleBooking(opts = {}) {
       return group ? group.label : "";
     },
 
-    /* `skipEmpty` is how many empty months may be stepped over before giving up. The
-       panel opens on the first month with something bookable: late in a month there is
-       often nothing left in it, and opening onto a dead calendar reads as "no
-       availability" rather than "look at next month". Calendly's own page does this. */
-    async loadMonth({ skipEmpty = 0 } = {}) {
+    /** YYYY-MM of the earliest day that has something bookable, from what we hold. */
+    firstOpenMonth() {
+      for (const group of this.dayGroups) {
+        if (group.slots.some((s) => !s.held)) {
+          // dayKey is en-US MM/DD/YYYY.
+          return `${group.key.slice(6, 10)}-${group.key.slice(0, 2)}`;
+        }
+      }
+      return "";
+    },
+
+    /* Opening fetches one rolling window rather than a calendar month, because the
+       month to show is not known until we know where the availability is. Late in a
+       month there is often nothing left in it, and opening onto a dead calendar reads
+       as "they have no availability" rather than "look at next month" — but asking for
+       this month, discovering it is spent and then asking for the next one cost a
+       second round trip and several wasted seconds. One window answers both. */
+    async loadInitial() {
+      this.phase = "loading";
+      try {
+        const resp = await fetch(`${this.slotsUrl}?days=${this.days}`, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) return this.fallbackToPopup();
+        this.slots = data.slots || [];
+        this.questions = data.questions || [];
+        this.phase = "ready";
+        this.month = this.firstOpenMonth() || this.monthKey(new Date());
+        this.$nextTick(() => {
+          if (window.initFlatpickr) window.initFlatpickr(this.$el);
+        });
+      } catch (e) {
+        this.fallbackToPopup();
+      }
+    },
+
+    /** One calendar month, for the arrows. */
+    async loadMonth() {
       this.phase = "loading";
       try {
         const resp = await fetch(`${this.slotsUrl}?month=${encodeURIComponent(this.month)}`, {
@@ -2693,10 +2727,6 @@ function scheduleBooking(opts = {}) {
         this.slots = data.slots || [];
         this.questions = data.questions || [];
         this.phase = "ready";
-        if (skipEmpty > 0 && !this.openDayCount) {
-          this.stepMonth(1);
-          return this.loadMonth({ skipEmpty: skipEmpty - 1 });
-        }
         // The question fields only exist now, so their pickers are initialised now.
         this.$nextTick(() => {
           if (window.initFlatpickr) window.initFlatpickr(this.$el);
