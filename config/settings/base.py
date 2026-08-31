@@ -229,6 +229,10 @@ CALENDLY_WEBHOOK_SIGNING_KEY = env("CALENDLY_WEBHOOK_SIGNING_KEY", default="")
 # The account's only event type today is the quick chat:
 #   https://api.calendly.com/event_types/EAFTEGE2V6TLJSZT
 CALENDLY_EVENT_TYPE_URI = env("CALENDLY_EVENT_TYPE_URI", default="")
+# How long a visitor keeps a slot after clicking it in our own booking form. Advisory
+# only — it stops two of OUR visitors colliding and knows nothing about bookings made
+# on calendly.com. Short on purpose: an abandoned form greys the slot out for everyone.
+CALENDLY_HOLD_MINUTES = env.int("CALENDLY_HOLD_MINUTES", default=10)
 
 # Geolocation & address bias
 from apps.core.geo import parse_latlon  # noqa: E402 settings-safe (no Django imports)
