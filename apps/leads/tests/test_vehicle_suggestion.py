@@ -88,13 +88,36 @@ def test_clearing_the_vehicle_clears_the_rate_card(fleet):
     assert res.min_hours == 0
 
 
-def test_the_snapshot_produces_the_same_subtotal_the_editor_would(fleet):
-    """Wedding legs are transfers, so the minimum is transfer_min_hours."""
+def test_an_hourly_trip_snapshots_the_hourly_minimum_instead(fleet):
+    """The minimum follows the trip type, exactly as the reservation editor does it —
+    an hourly wedding leg billed at the transfer minimum would quote hours short."""
     vehicle = fleet["coach40"]
     vehicle.rate = Decimal("150.00")
     vehicle.transfer_min_hours = Decimal("3.00")
     vehicle.hourly_min_hours = Decimal("8.00")
     vehicle.save()
-    res = ReservationFactory(hours=0)
+    res = ReservationFactory(trip_type="hourly", rate=0, min_hours=0)
+    apply_vehicle_rate_card(res, vehicle)
+    assert res.min_hours == Decimal("8.00")
+
+
+def test_a_transfer_still_snapshots_the_transfer_minimum(fleet):
+    vehicle = fleet["coach40"]
+    vehicle.transfer_min_hours = Decimal("3.00")
+    vehicle.hourly_min_hours = Decimal("8.00")
+    vehicle.save()
+    res = ReservationFactory(trip_type="transfer", min_hours=0)
+    apply_vehicle_rate_card(res, vehicle)
+    assert res.min_hours == Decimal("3.00")
+
+
+def test_the_snapshot_produces_the_same_subtotal_the_editor_would(fleet):
+    """Wedding legs default to transfers, so the minimum is transfer_min_hours."""
+    vehicle = fleet["coach40"]
+    vehicle.rate = Decimal("150.00")
+    vehicle.transfer_min_hours = Decimal("3.00")
+    vehicle.hourly_min_hours = Decimal("8.00")
+    vehicle.save()
+    res = ReservationFactory(trip_type="transfer", hours=0)
     apply_vehicle_rate_card(res, vehicle)
     assert res.subtotal == Decimal("450.00")

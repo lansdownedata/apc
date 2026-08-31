@@ -212,12 +212,17 @@ def _wedding_state(lead) -> dict | None:
     payload = lead.intake_payload or {}
     if not payload.get("legs"):
         return None
-    assigned = {
-        r.source_leg_id: r.vehicle_id
+    saved = {
+        r.source_leg_id: {
+            "vehicle_id": r.vehicle_id,
+            "trip_type": r.trip_type,
+            # 0 is "no override, bill the rate-card minimum" — send null, not 0, so the
+            # Hours box shows its "min" placeholder rather than a literal zero.
+            "hours": float(r.hours) if r.hours else None,
+        }
         for r in lead.reservations.exclude(source_leg_id="")
-        if r.vehicle_id
     }
-    legs = [{**leg, "vehicle_id": assigned.get(leg.get("id"))} for leg in payload["legs"]]
+    legs = [{**leg, **saved.get(leg.get("id"), {})} for leg in payload["legs"]]
     return {**payload, "legs": legs, "portal": True}
 
 

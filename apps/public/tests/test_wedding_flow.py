@@ -198,3 +198,13 @@ def test_a_wedding_inside_the_alert_window_arrives_flagged(client):
     soon = (timezone.localdate() + timedelta(days=20)).isoformat()
     client.post(PLAN_URL, _post(wedding_date=soon))
     assert Lead.objects.get().has_alert is True
+
+
+def test_the_customer_never_sees_how_a_leg_bills(client):
+    """Transfer-vs-hourly and the hours override are office controls. No pricing
+    mechanics reach the public flow — it shows vehicle recommendations and nothing else."""
+    html = client.get(PLAN_URL).content.decode()
+    assert "setLegTripType" not in html
+    assert "trip_types_json" not in html
+    assert "Bills as" not in html
+    assert "leg-hours-" not in html

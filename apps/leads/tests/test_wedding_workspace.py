@@ -218,3 +218,30 @@ def test_a_brand_new_wedding_still_opens_in_portal_mode(client, agent):
         f"{reverse('lead_detail', args=[LeadFactory().pk])}?wedding=1"
     ).content.decode()
     assert "portal: true" in body
+
+
+def test_reopening_the_builder_shows_how_each_leg_bills(client, agent):
+    """Trip type and hours must survive a reopen the same way the vehicle does."""
+    lead = LeadFactory()
+    client.post(
+        reverse("lead_wedding_save", args=[lead.pk]),
+        _portal(
+            trip_types_json=json.dumps({"guests-in": "hourly"}),
+            hours_json=json.dumps({"guests-in": "10"}),
+        ),
+    )
+    state = client.get(reverse("lead_detail", args=[lead.pk])).context["wedding_state"]
+    legs = {leg["id"]: leg for leg in state["legs"]}
+    assert legs["guests-in"]["trip_type"] == "hourly"
+    assert legs["guests-in"]["hours"] == 10
+    assert legs["final-out"]["trip_type"] == "transfer"
+    assert legs["final-out"]["hours"] is None
+
+
+def test_the_builder_offers_the_trip_type_control(client, agent):
+    body = client.get(
+        f"{reverse('lead_detail', args=[LeadFactory().pk])}?wedding=1"
+    ).content.decode()
+    assert "setLegTripType(leg, 'hourly')" in body
+    assert 'name="trip_types_json"' in body
+    assert 'name="hours_json"' in body
