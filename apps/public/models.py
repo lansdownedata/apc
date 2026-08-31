@@ -95,3 +95,67 @@ class SlotHold(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.start_time:%Y-%m-%d %H:%M} UTC held by {self.session_key[:8]}"
+
+
+# The exact wording shown beside the opt-in checkbox. Defined once and rendered from
+# here (via the site_settings context processor) so the page and the stored record can
+# never drift — a consent record that misquotes what was on screen is worth nothing.
+SMS_CONSENT_TEXT = (
+    "Yes — All Pro Charter may call and text me about this meeting at the number "
+    "above. Calendly sends the reminders; message and data rates may apply."
+)
+
+
+class BookingConsentManager(models.Manager):
+    def record(
+        self,
+        *,
+        name: str,
+        email: str,
+        phone: str,
+        start_time: datetime,
+        ip_address: str = "",
+    ) -> "BookingConsent":
+        """Write the consent down at the moment it is given.
+
+        Stores the wording VERBATIM rather than a reference to it. The copy on the page
+        will change; a record pointing at whatever the current text happens to be would
+        misdescribe what somebody agreed to two years earlier, which is exactly when it
+        would matter.
+        """
+        return self.create(
+            name=name,
+            email=email,
+            phone=phone,
+            start_time=start_time,
+            ip_address=ip_address or "",
+            consent_text=SMS_CONSENT_TEXT,
+        )
+
+
+class BookingConsent(TimeStampedModel):
+    """One visitor's opt-in to being called and texted about a call they booked.
+
+    Written only when the box was ticked AND the booking actually succeeded — a consent
+    record for a meeting that never existed is noise in the one place that has to be
+    trustworthy. Never updated and never deleted by the app.
+
+    The booking endpoint otherwise persists nothing (lead creation belongs to the
+    webhook), so this is the deliberate exception: the tick is worthless as evidence
+    without a record of who gave it, when, from where, and to what wording.
+    """
+
+    name = models.CharField(max_length=200)
+    email = models.EmailField()
+    phone = models.CharField(max_length=32, help_text="E.164, as sent to Calendly.")
+    start_time = models.DateTimeField(help_text="The meeting consented about, UTC.")
+    consent_text = models.TextField(help_text="The wording shown, captured verbatim.")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    objects = BookingConsentManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.email} consented {self.created_at:%Y-%m-%d %H:%M} UTC"

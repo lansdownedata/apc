@@ -3,6 +3,8 @@
 from django.conf import settings
 from django.templatetags.static import static
 
+from .models import SMS_CONSENT_TEXT
+
 
 def canonical(request):
     """Query-free absolute canonical URL for the current page.
@@ -55,4 +57,7 @@ def site_settings(request):
         # Rendered server-side on purpose: an Alpine x-for inside a <select> is invalid
         # HTML, the parser hoists it out, and Tom Select initialises with no options.
         "timezone_options": BOOKING_TIMEZONES,
+        # Comes from the model so the wording on screen and the wording recorded against
+        # a consent are the same string by construction, not by anyone remembering.
+        "sms_consent_text": SMS_CONSENT_TEXT,
     }

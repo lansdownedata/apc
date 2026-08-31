@@ -253,6 +253,7 @@ def create_invitee(
     timezone: str,
     phone: str,
     answers: list[dict],
+    text_reminder_number: str = "",
 ) -> dict:
     """Book the slot. Returns Calendly's invitee resource.
 
@@ -269,6 +270,12 @@ def create_invitee(
 
     Location validation runs before slot availability, so a malformed location masks
     every other error in the body.
+
+    `text_reminder_number` is the one field here that belongs INSIDE `invitee` rather
+    than beside it, and it is omitted entirely unless the visitor opted in. Getting its
+    placement wrong would fail silently: this API ignores unknown request keys rather
+    than rejecting them, so the number would simply never arrive and no SMS would ever
+    be sent, with nothing anywhere reporting a problem.
     """
     missing = [entry for entry in answers if entry.get("position") is None]
     if missing:
@@ -283,6 +290,8 @@ def create_invitee(
         "location": {"kind": "outbound_call", "location": phone},
         "invitee": {"email": email, "name": name, "timezone": timezone},
     }
+    if text_reminder_number:
+        body["invitee"]["text_reminder_number"] = text_reminder_number
     if answers:
         body["questions_and_answers"] = list(answers)
     try:

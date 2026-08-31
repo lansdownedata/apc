@@ -278,3 +278,62 @@ def test_an_upstream_error_is_502_and_releases_the_hold():
 
 def test_a_get_is_not_allowed():
     assert Client().get(URL).status_code == 405
+
+
+# --- SMS consent ------------------------------------------------------------------
+#
+# The event type keeps Calendly's SMS-reminder prompt switched on; we fill it from the
+# one phone field we already validate rather than asking for the number twice. But the
+# number is only ever sent when the visitor has explicitly opted in.
+
+
+def test_the_reminder_number_is_sent_only_when_they_opt_in():
+    _, create = _post(sms_consent="1")
+    assert create.call_args.kwargs["text_reminder_number"] == "+17035550101"
+
+
+def test_an_unticked_box_sends_no_reminder_number():
+    """The default. A booking still succeeds and they still get the call — that is the
+    service they asked for; only the texting needs opting into."""
+    resp, create = _post()
+    assert resp.status_code == 200
+    assert create.call_args.kwargs["text_reminder_number"] == ""
+
+
+def test_consent_is_recorded_with_the_wording_they_saw():
+    from apps.public.models import SMS_CONSENT_TEXT, BookingConsent
+
+    _post(sms_consent="1")
+    row = BookingConsent.objects.latest("created_at")
+    assert row.phone == "+17035550101"
+    assert row.email == "sarah@example.com"
+    assert row.consent_text == SMS_CONSENT_TEXT
+    assert row.start_time == _start()
+
+
+def test_nothing_is_recorded_when_they_do_not_opt_in():
+    from apps.public.models import BookingConsent
+
+    before = BookingConsent.objects.count()
+    _post()
+    assert BookingConsent.objects.count() == before
+
+
+def test_consent_is_not_recorded_when_the_booking_fails():
+    """A record of consent for a meeting that never existed is noise in the one place
+    that has to be trustworthy."""
+    from apps.integrations.calendly import CalendlyAPIError
+    from apps.public.models import BookingConsent
+
+    before = BookingConsent.objects.count()
+    _post(sms_consent="1", invitee={"side_effect": CalendlyAPIError("boom")})
+    assert BookingConsent.objects.count() == before
+
+
+def test_a_double_click_records_consent_once():
+    from apps.public.models import BookingConsent
+
+    client = Client()
+    _post(client=client, sms_consent="1")
+    _post(client=client, sms_consent="1")
+    assert BookingConsent.objects.count() == 1
