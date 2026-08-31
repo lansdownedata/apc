@@ -162,64 +162,115 @@
             </div>
           </div>
 
-          {# ------------------------------------------------------- slot grid #}
+          {% comment %}
+            Date first, then time — the same shape as Calendly's own page, which is what
+            the client's customers have already seen. A flat list of times across many
+            days reads as a wall of numbers and hides the fact that most days are simply
+            not worked.
+          {% endcomment %}
           <div class="px-5 py-5 sm:px-6">
-            <div class="flex items-baseline justify-between">
-              <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Pick a time</h3>
-              <span x-show="phase === 'ready' && slotCount" class="text-[12px] text-muted"
-                    x-text="tzAbbreviation"></span>
-            </div>
 
-            <template x-if="phase === 'loading'">
-              <div class="mt-4 space-y-2" aria-live="polite">
-                <template x-for="i in 5" :key="i">
-                  <div class="h-9 animate-pulse rounded-lg bg-line/60"></div>
+            {# ---- month calendar ---- #}
+            <div x-show="view === 'date'">
+              <div class="flex items-center justify-between">
+                <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Pick a date</h3>
+                <span x-show="phase === 'ready'" class="text-[12px] text-muted" x-text="tzAbbreviation"></span>
+              </div>
+
+              <div class="mt-3 flex items-center justify-between">
+                <button type="button" x-on:click="shiftMonth(-1)" :disabled="!canGoBack"
+                        aria-label="Previous month"
+                        class="focus-gold rounded-full p-1.5 text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-30">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <p class="text-[13.5px] font-semibold text-ink" x-text="monthLabel"></p>
+                <button type="button" x-on:click="shiftMonth(1)" aria-label="Next month"
+                        class="focus-gold rounded-full p-1.5 text-muted transition-colors hover:text-ink">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+
+              <div class="mt-3 grid grid-cols-7 gap-1 text-center">
+                <template x-for="name in weekdayNames" :key="name">
+                  <div class="pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted" x-text="name"></div>
+                </template>
+                {% comment %}
+                  Blank leading cells keep the 1st under its real weekday. `key` is the
+                  index because empty cells have nothing else to be keyed on.
+                {% endcomment %}
+                <template x-for="(cell, i) in monthCells" :key="i">
+                  <div>
+                    <button type="button" x-show="cell.day" :disabled="!cell.open"
+                            x-on:click="chooseDay(cell)"
+                            :aria-label="cell.open ? cell.label + ', times available' : cell.label + ', no availability'"
+                            class="focus-gold grid h-9 w-full place-items-center rounded-full text-[13px] transition-colors disabled:cursor-not-allowed"
+                            :class="cell.open
+                              ? 'font-semibold text-ink bg-gold/[0.12] hover:bg-gold/[0.28]'
+                              : 'text-muted/40'"
+                            x-text="cell.day"></button>
+                    <div x-show="!cell.day" class="h-9"></div>
+                  </div>
                 </template>
               </div>
-            </template>
 
-            <template x-if="phase === 'empty'">
-              <p class="mt-6 text-[13.5px] leading-relaxed text-muted">
-                No open times in the next <span x-text="days"></span> days.
+              <div x-show="phase === 'loading'" class="mt-4 h-1 w-full overflow-hidden rounded bg-line/60">
+                <div class="h-full w-1/3 animate-pulse rounded bg-gold/50"></div>
+              </div>
+
+              <p x-show="phase === 'ready' && !openDayCount" class="mt-4 text-[13px] leading-relaxed text-muted">
+                Nothing open this month. Try the next one, or
                 <button type="button" x-on:click="fallbackToPopup()"
-                        class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">
-                  Try the full calendar
-                </button>.
+                        class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">the full calendar</button>.
               </p>
-            </template>
 
-            <template x-if="phase === 'error'">
-              <p class="mt-6 text-[13.5px] leading-relaxed text-muted">
-                We couldn&rsquo;t load times just now.
-                <button type="button" x-on:click="fallbackToPopup()"
-                        class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">
-                  Open the calendar instead
-                </button>.
-              </p>
-            </template>
-
-            <div x-show="phase === 'ready'" class="mt-3 max-h-[19rem] space-y-4 overflow-y-auto pr-1">
-              <template x-for="day in dayGroups" :key="day.key">
-                <div>
-                  <p class="sticky top-0 bg-white py-1 text-[12px] font-semibold text-ink">
-                    <span x-text="day.label"></span>
-                    <span x-show="day.abbr !== tzAbbreviation" class="font-normal text-muted"
-                          x-text="' · ' + day.abbr"></span>
-                  </p>
-                  <div class="mt-1 grid grid-cols-3 gap-1.5">
-                    <template x-for="slot in day.slots" :key="slot.start">
-                      <button type="button" :disabled="slot.held"
-                              x-on:click="pick(slot)"
-                              :title="slot.held ? 'Someone else is booking this time' : ''"
-                              class="focus-gold rounded-lg px-2 py-1.5 text-[12.5px] font-medium ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                              :class="slot.start === form.start_time
-                                ? 'bg-gold text-ink ring-gold'
-                                : 'text-ink ring-line hover:ring-gold'"
-                              x-text="slot.label"></button>
-                    </template>
-                  </div>
-                </div>
+              <template x-if="phase === 'error'">
+                <p class="mt-4 text-[13px] leading-relaxed text-muted">
+                  We couldn&rsquo;t load times just now.
+                  <button type="button" x-on:click="fallbackToPopup()"
+                          class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">
+                    Open the calendar instead
+                  </button>.
+                </p>
               </template>
+            </div>
+
+            {# ---- times for the chosen day ---- #}
+            <div x-show="view === 'time'">
+              <div class="flex items-center justify-between">
+                <button type="button" x-on:click="view = 'date'"
+                        class="focus-gold -ml-1 inline-flex items-center gap-1 rounded px-1 text-[12px] font-semibold text-gold">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  All dates
+                </button>
+                <span class="text-[12px] text-muted" x-text="tzAbbreviation"></span>
+              </div>
+
+              <p class="mt-3 text-[13.5px] font-semibold text-ink" x-text="selectedDayLabel"></p>
+
+              {% comment %}
+                px-0.5 is not decoration: `ring-1` paints outside the border box, and
+                overflow-y-auto clips horizontally too, so without the padding the first
+                column's ring is shaved off down the whole left edge.
+              {% endcomment %}
+              <div class="mt-2 max-h-[17.5rem] overflow-y-auto px-0.5 py-0.5">
+                <div class="grid grid-cols-3 gap-1.5">
+                  <template x-for="slot in selectedDaySlots" :key="slot.start">
+                    <button type="button" :disabled="slot.held" x-on:click="pick(slot)"
+                            :title="slot.held ? 'Someone else is booking this time' : ''"
+                            class="focus-gold rounded-lg px-2 py-1.5 text-[12.5px] font-medium ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                            :class="slot.start === form.start_time
+                              ? 'bg-gold text-ink ring-gold'
+                              : 'text-ink ring-line hover:ring-gold'"
+                            x-text="slot.label"></button>
+                  </template>
+                </div>
+              </div>
             </div>
 
             <p x-show="errors.start_time" x-text="errors.start_time"
