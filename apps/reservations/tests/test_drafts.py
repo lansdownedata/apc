@@ -671,3 +671,43 @@ def test_linking_costs_one_query_however_many_stops(iad, united, django_assert_m
     with django_assert_max_num_queries(1):
         link_flights(stops, date(2026, 7, 4))
     assert all(s["flight_id"] is None for s in stops)
+
+
+def test_save_resolves_timezone_from_pickup_coordinates():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        _payload(
+            stops=[
+                {"address": "Santa Monica", "lat": 34.0194, "lng": -118.4912},
+                {"address": "LAX"},
+            ]
+        ),
+    )
+    assert res.pickup_timezone == "America/Los_Angeles"
+
+
+def test_save_re_resolves_when_the_pickup_moves():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        _payload(
+            stops=[
+                {"address": "Santa Monica", "lat": 34.0194, "lng": -118.4912},
+                {"address": "LAX"},
+            ]
+        ),
+    )
+    save_reservation_from_draft(
+        lead,
+        _payload(
+            id=res.pk,
+            stops=[
+                {"address": "Reston", "lat": 38.9586, "lng": -77.3570},
+                {"address": "IAD"},
+            ],
+        ),
+        instance=res,
+    )
+    res.refresh_from_db()
+    assert res.pickup_timezone == "America/New_York"
