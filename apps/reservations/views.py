@@ -88,10 +88,19 @@ def reservation_duplicate(request, pk) -> HttpResponse:
     clone.save()
     Stop.objects.bulk_create(
         [
-            Stop(reservation=clone, sequence=s.sequence, address=s.address, note=s.note)
+            Stop(
+                reservation=clone,
+                sequence=s.sequence,
+                address=s.address,
+                note=s.note,
+                latitude=s.latitude,
+                longitude=s.longitude,
+                airport_id=s.airport_id,
+            )
             for s in stops
         ]
     )
+    clone.refresh_pickup_timezone()
     return redirect("lead_detail", pk=res.lead_id)
 
 

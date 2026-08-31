@@ -163,7 +163,18 @@ def test_payload_passenger_count_and_naive_pickup_time():
     payload = gnet.build_send_payload(assignment)
     assert payload["passengerCount"] == "3"
     pickup_time = payload["locations"]["pickup"]["time"]
-    # naive local time, verbatim — never invent a timezone conversion/suffix
+    # naive local time, verbatim — GNET-CONNECTION-GUIDE §1.4; never invent a tz suffix
+    assert pickup_time == "2026-09-01T14:00:00"
+    assert "+" not in pickup_time
+    assert "Z" not in pickup_time
+
+
+def test_payload_pacific_pickup_stays_naive():
+    """Reservation.pickup_timezone is unused by GNet — §1.4 times are naive local."""
+    assignment = _assignment()
+    assignment.reservation.pickup_timezone = "America/Los_Angeles"
+    assignment.reservation.save(update_fields=["pickup_timezone"])
+    pickup_time = gnet.build_send_payload(assignment)["locations"]["pickup"]["time"]
     assert pickup_time == "2026-09-01T14:00:00"
     assert "+" not in pickup_time
     assert "Z" not in pickup_time

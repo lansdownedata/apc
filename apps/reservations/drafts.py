@@ -313,4 +313,5 @@ def save_reservation_from_draft(
             for i, s in enumerate(stops)
         ]
     )
+    instance.refresh_pickup_timezone()
     return instance

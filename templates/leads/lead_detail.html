@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize json_filters %}
+{% load humanize json_filters time_filters %}
 
 {% block head_extra %}
 {% if user.has_payments_access and stripe_pk %}
@@ -242,7 +242,7 @@
             <div class="flex items-center gap-x-4 gap-y-1 flex-wrap text-[11.5px] text-muted mt-2.5">
               {% if res.vehicle %}<span class="flex items-center gap-1"><i class="ti ti-car text-[13px]"></i> {{ res.vehicle.name }}</span>{% endif %}
               <span class="flex items-center gap-1"><i class="ti ti-users text-[13px]"></i> {{ res.passengers }} pax</span>
-              {% if res.pickup_date %}<span class="flex items-center gap-1 num"><i class="ti ti-calendar text-[13px]"></i> {{ res.pickup_date|date:"M j, Y" }}{% if res.pickup_time %} · {{ res.pickup_time|time:"g:i A" }}{% endif %}</span>{% endif %}
+              {% if res.pickup_date %}<span class="flex items-center gap-1 num"><i class="ti ti-calendar text-[13px]"></i> {{ res.pickup_date|date:"M j, Y" }}{% if res.pickup_time %} · {{ res|pickup_clock }}{% endif %}</span>{% endif %}
               {% if res.trip_type == 'hourly' %}<span class="flex items-center gap-1 num"><i class="ti ti-clock text-[13px]"></i> {{ res.billed_hours|floatformat:"-2" }} hrs{% if res.min_applied %} (min){% endif %}</span>{% endif %}
               {% with fs=res.flight_summary %}{% if fs %}
                 {% if fs.state == 'unverified' %}

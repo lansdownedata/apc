@@ -8,12 +8,9 @@ Reference shapes: docs/la-api/la-api.txt.
 import json
 import logging
 import secrets
-from datetime import datetime
-from datetime import time as dtime
 
 from django.conf import settings
 from django.core import signing
-from django.utils import timezone
 
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
@@ -52,10 +49,10 @@ def build_registration_payload(contact, *, password: str) -> dict:
 
 
 def _pickup_at(reservation: Reservation) -> str:
-    if reservation.pickup_date is None:
+    instant = reservation.pickup_at
+    if instant is None:
         raise LASyncError("Reservation has no pickup date.")
-    naive = datetime.combine(reservation.pickup_date, reservation.pickup_time or dtime(0, 0))
-    return timezone.make_aware(naive).isoformat()
+    return instant.isoformat()
 
 
 def _address_payload(stop) -> dict:

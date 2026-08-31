@@ -89,6 +89,7 @@ def create_lead_from_booking(data: dict) -> Lead:
                 for i, s in enumerate(stops)
             ]
         )
+        reservation.refresh_pickup_timezone()
     Notification.notify(
         lead,
         Notification.Kind.NEW_LEAD,
@@ -212,6 +213,8 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
         stops.append(wedding_stop(reservation, 0, leg["from"], leg.get("from_sub", ""), sites))
         stops.append(wedding_stop(reservation, 1, leg["to"], leg.get("to_sub", ""), sites))
     Stop.objects.bulk_create(stops)
+    for res in lead.reservations.all():
+        res.refresh_pickup_timezone()
 
     venue_name = data["venue"].name if data.get("venue") else "venue TBD"
     Notification.notify(

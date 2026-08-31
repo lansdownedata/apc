@@ -1,5 +1,5 @@
 {% load humanize %}
-{% load json_filters %}
+{% load json_filters time_filters %}
 {% comment %} Drawer body — injected via x-html, so this is a fragment with no {% extends %}. {% endcomment %}
 {% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
@@ -51,7 +51,7 @@
       <div>
         <p class="text-[11.5px] text-muted">Pickup</p>
         <p class="text-[12.5px] font-medium text-ink num">
-          {% if trip.pickup_date %}{{ trip.pickup_date|date:"M j, Y" }}{% else %}—{% endif %}{% if trip.pickup_time %} · {{ trip.pickup_time|time:"g:i A" }}{% endif %}
+          {% if trip.pickup_date %}{{ trip.pickup_date|date:"M j, Y" }}{% else %}—{% endif %}{% if trip.pickup_time %} · {{ trip|pickup_clock }}{% endif %}
         </p>
       </div>
       <div>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize time_filters %}
 {% block title %}Dispatch{% endblock %}
 
 {% block content %}
@@ -59,7 +59,7 @@
         {% with fs=trip.flight_summary %}
         <tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
             @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
-          <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip.pickup_time|time:"g:i A" }}{% else %}—{% endif %}</td>
+          <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}—{% endif %}</td>
           <td class="px-1 py-3">{% if fs %}<i class="ti {{ fs.icon }} text-[15px] {% if fs.state == 'verified' %}text-emerald-600{% elif fs.state == 'delayed' or fs.state == 'not_found' %}text-amber-600{% elif fs.state == 'cancelled' %}text-rose-600{% elif fs.state == 'partial' %}text-goldd{% else %}text-muted/60{% endif %}" title="{{ fs.label }}"></i>{% endif %}</td>
           <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
           <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
