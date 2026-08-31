@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET
 
 from apps.addresses.search import MIN_VENUE_QUERY, VENUE_RESULT_LIMIT, search_venues
+from apps.core.net import client_ip
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
 from apps.integrations.geocoding import merged_autocomplete
 from apps.leads.models import Lead
@@ -39,12 +40,12 @@ def _booking_throttle_key(request) -> str:
     in dev — per-process, so this throttle is per-worker until a shared cache like
     Redis/Memcached is configured for prod; acceptable baseline for now).
 
-    NOTE: REMOTE_ADDR is trusted as-is; behind a reverse proxy in prod this needs
-    X-Forwarded-For handling (e.g. via django-xff or a trusted-proxy header parse)
-    at deploy time.
+    The caller comes from `core.net.client_ip`, not straight off REMOTE_ADDR: behind
+    Heroku's router every visitor presents as the router itself, so one bucket covered
+    the whole site and real booking requests were being rejected once a handful of
+    people had submitted that hour.
     """
-    ip = request.META.get("REMOTE_ADDR", "unknown")
-    return f"bookings-throttle:{ip}"
+    return f"bookings-throttle:{client_ip(request)}"
 
 
 def _booking_throttle_exceeded(request) -> bool:
@@ -78,8 +79,7 @@ def _geocode_throttle_exceeded(request, scope: str = "geocode") -> bool:
     typeahead are separate surfaces, and spending one's budget must never lock a
     visitor out of the other.
     """
-    ip = request.META.get("REMOTE_ADDR", "unknown")
-    key = f"{scope}-throttle:{ip}"
+    key = f"{scope}-throttle:{client_ip(request)}"
     count = cache.get(key, 0) + 1
     cache.set(key, count, GEOCODE_THROTTLE_WINDOW_SECONDS)
     return count > GEOCODE_THROTTLE_LIMIT

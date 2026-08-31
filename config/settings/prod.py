@@ -47,6 +47,10 @@ STORAGES = {
 
 # Security hardening (served behind HTTPS / a proxy)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# Heroku's router is exactly one hop and appends the connecting peer to X-Forwarded-For.
+# Without this every visitor presents as the router and they all share one per-IP throttle
+# bucket — which silently rejected real booking requests. Overridable for another host.
+TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=1)  # noqa: F405
 SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True

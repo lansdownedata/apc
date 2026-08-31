@@ -169,3 +169,14 @@ def test_each_reservation_records_the_leg_it_came_from():
     rebuild matches on source_leg_id, and a blank one reads as a hand-added trip."""
     lead = _lead()
     assert sorted(r.source_leg_id for r in lead.reservations.all()) == ["final-out", "guests-in"]
+
+
+def test_a_wedding_records_the_name_on_the_form_when_it_differs(db):
+    """Same reason as the booking form: the office needs to see who actually filled it."""
+    from apps.contacts.factories import ContactFactory
+
+    ContactFactory(name="James Bond", email="jane@example.com")
+    lead = _lead(name="Priya Whitfield")
+    assert lead.contact.name == "James Bond"
+    assert lead.notes.startswith("Submitted as: Priya Whitfield")
+    assert "WEDDING — " in lead.notes

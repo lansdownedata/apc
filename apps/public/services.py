@@ -18,6 +18,22 @@ from apps.reservations.models import Reservation, Stop
 from .wedding import Site, build_notes, hotel_label, is_time_sensitive
 
 
+def with_submitted_name(notes: str, contact, submitted_name: str) -> str:
+    """Prepend "Submitted as: …" when the form's name is not the one on file.
+
+    `Contact.objects.match_or_create` matches on phone or email and keeps the existing
+    contact's name — deliberately, since a stranger who knows a customer's email must
+    not be able to rename them in the CRM. The cost is that the lead is then filed under
+    whoever owned that address first, and an agent looking for the name the customer
+    actually typed never finds it. Recording it here keeps both properties.
+    """
+    submitted = (submitted_name or "").strip()
+    if not submitted or submitted.casefold() == (contact.name or "").strip().casefold():
+        return notes
+    line = f"Submitted as: {submitted}"
+    return f"{line}\n{notes}" if notes else line
+
+
 def create_lead_from_booking(data: dict) -> Lead:
     """Turn a validated public booking request into a NEW Lead + reservation stub."""
     contact = Contact.objects.match_or_create(
@@ -30,7 +46,7 @@ def create_lead_from_booking(data: dict) -> Lead:
         contact=contact,
         status=Lead.Status.NEW,
         channel=Channel.WEBSITE,
-        notes=data.get("notes", ""),
+        notes=with_submitted_name(data.get("notes", ""), contact, data.get("name", "")),
     )
     reservation = Reservation.objects.create(
         lead=lead,
@@ -156,6 +172,7 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
         times_tbd=bool(data.get("times_tbd")),
         legs=legs,
     )
+    notes = with_submitted_name(notes, contact, data.get("name", ""))
     has_alert = is_time_sensitive(data["wedding_date"], timezone.localdate())
     payload = wedding_payload(data)
     if lead is None:
