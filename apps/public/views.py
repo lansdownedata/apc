@@ -1,7 +1,8 @@
 import hashlib
 import logging
+from calendar import monthrange
 from datetime import UTC as dt_timezone_utc
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
@@ -490,33 +491,69 @@ def _expire_slots() -> None:
     cache.set(SLOT_GENERATION_KEY, _slot_generation() + 1, None)
 
 
-def _fetch_slots(days: int) -> list[str]:
-    """Every bookable start time in the next `days`, as raw Calendly timestamps.
+# How far ahead the month arrows may reach. Calendly's own event types stop offering
+# dates long before this; the cap exists so a hand-built ?month=2999-01 cannot fan out.
+SLOT_MONTHS_AHEAD = 12
+# A month's slots are attributed to LOCAL days by the browser, and a visitor may be up
+# to ~14 hours either side of UTC. Padding a day at each end means the 1st and the 31st
+# are complete for everyone rather than losing an evening depending on who is looking.
+MONTH_EDGE_PADDING = timedelta(days=1)
 
-    Cached as-is and WITHOUT hold state: holds change between one poll and the next,
-    so they are overlaid per request instead of being baked into the cached list.
+
+def _month_window(raw: str) -> tuple[datetime, datetime] | None:
+    """(start, end) for a `YYYY-MM` request, or None if it isn't one.
+
+    Returns a start later than the end for a month that has already passed — callers
+    treat that as "nothing to fetch" rather than asking Calendly about the past.
     """
-    key = f"calendly-slots:v1:{_slot_generation()}:{days}"
-    cached = cache.get(key)
+    try:
+        year, month = (int(part) for part in raw.split("-", 1))
+        first = datetime(year, month, 1, tzinfo=dt_timezone_utc)
+    except (TypeError, ValueError):
+        return None
+    days_in_month = monthrange(year, month)[1]
+    start = first - MONTH_EDGE_PADDING
+    end = first + timedelta(days=days_in_month) + MONTH_EDGE_PADDING
+    # Calendly rejects a start_time in the past, so a month already under way starts now.
+    return max(start, timezone.now() + SLOT_WINDOW_LEAD), end
+
+
+def _month_is_reachable(start: datetime, end: datetime) -> bool:
+    horizon = timezone.now() + timedelta(days=31 * SLOT_MONTHS_AHEAD)
+    return start < end and start < horizon
+
+
+def _fetch_window(start: datetime, end: datetime, *, key: str) -> list[str]:
+    """Every bookable start time in [start, end), as raw Calendly timestamps.
+
+    Calendly caps one call at 7 days, so anything longer is several contiguous calls
+    concatenated. Cached as-is and WITHOUT hold state: holds change between one poll
+    and the next, so they are overlaid per request rather than baked into the cache.
+    """
+    cache_key = f"calendly-slots:v2:{_slot_generation()}:{key}"
+    cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
     starts: list[str] = []
-    window_start = timezone.now() + SLOT_WINDOW_LEAD
-    remaining = days
-    while remaining > 0:
-        chunk = min(remaining, calendly.MAX_SLOT_RANGE.days)
-        window_end = window_start + timedelta(days=chunk)
+    window_start = start
+    while window_start < end:
+        window_end = min(window_start + calendly.MAX_SLOT_RANGE, end)
         for slot in calendly.available_times(start=window_start, end=window_end):
             if slot.get("status") and slot["status"] != "available":
                 continue
             if slot.get("start_time"):
                 starts.append(slot["start_time"])
         window_start = window_end
-        remaining -= chunk
 
-    cache.set(key, starts, settings.CALENDLY_SLOT_CACHE_SECONDS)
+    cache.set(cache_key, starts, settings.CALENDLY_SLOT_CACHE_SECONDS)
     return starts
+
+
+def _fetch_slots(days: int) -> list[str]:
+    """The rolling default window, used when no month is asked for."""
+    start = timezone.now() + SLOT_WINDOW_LEAD
+    return _fetch_window(start, start + timedelta(days=days), key=f"d{days}")
 
 
 @require_GET
@@ -530,9 +567,18 @@ def schedule_slots(request):
     A 503 rather than a 500 on any upstream trouble: the UI treats it as a signal to
     fall back to the Calendly popup, which needs a parseable answer.
     """
+    raw_month = request.GET.get("month", "").strip()
+    window = _month_window(raw_month) if raw_month else None
     days = _slot_days(request.GET.get("days", ""))
     try:
-        starts = _fetch_slots(days)
+        if window is None:
+            starts = _fetch_slots(days)
+        elif _month_is_reachable(*window):
+            starts = _fetch_window(*window, key=raw_month)
+        else:
+            # A month behind us or past the horizon. Not an error — the calendar just
+            # has nothing there — and emphatically not worth an upstream call.
+            starts = []
         questions = calendly.event_type_questions()
     except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured) as exc:
         logger.warning("Calendly availability unavailable: %s", exc)
@@ -541,7 +587,14 @@ def schedule_slots(request):
             status=503,
         )
 
-    return JsonResponse({"slots": _with_holds(starts), "questions": questions, "error": ""})
+    return JsonResponse(
+        {
+            "slots": _with_holds(starts),
+            "questions": questions,
+            "month": raw_month if window is not None else "",
+            "error": "",
+        }
+    )
 
 
 def _with_holds(starts: list[str]) -> list[dict]:
@@ -565,6 +618,19 @@ def _with_holds(starts: list[str]) -> list[dict]:
 # double-click books twice: claim() deliberately lets a session re-take its own hold,
 # so nothing upstream of the Calendly call stops the second submit.
 BOOKED_SESSION_KEY = "calendly_booked"
+
+
+def _slots_for_refresh(raw_month: str) -> list[dict]:
+    """The grid to hand back with a 409, in the same shape the caller is looking at.
+
+    The booking POST carries the month the calendar is showing so a lost race can
+    re-render it in place. Without that we would answer a month view with a rolling
+    two-week window and the calendar would quietly lose most of its month.
+    """
+    window = _month_window(raw_month) if raw_month else None
+    if window is not None and _month_is_reachable(*window):
+        return _with_holds(_fetch_window(*window, key=raw_month))
+    return _with_holds(_fetch_slots(SLOT_DAYS_DEFAULT))
 
 
 def _booking_errors(*, name: str, email: str, phone: str, start) -> dict[str, str]:
@@ -660,7 +726,7 @@ def schedule_book(request):
             {
                 "code": "slot_taken",
                 "error": "Someone else is booking that time right now.",
-                "slots": _with_holds(_fetch_slots(SLOT_DAYS_DEFAULT)),
+                "slots": _slots_for_refresh(request.POST.get("month", "").strip()),
             },
             status=409,
         )
@@ -682,7 +748,7 @@ def schedule_book(request):
         _expire_slots()
         slots = []
         try:
-            slots = _with_holds(_fetch_slots(SLOT_DAYS_DEFAULT))
+            slots = _slots_for_refresh(request.POST.get("month", "").strip())
         except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured):
             logger.warning("Could not refresh slots after a lost race.")
         return JsonResponse(

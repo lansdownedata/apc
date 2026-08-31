@@ -2439,7 +2439,10 @@ function scheduleBooking(opts = {}) {
     days: 14,
 
     isOpen: false,
-    phase: "idle", // idle | loading | ready | empty | error | done
+    phase: "idle", // idle | loading | ready | error | done
+    view: "date",  // date | time — pick a day first, the way Calendly's own page does
+    month: "",     // YYYY-MM currently shown
+    selectedDay: "",  // local day key of the chosen date
     busy: false,
     offerPopup: false,
     notice: "",
@@ -2457,6 +2460,8 @@ function scheduleBooking(opts = {}) {
          plain script but Alpine is deferred, so the CTA can fire open-scheduler with
          nothing listening yet — and the button would look simply broken. */
       if (window.__schedulerPending) this.$nextTick(() => this.openPanel());
+
+      this.month = this.monthKey(new Date());
 
       /* The VISITOR's zone, not the company's. Everything on the All Pro Charter side
          stays America/New_York, but a grid rendered in Eastern to someone in Denver is
@@ -2478,7 +2483,7 @@ function scheduleBooking(opts = {}) {
       });
       // "error" retries too: a visitor who hit a blip and came back deserves a fresh
       // attempt rather than the state that failed them.
-      if (this.phase === "idle" || this.phase === "error") this.loadSlots();
+      if (this.phase === "idle" || this.phase === "error") this.loadMonth({ skipEmpty: 2 });
     },
 
     closePanel() {
@@ -2546,7 +2551,7 @@ function scheduleBooking(opts = {}) {
         if (isNaN(when.getTime())) continue;
         /* Group AFTER converting to the visitor's zone. Grouping on the UTC date puts
            an 8pm Eastern slot under tomorrow's heading for anyone west of us. */
-        const key = this.fmt(when, { year: "numeric", month: "2-digit", day: "2-digit" });
+        const key = this.dayKey(when);
         if (!groups.has(key)) {
           groups.set(key, {
             key,
@@ -2568,17 +2573,130 @@ function scheduleBooking(opts = {}) {
       return this.slots.length;
     },
 
-    async loadSlots() {
+    /* ---- the calendar --------------------------------------------------- */
+
+    /** YYYY-MM for a Date, read in the VISITOR's zone — the month they see. */
+    monthKey(date) {
+      const parts = this.fmt(date, { year: "numeric", month: "2-digit" }).split("/");
+      return parts.length === 2 ? `${parts[1]}-${parts[0]}` : "";
+    },
+
+    /** Stable local-day key, so a slot lands on the day the visitor would call it. */
+    dayKey(date) {
+      return this.fmt(date, { year: "numeric", month: "2-digit", day: "2-digit" });
+    },
+
+    get weekdayNames() {
+      return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    },
+
+    get monthLabel() {
+      const [y, m] = this.month.split("-").map(Number);
+      if (!y) return "";
+      return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(
+        new Date(y, m - 1, 1)
+      );
+    },
+
+    /** Local days with at least one slot nobody else is holding. */
+    get openDays() {
+      const open = {};
+      for (const group of this.dayGroups) {
+        if (group.slots.some((s) => !s.held)) open[group.key] = group.slots;
+      }
+      return open;
+    },
+
+    /* Scoped to the month on screen. The fetched window is padded a day at each end so
+       local days at the boundaries are complete, and those neighbours must not count
+       towards "is there anything to click here". */
+    get openDayCount() {
+      return this.monthCells.filter((c) => c.day && c.open).length;
+    },
+
+    /* Leading blanks then one cell per day, so the 1st sits under its real weekday.
+       `open` drives both the styling and the disabled state — the client works Monday
+       to Thursday, and a calendar that let you click Friday would be lying. */
+    get monthCells() {
+      const [y, m] = this.month.split("-").map(Number);
+      if (!y) return [];
+      const first = new Date(y, m - 1, 1);
+      const daysInMonth = new Date(y, m, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < first.getDay(); i += 1) cells.push({ day: null });
+      const open = this.openDays;
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const key = `${String(m).padStart(2, "0")}/${String(day).padStart(2, "0")}/${y}`;
+        cells.push({
+          day,
+          key,
+          open: !!open[key],
+          label: new Intl.DateTimeFormat("en-US", {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          }).format(new Date(y, m - 1, day)),
+        });
+      }
+      return cells;
+    },
+
+    /** No arrowing back into months that are already over. */
+    get canGoBack() {
+      return this.month > this.monthKey(new Date());
+    },
+
+    stepMonth(delta) {
+      const [y, m] = this.month.split("-").map(Number);
+      const moved = new Date(y, m - 1 + delta, 1);
+      this.month = `${moved.getFullYear()}-${String(moved.getMonth() + 1).padStart(2, "0")}`;
+      this.selectedDay = "";
+      this.view = "date";
+    },
+
+    shiftMonth(delta) {
+      if (delta < 0 && !this.canGoBack) return;
+      this.stepMonth(delta);
+      // A month the visitor asked for by name is shown as-is, empty or not — skipping
+      // past it would fight the arrow they just pressed.
+      this.loadMonth();
+    },
+
+    chooseDay(cell) {
+      if (!cell.open) return;
+      this.selectedDay = cell.key;
+      this.view = "time";
+    },
+
+    get selectedDaySlots() {
+      const group = this.dayGroups.find((g) => g.key === this.selectedDay);
+      return group ? group.slots : [];
+    },
+
+    get selectedDayLabel() {
+      const group = this.dayGroups.find((g) => g.key === this.selectedDay);
+      return group ? group.label : "";
+    },
+
+    /* `skipEmpty` is how many empty months may be stepped over before giving up. The
+       panel opens on the first month with something bookable: late in a month there is
+       often nothing left in it, and opening onto a dead calendar reads as "no
+       availability" rather than "look at next month". Calendly's own page does this. */
+    async loadMonth({ skipEmpty = 0 } = {}) {
       this.phase = "loading";
       try {
-        const resp = await fetch(`${this.slotsUrl}?days=${this.days}`, {
+        const resp = await fetch(`${this.slotsUrl}?month=${encodeURIComponent(this.month)}`, {
           headers: { Accept: "application/json" },
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) return this.fallbackToPopup();
         this.slots = data.slots || [];
         this.questions = data.questions || [];
-        this.phase = this.slots.length ? "ready" : "empty";
+        this.phase = "ready";
+        if (skipEmpty > 0 && !this.openDayCount) {
+          this.stepMonth(1);
+          return this.loadMonth({ skipEmpty: skipEmpty - 1 });
+        }
         // The question fields only exist now, so their pickers are initialised now.
         this.$nextTick(() => {
           if (window.initFlatpickr) window.initFlatpickr(this.$el);
@@ -2680,6 +2798,8 @@ function scheduleBooking(opts = {}) {
         phone,
         timezone: this.tz,
         start_time: this.form.start_time,
+        // So a lost race hands back the month we are showing, not a rolling window.
+        month: this.month,
       };
       if (this.form.sms_consent) body.sms_consent = "1";
       for (const q of this.questions) {
@@ -2710,7 +2830,10 @@ function scheduleBooking(opts = {}) {
              trip, and the selection is cleared so the next click is deliberate. */
           this.slots = data.slots && data.slots.length ? data.slots : this.slots;
           this.form.start_time = "";
-          this.phase = this.slots.length ? "ready" : "empty";
+          this.phase = "ready";
+          // If that was the day's last slot, the day is gone — send them back to the
+          // calendar rather than leaving them staring at an empty column.
+          if (!this.selectedDaySlots.length) this.view = "date";
           this.notice = data.error || "That time just went — here are the next available.";
           return;
         }

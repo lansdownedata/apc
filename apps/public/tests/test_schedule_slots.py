@@ -6,7 +6,7 @@ minimum notice, date overrides and DST, every one a way to offer a slot Calendly
 rejects at booking time.
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -192,3 +192,90 @@ def test_the_window_starts_in_the_future():
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
             _get()
     assert times.call_args_list[0].kwargs["start"] > timezone.now()
+
+
+# --- month view -------------------------------------------------------------------
+#
+# The grid is a calendar now: pick a date, then a time. That means fetching a month at
+# a go — five upstream calls at Calendly's 7-day cap — so it is cached per month and
+# bounded hard against a hand-built ?month=.
+
+
+def test_a_month_is_fetched_and_echoed_back():
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            resp = Client().get(f"{URL}?month=2026-10")
+    assert resp.status_code == 200
+    assert resp.json()["month"] == "2026-10"
+    assert times.called
+    # October is 31 days plus a day of padding either side, at 7 days a call.
+    assert times.call_count == 5
+
+
+def test_the_window_is_padded_past_the_month_edges():
+    """A slot at 8pm Eastern on the 30th is the 1st in UTC, and a visitor in Los
+    Angeles sees the 1st's early-UTC slots as the 30th. Fetching the bare month would
+    drop a day off one end or the other depending on who is looking."""
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            Client().get(f"{URL}?month=2026-10")
+    first_start = times.call_args_list[0].kwargs["start"]
+    last_end = times.call_args_list[-1].kwargs["end"]
+    assert first_start < datetime(2026, 10, 1, tzinfo=UTC)
+    assert last_end > datetime(2026, 10, 31, tzinfo=UTC)
+
+
+def test_the_current_month_starts_from_now_not_the_first():
+    """Calendly rejects a start_time in the past, so the 1st is not a legal window
+    start once the month is under way."""
+    today = timezone.now()
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            Client().get(f"{URL}?month={today:%Y-%m}")
+    assert times.call_args_list[0].kwargs["start"] > timezone.now()
+
+
+def test_a_month_entirely_in_the_past_costs_no_upstream_call():
+    with patch("apps.public.views.calendly.available_times") as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            resp = Client().get(f"{URL}?month=2020-01")
+    assert resp.status_code == 200
+    assert resp.json()["slots"] == []
+    times.assert_not_called()
+
+
+def test_a_month_beyond_the_horizon_costs_no_upstream_call():
+    """?month=2999-01 must not fan out, and must not look like an error either — the
+    calendar simply has nothing that far out."""
+    with patch("apps.public.views.calendly.available_times") as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            resp = Client().get(f"{URL}?month=2999-01")
+    assert resp.status_code == 200
+    assert resp.json()["slots"] == []
+    times.assert_not_called()
+
+
+def test_a_malformed_month_falls_back_to_the_default_window():
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            resp = Client().get(f"{URL}?month=octoberish")
+    assert resp.status_code == 200
+    assert times.called
+
+
+def test_two_requests_for_one_month_make_one_set_of_calls():
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            Client().get(f"{URL}?month=2026-10")
+            first = times.call_count
+            Client().get(f"{URL}?month=2026-10")
+    assert times.call_count == first
+
+
+def test_different_months_are_cached_separately():
+    with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
+        with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
+            Client().get(f"{URL}?month=2026-10")
+            first = times.call_count
+            Client().get(f"{URL}?month=2026-11")
+    assert times.call_count > first
