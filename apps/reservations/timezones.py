@@ -32,5 +32,8 @@ def resolve(stop) -> str:
     lng = getattr(stop, "longitude", None)
     if lat is None or lng is None:
         return ""
-    found = _finder.timezone_at(lng=float(lng), lat=float(lat))
+    try:
+        found = _finder.timezone_at(lng=float(lng), lat=float(lat))
+    except Exception:
+        return ""
     return found or ""
