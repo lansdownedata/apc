@@ -9,6 +9,8 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("bookings/", views.bookings, name="bookings"),
     path("bookings/thanks/", views.booking_thanks, name="booking_thanks"),
+    # Calendly's "Redirect to an external site" target for the quick-chat event type.
+    path("schedule/thanks/", views.schedule_thanks, name="schedule_thanks"),
     path("bookings/geocode/", views.geocode, name="geocode"),
     path("weddings/plan/", views.wedding_plan, name="wedding_plan"),
     # The emailed resume link. A signed token in the path, never the couple's own

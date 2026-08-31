@@ -189,10 +189,7 @@
       <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
         Book Now
       </a>
-      <a href="tel:+12024242600"
-         class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto">
-        Call (202) 424-2600
-      </a>
+      {% include "public/_call_cta.html" with class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto" fallback_label="Call (202) 424-2600" %}
     </div>
   </div>
 </section>

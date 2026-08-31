@@ -1,0 +1,23 @@
+{% comment %}
+  The "Schedule a call" call-to-action, used everywhere the marketing site used to
+  print the phone number (client's call, 2026-08-31).
+
+  Opens the Calendly popup; the bridge in _calendly.html carries the invitee to
+  public:schedule_thanks once they book. Requires that partial to be loaded, which
+  base_public.html does for every public page.
+
+  Falls back to the old tel: link when CALENDLY_URL is blank. That branch is the
+  whole reason this is a partial rather than 25 copies: without it, switching the
+  integration off would leave every page with no way to reach the company.
+
+  Callers pass `class` (and optionally `label`, `fallback_label`). Pass the class
+  string as a LITERAL at the call site — Tailwind's JIT only emits classes it can
+  find as literal strings, so a class assembled from a variable silently has no
+  styles in prod (CLAUDE.md, CSS build).
+{% endcomment %}
+{% if calendly_url %}
+<button type="button" onclick="Calendly.initPopupWidget({url:'{{ calendly_url }}'});return false;"
+        class="{{ class }}">{% firstof label "Schedule a call" %}</button>
+{% else %}
+<a href="tel:+12024242600" class="{{ class }}">{% firstof fallback_label "(202) 424-2600" %}</a>
+{% endif %}
