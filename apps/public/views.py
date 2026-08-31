@@ -2,6 +2,7 @@ import hashlib
 import logging
 from datetime import UTC as dt_timezone_utc
 from datetime import timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
 from django.core.cache import cache
@@ -34,6 +35,7 @@ from .services import (
     create_lead_from_wedding,
     make_booking_token,
     make_wedding_token,
+    read_booking_token,
     read_wedding_token,
     send_wedding_confirmation,
 )
@@ -149,6 +151,10 @@ def schedule_thanks(request):
     Arriving with no params at all is normal, not an error: our own popup redirects
     here from the parent window, which cannot read the iframe's cross-origin URL.
     """
+    booked = _booking_from_token(request.GET.get("b", ""))
+    if booked is not None:
+        return render(request, "public/schedule_thanks.html", booked)
+
     starts_at = parse_start_time(request.GET.get("event_start_time", ""))
     return render(
         request,
@@ -160,6 +166,40 @@ def schedule_thanks(request):
             "starts_at": timezone.localtime(starts_at) if starts_at else None,
         },
     )
+
+
+def _booking_from_token(token: str) -> dict | None:
+    """Context for a booking made through our own form, or None to fall through.
+
+    The token is the trusted half of this page: a booking that came through us gets a
+    real confirmation, where the query-string values Calendly appends are forgeable
+    and display-only. A tampered or expired token degrades to the generic page rather
+    than erroring — this is unauthenticated, and a broken link is not an incident.
+
+    The time renders in the zone the VISITOR booked in, which is the one place this
+    site deliberately does not use TIME_ZONE. The confirmation has to agree with the
+    slot they clicked and with the calendar invite Calendly sent them, both of which
+    are in their zone; 2:30 PM EDT shown to someone who booked 11:30 AM PDT reads as a
+    different appointment.
+    """
+    if not token:
+        return None
+    try:
+        payload = read_booking_token(token)
+    except (BadSignature, SignatureExpired):
+        return None
+
+    starts_at = parse_start_time(payload.get("start_time", ""))
+    if starts_at is not None:
+        try:
+            starts_at = starts_at.astimezone(ZoneInfo(payload.get("timezone") or ""))
+        except (ZoneInfoNotFoundError, ValueError):
+            # A zone we cannot resolve is not worth a 500 on a confirmation page.
+            starts_at = timezone.localtime(starts_at)
+    return {
+        "invitee_name": (payload.get("name") or "").strip()[:CALENDLY_NAME_MAXLEN],
+        "starts_at": starts_at,
+    }
 
 
 def booking_thanks(request):
