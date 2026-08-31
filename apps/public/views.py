@@ -6,10 +6,12 @@ from django.core.signing import BadSignature, SignatureExpired
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from apps.addresses.search import MIN_VENUE_QUERY, VENUE_RESULT_LIMIT, search_venues
 from apps.core.net import client_ip
+from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
 from apps.integrations.geocoding import merged_autocomplete
 from apps.leads.models import Lead
@@ -119,6 +121,35 @@ def bookings(request):
         form = BookingRequestForm(initial={"service_type": service.pk} if service else None)
     return render(
         request, "public/bookings.html", {"form": form, "occasion_options": occasion_options()}
+    )
+
+
+# Calendly truncates nothing on its side; cap what we echo back so a hand-built URL
+# can't stretch the layout with a kilobyte "name".
+CALENDLY_NAME_MAXLEN = 80
+
+
+def schedule_thanks(request):
+    """Where Calendly sends an invitee after they book the discovery call.
+
+    Both values come from the query string Calendly appends ("Pass event details to
+    your redirected page"), which any visitor can forge — so they are DISPLAY ONLY.
+    Nothing here is looked up or written. The Lead is created by the signed webhook
+    at /webhooks/calendly/, never by this page.
+
+    Arriving with no params at all is normal, not an error: our own popup redirects
+    here from the parent window, which cannot read the iframe's cross-origin URL.
+    """
+    starts_at = parse_start_time(request.GET.get("event_start_time", ""))
+    return render(
+        request,
+        "public/schedule_thanks.html",
+        {
+            "invitee_name": request.GET.get("invitee_full_name", "").strip()[:CALENDLY_NAME_MAXLEN],
+            # localtime() renders in settings.TIME_ZONE; the template prints the
+            # abbreviation alongside it.
+            "starts_at": timezone.localtime(starts_at) if starts_at else None,
+        },
     )
 
 

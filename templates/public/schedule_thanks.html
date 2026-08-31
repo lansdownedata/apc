@@ -1,0 +1,61 @@
+{% extends "public/base_public.html" %}
+
+{% block title %}You&rsquo;re on the calendar · All Pro Charter{% endblock %}
+{% block meta %}
+{{ block.super }}
+<meta name="description" content="Your call with All Pro Charter is confirmed.">
+<meta name="robots" content="noindex">
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  Post-booking landing page for the Calendly quick-chat event type. Deliberately
+  mirrors public/booking_thanks.html so the two exits from the site feel like one
+  site. noindex because it is a destination, not a page anyone should find in search.
+
+  invitee_name / starts_at come from Calendly's redirect query string and are
+  display-only — see the view's docstring. Autoescaping is what keeps a forged name
+  inert; never add |safe here.
+
+  This is the one public page that deliberately keeps a phone number rather than a
+  "Schedule a call" button: the visitor has just scheduled a call, so offering them
+  another one is nonsense, and someone who needs to reach us about the call they
+  just booked needs a way that isn't booking a second call.
+{% endcomment %}
+<section class="mx-auto max-w-xl px-4 py-20 text-center sm:px-6 lg:px-8">
+  <div class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/[0.14] text-gold">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-7 w-7">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  </div>
+
+  <h1 class="mt-5 font-display text-[28px] font-semibold tracking-tight text-ink">
+    You&rsquo;re on the calendar{% if invitee_name %}, {{ invitee_name }}{% endif %}.
+  </h1>
+
+  {% if starts_at %}
+  <p class="mt-3 text-[15px] leading-relaxed text-muted">
+    We&rsquo;ll talk {{ starts_at|date:"l, F j" }} at
+    <span class="font-semibold text-ink">{{ starts_at|time:"g:i A" }} {{ starts_at|date:"T" }}</span>.
+    The calendar invite is already in your inbox.
+  </p>
+  {% else %}
+  <p class="mt-3 text-[15px] leading-relaxed text-muted">
+    The calendar invite is already in your inbox, with everything you need to join.
+  </p>
+  {% endif %}
+
+  <p class="mt-6 text-[13.5px] text-muted">
+    Want pricing before we speak? Send the trip details and we&rsquo;ll have a quote ready.
+  </p>
+
+  <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+    <a href="{% url 'public:bookings' %}" class="btn-gold focus-gold inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">
+      Get a quote
+    </a>
+    <a href="tel:+12024242600" class="focus-gold inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:text-gold">
+      (202) 424-2600
+    </a>
+  </div>
+</section>
+{% endblock %}

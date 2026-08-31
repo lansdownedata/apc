@@ -125,10 +125,15 @@ def test_single_step_pages_render_every_field_at_once(db):
         assert "Request a quote" in html, url
 
 
-def test_thanks_page_copy(db):
+def test_thanks_page_copy(db, settings):
+    settings.CALENDLY_URL = "https://calendly.com/allprocharter/quick-chat"
     html = Client().get("/bookings/thanks/").content.decode()
     assert "Got it. We will follow up within one business day." in html
-    assert "(202) 424-2600" in html
+    # The phone CTA became "Schedule a call" across the marketing site (2026-08-31);
+    # the number still shows here when Calendly is switched off.
+    assert "Schedule a call" in html
+    settings.CALENDLY_URL = ""
+    assert "(202) 424-2600" in Client().get("/bookings/thanks/").content.decode()
 
 
 def test_autocomplete_has_combobox_semantics(db):

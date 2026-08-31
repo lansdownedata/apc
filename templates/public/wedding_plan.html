@@ -151,7 +151,11 @@
 
     <p class="mt-5 text-center text-[12.5px] text-muted">
       Prefer to talk it through?
-      <a href="tel:+12024242600" class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold">(202) 424-2600</a>
+      {% comment %}
+        type="button" on the partial's <button> matters here — this sits inside the
+        wedding form, and a bare <button> would submit it.
+      {% endcomment %}
+      {% include "public/_call_cta.html" with class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold" fallback_label="(202) 424-2600" %}
     </p>
   </form>
 </section>
