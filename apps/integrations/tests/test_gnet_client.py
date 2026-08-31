@@ -158,20 +158,26 @@ def test_payload_raises_for_reservation_with_one_stop():
         gnet.build_send_payload(assignment)
 
 
-def test_payload_pickup_time_carries_the_trip_offset():
+def test_payload_passenger_count_and_naive_pickup_time():
     assignment = _assignment()
     payload = gnet.build_send_payload(assignment)
     assert payload["passengerCount"] == "3"
-    # blank pickup_timezone → TIME_ZONE (America/New_York); 1 Sep 2026 is EDT
-    assert payload["locations"]["pickup"]["time"] == "2026-09-01T14:00:00-04:00"
+    pickup_time = payload["locations"]["pickup"]["time"]
+    # naive local time, verbatim — GNET-CONNECTION-GUIDE §1.4; never invent a tz suffix
+    assert pickup_time == "2026-09-01T14:00:00"
+    assert "+" not in pickup_time
+    assert "Z" not in pickup_time
 
 
-def test_payload_pacific_pickup_carries_the_pacific_offset():
+def test_payload_pacific_pickup_stays_naive():
+    """Reservation.pickup_timezone is unused by GNet — §1.4 times are naive local."""
     assignment = _assignment()
     assignment.reservation.pickup_timezone = "America/Los_Angeles"
     assignment.reservation.save(update_fields=["pickup_timezone"])
     pickup_time = gnet.build_send_payload(assignment)["locations"]["pickup"]["time"]
-    assert pickup_time == "2026-09-01T14:00:00-07:00"
+    assert pickup_time == "2026-09-01T14:00:00"
+    assert "+" not in pickup_time
+    assert "Z" not in pickup_time
 
 
 def _with_contact_name(assignment, name):
@@ -286,7 +292,7 @@ def test_payload_intermediate_stop_time_uses_reservation_pickup_date():
     )
     payload = gnet.build_send_payload(assignment)
     middle = payload["locations"]["stops"][0]
-    assert middle["time"] == "2026-09-01T14:30:00-04:00"
+    assert middle["time"] == "2026-09-01T14:30:00"
 
 
 def test_payload_intermediate_stop_omits_time_when_not_scheduled():

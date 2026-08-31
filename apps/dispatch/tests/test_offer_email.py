@@ -34,6 +34,19 @@ def test_offer_emails_the_vendor_with_the_payout(mailoutbox):
     assert "215.00" in message.body
 
 
+def test_offer_email_text_labels_a_pacific_pickup(mailoutbox):
+    trip = ReservationFactory(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        pickup_date=date(2026, 8, 26),
+        pickup_time=time(6, 15),
+        pickup_timezone="America/Los_Angeles",
+        rate=285,
+        hours=1,
+    )
+    services.send_offer(trip, VendorFactory(email="ops@capital.example"), payout=Decimal("215.00"))
+    assert "6:15 AM PDT" in mailoutbox[0].body
+
+
 def test_offer_email_never_shows_the_customer_price(mailoutbox):
     vendor = VendorFactory(email="ops@capital.example")
     services.send_offer(_trip(), vendor, payout=Decimal("215.00"))  # customer total is 285.00
