@@ -498,6 +498,23 @@ header, aside, main, .wash-gold {
 .flatpickr-calendar.arrowTop:before, .flatpickr-calendar.arrowTop:after,
 .flatpickr-calendar.arrowBottom:before, .flatpickr-calendar.arrowBottom:after { display: none; }
 
+/* Breathing room around the grid — stock flatpickr runs the days flush to the panel
+   edge.  The panel has to GROW by the padding, not absorb it: the calendar is a fixed
+   307.875px `border-box` and the day grid carries a matching `min-width`, so padding
+   alone would clip Saturday.  `width: auto` shrink-wraps that same grid instead.
+   Date pickers only — the time panel is a fixed 15rem whose rows (and the Done button)
+   run edge to edge by design. */
+.flatpickr-calendar:not(.hasTime) {
+  --fp-pad-x: 0.7rem;
+  --fp-pad-y: 0.45rem;
+  width: auto;
+  padding: var(--fp-pad-y) var(--fp-pad-x) calc(var(--fp-pad-y) + 0.15rem);
+}
+/* The month arrows are positioned against the calendar's padding box, so they ignore
+   that padding and would stay pinned to the edge — bring them in with the grid. */
+.flatpickr-calendar:not(.hasTime) .flatpickr-months .flatpickr-prev-month { left: var(--fp-pad-x); top: var(--fp-pad-y); }
+.flatpickr-calendar:not(.hasTime) .flatpickr-months .flatpickr-next-month { right: var(--fp-pad-x); top: var(--fp-pad-y); }
+
 /* date grid */
 .flatpickr-months .flatpickr-month, .flatpickr-current-month input.cur-year, .flatpickr-monthDropdown-months, .flatpickr-weekday { color: rgb(var(--text)); fill: rgb(var(--text)); }
 .flatpickr-day { color: rgb(var(--text)); border-radius: 0.55rem; }

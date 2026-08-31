@@ -12,11 +12,25 @@ fixture has already run (see `apps/integrations/tests/test_aviationstack.py`'s o
 `key` fixture, and the individual `settings.AVIATIONSTACK_API_KEY = "k"` lines elsewhere) —
 a same-scope autouse fixture defined in a test module runs after one from a conftest.py
 higher up the tree, so those still win.
+
+Autouse: an empty cache per test. The default cache is LocMemCache, which lives for the
+whole pytest process, so the public site's per-IP throttle counters leak from one test
+into the next — a test that POSTs a few bookings silently spends another file's budget,
+and the victim fails only when the suite runs in a particular order. Clearing between
+tests makes those counters mean what each test thinks they mean.
 """
 
 import pytest
+from django.core.cache import cache
 
 
 @pytest.fixture(autouse=True)
 def _blank_aviationstack_key(settings):
     settings.AVIATIONSTACK_API_KEY = ""
+
+
+@pytest.fixture(autouse=True)
+def _empty_cache():
+    cache.clear()
+    yield
+    cache.clear()

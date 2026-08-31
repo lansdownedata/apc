@@ -3,6 +3,7 @@ from django.core.cache import cache
 
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
+from apps.public.views import BOOKING_THROTTLE_LIMIT
 
 pytestmark = pytest.mark.django_db
 
@@ -91,3 +92,88 @@ def test_the_chosen_occasion_lands_on_the_reservation(client):
     wedding = ServiceTypeFactory(name="Wedding Transportation")
     client.post("/bookings/", {**VALID, "service_type": wedding.pk})
     assert Lead.objects.get().reservations.get().service_type == wedding
+
+
+def test_two_visitors_behind_the_proxy_get_their_own_throttle_budgets(client, settings):
+    """The bug this guards: on Heroku REMOTE_ADDR is the router, so every visitor shared
+    one bucket and real booking requests were rejected after a handful site-wide."""
+    settings.TRUSTED_PROXY_COUNT = 1
+    cache.clear()
+    for i in range(BOOKING_THROTTLE_LIMIT):
+        resp = client.post(
+            "/bookings/",
+            {**VALID, "email": f"first{i}@example.com"},
+            HTTP_X_FORWARDED_FOR="203.0.113.7",
+        )
+        assert resp.status_code == 302
+
+    # The first visitor is spent...
+    spent = client.post(
+        "/bookings/",
+        {**VALID, "email": "first-blocked@example.com"},
+        HTTP_X_FORWARDED_FOR="203.0.113.7",
+    )
+    assert spent.status_code == 200
+
+    # ...but a different customer on the same site is not.
+    other = client.post(
+        "/bookings/",
+        {**VALID, "email": "second@example.com"},
+        HTTP_X_FORWARDED_FOR="198.51.100.4",
+    )
+    assert other.status_code == 302
+
+
+def test_a_spoofed_forwarded_header_cannot_buy_a_fresh_budget(client, settings):
+    """Heroku appends the real peer, so a client-supplied prefix is ignored."""
+    settings.TRUSTED_PROXY_COUNT = 1
+    cache.clear()
+    for i in range(BOOKING_THROTTLE_LIMIT):
+        client.post(
+            "/bookings/",
+            {**VALID, "email": f"spoof{i}@example.com"},
+            HTTP_X_FORWARDED_FOR="203.0.113.7",
+        )
+    resp = client.post(
+        "/bookings/",
+        {**VALID, "email": "spoof-again@example.com"},
+        HTTP_X_FORWARDED_FOR="9.9.9.9, 203.0.113.7",
+    )
+    assert resp.status_code == 200
+
+
+# --- a submission that matches an existing customer (spec: the name is not lost) -----
+
+
+def test_a_matched_contact_keeps_its_own_name(client):
+    """A stranger who knows your email must not be able to rename you in the CRM."""
+    from apps.contacts.factories import ContactFactory
+
+    ContactFactory(name="James Bond", email="jane@example.com")
+    client.post("/bookings/", {**VALID, "name": "Someone Else"})
+    assert Lead.objects.get().contact.name == "James Bond"
+
+
+def test_the_name_on_the_form_is_recorded_when_it_is_not_the_one_on_file(client):
+    """Otherwise the office scans the leads list for the name the customer typed and
+    never finds it — the lead is filed under whoever owned that email first."""
+    from apps.contacts.factories import ContactFactory
+
+    ContactFactory(name="James Bond", email="jane@example.com")
+    client.post("/bookings/", {**VALID, "name": "Priya Whitfield", "notes": "IAD pickup"})
+    notes = Lead.objects.get().notes
+    assert notes.startswith("Submitted as: Priya Whitfield")
+    assert "IAD pickup" in notes
+
+
+def test_a_matching_name_adds_no_noise(client):
+    from apps.contacts.factories import ContactFactory
+
+    ContactFactory(name="Jane Rider", email="jane@example.com")
+    client.post("/bookings/", VALID)
+    assert "Submitted as" not in Lead.objects.get().notes
+
+
+def test_a_brand_new_customer_adds_no_noise(client):
+    client.post("/bookings/", VALID)
+    assert "Submitted as" not in Lead.objects.get().notes

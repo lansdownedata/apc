@@ -233,6 +233,11 @@ LEAD_INBOUND_API_KEY = env("LEAD_INBOUND_API_KEY", default="")
 QUOTE_EXPIRY_DAYS_BEFORE_PICKUP = env.int("QUOTE_EXPIRY_DAYS_BEFORE_PICKUP", default=14)
 TOUCHPOINTS_ENABLED = env.bool("TOUCHPOINTS_ENABLED", default=False)  # dev safety: off by default
 COMPANY_NAME = env("COMPANY_NAME", default="All Pro Charter")
+# How many reverse proxies sit in front of the app. 0 = none, so per-IP limits key off
+# REMOTE_ADDR. See apps.core.net.client_ip for why the count matters and why reading
+# X-Forwarded-For positionally (from the right) is the only safe way to use it.
+TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=0)
+
 COMPANY_PHONE = env("COMPANY_PHONE", default="")
 COMPANY_EMAIL = env("COMPANY_EMAIL", default="reservations@allprocharter.com")
 # Daily unpaid-deposit report (cron job `deposit-report`); one email per address.
