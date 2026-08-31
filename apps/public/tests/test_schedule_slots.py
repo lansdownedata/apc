@@ -162,12 +162,18 @@ def test_a_missing_token_degrades_the_same_way():
 
 
 def test_days_is_clamped_so_a_hand_built_url_cannot_fan_out():
-    """?days=3650 would otherwise be 520 upstream calls from one unauthenticated GET."""
+    """?days=3650 would otherwise be 520 upstream calls from one unauthenticated GET.
+
+    The bound is SLOT_DAYS_MAX at Calendly's 7-day cap — nine calls — not a number
+    picked here; what matters is that it is bounded at all.
+    """
+    from apps.public.views import SLOT_DAYS_MAX
+
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
             resp = _get(3650)
     assert resp.status_code == 200
-    assert times.call_count <= 5
+    assert times.call_count <= -(-SLOT_DAYS_MAX // 7)
 
 
 def test_garbage_days_falls_back_to_the_default_rather_than_erroring():
