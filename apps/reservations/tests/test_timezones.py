@@ -44,3 +44,8 @@ def test_blank_airport_timezone_falls_through_to_coordinates():
     stop = _stop(timezone="", lat=Decimal("34.052200"), lng=Decimal("-118.243700"))
     stop.airport = SimpleNamespace(timezone="")
     assert resolve(stop) == "America/Los_Angeles"
+
+
+def test_unusable_coordinates_return_empty_not_a_crash():
+    stop = _stop(timezone="", lat=Decimal("999"), lng=Decimal("-118.243700"))
+    assert resolve(stop) == ""
