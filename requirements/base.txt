@@ -17,3 +17,4 @@ django-anymail[postmark]>=12,<16  # Postmark email backend (quotes + confirmatio
 # --- Media ---
 Pillow>=11.0,<13.0           # required by ImageField (vehicle-type photos)
 phonenumbers>=8.13,<10       # E.164 normalization for contact dedupe
+timezonefinder>=8.2,<9       # offline coordinate → IANA; no network in the save path

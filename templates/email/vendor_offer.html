@@ -1,13 +1,14 @@
 {% extends "email/base_email.html" %}
+{% load time_filters %}
 {% block subject %}Trip offer — {{ trip.pickup_date|date:"M j" }}{% endblock %}
-{% block preheader %}{{ trip.pickup_date|date:"M j" }} at {{ trip.pickup_time|time:"g:i A" }} — ${{ payout }} payout.{% endblock %}
+{% block preheader %}{{ trip.pickup_date|date:"M j" }} at {{ trip|pickup_clock }} — ${{ payout }} payout.{% endblock %}
 {% block content %}
 <h1 style="font-size:20px;margin:0 0 12px">Trip offer</h1>
 <p style="margin:0 0 16px">{{ vendor.name }} — we have a trip we'd like you to cover.</p>
 
 <table cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;margin-bottom:16px">
   <tr><td style="padding:4px 0;color:#6b7280">Date</td><td style="padding:4px 0">{{ trip.pickup_date|date:"l, F j, Y" }}</td></tr>
-  <tr><td style="padding:4px 0;color:#6b7280">Pickup</td><td style="padding:4px 0">{{ trip.pickup_time|time:"g:i A" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Pickup</td><td style="padding:4px 0">{{ trip|pickup_clock }}</td></tr>
   <tr><td style="padding:4px 0;color:#6b7280">Vehicle</td><td style="padding:4px 0">{{ trip.vehicle.name|default:"—" }}</td></tr>
   <tr><td style="padding:4px 0;color:#6b7280">Passengers</td><td style="padding:4px 0">{{ trip.passengers }}</td></tr>
 </table>

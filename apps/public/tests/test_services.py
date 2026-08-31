@@ -35,3 +35,15 @@ def test_no_stops_creates_no_stop_rows(db):
     res = lead.reservations.get()
     assert res.stops.count() == 0
     assert lead.contact.name == "Jane Rider"
+
+
+def test_booking_resolves_timezone_from_pickup_coordinates(db):
+    lead = create_lead_from_booking(
+        _data(
+            stops=[
+                {"address": "Santa Monica Blvd", "lat": 34.0194, "lng": -118.4912},
+                {"address": "LAX", "lat": 33.9416, "lng": -118.4085},
+            ]
+        )
+    )
+    assert lead.reservations.get().pickup_timezone == "America/Los_Angeles"
