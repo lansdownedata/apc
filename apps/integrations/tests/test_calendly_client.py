@@ -544,3 +544,47 @@ def test_event_type_questions_is_empty_when_no_event_type_is_configured(settings
     with patch("apps.integrations.calendly.requests.request") as req:
         assert calendly.event_type_questions() == []
     req.assert_not_called()
+
+
+# --- SMS reminders --------------------------------------------------------------
+#
+# `text_reminder_number` is documented as a field of `invitee` — NOT top level like
+# `location` and `questions_and_answers`. Worth pinning: unknown request keys are
+# silently IGNORED by this API rather than rejected (probed 2026-08-31 with a
+# deliberately bogus key), so putting it in the wrong place would fail invisibly —
+# no error, no SMS, nobody the wiser.
+
+
+def test_a_reminder_number_rides_inside_invitee(settings):
+    settings.CALENDLY_API_TOKEN = "pat"
+    settings.CALENDLY_EVENT_TYPE_URI = EVENT_TYPE
+    with patch("apps.integrations.calendly.requests.request", return_value=_response({})) as req:
+        calendly.create_invitee(
+            start_time="2026-10-01T17:45:00.000000Z",
+            name="Sarah",
+            email="s@example.com",
+            timezone="America/New_York",
+            phone="+17035550101",
+            answers=[],
+            text_reminder_number="+17035550101",
+        )
+    body = req.call_args.kwargs["json"]
+    assert body["invitee"]["text_reminder_number"] == "+17035550101"
+    assert "text_reminder_number" not in body
+
+
+def test_no_reminder_number_means_the_key_is_absent_entirely(settings):
+    """Not an empty string — the customer did not consent, so there must be nothing
+    for Calendly to interpret."""
+    settings.CALENDLY_API_TOKEN = "pat"
+    settings.CALENDLY_EVENT_TYPE_URI = EVENT_TYPE
+    with patch("apps.integrations.calendly.requests.request", return_value=_response({})) as req:
+        calendly.create_invitee(
+            start_time="2026-10-01T17:45:00.000000Z",
+            name="Sarah",
+            email="s@example.com",
+            timezone="America/New_York",
+            phone="+17035550101",
+            answers=[],
+        )
+    assert "text_reminder_number" not in json.dumps(req.call_args.kwargs["json"])

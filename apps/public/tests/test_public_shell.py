@@ -210,3 +210,16 @@ def test_no_unstripped_django_comments_leak_into_the_page(db):
         html = Client().get(path).content.decode()
         assert "{#" not in html, f"unstripped Django comment rendering on {path}"
         assert "{%" not in html, f"unrendered template tag on {path}"
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_sms_opt_in_is_present_and_never_pre_ticked(db):
+    """A pre-ticked box is not consent. The wording must also be the same string the
+    BookingConsent row stores, or the record misquotes what was on screen."""
+    from apps.public.models import SMS_CONSENT_TEXT
+
+    html = Client().get("/").content.decode()
+    assert SMS_CONSENT_TEXT in html
+    assert 'x-model="form.sms_consent"' in html
+    checkbox = html.split('x-model="form.sms_consent"')[0].rsplit("<input", 1)[1]
+    assert "checked" not in checkbox

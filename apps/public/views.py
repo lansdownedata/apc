@@ -29,7 +29,7 @@ from .forms import (
     service_slug_ids,
     service_type_for_slug,
 )
-from .models import SlotHold
+from .models import BookingConsent, SlotHold
 from .services import (
     create_lead_from_booking,
     create_lead_from_wedding,
@@ -637,6 +637,12 @@ def schedule_book(request):
     if start_iso in booked:
         return JsonResponse({"redirect": booked[start_iso]})
 
+    # Calendly's SMS-reminder prompt stays switched on for this event type; we fill it
+    # from the one phone field we already validate rather than asking twice. Only ever
+    # when explicitly opted in — an unticked box sends nothing at all, and the visitor
+    # still gets the call, which is the service they actually asked for.
+    sms_consent = request.POST.get("sms_consent", "").strip() not in ("", "0", "false")
+
     try:
         questions = calendly.event_type_questions()
     except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured) as exc:
@@ -667,6 +673,7 @@ def schedule_book(request):
             timezone=visitor_tz,
             phone=phone,
             answers=answers,
+            text_reminder_number=phone if sms_consent else "",
         )
     except calendly.CalendlySlotTaken:
         # The authoritative signal, and the only thing that earns a 409: the slot went
@@ -694,6 +701,14 @@ def schedule_book(request):
         return JsonResponse({"error": "We couldn't complete that booking."}, status=502)
 
     SlotHold.objects.release(start, session_key)
+    if sms_consent:
+        BookingConsent.objects.record(
+            name=name,
+            email=email,
+            phone=phone,
+            start_time=start,
+            ip_address=client_ip(request),
+        )
     token = make_booking_token(name=name, start_time=start_iso, timezone=visitor_tz)
     redirect_to = f"{reverse('public:schedule_thanks')}?b={token}"
     request.session[BOOKED_SESSION_KEY] = {**booked, start_iso: redirect_to}

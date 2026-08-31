@@ -105,3 +105,37 @@ def test_hold_length_comes_from_settings(settings):
     hold = SlotHold.objects.claim(SLOT, "session-a")
     assert timedelta(minutes=2, seconds=50) < hold.expires_at - timezone.now()
     assert hold.expires_at - timezone.now() <= timedelta(minutes=3)
+
+
+# --- SMS consent ------------------------------------------------------------------
+
+
+def test_a_consent_record_captures_what_was_actually_shown():
+    """A tick with no record of the wording behind it is not evidence of consent.
+
+    The text is stored verbatim rather than referenced, because the wording on the page
+    will change and a record pointing at today's copy would misdescribe what someone
+    agreed to two years ago.
+    """
+    from apps.public.models import SMS_CONSENT_TEXT, BookingConsent
+
+    row = BookingConsent.objects.record(
+        name="Sarah Whitfield",
+        email="sarah@example.com",
+        phone="+17035550101",
+        start_time=SLOT,
+        ip_address="203.0.113.9",
+    )
+    assert row.consent_text == SMS_CONSENT_TEXT
+    assert row.phone == "+17035550101"
+    assert row.ip_address == "203.0.113.9"
+    assert row.start_time == SLOT
+    assert row.created_at is not None
+
+
+def test_the_consent_text_names_both_calls_and_texts():
+    from apps.public.models import SMS_CONSENT_TEXT
+
+    lowered = SMS_CONSENT_TEXT.lower()
+    assert "call" in lowered
+    assert "text" in lowered

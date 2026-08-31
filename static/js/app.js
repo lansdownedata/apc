@@ -356,6 +356,36 @@ function adminCardPay(opts) {
 }
 window.adminCardPay = adminCardPay;
 
+/* -------------------------------------------------- send the customer a pay-page link */
+function sendPayLink(url) {
+  return {
+    busy: false,
+    send() {
+      if (this.busy) return;
+      this.busy = true;
+      postForm(url, {})
+        .then((r) =>
+          Alpine.store("toast").push({
+            type: "success",
+            title: "Payment link sent",
+            message: "Sent by " + (r.channel === "sms" ? "text message" : "email") + ".",
+          }),
+        )
+        .catch((e) =>
+          Alpine.store("toast").push({
+            type: "error",
+            title: "Could not send",
+            message: e.message || "Please try again.",
+          }),
+        )
+        .finally(() => {
+          this.busy = false;
+        });
+    },
+  };
+}
+window.sendPayLink = sendPayLink;
+
 /* -------------------------------------------------- LA sync payload preview */
 // LA sync: show a recorded payload (json_script element) in the shared modal.
 window.showLaPayload = function (elementId, title) {
@@ -2418,10 +2448,16 @@ function scheduleBooking(opts = {}) {
     slots: [],
     questions: [],
     answers: {},
-    form: { name: "", email: "", start_time: "" },
+    // sms_consent starts false and is never pre-ticked — see the panel template.
+    form: { name: "", email: "", start_time: "", sms_consent: false },
     tz: "America/New_York",
 
     init() {
+      /* A click that landed before Alpine finished booting still counts. app.js is a
+         plain script but Alpine is deferred, so the CTA can fire open-scheduler with
+         nothing listening yet — and the button would look simply broken. */
+      if (window.__schedulerPending) this.$nextTick(() => this.openPanel());
+
       /* The VISITOR's zone, not the company's. Everything on the All Pro Charter side
          stays America/New_York, but a grid rendered in Eastern to someone in Denver is
          a call they will miss by two hours. They can override it below. */
@@ -2433,6 +2469,7 @@ function scheduleBooking(opts = {}) {
     },
 
     openPanel() {
+      window.__schedulerPending = false;
       this.isOpen = true;
       document.body.style.overflow = "hidden";
       this.$nextTick(() => {
@@ -2644,6 +2681,7 @@ function scheduleBooking(opts = {}) {
         timezone: this.tz,
         start_time: this.form.start_time,
       };
+      if (this.form.sms_consent) body.sms_consent = "1";
       for (const q of this.questions) {
         body["q" + q.position] =
           q.type === "phone_number" ? phone : String(this.answers[q.position] || "");
@@ -2702,8 +2740,11 @@ function scheduleBooking(opts = {}) {
 }
 window.scheduleBooking = scheduleBooking;
 
-/** Opened from the CTA on any public page — see templates/public/_call_cta.html. */
+/** Opened from the CTA on any public page — see templates/public/_call_cta.html.
+ *  The flag covers the gap before deferred Alpine has bound its listener; the panel
+ *  clears it as soon as it opens, whichever of the two got there first. */
 function openScheduler() {
+  window.__schedulerPending = true;
   window.dispatchEvent(new CustomEvent("open-scheduler"));
 }
 window.openScheduler = openScheduler;

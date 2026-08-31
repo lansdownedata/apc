@@ -138,6 +138,23 @@
                 </div>
               </template>
 
+              {% comment %}
+                Opt-in to Calendly's SMS reminder, filled from the phone field above so
+                nobody is asked for the same number twice. UNCHECKED by default and never
+                pre-ticked: a pre-ticked box is not consent, and this is the number the
+                company will text. Unticked simply sends no reminder number — the call
+                still happens, because that is the service being booked.
+
+                The label text comes from SMS_CONSENT_TEXT via the context processor, the
+                same string stored on the BookingConsent row, so what was agreed to and
+                what was recorded cannot drift apart.
+              {% endcomment %}
+              <label class="flex cursor-pointer items-start gap-2.5 rounded-lg bg-surface p-3 ring-1 ring-line">
+                <input type="checkbox" x-model="form.sms_consent"
+                       class="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-line text-gold focus-gold">
+                <span class="text-[12px] leading-relaxed text-muted">{{ sms_consent_text }}</span>
+              </label>
+
               <div>
                 <label for="sched-tz" class="mb-1 block text-[12.5px] font-medium text-ink">Your timezone</label>
                 {% include "components/searchable_select.html" with name="timezone" field_id="sched-tz" options=timezone_options selected="America/New_York" search="on" %}
