@@ -1,5 +1,5 @@
 {# templates/public/quote.html #}
-{% load static humanize %}
+{% load static humanize time_filters %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -131,7 +131,7 @@
               <div class="when">{% if forloop.first %}Arriving on{% elif forloop.last %}Departing on{% endif %} {{ stop.flight_label_long }}</div>
               {% endif %}
               {% if stop.scheduled_time %}
-              <div class="when">{{ stop.scheduled_time|time:"g:i A" }}</div>
+              <div class="when">{{ r|pickup_clock:stop.scheduled_time }}</div>
               {% endif %}
             </li>
             {% endfor %}

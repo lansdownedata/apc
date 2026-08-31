@@ -264,3 +264,9 @@ def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert
         _verified_on_board(trip, number=str(hour))
     with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+
+def test_board_shows_pacific_abbrev_when_the_trip_is_not_eastern(logged_in_client):
+    _trip(pickup_time=time(7, 30), pickup_timezone="America/Los_Angeles")
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
+    assert b"7:30 AM PDT" in body
