@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -82,9 +82,7 @@ def compute_quote_expiry(lead: Lead) -> datetime:
     )
     if first is None:
         return timezone.now() + timedelta(days=days)
-    pickup = timezone.make_aware(
-        datetime.combine(first.pickup_date, first.pickup_time or time(0, 0))
-    )
+    pickup = first.pickup_at
     cutoff = pickup - timedelta(days=days)
     return cutoff if cutoff > timezone.now() else pickup
 
