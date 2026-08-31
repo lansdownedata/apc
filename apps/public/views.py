@@ -10,10 +10,11 @@ from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.addresses.search import MIN_VENUE_QUERY, VENUE_RESULT_LIMIT, search_venues
 from apps.core.net import client_ip
+from apps.core.phone import to_e164
 from apps.integrations import calendly
 from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
@@ -31,6 +32,7 @@ from .models import SlotHold
 from .services import (
     create_lead_from_booking,
     create_lead_from_wedding,
+    make_booking_token,
     make_wedding_token,
     read_wedding_token,
     send_wedding_confirmation,
@@ -430,13 +432,31 @@ def _slot_days(raw: str) -> int:
     return max(1, min(days, SLOT_DAYS_MAX))
 
 
+SLOT_GENERATION_KEY = "calendly-slots:generation"
+
+
+def _slot_generation() -> int:
+    return cache.get(SLOT_GENERATION_KEY) or 0
+
+
+def _expire_slots() -> None:
+    """Drop every cached day-range at once.
+
+    Called when Calendly tells us a slot we were offering is already filled: the
+    cached grid demonstrably contains a slot that is gone, and which `days` range a
+    given visitor asked for is not knowable from here. Bumping a generation
+    invalidates all of them without enumerating keys.
+    """
+    cache.set(SLOT_GENERATION_KEY, _slot_generation() + 1, None)
+
+
 def _fetch_slots(days: int) -> list[str]:
     """Every bookable start time in the next `days`, as raw Calendly timestamps.
 
     Cached as-is and WITHOUT hold state: holds change between one poll and the next,
     so they are overlaid per request instead of being baked into the cached list.
     """
-    key = f"calendly-slots:v1:{days}"
+    key = f"calendly-slots:v1:{_slot_generation()}:{days}"
     cached = cache.get(key)
     if cached is not None:
         return cached
@@ -481,6 +501,11 @@ def schedule_slots(request):
             status=503,
         )
 
+    return JsonResponse({"slots": _with_holds(starts), "questions": questions, "error": ""})
+
+
+def _with_holds(starts: list[str]) -> list[dict]:
+    """Slot timestamps annotated with live hold state, newest hold data every time."""
     held = SlotHold.objects.held_start_times()
     slots = []
     for raw in starts:
@@ -493,4 +518,143 @@ def schedule_slots(request):
                 "held": moment in held,
             }
         )
-    return JsonResponse({"slots": slots, "questions": questions, "error": ""})
+    return slots
+
+
+# The session remembers what it has already booked, keyed by slot. Without it a
+# double-click books twice: claim() deliberately lets a session re-take its own hold,
+# so nothing upstream of the Calendly call stops the second submit.
+BOOKED_SESSION_KEY = "calendly_booked"
+
+
+def _booking_errors(*, name: str, email: str, phone: str, start) -> dict[str, str]:
+    errors = {}
+    if not name:
+        errors["name"] = "Tell us your name."
+    if not email or "@" not in email:
+        errors["email"] = "We need a valid email for the calendar invite."
+    if not phone:
+        # Phone becomes location.location — the number the host dials. Calendly's own
+        # complaint about a bad one comes back as a location failure, which names
+        # nothing the visitor can act on, so it is caught here instead.
+        errors["phone"] = "We call you at this number, so we need a valid one."
+    if start is None:
+        errors["start_time"] = "Pick a time."
+    elif start <= timezone.now():
+        errors["start_time"] = "That time has passed — pick another."
+    return errors
+
+
+def _collect_answers(request, questions: list[dict]) -> tuple[list[dict], list[str]]:
+    """Answers in Calendly's shape, plus the names of any required ones left blank.
+
+    Driven entirely by the live question list. `position` is what the API matches on
+    and it is the client's to reorder in Calendly whenever he likes — a hardcoded
+    position keeps working right up until he does, then silently posts answers to the
+    wrong questions.
+    """
+    answers, missing = [], []
+    for question in questions:
+        position = question.get("position")
+        value = request.POST.get(f"q{position}", "").strip()
+        if not value:
+            if question.get("required"):
+                missing.append(question.get("name", ""))
+            continue
+        answers.append(
+            {"question": question.get("name", ""), "answer": value, "position": position}
+        )
+    return answers, missing
+
+
+@require_POST
+def schedule_book(request):
+    """Book the discovery call the visitor picked, through Calendly's API.
+
+    Creates NO Lead and NO Contact. `invitee.created` already does that, idempotently,
+    with the attach heuristic and reschedule correlation — and it fires for an API
+    booking exactly as for one made in Calendly's own UI (probed against the live
+    account, 2026-08-31). Doing it here as well would race the webhook and duplicate.
+    """
+    if not request.session.session_key:
+        request.session.save()
+    session_key = request.session.session_key
+
+    name = request.POST.get("name", "").strip()[:CALENDLY_NAME_MAXLEN]
+    email = request.POST.get("email", "").strip()
+    phone = to_e164(request.POST.get("phone", ""))
+    visitor_tz = request.POST.get("timezone", "").strip() or settings.TIME_ZONE
+    start = parse_start_time(request.POST.get("start_time", ""))
+
+    errors = _booking_errors(name=name, email=email, phone=phone, start=start)
+    if errors:
+        return JsonResponse({"errors": errors}, status=400)
+
+    start_iso = start.astimezone(dt_timezone_utc).isoformat().replace("+00:00", "Z")
+
+    # Already booked by this very session — a double-click, not a second booking.
+    booked = request.session.get(BOOKED_SESSION_KEY) or {}
+    if start_iso in booked:
+        return JsonResponse({"redirect": booked[start_iso]})
+
+    try:
+        questions = calendly.event_type_questions()
+    except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured) as exc:
+        logger.warning("Calendly questions unavailable: %s", exc)
+        return JsonResponse({"error": "We couldn't reach the calendar."}, status=502)
+
+    answers, missing = _collect_answers(request, questions)
+    if missing:
+        return JsonResponse(
+            {"errors": {"questions": [f"{n} is required." for n in missing]}}, status=400
+        )
+
+    if SlotHold.objects.claim(start, session_key) is None:
+        return JsonResponse(
+            {
+                "code": "slot_taken",
+                "error": "Someone else is booking that time right now.",
+                "slots": _with_holds(_fetch_slots(SLOT_DAYS_DEFAULT)),
+            },
+            status=409,
+        )
+
+    try:
+        calendly.create_invitee(
+            start_time=start_iso,
+            name=name,
+            email=email,
+            timezone=visitor_tz,
+            phone=phone,
+            answers=answers,
+        )
+    except calendly.CalendlySlotTaken:
+        # The authoritative signal, and the only thing that earns a 409: the slot went
+        # somewhere we cannot see — calendly.com, or the host's own calendar.
+        SlotHold.objects.release(start, session_key)
+        _expire_slots()
+        slots = []
+        try:
+            slots = _with_holds(_fetch_slots(SLOT_DAYS_DEFAULT))
+        except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured):
+            logger.warning("Could not refresh slots after a lost race.")
+        return JsonResponse(
+            {
+                "code": "slot_taken",
+                "error": "That time just went — here are the next available.",
+                "slots": slots,
+            },
+            status=409,
+        )
+    except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured) as exc:
+        # Not an availability problem, so the hold must not be left behind greying the
+        # slot out for everyone else for the rest of the hold window.
+        SlotHold.objects.release(start, session_key)
+        logger.exception("Calendly booking failed: %s", exc)
+        return JsonResponse({"error": "We couldn't complete that booking."}, status=502)
+
+    SlotHold.objects.release(start, session_key)
+    token = make_booking_token(name=name, start_time=start_iso, timezone=visitor_tz)
+    redirect_to = f"{reverse('public:schedule_thanks')}?b={token}"
+    request.session[BOOKED_SESSION_KEY] = {**booked, start_iso: redirect_to}
+    return JsonResponse({"redirect": redirect_to})
