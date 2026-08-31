@@ -17,7 +17,6 @@ cancel_trip from a test — always mock `requests` at the boundary.
 from datetime import date as date_type
 from datetime import datetime
 from datetime import time as time_type
-from zoneinfo import ZoneInfo
 
 import requests
 from django.conf import settings
@@ -97,21 +96,15 @@ def vehicle_code(vehicle: VehicleType) -> str:
         ) from None
 
 
-def _combine_iso(
-    date_val: date_type | None,
-    time_val: time_type | None,
-    *,
-    tz_name: str = "",
-) -> str | None:
-    """`date`+`time` in the trip's pickup zone → ISO 8601 with offset.
+def _combine_iso(date_val: date_type | None, time_val: time_type | None) -> str | None:
+    """Naive `date`+`time` -> ISO 8601 string, or None if either half is missing.
 
-    Missing either half still returns None (nothing to send). Blank tz_name
-    uses TIME_ZONE, matching Reservation.pickup_at's fallback.
+    No timezone is ever attached — the contract's timestamps are naive and irregular
+    by design (§1.4/§5.11), so this never invents a conversion, only a format.
     """
     if not date_val or not time_val:
         return None
-    zone = tz_name or settings.TIME_ZONE
-    return datetime.combine(date_val, time_val, tzinfo=ZoneInfo(zone)).isoformat()
+    return datetime.combine(date_val, time_val).isoformat()
 
 
 def _location(stop: Stop, *, time_iso: str | None = None) -> dict:
@@ -168,13 +161,12 @@ def build_send_payload(assignment: Assignment) -> dict:
       would just be passed through and ignored, so neither goes out. `totalAmount` is
       read off the *response*, not sent in this payload.
 
-    Times are the naive wall-clock interpreted in `Reservation.pickup_timezone`
-    (falling back to `TIME_ZONE`) and serialized with that offset. Pickup/dropOff
-    use the reservation's own `pickup_date`/`pickup_time` and `dropoff_date`/
+    Times are sent verbatim with no timezone conversion invented — the contract's
+    timestamps are naive and irregular by design (§1.4/§5.11). Pickup/dropOff use
+    the reservation's own `pickup_date`/`pickup_time` and `dropoff_date`/
     `dropoff_time`; an intermediate stop has no date of its own (`Stop.scheduled_time`
     is rendered against the trip's `pickup_date` — see the model), so its `time` is
-    that same `pickup_date` combined with its own `scheduled_time`, in the same
-    pickup zone.
+    that same `pickup_date` combined with its own `scheduled_time`.
 
     Every stop on the trip reaches GNet: the first and last of `ordered_stops` become
     `locations.pickup`/`.dropOff`, and everything between is `locations.stops` — a
@@ -208,20 +200,14 @@ def build_send_payload(assignment: Assignment) -> dict:
         )
     pickup_stop, dropoff_stop, middle_stops = stops[0], stops[-1], stops[1:-1]
 
-    zone = reservation.pickup_timezone or settings.TIME_ZONE
     pickup = _location(
-        pickup_stop,
-        time_iso=_combine_iso(reservation.pickup_date, reservation.pickup_time, tz_name=zone),
+        pickup_stop, time_iso=_combine_iso(reservation.pickup_date, reservation.pickup_time)
     )
     dropoff = _location(
-        dropoff_stop,
-        time_iso=_combine_iso(reservation.dropoff_date, reservation.dropoff_time, tz_name=zone),
+        dropoff_stop, time_iso=_combine_iso(reservation.dropoff_date, reservation.dropoff_time)
     )
     stops_payload = [
-        _location(
-            stop,
-            time_iso=_combine_iso(reservation.pickup_date, stop.scheduled_time, tz_name=zone),
-        )
+        _location(stop, time_iso=_combine_iso(reservation.pickup_date, stop.scheduled_time))
         for stop in middle_stops
     ]
 

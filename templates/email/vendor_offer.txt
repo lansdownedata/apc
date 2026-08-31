@@ -1,6 +1,7 @@
+{% load time_filters %}
 {{ vendor.name }} — trip offer from All Pro Charter
 
-{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip.pickup_time|time:"g:i A" }}
+{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
 Vehicle: {{ trip.vehicle.name|default:"—" }}
 Passengers: {{ trip.passengers }}
 
