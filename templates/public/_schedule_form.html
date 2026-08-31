@@ -85,17 +85,21 @@
 
               <div>
                 <label for="sched-phone" class="mb-1 block text-[12.5px] font-medium text-ink">Phone</label>
-                {# intlTelInput is auto-initialised by data-phone; app.js reads it back
-                   through phoneValue() so what we post is E.164. #}
+                {% comment %}
+                  intlTelInput is auto-initialised by data-phone; app.js reads it back
+                  through phoneValue() so what we post is E.164.
+                {% endcomment %}
                 <div><input id="sched-phone" type="tel" data-phone x-ref="phone" autocomplete="tel"
                             class="field" :class="errors.phone && 'ring-danger'"></div>
                 <p x-show="errors.phone" x-text="errors.phone" class="mt-1 text-[12px] text-danger"></p>
               </div>
 
-              {# One field per LIVE custom question. A phone_number question is answered
-                 from the field above rather than asked twice (decision 1); a question
-                 whose name mentions a date gets a picker so Calendly's free-text answer
-                 arrives normalised (decision 3). #}
+              {% comment %}
+                One field per LIVE custom question. A phone_number question is answered
+                from the field above rather than asked twice (decision 1); a question
+                whose name mentions a date gets a picker so Calendly's free-text answer
+                arrives normalised (decision 3).
+              {% endcomment %}
               {% comment %}
                 One <template x-if> per kind rather than three x-show siblings: with
                 altInput on, flatpickr HIDES the real input and shows a sibling of its
