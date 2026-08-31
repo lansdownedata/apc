@@ -233,6 +233,9 @@ CALENDLY_EVENT_TYPE_URI = env("CALENDLY_EVENT_TYPE_URI", default="")
 # only — it stops two of OUR visitors colliding and knows nothing about bookings made
 # on calendly.com. Short on purpose: an abandoned form greys the slot out for everyone.
 CALENDLY_HOLD_MINUTES = env.int("CALENDLY_HOLD_MINUTES", default=10)
+# How long the availability grid is served from cache. Calendly rate-limits harder
+# than it documents, and the grid is polled by every visitor on the booking page.
+CALENDLY_SLOT_CACHE_SECONDS = env.int("CALENDLY_SLOT_CACHE_SECONDS", default=60)
 
 # Geolocation & address bias
 from apps.core.geo import parse_latlon  # noqa: E402 settings-safe (no Django imports)
