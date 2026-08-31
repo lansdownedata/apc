@@ -9,7 +9,12 @@ from django.views.generic import TemplateView
 
 from apps.accounts.views import accept_invite
 from apps.core.cron import run_job
-from apps.integrations.views import gnet_callback, la_webhook, podium_webhook
+from apps.integrations.views import (
+    calendly_webhook,
+    gnet_callback,
+    la_webhook,
+    podium_webhook,
+)
 from apps.leads.views import pipeline, quote_book, quote_page
 from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
@@ -49,6 +54,7 @@ urlpatterns = [
     # integrations + webhooks + cron — unchanged
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),
+    path("webhooks/calendly/", calendly_webhook, name="calendly_webhook"),
     path("webhooks/limoanywhere/<str:token>/", la_webhook, name="la_webhook"),
     path("webhooks/stripe/", stripe_webhook, name="stripe_webhook"),
     path("api/gnet/callback/", gnet_callback, name="gnet_callback"),

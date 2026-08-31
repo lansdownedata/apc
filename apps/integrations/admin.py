@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import LACustomer, LAEvent, PodiumCredential, PodiumEvent, ZapEvent
+from .models import (
+    CalendlyEvent,
+    LACustomer,
+    LAEvent,
+    PodiumCredential,
+    PodiumEvent,
+    ZapEvent,
+)
 
 
 @admin.register(PodiumCredential)
@@ -32,3 +39,10 @@ class LACustomerAdmin(admin.ModelAdmin):
 class LAEventAdmin(admin.ModelAdmin):
     list_display = ("__str__", "event", "la_customer", "reservation", "created_at")
     list_filter = ("event",)
+
+
+@admin.register(CalendlyEvent)
+class CalendlyEventAdmin(admin.ModelAdmin):
+    list_display = ("event_type", "lead", "processed", "created_at")
+    list_filter = ("event_type", "processed")
+    search_fields = ("idempotency_key",)
