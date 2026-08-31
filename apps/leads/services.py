@@ -447,6 +447,7 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
                 wedding_stop(res, 1, leg["to"], leg.get("to_sub", ""), sites),
             ]
         )
+        res.refresh_pickup_timezone()
         (created if is_new else updated).append(res)
 
     orphans = [res for leg_id, res in existing.items() if leg_id not in seen]

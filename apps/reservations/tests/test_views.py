@@ -5,6 +5,7 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
+from apps.addresses.factories import AirportFactory
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import TransferReservationFactory
@@ -106,6 +107,30 @@ def test_duplicate_clones_reservation_and_stops(client):
     assert clone.la_reservation_id == ""
     assert [s.address for s in clone.ordered_stops] == ["A", "B"]
     assert clone.ordered_stops[1].note == "wait"
+
+
+def test_duplicate_carries_coordinates_airport_and_timezone(client):
+    lax = AirportFactory(iata="LAX", timezone="America/Los_Angeles")
+    res = TransferReservationFactory(pickup_timezone="America/Los_Angeles")
+    Stop.objects.filter(reservation=res).delete()
+    Stop.objects.create(
+        reservation=res,
+        sequence=0,
+        address="LAX",
+        latitude=Decimal("33.941600"),
+        longitude=Decimal("-118.408500"),
+        airport=lax,
+        note="curb",
+    )
+    Stop.objects.create(reservation=res, sequence=1, address="Hotel")
+    client.force_login(UserFactory())
+    client.post(reverse("reservation_duplicate", args=[res.pk]))
+    clone = res.lead.reservations.exclude(pk=res.pk).get()
+    pickup = clone.stops.order_by("sequence").first()
+    assert pickup.latitude == Decimal("33.941600")
+    assert pickup.longitude == Decimal("-118.408500")
+    assert pickup.airport_id == lax.pk
+    assert clone.pickup_timezone == "America/Los_Angeles"
 
 
 def test_delete_removes_reservation_and_stops(client):
