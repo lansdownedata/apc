@@ -91,6 +91,10 @@ def make_quote_page_url(lead: Lead, *, base_url: str) -> str:
     return f"{base_url}{reverse('quote_page', args=[make_deposit_token(lead)])}"
 
 
+def make_pay_page_url(lead: Lead, *, base_url: str) -> str:
+    return f"{base_url}{reverse('quote_pay', args=[make_deposit_token(lead)])}"
+
+
 @dataclass
 class SendQuoteResult:
     ok: bool

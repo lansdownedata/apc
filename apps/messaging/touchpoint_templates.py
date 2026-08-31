@@ -166,6 +166,31 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{review_link}"
         ),
     ),
+    # DRAFT COPY — awaiting client sign-off. Unlike TP1–TP8 this is NOT client-verbatim
+    # (the touch-points PDF has no payment-reminder message). Do not treat as approved.
+    "payment_reminder": TouchPointTemplate(
+        kind="payment_reminder",
+        anchor="balance_due",  # midnight on PaymentPlan.balance_due_date
+        offset=timedelta(hours=-72),
+        channels=("sms", "email"),
+        subject="Your remaining balance for reservation {quote_no}",
+        email_body=(
+            "{first_name},\n\n"
+            "This is a friendly reminder that the remaining balance of {balance_amount} for "
+            "reservation {quote_no} is scheduled to be charged on {balance_due_date} to the "
+            "card ending {card_last4}.\n\n"
+            "No action is needed — we'll take care of it automatically. If anything has "
+            "changed, or you'd like to use a different card, reply here or call us at "
+            "{company_phone}.\n\n"
+            "You can review your reservation and payment here: {pay_link}\n\n"
+            "Thank you for choosing {company_name}."
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. The remaining balance of {balance_amount} for "
+            "reservation {quote_no} will be charged on {balance_due_date} to the card ending "
+            "{card_last4}. Nothing to do — reply here if anything's changed. {pay_link}"
+        ),
+    ),
 }
 
 
@@ -201,6 +226,8 @@ def build_context(lead) -> dict[str, str]:
     pickup_time = (
         f"{first_res.pickup_time:%-I:%M %p}" if first_res and first_res.pickup_time else ""
     )
+    plan = getattr(lead, "payment", None)
+    balance_due = plan.balance_due_date if plan else None
     return {
         "first_name": first,
         "agent_first": agent_first,
@@ -214,7 +241,11 @@ def build_context(lead) -> dict[str, str]:
         "quote_no": lead.quote_no,
         "quote_breakdown": breakdown,
         "quote_link": "",  # filled by callers that have request/base-url context
+        "pay_link": "",  # filled by the payment_reminder sender
         "review_link": "",  # filled by the review_request sender
+        "balance_amount": f"${plan.balance_amount:,.2f}" if plan else "",
+        "balance_due_date": f"{balance_due:%b %d, %Y}" if balance_due else "",
+        "card_last4": plan.card_last4 if plan else "",
     }
 
 

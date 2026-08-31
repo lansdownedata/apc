@@ -12,8 +12,12 @@ from django.views.decorators.http import require_POST
 from apps.accounts.permissions import payment_access_required
 from apps.core.choices import Channel
 from apps.dispatch import services as dispatch_services
+from apps.integrations import podium
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads import services as lead_services
 from apps.leads.models import Lead
+from apps.messaging import services as messaging_services
+from apps.messaging.models import Message
 from apps.reservations.models import Reservation
 
 from . import ledger, services, webhooks
@@ -213,3 +217,48 @@ def order_charge_saved(request, lead_id):
             "status": lead.status,
         }
     )
+
+
+_PAY_LINK_CHANNEL = {"sms": "phone", "email": "email"}
+_PAY_LINK_MODEL = {"sms": Message.Channel.SMS, "email": Message.Channel.EMAIL}
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_send_pay_link(request, lead_id):
+    """Send the customer pay-page link over Podium (SMS preferred, email fallback) and
+    record it as an outbound message on the conversation."""
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=lead_id)
+    contact = lead.contact
+
+    if contact.phone:
+        channel, identifier = "sms", contact.phone
+    elif contact.email:
+        channel, identifier = "email", contact.email
+    else:
+        return _json_error("No phone or email on file for this contact.")
+
+    base_url = request.build_absolute_uri("/")[:-1]
+    link = lead_services.make_pay_page_url(lead, base_url=base_url)
+    body = f"Here's a secure link to pay for reservation {lead.quote_no}: {link}"
+
+    try:
+        response = podium.send_message(
+            identifier=identifier, body=body, channel_type=_PAY_LINK_CHANNEL[channel]
+        )
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        return _json_error(str(exc), status=502)
+
+    uid = ""
+    if isinstance(response, dict):
+        uid = response.get("uid") or (response.get("data") or {}).get("uid") or ""
+
+    messaging_services.record_outbound(
+        messaging_services.conversation_for(contact),
+        channel=_PAY_LINK_MODEL[channel],
+        body=body,
+        podium_message_uid=uid,
+        sender_name=request.user.get_full_name() or request.user.username,
+    )
+    return JsonResponse({"ok": True, "channel": channel})

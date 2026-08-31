@@ -103,6 +103,7 @@ class TouchPoint(TimeStampedModel):
         TP7_EXPIRING = "tp7_expiring", "Quote expiring"
         TP8_EXPIRED = "tp8_expired", "Quote expired"
         REVIEW_REQUEST = "review_request", "Review request"
+        PAYMENT_REMINDER = "payment_reminder", "Payment reminder"
 
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", "Scheduled"

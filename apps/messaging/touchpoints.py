@@ -1,6 +1,7 @@
 """Touch-point scheduling + sending (spec 2026-07-11, client cadence TP1-TP8)."""
 
 import logging
+from datetime import datetime, time
 
 from django.conf import settings
 from django.utils import timezone
@@ -81,16 +82,37 @@ def schedule_review_request(lead) -> None:
     _create(lead, kind, timezone.now())
 
 
+def schedule_payment_reminder(lead) -> None:
+    """The 72-hour pre-charge notice (spec 2026-08-30 §9). One row per lead.
+
+    A pre-charge notice, not dunning: it only makes sense for a booked lead with a card on
+    file whose balance the cron will auto-charge, so it is a no-op without a card or a dated
+    trip. Called from `sync_plan_from_collected` when the balance flips to SCHEDULED. The
+    anchor is midnight on `balance_due_date` in the project timezone — `Reservation` has no
+    per-trip zone yet (see the trip-timezone spec); revisit together with that work.
+    """
+    kind = TouchPoint.Kind.PAYMENT_REMINDER
+    if TouchPoint.objects.filter(lead=lead, kind=kind).exists():
+        return
+    plan = getattr(lead, "payment", None)
+    if plan is None or not plan.stripe_payment_method_id or plan.balance_due_date is None:
+        return
+    anchor = timezone.make_aware(
+        datetime.combine(plan.balance_due_date, time.min), timezone.get_default_timezone()
+    )
+    _create(lead, kind, anchor)
+
+
 def cancel_pending(lead, *, kinds=None) -> int:
     """Cancel SCHEDULED touch-points for a lead.
 
-    Defaults to every kind except review_request (so a booked lead still gets its
-    post-trip review ask); pass explicit ``kinds`` to override, e.g. cancelling
+    Defaults to every kind except review_request and payment_reminder (both fire on a
+    booked lead by design); pass explicit ``kinds`` to override, e.g. cancelling
     everything on LOST.
     """
     qs = TouchPoint.objects.filter(lead=lead, status=TouchPoint.Status.SCHEDULED)
     if kinds is None:
-        qs = qs.exclude(kind=TouchPoint.Kind.REVIEW_REQUEST)
+        qs = qs.exclude(kind__in=(TouchPoint.Kind.REVIEW_REQUEST, TouchPoint.Kind.PAYMENT_REMINDER))
     else:
         qs = qs.filter(kind__in=kinds)
     return qs.update(status=TouchPoint.Status.CANCELLED)
@@ -120,10 +142,12 @@ def _render_body(template, channel: str, ctx: dict) -> str:
 
 def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
     """Send over each available channel; SENT on any success, else FAILED."""
-    from apps.leads.services import make_quote_page_url
+    from apps.leads.services import make_pay_page_url, make_quote_page_url
 
+    base_url = settings.PUBLIC_BASE_URL or ""
     ctx = build_context(tp.lead)
-    ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=settings.PUBLIC_BASE_URL or "")
+    ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=base_url)
+    ctx["pay_link"] = make_pay_page_url(tp.lead, base_url=base_url)
 
     first_uid = ""
     any_success = False
@@ -208,7 +232,26 @@ def _process(tp: TouchPoint) -> bool:
     if kind == TouchPoint.Kind.REVIEW_REQUEST:
         return _send_review_invite(tp)
 
-    if lead.status == lead.Status.BOOKED:
+    if kind == TouchPoint.Kind.PAYMENT_REMINDER:
+        from apps.payments.models import PaymentPlan
+        from apps.payments.services import remaining_balance
+
+        plan = getattr(lead, "payment", None)
+        if plan is None or not plan.stripe_payment_method_id:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="no card on file")
+            return False
+        if plan.balance_status != PaymentPlan.BalanceStatus.SCHEDULED:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="balance not scheduled")
+            return False
+        if remaining_balance(lead) <= 0:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="nothing owed")
+            return False
+        if not settings.PUBLIC_BASE_URL:
+            # Config isn't ready — leave SCHEDULED (matches the quote kinds).
+            logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
+            return False
+        # fall through to the shared template / channel / _send path
+    elif lead.status == lead.Status.BOOKED:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead BOOKED")
         return False
 
