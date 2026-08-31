@@ -15,7 +15,13 @@ from apps.integrations.views import (
     la_webhook,
     podium_webhook,
 )
-from apps.leads.views import pipeline, quote_book, quote_page
+from apps.leads.views import (
+    pipeline,
+    quote_page,
+    quote_pay,
+    quote_pay_complete,
+    quote_pay_intent,
+)
 from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
 from apps.public.sitemaps import StaticViewSitemap
@@ -50,7 +56,9 @@ urlpatterns = [
     # staff invite acceptance — unauthenticated by design; the signed token is the guard
     path("invite/<str:uidb64>/<str:token>/", accept_invite, name="accept_invite"),
     path("quote/<str:token>/", quote_page, name="quote_page"),
-    path("quote/<str:token>/book/", quote_book, name="quote_book"),
+    path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
+    path("quote/<str:token>/intent/", quote_pay_intent, name="quote_pay_intent"),
+    path("quote/<str:token>/complete/", quote_pay_complete, name="quote_pay_complete"),
     # integrations + webhooks + cron — unchanged
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),

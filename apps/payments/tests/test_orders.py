@@ -14,6 +14,23 @@ def test_orders_requires_login(client):
     assert "/login" in resp.url
 
 
+def test_money_actions_partial_renders_the_take_payment_element(client, settings):
+    """Regression guard for the shared-config rewire: the workspace still renders the
+    Payment Element mount + adminCardPay block for a payments-access user."""
+    from apps.accounts.models import User
+
+    settings.STRIPE_PUBLISHABLE_KEY = "pk_test_123"
+    owner = UserFactory(role=User.Role.OWNER_ADMIN)
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    client.force_login(owner)
+    resp = client.get(reverse("lead_detail", args=[lead.pk]))
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert "adminCardPay(" in body
+    assert 'x-ref="cardMount"' in body
+    assert "js.stripe.com/v3" in body
+
+
 def test_orders_lists_booked_only(client):
     booked = LeadFactory(status=Lead.Status.BOOKED)
     LeadFactory(status=Lead.Status.NEW)

@@ -158,7 +158,7 @@ def order_admin_complete(request, lead_id):
     if not pi_id:
         return _json_error("Missing payment intent.")
     try:
-        services.record_admin_payment(plan, pi_id)
+        services.record_payment(plan, pi_id)
     except services.PaymentError as exc:
         return _json_error(str(exc))
     return JsonResponse({"ok": True, "remaining": str(services.remaining_balance(lead))})

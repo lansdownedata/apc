@@ -215,13 +215,13 @@ def test_mark_lost_cancels_all_kinds_including_review_request(client):
 
 def test_deposit_webhook_cancels_pending_touchpoints():
     plan = PaymentPlanFactory()
-    from apps.payments.tests.test_stripe_webhook import _saved_pm, _session_event
+    from apps.payments.tests.test_stripe_webhook import _intent, _pi_event
 
     with (
-        patch("apps.payments.webhooks.stripe.PaymentIntent.retrieve", return_value=_saved_pm()),
+        patch("apps.payments.services.stripe.PaymentIntent.retrieve", return_value=_intent()),
         patch("apps.leads.services.touchpoints.cancel_pending") as cancel_pending,
     ):
-        process_stripe_event(_session_event(plan.lead_id))
+        process_stripe_event(_pi_event(plan.lead_id))
 
     cancel_pending.assert_called_once()
     assert cancel_pending.call_args.args[0].pk == plan.lead_id

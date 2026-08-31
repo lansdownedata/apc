@@ -43,30 +43,60 @@ def get_or_create_customer(plan: PaymentPlan) -> str:
     return customer.id
 
 
-def create_deposit_checkout(plan: PaymentPlan, *, success_url: str, cancel_url: str) -> str:
-    """A Checkout Session for the deposit that also saves the card for the balance."""
-    customer = get_or_create_customer(plan)
-    session = _stripe().checkout.Session.create(
-        mode="payment",
-        customer=customer,
-        line_items=[
-            {
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": f"Deposit · {plan.lead.quote_no}"},
-                    "unit_amount": _cents(plan.deposit_amount),
-                },
-                "quantity": 1,
-            }
-        ],
-        payment_intent_data={"setup_future_usage": "off_session"},
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"lead_id": plan.lead_id, "kind": Charge.Kind.DEPOSIT.value},
+def open_intent_for(plan: PaymentPlan, *, kind: str, amount) -> tuple[Charge, str]:
+    """Reuse this plan's open intent for `kind` at `amount`, else create one.
+
+    `record_charge()` mints a row per call, so a public endpoint calling it per page load
+    would let a token-holder pile up unbounded PENDING charges. Reuse closes that.
+
+    The check is deliberately local — no `PaymentIntent.retrieve`. A spent intent is already
+    caught by the PENDING filter (both the customer's `complete` POST and the webhook flip the
+    Charge to SUCCEEDED), we never cancel deposit/balance intents, and a genuinely dead one
+    only makes `confirmPayment` error client-side, which a refresh clears. That is worth not
+    paying a Stripe round-trip on every hit of a public endpoint.
+
+    A changed amount means a partial payment landed between page loads: a fresh Charge (and so
+    a fresh idempotency key) is created and the old PENDING one is abandoned, not cancelled —
+    Stripe expires unconfirmed intents on its own.
+    """
+    amount = Decimal(amount)
+    existing = (
+        plan.charges.filter(kind=kind, status=Charge.Status.PENDING, amount=amount)
+        .exclude(stripe_payment_intent_id="")
+        .exclude(stripe_client_secret="")
+        .first()
     )
-    plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
-    plan.save(update_fields=["deposit_status", "updated_at"])
-    return session.url
+    if existing is not None:
+        return existing, existing.stripe_client_secret
+
+    customer = get_or_create_customer(plan)
+    charge = plan.record_charge(kind=kind, amount=amount)
+    intent = _stripe().PaymentIntent.create(
+        amount=_cents(amount),
+        currency="usd",
+        customer=customer,
+        payment_method_types=["card"],
+        setup_future_usage="off_session",
+        metadata={
+            "lead_id": str(plan.lead_id),
+            "kind": Charge.Kind(kind).value,
+            "charge_id": str(charge.pk),
+        },
+        idempotency_key=charge.idempotency_key,
+    )
+    charge.stripe_payment_intent_id = intent.id
+    charge.stripe_client_secret = intent.client_secret
+    charge.save(update_fields=["stripe_payment_intent_id", "stripe_client_secret", "updated_at"])
+    return charge, intent.client_secret
+
+
+def create_deposit_intent(plan: PaymentPlan) -> tuple[Charge, str]:
+    """The deposit intent for our own pay page. Saves the card for the balance cron."""
+    charge, secret = open_intent_for(plan, kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
+    if plan.deposit_status != PaymentPlan.DepositStatus.REQUESTED:
+        plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
+        plan.save(update_fields=["deposit_status", "updated_at"])
+    return charge, secret
 
 
 def charge_balance(plan: PaymentPlan) -> Charge:
@@ -78,6 +108,7 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
+            payment_method_types=["card"],
             off_session=True,
             confirm=True,
             metadata={
@@ -237,31 +268,20 @@ def _store_card(plan: PaymentPlan, payment_method) -> None:
 
 
 def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
-    """Create a PaymentIntent for the staff Payment Element. Returns (charge, client_secret)."""
+    """Create a PaymentIntent for the staff Payment Element. Returns (charge, client_secret).
+
+    Routed through `open_intent_for`, which stops a repeated attempt minting a row per try.
+    """
     amount = _parse_positive_amount(amount)
-    customer = get_or_create_customer(plan)
-    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
-    intent = _stripe().PaymentIntent.create(
-        amount=_cents(amount),
-        currency="usd",
-        customer=customer,
-        setup_future_usage="off_session",
-        metadata={
-            "lead_id": str(plan.lead_id),
-            "kind": "admin",
-            "charge_id": str(charge.pk),
-        },
-        idempotency_key=charge.idempotency_key,
-    )
-    charge.stripe_payment_intent_id = intent.id
-    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
-    return charge, intent.client_secret
+    return open_intent_for(plan, kind=Charge.Kind.BALANCE, amount=amount)
 
 
 def create_setup_intent(plan: PaymentPlan) -> str:
     """Client secret so staff can save a card without charging."""
     customer = get_or_create_customer(plan)
-    intent = _stripe().SetupIntent.create(customer=customer, usage="off_session")
+    intent = _stripe().SetupIntent.create(
+        customer=customer, usage="off_session", payment_method_types=["card"]
+    )
     return intent.client_secret
 
 
@@ -276,9 +296,22 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
     return plan
 
 
-def record_admin_payment(plan: PaymentPlan, payment_intent_id: str) -> Charge:
-    """Reconcile a succeeded staff PaymentIntent: ledger, card, statuses, maybe book
-    (a new or quoted lead — a NEW lead can take a card too)."""
+def record_payment(
+    plan: PaymentPlan, payment_intent_id: str, *, kind: str = Charge.Kind.BALANCE
+) -> Charge:
+    """Reconcile a succeeded PaymentIntent: ledger, card, statuses, maybe book.
+
+    The single reconcile for all three surfaces — the customer pay page, the staff Payment
+    Element, and the webhook. `kind` selects the Charge kind and the matching journal entry;
+    everything else is identical, which is the point.
+
+    The `expand=["payment_method"]` retrieve is load-bearing, not redundant: webhook payloads
+    carry `payment_method` as a bare ID (expanded payloads are opt-in and we don't use them),
+    so this is what resolves the card on every path.
+
+    Plan flags are left to `sync_plan_from_collected` — it already sets deposit PAID +
+    balance SCHEDULED once collected covers the deposit, so a deposit needs no special case.
+    """
     from apps.leads.models import Lead
     from apps.leads.services import book_lead
 
@@ -289,21 +322,26 @@ def record_admin_payment(plan: PaymentPlan, payment_intent_id: str) -> Charge:
     charge = plan.charges.filter(stripe_payment_intent_id=payment_intent_id).first()
     if charge is None:
         amount = (Decimal(intent.amount) / Decimal(100)).quantize(Decimal("0.01"))
-        charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
+        charge = plan.record_charge(kind=kind, amount=amount)
         charge.stripe_payment_intent_id = payment_intent_id
         charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
 
     if charge.status != Charge.Status.SUCCEEDED:
+        is_deposit = charge.kind == Charge.Kind.DEPOSIT
         charge.status = Charge.Status.SUCCEEDED
         charge.save(update_fields=["status", "updated_at"])
         ledger.post_capture(
             lead=plan.lead,
             amount=charge.amount,
-            kind=JournalEntry.Kind.BALANCE_CAPTURED,
+            kind=(
+                JournalEntry.Kind.DEPOSIT_CAPTURED
+                if is_deposit
+                else JournalEntry.Kind.BALANCE_CAPTURED
+            ),
             idempotency_key=f"capture-charge{charge.pk}",
             charge=charge,
             stripe_ref=payment_intent_id,
-            memo="Admin card payment",
+            memo="Deposit captured" if is_deposit else "Card payment",
         )
 
     _store_card(plan, getattr(intent, "payment_method", None))
@@ -326,6 +364,7 @@ def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
+            payment_method_types=["card"],
             off_session=True,
             confirm=True,
             metadata={
@@ -339,7 +378,7 @@ def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
         return _record_failure(plan, charge, exc)
     charge.stripe_payment_intent_id = intent.id
     charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
-    return record_admin_payment(plan, intent.id)
+    return record_payment(plan, intent.id)
 
 
 def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:

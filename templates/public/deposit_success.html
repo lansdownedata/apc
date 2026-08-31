@@ -33,11 +33,16 @@
   <div class="card">
     <img class="logo" src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter">
     <div class="badge"><i class="ti ti-check" style="font-size:30px"></i></div>
-    <h1>Deposit received</h1>
-    <p>Thank you — we're processing your booking. You'll get a confirmation shortly.</p>
-    <div class="amt">
-      Quote <b>{{ quote_no }}</b>{% if deposit_amount %} · deposit <b>${{ deposit_amount|floatformat:2|intcomma }}</b>{% endif %}
-    </div>
+    {% if paid_in_full %}
+      <h1>Payment received</h1>
+      <p>Thank you — reservation {{ quote_no }} is now paid in full. You'll get a confirmation shortly.</p>
+    {% else %}
+      <h1>Deposit received</h1>
+      <p>Thank you — we're processing your booking. You'll get a confirmation shortly.</p>
+      <div class="amt">
+        Quote <b>{{ quote_no }}</b>{% if deposit_amount %} · deposit <b>${{ deposit_amount|floatformat:2|intcomma }}</b>{% endif %}
+      </div>
+    {% endif %}
   </div>
 </body>
 </html>

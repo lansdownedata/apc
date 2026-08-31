@@ -120,6 +120,10 @@ class Charge(TimeStampedModel):
     amount = MoneyField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     stripe_payment_intent_id = models.CharField(max_length=64, blank=True)
+    # Stored so reusing an open intent stays a local lookup — see services.open_intent_for.
+    # Not a standalone credential: it confirms this one intent, and the token-holder it is
+    # handed to is already authorised to pay this charge.
+    stripe_client_secret = models.CharField(max_length=255, blank=True)
     stripe_refund_id = models.CharField(max_length=64, blank=True)
     idempotency_key = models.CharField(max_length=120, unique=True)
     failure_reason = models.CharField(max_length=255, blank=True)

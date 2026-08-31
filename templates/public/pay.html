@@ -1,0 +1,92 @@
+{# templates/public/pay.html — customer pay page (deposit or balance), collected on our own page #}
+{% load static humanize %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pay · Quote {{ quote_no }} · All Pro Charter</title>
+<link rel="icon" href="{% static 'brand/favicon.svg' %}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{% static 'brand/apple-touch-icon.png' %}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
+<style>
+  :root{--gold:199 162 78;--text:23 25 29;--muted:107 114 124;--surface:255 255 255;--border:229 226 217}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 20px;
+       font-family:'Inter',system-ui,sans-serif;color:rgb(var(--text));
+       background:radial-gradient(900px 520px at 50% -8%,#20262f 0%,#14181f 58%,#0e1117 100%)}
+  .card{width:100%;max-width:440px;background:rgb(var(--surface));border:1px solid rgb(var(--border));
+        border-radius:20px;padding:36px;box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
+  .logo{height:56px;display:block;margin:0 auto 18px}
+  h1{font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:600;margin:.2rem 0 .3rem;text-align:center}
+  p{color:rgb(var(--muted));font-size:14px;line-height:1.6;margin:.2rem 0;text-align:center}
+  .amt{margin:18px 0;padding:14px 0;border-top:1px solid rgb(var(--border));border-bottom:1px solid rgb(var(--border));
+       display:flex;justify-content:space-between;font-size:15px;font-weight:600}
+  .amt .n{font-variant-numeric:tabular-nums}
+  #card-mount{min-height:48px;margin:18px 0 8px}
+  .btn-gold{display:block;width:100%;text-align:center;background:rgb(var(--gold));color:#151515;
+            border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;
+            font-family:inherit;margin-top:14px}
+  .btn-gold:disabled{opacity:.55;cursor:default}
+  .btn-gold.is-busy{opacity:.7;cursor:progress}
+  .err{color:#8a1f1f;background:#fde8e8;border:1px solid #f3b4b4;border-radius:10px;
+       padding:10px 12px;font-size:13px;margin-top:12px;text-align:left;min-height:0}
+  .err:empty{display:none}
+  .note{text-align:center;background:rgb(var(--gold)/.1);border:1px solid rgb(var(--gold)/.3);
+        border-radius:10px;padding:14px;font-size:14px;color:rgb(var(--text));margin-top:16px}
+  .badge{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;margin:0 auto 12px;
+         background:rgb(var(--gold)/.14);color:rgb(var(--gold))}
+  .secure{margin-top:14px;font-size:11.5px;color:rgb(var(--muted));text-align:center}
+  a.back{display:block;text-align:center;margin-top:14px;font-size:13px;color:rgb(var(--muted))}
+</style>
+</head>
+<body>
+  {# csrf_token here sets the cookie + gives Django the token; stripe-pay.js sends it as a header #}
+  {% csrf_token %}
+  <div class="card">
+    <img class="logo" src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter">
+
+    {% if is_lost or is_expired %}
+      <div class="badge"><i class="ti ti-clock-x" style="font-size:26px"></i></div>
+      <h1>This quote is no longer active</h1>
+      <p>Please contact us for an updated quote for reservation {{ quote_no }}.</p>
+
+    {% elif not pay_kind %}
+      <div class="badge"><i class="ti ti-check" style="font-size:28px"></i></div>
+      <h1>You're all set</h1>
+      <p>Reservation {{ quote_no }} is paid in full. Nothing further is due.</p>
+
+    {% else %}
+      <h1>{% if pay_kind == 'deposit' %}Reservation deposit{% else %}Remaining balance{% endif %}</h1>
+      <p>Quote {{ quote_no }}</p>
+      <div class="amt">
+        <span>{% if pay_kind == 'deposit' %}Deposit due{% else %}Balance due{% endif %}</span>
+        <span class="n">${{ amount|floatformat:2|intcomma }}</span>
+      </div>
+
+      <div id="card-mount"></div>
+      <div id="pay-error" class="err"></div>
+      <button id="pay-button" type="button" class="btn-gold">
+        Pay ${{ amount|floatformat:2|intcomma }}
+      </button>
+      <div class="secure"><i class="ti ti-lock"></i> Card details are handled securely by Stripe.</div>
+
+      <script src="https://js.stripe.com/v3/"></script>
+      <script src="{% static 'js/stripe-pay.js' %}?v={{ asset_version }}"></script>
+      <script>
+        apcPay.mount({
+          pk: "{{ stripe_pk|escapejs }}",
+          amount: {{ amount_cents }},
+          intentUrl: "{% url 'quote_pay_intent' token %}",
+          completeUrl: "{% url 'quote_pay_complete' token %}",
+          returnUrl: "{{ success_url|escapejs }}",
+        });
+      </script>
+    {% endif %}
+
+    <a class="back" href="{% url 'quote_page' token %}">Back to your quote</a>
+  </div>
+</body>
+</html>

@@ -42,6 +42,8 @@
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.2/dist/js/intlTelInputWithUtils.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+{# shared Stripe Payment Element config — must load before app.js (adminCardPay reads window.apcPay) #}
+<script src="{% static 'js/stripe-pay.js' %}?v={{ asset_version }}"></script>
 <script src="{% static 'js/app.js' %}?v={{ asset_version }}"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
 {% block head_extra %}{% endblock %}
