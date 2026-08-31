@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -103,6 +103,7 @@ class Reservation(TimeStampedModel):
     )
     pickup_date = models.DateField(null=True, blank=True)
     pickup_time = models.TimeField(null=True, blank=True)
+    pickup_timezone = models.CharField(max_length=64, blank=True)
     passengers = models.PositiveIntegerField(default=1)
 
     # pricing: rate × billed_hours (override hours, else the rate-card minimum) + gratuity
@@ -195,6 +196,41 @@ class Reservation(TimeStampedModel):
     @property
     def is_multi_stop(self) -> bool:
         return self.stops.count() > 2
+
+    @property
+    def pickup_at(self) -> datetime | None:
+        """Pickup as an aware datetime in the trip's own zone, or None without a date.
+
+        Naive `pickup_date`/`pickup_time` stay naive on the row; this is the one
+        place they become an instant. Blank `pickup_timezone` uses TIME_ZONE.
+        """
+        if self.pickup_date is None:
+            return None
+        zone = self.pickup_timezone or settings.TIME_ZONE
+        clock = self.pickup_time or time(0, 0)
+        return datetime.combine(self.pickup_date, clock, tzinfo=ZoneInfo(zone))
+
+    @property
+    def pickup_tz_abbrev(self) -> str:
+        """Zone abbreviation for display, or "" when the trip is in TIME_ZONE."""
+        zone = self.pickup_timezone or ""
+        if not zone or zone == settings.TIME_ZONE:
+            return ""
+        clock = self.pickup_time or time(12, 0)
+        day = self.pickup_date or dj_timezone.localdate()
+        return datetime.combine(day, clock, tzinfo=ZoneInfo(zone)).tzname() or ""
+
+    def refresh_pickup_timezone(self) -> bool:
+        """Re-resolve from the current pickup stop. No-op (no save) when unchanged."""
+        from apps.reservations.timezones import resolve
+
+        pickup = self.stops.select_related("airport").order_by("sequence").first()
+        zone = resolve(pickup) if pickup is not None else ""
+        if (self.pickup_timezone or "") == zone:
+            return False
+        self.pickup_timezone = zone
+        self.save(update_fields=["pickup_timezone"])
+        return True
 
     # --- flights ---
     _VERIFIED_STATES = frozenset({"verified", "on_time", "landed"})
