@@ -132,7 +132,7 @@
             Tom Select, never a bare <select>; initialised on the wrapper because x-for
             clones this row.
           {% endcomment %}
-          {% if vehicle_picker %}
+          {% if office %}
           {% comment %}
             The options are rendered by Django, not by an x-for: `<template>` is not a
             legal child of `<select>`, so the parser hoists it out and Tom Select
@@ -142,6 +142,36 @@
             x-effect, because Tom Select owns the rendered control and will not notice a
             bare `.value` assignment.
           {% endcomment %}
+          {% comment %}
+            How this leg bills. A wedding is N transfers by default — the shape the
+            office wants unless they are running a continuous shuttle, which is billed
+            by the hour off the vehicle's hourly minimum instead of its transfer one.
+          {% endcomment %}
+          <div class="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <span class="mb-1 block text-[11.5px] font-medium text-muted">Bills as</span>
+              <div class="inline-flex overflow-hidden rounded-lg text-[12px] ring-1 ring-line"
+                   role="group" :aria-label="`How ${leg.title} bills`">
+                <button type="button" @click="setLegTripType(leg, 'transfer')"
+                        :aria-pressed="!isHourly(leg)"
+                        :class="!isHourly(leg) ? 'bg-goldl font-semibold text-goldd' : 'text-muted hover:bg-surface2'"
+                        class="px-3 py-1.5 focus-gold">Transfer</button>
+                <button type="button" @click="setLegTripType(leg, 'hourly')"
+                        :aria-pressed="isHourly(leg)"
+                        :class="isHourly(leg) ? 'bg-goldl font-semibold text-goldd' : 'text-muted hover:bg-surface2'"
+                        class="px-3 py-1.5 focus-gold">Hourly</button>
+              </div>
+            </div>
+            <div x-cloak x-show="isHourly(leg)" class="w-24">
+              <label class="mb-1 block text-[11.5px] font-medium text-muted"
+                     :for="`leg-hours-${leg.id}`">Hours</label>
+              {% comment %} Blank = bill the vehicle's hourly minimum; a value replaces it. {% endcomment %}
+              <input type="number" :id="`leg-hours-${leg.id}`" min="1" max="24" step="0.5"
+                     :value="leg.hours" placeholder="min"
+                     @change="setLegHours(leg, $event.target.value)" class="field">
+            </div>
+          </div>
+
           <div class="mt-3">
             <span class="mb-1 block text-[11.5px] font-medium text-muted">Vehicle</span>
             <div x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"

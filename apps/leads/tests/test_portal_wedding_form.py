@@ -1,6 +1,7 @@
 """The portal's wedding form: the public one's validation, minus the contact fields."""
 
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -83,3 +84,40 @@ def test_the_contact_fields_are_gone_rather_than_optional():
 def test_a_posted_honeypot_is_simply_ignored():
     form = PortalWeddingForm(_portal(company="spam"))
     assert form.is_valid(), form.errors
+
+
+# --- per-leg trip type + hours (the office may bill a leg by the hour) --------------
+
+
+def test_trip_types_come_back_keyed_by_leg():
+    form = PortalWeddingForm(_portal(trip_types_json=json.dumps({"guests-in": "hourly"})))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["trip_types"] == {"guests-in": "hourly"}
+
+
+def test_an_unknown_trip_type_is_dropped():
+    form = PortalWeddingForm(_portal(trip_types_json=json.dumps({"guests-in": "teleport"})))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["trip_types"] == {}
+
+
+def test_hours_come_back_keyed_by_leg():
+    form = PortalWeddingForm(_portal(hours_json=json.dumps({"guests-in": "6.5"})))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["hours"] == {"guests-in": Decimal("6.5")}
+
+
+@pytest.mark.parametrize("bad", ["0", "-2", "25", "ages", ""])
+def test_an_unusable_hours_value_is_dropped_not_fatal(bad):
+    """Same ceiling as the booking widget (1-24). A stray value must not cost the agent
+    the day's edits — the leg simply keeps whatever hours it had."""
+    form = PortalWeddingForm(_portal(hours_json=json.dumps({"guests-in": bad})))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["hours"] == {}
+
+
+def test_malformed_trip_type_or_hours_json_is_dropped():
+    form = PortalWeddingForm(_portal(trip_types_json="{nope", hours_json="[1,2]"))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["trip_types"] == {}
+    assert form.cleaned_data["hours"] == {}

@@ -175,3 +175,95 @@ def test_a_website_wedding_survives_the_offices_first_edit(db):
     assert lead.reservations.count() == 2
     assert {r.source_leg_id: r.pk for r in lead.reservations.all()} == original
     assert lead.reservations.get(source_leg_id="guests-in").passengers == 130
+
+
+# --- transfers by default, hourly when the office says so ---------------------------
+
+
+def test_legs_are_transfers_unless_the_agent_says_otherwise(lead):
+    """N transfers is the default shape — a wedding is a set of movements, not one
+    open-ended charter, unless the office is running a continuous shuttle."""
+    assert all(r.trip_type == "transfer" for r in lead.reservations.all())
+
+
+def test_a_leg_can_be_billed_by_the_hour(lead):
+    rebuild_wedding_trips(lead, _clean(trip_types_json=json.dumps({"guests-in": "hourly"})))
+    assert lead.reservations.get(source_leg_id="guests-in").trip_type == "hourly"
+    assert lead.reservations.get(source_leg_id="final-out").trip_type == "transfer"
+
+
+def test_an_hourly_leg_takes_the_vehicles_hourly_minimum(lead):
+    vehicle = VehicleTypeFactory(
+        name="Shuttle Coach",
+        capacity=56,
+        rate=Decimal("150.00"),
+        transfer_min_hours=3,
+        hourly_min_hours=8,
+    )
+    rebuild_wedding_trips(
+        lead,
+        _clean(
+            vehicles_json=json.dumps({"guests-in": vehicle.pk}),
+            trip_types_json=json.dumps({"guests-in": "hourly"}),
+        ),
+    )
+    res = lead.reservations.get(source_leg_id="guests-in")
+    assert res.min_hours == 8
+    assert res.subtotal == Decimal("1200.00")  # 150 x 8
+
+
+def test_an_hours_override_replaces_the_minimum(lead):
+    vehicle = VehicleTypeFactory(
+        name="Shuttle Coach", capacity=56, rate=Decimal("150.00"), hourly_min_hours=8
+    )
+    rebuild_wedding_trips(
+        lead,
+        _clean(
+            vehicles_json=json.dumps({"guests-in": vehicle.pk}),
+            trip_types_json=json.dumps({"guests-in": "hourly"}),
+            hours_json=json.dumps({"guests-in": "10"}),
+        ),
+    )
+    res = lead.reservations.get(source_leg_id="guests-in")
+    assert res.hours == 10
+    assert res.subtotal == Decimal("1500.00")  # 150 x 10, the override replaces the minimum
+
+
+def test_an_hourly_leg_derives_its_drop_off_from_the_billed_hours(lead):
+    """Same rule as the reservation editor: an hourly trip's end is pickup + billed
+    hours, so dispatch and the customer's itinerary both have an end time."""
+    vehicle = VehicleTypeFactory(name="Shuttle Coach", capacity=56, hourly_min_hours=8)
+    rebuild_wedding_trips(
+        lead,
+        _clean(
+            vehicles_json=json.dumps({"guests-in": vehicle.pk}),
+            trip_types_json=json.dumps({"guests-in": "hourly"}),
+        ),
+    )
+    res = lead.reservations.get(source_leg_id="guests-in")
+    assert res.pickup_time.strftime("%H:%M") == "15:00"
+    assert res.dropoff_time.strftime("%H:%M") == "23:00"  # 3pm + 8h
+    assert res.dropoff_date == res.pickup_date
+
+
+def test_switching_a_leg_back_to_transfer_drops_the_stale_hours(lead):
+    """Otherwise a transfer keeps billing the hours it had while it was hourly."""
+    rebuild_wedding_trips(
+        lead,
+        _clean(
+            trip_types_json=json.dumps({"guests-in": "hourly"}),
+            hours_json=json.dumps({"guests-in": "10"}),
+        ),
+    )
+    rebuild_wedding_trips(lead, _clean(trip_types_json=json.dumps({"guests-in": "transfer"})))
+    res = lead.reservations.get(source_leg_id="guests-in")
+    assert res.trip_type == "transfer"
+    assert res.hours == 0
+    assert res.dropoff_time is None
+
+
+def test_a_rebuild_that_posts_no_trip_type_leaves_the_leg_alone(lead):
+    """An agent changing a time must not silently flip an hourly shuttle to a transfer."""
+    rebuild_wedding_trips(lead, _clean(trip_types_json=json.dumps({"guests-in": "hourly"})))
+    rebuild_wedding_trips(lead, _clean())
+    assert lead.reservations.get(source_leg_id="guests-in").trip_type == "hourly"

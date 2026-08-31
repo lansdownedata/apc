@@ -320,7 +320,7 @@ def suggest_vehicle(passengers: int, cap: int | None = None) -> VehicleType | No
 
 
 def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
-    """Snapshot the vehicle's rate and transfer minimum onto the reservation, in place.
+    """Snapshot the vehicle's rate and rate-card minimum onto the reservation, in place.
 
     The reservation editor does this in the browser — app.js writes `draft.rate` and
     `draft.minHours` from the picked vehicle and `drafts.parse_draft` simply persists what
@@ -328,11 +328,44 @@ def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
     vehicle outside that editor needs one, or the trip saves at rate 0 and the whole quote
     totals zero.
 
-    Wedding legs are transfers, so the minimum is `transfer_min_hours`.
+    *Which* minimum applies follows `reservation.trip_type`, the same rule the editor
+    uses: an hourly trip billed at the transfer minimum quotes hours short. Set the trip
+    type before calling this.
     """
+    from apps.reservations.models import Reservation
+
     reservation.vehicle = vehicle
     reservation.rate = vehicle.rate if vehicle else 0
-    reservation.min_hours = vehicle.transfer_min_hours if vehicle else 0
+    if vehicle is None:
+        reservation.min_hours = 0
+    elif reservation.trip_type == Reservation.TripType.HOURLY:
+        reservation.min_hours = vehicle.hourly_min_hours
+    else:
+        reservation.min_hours = vehicle.transfer_min_hours
+
+
+def _apply_trip_window(reservation) -> None:
+    """Give an hourly trip the end its billed hours imply; clear both for a transfer.
+
+    Mirrors `reservations.drafts._derive_dropoff_and_hours`, which does the same for the
+    reservation editor: without it an hourly leg reaches dispatch and the customer's
+    itinerary with no end time. Switching a leg back to a transfer drops the hours it was
+    billing as well as the derived end, or the transfer keeps quoting them.
+    """
+    from apps.reservations.models import Reservation
+
+    if reservation.trip_type != Reservation.TripType.HOURLY:
+        reservation.hours = 0
+        reservation.dropoff_date = None
+        reservation.dropoff_time = None
+        return
+    billed = reservation.billed_hours
+    if not (reservation.pickup_date and reservation.pickup_time and billed):
+        return
+    end = datetime.combine(reservation.pickup_date, reservation.pickup_time) + timedelta(
+        hours=float(billed)
+    )
+    reservation.dropoff_date, reservation.dropoff_time = end.date(), end.time()
 
 
 @dataclass
@@ -372,6 +405,8 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
     service_type = wedding_service_type()
     sites = wedding_sites(data)
     vehicles = data.get("vehicles") or {}
+    trip_types = data.get("trip_types") or {}
+    billed_hours = data.get("hours") or {}
     existing = {r.source_leg_id: r for r in lead.reservations.exclude(source_leg_id="")}
     seen: set[str] = set()
     updated: list = []
@@ -391,10 +426,17 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
         res.pickup_date = data["wedding_date"]
         res.pickup_time = leg["time"]
         res.passengers = leg["pax"]
-        # Only when the agent actually chose one: a rebuild after a time change must not
-        # silently un-price a trip whose vehicle was set on an earlier pass.
+        # Each override applies only when the agent actually posted it: a rebuild after a
+        # time change must not silently un-price a trip, nor flip an hourly shuttle back
+        # to a transfer, because this pass happened not to mention it.
+        if leg_id in trip_types:
+            res.trip_type = trip_types[leg_id]
+        if leg_id in billed_hours:
+            res.hours = billed_hours[leg_id]
+        # After the trip type, never before: the rate-card minimum depends on it.
         if leg_id in vehicles:
             apply_vehicle_rate_card(res, vehicles[leg_id])
+        _apply_trip_window(res)
         res.save()
         # Stops are cheap and fully derived; rewriting both is simpler and safer than
         # diffing two rows, and nothing downstream holds on to a Stop pk.

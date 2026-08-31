@@ -2200,6 +2200,9 @@ function weddingPlanner(opts = {}) {
         id: "exit", time: end, title: "Your exit", from: venue.name, from_sub: venue.sub,
         to: "Hotel or home", to_sub: "we'll confirm with you", pax: 2, optional: false,
       });
+      // The default shape: every movement its own transfer. The office may switch any
+      // of them to hourly on the itinerary; a fresh generate returns to the default.
+      for (const leg of legs) { leg.trip_type = "transfer"; leg.hours = null; }
       legs.sort((a, b) => a.time.localeCompare(b.time));
       return legs;
     },
@@ -2218,6 +2221,19 @@ function weddingPlanner(opts = {}) {
     setLegPax(leg, value) {
       leg.pax = Math.max(1, Math.min(400, parseInt(value, 10) || 1));
     },
+    /* Office only. A wedding is N transfers by default — a set of movements, not one
+     * open-ended charter — but a continuous shuttle is billed by the hour, so each leg
+     * can be either. Switching back to a transfer drops the hours, mirroring what
+     * services._apply_trip_window does on save. */
+    setLegTripType(leg, value) {
+      leg.trip_type = value;
+      if (value !== "hourly") leg.hours = null;
+    },
+    setLegHours(leg, value) {
+      const hours = parseFloat(value);
+      leg.hours = Number.isFinite(hours) && hours >= 1 && hours <= 24 ? hours : null;
+    },
+    isHourly(leg) { return leg.trip_type === "hourly"; },
     dropLeg(leg) { leg.skip = true; },
     restoreLeg(leg) { leg.skip = false; },
     regenerate() { this.legs = this.generateLegs(); },
@@ -2307,6 +2323,17 @@ function weddingPlanner(opts = {}) {
     get vehiclesJson() {
       const out = {};
       for (const leg of this.liveLegs) if (leg.vehicle_id) out[leg.id] = leg.vehicle_id;
+      return JSON.stringify(out);
+    },
+
+    get tripTypesJson() {
+      const out = {};
+      for (const leg of this.liveLegs) if (leg.trip_type) out[leg.id] = leg.trip_type;
+      return JSON.stringify(out);
+    },
+    get hoursJson() {
+      const out = {};
+      for (const leg of this.liveLegs) if (leg.hours) out[leg.id] = leg.hours;
       return JSON.stringify(out);
     },
 
