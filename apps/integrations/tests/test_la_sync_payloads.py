@@ -164,3 +164,12 @@ def test_hourly_booking_never_sends_dropoff_flight_info():
     _with_flight(res, 1, "456")
     payload = la_sync.build_booking_payload(res, search_result_id=1)
     assert "dropoff_flight_info" not in payload
+
+
+def test_pickup_at_for_a_pacific_trip_carries_the_pacific_offset():
+    """Reproduction: make_aware() used TIME_ZONE, so a 10 AM LA pickup went to LA
+    as 10 AM Eastern — three hours wrong on the wire."""
+    res = _geocoded_reservation()
+    res.pickup_timezone = "America/Los_Angeles"
+    res.save(update_fields=["pickup_timezone"])
+    assert la_sync._pickup_at(res) == "2026-07-15T10:00:00-07:00"
