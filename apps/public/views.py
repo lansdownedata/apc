@@ -1,4 +1,7 @@
 import hashlib
+import logging
+from datetime import UTC as dt_timezone_utc
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
@@ -11,6 +14,7 @@ from django.views.decorators.http import require_GET
 
 from apps.addresses.search import MIN_VENUE_QUERY, VENUE_RESULT_LIMIT, search_venues
 from apps.core.net import client_ip
+from apps.integrations import calendly
 from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
 from apps.integrations.geocoding import merged_autocomplete
@@ -23,6 +27,7 @@ from .forms import (
     service_slug_ids,
     service_type_for_slug,
 )
+from .models import SlotHold
 from .services import (
     create_lead_from_booking,
     create_lead_from_wedding,
@@ -30,6 +35,8 @@ from .services import (
     read_wedding_token,
     send_wedding_confirmation,
 )
+
+logger = logging.getLogger(__name__)
 
 # Coarse per-IP throttle for the unauthenticated bookings POST — caps mass Lead
 # creation from scripted/bot traffic that skips the honeypot field entirely.
@@ -401,3 +408,89 @@ def _payload_from_reservations(lead) -> dict:
         "wedding_date": first.pickup_date.isoformat() if first and first.pickup_date else "",
         "legs": legs,
     }
+
+
+# --- our own booking UI over Calendly -------------------------------------------
+
+# Calendly caps a single availability call at 7 days, so a longer view is several
+# calls. Capped so a hand-built ?days=3650 cannot turn one unauthenticated GET into
+# hundreds of upstream requests against a rate limit that is tighter than documented.
+SLOT_DAYS_DEFAULT = 14
+SLOT_DAYS_MAX = 28
+# Calendly rejects a start_time in the past, and `now` is already past by the time the
+# request reaches them.
+SLOT_WINDOW_LEAD = timedelta(minutes=2)
+
+
+def _slot_days(raw: str) -> int:
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return SLOT_DAYS_DEFAULT
+    return max(1, min(days, SLOT_DAYS_MAX))
+
+
+def _fetch_slots(days: int) -> list[str]:
+    """Every bookable start time in the next `days`, as raw Calendly timestamps.
+
+    Cached as-is and WITHOUT hold state: holds change between one poll and the next,
+    so they are overlaid per request instead of being baked into the cached list.
+    """
+    key = f"calendly-slots:v1:{days}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    starts: list[str] = []
+    window_start = timezone.now() + SLOT_WINDOW_LEAD
+    remaining = days
+    while remaining > 0:
+        chunk = min(remaining, calendly.MAX_SLOT_RANGE.days)
+        window_end = window_start + timedelta(days=chunk)
+        for slot in calendly.available_times(start=window_start, end=window_end):
+            if slot.get("status") and slot["status"] != "available":
+                continue
+            if slot.get("start_time"):
+                starts.append(slot["start_time"])
+        window_start = window_end
+        remaining -= chunk
+
+    cache.set(key, starts, settings.CALENDLY_SLOT_CACHE_SECONDS)
+    return starts
+
+
+@require_GET
+def schedule_slots(request):
+    """Bookable slots plus the live custom-question list, for our own booking form.
+
+    Times go out as UTC ISO and nothing else. The visitor is not necessarily in
+    Eastern, the server cannot know their zone, and a formatted wall-clock time from
+    here would be wrong for anyone outside it — the browser localises.
+
+    A 503 rather than a 500 on any upstream trouble: the UI treats it as a signal to
+    fall back to the Calendly popup, which needs a parseable answer.
+    """
+    days = _slot_days(request.GET.get("days", ""))
+    try:
+        starts = _fetch_slots(days)
+        questions = calendly.event_type_questions()
+    except (calendly.CalendlyAPIError, calendly.CalendlyNotConfigured) as exc:
+        logger.warning("Calendly availability unavailable: %s", exc)
+        return JsonResponse(
+            {"slots": [], "questions": [], "error": "Availability is unavailable right now."},
+            status=503,
+        )
+
+    held = SlotHold.objects.held_start_times()
+    slots = []
+    for raw in starts:
+        moment = parse_start_time(raw)
+        if moment is None:
+            continue
+        slots.append(
+            {
+                "start": moment.astimezone(dt_timezone_utc).isoformat().replace("+00:00", "Z"),
+                "held": moment in held,
+            }
+        )
+    return JsonResponse({"slots": slots, "questions": questions, "error": ""})
