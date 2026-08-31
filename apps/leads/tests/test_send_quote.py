@@ -304,21 +304,8 @@ def test_deposit_success_page_public_no_pii(client):
     assert (lead.contact.email or "x@x") not in body
 
 
-def test_deposit_cancel_page_public(client):
-    lead = _quotable_lead()
-    token = services.make_deposit_token(lead)
-    resp = client.get(reverse("quote_deposit_cancel", args=[token]))
-    assert resp.status_code == 200
-    assert lead.quote_no in resp.content.decode()
-
-
 def test_deposit_page_rejects_bad_token(client):
     resp = client.get(reverse("quote_deposit_success", args=["not-a-real-token"]))
-    assert resp.status_code == 404
-
-
-def test_deposit_cancel_page_rejects_bad_token(client):
-    resp = client.get(reverse("quote_deposit_cancel", args=["not-a-real-token"]))
     assert resp.status_code == 404
 
 

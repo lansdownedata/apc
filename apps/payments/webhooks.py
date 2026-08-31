@@ -2,30 +2,25 @@
 
 import logging
 
-import stripe
-from django.conf import settings
-
-from apps.leads.services import book_lead
 from apps.notifications.models import Notification
 
-from . import ledger, services
-from .models import Charge, JournalEntry, PaymentPlan
+from . import services
+from .models import Charge, PaymentPlan
 
 logger = logging.getLogger(__name__)
 
 
-def _stripe():
-    stripe.api_key = settings.STRIPE_SECRET_KEY
-    return stripe
+_SUCCESS_KINDS = {
+    "deposit": Charge.Kind.DEPOSIT,
+    "balance": Charge.Kind.BALANCE,
+}
 
 
 def process_stripe_event(event) -> None:
     etype = event["type"]
     obj = event["data"]["object"]
-    if etype == "checkout.session.completed":
-        _deposit_completed(obj)
-    elif etype == "payment_intent.succeeded":
-        _admin_payment_succeeded(obj)
+    if etype == "payment_intent.succeeded":
+        _payment_succeeded(obj)
     elif etype == "payment_intent.payment_failed":
         _balance_failed(obj)
 
@@ -37,69 +32,28 @@ def _plan_from_metadata(obj):
     return PaymentPlan.objects.filter(lead_id=lead_id).select_related("lead").first()
 
 
-def _deposit_completed(session) -> None:
-    plan = _plan_from_metadata(session)
-    if plan is None:
-        return
-
-    pm_id, brand, last4 = _saved_card(session.get("payment_intent"))
-    plan.deposit_status = PaymentPlan.DepositStatus.PAID
-    plan.stripe_payment_method_id = pm_id
-    plan.card_brand = brand
-    plan.card_last4 = last4
-    plan.balance_status = PaymentPlan.BalanceStatus.SCHEDULED
-    plan.save(
-        update_fields=[
-            "deposit_status",
-            "stripe_payment_method_id",
-            "card_brand",
-            "card_last4",
-            "balance_status",
-            "updated_at",
-        ]
-    )
-
-    # Record the deposit Charge as captured and post the ledger entry.
-    charge = plan.charges.filter(kind=Charge.Kind.DEPOSIT).first()
-    if charge is None:
-        charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
-    if charge.status != Charge.Status.SUCCEEDED:
-        charge.status = Charge.Status.SUCCEEDED
-        charge.save(update_fields=["status", "updated_at"])
-    ledger.post_capture(
-        lead=plan.lead,
-        amount=plan.deposit_amount,
-        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
-        idempotency_key=f"capture-charge{charge.pk}",
-        charge=charge,
-        stripe_ref=session.get("payment_intent") or "",
-        memo="Deposit captured",
-    )
-
-    book_lead(plan.lead)
-
-
-def _admin_payment_succeeded(intent) -> None:
-    if (intent.get("metadata") or {}).get("kind") != "admin":
+def _payment_succeeded(intent) -> None:
+    """The single success entry point. Branches on `metadata.kind`; plan flags are left to
+    `record_payment` → `sync_plan_from_collected`, which already covers the deposit case."""
+    kind = _SUCCESS_KINDS.get((intent.get("metadata") or {}).get("kind"))
+    if kind is None:
         return
     plan = _plan_from_metadata(intent)
     if plan is None:
         return
+
+    # `charge_balance` / `charge_saved_card` confirm off-session and post their own ledger
+    # entry inline, but their success event still arrives here. Also absorbs a duplicate
+    # delivery, independently of the ledger's idempotency key.
+    if plan.charges.filter(
+        stripe_payment_intent_id=intent["id"], status=Charge.Status.SUCCEEDED
+    ).exists():
+        return
+
     try:
-        services.record_admin_payment(plan, intent["id"])
+        services.record_payment(plan, intent["id"], kind=kind)
     except Exception:
-        logger.exception("Admin payment reconcile failed for intent %s", intent.get("id"))
-
-
-def _saved_card(payment_intent_id):
-    if not payment_intent_id:
-        return "", "", ""
-    intent = _stripe().PaymentIntent.retrieve(payment_intent_id, expand=["payment_method"])
-    pm = getattr(intent, "payment_method", None)
-    if not pm:
-        return "", "", ""
-    card = getattr(pm, "card", None)
-    return pm.id, (card.brand if card else ""), (card.last4 if card else "")
+        logger.exception("Payment reconcile failed for intent %s", intent.get("id"))
 
 
 def _balance_failed(intent) -> None:

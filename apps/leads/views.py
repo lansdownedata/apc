@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import stripe
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -38,6 +37,8 @@ from apps.reservations.models import Stop
 from . import services
 from .forms import NewLeadForm, PortalWeddingForm
 from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, VehicleType
+
+ZERO = Decimal("0.00")
 
 
 def _balances_with_remaining(lead: Lead) -> dict:
@@ -467,24 +468,31 @@ def lead_send_quote(request, pk: int) -> JsonResponse:
 
 
 def quote_deposit_success(request, token: str) -> HttpResponse:
-    try:
-        lead = services.read_deposit_token(token)
-    except (BadSignature, Lead.DoesNotExist):
-        raise Http404 from None
+    """The landing page after a successful confirm. Also the `return_url` for a 3-D Secure
+    challenge — Stripe appends `?payment_intent=…&redirect_status=succeeded`, and the
+    `complete/` POST never ran, so reconcile it here. Idempotent against the webhook."""
+    lead = _lead_from_token(token)
     plan = getattr(lead, "payment", None)
+
+    pi_id = request.GET.get("payment_intent")
+    if plan is not None and pi_id and request.GET.get("redirect_status") == "succeeded":
+        charge = plan.charges.filter(stripe_payment_intent_id=pi_id).first()
+        if charge is not None and charge.status != charge.Status.SUCCEEDED:
+            try:
+                payment_services.record_payment(plan, pi_id, kind=charge.kind)
+            except payment_services.PaymentError:
+                pass
+
+    paid_in_full = plan is not None and payment_services.remaining_balance(lead) <= ZERO
     return render(
         request,
         "public/deposit_success.html",
-        {"quote_no": lead.quote_no, "deposit_amount": plan.deposit_amount if plan else None},
+        {
+            "quote_no": lead.quote_no,
+            "deposit_amount": plan.deposit_amount if plan else None,
+            "paid_in_full": paid_in_full,
+        },
     )
-
-
-def quote_deposit_cancel(request, token: str) -> HttpResponse:
-    try:
-        lead = services.read_deposit_token(token)
-    except (BadSignature, Lead.DoesNotExist):
-        raise Http404 from None
-    return render(request, "public/deposit_cancel.html", {"quote_no": lead.quote_no})
 
 
 def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
@@ -553,33 +561,99 @@ def quote_page(request, token: str) -> HttpResponse:
     return render(request, "public/quote.html", _quote_page_context(lead, token))
 
 
-@require_POST
-def quote_book(request, token: str) -> HttpResponse:
-    """Book-now: kick off the Stripe deposit Checkout for an active quote (or a
-    booked quote whose deposit is still unpaid)."""
+def _lead_from_token(token: str) -> Lead:
     try:
-        lead = services.read_deposit_token(token)
+        return services.read_deposit_token(token)
     except (BadSignature, Lead.DoesNotExist):
         raise Http404 from None
 
+
+def _owed(lead: Lead) -> tuple[str | None, Decimal]:
+    """(Charge.Kind, amount) for what the customer still owes, or (None, 0).
+
+    Resolved from the ledger, never the plan flags alone — a partial staff charge must be
+    reflected, and `deposit_status` can lag it. The deposit branch is clamped by the total
+    still owed so a deposit percentage larger than the remainder can never over-charge.
+    """
+    from apps.payments.models import Charge
+
     plan = getattr(lead, "payment", None)
-    deposit_unpaid = plan is not None and plan.deposit_status != plan.DepositStatus.PAID
-    quoted_ok = lead.status == Lead.Status.QUOTED and not lead.quote_expired
-    booked_unpaid = lead.status == Lead.Status.BOOKED and deposit_unpaid
-    if plan is None or not (quoted_ok or booked_unpaid):
-        return redirect("quote_page", token=token)
+    if plan is None:
+        return None, ZERO
+    owed = payment_services.remaining_balance(lead)
+    if owed <= ZERO:
+        return None, ZERO
+    collected = ledger.order_balances(lead)["collected"]
+    if collected < plan.deposit_amount:
+        return Charge.Kind.DEPOSIT, min(plan.deposit_amount - collected, owed)
+    return Charge.Kind.BALANCE, owed
 
-    success_url = request.build_absolute_uri(reverse("quote_deposit_success", args=[token]))
-    cancel_url = request.build_absolute_uri(reverse("quote_deposit_cancel", args=[token]))
-    try:
-        checkout_url = payment_services.create_deposit_checkout(
-            plan, success_url=success_url, cancel_url=cancel_url
+
+def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
+    """`_owed`, but gated on the states a pay form must not appear in."""
+    if lead.status == Lead.Status.LOST:
+        return None, ZERO
+    if lead.status == Lead.Status.QUOTED and lead.quote_expired:
+        return None, ZERO
+    return _owed(lead)
+
+
+@require_GET
+def quote_pay(request, token: str) -> HttpResponse:
+    """The customer pay page — deposit or balance, whichever is owed."""
+    lead = _lead_from_token(token)
+    kind, amount = _pay_state(lead)
+    return render(
+        request,
+        "public/pay.html",
+        {
+            "token": token,
+            "quote_no": lead.quote_no,
+            "lead": lead,
+            "pay_kind": kind,
+            "amount": amount,
+            "amount_cents": int(amount * 100),
+            "is_expired": lead.status == Lead.Status.QUOTED and lead.quote_expired,
+            "is_lost": lead.status == Lead.Status.LOST,
+            "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
+            "success_url": request.build_absolute_uri(
+                reverse("quote_deposit_success", args=[token])
+            ),
+        },
+    )
+
+
+@require_POST
+def quote_pay_intent(request, token: str) -> JsonResponse:
+    """Mint (or reuse) the PaymentIntent for whatever is owed. Token-keyed; CSRF still on."""
+    lead = _lead_from_token(token)
+    kind, amount = _pay_state(lead)
+    if kind is None:
+        return JsonResponse(
+            {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
         )
-    except stripe.error.StripeError as exc:
-        message = getattr(exc, "user_message", None) or str(exc)
-        return render(request, "public/quote.html", _quote_page_context(lead, token, error=message))
+    plan = payment_services.ensure_plan(lead)
+    _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
+    return JsonResponse({"ok": True, "client_secret": secret, "amount": str(amount)})
 
-    return redirect(checkout_url)
+
+@require_POST
+def quote_pay_complete(request, token: str) -> JsonResponse:
+    """Reconcile immediately after the customer confirms (the no-redirect path)."""
+    lead = _lead_from_token(token)
+    plan = getattr(lead, "payment", None)
+    pi_id = (request.POST.get("payment_intent_id") or "").strip()
+    if plan is None or not pi_id:
+        return JsonResponse({"ok": False, "error": "Missing payment."}, status=400)
+    charge = plan.charges.filter(stripe_payment_intent_id=pi_id).first()
+    if charge is None:
+        # The token identifies the lead; an intent from another lead must not reconcile here.
+        return JsonResponse({"ok": False, "error": "Unknown payment."}, status=400)
+    try:
+        payment_services.record_payment(plan, pi_id, kind=charge.kind)
+    except payment_services.PaymentError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True})
 
 
 @login_required

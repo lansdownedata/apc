@@ -34,7 +34,7 @@
          background:rgb(var(--gold)/.14);color:rgb(var(--gold))}
   .btn-gold{display:block;width:100%;text-align:center;background:rgb(var(--gold));color:#151515;
             border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;
-            font-family:inherit;margin-top:20px}
+            font-family:inherit;margin-top:20px;text-decoration:none;box-sizing:border-box}
   .expiry{text-align:center;font-size:12px;color:rgb(var(--muted));margin-top:12px}
   .alert{background:#fde8e8;border:1px solid #f3b4b4;color:#8a1f1f;border-radius:10px;
          padding:12px 14px;font-size:13px;margin-bottom:16px}
@@ -152,10 +152,7 @@
       </div>
 
       {% if is_active %}
-        <form method="post" action="{% url 'quote_book' token %}">
-          {% csrf_token %}
-          <button type="submit" class="btn-gold">Book Now</button>
-        </form>
+        <a href="{% url 'quote_pay' token %}" class="btn-gold">Book Now</a>
         {% if lead.quote_expires_at %}
         <div class="expiry">This quote is valid until {{ lead.quote_expires_at|date:"M j, Y g:i A" }}.</div>
         {% endif %}

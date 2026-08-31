@@ -32,7 +32,7 @@ def test_create_admin_payment_intent_rejects_zero():
         services.create_admin_payment_intent(plan, Decimal("-1.00"))
 
 
-def test_record_admin_payment_posts_ledger_and_books_quoted():
+def test_record_payment_posts_ledger_and_books_quoted():
     plan = _plan()
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("400.00"))
     charge.stripe_payment_intent_id = "pi_admin"
@@ -46,7 +46,7 @@ def test_record_admin_payment_posts_ledger_and_books_quoted():
         patch.object(services.stripe.PaymentIntent, "retrieve", return_value=intent),
         patch("apps.integrations.la_sync.push_lead_bookings"),
     ):
-        services.record_admin_payment(plan, "pi_admin")
+        services.record_payment(plan, "pi_admin")
     plan.refresh_from_db()
     plan.lead.refresh_from_db()
     bals = ledger.order_balances(plan.lead)
@@ -58,7 +58,7 @@ def test_record_admin_payment_posts_ledger_and_books_quoted():
     assert charge.status == Charge.Status.SUCCEEDED
 
 
-def test_record_admin_payment_books_a_new_lead_too():
+def test_record_payment_books_a_new_lead_too():
     plan = _plan(lead=LeadFactory(status=Lead.Status.NEW))
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("400.00"))
     charge.stripe_payment_intent_id = "pi_admin_new"
@@ -72,7 +72,7 @@ def test_record_admin_payment_books_a_new_lead_too():
         patch.object(services.stripe.PaymentIntent, "retrieve", return_value=intent),
         patch("apps.integrations.la_sync.push_lead_bookings"),
     ):
-        services.record_admin_payment(plan, "pi_admin_new")
+        services.record_payment(plan, "pi_admin_new")
     plan.refresh_from_db()
     plan.lead.refresh_from_db()
     bals = ledger.order_balances(plan.lead)
@@ -84,7 +84,7 @@ def test_record_admin_payment_books_a_new_lead_too():
     assert charge.status == Charge.Status.SUCCEEDED
 
 
-def test_record_admin_payment_does_not_rebook_already_booked():
+def test_record_payment_does_not_rebook_already_booked():
     plan = _plan(lead=LeadFactory(status=Lead.Status.BOOKED))
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("400.00"))
     charge.stripe_payment_intent_id = "pi_admin2"
@@ -94,7 +94,7 @@ def test_record_admin_payment_does_not_rebook_already_booked():
         patch.object(services.stripe.PaymentIntent, "retrieve", return_value=intent),
         patch("apps.integrations.la_sync.push_lead_bookings") as push,
     ):
-        services.record_admin_payment(plan, "pi_admin2")
+        services.record_payment(plan, "pi_admin2")
     plan.lead.refresh_from_db()
     assert plan.lead.status == Lead.Status.BOOKED
     push.assert_not_called()
