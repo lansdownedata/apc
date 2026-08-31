@@ -244,6 +244,10 @@ function adminCardPay(opts) {
       if (!opts.pk || typeof Stripe === "undefined") return;
       this.stripe = Stripe(opts.pk);
       if (!this.hasCard) this.mountElement();
+      // Stripe re-themes a mounted element in place — no remount needed.
+      this.$watch("$store.theme.mode", (m) => {
+        if (this.elements) this.elements.update({ appearance: apcPay.appearance(m) });
+      });
     },
 
     cents() {
@@ -253,23 +257,14 @@ function adminCardPay(opts) {
 
     mountElement() {
       if (!this.stripe || this.mounted) return;
-      const amount = Math.max(this.cents(), 50);
-      this.elements = this.stripe.elements({
-        mode: "payment",
-        amount,
-        currency: "usd",
-        setupFutureUsage: "off_session",
-        appearance: {
-          theme: "stripe",
-          variables: {
-            colorPrimary: "#C7A24E",
-            colorText: "#17191D",
-            fontFamily: "Inter, system-ui, sans-serif",
-            borderRadius: "8px",
-          },
-        },
-      });
-      this.paymentElement = this.elements.create("payment");
+      this.elements = this.stripe.elements(
+        apcPay.elementsOptions({
+          mode: "payment",
+          amount: this.cents(),
+          appearanceMode: Alpine.store("theme").mode,
+        }),
+      );
+      this.paymentElement = this.elements.create("payment", apcPay.paymentElementOptions());
       this.$nextTick(() => {
         if (this.$refs.cardMount) this.paymentElement.mount(this.$refs.cardMount);
       });
@@ -2397,3 +2392,313 @@ function servicePicker(opts = {}) {
   };
 }
 window.servicePicker = servicePicker;
+
+/* ------------------------------------ public booking panel (Calendly Scheduling API)
+ *
+ * Our own two-pane booking UI: details on the left, availability on the right. It
+ * books through /schedule/book/, which calls Calendly's API — Calendly still owns the
+ * calendar, the invite email, reminders, reschedule and cancel.
+ *
+ * Calendly's own popup remains loaded as the fallback (window.openCalendlyPopup, in
+ * public/_calendly.html). Losing our endpoints must not cost the booking path.
+ */
+function scheduleBooking(opts = {}) {
+  return {
+    slotsUrl: opts.slotsUrl || "",
+    bookUrl: opts.bookUrl || "",
+    days: 14,
+
+    isOpen: false,
+    phase: "idle", // idle | loading | ready | empty | error | done
+    busy: false,
+    offerPopup: false,
+    notice: "",
+    errors: {},
+
+    slots: [],
+    questions: [],
+    answers: {},
+    form: { name: "", email: "", start_time: "" },
+    tz: "America/New_York",
+
+    init() {
+      /* The VISITOR's zone, not the company's. Everything on the All Pro Charter side
+         stays America/New_York, but a grid rendered in Eastern to someone in Denver is
+         a call they will miss by two hours. They can override it below. */
+      try {
+        this.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || this.tz;
+      } catch (e) {
+        /* Fall back to Eastern rather than guessing. */
+      }
+    },
+
+    openPanel() {
+      this.isOpen = true;
+      document.body.style.overflow = "hidden";
+      this.$nextTick(() => {
+        this.syncTimezonePicker();
+        if (window.initPhoneInputs) window.initPhoneInputs(this.$el);
+      });
+      if (this.phase === "idle") this.loadSlots();
+    },
+
+    closePanel() {
+      this.isOpen = false;
+      document.body.style.overflow = "";
+    },
+
+    /* ---- timezone -------------------------------------------------------- */
+
+    /** Point the Tom Select at the detected zone, adding it if we don't list it. */
+    syncTimezonePicker() {
+      const select = this.$el.querySelector('select[name="timezone"]');
+      if (!select) return;
+      const ts = select.tomselect;
+      const known = Array.from(select.options).some((o) => o.value === this.tz);
+      if (!known && this.tz) {
+        if (ts) ts.addOption({ value: this.tz, text: this.tz });
+        else select.add(new Option(this.tz, this.tz));
+      }
+      if (ts) ts.setValue(this.tz, true);
+      else select.value = this.tz;
+
+      if (!select._schedBound) {
+        select._schedBound = true;
+        // Tom Select fires `change` on the original select it wraps.
+        select.addEventListener("change", () => {
+          this.tz = select.value || this.tz;
+        });
+      }
+    },
+
+    /** `date` formatted in the visitor's zone, falling back if the zone is unusable. */
+    fmt(date, options) {
+      try {
+        return new Intl.DateTimeFormat("en-US", { timeZone: this.tz, ...options }).format(date);
+      } catch (e) {
+        return new Intl.DateTimeFormat("en-US", options).format(date);
+      }
+    },
+
+    /** "EDT" / "PST" for a given moment — never a fixed string. */
+    abbr(date) {
+      try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+          timeZone: this.tz,
+          timeZoneName: "short",
+        }).formatToParts(date);
+        return (parts.find((p) => p.type === "timeZoneName") || {}).value || "";
+      } catch (e) {
+        return "";
+      }
+    },
+
+    get tzAbbreviation() {
+      const first = this.slots.length ? new Date(this.slots[0].start) : new Date();
+      return this.abbr(first);
+    },
+
+    /* ---- slots ------------------------------------------------------------ */
+
+    get dayGroups() {
+      const groups = new Map();
+      for (const slot of this.slots) {
+        const when = new Date(slot.start);
+        if (isNaN(when.getTime())) continue;
+        /* Group AFTER converting to the visitor's zone. Grouping on the UTC date puts
+           an 8pm Eastern slot under tomorrow's heading for anyone west of us. */
+        const key = this.fmt(when, { year: "numeric", month: "2-digit", day: "2-digit" });
+        if (!groups.has(key)) {
+          groups.set(key, {
+            key,
+            label: this.fmt(when, { weekday: "long", month: "short", day: "numeric" }),
+            abbr: this.abbr(when),
+            slots: [],
+          });
+        }
+        groups.get(key).slots.push({
+          start: slot.start,
+          held: !!slot.held,
+          label: this.fmt(when, { hour: "numeric", minute: "2-digit" }),
+        });
+      }
+      return Array.from(groups.values());
+    },
+
+    get slotCount() {
+      return this.slots.length;
+    },
+
+    async loadSlots() {
+      this.phase = "loading";
+      try {
+        const resp = await fetch(`${this.slotsUrl}?days=${this.days}`, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) return this.fallbackToPopup();
+        this.slots = data.slots || [];
+        this.questions = data.questions || [];
+        this.phase = this.slots.length ? "ready" : "empty";
+        // The question fields only exist now, so their pickers are initialised now.
+        this.$nextTick(() => {
+          if (window.initFlatpickr) window.initFlatpickr(this.$el);
+        });
+      } catch (e) {
+        this.fallbackToPopup();
+      }
+    },
+
+    /** Hand over to Calendly's own popup. Returns false if its script never loaded. */
+    fallbackToPopup() {
+      if (window.openCalendlyPopup && window.openCalendlyPopup()) {
+        this.closePanel();
+        return true;
+      }
+      this.phase = "error";
+      return false;
+    },
+
+    pick(slot) {
+      if (slot.held) return;
+      this.form.start_time = slot.start;
+      this.errors = { ...this.errors, start_time: "" };
+      const when = new Date(slot.start);
+      this.notice = `${this.fmt(when, {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })} ${this.abbr(when)}`;
+    },
+
+    /* ---- questions --------------------------------------------------------- */
+
+    /* Built from the LIVE event type, never a copy of it: `position` is what Calendly
+       matches answers on and the client can reorder his questions whenever he likes.
+       A phone_number question is not shown — it is answered from the phone field we
+       already validate, rather than asking for the same number twice (decision 1). */
+    get visibleQuestions() {
+      return (this.questions || [])
+        .filter((q) => q.type !== "phone_number")
+        .map((q) => ({
+          position: q.position,
+          label: q.name || "",
+          required: !!q.required,
+          /* Calendly has no date question type, so the intent has to be read off the
+             wording. Getting it wrong costs a picker, not an answer — the field still
+             submits whatever the visitor typed. */
+          kind: q.type === "text" ? "text" : /date/i.test(q.name || "") ? "date" : "line",
+        }));
+    },
+
+    /* ---- submit ------------------------------------------------------------ */
+
+    phone() {
+      const el = this.$refs.phone;
+      if (!el) return "";
+      return window.phoneValue ? window.phoneValue(el) : el.value.trim();
+    },
+
+    localErrors(phone) {
+      const found = {};
+      if (!this.form.name.trim()) found.name = "Tell us your name.";
+      if (!this.form.email.trim() || !this.form.email.includes("@")) {
+        found.email = "We need a valid email for the calendar invite.";
+      }
+      if (!phone) found.phone = "We call you at this number, so we need one.";
+      else if (window.phoneIsValid && !window.phoneIsValid(this.$refs.phone)) {
+        found.phone = "That number doesn't look right.";
+      }
+      if (!this.form.start_time) found.start_time = "Pick a time.";
+      for (const q of this.visibleQuestions) {
+        if (q.required && !String(this.answers[q.position] || "").trim()) {
+          found["q" + q.position] = `${q.label} is required.`;
+        }
+      }
+      return found;
+    },
+
+    async submit() {
+      if (this.busy) return;
+      this.offerPopup = false;
+      const phone = this.phone();
+      const found = this.localErrors(phone);
+      if (Object.keys(found).length) {
+        this.errors = found;
+        return;
+      }
+
+      this.errors = {};
+      this.busy = true;
+      const body = {
+        name: this.form.name.trim(),
+        email: this.form.email.trim(),
+        phone,
+        timezone: this.tz,
+        start_time: this.form.start_time,
+      };
+      for (const q of this.questions) {
+        body["q" + q.position] =
+          q.type === "phone_number" ? phone : String(this.answers[q.position] || "");
+      }
+
+      try {
+        const resp = await fetch(this.bookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-CSRFToken": getCookie("csrftoken"),
+            Accept: "application/json",
+          },
+          body: new URLSearchParams(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+
+        if (resp.ok && data.redirect) {
+          this.phase = "done";
+          window.location.href = data.redirect;
+          return;
+        }
+        if (resp.status === 409) {
+          /* The slot went — either to another of our visitors or to someone booking on
+             calendly.com. The server sends a refreshed grid so this costs no round
+             trip, and the selection is cleared so the next click is deliberate. */
+          this.slots = data.slots && data.slots.length ? data.slots : this.slots;
+          this.form.start_time = "";
+          this.phase = this.slots.length ? "ready" : "empty";
+          this.notice = data.error || "That time just went — here are the next available.";
+          return;
+        }
+        if (resp.status === 400 && data.errors) {
+          this.errors = this.serverErrors(data.errors);
+          return;
+        }
+        this.notice = data.error || "We couldn't complete that booking.";
+        this.offerPopup = true;
+      } catch (e) {
+        this.notice = "Network error — please try again.";
+        this.offerPopup = true;
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    /** Server error keys onto field keys; `questions` arrives as a list. */
+    serverErrors(errors) {
+      const mapped = {};
+      for (const [key, value] of Object.entries(errors)) {
+        mapped[key] = Array.isArray(value) ? value.join(" ") : value;
+      }
+      return mapped;
+    },
+  };
+}
+window.scheduleBooking = scheduleBooking;
+
+/** Opened from the CTA on any public page — see templates/public/_call_cta.html. */
+function openScheduler() {
+  window.dispatchEvent(new CustomEvent("open-scheduler"));
+}
+window.openScheduler = openScheduler;

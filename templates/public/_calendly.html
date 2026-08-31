@@ -1,6 +1,12 @@
 {% comment %}
   Calendly popup assets plus the bridge that gets an invitee OUT of the iframe.
 
+  This is no longer the front door — our own panel (public/_schedule_form.html) books
+  through Calendly's API instead. It stays because it is the FALLBACK: if availability
+  or booking fails, the panel calls window.openCalendlyPopup() and the visitor can
+  still book. Deleting it would turn an API outage into a total loss of the booking
+  path (plan decision 2).
+
   The event type's "Redirect to an external site" setting navigates the POPUP's
   iframe, not the page behind it — on its own the visitor ends up on our thanks page
   inside a modal, still on whatever page they started from. Calendly posts
@@ -18,6 +24,15 @@
 <script>
   (function () {
     var THANKS = "{% url 'public:schedule_thanks' %}";
+
+    // The fallback entry point. Kept here rather than in app.js so the event-type URL
+    // stays server-rendered and app.js needs no configuration to reach it.
+    window.openCalendlyPopup = function () {
+      if (!window.Calendly) return false;
+      Calendly.initPopupWidget({ url: "{{ calendly_url }}" });
+      return true;
+    };
+
     window.addEventListener("message", function (e) {
       if (e.origin !== "https://calendly.com") return;
       var data = e.data;

@@ -52,7 +52,8 @@
   {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
   {% include "components/modal.html" %}
   {% include "components/toasts.html" %}
-  {% if calendly_url %}{% include "public/_calendly.html" %}{% endif %}
+  {% if calendly_url %}{% include "public/_calendly.html" %}
+                       {% include "public/_schedule_form.html" %}{% endif %}
   {% block body_extra %}{% endblock %}
 </body>
 </html>

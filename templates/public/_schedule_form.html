@@ -1,0 +1,230 @@
+{% comment %}
+  Our own booking UI over Calendly's Scheduling API — the front door that replaced the
+  Calendly popup (which survives as the fallback, see _calendly.html and decision 2).
+
+  Included once by base_public.html whenever CALENDLY_URL is set, so the CTA on any
+  marketing page can open it without navigating away.
+
+  Nothing about the event type is baked in here. The custom questions come from
+  /schedule/slots/ alongside the availability, because `position` is what Calendly
+  matches answers on and it is the client's to reorder in his own account at any time
+  — and because rendering them server-side would put a blocking Calendly call in every
+  marketing page render.
+
+  The timezone options ARE server-side, deliberately: an Alpine x-for inside a <select>
+  is invalid HTML, the parser hoists it out, and Tom Select then initialises with zero
+  options. A zone we do not list is added through Tom Select's own API on open.
+{% endcomment %}
+<div x-data="scheduleBooking({
+       slotsUrl: '{% url 'public:schedule_slots' %}',
+       bookUrl: '{% url 'public:schedule_book' %}'
+     })"
+     x-on:open-scheduler.window="openPanel()"
+     x-on:keydown.escape.window="closePanel()"
+     x-show="isOpen"
+     x-cloak
+     class="fixed inset-0 z-[60]"
+     role="dialog" aria-modal="true" aria-labelledby="sched-title">
+
+  <div x-show="isOpen" x-transition.opacity
+       class="absolute inset-0 bg-ink/60 backdrop-blur-sm" x-on:click="closePanel()"></div>
+
+  <div class="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+    <div x-show="isOpen" x-transition
+         class="mx-auto flex min-h-full max-w-3xl items-center">
+      <div class="w-full overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-line">
+
+        <header class="flex items-start justify-between gap-4 border-b border-line px-5 py-4 sm:px-6">
+          <div>
+            <h2 id="sched-title" class="font-display text-[19px] font-semibold tracking-tight text-ink">
+              Schedule a call
+            </h2>
+            <p class="mt-0.5 text-[13px] text-muted">Fifteen minutes &mdash; we&rsquo;ll call you.</p>
+          </div>
+          <button type="button" x-on:click="closePanel()" aria-label="Close"
+                  class="focus-gold -m-1.5 rounded-full p-1.5 text-muted transition-colors hover:text-ink">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-5 w-5">
+              <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </header>
+
+        {# Confirmed state replaces the whole body — the redirect follows immediately. #}
+        <template x-if="phase === 'done'">
+          <div class="px-6 py-14 text-center">
+            <div class="mx-auto grid h-12 w-12 place-items-center rounded-full bg-gold/[0.14] text-gold">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+            </div>
+            <p class="mt-4 text-[15px] font-semibold text-ink">You&rsquo;re on the calendar.</p>
+            <p class="mt-1 text-[13px] text-muted">Taking you to the details&hellip;</p>
+          </div>
+        </template>
+
+        <div x-show="phase !== 'done'" class="grid gap-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+
+          {# ---------------------------------------------------------- details #}
+          <div class="border-b border-line px-5 py-5 sm:border-b-0 sm:border-r sm:px-6">
+            <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Your details</h3>
+
+            <div class="mt-4 space-y-3.5">
+              <div>
+                <label for="sched-name" class="mb-1 block text-[12.5px] font-medium text-ink">Name</label>
+                <div><input id="sched-name" type="text" x-model="form.name" autocomplete="name"
+                            class="field" :class="errors.name && 'ring-danger'"></div>
+                <p x-show="errors.name" x-text="errors.name" class="mt-1 text-[12px] text-danger"></p>
+              </div>
+
+              <div>
+                <label for="sched-email" class="mb-1 block text-[12.5px] font-medium text-ink">Email</label>
+                <div><input id="sched-email" type="email" x-model="form.email" autocomplete="email"
+                            class="field" :class="errors.email && 'ring-danger'"></div>
+                <p x-show="errors.email" x-text="errors.email" class="mt-1 text-[12px] text-danger"></p>
+              </div>
+
+              <div>
+                <label for="sched-phone" class="mb-1 block text-[12.5px] font-medium text-ink">Phone</label>
+                {# intlTelInput is auto-initialised by data-phone; app.js reads it back
+                   through phoneValue() so what we post is E.164. #}
+                <div><input id="sched-phone" type="tel" data-phone x-ref="phone" autocomplete="tel"
+                            class="field" :class="errors.phone && 'ring-danger'"></div>
+                <p x-show="errors.phone" x-text="errors.phone" class="mt-1 text-[12px] text-danger"></p>
+              </div>
+
+              {# One field per LIVE custom question. A phone_number question is answered
+                 from the field above rather than asked twice (decision 1); a question
+                 whose name mentions a date gets a picker so Calendly's free-text answer
+                 arrives normalised (decision 3). #}
+              {% comment %}
+                One <template x-if> per kind rather than three x-show siblings: with
+                altInput on, flatpickr HIDES the real input and shows a sibling of its
+                own, which x-show does not govern — so a hidden date field would still
+                render its picker next to whichever input was meant to be visible.
+              {% endcomment %}
+              <template x-for="q in visibleQuestions" :key="q.position">
+                <div>
+                  <label :for="'sched-q' + q.position"
+                         class="mb-1 block text-[12.5px] font-medium text-ink"
+                         x-text="q.label"></label>
+                  <div>
+                    <template x-if="q.kind === 'text'">
+                      <textarea :id="'sched-q' + q.position" x-model="answers[q.position]"
+                                rows="2" class="field"></textarea>
+                    </template>
+                    {% comment %}
+                      flatpickr writes Y-m-d into the real input and fires `change`, not
+                      `input` — which is the event x-model listens for on a text box — so
+                      the answer is captured explicitly here. Calendly has no date
+                      question type, so what it receives is free text either way; this is
+                      only about controlling what goes into it (decision 3).
+                    {% endcomment %}
+                    <template x-if="q.kind === 'date'">
+                      <input :id="'sched-q' + q.position" type="text" data-flatpickr
+                             x-on:change="answers[q.position] = $event.target.value"
+                             placeholder="Pick a date" class="field">
+                    </template>
+                    <template x-if="q.kind === 'line'">
+                      <input :id="'sched-q' + q.position" type="text"
+                             x-model="answers[q.position]" class="field">
+                    </template>
+                  </div>
+                  <p x-show="errors['q' + q.position]" x-text="errors['q' + q.position]"
+                     class="mt-1 text-[12px] text-danger"></p>
+                </div>
+              </template>
+
+              <div>
+                <label for="sched-tz" class="mb-1 block text-[12.5px] font-medium text-ink">Your timezone</label>
+                {% include "components/searchable_select.html" with name="timezone" field_id="sched-tz" options=timezone_options selected="America/New_York" search="on" %}
+              </div>
+            </div>
+          </div>
+
+          {# ------------------------------------------------------- slot grid #}
+          <div class="px-5 py-5 sm:px-6">
+            <div class="flex items-baseline justify-between">
+              <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Pick a time</h3>
+              <span x-show="phase === 'ready' && slotCount" class="text-[12px] text-muted"
+                    x-text="tzAbbreviation"></span>
+            </div>
+
+            <template x-if="phase === 'loading'">
+              <div class="mt-4 space-y-2" aria-live="polite">
+                <template x-for="i in 5" :key="i">
+                  <div class="h-9 animate-pulse rounded-lg bg-line/60"></div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="phase === 'empty'">
+              <p class="mt-6 text-[13.5px] leading-relaxed text-muted">
+                No open times in the next <span x-text="days"></span> days.
+                <button type="button" x-on:click="fallbackToPopup()"
+                        class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">
+                  Try the full calendar
+                </button>.
+              </p>
+            </template>
+
+            <template x-if="phase === 'error'">
+              <p class="mt-6 text-[13.5px] leading-relaxed text-muted">
+                We couldn&rsquo;t load times just now.
+                <button type="button" x-on:click="fallbackToPopup()"
+                        class="focus-gold font-semibold text-gold underline-offset-2 hover:underline">
+                  Open the calendar instead
+                </button>.
+              </p>
+            </template>
+
+            <div x-show="phase === 'ready'" class="mt-3 max-h-[19rem] space-y-4 overflow-y-auto pr-1">
+              <template x-for="day in dayGroups" :key="day.key">
+                <div>
+                  <p class="sticky top-0 bg-white py-1 text-[12px] font-semibold text-ink">
+                    <span x-text="day.label"></span>
+                    <span x-show="day.abbr !== tzAbbreviation" class="font-normal text-muted"
+                          x-text="' · ' + day.abbr"></span>
+                  </p>
+                  <div class="mt-1 grid grid-cols-3 gap-1.5">
+                    <template x-for="slot in day.slots" :key="slot.start">
+                      <button type="button" :disabled="slot.held"
+                              x-on:click="pick(slot)"
+                              :title="slot.held ? 'Someone else is booking this time' : ''"
+                              class="focus-gold rounded-lg px-2 py-1.5 text-[12.5px] font-medium ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                              :class="slot.start === form.start_time
+                                ? 'bg-gold text-ink ring-gold'
+                                : 'text-ink ring-line hover:ring-gold'"
+                              x-text="slot.label"></button>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <p x-show="errors.start_time" x-text="errors.start_time"
+               class="mt-2 text-[12px] text-danger"></p>
+          </div>
+        </div>
+
+        <footer x-show="phase !== 'done'"
+                class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4 sm:px-6">
+          <div class="text-[12px] text-muted">
+            <p x-show="notice" x-text="notice"></p>
+            <button type="button" x-show="offerPopup" x-on:click="fallbackToPopup()"
+                    class="focus-gold mt-0.5 font-semibold text-gold underline-offset-2 hover:underline">
+              Book on the full calendar instead
+            </button>
+          </div>
+          <button type="button" x-on:click="submit()" :disabled="busy || phase !== 'ready'"
+                  class="btn-gold focus-gold ml-auto inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-[13.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50">
+            <svg x-show="busy" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+            <span x-text="busy ? 'Booking…' : 'Book the call'"></span>
+          </button>
+        </footer>
+      </div>
+    </div>
+  </div>
+</div>

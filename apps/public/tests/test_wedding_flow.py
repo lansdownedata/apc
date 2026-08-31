@@ -46,8 +46,16 @@ def test_the_page_carries_the_honeypot(client):
 
 
 def test_the_page_uses_no_native_select_or_dialog(client):
+    """CLAUDE.md: never a BARE <select> for an option input.
+
+    This used to assert the page had no <select> at all, which held only while it had
+    none of any kind. The booking panel in the shell now ships one, and it is the
+    sanctioned form — `data-tom`, enhanced by initTomSelects(). So the guard checks
+    what the rule actually says: every select on the page is a Tom Select.
+    """
     html = client.get(PLAN_URL).content.decode()
-    assert "<select" not in html
+    for fragment in html.split("<select")[1:]:
+        assert "data-tom" in fragment.split(">")[0], "bare <select> on the wedding page"
     assert "window.confirm" not in html and "window.alert" not in html
 
 

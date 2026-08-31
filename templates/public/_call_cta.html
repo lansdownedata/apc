@@ -2,9 +2,10 @@
   The "Schedule a call" call-to-action, used everywhere the marketing site used to
   print the phone number (client's call, 2026-08-31).
 
-  Opens the Calendly popup; the bridge in _calendly.html carries the invitee to
-  public:schedule_thanks once they book. Requires that partial to be loaded, which
-  base_public.html does for every public page.
+  Opens OUR booking panel (public/_schedule_form.html), which books through
+  Calendly's API and never leaves the page. Calendly's own popup is still loaded and
+  is what the panel falls back to when our endpoints fail — see _calendly.html and
+  the plan's decision 2. Both partials come from base_public.html on every page.
 
   Falls back to the old tel: link when CALENDLY_URL is blank. That branch is the
   whole reason this is a partial rather than 25 copies: without it, switching the
@@ -16,7 +17,7 @@
   styles in prod (CLAUDE.md, CSS build).
 {% endcomment %}
 {% if calendly_url %}
-<button type="button" onclick="Calendly.initPopupWidget({url:'{{ calendly_url }}'});return false;"
+<button type="button" onclick="window.openScheduler();return false;"
         class="{{ class }}">{% firstof label "Schedule a call" %}</button>
 {% else %}
 <a href="tel:+12024242600" class="{{ class }}">{% firstof fallback_label "(202) 424-2600" %}</a>
