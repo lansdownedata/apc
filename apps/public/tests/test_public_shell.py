@@ -131,3 +131,69 @@ def test_schema_org_keeps_the_phone_number(db):
     machine-read, never displayed, so the swap must not touch it."""
     html = Client().get("/").content.decode()
     assert '"telephone": "+1-202-424-2600"' in html
+
+
+# --- our own booking panel over Calendly ------------------------------------------
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_cta_opens_our_own_form_not_the_calendly_popup(db):
+    html = Client().get("/").content.decode()
+    assert "openScheduler()" in html
+    # The CTA must no longer reach for Calendly's widget directly — that is now only
+    # the fallback, reached from JS when our endpoints fail.
+    assert 'onclick="Calendly.initPopupWidget' not in html
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_popup_survives_as_a_fallback(db):
+    """Decision 2: removing it would make an API outage a total loss of the booking
+    path. It stays loaded and reachable, just no longer the front door."""
+    html = Client().get("/").content.decode()
+    assert "assets.calendly.com/assets/external/widget.js" in html
+    assert "Calendly.initPopupWidget" in html
+    assert "window.openCalendlyPopup" in html
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_booking_panel_is_wired_to_both_endpoints(db):
+    html = Client().get("/").content.decode()
+    assert "scheduleBooking(" in html
+    assert "/schedule/slots/" in html
+    assert "/schedule/book/" in html
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_panel_ships_on_every_marketing_page_exactly_once(db):
+    for path in MARKETING_PAGES:
+        html = Client().get(path).content.decode()
+        assert html.count("scheduleBooking(") == 1, f"panel count wrong on {path}"
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_timezone_picker_is_a_tom_select_not_a_bare_select(db):
+    """CLAUDE.md: never a native <select> for an option input. Options are rendered
+    server-side — an Alpine x-for inside a <select> is invalid HTML, and the parser
+    hoists it out so Tom Select initialises with zero options."""
+    html = Client().get("/").content.decode()
+    assert "data-tom" in html
+    assert "America/New_York" in html
+    assert "America/Los_Angeles" in html
+
+
+@override_settings(CALENDLY_URL=CAL)
+def test_the_question_fields_are_not_baked_into_the_page(db):
+    """They come from the live event type via /schedule/slots/, never a server-side
+    copy — otherwise every marketing page render is a blocking Calendly call, and the
+    client reordering a question in his own account silently breaks the form."""
+    html = Client().get("/").content.decode()
+    assert "Event Date" not in html
+    assert "visibleQuestions" in html
+
+
+@override_settings(CALENDLY_URL="")
+def test_no_booking_panel_when_calendly_is_switched_off(db):
+    for path in ("/", "/contact/"):
+        html = Client().get(path).content.decode()
+        assert "scheduleBooking(" not in html
+        assert "openScheduler()" not in html
