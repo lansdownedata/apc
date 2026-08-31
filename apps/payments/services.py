@@ -235,6 +235,11 @@ def sync_plan_from_collected(plan: PaymentPlan) -> None:
             plan.balance_status = PaymentPlan.BalanceStatus.SCHEDULED
         fields += ["deposit_status", "balance_status"]
     plan.save(update_fields=fields)
+
+    if plan.balance_status == PaymentPlan.BalanceStatus.SCHEDULED:
+        from apps.messaging.touchpoints import schedule_payment_reminder
+
+        schedule_payment_reminder(plan.lead)
     if plan.lead.has_alert and plan.balance_status != PaymentPlan.BalanceStatus.FAILED:
         plan.lead.has_alert = False
         plan.lead.save(update_fields=["has_alert", "updated_at"])

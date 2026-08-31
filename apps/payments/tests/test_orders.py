@@ -29,6 +29,7 @@ def test_money_actions_partial_renders_the_take_payment_element(client, settings
     assert "adminCardPay(" in body
     assert 'x-ref="cardMount"' in body
     assert "js.stripe.com/v3" in body
+    assert "sendPayLink(" in body  # the Send payment link action
 
 
 def test_orders_lists_booked_only(client):

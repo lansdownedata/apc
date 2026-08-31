@@ -72,6 +72,21 @@
       </button>
     </form>
     {% endif %}
+
+    <!-- Send payment link (customer self-serves the pay page) -->
+    {% if lead.status != 'lost' %}
+    <div x-data="sendPayLink('{% url 'order_send_pay_link' lead.pk %}')">
+      <button
+        type="button"
+        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5 disabled:opacity-50"
+        :disabled="busy"
+        @click="send()"
+      >
+        <i class="ti ti-send text-[14px]"></i>
+        <span x-text="busy ? 'Sending…' : 'Send payment link'"></span>
+      </button>
+    </div>
+    {% endif %}
   </div>
 
   {% if lead.status != 'lost' %}

@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from django.conf import settings
 from django.utils import timezone
@@ -7,9 +8,15 @@ from apps.notifications.email import send_html_email
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation
 
 from . import ledger, reports, services
-from .models import PaymentPlan
+from .models import Charge, PaymentPlan
 
 logger = logging.getLogger(__name__)
+
+# Old enough never to race the customer's own `complete` POST or a just-in-time webhook.
+RECONCILE_MIN_AGE = timedelta(minutes=10)
+# Cron endpoints are synchronous HTTP behind Heroku's 30 s router timeout — a backlog drains
+# across runs rather than timing out on one.
+RECONCILE_BATCH = 50
 
 
 def charge_due_balances() -> int:
@@ -47,6 +54,43 @@ def recognize_due_revenue() -> int:
         ledger.recognize_reservation(reservation)
         count += 1
     return count
+
+
+def reconcile_open_charges(now=None) -> int:
+    """Catch payments the webhook never delivered. Returns the count reconciled.
+
+    `payment_intent.succeeded` is the only webhook success path (spec 2026-08-30 §7); when it
+    goes missing — a dyno restarting mid-deploy, Stripe exhausting retries, a 500 in the
+    handler, a customer closing the tab before the `complete` POST — this sweep finishes the
+    job. Bounded and age-gated so it never races the normal path.
+    """
+    cutoff = (now or timezone.now()) - RECONCILE_MIN_AGE
+    open_charges = (
+        Charge.objects.filter(
+            status=Charge.Status.PENDING,
+            kind__in=(Charge.Kind.DEPOSIT, Charge.Kind.BALANCE),
+            updated_at__lt=cutoff,
+        )
+        .exclude(stripe_payment_intent_id="")
+        .select_related("plan__lead")
+        .order_by("updated_at")[:RECONCILE_BATCH]
+    )
+    reconciled = 0
+    for charge in open_charges:
+        try:
+            intent = services._stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+            if intent.status == "succeeded":
+                services.record_payment(
+                    charge.plan, charge.stripe_payment_intent_id, kind=charge.kind
+                )
+                reconciled += 1
+            elif intent.status == "canceled":
+                charge.status = Charge.Status.FAILED
+                charge.save(update_fields=["status", "updated_at"])
+            # any other status: still in flight — leave it PENDING for open_intent_for to reuse
+        except Exception:  # noqa: BLE001 - one bad row must not kill the run
+            logger.exception("reconcile-payments: charge %s failed", charge.pk)
+    return reconciled
 
 
 def send_unpaid_deposit_report(today=None) -> int:

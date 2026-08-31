@@ -41,6 +41,15 @@ def test_valid_call_runs_job_and_returns_count(client, settings):
     assert resp.json() == {"job": "charge-due-balances", "processed": 5}
 
 
+def test_reconcile_payments_job_is_registered(client, settings):
+    settings.CRON_SECRET = "s3cret"
+    assert "reconcile-payments" in cron.JOBS
+    with patch.dict(cron.JOBS, {"reconcile-payments": lambda: 3}):
+        resp = client.post("/cron/reconcile-payments/", HTTP_X_CRON_KEY="s3cret")
+    assert resp.status_code == 200
+    assert resp.json() == {"job": "reconcile-payments", "processed": 3}
+
+
 def test_registry_contains_all_jobs():
     assert set(cron.JOBS) == {
         "charge-due-balances",
@@ -48,6 +57,7 @@ def test_registry_contains_all_jobs():
         "retry-la-sync",
         "run-touchpoints",
         "deposit-report",
+        "reconcile-payments",
     }
 
 
