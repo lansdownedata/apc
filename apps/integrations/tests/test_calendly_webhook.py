@@ -33,6 +33,7 @@ def _created(email="sarah@example.com", name="Sarah Smith", uri=INVITEE_URI, **o
         "end_time": "2026-09-08T18:45:00.000000Z",
         "status": "active",
         "event_type": EVENT_TYPE_URI,
+        "location": {"type": "outbound_call", "location": "+1 703-626-0999"},
     }
     scheduled.update(overrides.pop("scheduled_event", {}))
     payload = {
@@ -317,3 +318,112 @@ def test_a_reschedule_whose_original_is_unknown_still_creates_a_lead():
         _created(uri="https://api.calendly.com/x/y", old_invitee="https://api.calendly.com/gone")
     )
     assert Lead.objects.count() == 1
+
+
+# --- what the invitee actually told us (probed against real traffic 2026-08-31) ----
+
+
+def test_note_says_who_places_the_call_and_to_what_number():
+    """location.type "outbound_call" means WE ring THEM. An agent who misses that
+    sits waiting for a call that is never coming."""
+    process_calendly_webhook(_created())
+    assert "+1 703-626-0999" in Lead.objects.get().notes
+
+
+def test_note_carries_the_invitees_answers():
+    """The real booking put the trip context, the date and the phone in
+    questions_and_answers and none of it reached the note — the agent had to read
+    raw JSON to find out what the call was even about."""
+    process_calendly_webhook(
+        _created(
+            questions_and_answers=[
+                {
+                    "question": "Please share anything that will help prepare for our meeting.",
+                    "answer": "Wedding shuttle for 40 guests",
+                    "position": 0,
+                },
+                {"question": "Event Date", "answer": "11/12/2026", "position": 1},
+            ]
+        )
+    )
+    notes = Lead.objects.get().notes
+    assert "Event Date: 11/12/2026" in notes
+    assert "Wedding shuttle for 40 guests" in notes
+
+
+def test_the_phone_answer_is_not_repeated_in_the_note():
+    """It is already on the Contact; repeating it just makes the card noisier."""
+    process_calendly_webhook(
+        _created(
+            questions_and_answers=[
+                {
+                    "question": "What is your phone number?",
+                    "answer": "+1 703-626-0999",
+                    "position": 0,
+                },
+            ]
+        )
+    )
+    assert "What is your phone number" not in Lead.objects.get().notes
+
+
+def test_unanswered_optional_questions_are_skipped():
+    process_calendly_webhook(
+        _created(
+            questions_and_answers=[
+                {"question": "Event Date", "answer": "", "position": 0},
+                {"question": "Anything else?", "answer": None, "position": 1},
+            ]
+        )
+    )
+    assert "Event Date" not in Lead.objects.get().notes
+
+
+def test_a_video_call_link_is_surfaced_too():
+    process_calendly_webhook(
+        _created(scheduled_event={"location": {"type": "zoom", "join_url": "https://zoom.us/j/1"}})
+    )
+    assert "https://zoom.us/j/1" in Lead.objects.get().notes
+
+
+def test_note_names_anyone_else_on_the_call():
+    """A second email arrives as event_guests, not as a second invitee — an assistant,
+    a planner, a spouse. Silently dropping them loses a person from the conversation."""
+    process_calendly_webhook(
+        _created(scheduled_event={"event_guests": [{"email": "assistant@example.com"}]})
+    )
+    assert "assistant@example.com" in Lead.objects.get().notes
+
+
+def test_no_guest_line_when_nobody_else_is_invited():
+    process_calendly_webhook(_created())
+    assert "Also on the call" not in Lead.objects.get().notes
+
+
+def test_several_guests_are_all_named():
+    """Calendly takes guests as a list, so event_guests is an array — one guest
+    passing proves nothing about two."""
+    process_calendly_webhook(
+        _created(
+            scheduled_event={
+                "event_guests": [
+                    {"email": "planner@example.com"},
+                    {"email": "assistant@example.com"},
+                    {"email": "spouse@example.com"},
+                ]
+            }
+        )
+    )
+    notes = Lead.objects.get().notes
+    assert "planner@example.com, assistant@example.com, spouse@example.com" in notes
+
+
+def test_a_guest_row_with_no_email_does_not_leave_a_dangling_comma():
+    process_calendly_webhook(
+        _created(
+            scheduled_event={
+                "event_guests": [{"email": "planner@example.com"}, {"email": None}, {}]
+            }
+        )
+    )
+    assert "Also on the call: planner@example.com" in Lead.objects.get().notes

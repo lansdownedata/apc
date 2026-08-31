@@ -266,8 +266,59 @@ def _calendly_attribution(data: dict) -> str:
     return f"Source: {' / '.join(p for p in parts if p)}" if any(parts) else ""
 
 
+def _calendly_location(scheduled: dict) -> str:
+    """Where the call happens, when that needs an action from us.
+
+    "outbound_call" means WE ring THEM — an agent who misses that sits waiting for a
+    call that is never coming, so the number goes on the lead.
+    """
+    location = scheduled.get("location") or {}
+    kind = (location.get("type") or "").strip()
+    where = (location.get("location") or "").strip()
+    if kind == "outbound_call":
+        return f"We call the invitee at {where}." if where else ""
+    join_url = (location.get("join_url") or "").strip()
+    if join_url:
+        return f"Meeting link: {join_url}"
+    return f"Location: {where}" if where else ""
+
+
+def _calendly_guests(scheduled: dict) -> str:
+    """Anyone added as a guest — an assistant, a planner, a spouse.
+
+    A second email on the booking arrives here, NOT as a second invitee email, so
+    without this the extra person vanishes from the conversation entirely.
+    """
+    emails = [(g.get("email") or "").strip() for g in scheduled.get("event_guests") or []]
+    emails = [e for e in emails if e]
+    return f"Also on the call: {', '.join(emails)}" if emails else ""
+
+
+def _calendly_answers(data: dict) -> list[str]:
+    """The invitee's own words, one line per answered question.
+
+    These are the whole reason the booking form exists, and they only live in the
+    payload — before this they reached nobody, and an agent had to read raw JSON to
+    learn what the call was about.
+
+    Answers are rendered as TEXT and never parsed. Calendly has no date-picker
+    question type, so an "Event Date" field is free-form ("11/12/2024", "next
+    Friday", "sometime in October"). A human reads that correctly; a parser would
+    guess, and a wrongly-parsed date is worse than no date.
+    """
+    lines = []
+    for qa in data.get("questions_and_answers") or []:
+        question = (qa.get("question") or "").strip().rstrip(":.")
+        answer = (qa.get("answer") or "").strip()
+        # The phone answer is already on the Contact — see calendly_phone().
+        if not question or not answer or "phone" in question.lower():
+            continue
+        lines.append(f"{question}: {answer}")
+    return lines
+
+
 def _calendly_note(data: dict, *, moved: bool = False) -> str:
-    """The agent-facing line on the Lead, in the company timezone.
+    """The agent-facing summary on the Lead, in the company timezone.
 
     Calendly sends UTC; the office reads the pipeline in ET, so this renders in
     TIME_ZONE with the abbreviation rather than dropping a raw UTC string in notes.
@@ -279,7 +330,14 @@ def _calendly_note(data: dict, *, moved: bool = False) -> str:
     start = parse_start_time(scheduled.get("start_time") or "")
     when = f" — {timezone.localtime(start):%a %b %-d, %Y at %-I:%M %p %Z}" if start else ""
     headline = f"Calendly call moved{when}." if moved else f"{name} booked via Calendly{when}."
-    return "\n".join(line for line in (headline, _calendly_attribution(data)) if line)
+    lines = [
+        headline,
+        _calendly_attribution(data),
+        _calendly_location(scheduled),
+        _calendly_guests(scheduled),
+        *_calendly_answers(data),
+    ]
+    return "\n".join(line for line in lines if line)
 
 
 def _append_note(lead: Lead, line: str) -> None:
