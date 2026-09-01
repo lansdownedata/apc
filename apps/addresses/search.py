@@ -84,6 +84,10 @@ def search_airports(q: str, limit: int = AIRPORT_RESULT_LIMIT) -> list[dict]:
 
 VENUE_RESULT_LIMIT = 8
 MIN_VENUE_QUERY = 2
+# When the curated directory returns fewer than this many *name* matches for a query,
+# the public endpoint also fetches LocationIQ and merges the two lists — a single weak
+# (city-only) directory hit must not hide a real venue we have never run to (§A1).
+VENUE_STRONG_MATCH_TARGET = 3
 
 
 def _serialize_venue(venue: Venue) -> dict:

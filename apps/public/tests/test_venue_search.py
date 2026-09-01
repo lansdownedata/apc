@@ -5,6 +5,7 @@ from django.core.cache import cache
 
 from apps.addresses.factories import VenueFactory
 from apps.addresses.models import Venue
+from apps.addresses.search import VENUE_RESULT_LIMIT
 
 pytestmark = pytest.mark.django_db
 
@@ -107,9 +108,92 @@ def test_falls_through_to_locationiq_when_the_directory_has_no_match(client, mon
     assert results[0]["latitude"] == "39.15"
 
 
-def test_directory_matches_never_trigger_a_locationiq_call(client, monkeypatch):
+def test_a_strong_directory_match_set_never_triggers_a_locationiq_call(client, monkeypatch):
+    """Plenty of name matches on file — no reason to spend a paid lookup."""
+
     def boom(*a, **kw):  # pragma: no cover - must never run
-        raise AssertionError("LocationIQ called although the directory matched")
+        raise AssertionError("LocationIQ called although the directory matched well")
 
     monkeypatch.setattr("apps.public.views.locationiq_autocomplete", boom)
-    assert client.get(URL, {"q": "oak"}).json()["results"]
+    # "manor" hits four+ directory rows by name.
+    assert len(client.get(URL, {"q": "manor"}).json()["results"]) >= 4
+
+
+def test_merges_locationiq_rows_when_the_directory_match_is_thin(client, monkeypatch):
+    """A single weak directory hit no longer hides real venues (reconciliation §A1)."""
+    VenueFactory(name="Rosewood Chapel", city="Vienna", state="VA", lead_hits=5)
+    monkeypatch.setattr(
+        "apps.public.views.locationiq_autocomplete",
+        lambda q, lat=None, lon=None: [
+            {
+                "landmark_name": "Rosewood Manor",
+                "line1": "9 Rose Ln",
+                "city": "Fairfax",
+                "state": "VA",
+                "latitude": "38.8",
+                "longitude": "-77.3",
+                "display_name": "Rosewood Manor, Fairfax, VA",
+            }
+        ],
+    )
+    results = client.get(URL, {"q": "rosewood"}).json()["results"]
+    names = [r["name"] for r in results]
+    assert names[0] == "Rosewood Chapel"  # directory rows come first
+    assert results[0]["source"] == "directory"
+    assert "Rosewood Manor" in names  # LocationIQ row appended
+    assert any(r["source"] == "locationiq" for r in results)
+
+
+def test_a_locationiq_row_duplicating_a_directory_row_is_dropped(client, monkeypatch):
+    # "Airlie" is a seeded directory row; LocationIQ returning it too must not double it.
+    monkeypatch.setattr(
+        "apps.public.views.locationiq_autocomplete",
+        lambda q, lat=None, lon=None: [
+            {
+                "landmark_name": "AIRLIE",
+                "line1": "6809 Airlie Rd",
+                "city": "warrenton",
+                "state": "VA",
+                "latitude": "38.7",
+                "longitude": "-77.7",
+                "display_name": "Airlie, Warrenton, VA",
+            }
+        ],
+    )
+    results = client.get(URL, {"q": "airlie"}).json()["results"]
+    assert [r["name"].lower() for r in results].count("airlie") == 1
+    assert results[0]["source"] == "directory"
+
+
+def test_merged_results_stay_capped_at_the_limit(client, monkeypatch):
+    monkeypatch.setattr(
+        "apps.public.views.locationiq_autocomplete",
+        lambda q, lat=None, lon=None: [
+            {
+                "landmark_name": f"Barn {i}",
+                "line1": f"{i} Rd",
+                "city": "Hume",
+                "state": "VA",
+                "latitude": "38.6",
+                "longitude": "-78.0",
+                "display_name": f"Barn {i}, Hume, VA",
+            }
+            for i in range(20)
+        ],
+    )
+    results = client.get(URL, {"q": "barn"}).json()["results"]
+    assert len(results) <= VENUE_RESULT_LIMIT
+
+
+def test_merge_preserves_the_degraded_flag_and_throttle(client, monkeypatch, settings):
+    from apps.public.views import GEOCODE_THROTTLE_LIMIT
+
+    settings.LOCATIONIQ_API_KEY = ""
+    monkeypatch.setattr(
+        "apps.public.views.locationiq_autocomplete", lambda q, lat=None, lon=None: []
+    )
+    resp = client.get(URL, {"q": "congress"})
+    assert resp.json()["degraded"] is True
+    for _ in range(GEOCODE_THROTTLE_LIMIT):
+        client.get(URL, {"q": "congress"})
+    assert client.get(URL, {"q": "congress"}).status_code == 429

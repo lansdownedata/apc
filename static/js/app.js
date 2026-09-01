@@ -2320,9 +2320,23 @@ function weddingPlanner(opts = {}) {
     },
     removeHotel(i) { this.hotels.splice(i, 1); this.legs = null; },
     clearPlace(kind) {
-      if (kind === "venue") { this.venue = null; this.venueName = ""; }
+      const field = kind === "venue" ? "venue" : "ceremony";
+      if (field === "venue") { this.venue = null; this.venueName = ""; }
       else { this.ceremony = null; this.ceremonyName = ""; }
+      // "Change" reveals the same typeahead input. Wipe every trace of the previous
+      // pick — the query text, the cached result list, an in-flight request, the
+      // open/active flags — so the first keystroke of a new name runs a clean search
+      // instead of racing a stale AbortController or reopening the old dropdown.
+      this.resetField(field);
       this.legs = null;
+    },
+    resetField(field) {
+      this._ctl[field]?.abort();
+      this._ctl[field] = null;
+      this.query[field] = "";
+      this.results[field] = [];
+      this.active[field] = -1;
+      this.open[field] = false;
     },
 
     /* ------------------------------------------------------------------ typeahead */
