@@ -25,9 +25,72 @@ class AirlineAdmin(admin.ModelAdmin):
     ordering = ("name",)
 
 
+class HasVehicleCapFilter(admin.SimpleListFilter):
+    """ "Do we have a vehicle-access limit on file?" — lets the office work the gaps
+    left by the client's venue -> limit list (APC-9)."""
+
+    title = "vehicle cap on file"
+    parameter_name = "has_cap"
+
+    def lookups(self, request, model_admin):
+        return (("yes", "Cap on file"), ("no", "No cap set"))
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(vehicle_cap__isnull=False)
+        if self.value() == "no":
+            return queryset.filter(vehicle_cap__isnull=True)
+        return queryset
+
+
 @admin.register(Venue)
 class VenueAdmin(admin.ModelAdmin):
-    list_display = ("name", "kind", "city", "state", "vehicle_cap", "lead_hits", "is_active")
-    list_filter = ("kind", "is_active", "state")
-    search_fields = ("name", "city")
-    ordering = ("name",)
+    list_display = (
+        "name",
+        "kind",
+        "city",
+        "state",
+        "vehicle_cap",
+        "has_cap",
+        "lead_hits",
+        "is_active",
+    )
+    list_editable = ("vehicle_cap",)
+    list_filter = (HasVehicleCapFilter, "kind", "is_active", "state")
+    search_fields = ("name", "city", "cap_note", "access_note")
+    # A second key keeps changelist pagination stable while `list_editable` is on —
+    # `name` alone is not unique across the directory.
+    ordering = ("name", "pk")
+    list_per_page = 50
+    fieldsets = (
+        (None, {"fields": ("name", "kind", "is_active")}),
+        (
+            "Location",
+            {
+                "fields": (
+                    "address",
+                    "city",
+                    "state",
+                    "latitude",
+                    "longitude",
+                    "locationiq_place_id",
+                )
+            },
+        ),
+        (
+            "Vehicle access",
+            {
+                "fields": ("vehicle_cap", "cap_note", "access_note"),
+                "description": (
+                    "Largest vehicle this venue allows and why (gravel drive, low bridge, "
+                    "short turning circle). Shown on the wedding recommendation page and used "
+                    "to gate the vehicle suggestion — leave blank if unknown."
+                ),
+            },
+        ),
+        ("Directory ranking", {"fields": ("lead_hits",)}),
+    )
+
+    @admin.display(description="Cap?", boolean=True, ordering="vehicle_cap")
+    def has_cap(self, obj) -> bool:
+        return obj.vehicle_cap is not None
