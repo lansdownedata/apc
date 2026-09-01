@@ -38,6 +38,14 @@ def test_the_page_never_offers_a_vehicle_question(client):
     """Headcount plus trip shape produces the recommendation — spec §5.1 step 3."""
     html = client.get(PLAN_URL).content.decode().lower()
     assert "what kind of vehicle" not in html
+
+
+def test_the_recommendation_note_no_longer_pitches_a_looping_shuttle(client):
+    """Client feedback A3(3): never nudge a couple toward one coach looping for guests."""
+    html = client.get(PLAN_URL).content.decode()
+    assert "confirm the best fit" in html
+    assert "smaller coach running" not in html
+    assert "works out cheaper" not in html
     assert "vehicle type?" not in html
 
 
