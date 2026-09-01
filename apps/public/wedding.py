@@ -372,6 +372,14 @@ def build_notes(
         lines.append(
             "!! Hotels NOT BOOKED — guest pickup points unconfirmed. Confirm before quoting."
         )
+    if any(" × " in (leg.get("vehicle") or "") for leg in legs):
+        # A run the recommender splits across coaches. The client's guidance (feedback
+        # A3.3) is that looping one vehicle for wedding guests is a bad experience — so
+        # this is the agent's call, not an assumption baked into the quote.
+        lines.append(
+            "!! A run needs more than one coach — decide with the customer whether to "
+            "run the coaches together; do NOT default to a looping shuttle."
+        )
     movements = " | ".join(
         f"{format_clock(leg['time'])} {leg['title']} ({leg['pax']}p · {leg['vehicle']})"
         for leg in legs

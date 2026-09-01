@@ -126,6 +126,22 @@ def test_the_notes_list_every_movement_with_its_recommendation():
     assert "2 × 56-passenger coach" in notes
 
 
+def test_the_notes_flag_a_multi_coach_guest_run_for_agent_review():
+    """Client feedback A3(3): a run the recommender splits across coaches is an agent
+    decision (run them together vs. loop one), never an assumed looping shuttle."""
+    notes = _lead().notes  # default guest_count 105 -> two coaches
+    assert "!! " in notes
+    assert "looping shuttle" in notes
+
+
+def test_the_notes_do_not_flag_looping_when_one_vehicle_covers_the_run():
+    small = _legs()
+    for leg in small:
+        leg["pax"] = 30
+    notes = _lead(legs_json=json.dumps(small)).notes
+    assert "looping shuttle" not in notes
+
+
 def test_a_separate_ceremony_site_gets_its_own_line():
     notes = _lead(same_site="", ceremony_venue_name="St. Katharine Drexel Church").notes
     assert "Ceremony: St. Katharine Drexel Church" in notes
@@ -143,7 +159,12 @@ def test_unbooked_hotels_are_flagged_too():
 
 
 def test_a_confirmed_plan_carries_no_warning_line():
-    assert "!!" not in _lead().notes
+    # A single-vehicle guest count so the multi-coach advisory doesn't fire either —
+    # this test is about estimated-times / unbooked-hotels warnings being absent.
+    small = _legs()
+    for leg in small:
+        leg["pax"] = 30
+    assert "!!" not in _lead(legs_json=json.dumps(small)).notes
 
 
 # --- alerts ------------------------------------------------------------------------
