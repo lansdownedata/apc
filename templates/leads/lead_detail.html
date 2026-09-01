@@ -267,13 +267,15 @@
                 <i class="ti ti-pencil text-[15px]"></i>
               </button>
 
-              {# duplicate form #}
-              <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}">
+              {# duplicate — opens the quantity picker ($store.modal); the count rides on this hidden form #}
+              <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}" class="hidden">
                 {% csrf_token %}
-                <button type="submit" class="p-1 text-muted hover:text-ink transition-colors" title="Duplicate reservation">
-                  <i class="ti ti-copy text-[15px]"></i>
-                </button>
+                <input type="hidden" name="count" value="1">
               </form>
+              <button type="button" @click="duplicateReservation({{ res.pk }})"
+                      class="p-1 text-muted hover:text-ink transition-colors" title="Duplicate reservation">
+                <i class="ti ti-copy text-[15px]"></i>
+              </button>
 
               {# delete form (gated by modal) #}
               <form method="post" action="{% url 'reservation_delete' res.pk %}" id="form-del-{{ res.pk }}" class="hidden">

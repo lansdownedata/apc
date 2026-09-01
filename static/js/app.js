@@ -659,6 +659,35 @@ function quoteWorkspace(opts = {}) {
       this.syncVehicleSelect();
     },
     closeEditor() { this.editorOpen = false; },
+    /* "Copy Reservation ×N" — the wedding-shuttle case is several identical minibuses on
+     * one itinerary (feedback B1). Opens the shared modal (never a native prompt); the
+     * chosen count rides on the hidden per-row form, which posts normally. */
+    duplicateReservation(pk) {
+      const go = (n) => {
+        const count = Math.max(1, Math.min(20, Math.floor(Number(n)) || 1));
+        const form = document.getElementById(`form-dup-${pk}`);
+        if (!form) return;
+        form.querySelector('input[name="count"]').value = count;
+        form.submit();
+      };
+      window.__apcDuplicateGo = go;
+      Alpine.store("modal").show({
+        variant: "info",
+        title: "Duplicate reservation",
+        confirmText: "Duplicate",
+        html: `
+          <p class="text-[13px] leading-relaxed">Add copies of this trip to the quote — a wedding
+          shuttle running several identical vehicles, say. Each copy stays independently editable.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-1.5">
+            <button type="button" onclick="window.__apcDuplicateGo(1)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×1</button>
+            <button type="button" onclick="window.__apcDuplicateGo(2)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×2</button>
+            <button type="button" onclick="window.__apcDuplicateGo(3)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×3</button>
+            <button type="button" onclick="window.__apcDuplicateGo(5)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×5</button>
+            <span class="inline-block w-20"><input id="apc-dup-count" type="number" min="1" max="20" value="4" aria-label="Number of copies" class="field text-[13px]"></span>
+          </div>`,
+        onConfirm: () => go(document.getElementById("apc-dup-count").value),
+      });
+    },
     applyVehicleRateCard() {
       const v = this.vehicles.find((x) => String(x.id) === String(this.draft.vehicle));
       // No (active) vehicle → no rate card → no minimum. Min hours is read-only, so a

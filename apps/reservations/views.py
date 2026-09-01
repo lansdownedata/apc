@@ -7,6 +7,7 @@ import logging
 from datetime import date, time
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
@@ -71,20 +72,30 @@ def reservation_save(request) -> HttpResponse:
     return redirect("lead_detail", pk=lead.pk)
 
 
-@login_required
-@require_POST
-def reservation_duplicate(request, pk) -> HttpResponse:
-    res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
-    stops = list(res.stops.order_by("sequence"))
-    last = res.lead.reservations.order_by("-sort_order").first()
-    clone = Reservation.objects.get(pk=pk)
+# A wedding shuttle is the motivating case — four minibuses on one itinerary — but a
+# hand-built ?count keeps one click from spawning hundreds of rows.
+DUPLICATE_MAX = 20
+
+
+def _duplicate_count(request) -> int:
+    """How many copies to make: 1..DUPLICATE_MAX, and 1 for anything unparseable."""
+    try:
+        n = int(request.POST.get("count", 1))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(n, DUPLICATE_MAX))
+
+
+def _clone_reservation(source: Reservation, stops: list[Stop], sort_order: int) -> Reservation:
+    """One independent copy of `source` at `sort_order` — no LA link, revenue reset."""
+    clone = Reservation.objects.get(pk=source.pk)
     clone.pk = None
     clone.la_reservation_id = ""
     clone.trip_status = ""
     clone.revenue_status = Reservation.RevenueStatus.DEFERRED
     clone.recognized_at = None
     clone.recognized_amount = 0
-    clone.sort_order = (last.sort_order + 1) if last else 0
+    clone.sort_order = sort_order
     clone.save()
     Stop.objects.bulk_create(
         [
@@ -101,6 +112,19 @@ def reservation_duplicate(request, pk) -> HttpResponse:
         ]
     )
     clone.refresh_pickup_timezone()
+    return clone
+
+
+@login_required
+@require_POST
+def reservation_duplicate(request, pk) -> HttpResponse:
+    res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
+    stops = list(res.stops.order_by("sequence"))
+    last = res.lead.reservations.order_by("-sort_order").first()
+    next_order = (last.sort_order + 1) if last else 0
+    with transaction.atomic():
+        for offset in range(_duplicate_count(request)):
+            _clone_reservation(res, stops, next_order + offset)
     return redirect("lead_detail", pk=res.lead_id)
 
 
