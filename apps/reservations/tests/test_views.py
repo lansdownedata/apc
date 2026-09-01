@@ -109,6 +109,50 @@ def test_duplicate_clones_reservation_and_stops(client):
     assert clone.ordered_stops[1].note == "wait"
 
 
+def test_duplicate_count_makes_n_independent_copies(client):
+    res = TransferReservationFactory()
+    Stop.objects.filter(reservation=res).delete()
+    Stop.objects.create(reservation=res, sequence=0, address="A")
+    Stop.objects.create(reservation=res, sequence=1, address="B", note="wait")
+    client.force_login(UserFactory())
+
+    resp = client.post(reverse("reservation_duplicate", args=[res.pk]), {"count": 4})
+
+    assert resp.status_code == 302
+    clones = list(res.lead.reservations.exclude(pk=res.pk).order_by("sort_order"))
+    assert len(clones) == 4
+    assert len({c.pk for c in clones}) == 4  # four distinct rows
+    orders = [c.sort_order for c in clones]
+    assert orders == sorted(orders) and len(set(orders)) == 4  # sequential, no collision
+    for clone in clones:
+        assert [s.address for s in clone.ordered_stops] == ["A", "B"]
+        assert clone.ordered_stops[1].note == "wait"  # each got its own stop set
+
+
+def test_duplicate_without_count_makes_one_copy(client):
+    res = TransferReservationFactory()
+    client.force_login(UserFactory())
+    client.post(reverse("reservation_duplicate", args=[res.pk]))
+    assert res.lead.reservations.exclude(pk=res.pk).count() == 1
+
+
+def test_duplicate_count_is_capped(client):
+    from apps.reservations.views import DUPLICATE_MAX
+
+    res = TransferReservationFactory()
+    client.force_login(UserFactory())
+    client.post(reverse("reservation_duplicate", args=[res.pk]), {"count": 999})
+    assert res.lead.reservations.exclude(pk=res.pk).count() == DUPLICATE_MAX
+
+
+def test_duplicate_count_falls_back_to_one_for_bad_values(client):
+    res = TransferReservationFactory()
+    client.force_login(UserFactory())
+    for bad in ("0", "-3", "abc", "", "2.5"):
+        client.post(reverse("reservation_duplicate", args=[res.pk]), {"count": bad})
+    assert res.lead.reservations.exclude(pk=res.pk).count() == 5  # one per request
+
+
 def test_duplicate_carries_coordinates_airport_and_timezone(client):
     lax = AirportFactory(iata="LAX", timezone="America/Los_Angeles")
     res = TransferReservationFactory(pickup_timezone="America/Los_Angeles")
