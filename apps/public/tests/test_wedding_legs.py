@@ -11,12 +11,14 @@ import pytest
 from apps.public.wedding import (
     DEFAULT_CEREMONY_TIME,
     DEFAULT_END_TIME,
+    VEHICLE_CERTAIN_MAX,
     Site,
     WeddingPlan,
     early_return_leg,
     generate_legs,
     hotel_label,
     vehicle_for,
+    vehicle_is_certain,
 )
 
 
@@ -218,6 +220,32 @@ def test_generated_legs_carry_the_venues_cap():
         plan(venue=Site(name="The Oak Barn at Loyalty", vehicle_cap=40), guest_count=105)
     )
     assert at(legs, "guests-in").vehicle == "3 × 40-passenger coach"
+
+
+# --- when we can show a specific vehicle to the customer (APC-6 / feedback A3.1) ---
+
+
+def test_a_small_group_is_certain_without_any_venue_cap():
+    """At or below the coach threshold the class is unambiguous — no venue bans it."""
+    assert vehicle_is_certain(VEHICLE_CERTAIN_MAX, None)
+    assert vehicle_is_certain(6, None)
+
+
+def test_a_coach_sized_group_is_uncertain_without_a_venue_cap():
+    """Above the threshold the answer is 'how many coaches' — only the cap settles that."""
+    assert not vehicle_is_certain(VEHICLE_CERTAIN_MAX + 1, None)
+    assert not vehicle_is_certain(220, None)
+
+
+def test_a_venue_cap_on_file_makes_any_size_certain():
+    assert vehicle_is_certain(220, 40)
+    assert vehicle_is_certain(VEHICLE_CERTAIN_MAX + 1, 56)
+
+
+def test_the_certainty_threshold_is_the_vehicle_for_coach_boundary():
+    """The cut-off must track `vehicle_for`: the last count that names one class."""
+    assert vehicle_for(VEHICLE_CERTAIN_MAX, None) == "Executive mini coach"
+    assert vehicle_for(VEHICLE_CERTAIN_MAX + 1, None) == "Motorcoach"
 
 
 # --- "not sure yet" ----------------------------------------------------------------

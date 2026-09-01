@@ -45,6 +45,14 @@ EARLY_RETURN_FLOOR = 12
 # Our largest coach. A venue may cap lower; it can never raise this.
 MAX_COACH_SEATS = 56
 
+# The last headcount `vehicle_for` answers with a single class ("Executive mini coach").
+# At or below it the recommendation is safe to show a customer with no venue cap on file —
+# nothing we run bans a mini coach. Above it the answer is "how many coaches", which only
+# the venue's own limit settles, so we don't name a size without that limit (APC-6). The
+# itinerary then shows "We'll confirm the exact vehicle once we've checked the venue's
+# access" (`_wedding_itinerary.html`) instead of a coach size.
+VEHICLE_CERTAIN_MAX = 38
+
 GROUP_GUESTS = "guests"
 GROUP_PARTY = "party"
 GROUP_FAMILY = "family"
@@ -175,10 +183,22 @@ def vehicle_for(count: int, cap: int | None = None) -> str:
         return "Sprinter van"
     if count <= 24:
         return "Mini bus"
-    if count <= 38:
+    if count <= VEHICLE_CERTAIN_MAX:
         return "Executive mini coach"
     runs = math.ceil(count / limit)
     return "Motorcoach" if runs <= 1 else f"{runs} × {limit}-passenger coach"
+
+
+def vehicle_is_certain(count: int, cap: int | None = None) -> bool:
+    """Whether we can name a specific vehicle to the customer for `count` riders.
+
+    True when the venue's cap is on file (so the size is sized to fit it) or the group
+    is small enough that the class is unambiguous and no venue bans it. When neither
+    holds the itinerary shows a "we'll confirm once we've checked the venue" line
+    instead of a coach size (feedback A3.1 / APC-6). Mirrored in
+    `weddingPlanner.vehicleCertain()` — change one, change the other.
+    """
+    return cap is not None or count <= VEHICLE_CERTAIN_MAX
 
 
 def hotel_label(hotels: list[Site], hotels_tbd: bool) -> str:

@@ -2148,6 +2148,15 @@ function weddingPlanner(opts = {}) {
       const runs = Math.ceil(count / limit);
       return runs <= 1 ? "Motorcoach" : `${runs} × ${limit}-passenger coach`;
     },
+    /* Mirror of wedding.py:vehicle_is_certain — show a specific coach size only when the
+     * venue's cap is on file or the group is small enough (<= 38) that the class is
+     * unambiguous. Otherwise the itinerary shows the "we'll confirm" line (APC-6). */
+    vehicleCertain(count) {
+      return this.venueCap !== null || count <= 38;
+    },
+    get anyVehicleTbc() {
+      return (this.legs || []).some((l) => !l.skip && !this.vehicleCertain(l.pax));
+    },
     shortName(place) {
       const suffix = ` ${place.city || ""}`;
       return place.city && place.name.endsWith(suffix)
