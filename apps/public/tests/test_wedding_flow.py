@@ -46,6 +46,13 @@ def test_the_recommendation_note_no_longer_pitches_a_looping_shuttle(client):
     assert "confirm the best fit" in html
     assert "smaller coach running" not in html
     assert "works out cheaper" not in html
+
+
+def test_the_itinerary_offers_an_opt_in_early_return_run(client):
+    """APC-7 / A3.2 — the early return run is added by the couple, not generated."""
+    html = client.get(PLAN_URL).content.decode()
+    assert "Add an early return run" in html
+    assert "addEarlyReturn()" in html
     assert "vehicle type?" not in html
 
 

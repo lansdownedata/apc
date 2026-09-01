@@ -13,6 +13,7 @@ from apps.public.wedding import (
     DEFAULT_END_TIME,
     Site,
     WeddingPlan,
+    early_return_leg,
     generate_legs,
     hotel_label,
     vehicle_for,
@@ -50,20 +51,26 @@ def at(legs, leg_id):
 # --- which legs get generated ------------------------------------------------------
 
 
-def test_guests_only_makes_three_runs():
+def test_guests_only_makes_two_runs():
     legs = generate_legs(plan(groups=["guests"]))
-    assert ids(legs) == ["guests-in", "early-out", "final-out"]
+    assert ids(legs) == ["guests-in", "final-out"]
 
 
-def test_guests_and_party_make_four():
+def test_no_early_return_run_is_generated_by_default():
+    """APC-7 / feedback A3.2 — return timing is the customer's or the office's to set."""
+    assert "early-out" not in ids(generate_legs(plan(groups=["guests"])))
+    assert not any(leg.optional for leg in generate_legs(plan(groups=["guests"])))
+
+
+def test_guests_and_party_make_three():
     legs = generate_legs(plan(groups=["guests", "party"]))
-    assert len(legs) == 4
+    assert len(legs) == 3
     assert "party-in" in ids(legs)
 
 
 def test_family_adds_its_own_inbound_run():
     legs = generate_legs(plan(groups=["guests", "family"]))
-    assert ids(legs) == ["family-in", "guests-in", "early-out", "final-out"]
+    assert ids(legs) == ["family-in", "guests-in", "final-out"]
 
 
 def test_couple_only_is_a_single_two_passenger_exit():
@@ -114,7 +121,6 @@ def test_offsets_are_exact():
     assert at(legs, "family-in").time == time(14, 50)  # ceremony − 70
     assert at(legs, "guests-in").time == time(15, 0)  # ceremony − 60
     assert at(legs, "hop").time == time(16, 45)  # ceremony + 45
-    assert at(legs, "early-out").time == time(22, 15)  # end − 45
     assert at(legs, "final-out").time == time(23, 0)  # end
     assert at(legs, "exit").time == time(23, 0)  # end
 
@@ -151,18 +157,22 @@ def test_the_hop_carries_everyone_who_is_riding():
     assert at(legs, "hop").passengers == 125
 
 
-def test_the_early_return_is_forty_percent_of_guests():
-    assert at(generate_legs(plan(guest_count=105)), "early-out").passengers == 42
+def test_the_early_return_leg_is_forty_percent_of_guests():
+    assert early_return_leg(plan(guest_count=105)).passengers == 42
 
 
-def test_the_early_return_never_drops_below_twelve():
-    assert at(generate_legs(plan(guest_count=10)), "early-out").passengers == 12
+def test_the_early_return_leg_never_drops_below_twelve():
+    assert early_return_leg(plan(guest_count=10)).passengers == 12
 
 
-def test_the_early_return_is_the_only_optional_run():
-    legs = generate_legs(plan(groups=["guests", "party", "couple"]))
-    assert [leg.id for leg in legs if leg.optional] == ["early-out"]
-    assert at(legs, "early-out").why
+def test_the_early_return_leg_is_optional_and_carries_no_early_time():
+    """Opt-in only (APC-7): it lands on the end time, for the couple to pull earlier."""
+    leg = early_return_leg(plan(guest_count=105, end_time=time(23, 0)))
+    assert leg.optional
+    assert leg.why
+    assert leg.id == "early-out"
+    assert leg.time == time(23, 0)  # the end — never a suggested early time
+    assert leg.vehicle
 
 
 # --- vehicle recommendation --------------------------------------------------------
@@ -233,7 +243,7 @@ def test_confirmed_times_are_not_flagged_as_estimated():
 def test_hotels_tbd_still_produces_a_full_itinerary():
     """43% of inquiries are six months out. This path must complete, not block."""
     legs = generate_legs(plan(hotels=[], hotels_tbd=True, times_tbd=True))
-    assert len(legs) == 3
+    assert len(legs) == 2
     assert at(legs, "guests-in").origin.name == "Guest hotels (to be confirmed)"
 
 
