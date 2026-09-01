@@ -131,6 +131,17 @@ def test_a_separate_ceremony_site_gets_its_own_line():
     assert "Ceremony: St. Katharine Drexel Church" in notes
 
 
+def test_a_customer_added_early_return_is_called_out_for_the_office():
+    legs = _legs()
+    legs.append({**legs[0], "id": "early-out", "title": "Early return run", "time": "23:00"})
+    notes = _lead(legs_json=json.dumps(legs)).notes
+    assert "Customer added an early return run — confirm its pickup time." in notes
+
+
+def test_no_early_return_line_when_the_customer_did_not_add_one():
+    assert "early return run" not in _lead().notes.lower()
+
+
 def test_estimated_times_are_flagged_so_nobody_quotes_a_guess():
     notes = _lead(ceremony_time="", end_time="", times_tbd="1").notes
     assert "!! Times ESTIMATED" in notes

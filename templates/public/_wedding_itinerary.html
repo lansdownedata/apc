@@ -4,8 +4,9 @@
   `weddingPlanner()` scope.
 
   A removed leg collapses to a one-line "removed / Add back" row rather than vanishing,
-  so nothing is lost by accident — the early return run in particular is the one couples
-  drop and then need.
+  so nothing is lost by accident. The early return run is not generated — the couple
+  opts into it here ("Add an early return run"), and its time is theirs / the office's
+  to set, never ours to suggest (APC-7).
 {% endcomment %}
 <fieldset x-show="stepName === 'itinerary'">
   <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Your wedding day</span>
@@ -192,6 +193,13 @@
       </div>
     </template>
   </div>
+
+  {% comment %} opt-in early return run — never generated, never pre-timed (APC-7) {% endcomment %}
+  <button type="button" x-cloak x-show="canAddEarlyReturn" @click="addEarlyReturn()"
+          class="mt-1 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line px-4 py-3 text-[12.5px] font-semibold text-muted transition-colors hover:border-gold hover:text-ink focus-gold">
+    <span aria-hidden="true">+</span> Add an early return run
+    <span class="font-normal text-muted">for guests who leave before the last call</span>
+  </button>
 
   <p x-cloak x-show="venueCap"
      class="mt-4 flex gap-2.5 rounded-xl bg-amber-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-amber-700">

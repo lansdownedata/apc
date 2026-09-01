@@ -2209,12 +2209,8 @@ function weddingPlanner(opts = {}) {
         });
       }
       if (has("guests")) {
-        legs.push({
-          id: "early-out", time: this.shift(end, -45), title: "Early return run",
-          from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
-          pax: Math.max(12, Math.round(this.counts.guests * 0.4)), optional: true,
-          why: "Guests with young kids and older family almost always leave before the end.",
-        });
+        // No early return run by default (APC-7): the couple opts in with addEarlyReturn()
+        // and we never pre-fill an early time. Mirrors wedding.py.
         legs.push({
           id: "final-out", time: end, title: "Final return — last call",
           from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
@@ -2262,6 +2258,31 @@ function weddingPlanner(opts = {}) {
     dropLeg(leg) { leg.skip = true; },
     restoreLeg(leg) { leg.skip = false; },
     regenerate() { this.legs = this.generateLegs(); },
+    /* Opt-in early return run (APC-7). Not in the generated set and never pre-timed —
+     * it lands co-timed with the final run and the couple / office pull it earlier.
+     * Mirrors wedding.py:early_return_leg. */
+    get hasEarlyReturn() { return (this.legs || []).some((l) => l.id === "early-out"); },
+    get canAddEarlyReturn() {
+      return this.who.includes("guests") && !this.hasEarlyReturn && this.canAddLeg;
+    },
+    addEarlyReturn() {
+      if (!this.legs || this.hasEarlyReturn) return;
+      const end = this.timesTbd ? "23:00" : (this.endTime || "23:00");
+      const venue = { name: this.venueLabel, sub: this.siteLine(this.venue) };
+      const hotel = {
+        name: this.hotelLabel,
+        sub: (this.hotelsTbd || !this.hotels.length) ? "hotel not booked yet"
+          : (this.hotels.length === 1 ? this.siteLine(this.hotels[0]) : ""),
+      };
+      this.legs.push({
+        id: "early-out", time: end, title: "Early return run",
+        from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
+        pax: Math.max(12, Math.round(this.counts.guests * 0.4)), optional: true,
+        why: "Set the pickup time with the couple — many guests leave before the last call.",
+        trip_type: "transfer", hours: null,
+      });
+      this.resort();
+    },
     bump(key, delta) {
       this.counts[key] = Math.max(1, Math.min(400, (this.counts[key] || 1) + delta));
       this.legs = null;

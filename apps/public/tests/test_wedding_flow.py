@@ -38,6 +38,13 @@ def test_the_page_never_offers_a_vehicle_question(client):
     """Headcount plus trip shape produces the recommendation — spec §5.1 step 3."""
     html = client.get(PLAN_URL).content.decode().lower()
     assert "what kind of vehicle" not in html
+
+
+def test_the_itinerary_offers_an_opt_in_early_return_run(client):
+    """APC-7 / A3.2 — the early return run is added by the couple, not generated."""
+    html = client.get(PLAN_URL).content.decode()
+    assert "Add an early return run" in html
+    assert "addEarlyReturn()" in html
     assert "vehicle type?" not in html
 
 
