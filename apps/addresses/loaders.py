@@ -144,3 +144,38 @@ def load_venues(model, path: Path | str | None = None) -> tuple[int, int]:
             else:
                 updated += 1
     return created, updated
+
+
+def load_venue_caps(model, path: Path | str) -> tuple[int, list[tuple[str, str]]]:
+    """Update ONLY `vehicle_cap` / `cap_note` on existing venues, keyed on (name, kind).
+
+    The companion to `load_venues` for the client's venue -> vehicle-limit list (APC-9):
+    it never creates a row and never touches any other field, so a partial list can be
+    re-run against the directory without disturbing names, towns, `lead_hits`, or the
+    enrichment data. A blank cell writes the empty value (an explicit way to clear a cap
+    the client has withdrawn), matching `load_venues`.
+
+    CSV columns: `name,kind,vehicle_cap,cap_note` (`kind` blank -> "venue"). Returns
+    `(rows_updated, unmatched)` where `unmatched` is the (name, kind) pairs with no
+    directory row, for the caller to report.
+    """
+    path = Path(path)
+    updated = 0
+    unmatched: list[tuple[str, str]] = []
+    with path.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
+            kind = (row.get("kind") or "venue").strip() or "venue"
+            fields: dict = {}
+            if "vehicle_cap" in row:
+                fields["vehicle_cap"] = _int(row.get("vehicle_cap"))
+            if "cap_note" in row:
+                fields["cap_note"] = (row.get("cap_note") or "").strip()
+            hits = model.objects.filter(name=name, kind=kind).update(**fields) if fields else 0
+            if hits:
+                updated += hits
+            else:
+                unmatched.append((name, kind))
+    return updated, unmatched
