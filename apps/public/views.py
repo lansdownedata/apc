@@ -15,7 +15,12 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.addresses.search import MIN_VENUE_QUERY, VENUE_RESULT_LIMIT, search_venues
+from apps.addresses.search import (
+    MIN_VENUE_QUERY,
+    VENUE_RESULT_LIMIT,
+    VENUE_STRONG_MATCH_TARGET,
+    search_venues,
+)
 from apps.core.net import client_ip
 from apps.core.phone import to_e164
 from apps.integrations import calendly
@@ -353,9 +358,47 @@ def _locationiq_venue_results(q: str) -> list[dict]:
     return rows
 
 
+def _strong_directory_matches(q: str, rows: list[dict]) -> int:
+    """How many directory rows matched on the venue *name* (not just the town).
+
+    A city-only hit is real but weak — "Leesburg" surfaces a dozen rows and none of
+    them is what the couple typed. Only name matches count toward "the directory has
+    this covered, skip the paid lookup".
+    """
+    needle = q.strip().lower()
+    return sum(1 for r in rows if needle in (r.get("name") or "").lower())
+
+
+def _merge_locationiq_venues(q: str, directory: list[dict]) -> list[dict]:
+    """Directory rows first, then LocationIQ rows the directory didn't already have.
+
+    De-duplicated on (name, city) case-insensitively so a venue we curate doesn't also
+    appear as a raw geocoder hit; capped at VENUE_RESULT_LIMIT.
+    """
+    seen = {
+        ((r.get("name") or "").strip().lower(), (r.get("city") or "").strip().lower())
+        for r in directory
+    }
+    merged = list(directory)
+    for row in _locationiq_venue_results(q):
+        if len(merged) >= VENUE_RESULT_LIMIT:
+            break
+        key = ((row.get("name") or "").strip().lower(), (row.get("city") or "").strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged[:VENUE_RESULT_LIMIT]
+
+
 @require_GET
 def venue_search(request):
     """Typeahead over the curated Venue directory for the wedding intake (spec §6.1).
+
+    The directory is the primary source; LocationIQ is merged in — not used as an
+    either/or fallback — whenever the directory's name matches are thin, so a venue we
+    have never run to (Congressional, District Winery, …) still surfaces alongside the
+    curated rows (reconciliation §A1).
 
     Throttled like `public:geocode` — it is an unauthenticated endpoint that can reach a
     paid API — but on its own counter (see `_geocode_throttle_exceeded`).
@@ -363,9 +406,16 @@ def venue_search(request):
     if _geocode_throttle_exceeded(request, scope="venues"):
         return JsonResponse({"results": [], "degraded": False}, status=429)
     q = request.GET.get("q", "")
-    results = search_venues(q, request.GET.get("kind", ""))
-    if not results and len(q.strip()) >= MIN_VENUE_QUERY:
-        results = _locationiq_venue_results(q)
+    kind = request.GET.get("kind", "")
+    results = search_venues(q, kind)
+    if len(q.strip()) >= MIN_VENUE_QUERY:
+        if kind:
+            # The hotel / ceremony-site typeaheads stay single-kind: only reach for
+            # LocationIQ when the directory has nothing, and never mix in unkinded rows.
+            if not results:
+                results = _locationiq_venue_results(q)
+        elif _strong_directory_matches(q, results) < VENUE_STRONG_MATCH_TARGET:
+            results = _merge_locationiq_venues(q, results)
     return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})
 
 

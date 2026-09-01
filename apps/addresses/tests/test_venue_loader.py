@@ -68,6 +68,44 @@ def test_seed_venues_command_reports_counts(tmp_path, capsys):
     assert "Venues: 2 created, 0 updated." in capsys.readouterr().out
 
 
+def test_the_committed_csv_has_no_duplicate_name_kind_rows():
+    """load_venues keys on (name, kind); a dupe row would silently swallow the other."""
+    import csv as _csv
+
+    from apps.addresses.loaders import VENUES_CSV_PATH
+
+    with open(VENUES_CSV_PATH, newline="", encoding="utf-8") as fh:
+        keys = [
+            ((r["name"] or "").strip(), (r.get("kind") or "venue").strip())
+            for r in _csv.DictReader(fh)
+            if (r["name"] or "").strip()
+        ]
+    dupes = {k for k in keys if keys.count(k) > 1}
+    assert not dupes, dupes
+
+
+def test_the_committed_csv_covers_the_wider_dmv():
+    """DC + Maryland + Northern Virginia venues, not just Loudoun/Fauquier."""
+    from apps.addresses.loaders import VENUES_CSV_PATH
+
+    load_venues(Venue, VENUES_CSV_PATH)
+    for name in (
+        "Congressional Country Club",
+        "District Winery",
+        "Anderson House",
+        "Great Marsh Estate",
+        "Woodend Sanctuary",
+        "Whitehall Estate",  # a pre-existing row, still present
+    ):
+        assert Venue.objects.filter(name=name).exists(), name
+    # New rows carry no fabricated inbound-lead history.
+    assert Venue.objects.get(name="District Winery").lead_hits == 0
+    assert Venue.objects.filter(state="DC").count() >= 5
+    assert Venue.objects.filter(state="MD").count() >= 15
+    # The original Loudoun rows are untouched.
+    assert Venue.objects.get(name="The Oak Barn at Loyalty").vehicle_cap == 40
+
+
 def test_the_committed_csv_seeds_the_recurring_places(django_db_blocker):
     """The shipped directory covers the places that recur across the 1,491 inquiries."""
     from apps.addresses.loaders import VENUES_CSV_PATH

@@ -30,7 +30,7 @@
                 x-text="venue ? ` · we've quoted here ${venue.lead_hits} times` : ''"></span>
         </span>
       </span>
-      <button type="button" @click="clearPlace('venue'); query.venue = ''"
+      <button type="button" @click="clearPlace('venue')"
               class="shrink-0 rounded text-[12px] font-semibold text-muted focus-gold transition-colors hover:text-ink">Change</button>
     </div>
 
@@ -71,7 +71,7 @@
         <span class="block text-[13.5px] font-semibold text-ink" x-text="ceremony && ceremony.name"></span>
         <span class="block text-[11.5px] text-muted" x-text="ceremony && ceremony.location_line"></span>
       </span>
-      <button type="button" @click="clearPlace('ceremony'); query.ceremony = ''"
+      <button type="button" @click="clearPlace('ceremony')"
               class="shrink-0 rounded text-[12px] font-semibold text-muted focus-gold transition-colors hover:text-ink">Change</button>
     </div>
     <div x-show="!ceremony">
