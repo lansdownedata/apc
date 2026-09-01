@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# MCP (server config with local endpoints/keys — session-local, never commit)
+.mcp.json
+
 # Virtual environment
 .venv/
 venv/
