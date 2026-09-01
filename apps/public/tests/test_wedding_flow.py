@@ -56,6 +56,15 @@ def test_the_itinerary_offers_an_opt_in_early_return_run(client):
     assert "vehicle type?" not in html
 
 
+def test_the_vehicle_chip_is_gated_on_what_we_can_honour(client):
+    """APC-6 / A3.1 — a specific coach size only shows with a venue cap or a small group;
+    otherwise the customer sees the 'we'll confirm once we've checked the venue' line."""
+    html = client.get(PLAN_URL).content.decode()
+    assert "vehicleCertain(leg.pax)" in html
+    assert "confirm the exact vehicle once we" in html
+    assert "checked the venue" in html
+
+
 def test_the_page_carries_the_honeypot(client):
     assert 'name="company"' in client.get(PLAN_URL).content.decode()
 

@@ -119,8 +119,16 @@
                      class="w-9 border-0 bg-transparent p-0 text-right font-mono2 text-[11px] font-semibold text-ink focus:outline-none">
               passengers
             </span>
-            <span class="chip-gold inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            {% comment %}
+              The coach size shows only when we can honour it (APC-6 / feedback A3.1) —
+              a venue cap on file, or a group small enough that the class is unambiguous.
+              Otherwise a neutral chip, with the "we'll confirm" line below the timeline.
+            {% endcomment %}
+            <span x-show="vehicleCertain(leg.pax)"
+                  class="chip-gold inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
                   x-text="vehicleFor(leg.pax)"></span>
+            <span x-cloak x-show="!vehicleCertain(leg.pax)"
+                  class="chip-ring inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium text-muted">vehicle confirmed after venue check</span>
             <span x-cloak x-show="leg.optional"
                   class="chip-ring inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">optional</span>
           </div>
@@ -207,6 +215,13 @@
     <span><b class="font-semibold" x-text="`${venueLabel} caps vehicles at ${venueCap} passengers.`"></b>
       Every run above is already sized to fit &mdash; that&rsquo;s why the larger groups show more
       than one coach.</span>
+  </p>
+
+  {% comment %} no cap on file and a coach-sized group — don't name a size we can't stand behind (APC-6) {% endcomment %}
+  <p x-cloak x-show="anyVehicleTbc"
+     class="mt-4 flex gap-2.5 rounded-xl bg-surface2 px-3.5 py-3 text-[12.5px] leading-relaxed text-muted ring-1 ring-line">
+    <span aria-hidden="true">&#9670;</span>
+    <span>We&rsquo;ll confirm the exact vehicle once we&rsquo;ve checked the venue&rsquo;s access.</span>
   </p>
 
   {% comment %} Recommendations, never a number — quoting stays with the office. {% endcomment %}
