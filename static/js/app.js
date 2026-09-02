@@ -1712,6 +1712,22 @@ function quoteSteps(opts = {}) {
     // so x-text would only re-run when some *other* reactive prop changed and would
     // render a stale trip.
     summaryText: "",
+    _onPop: null,
+
+    // APC-5 / feedback A2: Back off step 2 returns to step 1, not off the page — the
+    // browser's Back button and the on-page one share the popstate route. The DOM inputs
+    // sit under x-show (never removed), so stepping back and forth keeps what was typed,
+    // and the browser's bfcache covers a full navigation away and back.
+    init() {
+      if (!this.twoStep) return;
+      this._onPop = (e) => { this.step = (e.state && e.state.quoteStep) || 1; };
+      window.addEventListener("popstate", this._onPop);
+      history.replaceState({ ...history.state, quoteStep: 1 }, "");
+      if (this.step === 2) history.pushState({ ...history.state, quoteStep: 2 }, "");
+    },
+    destroy() {
+      if (this._onPop) window.removeEventListener("popstate", this._onPop);
+    },
 
     submitLabel() {
       if (!this.twoStep) return "Request a quote";
@@ -1759,10 +1775,12 @@ function quoteSteps(opts = {}) {
       if (!this.validateStepOne()) return;
       this.summaryText = this.summary();
       this.step = 2;
+      history.pushState({ ...history.state, quoteStep: 2 }, "");
     },
 
     back() {
-      this.step = 1;
+      // popstate flips step back to 1 and keeps the browser Back button in sync.
+      if (this.step === 2) history.back();
     },
 
     // Reads flatpickr's altInput display values, not the raw Y-m-d / H:i.
@@ -2061,14 +2079,73 @@ function weddingPlanner(opts = {}) {
     active: { venue: -1, ceremony: -1, hotel: -1 },
     _ctl: {},
 
+    // APC-5 / feedback A2: keep the browser's Back button and the on-page one on one
+    // route, and don't lose answers when the visitor navigates away and returns.
+    _storageKey: "apc-wedding-plan-v1",
+    _onPop: null,
+    _onHide: null,
+
     init() {
       // A plan that already has an itinerary — a customer's resume link, or the office
-      // reopening a saved wedding — drops straight onto it. A brand-new one starts at
-      // step 1.
+      // reopening a saved wedding — drops straight onto it. A brand-new customer visit
+      // rehydrates whatever a previous, abandoned visit had entered.
       if ((this.resumed || this.portal) && this.legs) {
         this.step = WEDDING_STEPS.indexOf("itinerary");
+      } else if (!this.portal) {
+        this._restore();
       }
+      // Seed the entry for the step we open on. The first Back then leaves the page
+      // (correct — Back off step 1 goes home) and every later Back walks one step.
+      history.replaceState({ ...history.state, weddingStep: this.step }, "");
+      this._onPop = (e) => this._goto((e.state && e.state.weddingStep) || 0, false);
+      this._onHide = () => this._persist();
+      window.addEventListener("popstate", this._onPop);
+      window.addEventListener("pagehide", this._onHide);
       this.track(this.stepName);
+    },
+    destroy() {
+      if (this._onPop) window.removeEventListener("popstate", this._onPop);
+      if (this._onHide) window.removeEventListener("pagehide", this._onHide);
+    },
+
+    /* Save / restore the whole answer set so a full navigation away and back doesn't
+     * wipe it (A2). sessionStorage, not local: it is this visit's draft, not a
+     * cross-session one — the emailed resume link is the durable path. */
+    _persist() {
+      if (this._submitted) return;
+      try {
+        sessionStorage.setItem(this._storageKey, JSON.stringify({
+          step: this.step, date: this.date, venue: this.venue, venueName: this.venueName,
+          sameSite: this.sameSite, ceremony: this.ceremony, ceremonyName: this.ceremonyName,
+          who: this.who, counts: this.counts, hotels: this.hotels, hotelsTbd: this.hotelsTbd,
+          ceremonyTime: this.ceremonyTime, endTime: this.endTime, timesTbd: this.timesTbd,
+          legs: this.legs, contact: this.contact,
+        }));
+      } catch (e) { /* private mode / quota — the flow still works, just no local resume */ }
+    },
+    _restore() {
+      let s = null;
+      try { s = JSON.parse(sessionStorage.getItem(this._storageKey) || "null"); } catch (e) { s = null; }
+      if (!s) return;
+      this.date = s.date || "";
+      this.venue = s.venue || null;
+      this.venueName = s.venueName || "";
+      this.sameSite = s.sameSite !== false;
+      this.ceremony = s.ceremony || null;
+      this.ceremonyName = s.ceremonyName || "";
+      this.who = Array.isArray(s.who) ? s.who : [];
+      this.counts = s.counts || this.counts;
+      this.hotels = Array.isArray(s.hotels) ? s.hotels : [];
+      this.hotelsTbd = !!s.hotelsTbd;
+      this.ceremonyTime = s.ceremonyTime || "16:00";
+      this.endTime = s.endTime || "23:00";
+      this.timesTbd = !!s.timesTbd;
+      this.legs = (s.legs && s.legs.length) ? s.legs.map((l) => ({ ...l })) : null;
+      this.contact = s.contact || this.contact;
+      this.step = Math.min(Math.max(s.step || 0, 0), WEDDING_STEPS.length - 1);
+    },
+    _clearPersist() {
+      try { sessionStorage.removeItem(this._storageKey); } catch (e) { /* nothing to clear */ }
     },
 
     /* ------------------------------------------------------------------ step model */
@@ -2105,21 +2182,30 @@ function weddingPlanner(opts = {}) {
       }
     },
 
+    /* The one place `step` moves. next(), the on-page Back button, and the browser's
+     * Back button all land here; `push` writes a history entry (a forward move),
+     * popstate replays one that already exists (APC-5 / A2). */
+    _goto(i, push = true) {
+      i = Math.max(0, Math.min(i, WEDDING_STEPS.length - 1));
+      if (i === this.step) return;
+      if (WEDDING_STEPS[i] === "itinerary" && !this.legs) this.legs = this.generateLegs();
+      if (i > this.step) this.track(this.stepName, "completed");
+      this.step = i;
+      if (push) history.pushState({ ...history.state, weddingStep: i }, "", `#${this.stepName}`);
+      this._persist();
+      this.track(this.stepName);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
     next() {
       if (!this.canAdvance()) return;
       let i = this.step + 1;
       while (i < WEDDING_STEPS.length && !this.visibleSteps.includes(WEDDING_STEPS[i])) i++;
-      if (WEDDING_STEPS[i] === "itinerary" && !this.legs) this.legs = this.generateLegs();
-      this.track(this.stepName, "completed");
-      this.step = Math.min(i, WEDDING_STEPS.length - 1);
-      this.track(this.stepName);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      this._goto(Math.min(i, WEDDING_STEPS.length - 1));
     },
     back() {
-      let i = this.step - 1;
-      while (i > 0 && !this.visibleSteps.includes(WEDDING_STEPS[i])) i--;
-      this.step = Math.max(0, i);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      // Drive it through the browser so the on-page button and the browser Back button
+      // are one path — popstate restores the previous step. Off step 0 nothing to pop.
+      if (this.step > 0) history.back();
     },
 
     /* Step-level drop-off is the only way to tell whether the deep path is worth its
@@ -2449,6 +2535,10 @@ function weddingPlanner(opts = {}) {
       if (!this.canAdvance()) { e.preventDefault(); return; }
       this.track("contact", "completed");
       this.submitting = true;
+      // The plan is being sent — drop the local draft so returning to /weddings/plan/
+      // starts fresh rather than resurrecting a submitted wedding.
+      this._submitted = true;
+      this._clearPersist();
     },
   };
 }

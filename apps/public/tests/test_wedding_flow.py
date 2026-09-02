@@ -2,6 +2,7 @@
 
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from django.core.cache import cache
@@ -14,6 +15,18 @@ from .test_wedding_form import _legs, _post
 pytestmark = pytest.mark.django_db
 
 PLAN_URL = "/weddings/plan/"
+
+APP_JS = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+
+
+def _fn_source(name: str) -> str:
+    """The body of a top-level `function <name>(` up to its `window.<name> =` export.
+
+    Built with str.split rather than a slice expression: Tailwind's JIT scans this file
+    and would turn a bracket-colon slice into a junk arbitrary-value class (CLAUDE.md).
+    """
+    after = APP_JS.split(f"function {name}(", 1)[1]
+    return after.split(f"window.{name} =", 1)[0]
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +67,27 @@ def test_the_itinerary_offers_an_opt_in_early_return_run(client):
     assert "Add an early return run" in html
     assert "addEarlyReturn()" in html
     assert "vehicle type?" not in html
+
+
+def test_wedding_flow_wires_browser_back_to_the_previous_step(client):
+    """APC-5 / A2 — every step advance is a history entry, Back walks one step, and the
+    on-page Back button shares that route (`history.back()`)."""
+    planner = _fn_source("weddingPlanner")
+    assert 'addEventListener("popstate"' in planner
+    assert "history.pushState(" in planner
+    assert "history.replaceState(" in planner
+    assert "history.back()" in planner
+    # the single code route: one internal mover that popstate replays without pushing
+    assert "_goto(" in planner
+
+
+def test_wedding_flow_persists_answers_across_a_full_navigation(client):
+    """APC-5 / A2 — leaving the page and coming back must not wipe entered answers."""
+    planner = _fn_source("weddingPlanner")
+    assert "sessionStorage" in planner
+    assert 'addEventListener("pagehide"' in planner
+    # a completed submission clears the saved plan so it doesn't resurrect
+    assert planner.count("sessionStorage") >= 3  # persist + restore + clear
 
 
 def test_the_vehicle_chip_is_gated_on_what_we_can_honour(client):

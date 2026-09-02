@@ -5,6 +5,19 @@ from pathlib import Path
 import pytest
 from django.test import Client
 
+APP_JS = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+
+
+def test_hero_two_step_widget_wires_browser_back(db):
+    """APC-5 / A2 — Back from step 2 of the hero widget returns to step 1 (not off the
+    page), and the on-page Back button shares that route."""
+    # str.split, not a slice expression — Tailwind's JIT scans this file and a
+    # bracket-colon slice literal would leak in as a junk arbitrary-value class.
+    steps = APP_JS.split("function quoteSteps(", 1)[1].split("window.quoteSteps =", 1)[0]
+    assert 'addEventListener("popstate"' in steps
+    assert "history.pushState(" in steps
+    assert "history.back()" in steps
+
 
 def test_booking_widget_renders_address_autocomplete(db):
     html = Client().get("/bookings/").content.decode()
