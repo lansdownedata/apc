@@ -32,45 +32,28 @@
       <a href="{% url 'public:wedding_plan' %}"
          class="group relative rounded-2xl bg-surface p-5 ring-1 ring-line transition-all focus-gold hover:shadow-lg hover:ring-gold/[0.4] motion-safe:hover:-translate-y-0.5 sm:col-span-3">
         <span class="chip-gold absolute right-4 top-4 inline-flex items-center rounded-full px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em]">Most requested</span>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-             class="h-[22px] w-[22px] text-goldd">
-          <path d="M12 21s-6.5-4.35-8.5-8A4.75 4.75 0 0 1 12 7.6a4.75 4.75 0 0 1 8.5 5.4c-2 3.65-8.5 8-8.5 8Z"/>
-        </svg>
+        {% icon "heart" class="h-[22px] w-[22px] text-goldd" %}
         <span class="mt-3 block font-display text-[19px] font-semibold text-ink">Wedding</span>
         <span class="mt-0.5 block text-[12.5px] text-muted">Shuttles, wedding party, the whole day</span>
       </a>
 
       <a href="/bookings/?service=airport" @click.prevent="choose('airport')"
          class="group rounded-2xl bg-surface p-4 ring-1 ring-line transition-all focus-gold hover:shadow-lg hover:ring-gold/[0.4] motion-safe:hover:-translate-y-0.5 sm:p-5">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-             class="h-[22px] w-[22px] text-goldd">
-          <path d="M10.5 3.5a1.5 1.5 0 0 1 3 0V9l7.5 4.2v2.1L13.5 13v4.4l2.4 1.7v1.6L12 19.6l-3.9 1.1v-1.6l2.4-1.7V13L3 15.3v-2.1L10.5 9Z"/>
-        </svg>
+        {% icon "plane" class="h-[22px] w-[22px] text-goldd" %}
         <span class="mt-3 block text-[15px] font-semibold text-ink">Airport Transfer</span>
         <span class="mt-0.5 block text-[12.5px] text-muted">IAD, DCA, BWI — arrivals and departures</span>
       </a>
 
       <a href="/bookings/?service=corporate" @click.prevent="choose('corporate')"
          class="group rounded-2xl bg-surface p-4 ring-1 ring-line transition-all focus-gold hover:shadow-lg hover:ring-gold/[0.4] motion-safe:hover:-translate-y-0.5 sm:p-5">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-             class="h-[22px] w-[22px] text-goldd">
-          <path d="M3.5 20.5h17M5 20.5V6.2a1.2 1.2 0 0 1 1.2-1.2h7.1A1.2 1.2 0 0 1 14.5 6.2v14.3M14.5 10.5h3.3a1.2 1.2 0 0 1 1.2 1.2v8.8"/>
-          <path d="M8 8.5h3.5M8 12h3.5M8 15.5h3.5"/>
-        </svg>
+        {% icon "building" class="h-[22px] w-[22px] text-goldd" %}
         <span class="mt-3 block text-[15px] font-semibold text-ink">Corporate</span>
         <span class="mt-0.5 block text-[12.5px] text-muted">Roadshows, shuttles, executive travel</span>
       </a>
 
       <a href="/contact/"
          class="group rounded-2xl bg-surface p-4 ring-1 ring-line transition-all focus-gold hover:shadow-lg hover:ring-gold/[0.4] motion-safe:hover:-translate-y-0.5 sm:p-5">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-             class="h-[22px] w-[22px] text-goldd">
-          <path d="M4 5.5h16v11H9.5L5.5 20v-3.5H4Z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/>
-        </svg>
+        {% icon "message" class="h-[22px] w-[22px] text-goldd" %}
         <span class="mt-3 block text-[15px] font-semibold text-ink">Something else</span>
         <span class="mt-0.5 block text-[12.5px] text-muted">Tell us what you need</span>
       </a>

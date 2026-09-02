@@ -7,7 +7,9 @@
   one copy. Requires an enclosing `weddingPlanner()` scope.
 {% endcomment %}
 <fieldset x-show="stepName === 'date'">
-  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Wedding transportation</span>
+  <span class="flex items-center gap-1.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+    {% icon "diamond" class="h-3.5 w-3.5" %} Wedding transportation
+  </span>
   <h1 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
     When&rsquo;s the big day?
   </h1>
@@ -28,7 +30,7 @@
   </div>
 
   <div x-cloak x-show="date" class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
-    <span aria-hidden="true">&#9670;</span>
+    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span>
       <b class="font-semibold" x-text="fmtDate(date)"></b>
       <span x-show="leadTimeNote" class="block" x-text="leadTimeNote && leadTimeNote.text"></span>

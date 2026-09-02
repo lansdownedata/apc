@@ -38,7 +38,7 @@
     ask for it.
   {% endcomment %}
   <p class="mt-4 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
-    <span aria-hidden="true">&#9670;</span>
+    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span>Almost every venue has a hard end time in the contract &mdash; it&rsquo;s usually
       <b class="font-semibold">10:00 or 11:00&nbsp;PM</b>. It&rsquo;s the single biggest thing
       that changes your price, so it&rsquo;s worth checking.</span>
@@ -48,7 +48,7 @@
           :class="timesTbd ? 'bg-goldl ring-2 ring-gold' : 'bg-surface ring-1 ring-line hover:bg-surface2'"
           class="relative mt-4 block w-full rounded-xl px-4 py-4 text-left transition-all focus-gold">
     <span x-cloak x-show="timesTbd"
-          class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">&check;</span>
+          class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">{% icon "check" class="h-3 w-3" %}</span>
     <span class="block text-[14px] font-semibold text-ink">We don&rsquo;t have times yet</span>
     <span class="block text-[12px] text-muted">We&rsquo;ll build a typical timeline you can adjust later &mdash; a 4:00 PM ceremony and an 11:00 PM end</span>
   </button>

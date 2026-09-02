@@ -11,7 +11,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
 <style>
   :root{--gold:199 162 78;--text:23 25 29;--muted:107 114 124;--surface:255 255 255;--border:229 226 217}
   body{margin:0;min-height:100vh;display:grid;place-items:center;padding:40px 20px;
@@ -49,12 +48,12 @@
     <img class="logo" src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter">
 
     {% if is_lost or is_expired %}
-      <div class="badge"><i class="ti ti-clock-x" style="font-size:26px"></i></div>
+      <div class="badge">{% icon "clock-x" attrs='width="26" height="26"' %}</div>
       <h1>This quote is no longer active</h1>
       <p>Please contact us for an updated quote for reservation {{ quote_no }}.</p>
 
     {% elif not pay_kind %}
-      <div class="badge"><i class="ti ti-check" style="font-size:28px"></i></div>
+      <div class="badge">{% icon "check" attrs='width="28" height="28"' %}</div>
       <h1>You're all set</h1>
       <p>Reservation {{ quote_no }} is paid in full. Nothing further is due.</p>
 
@@ -71,7 +70,7 @@
       <button id="pay-button" type="button" class="btn-gold">
         Pay ${{ amount|floatformat:2|intcomma }}
       </button>
-      <div class="secure"><i class="ti ti-lock"></i> Card details are handled securely by Stripe.</div>
+      <div class="secure">{% icon "lock" attrs='width="14" height="14" style="vertical-align:-2px"' %} Card details are handled securely by Stripe.</div>
 
       <script src="https://js.stripe.com/v3/"></script>
       <script src="{% static 'js/stripe-pay.js' %}?v={{ asset_version }}"></script>

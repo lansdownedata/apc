@@ -15,9 +15,7 @@
 {% endcomment %}
 <section class="mx-auto px-4 py-20 sm:px-6 lg:px-8 {% if wedding_lead %}max-w-2xl{% else %}max-w-xl text-center{% endif %}">
   <div class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gold/[0.14] text-gold">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-7 w-7">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-    </svg>
+    {% icon "check" class="h-7 w-7" %}
   </div>
 
   {% if wedding_lead %}

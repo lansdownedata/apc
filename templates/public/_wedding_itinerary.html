@@ -9,7 +9,9 @@
   to set, never ours to suggest (APC-7).
 {% endcomment %}
 <fieldset x-show="stepName === 'itinerary'">
-  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Your wedding day</span>
+  <span class="flex items-center gap-1.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+    {% icon "confetti" class="h-3.5 w-3.5" %} Your wedding day
+  </span>
   <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
     Here&rsquo;s how we&rsquo;d run it.
   </h2>
@@ -24,7 +26,7 @@
 
   <p x-cloak x-show="resumed"
      class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
-    <span aria-hidden="true">&#9670;</span>
+    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span><b class="font-semibold">Welcome back.</b> This is the plan we have on file
       (<span class="font-mono2" x-text="quoteNo"></span>). Change anything and send it again &mdash;
       it replaces what we&rsquo;re holding, it doesn&rsquo;t start a second request.</span>
@@ -88,14 +90,14 @@
 
           <div class="mt-2.5 space-y-1 text-[12.5px] leading-relaxed">
             <div class="flex gap-2">
-              <span aria-hidden="true" class="pt-0.5 text-[11px] text-gold">&#9679;</span>
+              {% icon "point" variant="filled" class="mt-1 h-2.5 w-2.5 shrink-0 text-gold" %}
               <span class="text-ink">
                 <span x-text="leg.from"></span>
                 <small x-cloak x-show="leg.from_sub" class="block text-muted" x-text="leg.from_sub"></small>
               </span>
             </div>
             <div class="flex gap-2">
-              <span aria-hidden="true" class="pt-0.5 text-[11px] text-gold">&#9660;</span>
+              {% icon "map-pin" variant="filled" class="mt-0.5 h-3 w-3 shrink-0 text-gold" %}
               <span class="text-ink">
                 <span x-text="leg.to"></span>
                 <small x-cloak x-show="leg.to_sub" class="block text-muted" x-text="leg.to_sub"></small>
@@ -195,7 +197,7 @@
 
           <p x-cloak x-show="leg.optional && leg.why"
              class="mt-2.5 flex gap-2.5 rounded-xl bg-sky-50 px-3 py-2.5 text-[12.5px] leading-relaxed text-sky-700">
-            <span aria-hidden="true">&#9670;</span><span x-text="leg.why"></span>
+            {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}<span x-text="leg.why"></span>
           </p>
         </div>
       </div>
@@ -211,7 +213,7 @@
 
   <p x-cloak x-show="venueCap"
      class="mt-4 flex gap-2.5 rounded-xl bg-amber-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-amber-700">
-    <span aria-hidden="true">&#9873;</span>
+    {% icon "bulb" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span><b class="font-semibold" x-text="`${venueLabel} caps vehicles at ${venueCap} passengers.`"></b>
       Every run above is already sized to fit &mdash; that&rsquo;s why the larger groups show more
       than one coach.</span>
@@ -220,13 +222,13 @@
   {% comment %} no cap on file and a coach-sized group — don't name a size we can't stand behind (APC-6) {% endcomment %}
   <p x-cloak x-show="anyVehicleTbc"
      class="mt-4 flex gap-2.5 rounded-xl bg-surface2 px-3.5 py-3 text-[12.5px] leading-relaxed text-muted ring-1 ring-line">
-    <span aria-hidden="true">&#9670;</span>
+    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span>We&rsquo;ll confirm the exact vehicle once we&rsquo;ve checked the venue&rsquo;s access.</span>
   </p>
 
   {% comment %} Recommendations, never a number — quoting stays with the office. {% endcomment %}
   <p class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
-    <span aria-hidden="true">&#9670;</span>
+    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span>Vehicle types are our recommendation, not a fixed quote &mdash; our team will
       confirm the best fit.</span>
   </p>

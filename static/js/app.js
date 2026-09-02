@@ -1990,22 +1990,24 @@ window.contactPicker = contactPicker;
  * sends. Change one and change the other, or the preview and the quote drift apart.
  */
 const WEDDING_STEPS = ["date", "venue", "who", "hotels", "times", "itinerary", "contact"];
+/* Tabler icon inner-markup (outline, stroke-width 2), matched to `static/icons/`.
+ * The template supplies the <svg> wrapper (h-[22px] w-[22px], currentColor). */
 const WEDDING_GROUPS = [
   {
     key: "guests", title: "Our guests", hint: "Shuttles between hotels and the venue",
-    icon: '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17.5" cy="9.5" r="2.2"/><path d="M16 15.6A5 5 0 0 1 22 20"/>',
+    icon: '<path d="M10 13a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/><path d="M8 21v-1a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v1"/><path d="M15 5a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/><path d="M17 10h2a2 2 0 0 1 2 2v1"/><path d="M5 5a2 2 0 1 0 4 0a2 2 0 0 0 -4 0"/><path d="M3 13v-1a2 2 0 0 1 2 -2h2"/>',
   },
   {
     key: "party", title: "The wedding party", hint: "Bridesmaids, groomsmen, the two of you",
-    icon: '<circle cx="9" cy="14" r="4.2"/><circle cx="15" cy="14" r="4.2"/><path d="M9 9.8 11 5h2l2 4.8"/>',
+    icon: '<path d="M4 5h2"/><path d="M5 4v2"/><path d="M11.5 4l-.5 2"/><path d="M18 5h2"/><path d="M19 4v2"/><path d="M15 9l-1 1"/><path d="M18 13l2 -.5"/><path d="M18 19h2"/><path d="M19 18v2"/><path d="M14 16.518l-6.518 -6.518l-4.39 9.58a1 1 0 0 0 1.329 1.329l9.579 -4.39z"/>',
   },
   {
     key: "family", title: "Family & VIPs", hint: "Parents, grandparents, close family",
-    icon: '<path d="M7 3h10l-1.2 6.2A4 4 0 0 1 11.9 12h-.2A4 4 0 0 1 8.2 9.2Z"/><path d="M12 12v6"/><path d="M8.5 21h7"/><path d="M9 18h6"/>',
+    icon: '<path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0 -3 -3.85"/>',
   },
   {
     key: "couple", title: "Just the two of us", hint: "A private car for the exit",
-    icon: '<path d="M4 16v-3.2L6 8h12l2 4.8V16"/><path d="M4 16h16"/><circle cx="7.5" cy="17.6" r="1.6"/><circle cx="16.5" cy="17.6" r="1.6"/><path d="M9 8V6.2A1.2 1.2 0 0 1 10.2 5h3.6A1.2 1.2 0 0 1 15 6.2V8"/>',
+    icon: '<path d="M7 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M17 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M5 17h-2v-6l2 -5h9l4 5h1a2 2 0 0 1 2 2v4h-2m-4 0h-6m-6 -6h15m-6 0v-5"/>',
   },
 ];
 const WEDDING_MAX_LEGS = 12;

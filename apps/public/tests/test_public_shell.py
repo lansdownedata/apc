@@ -17,9 +17,10 @@ def test_weddingwire_snippet_rendered_when_set(db):
 def test_public_shell_loads_foundation(db):
     html = Client().get("/").content.decode()
     # which faces load is owned by apps/core/tests/test_typography.py — this only
-    # asserts the shell pulls a webfont stylesheet at all
+    # asserts the shell pulls the font stylesheet at all
     assert "fonts.googleapis.com/css2?family=" in html
-    assert "@tabler/icons-webfont" in html
+    # icons are inline SVG via {% icon %} now, not a webfont — see apps/core/tests/test_icons.py
+    assert "@tabler/icons-webfont" not in html
     assert "intlTelInput" in html
     assert "flatpickr" in html
     assert "alpinejs" in html

@@ -83,7 +83,7 @@
             <label class="!mb-0 block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
             <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
                     class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
-              <i class="ti ti-x text-[13px]"></i>
+              {% icon "x" class="h-[13px] w-[13px]" %}
             </button>
           </div>
           <div class="sa-search" @keydown.escape="closeRow(i)"
@@ -129,7 +129,7 @@
           <label for="bw-dropoff" class="!mb-0 block text-[12px] font-medium text-muted">Drop-off location</label>
           <button type="button" @click="add()" x-show="canAdd()"
                   class="inline-flex shrink-0 items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
-            <i class="ti ti-plus text-[13px]"></i> Add a stop
+            {% icon "plus" class="h-[13px] w-[13px]" %} Add a stop
           </button>
         </div>
         {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value hide_label=1 flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}

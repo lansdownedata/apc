@@ -41,7 +41,7 @@
 
   <div x-cloak x-show="venue && venue.cap_note"
        class="mt-4 flex gap-2.5 rounded-xl bg-amber-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-amber-700">
-    <span aria-hidden="true">&#9873;</span>
+    {% icon "bulb" class="mt-0.5 h-4 w-4 shrink-0" %}
     <span><b class="font-semibold">Good to know.</b> <span x-text="venue && venue.cap_note"></span>
       We&rsquo;ll size the run around that automatically.</span>
   </div>

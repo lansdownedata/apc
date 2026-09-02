@@ -30,8 +30,9 @@
               :class="who.includes(group.key) ? 'bg-goldl ring-2 ring-gold' : 'bg-surface ring-1 ring-line hover:bg-surface2'"
               class="relative rounded-xl px-4 py-4 text-left transition-all focus-gold">
         <span x-cloak x-show="who.includes(group.key)"
-              class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">&check;</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+              class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">{% icon "check" class="h-3 w-3" %}</span>
+        {% comment %} paths from the Tabler icon map in weddingPlanner() — see static/js/app.js {% endcomment %}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
              class="mb-2 h-[22px] w-[22px] text-goldd" x-html="group.icon"></svg>
         <span class="block text-[14px] font-semibold text-ink" x-text="group.title"></span>
@@ -96,7 +97,7 @@
     </div>
 
     <p class="mt-3 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
-      <span aria-hidden="true">&#9670;</span>
+      {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
       <span>An estimate is fine. You can adjust the count right up until we finalise &mdash;
         nothing here is locked.</span>
     </p>
