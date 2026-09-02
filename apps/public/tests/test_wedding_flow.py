@@ -69,6 +69,16 @@ def test_the_itinerary_offers_an_opt_in_early_return_run(client):
     assert "vehicle type?" not in html
 
 
+def test_every_wedding_step_offers_a_schedule_a_call_affordance(client):
+    """APC-10 / A4 — a 'Schedule a call' out is in the footer of every step, not just
+    once at the bottom of the page."""
+    html = client.get(PLAN_URL).content.decode()
+    # one per step footer: date, venue, who, hotels, times, itinerary, contact
+    assert html.count("Stuck on something?") >= 6
+    # opens the on-page scheduler (or the tel: fallback when CALENDLY_URL is blank)
+    assert "openScheduler()" in html or 'href="tel:' in html
+
+
 def test_wedding_flow_wires_browser_back_to_the_previous_step(client):
     """APC-5 / A2 — every step advance is a history entry, Back walks one step, and the
     on-page Back button shares that route (`history.back()`)."""

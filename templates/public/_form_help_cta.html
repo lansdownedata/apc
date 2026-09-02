@@ -1,0 +1,19 @@
+{% comment %}
+  "Stuck on something? Schedule a call" — a low-emphasis affordance shown in the footer
+  of every step of the multi-step forms (the wedding wizard and the two-step hero
+  widget) so a customer who gets stuck always has a way out (APC-10 / feedback A4).
+
+  Delegates to _call_cta.html, so it opens the on-page scheduler panel
+  (window.openScheduler()) and falls back to a tel: link when CALENDLY_URL is blank.
+  The panel never navigates, and the wedding planner also snapshots every answer to
+  sessionStorage on each step and on pagehide (APC-5) — so returning to the form keeps
+  what was entered.
+
+  `basis-full` drops it onto its own line inside the footer's `flex flex-wrap` row,
+  below the Back / Continue buttons. type="button" on _call_cta's control keeps it from
+  submitting the enclosing <form>.
+{% endcomment %}
+<p class="mt-3 basis-full text-[12px] text-muted">
+  Stuck on something?
+  {% include "public/_call_cta.html" with class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold" label="Schedule a call" fallback_label="call (202) 424-2600" %}
+</p>

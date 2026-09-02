@@ -144,19 +144,13 @@
                   class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
             <span x-text="submitting ? 'Sending…' : 'Send my itinerary'">Send my itinerary</span>
           </button>
+          {% comment %} Every step carries this out (APC-10); it replaces the single
+             page-level CTA that used to sit below the wizard. {% endcomment %}
+          {% include "public/_form_help_cta.html" %}
         </div>
       </fieldset>
 
     </div>
-
-    <p class="mt-5 text-center text-[12.5px] text-muted">
-      Prefer to talk it through?
-      {% comment %}
-        type="button" on the partial's <button> matters here — this sits inside the
-        wedding form, and a bare <button> would submit it.
-      {% endcomment %}
-      {% include "public/_call_cta.html" with class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold" fallback_label="(202) 424-2600" %}
-    </p>
   </form>
 </section>
 {% endblock %}
