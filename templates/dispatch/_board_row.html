@@ -1,0 +1,22 @@
+{% comment %}
+One trip row on the dispatch board. `trip` comes from `selectors.board_trips` — already
+carries `pickup_stop` / `dropoff_stop` / `coverage`; never touch `trip.pickup` (N+1).
+{% endcomment %}
+{% load humanize time_filters %}
+{% with fs=trip.flight_summary %}
+<tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
+    @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
+  <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}—{% endif %}</td>
+  <td class="px-1 py-3">{% if fs %}<i class="ti {{ fs.icon }} text-[15px] {% if fs.state == 'verified' %}text-emerald-600{% elif fs.state == 'delayed' or fs.state == 'not_found' %}text-amber-600{% elif fs.state == 'cancelled' %}text-rose-600{% elif fs.state == 'partial' %}text-goldd{% else %}text-muted/60{% endif %}" title="{{ fs.label }}"></i>{% endif %}</td>
+  <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
+  <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
+  <td class="px-3 py-3">{{ trip.lead.contact.name }}</td>
+  <td class="px-3 py-3 text-muted">
+    {{ trip.pickup_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.pickup_stop compact=1 %}
+    → {{ trip.dropoff_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.dropoff_stop compact=1 %}
+  </td>
+  <td class="px-3 py-3 text-muted">{{ trip.vehicle.name|default:"—" }}</td>
+  <td class="px-3 py-3">{% include "dispatch/_coverage_cell.html" with trip=trip %}</td>
+  <td class="px-3 py-3 num text-right">${{ trip.line_total|floatformat:2|intcomma }}</td>
+</tr>
+{% endwith %}

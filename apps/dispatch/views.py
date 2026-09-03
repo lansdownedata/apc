@@ -1,55 +1,105 @@
-from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Prefetch
+from django.db.models import Exists, OuterRef, Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.contacts.models import Contact
 from apps.fleet.models import Driver, Vehicle
+from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import Reservation, Stop
 from apps.vendors.models import Vendor
 
 from . import selectors, services
+from .board_filters import BoardFilters
 from .models import Assignment
 
-_FILTERS = ("uncovered", "offered", "confirmed")
 
-
-def _requested_day(request: HttpRequest) -> date:
-    raw = (request.GET.get("day") or "").strip()
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        return timezone.localdate()
+def _filter_labels(filters: BoardFilters) -> dict:
+    """The picked vehicle-type / customer as objects, for the removable filter chips."""
+    return {
+        "vehicle": (
+            VehicleType.objects.filter(pk=filters.vehicle_type_id).first()
+            if filters.vehicle_type_id
+            else None
+        ),
+        "customer": (
+            Contact.objects.filter(pk=filters.contact_id).first() if filters.contact_id else None
+        ),
+    }
 
 
 @login_required
 def dispatch_board(request: HttpRequest) -> HttpResponse:
-    """One day of booked trips, with what still needs coverage called out on top."""
-    day = _requested_day(request)
-    trips = selectors.board_trips(day)
-    counts = selectors.strip_counts(trips)
+    """Booked trips over a day, a week, or a custom range — with what still needs
+    coverage called out on top, and vehicle-type / customer / linked-set filters."""
+    filters = BoardFilters.from_request(request)
+    trips = selectors.board_trips(filters)
+    counts = selectors.strip_counts(trips)  # whole window, before the coverage filter
 
-    active_filter = request.GET.get("f", "")
-    if active_filter in _FILTERS:
-        trips = [t for t in trips if t.coverage == active_filter]
-    else:
-        active_filter = ""
+    if filters.coverage:
+        trips = [t for t in trips if t.coverage == filters.coverage]
+
+    day_groups = selectors.day_groups(trips) if filters.is_multi_day else None
+
+    # Only customers who actually have a booked trip — keeps the picker relevant.
+    customer_options = list(
+        Contact.objects.filter(
+            Exists(
+                Reservation.objects.filter(
+                    lead__contact=OuterRef("pk"), lead__status=Lead.Status.BOOKED
+                )
+            )
+        )
+        .order_by("name")
+        .values_list("id", "name")
+    )
+
+    picked = _filter_labels(filters)
+    chips = []
+    if picked["vehicle"]:
+        chips.append({"label": picked["vehicle"].name, "url": filters.without_url("vehicle")})
+    if picked["customer"]:
+        chips.append({"label": picked["customer"].name, "url": filters.without_url("customer")})
+    if filters.group_key:
+        chips.append({"label": "Linked program", "url": filters.without_url("group")})
 
     return render(
         request,
         "dispatch/board.html",
         {
+            "filters": filters,
             "trips": trips,
+            "day_groups": day_groups,
             "counts": counts,
-            "day": day,
-            "prev_day": day - timedelta(days=1),
-            "next_day": day + timedelta(days=1),
             "today": timezone.localdate(),
-            "active_filter": active_filter,
+            "active_filter": filters.coverage,
+            "chips": chips,
+            "view_links": [
+                {"key": k, "label": lbl, "url": filters.switch_url(k), "active": filters.view == k}
+                for k, lbl in (("day", "Day"), ("week", "Week"), ("range", "Range"))
+            ],
+            "strip": [
+                {
+                    "key": k,
+                    "label": lbl,
+                    "count": counts[k],
+                    "active": filters.coverage == k,
+                    "url": filters.coverage_url(k),
+                }
+                for k, lbl in (
+                    ("uncovered", "uncovered"),
+                    ("offered", "awaiting affiliate"),
+                    ("confirmed", "covered"),
+                )
+            ],
+            "vehicle_options": list(
+                VehicleType.objects.filter(active=True).order_by("name").values_list("id", "name")
+            ),
+            "customer_options": customer_options,
             "nav": "dispatch",
             "page_title": "Dispatch",
         },

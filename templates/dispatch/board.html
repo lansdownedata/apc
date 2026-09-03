@@ -3,84 +3,124 @@
 {% block title %}Dispatch{% endblock %}
 
 {% block content %}
-<div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6">
-<div class="flex items-center gap-3 mb-5">
-  <h1 class="font-display text-[22px] font-semibold text-ink">Dispatch</h1>
-  <div class="flex items-center gap-1 ml-auto text-[13px]">
-    <a href="?day={{ prev_day|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
-       class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Previous day">
-      <i class="ti ti-chevron-left text-[16px]"></i>
-    </a>
-    <span class="px-3 py-1.5 font-semibold text-ink num">{{ day|date:"D M j, Y" }}</span>
-    <a href="?day={{ next_day|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
-       class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Next day">
-      <i class="ti ti-chevron-right text-[16px]"></i>
-    </a>
-    {% if day != today %}
-      <a href="?day={{ today|date:'Y-m-d' }}{% if active_filter %}&f={{ active_filter }}{% endif %}"
-         class="btn-ghost px-3 py-1.5 rounded-lg ring-1 ring-line ml-1">Today</a>
-    {% endif %}
-  </div>
-</div>
+<div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6" x-data="{}">
 
-{% comment %} Attention strip — whole-day counts; each chip filters the grid below. {% endcomment %}
-<div class="flex flex-wrap items-center gap-2 mb-3">
-  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'uncovered' %}&f=uncovered{% endif %}"
-     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 {% if active_filter == 'uncovered' %}bg-amber-100 text-amber-800 ring-amber-600/30{% else %}bg-amber-50 text-amber-700 ring-amber-600/20{% endif %}">
-    {{ counts.uncovered }} uncovered
-  </a>
-  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'offered' %}&f=offered{% endif %}"
-     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 {% if active_filter == 'offered' %}bg-sky-100 text-sky-800 ring-sky-600/30{% else %}bg-surface text-muted ring-line{% endif %}">
-    {{ counts.offered }} awaiting affiliate
-  </a>
-  <a href="?day={{ day|date:'Y-m-d' }}{% if active_filter != 'confirmed' %}&f=confirmed{% endif %}"
-     class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 ml-auto {% if active_filter == 'confirmed' %}bg-emerald-100 text-emerald-800 ring-emerald-600/30{% else %}bg-surface text-muted ring-line{% endif %}">
-    {{ counts.confirmed }} covered
-  </a>
-</div>
+  <div class="flex flex-wrap items-center gap-3 mb-4">
+    <h1 class="font-display text-[22px] font-semibold text-ink">Dispatch</h1>
 
-<div class="card overflow-x-auto">
-  <table class="w-full text-[13px]">
-    <thead class="sticky top-0 bg-surface2 z-10">
-      <tr class="text-[11px] uppercase tracking-wide text-muted">
-        <th class="text-left px-3 py-2.5">PU</th>
-        <th class="w-6 px-1 py-2.5"></th>
-        <th class="text-left px-3 py-2.5">Conf#</th>
-        <th class="text-left px-3 py-2.5">Coverage</th>
-        <th class="text-left px-3 py-2.5">Passenger</th>
-        <th class="text-left px-3 py-2.5">Routing</th>
-        <th class="text-left px-3 py-2.5">Veh</th>
-        <th class="text-left px-3 py-2.5">Covered by</th>
-        <th class="text-right px-3 py-2.5">Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for trip in trips %}
-        {% with fs=trip.flight_summary %}
-        <tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
-            @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
-          <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}—{% endif %}</td>
-          <td class="px-1 py-3">{% if fs %}<i class="ti {{ fs.icon }} text-[15px] {% if fs.state == 'verified' %}text-emerald-600{% elif fs.state == 'delayed' or fs.state == 'not_found' %}text-amber-600{% elif fs.state == 'cancelled' %}text-rose-600{% elif fs.state == 'partial' %}text-goldd{% else %}text-muted/60{% endif %}" title="{{ fs.label }}"></i>{% endif %}</td>
-          <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
-          <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
-          <td class="px-3 py-3">{{ trip.lead.contact.name }}</td>
-          {% comment %} pickup_stop/dropoff_stop come from the selector — never trip.pickup (N+1). {% endcomment %}
-          <td class="px-3 py-3 text-muted">
-            {{ trip.pickup_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.pickup_stop compact=1 %}
-            → {{ trip.dropoff_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.dropoff_stop compact=1 %}
-          </td>
-          <td class="px-3 py-3 text-muted">{{ trip.vehicle.name|default:"—" }}</td>
-          <td class="px-3 py-3">{% include "dispatch/_coverage_cell.html" with trip=trip %}</td>
-          <td class="px-3 py-3 num text-right">${{ trip.line_total|floatformat:2|intcomma }}</td>
-        </tr>
-        {% endwith %}
-      {% empty %}
-        <tr><td colspan="9" class="px-3 py-10 text-center text-muted">No trips on this day.</td></tr>
+    {# view switcher #}
+    <div class="flex items-center gap-0.5 bg-surface rounded-full p-1 ring-1 ring-line">
+      {% for v in view_links %}
+      <a href="{{ v.url }}"
+         class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition {% if v.active %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">{{ v.label }}</a>
       {% endfor %}
-    </tbody>
-  </table>
-</div>
+    </div>
 
-{% include "components/drawer.html" with drawer_title="Assign trip" %}
+    {# date nav #}
+    <div class="flex items-center gap-1 ml-auto text-[13px]">
+      <a href="{{ filters.prev_url }}" class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Previous">
+        <i class="ti ti-chevron-left text-[16px]"></i>
+      </a>
+      <span class="px-3 py-1.5 font-semibold text-ink num">
+        {% if filters.is_multi_day %}{{ filters.start|date:"M j" }} – {{ filters.end|date:"M j, Y" }}{% else %}{{ filters.start|date:"D M j, Y" }}{% endif %}
+      </span>
+      <a href="{{ filters.next_url }}" class="btn-ghost px-2 py-1.5 rounded-lg ring-1 ring-line" aria-label="Next">
+        <i class="ti ti-chevron-right text-[16px]"></i>
+      </a>
+      <a href="{{ filters.today_url }}" class="btn-ghost px-3 py-1.5 rounded-lg ring-1 ring-line ml-1">Today</a>
+    </div>
+  </div>
+
+  {# filter bar — GET form, Tom Select autosubmits on change #}
+  <form method="get" class="flex flex-wrap items-center gap-2.5 mb-3">
+    {% if filters.view != 'day' %}<input type="hidden" name="view" value="{{ filters.view }}">{% endif %}
+    {% if filters.view == 'range' %}
+      <input type="hidden" name="start" value="{{ filters.start|date:'Y-m-d' }}">
+      <input type="hidden" name="end" value="{{ filters.end|date:'Y-m-d' }}">
+    {% else %}
+      <input type="hidden" name="day" value="{{ filters.anchor|date:'Y-m-d' }}">
+    {% endif %}
+    {% if filters.coverage %}<input type="hidden" name="f" value="{{ filters.coverage }}">{% endif %}
+
+    {% if filters.view == 'range' %}
+    <div class="flex items-center gap-1.5 text-[12.5px] text-muted">
+      <input type="text" name="start" data-flatpickr data-fp-past value="{{ filters.start|date:'Y-m-d' }}"
+             onchange="this.form.submit()" class="field w-36 text-[12.5px]" aria-label="Range start">
+      <span>to</span>
+      <input type="text" name="end" data-flatpickr data-fp-past value="{{ filters.end|date:'Y-m-d' }}"
+             onchange="this.form.submit()" class="field w-36 text-[12.5px]" aria-label="Range end">
+    </div>
+    {% endif %}
+
+    <div class="w-44">
+      {% include "components/searchable_select.html" with name="vehicle" field_id="f-veh" options=vehicle_options selected=filters.vehicle_type_id empty_label="All vehicles" autosubmit=1 search="off" %}
+    </div>
+    <div class="w-56">
+      {% include "components/searchable_select.html" with name="customer" field_id="f-cust" options=customer_options selected=filters.contact_id empty_label="All customers" autosubmit=1 %}
+    </div>
+
+    {% if chips %}
+    <div class="flex flex-wrap items-center gap-1.5">
+      {% for chip in chips %}
+      <a href="{{ chip.url }}" class="inline-flex items-center gap-1 text-[11.5px] font-medium px-2 py-1 rounded-full bg-goldl text-goldd ring-1 ring-gold/25 hover:bg-gold/20">
+        {{ chip.label }} <i class="ti ti-x text-[12px]"></i>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </form>
+
+  {% comment %} Attention strip — whole-window counts; each chip filters the grid below. {% endcomment %}
+  <div class="flex flex-wrap items-center gap-2 mb-3">
+    {% for s in strip %}
+    <a href="{{ s.url }}"
+       class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 {% if s.key == 'confirmed' %}ml-auto {% endif %}{% if s.active and s.key == 'uncovered' %}bg-amber-100 text-amber-800 ring-amber-600/30{% elif s.key == 'uncovered' %}bg-amber-50 text-amber-700 ring-amber-600/20{% elif s.active and s.key == 'offered' %}bg-sky-100 text-sky-800 ring-sky-600/30{% elif s.active and s.key == 'confirmed' %}bg-emerald-100 text-emerald-800 ring-emerald-600/30{% else %}bg-surface text-muted ring-line{% endif %}">
+      {{ s.count }} {{ s.label }}
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="card overflow-x-auto">
+    <table class="w-full text-[13px]">
+      <thead class="sticky top-0 bg-surface2 z-10">
+        <tr class="text-[11px] uppercase tracking-wide text-muted">
+          <th class="text-left px-3 py-2.5">PU</th>
+          <th class="w-6 px-1 py-2.5"></th>
+          <th class="text-left px-3 py-2.5">Conf#</th>
+          <th class="text-left px-3 py-2.5">Coverage</th>
+          <th class="text-left px-3 py-2.5">Passenger</th>
+          <th class="text-left px-3 py-2.5">Routing</th>
+          <th class="text-left px-3 py-2.5">Veh</th>
+          <th class="text-left px-3 py-2.5">Covered by</th>
+          <th class="text-right px-3 py-2.5">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if day_groups is not None %}
+          {% for d, day_trips, dc in day_groups %}
+          <tr class="bg-surface2/80">
+            <td colspan="9" class="px-3 py-2 text-[11.5px] font-semibold text-ink border-t border-line">
+              {{ d|date:"l, M j" }}
+              <span class="ml-2 font-medium text-muted">
+                {{ dc.uncovered }} uncovered · {{ dc.offered }} awaiting · {{ dc.confirmed }} covered
+              </span>
+            </td>
+          </tr>
+          {% for trip in day_trips %}{% include "dispatch/_board_row.html" %}{% endfor %}
+          {% empty %}
+          <tr><td colspan="9" class="px-3 py-10 text-center text-muted">No trips match these filters.</td></tr>
+          {% endfor %}
+        {% else %}
+          {% for trip in trips %}
+            {% include "dispatch/_board_row.html" %}
+          {% empty %}
+            <tr><td colspan="9" class="px-3 py-10 text-center text-muted">No trips on this day.</td></tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "components/drawer.html" with drawer_title="Assign trip" %}
 </div>
 {% endblock %}

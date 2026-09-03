@@ -11,6 +11,7 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
 from apps.vendors.models import Vendor, VendorInsurance
 
+from .board_filters import BoardFilters
 from .models import Assignment, GnetEvent
 
 COVERAGE_UNCOVERED = "uncovered"
@@ -27,25 +28,31 @@ CANCELLED_STATUSES = tuple(
 )
 
 
-def board_trips(day: date) -> list[Reservation]:
-    """Booked trips picking up on `day`, each decorated with its coverage and route ends.
+def board_trips(filters: BoardFilters) -> list[Reservation]:
+    """Booked trips picking up inside `filters`' date window, narrowed by its
+    vehicle-type / customer / linked-set filters, each decorated with coverage + route ends.
 
     Coverage is derived from the active assignment rather than stored on the trip, so a
     declined offer puts the trip straight back in the uncovered bucket with no cleanup.
 
-    Everything is resolved from prefetches in one pass because the template renders a
-    whole day at once: `Reservation.pickup`/`dropoff` are properties over
+    Everything is resolved from prefetches in one pass because the template renders the
+    whole window at once: `Reservation.pickup`/`dropoff` are properties over
     `stops.order_by("sequence")`, and that `.order_by()` builds a fresh queryset that
     ignores the prefetch cache — two extra queries per row if a caller touches them.
     `pickup_stop`/`dropoff_stop` exist so the template never has to.
 
-    NULL pickup times are pinned to the top explicitly: MySQL (dev/test) sorts NULLs first
-    and Postgres (prod) sorts them last, so without saying which we want the same day reads
+    `pickup_date` is a naive, trip-local date on the row (never re-derived), so a plain
+    `__range` on it already respects the trip's own date boundary. NULL pickup times are
+    pinned to the top of each day explicitly: MySQL (dev/test) sorts NULLs first and
+    Postgres (prod) sorts them last, so without saying which the same day reads
     differently in the two environments. A booked trip with no pickup time is an exception
-    the dispatcher has to resolve, so it belongs at the top rather than buried at the end.
+    the dispatcher has to resolve, so it belongs at the top.
     """
-    trips = list(
-        Reservation.objects.filter(lead__status=Lead.Status.BOOKED, pickup_date=day)
+    qs = (
+        Reservation.objects.filter(
+            lead__status=Lead.Status.BOOKED,
+            pickup_date__range=(filters.start, filters.end),
+        )
         .exclude(trip_status__in=CANCELLED_STATUSES)
         .select_related("lead", "lead__contact", "vehicle")
         .prefetch_related(
@@ -61,8 +68,16 @@ def board_trips(day: date) -> list[Reservation]:
                 to_attr="active_list",
             ),
         )
-        .order_by(F("pickup_time").asc(nulls_first=True), "pk")
+        .order_by("pickup_date", F("pickup_time").asc(nulls_first=True), "pk")
     )
+    if filters.vehicle_type_id is not None:
+        qs = qs.filter(vehicle_id=filters.vehicle_type_id)
+    if filters.contact_id is not None:
+        qs = qs.filter(lead__contact_id=filters.contact_id)
+    if filters.group_key:
+        qs = qs.filter(group_key=filters.group_key)
+
+    trips = list(qs)
     for trip in trips:
         stops = list(trip.stops.all())  # prefetched, already in sequence order
         trip.pickup_stop = stops[0] if stops else None
@@ -70,6 +85,20 @@ def board_trips(day: date) -> list[Reservation]:
         trip.active = trip.active_list[0] if trip.active_list else None
         trip.coverage = trip.active.status if trip.active else COVERAGE_UNCOVERED
     return trips
+
+
+def day_groups(trips: list[Reservation]) -> list[tuple[date, list[Reservation], dict[str, int]]]:
+    """Split an already-ordered board result into `(date, trips, counts)` per day.
+
+    Drives the sticky day sub-headers in a week / range view. Iterates the list it is
+    handed — no query of its own — and relies on `board_trips` ordering by `pickup_date`.
+    """
+    out: list[tuple[date, list[Reservation]]] = []
+    for trip in trips:
+        if not out or out[-1][0] != trip.pickup_date:
+            out.append((trip.pickup_date, []))
+        out[-1][1].append(trip)
+    return [(day, day_trips, strip_counts(day_trips)) for day, day_trips in out]
 
 
 def strip_counts(trips: list[Reservation]) -> dict[str, int]:

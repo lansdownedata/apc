@@ -129,16 +129,16 @@ def test_chip_filter_narrows_the_grid(logged_in_client):
 
 def test_board_defaults_to_today_and_pages_by_day(logged_in_client):
     resp = logged_in_client.get(reverse("dispatch_board"))
-    assert resp.context["day"] == timezone.localdate()
+    assert resp.context["filters"].start == timezone.localdate()
     resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
-    assert resp.context["prev_day"] == DAY - timedelta(days=1)
-    assert resp.context["next_day"] == DAY + timedelta(days=1)
+    assert resp.context["filters"].prev_url == f"?day={(DAY - timedelta(days=1)).isoformat()}"
+    assert resp.context["filters"].next_url == f"?day={(DAY + timedelta(days=1)).isoformat()}"
 
 
 def test_a_bad_day_param_falls_back_to_today(logged_in_client):
     resp = logged_in_client.get(reverse("dispatch_board"), {"day": "not-a-date"})
     assert resp.status_code == 200
-    assert resp.context["day"] == timezone.localdate()
+    assert resp.context["filters"].start == timezone.localdate()
 
 
 def test_board_requires_login(client):
@@ -154,7 +154,8 @@ def test_today_link_preserves_the_active_filter(logged_in_client):
         reverse("dispatch_board"), {"day": DAY.isoformat(), "f": "uncovered"}
     )
     today_str = timezone.localdate().isoformat()
-    assert f'href="?day={today_str}&f=uncovered"'.encode() in resp.content
+    # &amp; — Django escapes the URL variable in the attribute (valid HTML; browsers decode it)
+    assert f'href="?day={today_str}&amp;f=uncovered"'.encode() in resp.content
 
 
 def test_board_query_count_does_not_grow_with_trips(
