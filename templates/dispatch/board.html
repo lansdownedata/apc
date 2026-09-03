@@ -70,6 +70,16 @@
     {% endif %}
   </form>
 
+  {% if exceptions.critical or exceptions.warning %}
+  <div class="flex items-center gap-2.5 rounded-lg px-4 py-2.5 mb-3 text-[12.5px] font-medium ring-1 {% if exceptions.critical %}bg-rose-50 text-rose-700 ring-rose-600/25{% else %}bg-amber-50 text-amber-800 ring-amber-600/25{% endif %}">
+    <i class="ti ti-bell-exclamation text-[16px]"></i>
+    <span>
+      {% if exceptions.critical %}{{ exceptions.critical }} critical{% endif %}{% if exceptions.critical and exceptions.warning %} · {% endif %}{% if exceptions.warning %}{{ exceptions.warning }} warning{% endif %}
+      dispatch exception{{ exceptions.critical|add:exceptions.warning|pluralize }} in this window — highlighted below.
+    </span>
+  </div>
+  {% endif %}
+
   {% comment %} Attention strip — whole-window counts; each chip filters the grid below. {% endcomment %}
   <div class="flex flex-wrap items-center gap-2 mb-3">
     {% for s in strip %}

@@ -20,6 +20,7 @@ class Notification(TimeStampedModel):
         NEW_LEAD = "new_lead", "New lead"
         LA_CHANGED = "la_changed", "Update LimoAnywhere"
         QUOTE_EXPIRED = "quote_expired", "Quote expired"
+        DISPATCH_EXCEPTION = "dispatch_exception", "Dispatch exception"
 
     lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
     user = models.ForeignKey(

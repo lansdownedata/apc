@@ -7,11 +7,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import owner_admin_required
+from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
 
-from .forms import ServiceTypeForm, VehicleTypeForm
+from .forms import DispatchAlertConfigForm, ServiceTypeForm, VehicleTypeForm
 
 
 def _fleet_attention_count() -> int:
@@ -36,6 +37,10 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             "service_type_count": ServiceType.objects.filter(active=True).count(),
             "renewal_type_count": RenewalType.objects.filter(active=True).count(),
             "fleet_attention_count": _fleet_attention_count(),
+            "dispatch_monitor_on": DispatchAlertConfig.load().enabled,
+            "open_dispatch_exceptions": DispatchException.objects.filter(
+                resolved_at__isnull=True
+            ).count(),
         },
     )
 
@@ -228,3 +233,25 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
         target.delete()
         messages.success(request, f"{name} deleted.")
     return redirect("renewal_type_list")
+
+
+@login_required
+@owner_admin_required
+def dispatch_alerts(request: HttpRequest) -> HttpResponse:
+    """The Dispatch-alerts config (APC-23) — one singleton form, plus a live open-count."""
+    config = DispatchAlertConfig.load()
+    form = DispatchAlertConfigForm(request.POST or None, instance=config)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Dispatch alert settings saved.")
+        return redirect("dispatch_alerts")
+    return render(
+        request,
+        "settings/dispatch_alerts.html",
+        {
+            "nav": "settings",
+            "page_title": "Dispatch alerts",
+            "form": form,
+            "open_exceptions": DispatchException.objects.filter(resolved_at__isnull=True).count(),
+        },
+    )

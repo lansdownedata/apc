@@ -12,7 +12,9 @@ from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
 from apps.vendors.models import Vendor, VendorInsurance
 
 from .board_filters import BoardFilters
-from .models import Assignment, GnetEvent
+from .models import Assignment, DispatchException, GnetEvent
+
+_TIER_RANK = {DispatchException.Tier.WARNING: 1, DispatchException.Tier.CRITICAL: 2}
 
 COVERAGE_UNCOVERED = "uncovered"
 COVERAGE_OFFERED = "offered"
@@ -67,6 +69,11 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
                 queryset=Assignment.objects.active().select_related("vendor", "driver", "vehicle"),
                 to_attr="active_list",
             ),
+            Prefetch(
+                "dispatch_exceptions",
+                queryset=DispatchException.objects.filter(resolved_at__isnull=True),
+                to_attr="open_exceptions",
+            ),
         )
         .order_by("pickup_date", F("pickup_time").asc(nulls_first=True), "pk")
     )
@@ -84,7 +91,19 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
         trip.dropoff_stop = stops[-1] if len(stops) > 1 else None
         trip.active = trip.active_list[0] if trip.active_list else None
         trip.coverage = trip.active.status if trip.active else COVERAGE_UNCOVERED
+        trip.exception_tier = max(
+            (e.tier for e in trip.open_exceptions), key=_TIER_RANK.get, default=""
+        )
     return trips
+
+
+def exception_tally(trips: list[Reservation]) -> dict[str, int]:
+    """How many trips in the window carry an open exception, by their worst tier."""
+    out = {DispatchException.Tier.WARNING: 0, DispatchException.Tier.CRITICAL: 0}
+    for trip in trips:
+        if trip.exception_tier:
+            out[trip.exception_tier] += 1
+    return out
 
 
 def day_groups(trips: list[Reservation]) -> list[tuple[date, list[Reservation], dict[str, int]]]:

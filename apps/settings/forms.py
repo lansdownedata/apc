@@ -82,3 +82,37 @@ class ServiceTypeForm(forms.ModelForm):
             clash = clash.exclude(pk=self.instance.pk)
         if clash.exists():
             self.add_error("name", "A service type with that name already exists.")
+
+
+_NUM = {"class": "field w-full", "min": 0}
+_AREA = {"class": "field w-full", "rows": 3}
+
+
+class DispatchAlertConfigForm(forms.ModelForm):
+    """The single Dispatch-alerts settings screen (APC-23) — one row, no list."""
+
+    class Meta:
+        from apps.dispatch.models import DispatchAlertConfig
+
+        model = DispatchAlertConfig
+        fields = [
+            "enabled",
+            "unassigned_warn_hours",
+            "unassigned_critical_hours",
+            "otw_warn_minutes",
+            "otw_critical_minutes",
+            "arrived_warn_minutes",
+            "arrived_critical_minutes",
+            "alert_emails",
+            "critical_sms",
+        ]
+        widgets = {
+            "unassigned_warn_hours": forms.NumberInput(attrs=_NUM),
+            "unassigned_critical_hours": forms.NumberInput(attrs=_NUM),
+            "otw_warn_minutes": forms.NumberInput(attrs=_NUM),
+            "otw_critical_minutes": forms.NumberInput(attrs=_NUM),
+            "arrived_warn_minutes": forms.NumberInput(attrs=_NUM),
+            "arrived_critical_minutes": forms.NumberInput(attrs=_NUM),
+            "alert_emails": forms.Textarea(attrs=_AREA),
+            "critical_sms": forms.Textarea(attrs=_AREA),
+        }

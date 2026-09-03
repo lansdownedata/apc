@@ -4,12 +4,16 @@ carries `pickup_stop` / `dropoff_stop` / `coverage`; never touch `trip.pickup` (
 {% endcomment %}
 {% load humanize time_filters %}
 {% with fs=trip.flight_summary %}
-<tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
+<tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if trip.exception_tier == 'critical' or fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.exception_tier == 'warning' or trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
     @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
   <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}—{% endif %}</td>
   <td class="px-1 py-3">{% if fs %}<i class="ti {{ fs.icon }} text-[15px] {% if fs.state == 'verified' %}text-emerald-600{% elif fs.state == 'delayed' or fs.state == 'not_found' %}text-amber-600{% elif fs.state == 'cancelled' %}text-rose-600{% elif fs.state == 'partial' %}text-goldd{% else %}text-muted/60{% endif %}" title="{{ fs.label }}"></i>{% endif %}</td>
   <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
-  <td class="px-3 py-3">{% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}</td>
+  <td class="px-3 py-3 whitespace-nowrap">
+    {% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}
+    {% if trip.exception_tier %}<span class="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded {% if trip.exception_tier == 'critical' %}chip-danger{% else %}chip-warn{% endif %}"
+      title="{% for e in trip.open_exceptions %}{{ e.get_kind_display }}{% if not forloop.last %} · {% endif %}{% endfor %}"><i class="ti ti-alert-triangle text-[11px]"></i></span>{% endif %}
+  </td>
   <td class="px-3 py-3">{{ trip.lead.contact.name }}</td>
   <td class="px-3 py-3 text-muted">
     {{ trip.pickup_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.pickup_stop compact=1 %}

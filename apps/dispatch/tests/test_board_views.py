@@ -158,6 +158,25 @@ def test_week_query_count_stays_flat(logged_in_client, django_assert_max_num_que
         logged_in_client.get(reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat()})
 
 
+def test_board_flags_and_tallies_open_exceptions(logged_in_client):
+    from apps.dispatch.models import DispatchException
+
+    trip = _trip(DAY)
+    DispatchException.objects.create(
+        reservation=trip,
+        kind=DispatchException.Kind.UNASSIGNED,
+        tier=DispatchException.Tier.CRITICAL,
+    )
+    _trip(DAY)  # clean
+
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    assert resp.context["exceptions"]["critical"] == 1
+    body = resp.content.decode()
+    assert "dispatch exception" in body  # the banner
+    assert "bg-rose-50/40" in body  # the row tint
+
+
 def test_board_requires_login(client):
     resp = client.get(reverse("dispatch_board"))
 

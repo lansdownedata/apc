@@ -1,0 +1,33 @@
+{% extends "email/base_email.html" %}
+{% block subject %}{% if critical_count %}CRITICAL — {% endif %}{{ lines|length }} dispatch exception{{ lines|length|pluralize }}{% endblock %}
+{% block preheader %}{{ lines|length }} dispatch exception{{ lines|length|pluralize }} need attention{% if critical_count %} — {{ critical_count }} critical{% endif %}.{% endblock %}
+{% block content %}
+<p style="margin:0 0 6px;font-size:17px;color:#17191D;" class="dm-ink">Dispatch exceptions — {{ now|date:"l, F j, g:i A" }}</p>
+<p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;" class="dm-muted">
+  {{ lines|length }} exception{{ lines|length|pluralize }} need attention{% if critical_count %}, <strong style="color:#b91c1c;">{{ critical_count }} critical</strong>{% endif %}.
+</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;">
+  <tr style="color:#6b7280;text-align:left;">
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Tier</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Exception</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Order</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Pickup</th>
+  </tr>
+  {% for l in lines %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;font-weight:600;color:{% if l.tier == 'critical' %}#b91c1c{% else %}#b45309{% endif %};">{{ l.tier|title }}</td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;" class="dm-ink">{{ l.kind }}</td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">
+      <div style="font-weight:600;color:#17191D;" class="dm-ink">{{ l.quote_no }}</div>
+      <div style="color:#6b7280;" class="dm-muted">{{ l.customer }} · trip #{{ l.trip_id }}</div>
+    </td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;" class="dm-muted">
+      {% if l.pickup %}{{ l.pickup|date:"D M j, g:i A" }} {{ l.tz }}{% else %}—{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% if board_url %}
+<p style="margin:20px 0 0;font-size:13px;"><a href="{{ board_url }}" style="color:#8A6D1F;font-weight:600;">Open the dispatch board →</a></p>
+{% endif %}
+{% endblock %}

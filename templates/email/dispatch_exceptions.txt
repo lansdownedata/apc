@@ -1,0 +1,13 @@
+{% autoescape off %}Dispatch exceptions — {{ now|date:"D M j, g:i A" }}
+
+{{ lines|length }} exception{{ lines|length|pluralize }} need attention{% if critical_count %} ({{ critical_count }} CRITICAL){% endif %}.
+{% for l in lines %}
+  [{{ l.tier|upper }}] {{ l.kind }} — {{ l.quote_no }} · {{ l.customer }}
+    Trip #{{ l.trip_id }}{% if l.pickup %} · pickup {{ l.pickup|date:"D M j, g:i A" }} {{ l.tz }}{% endif %}
+{% endfor %}
+{% if board_url %}
+Dispatch board: {{ board_url }}
+{% endif %}
+--
+{{ company_name }}
+{% endautoescape %}

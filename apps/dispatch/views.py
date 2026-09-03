@@ -39,6 +39,7 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
     filters = BoardFilters.from_request(request)
     trips = selectors.board_trips(filters)
     counts = selectors.strip_counts(trips)  # whole window, before the coverage filter
+    exceptions = selectors.exception_tally(trips)
 
     if filters.coverage:
         trips = [t for t in trips if t.coverage == filters.coverage]
@@ -75,6 +76,7 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
             "trips": trips,
             "day_groups": day_groups,
             "counts": counts,
+            "exceptions": exceptions,
             "today": timezone.localdate(),
             "active_filter": filters.coverage,
             "chips": chips,

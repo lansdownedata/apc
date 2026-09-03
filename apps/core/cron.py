@@ -13,6 +13,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from apps.dispatch import monitoring
 from apps.integrations import la_sync
 from apps.messaging import touchpoints
 from apps.payments import tasks
@@ -24,6 +25,7 @@ JOBS: dict[str, Callable[[], int]] = {
     "run-touchpoints": touchpoints.run_touchpoints,
     "deposit-report": tasks.send_unpaid_deposit_report,
     "reconcile-payments": tasks.reconcile_open_charges,
+    "monitor-dispatch": monitoring.run_dispatch_monitor,
 }
 
 

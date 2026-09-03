@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 
 from django.db import models
@@ -140,3 +141,106 @@ class GnetEvent(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.get_action_display()} · {self.get_result_display()}"
+
+
+def _split_list(raw: str) -> list[str]:
+    """Comma / newline / semicolon separated free text → a clean list, order kept."""
+    return [part.strip() for part in re.split(r"[,\n;]+", raw or "") if part.strip()]
+
+
+class DispatchAlertConfig(models.Model):
+    """Singleton — the thresholds and recipients for the dispatch exception monitor (APC-23).
+
+    One row (pk=1). Edited on the Settings screen; read by `monitoring.run_dispatch_monitor`
+    every cron tick. Defaults match the client-agreed table (2026-09-03).
+    """
+
+    singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    enabled = models.BooleanField(
+        default=True, help_text="Turn the whole monitor off without losing your thresholds."
+    )
+
+    # "No coverage" — hours before pickup with no confirmed driver / affiliate.
+    unassigned_warn_hours = models.PositiveIntegerField(default=24)
+    unassigned_critical_hours = models.PositiveIntegerField(default=4)
+    # "Not en route" — minutes before pickup without an On-The-Way status.
+    otw_warn_minutes = models.PositiveIntegerField(default=45)
+    otw_critical_minutes = models.PositiveIntegerField(default=15)
+    # "Not arrived" — minutes after pickup without an Arrived status.
+    arrived_warn_minutes = models.PositiveIntegerField(default=15)
+    arrived_critical_minutes = models.PositiveIntegerField(default=45)
+
+    alert_emails = models.TextField(
+        blank=True,
+        help_text="Who gets the exception digest email. One per line or comma-separated. "
+        "Blank falls back to the company email.",
+    )
+    critical_sms = models.TextField(
+        blank=True,
+        help_text="Phone numbers texted for critical-tier exceptions only. One per line or "
+        "comma-separated. Blank means no SMS.",
+    )
+
+    class Meta:
+        verbose_name = "dispatch alert configuration"
+
+    def __str__(self) -> str:
+        return "Dispatch alert configuration"
+
+    @classmethod
+    def load(cls) -> "DispatchAlertConfig":
+        return cls.objects.get_or_create(pk=1)[0]
+
+    @property
+    def email_list(self) -> list[str]:
+        from django.conf import settings
+
+        chosen = _split_list(self.alert_emails)
+        return chosen or ([settings.COMPANY_EMAIL] if settings.COMPANY_EMAIL else [])
+
+    @property
+    def sms_list(self) -> list[str]:
+        return _split_list(self.critical_sms)
+
+
+class DispatchException(TimeStampedModel):
+    """One open (or since-resolved) dispatch milestone breach on a trip (APC-23).
+
+    At most one row per (reservation, kind) ever — a re-breach clears `resolved_at` and
+    re-notifies rather than making a new row, so the board never shows the same problem
+    twice. `monitoring` owns every write.
+    """
+
+    class Kind(models.TextChoices):
+        UNASSIGNED = "unassigned", "No coverage"
+        NOT_ON_THE_WAY = "not_otw", "Not en route"
+        NOT_ARRIVED = "not_arrived", "Not arrived"
+
+    class Tier(models.TextChoices):
+        WARNING = "warning", "Warning"
+        CRITICAL = "critical", "Critical"
+
+    reservation = models.ForeignKey(
+        "reservations.Reservation", related_name="dispatch_exceptions", on_delete=models.CASCADE
+    )
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    tier = models.CharField(max_length=12, choices=Tier.choices, default=Tier.WARNING)
+    opened_at = models.DateTimeField(default=timezone.now)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    # The tier the recipients were last told about — lets an escalation warning→critical
+    # re-notify without a plain re-tick doing so.
+    notified_tier = models.CharField(max_length=12, blank=True, default="")
+
+    class Meta(TimeStampedModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reservation", "kind"], name="one_exception_per_kind_per_trip"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reservation_id} · {self.get_kind_display()} ({self.get_tier_display()})"
+
+    @property
+    def is_open(self) -> bool:
+        return self.resolved_at is None

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Dispatch alerts</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      The monitor runs every few minutes and raises an exception when a trip misses a milestone —
+      a warning first, then critical as service approaches.
+      {% if open_exceptions %}<span class="font-semibold text-rose-600">{{ open_exceptions }} open right now.</span>{% endif %}
+    </p>
+
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      <div class="flex items-center gap-2">
+        {{ form.enabled }}
+        <label for="{{ form.enabled.id_for_label }}" class="text-[12.5px] text-ink">Monitor is on</label>
+      </div>
+
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">No coverage — hours before pickup</div>
+        <div class="grid grid-cols-2 gap-3">
+          {% include "components/form_field.html" with field=form.unassigned_warn_hours %}
+          {% include "components/form_field.html" with field=form.unassigned_critical_hours %}
+        </div>
+      </div>
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Not en route — minutes before pickup</div>
+        <div class="grid grid-cols-2 gap-3">
+          {% include "components/form_field.html" with field=form.otw_warn_minutes %}
+          {% include "components/form_field.html" with field=form.otw_critical_minutes %}
+        </div>
+      </div>
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Not arrived — minutes after pickup</div>
+        <div class="grid grid-cols-2 gap-3">
+          {% include "components/form_field.html" with field=form.arrived_warn_minutes %}
+          {% include "components/form_field.html" with field=form.arrived_critical_minutes %}
+        </div>
+      </div>
+
+      {% include "components/form_field.html" with field=form.alert_emails %}
+      {% include "components/form_field.html" with field=form.critical_sms %}
+
+      {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <a href="{% url 'settings_index' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+        <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

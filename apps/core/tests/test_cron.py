@@ -58,6 +58,7 @@ def test_registry_contains_all_jobs():
         "run-touchpoints",
         "deposit-report",
         "reconcile-payments",
+        "monitor-dispatch",
     }
 
 
