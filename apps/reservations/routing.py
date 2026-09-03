@@ -62,3 +62,31 @@ def reverse_route(reservation: Reservation, *, propagate: bool = False) -> Reser
         groups.apply_to_group(reservation)
 
     return reservation
+
+
+@transaction.atomic
+def create_return_trip(source: Reservation) -> Reservation:
+    """Clone `source`, reverse the copy, and blank its schedule (APC-15).
+
+    The dispatcher then enters only the return date and pickup time. The return keeps the
+    outbound's vehicle and pricing — it is the same job coming back — and starts life
+    unsynced, unbooked and with deferred revenue (`groups.clone_reservation` resets all
+    of that).
+
+    Deliberately **unlinked** (`group_key=None`): a return is not an identical sibling of
+    the outbound, so `apply_to_group` must never fan an edit between them. A grouped "×N"
+    outbound still produces a single standalone return; the dispatcher raises its quantity
+    from the editor if the whole set is coming back.
+    """
+    from . import groups
+
+    last = source.lead.reservations.order_by("-sort_order").first()
+    next_order = (last.sort_order + 1) if last else 0
+    ret = groups.clone_reservation(source, next_order)
+    ret.pickup_date = None
+    ret.pickup_time = None
+    ret.dropoff_date = None
+    ret.dropoff_time = None
+    ret.save(update_fields=["pickup_date", "pickup_time", "dropoff_date", "dropoff_time"])
+    reverse_route(ret)
+    return ret

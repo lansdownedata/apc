@@ -64,6 +64,16 @@ def _la_state(rows: list[dict]) -> str:
     return "unsent"
 
 
+def _open_editor_id(request, reservations) -> int | None:
+    """The `?edit=<pk>` trip to reopen the editor on, if it names a real trip on this
+    quote — a redirect from Create Return Trip (APC-15) uses it. Anything else is None."""
+    raw = request.GET.get("edit", "")
+    if not raw.isdigit():
+        return None
+    pk = int(raw)
+    return pk if any(r.pk == pk for r in reservations) else None
+
+
 def _reservation_draft(r, *, quantity: int = 1) -> dict:
     """The editor's view of one saved trip. `quantity` is the size of the linked set it
     belongs to (APC-14) — 1 for a trip that stands alone."""
@@ -287,6 +297,8 @@ def lead_detail(request, pk):
         "booking_intent": request.GET.get("booking") == "1",
         "wedding_state": _wedding_state(lead),
         "wedding_open": request.GET.get("wedding") == "1",
+        # ?edit=<pk> reopens the editor on one trip after a redirect (APC-15 return trip).
+        "open_editor_id": _open_editor_id(request, reservations),
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
         "la_state": _la_state(la_sync_rows),

@@ -414,6 +414,9 @@ function quoteWorkspace(opts = {}) {
     // The seeded Private/tail-number carrier's pk (2026-08-29 §3) — lets the Verify gate
     // recognise it client-side the same way `Stop.verify_available` does server-side.
     privateAirlineId: opts.privateAirlineId ?? null,
+    // One trip to reopen the editor on straight after load — Create Return Trip (APC-15)
+    // redirects here with ?edit=<pk> so the dispatcher lands on the new trip's blank date.
+    openEditorId: opts.openEditorId ?? null,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
@@ -619,6 +622,10 @@ function quoteWorkspace(opts = {}) {
       // Snapshot so saveHeader() posts only what changed; posting the whole
       // header would let one invalid stored phone 400 every other edit.
       this._saved = { ...this.header };
+      // Reopen the editor on the trip named by ?edit=<pk> (Create Return Trip).
+      if (this.openEditorId != null) {
+        this.$nextTick(() => this.editReservation(Number(this.openEditorId)));
+      }
     },
 
     // ---- reservation editor ----

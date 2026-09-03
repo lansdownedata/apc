@@ -10,6 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Airline, Airport
@@ -23,7 +24,7 @@ from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .groups import DUPLICATE_MAX, apply_to_group, clone_reservation, delete_group, set_group_size
 from .models import FlightDirection, Reservation
-from .routing import reverse_route
+from .routing import create_return_trip, reverse_route
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +138,20 @@ def reservation_reverse(request, pk) -> HttpResponse:
         for sibling in res.lead.reservations.exclude(pk=res.pk).filter(group_key=res.group_key):
             _alert_la_stale(sibling)
     return redirect("lead_detail", pk=res.lead_id)
+
+
+@login_required
+@require_POST
+def reservation_return(request, pk) -> HttpResponse:
+    """Create the reversed return trip for an outbound reservation (APC-15).
+
+    Lands back on the quote workspace with the editor open on the new trip, its schedule
+    blank, so the dispatcher enters only the return date and pickup time.
+    """
+    res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
+    ret = create_return_trip(res)
+    url = reverse("lead_detail", args=[res.lead_id])
+    return redirect(f"{url}?edit={ret.pk}")
 
 
 @login_required

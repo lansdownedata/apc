@@ -13,6 +13,7 @@
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="quoteWorkspace({
        weddingOpen: {% if wedding_open %}true{% else %}false{% endif %},
+       openEditorId: {{ open_editor_id|default_if_none:'null' }},
        leadId: {{ lead.pk }},
        updateUrl: '{% url 'lead_update' lead.pk %}',
        saveUrl: '{% url 'reservation_save' %}',
@@ -281,6 +282,15 @@
               <button type="button" @click="duplicateReservation({{ res.pk }})"
                       class="p-1 text-muted hover:text-ink transition-colors" title="Duplicate reservation">
                 <i class="ti ti-copy text-[15px]"></i>
+              </button>
+
+              {# create return trip (APC-15) — a new reversed trip with a blank schedule; opens the editor on it #}
+              <form method="post" action="{% url 'reservation_return' res.pk %}" class="hidden" id="form-ret-{{ res.pk }}">
+                {% csrf_token %}
+              </form>
+              <button type="button" @click="document.getElementById('form-ret-{{ res.pk }}').submit()"
+                      class="p-1 text-muted hover:text-ink transition-colors" title="Create return trip">
+                <i class="ti ti-arrow-back-up text-[15px]"></i>
               </button>
 
               {# reverse route (APC-16) — flips pickup ↔ drop-off in place; destructive to the saved route #}
