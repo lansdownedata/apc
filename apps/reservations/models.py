@@ -130,6 +130,12 @@ class Reservation(TimeStampedModel):
     # Blank for every trip an agent added by hand, which is what keeps a rebuild from
     # touching them. Not a foreign key: legs are derived from the event, never stored.
     source_leg_id = models.CharField(max_length=40, blank=True, db_index=True)
+    # Trips generated together as one order line — "56-Passenger Coach ×4" — share a key
+    # (APC-14). Null is the normal state: a lone trip is not a set of one. Deliberately a
+    # bare key rather than a ReservationGroup row, matching `source_leg_id`: the set has no
+    # attributes of its own, only membership, and every member stays independently
+    # editable, deletable and assignable. `apps.reservations.groups` owns every write.
+    group_key = models.UUIDField(null=True, blank=True, db_index=True)
 
     class RevenueStatus(models.TextChoices):
         DEFERRED = "deferred", "Deferred"

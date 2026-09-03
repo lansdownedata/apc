@@ -217,3 +217,47 @@ def test_duplicate_requires_login(client):
     resp = client.post(reverse("reservation_duplicate", args=[res.pk]))
     assert resp.status_code == 302
     assert "/login" in resp.url
+
+
+def test_duplicate_carries_stop_names_times_and_flight_info(client):
+    """APC-14 moved the clone into `groups.clone_reservation` — a copy is now the whole
+    stop, not just its address. A duplicated airport run that lost its flight is wrong."""
+    from datetime import time
+
+    from apps.addresses.factories import AirlineFactory
+
+    iad = AirportFactory(iata="IAD", timezone="America/New_York")
+    res = TransferReservationFactory()
+    Stop.objects.filter(reservation=res).delete()
+    Stop.objects.create(
+        reservation=res,
+        sequence=0,
+        address="IAD",
+        name="Dulles curbside",
+        scheduled_time=time(14, 30),
+        airport=iad,
+        airline=AirlineFactory(iata="UA"),
+        flight_number="123",
+        flight_direction=Stop.FlightDirection.ARRIVAL,
+    )
+    Stop.objects.create(reservation=res, sequence=1, address="Hotel")
+    client.force_login(UserFactory())
+
+    client.post(reverse("reservation_duplicate", args=[res.pk]))
+
+    pickup = res.lead.reservations.exclude(pk=res.pk).get().stops.order_by("sequence").first()
+    assert pickup.name == "Dulles curbside"
+    assert pickup.scheduled_time == time(14, 30)
+    assert pickup.airport_id == iad.pk
+    assert pickup.flight_number == "123"
+    assert pickup.flight_direction == Stop.FlightDirection.ARRIVAL
+
+
+def test_duplicate_leaves_the_copies_unlinked(client):
+    """Duplicate is APC-13's independent copy — linkage is what the quantity field does."""
+    res = TransferReservationFactory()
+    client.force_login(UserFactory())
+
+    client.post(reverse("reservation_duplicate", args=[res.pk]), {"count": 3})
+
+    assert set(res.lead.reservations.values_list("group_key", flat=True)) == {None}

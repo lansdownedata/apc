@@ -21,7 +21,8 @@ from apps.notifications.models import Notification
 from . import flights
 from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
-from .models import FlightDirection, Reservation, Stop
+from .groups import DUPLICATE_MAX, clone_reservation
+from .models import FlightDirection, Reservation
 
 log = logging.getLogger(__name__)
 
@@ -72,11 +73,6 @@ def reservation_save(request) -> HttpResponse:
     return redirect("lead_detail", pk=lead.pk)
 
 
-# A wedding shuttle is the motivating case — four minibuses on one itinerary — but a
-# hand-built ?count keeps one click from spawning hundreds of rows.
-DUPLICATE_MAX = 20
-
-
 def _duplicate_count(request) -> int:
     """How many copies to make: 1..DUPLICATE_MAX, and 1 for anything unparseable."""
     try:
@@ -84,35 +80,6 @@ def _duplicate_count(request) -> int:
     except (TypeError, ValueError):
         return 1
     return max(1, min(n, DUPLICATE_MAX))
-
-
-def _clone_reservation(source: Reservation, stops: list[Stop], sort_order: int) -> Reservation:
-    """One independent copy of `source` at `sort_order` — no LA link, revenue reset."""
-    clone = Reservation.objects.get(pk=source.pk)
-    clone.pk = None
-    clone.la_reservation_id = ""
-    clone.trip_status = ""
-    clone.revenue_status = Reservation.RevenueStatus.DEFERRED
-    clone.recognized_at = None
-    clone.recognized_amount = 0
-    clone.sort_order = sort_order
-    clone.save()
-    Stop.objects.bulk_create(
-        [
-            Stop(
-                reservation=clone,
-                sequence=s.sequence,
-                address=s.address,
-                note=s.note,
-                latitude=s.latitude,
-                longitude=s.longitude,
-                airport_id=s.airport_id,
-            )
-            for s in stops
-        ]
-    )
-    clone.refresh_pickup_timezone()
-    return clone
 
 
 @login_required
@@ -124,7 +91,9 @@ def reservation_duplicate(request, pk) -> HttpResponse:
     next_order = (last.sort_order + 1) if last else 0
     with transaction.atomic():
         for offset in range(_duplicate_count(request)):
-            _clone_reservation(res, stops, next_order + offset)
+            # No `group_key`: a duplicate is an independent trip. Linking a set is what
+            # the editor's quantity field does (APC-14).
+            clone_reservation(res, next_order + offset, stops=stops)
     return redirect("lead_detail", pk=res.lead_id)
 
 
