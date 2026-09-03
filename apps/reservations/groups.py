@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
@@ -134,6 +135,50 @@ def clone_reservation(
     _write_stops(clone, stops)
     clone.refresh_pickup_timezone()
     return clone
+
+
+@transaction.atomic
+def copy_to_dates(source: Reservation, dates: list[date]) -> list[Reservation]:
+    """One independent copy of `source` per date in `dates` (APC-17).
+
+    For a recurring / multi-day programme — a corporate shuttle running Sep 8/9/10 built
+    once. Everything travels except the date: vehicle, pricing, passenger count, the whole
+    route including flight info (`clone_reservation`). Pickup *time* is kept — the shuttle
+    leaves at the same hour each day — and `dropoff_date` moves with `pickup_date` so an
+    overnight trip keeps its span.
+
+    The copies are **not linked** (`group_key=None`): they differ by the one field a
+    linked set's "apply to all" would overwrite. `source`'s own date is skipped, duplicates
+    are collapsed, and the whole thing is capped at `DUPLICATE_MAX`.
+    """
+    wanted: list[date] = []
+    for d in sorted(dates):
+        if d != source.pickup_date and d not in wanted:
+            wanted.append(d)
+    wanted = wanted[:DUPLICATE_MAX]
+    if not wanted:
+        return []
+
+    span = (
+        source.dropoff_date - source.pickup_date
+        if source.pickup_date and source.dropoff_date
+        else None
+    )
+    route = list(source.stops.order_by("sequence"))
+    last = source.lead.reservations.order_by("-sort_order").first()
+    next_order = (last.sort_order + 1) if last else 0
+
+    made: list[Reservation] = []
+    for offset, day in enumerate(wanted):
+        clone = clone_reservation(source, next_order + offset, stops=route)
+        clone.pickup_date = day
+        fields = ["pickup_date"]
+        if span is not None:
+            clone.dropoff_date = day + span
+            fields.append("dropoff_date")
+        clone.save(update_fields=fields)
+        made.append(clone)
+    return made
 
 
 def key_for(count: int) -> uuid.UUID | None:

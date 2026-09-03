@@ -1,0 +1,91 @@
+{% comment %}
+  leads/_copy_dates_modal.html — "Copy to dates…" (APC-17). Copies one reservation onto a
+  set of selected service dates (a corporate shuttle running Sep 8/9/10 built once).
+
+  Rendered inside quoteWorkspace() scope. `copyDatesOpen` / `copyDatesFor` / `copyDatesSource`
+  are workspace state; `openCopyDates(pk, iso)` opens it. Uses <template x-if> (not x-show) so
+  the inner copyDatesForm() re-initialises with the current source date each time it opens —
+  there is no Tom Select here, so the x-show modal caveat doesn't apply.
+
+  Requires: duplicate_max.
+{% endcomment %}
+<template x-if="copyDatesOpen">
+  <div x-cloak class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+       @keydown.escape.window="copyDatesOpen = false">
+    <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="copyDatesOpen = false"></div>
+    <div class="pop relative w-full sm:max-w-[460px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+         x-data="copyDatesForm({ source: copyDatesSource, max: {{ duplicate_max }} })" x-init="initCal()">
+      <form method="post" action="{% url 'reservation_copy_dates' %}" class="flex flex-col min-h-0">
+        {% csrf_token %}
+        <input type="hidden" name="reservation" :value="copyDatesFor">
+
+        <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
+          <span class="w-9 h-9 rounded-lg grid place-items-center bg-sky-50 text-sky-600">
+            <i class="ti ti-calendar-plus text-[18px]"></i>
+          </span>
+          <div>
+            <div class="font-display text-[16px] font-semibold text-ink">Copy to dates</div>
+            <div class="text-[11.5px] text-muted">One independent copy per date — vehicle, route and pricing carried</div>
+          </div>
+          <button type="button" @click="copyDatesOpen = false" class="ml-auto text-muted hover:text-ink"><i class="ti ti-x text-xl"></i></button>
+        </div>
+
+        <div class="overflow-y-auto px-6 py-5 space-y-4">
+          {# mode toggle — two buttons, never a native dropdown #}
+          <div class="inline-flex rounded-lg ring-1 ring-line overflow-hidden text-[12.5px] font-medium" x-show="source">
+            <button type="button" @click="mode = 'pick'"
+                    :class="mode === 'pick' ? 'bg-goldl text-goldd font-semibold' : 'text-muted hover:text-ink'"
+                    class="px-3 py-1.5">Pick dates</button>
+            <button type="button" @click="mode = 'weekly'"
+                    :class="mode === 'weekly' ? 'bg-goldl text-goldd font-semibold' : 'text-muted hover:text-ink'"
+                    class="px-3 py-1.5">Repeat weekly</button>
+          </div>
+
+          <div x-show="mode === 'pick'">
+            <div class="text-[11.5px] text-muted mb-1.5">Select every service date</div>
+            <div x-ref="cal" class="cd-cal"></div>
+          </div>
+
+          <div x-show="mode === 'weekly'" x-cloak class="space-y-2">
+            <div class="text-[11.5px] text-muted">Same weekday as this trip, starting the week after.</div>
+            <label class="flex items-center gap-2 text-[13px] text-ink">
+              For
+              <input x-model.number="weeks" type="number" min="1" max="{{ duplicate_max }}"
+                     class="field w-16 text-[13px] num text-center">
+              weeks
+            </label>
+          </div>
+
+          <div>
+            <div class="text-[11.5px] text-muted mb-1.5">
+              <span x-text="resolvedDates.length"></span> cop<span x-text="resolvedDates.length === 1 ? 'y' : 'ies'"></span> will be created
+            </div>
+            <div class="flex flex-wrap gap-1" x-show="resolvedDates.length">
+              <template x-for="d in resolvedDates" :key="d">
+                <span class="text-[11px] font-medium px-1.5 py-0.5 rounded bg-goldl text-goldd num" x-text="pretty(d)"></span>
+              </template>
+            </div>
+            <p x-show="overCap" x-cloak class="mt-1.5 text-[11.5px] text-amber-700">
+              Only the first {{ duplicate_max }} dates will be copied.
+            </p>
+          </div>
+
+          {# resolved dates ride to the server as plain hidden inputs #}
+          <template x-for="d in resolvedDates" :key="'f-' + d">
+            <input type="hidden" name="dates" :value="d">
+          </template>
+        </div>
+
+        <div class="px-6 py-4 border-t border-line bg-surface2 flex items-center gap-2">
+          <button type="button" @click="copyDatesOpen = false"
+                  class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2.5 rounded-lg ring-1 ring-line bg-surface">Cancel</button>
+          <button type="submit" :disabled="!resolvedDates.length"
+                  class="btn-gold ml-auto flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-5 py-2.5 disabled:opacity-45 disabled:cursor-not-allowed">
+            <i class="ti ti-copy text-[16px]"></i>
+            Create <span x-text="resolvedDates.length"></span> cop<span x-text="resolvedDates.length === 1 ? 'y' : 'ies'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>

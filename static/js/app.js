@@ -426,6 +426,16 @@ function quoteWorkspace(opts = {}) {
     // The wedding builder modal (spec 2026-08-30 §5.2). Opens itself when the workspace
     // was reached with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
+    // "Copy to dates…" (APC-17). `copyDatesFor` is the source trip's pk; `copyDatesSource`
+    // is its pickup date (ISO, "" when unscheduled — weekly repeat is hidden then).
+    copyDatesOpen: false,
+    copyDatesFor: null,
+    copyDatesSource: "",
+    openCopyDates(pk, iso) {
+      this.copyDatesFor = pk;
+      this.copyDatesSource = iso || "";
+      this.copyDatesOpen = true;
+    },
     draftIsNew: false,
     // How many vehicles the open trip's linked set had when the editor opened (APC-14).
     // 1 means it stands alone. Kept off `draft` because it is not part of the payload —
@@ -927,6 +937,64 @@ function quoteWorkspace(opts = {}) {
   };
 }
 window.quoteWorkspace = quoteWorkspace;
+
+/* -------------------------------------------------- copy reservation to dates (APC-17)
+ * The "Copy to dates…" modal: an inline flatpickr calendar in mode:"multiple", or a
+ * "repeat weekly for N weeks" shortcut off the source trip's date. Both resolve to a
+ * plain list of ISO dates rendered as hidden `dates` inputs on the form, which posts
+ * normally to reservation_copy_dates. */
+function copyDatesForm(opts = {}) {
+  return {
+    mode: "pick",
+    source: opts.source || "",           // source trip's pickup date, ISO ("" = unscheduled)
+    max: Number(opts.max) || 20,
+    picked: [],                          // ISO strings chosen on the calendar
+    weeks: 3,
+    _fp: null,
+
+    initCal() {
+      this.$nextTick(() => {
+        const el = this.$refs.cal;
+        if (!el || el._flatpickr || typeof window.flatpickr === "undefined") return;
+        this._fp = window.flatpickr(el, {
+          mode: "multiple", inline: true, dateFormat: "Y-m-d", minDate: "today",
+          onChange: (dates) => {
+            this.picked = dates.map((d) => this._fp.formatDate(d, "Y-m-d"));
+          },
+        });
+      });
+    },
+
+    // source date + 7·k for k = 1..weeks — same weekday as the source trip.
+    get weeklyDates() {
+      if (!this.source) return [];
+      const base = new Date(this.source + "T00:00");
+      const n = Math.max(1, Math.min(Math.floor(Number(this.weeks)) || 1, this.max));
+      const out = [];
+      for (let k = 1; k <= n; k++) {
+        const d = new Date(base);
+        d.setDate(d.getDate() + 7 * k);
+        out.push(localDate(d));
+      }
+      return out;
+    },
+
+    // What will actually be created: deduped, source's own date dropped, capped.
+    get resolvedDates() {
+      const raw = this.mode === "weekly" ? this.weeklyDates : this.picked;
+      return [...new Set(raw)].filter((d) => d && d !== this.source).sort().slice(0, this.max);
+    },
+    get overCap() {
+      const raw = this.mode === "weekly" ? this.weeklyDates : this.picked;
+      return [...new Set(raw)].filter((d) => d && d !== this.source).length > this.max;
+    },
+    pretty(iso) {
+      const d = new Date(iso + "T00:00");
+      return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    },
+  };
+}
+window.copyDatesForm = copyDatesForm;
 
 /* -------------------------------------------------- contact profile */
 // Same blur/change-autosave + field-diffing pattern as quoteWorkspace's header

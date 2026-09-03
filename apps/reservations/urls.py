@@ -8,6 +8,7 @@ urlpatterns = [
     path("<int:pk>/duplicate/", views.reservation_duplicate, name="reservation_duplicate"),
     path("<int:pk>/reverse/", views.reservation_reverse, name="reservation_reverse"),
     path("<int:pk>/return/", views.reservation_return, name="reservation_return"),
+    path("copy-dates/", views.reservation_copy_dates, name="reservation_copy_dates"),
     path("<int:pk>/delete/", views.reservation_delete, name="reservation_delete"),
     path(
         "<int:pk>/group/delete/",

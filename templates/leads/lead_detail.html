@@ -284,6 +284,12 @@
                 <i class="ti ti-copy text-[15px]"></i>
               </button>
 
+              {# copy to dates (APC-17) — one independent copy per selected service date #}
+              <button type="button" @click="openCopyDates({{ res.pk }}, '{{ res.pickup_date|date:'Y-m-d' }}')"
+                      class="p-1 text-muted hover:text-ink transition-colors" title="Copy to dates">
+                <i class="ti ti-calendar-plus text-[15px]"></i>
+              </button>
+
               {# create return trip (APC-15) — a new reversed trip with a blank schedule; opens the editor on it #}
               <form method="post" action="{% url 'reservation_return' res.pk %}" class="hidden" id="form-ret-{{ res.pk }}">
                 {% csrf_token %}
@@ -540,6 +546,7 @@
 
   {% include "leads/_reservation_editor.html" %}
   {% include "leads/_wedding_builder.html" %}
+  {% include "leads/_copy_dates_modal.html" %}
 
 </div>
 {% endblock %}

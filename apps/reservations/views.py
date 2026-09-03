@@ -22,7 +22,14 @@ from apps.notifications.models import Notification
 from . import flights
 from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
-from .groups import DUPLICATE_MAX, apply_to_group, clone_reservation, delete_group, set_group_size
+from .groups import (
+    DUPLICATE_MAX,
+    apply_to_group,
+    clone_reservation,
+    copy_to_dates,
+    delete_group,
+    set_group_size,
+)
 from .models import FlightDirection, Reservation
 from .routing import create_return_trip, reverse_route
 
@@ -152,6 +159,29 @@ def reservation_return(request, pk) -> HttpResponse:
     ret = create_return_trip(res)
     url = reverse("lead_detail", args=[res.lead_id])
     return redirect(f"{url}?edit={ret.pk}")
+
+
+@login_required
+@require_POST
+def reservation_copy_dates(request) -> HttpResponse:
+    """Copy one reservation onto each selected service date (APC-17).
+
+    `dates` is a repeated POST field of ISO dates from the workspace's multi-date picker;
+    unparseable entries are dropped, and an empty result is a 400.
+    """
+    res = get_object_or_404(
+        Reservation.objects.select_related("lead"), pk=_pk(request.POST.get("reservation"))
+    )
+    dates: list[date] = []
+    for raw in request.POST.getlist("dates"):
+        try:
+            dates.append(date.fromisoformat(raw))
+        except (ValueError, TypeError):
+            continue
+    if not dates:
+        return HttpResponseBadRequest("no valid dates")
+    copy_to_dates(res, dates)
+    return redirect("lead_detail", pk=res.lead_id)
 
 
 @login_required
