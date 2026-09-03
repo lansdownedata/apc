@@ -2292,8 +2292,27 @@ function weddingPlanner(opts = {}) {
       if (count <= 14) return "Sprinter van";
       if (count <= 24) return "Mini bus";
       if (count <= 38) return "Executive mini coach";
-      const runs = Math.ceil(count / limit);
+      const runs = this.vehicleRuns(count);
       return runs <= 1 ? "Motorcoach" : `${runs} × ${limit}-passenger coach`;
+    },
+    /* Mirror of wedding.py:vehicle_runs — the integer behind vehicleFor's "3 × …", so the
+     * chip a couple reads and the trips the office gets can never disagree about how many
+     * coaches are turning up (APC-14). Change one, change the other. */
+    vehicleRuns(count) {
+      if (count <= 38) return 1;
+      const cap = (this.venue && this.venue.vehicle_cap) || null;
+      return Math.max(1, Math.ceil(count / Math.min(cap || 56, 56)));
+    },
+    /* How many vehicles this leg runs: the agent's own number when they set one, else
+     * whatever the headcount needs. Office only — the public flow never asks. */
+    legVehicles(leg) {
+      return leg.vehicles > 0 ? leg.vehicles : this.vehicleRuns(leg.pax);
+    },
+    setLegVehicles(leg, value) {
+      const count = Math.max(1, Math.min(20, parseInt(value, 10) || 1));
+      // Typing the derived number back clears the override rather than freezing it, so a
+      // leg whose guest list grows later still gains a coach on its own.
+      leg.vehicles = count === this.vehicleRuns(leg.pax) ? null : count;
     },
     /* Mirror of wedding.py:vehicle_is_certain — show a specific coach size only when the
      * venue's cap is on file or the group is small enough (<= 38) that the class is
@@ -2550,6 +2569,14 @@ function weddingPlanner(opts = {}) {
     get hoursJson() {
       const out = {};
       for (const leg of this.liveLegs) if (leg.hours) out[leg.id] = leg.hours;
+      return JSON.stringify(out);
+    },
+    /* Only the legs the agent overrode. An absent count means "however many the guest
+     * list needs", which the server derives — posting the derived number would freeze
+     * a leg at today's headcount. */
+    get countsJson() {
+      const out = {};
+      for (const leg of this.liveLegs) if (leg.vehicles > 0) out[leg.id] = leg.vehicles;
       return JSON.stringify(out);
     },
 

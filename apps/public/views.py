@@ -28,6 +28,7 @@ from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
 from apps.integrations.geocoding import merged_autocomplete
 from apps.leads.models import Lead
+from apps.reservations import groups
 
 from .forms import (
     BookingRequestForm,
@@ -219,13 +220,18 @@ def booking_thanks(request):
     to the ordinary thanks page rather than erroring at the finish line.
     """
     lead = _wedding_lead(request.GET.get("w", ""))
-    reservations = (
-        lead.reservations.prefetch_related("stops").order_by("sort_order", "id") if lead else None
+    # Movements, not vehicles: a 105-guest run takes two coaches, but the couple asked for
+    # one movement carrying 105 guests and that is what they must read back (APC-14). The
+    # coach count rides along as ours to arrange, never as a split of their guest list.
+    lines = (
+        groups.as_lines(lead.reservations.prefetch_related("stops").order_by("sort_order", "id"))
+        if lead
+        else None
     )
     return render(
         request,
         "public/booking_thanks.html",
-        {"wedding_lead": lead, "reservations": reservations},
+        {"wedding_lead": lead, "movements": lines},
     )
 
 

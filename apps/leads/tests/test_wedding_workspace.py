@@ -39,7 +39,7 @@ def test_a_valid_save_builds_the_trips_and_returns_to_the_workspace(client, agen
     resp = client.post(reverse("lead_wedding_save", args=[lead.pk]), _portal())
     assert resp.status_code == 302
     assert resp["Location"] == reverse("lead_detail", args=[lead.pk])
-    assert lead.reservations.count() == 2
+    assert lead.reservations.count() == 4  # two movements, two coaches each (APC-14)
 
 
 def test_an_invalid_save_creates_nothing(client, agent):

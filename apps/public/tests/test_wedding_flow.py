@@ -125,7 +125,7 @@ def test_a_submission_creates_one_lead_and_redirects_to_thanks(client):
     assert resp.status_code == 302
     assert "/bookings/thanks/" in resp["Location"]
     lead = Lead.objects.get()
-    assert lead.reservations.count() == 2
+    assert lead.reservations.count() == 4  # two movements, two coaches each (APC-14)
 
 
 def test_the_honeypot_blocks_the_wedding_form_too(client):
@@ -168,7 +168,11 @@ def test_the_thanks_page_lists_the_movements_and_the_reference(client):
     assert "Hampton Inn Leesburg" in body  # the movement's route, both ends
     assert "The Oak Barn at Loyalty" in body
     assert "3:00 PM" in body
+    # The couple asked for 105 guests on this movement and must read 105 back — the two
+    # coaches it takes are ours to arrange, not a split of their guest list (APC-14).
     assert "105 passengers" in body
+    assert "53 passengers" not in body
+    assert "2 vehicles" in body
 
 
 def test_the_plain_thanks_page_still_works_without_a_token(client):
@@ -190,13 +194,25 @@ def _resume_url(lead) -> str:
     return f"/weddings/plan/{make_wedding_token(lead)}/"
 
 
+def read_wedding_token(token: str):
+    from apps.public.services import read_wedding_token as _read
+
+    return _read(token)
+
+
 def test_the_confirmation_email_carries_a_resume_link(client, mailoutbox, settings):
     settings.PUBLIC_BASE_URL = "https://allprocharter.com"
     client.post(PLAN_URL, _post())
     lead = Lead.objects.get()
     assert len(mailoutbox) == 1
     assert mailoutbox[0].to == ["jane@example.com"]
-    assert _resume_url(lead) in mailoutbox[0].body
+    # Not the whole signed URL: `signing.dumps` stamps the current time into the token,
+    # so a URL rebuilt here differs from the emailed one whenever a second ticks over
+    # between the POST and this line — a flake that only shows up under a full run.
+    # What matters is that a resume link for THIS lead went out.
+    body = mailoutbox[0].body
+    assert "https://allprocharter.com/weddings/plan/" in body
+    assert read_wedding_token(body.split("/weddings/plan/")[1].split("/")[0]) == lead
 
 
 def test_no_email_is_attempted_when_only_a_phone_was_given(client, mailoutbox):
@@ -220,7 +236,7 @@ def test_resuming_rebuilds_the_same_lead_rather_than_making_a_second(client):
     assert resp.status_code == 302
     assert Lead.objects.count() == 1
     lead.refresh_from_db()
-    assert lead.reservations.count() == 3
+    assert lead.reservations.count() == 6  # three movements, two coaches each
 
 
 def test_a_forged_resume_token_is_a_404(client):

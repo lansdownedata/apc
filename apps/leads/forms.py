@@ -9,6 +9,7 @@ from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import VehicleType
 from apps.public.forms import WeddingRequestForm
+from apps.reservations.groups import DUPLICATE_MAX
 from apps.reservations.models import Reservation
 
 
@@ -83,6 +84,16 @@ def _as_trip_type(value):
     return str(value) if str(value) in Reservation.TripType.values else None
 
 
+def _as_vehicle_count(value):
+    """How many vehicles the agent wants on a leg (APC-14). Out of range or unreadable →
+    None, which leaves the leg on the count the coach maths derives."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return None
+    return count if 1 <= count <= DUPLICATE_MAX else None
+
+
 def _as_billed_hours(value):
     """The same 1-24 window the public booking widget enforces."""
     try:
@@ -112,6 +123,10 @@ class PortalWeddingForm(WeddingRequestForm):
     vehicles_json = forms.CharField(required=False)
     trip_types_json = forms.CharField(required=False)
     hours_json = forms.CharField(required=False)
+    # Also keyed by leg id, and also absent-means-leave-alone — except that "as it is"
+    # for a count is the number the coach maths derives from the headcount, not the
+    # number stored, so a leg whose guest list grew still grows its set (APC-14).
+    counts_json = forms.CharField(required=False)
 
     def clean_vehicles_json(self) -> dict:
         """Unknown and retired vehicles are dropped, never fatal — see `_leg_map`."""
@@ -127,10 +142,14 @@ class PortalWeddingForm(WeddingRequestForm):
     def clean_hours_json(self) -> dict:
         return _leg_map(self.cleaned_data.get("hours_json"), _as_billed_hours)
 
+    def clean_counts_json(self) -> dict:
+        return _leg_map(self.cleaned_data.get("counts_json"), _as_vehicle_count)
+
     def clean(self):
         """No honeypot and no email-or-phone rule; everything else still applies."""
         cleaned = super(WeddingRequestForm, self).clean()
         cleaned["vehicles"] = cleaned.get("vehicles_json") or {}
         cleaned["trip_types"] = cleaned.get("trip_types_json") or {}
         cleaned["hours"] = cleaned.get("hours_json") or {}
+        cleaned["counts"] = cleaned.get("counts_json") or {}
         return self.resolve_wedding(cleaned)

@@ -295,3 +295,63 @@ def test_several_hotels_collapse_to_a_counted_label():
 def test_no_hotels_reads_as_to_be_confirmed():
     assert hotel_label([], True) == "Guest hotels (to be confirmed)"
     assert hotel_label([], False) == "Guest hotels (to be confirmed)"
+
+
+# --- APC-14: how many vehicles a leg actually needs -------------------------------------
+
+
+def test_vehicle_runs_is_one_for_anything_a_single_class_covers():
+    from apps.public.wedding import vehicle_runs
+
+    assert vehicle_runs(1, None) == 1
+    assert vehicle_runs(24, None) == 1
+    assert vehicle_runs(VEHICLE_CERTAIN_MAX, None) == 1
+
+
+def test_vehicle_runs_divides_the_group_by_the_venues_cap():
+    from apps.public.wedding import vehicle_runs
+
+    assert vehicle_runs(105, 40) == 3
+    assert vehicle_runs(80, 40) == 2
+
+
+def test_vehicle_runs_never_seats_more_than_our_largest_coach():
+    from apps.public.wedding import vehicle_runs
+
+    assert vehicle_runs(105, 300) == 2  # a generous venue cap can't raise MAX_COACH_SEATS
+    assert vehicle_runs(105, None) == 2
+
+
+def test_vehicle_for_names_the_count_vehicle_runs_computes():
+    """The chip and the trips it generates must never disagree about how many coaches."""
+    from apps.public.wedding import vehicle_runs
+
+    for count, cap in ((105, 40), (105, None), (200, 56), (39, None)):
+        runs = vehicle_runs(count, cap)
+        label = vehicle_for(count, cap)
+        assert (f"{runs} × " in label) if runs > 1 else ("×" not in label)
+
+
+def test_split_passengers_divides_a_group_evenly():
+    from apps.public.wedding import split_passengers
+
+    assert split_passengers(150, 3) == [50, 50, 50]
+    assert split_passengers(8, 1) == [8]
+
+
+def test_split_passengers_puts_the_remainder_on_the_earliest_coaches():
+    from apps.public.wedding import split_passengers
+
+    assert split_passengers(105, 2) == [53, 52]
+    assert split_passengers(100, 3) == [34, 33, 33]
+
+
+def test_split_passengers_always_seats_everyone():
+    from apps.public.wedding import split_passengers
+
+    for total in (1, 7, 39, 105, 400):
+        for runs in (1, 2, 3, 7):
+            share = split_passengers(total, runs)
+            assert len(share) == runs
+            assert sum(share) == total
+            assert min(share) >= 1 or total < runs

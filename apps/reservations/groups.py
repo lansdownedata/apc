@@ -118,6 +118,11 @@ def clone_reservation(
     clone = Reservation.objects.get(pk=source.pk)
     clone.pk = None
     clone.group_key = group_key
+    # Lineage, not content: `source_leg_id` is the wedding builder's handle on a trip it
+    # generated, so a copy must not answer to it — otherwise the next rebuild of the day
+    # would match, update or delete a trip nobody generated. The builder stamps its own
+    # members itself (`rebuild_wedding_trips`).
+    clone.source_leg_id = ""
     clone.la_reservation_id = ""
     clone.la_confirmation = ""
     clone.trip_status = ""
@@ -129,6 +134,17 @@ def clone_reservation(
     _write_stops(clone, stops)
     clone.refresh_pickup_timezone()
     return clone
+
+
+def key_for(count: int) -> uuid.UUID | None:
+    """The `group_key` a freshly built set of `count` trips shares — None for a set of
+    one, because a lone trip is not a set of one.
+
+    For a builder writing rows from scratch and already knowing how many it needs (the
+    public wedding submission). Anything reconciling or editing trips that already exist
+    goes through `set_group_size`, which owns growing, shrinking and dissolving.
+    """
+    return uuid.uuid4() if count > 1 else None
 
 
 def _members(group_key: uuid.UUID):
@@ -175,7 +191,12 @@ def set_group_size(reservation: Reservation, count: int) -> list[Reservation]:
 
     if count == 1:
         Reservation.objects.filter(group_key=key).update(group_key=None)
+        # The rows we are about to hand back were loaded before that UPDATE, so their
+        # in-memory key is now a lie. A caller that saves one straight back — the wedding
+        # rebuild does — would write it onto the row we just cleared.
         reservation.group_key = None
+        for member in current:
+            member.group_key = None
 
     return current
 
@@ -259,6 +280,12 @@ class ReservationLine:
     @property
     def total(self) -> Decimal:
         return sum((m.line_total for m in self.members), Decimal("0"))
+
+    @property
+    def passengers(self) -> int:
+        """The movement's own headcount — what the customer asked for, before it was
+        split across the vehicles it takes."""
+        return sum(m.passengers for m in self.members)
 
 
 def as_lines(reservations) -> list[ReservationLine]:

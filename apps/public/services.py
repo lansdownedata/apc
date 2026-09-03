@@ -12,10 +12,18 @@ from apps.core.choices import Channel
 from apps.leads.models import Lead, ServiceType
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
+from apps.reservations import groups
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Reservation, Stop
 
-from .wedding import Site, build_notes, hotel_label, is_time_sensitive
+from .wedding import (
+    Site,
+    build_notes,
+    hotel_label,
+    is_time_sensitive,
+    split_passengers,
+    vehicle_runs,
+)
 
 
 def with_submitted_name(notes: str, contact, submitted_name: str) -> str:
@@ -195,23 +203,35 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
 
     service_type = wedding_service_type()
     sites = wedding_sites(data)
+    venue = data.get("venue")
+    cap = venue.vehicle_cap if venue else None
     stops = []
-    for i, leg in enumerate(legs):
-        reservation = Reservation.objects.create(
-            lead=lead,
-            sort_order=i,
-            # Which generated leg this is. The office's builder matches on it to update
-            # a trip in place; without it, the first edit in the portal would read every
-            # website-built trip as hand-added and duplicate the whole day.
-            source_leg_id=leg["id"],
-            trip_type=Reservation.TripType.TRANSFER,
-            service_type=service_type,
-            pickup_date=data["wedding_date"],
-            pickup_time=leg["time"],
-            passengers=leg["pax"],
-        )
-        stops.append(wedding_stop(reservation, 0, leg["from"], leg.get("from_sub", ""), sites))
-        stops.append(wedding_stop(reservation, 1, leg["to"], leg.get("to_sub", ""), sites))
+    order = 0
+    for leg in legs:
+        # A leg is as many trips as it needs vehicles (APC-14): 105 guests is the two
+        # coaches the itinerary already showed the couple, linked so the office handles
+        # them as one line. Below the single-class threshold this is one unlinked trip
+        # and nothing about the old shape changes.
+        runs = vehicle_runs(leg["pax"], cap)
+        group_key = groups.key_for(runs)
+        for share in split_passengers(leg["pax"], runs):
+            reservation = Reservation.objects.create(
+                lead=lead,
+                sort_order=order,
+                # Which generated leg this is. The office's builder matches on it to
+                # update a trip in place; without it, the first edit in the portal would
+                # read every website-built trip as hand-added and duplicate the whole day.
+                source_leg_id=leg["id"],
+                group_key=group_key,
+                trip_type=Reservation.TripType.TRANSFER,
+                service_type=service_type,
+                pickup_date=data["wedding_date"],
+                pickup_time=leg["time"],
+                passengers=share,
+            )
+            order += 1
+            stops.append(wedding_stop(reservation, 0, leg["from"], leg.get("from_sub", ""), sites))
+            stops.append(wedding_stop(reservation, 1, leg["to"], leg.get("to_sub", ""), sites))
     Stop.objects.bulk_create(stops)
     for res in lead.reservations.all():
         res.refresh_pickup_timezone()

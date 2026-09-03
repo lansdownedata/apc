@@ -40,13 +40,13 @@
 
       <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Movements</dt>
       <dd class="space-y-1.5 text-[13px] text-ink">
-        {% for res in reservations %}
+        {% for movement in movements %}{% with res=movement.reservation %}
         <div class="flex flex-wrap items-baseline gap-x-2">
           <span class="font-mono2 font-semibold">{{ res.pickup_time|time:"g:i A" }}</span>
           <span>{{ res.stops.all.0.name }} &rarr; {{ res.stops.all.1.name }}</span>
-          <span class="text-[11.5px] text-muted">{{ res.passengers }} passenger{{ res.passengers|pluralize }}</span>
+          <span class="text-[11.5px] text-muted">{{ movement.passengers }} passenger{{ movement.passengers|pluralize }}{% if movement.is_group %} &middot; {{ movement.size }} vehicles{% endif %}</span>
         </div>
-        {% endfor %}
+        {% endwith %}{% endfor %}
       </dd>
     </dl>
 

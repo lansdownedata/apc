@@ -185,8 +185,37 @@ def vehicle_for(count: int, cap: int | None = None) -> str:
         return "Mini bus"
     if count <= VEHICLE_CERTAIN_MAX:
         return "Executive mini coach"
-    runs = math.ceil(count / limit)
+    runs = vehicle_runs(count, cap)
     return "Motorcoach" if runs <= 1 else f"{runs} × {limit}-passenger coach"
+
+
+def vehicle_runs(count: int, cap: int | None = None) -> int:
+    """How many vehicles `count` riders actually need — the number behind `vehicle_for`.
+
+    `vehicle_for` says "3 × 40-passenger coach" as prose; this is the 3, so the chip a
+    couple reads and the trips the builder generates (APC-14) can never disagree about
+    how many coaches are turning up. Below the single-class threshold the answer is
+    always one vehicle, whatever the cap: no venue bans a mini coach.
+    """
+    if count <= VEHICLE_CERTAIN_MAX:
+        return 1
+    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
+    return max(1, math.ceil(count / limit))
+
+
+def split_passengers(total: int, runs: int) -> list[int]:
+    """`total` riders across `runs` vehicles, as evenly as they divide.
+
+    The remainder rides on the earliest coaches rather than piling onto the last, so a
+    150-guest run reads 50/50/50 and a 105-guest one 53/52 — the numbers a dispatcher
+    would write down. Every rider is seated exactly once: the shares always sum to
+    `total`, which is what stops a trip sheet claiming more or fewer guests than the
+    wedding has.
+    """
+    if runs <= 1:
+        return [total]
+    base, extra = divmod(total, runs)
+    return [base + 1] * extra + [base] * (runs - extra)
 
 
 def vehicle_is_certain(count: int, cap: int | None = None) -> bool:

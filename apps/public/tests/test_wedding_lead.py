@@ -28,11 +28,13 @@ def _lead(**over) -> Lead:
     return create_lead_from_wedding(form.cleaned_data)
 
 
-def test_one_lead_holds_one_reservation_per_leg():
+def test_one_lead_holds_a_trip_per_coach_on_every_leg():
+    """Four legs of 105 guests, two 56-seat coaches each (APC-14) — the same two the
+    itinerary chip already promised the couple."""
     lead = _lead(legs_json=json.dumps(_legs(4)))
     assert Lead.objects.count() == 1
-    assert lead.reservations.count() == 4
-    assert [r.sort_order for r in lead.reservations.all()] == [0, 1, 2, 3]
+    assert lead.reservations.count() == 8
+    assert [r.sort_order for r in lead.reservations.all()] == [0, 1, 2, 3, 4, 5, 6, 7]
 
 
 def test_the_lead_lands_new_on_the_website_channel():
@@ -62,10 +64,15 @@ def test_the_wedding_service_type_reuses_the_settings_catalog_entry():
 
 
 def test_each_reservation_carries_its_own_time_and_headcount():
+    """Each leg's coaches share its time and split its guests, 53 + 52 of 105."""
     lead = _lead()
-    first, last = lead.reservations.all()
-    assert (first.pickup_time, first.passengers) == (time(15, 0), 105)
-    assert (last.pickup_time, last.passengers) == (time(23, 0), 105)
+    rows = list(lead.reservations.all())
+    assert [(r.pickup_time, r.passengers) for r in rows] == [
+        (time(15, 0), 53),
+        (time(15, 0), 52),
+        (time(23, 0), 53),
+        (time(23, 0), 52),
+    ]
 
 
 def test_each_reservation_has_exactly_two_ordered_stops():
@@ -200,7 +207,12 @@ def test_each_reservation_records_the_leg_it_came_from():
     """Without this the office's first edit duplicates the whole day: the portal's
     rebuild matches on source_leg_id, and a blank one reads as a hand-added trip."""
     lead = _lead()
-    assert sorted(r.source_leg_id for r in lead.reservations.all()) == ["final-out", "guests-in"]
+    assert sorted(r.source_leg_id for r in lead.reservations.all()) == [
+        "final-out",
+        "final-out",
+        "guests-in",
+        "guests-in",
+    ]
 
 
 def test_a_wedding_records_the_name_on_the_form_when_it_differs(db):

@@ -401,7 +401,8 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
         wedding_sites,
         wedding_stop,
     )
-    from apps.public.wedding import build_notes, is_time_sensitive
+    from apps.public.wedding import build_notes, is_time_sensitive, split_passengers, vehicle_runs
+    from apps.reservations import groups
     from apps.reservations.models import Reservation, Stop
 
     service_type = wedding_service_type()
@@ -409,25 +410,29 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
     vehicles = data.get("vehicles") or {}
     trip_types = data.get("trip_types") or {}
     billed_hours = data.get("hours") or {}
-    existing = {r.source_leg_id: r for r in lead.reservations.exclude(source_leg_id="")}
+    counts = data.get("counts") or {}
+    venue = data.get("venue")
+    cap = venue.vehicle_cap if venue else None
+
+    # A leg maps to a SET of trips, not a row (APC-14) — 150 guests is three coaches, and
+    # each is its own reservation with its own price, coverage and trip status. Ordered so
+    # the first member is the anchor the rest are cloned from and reconciled against.
+    existing: dict[str, list] = {}
+    for res in lead.reservations.exclude(source_leg_id="").order_by("sort_order", "id"):
+        existing.setdefault(res.source_leg_id, []).append(res)
     seen: set[str] = set()
     updated: list = []
     created: list = []
+    order = 0
 
-    for i, leg in enumerate(data["legs"]):
-        leg_id = leg["id"]
-        seen.add(leg_id)
-        res = existing.get(leg_id)
-        is_new = res is None
-        if is_new:
-            res = Reservation(
-                lead=lead, source_leg_id=leg_id, trip_type=Reservation.TripType.TRANSFER
-            )
-        res.sort_order = i
+    def write(res, leg, *, leg_id: str, passengers: int, sort_order: int) -> None:
+        """Everything a leg says about one of its vehicles, onto one reservation."""
+        res.source_leg_id = leg_id
+        res.sort_order = sort_order
         res.service_type = service_type
         res.pickup_date = data["wedding_date"]
         res.pickup_time = leg["time"]
-        res.passengers = leg["pax"]
+        res.passengers = passengers
         # Each override applies only when the agent actually posted it: a rebuild after a
         # time change must not silently un-price a trip, nor flip an hourly shuttle back
         # to a transfer, because this pass happened not to mention it.
@@ -450,9 +455,34 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
             ]
         )
         res.refresh_pickup_timezone()
-        (created if is_new else updated).append(res)
 
-    orphans = [res for leg_id, res in existing.items() if leg_id not in seen]
+    for leg in data["legs"]:
+        leg_id = leg["id"]
+        seen.add(leg_id)
+        members = existing.get(leg_id, [])
+        anchor = members[0] if members else None
+        was_new = anchor is None
+        if was_new:
+            anchor = Reservation(
+                lead=lead, source_leg_id=leg_id, trip_type=Reservation.TripType.TRANSFER
+            )
+        # The agent's own count wins; absent one the coach maths decides, so a leg whose
+        # guest list grew gains a coach without anyone having to notice.
+        count = counts.get(leg_id) or vehicle_runs(leg["pax"], cap)
+        # Write the anchor first: `set_group_size` clones it for any new member, so the
+        # copies it makes are already this leg's trip rather than last edit's.
+        write(anchor, leg, leg_id=leg_id, passengers=leg["pax"], sort_order=order)
+        # By identity, not by `sort_order` — that is the column this pass is in the middle
+        # of rewriting, so reading the set's order off it sees the anchor already moved and
+        # its siblings not yet, and coach 1 and coach 2 swap places. Their order decides
+        # which coach carries the odd guest and which one an affiliate is already holding.
+        group = sorted(groups.set_group_size(anchor, count), key=lambda r: r.pk)
+        for res, share in zip(group, split_passengers(leg["pax"], count), strict=True):
+            write(res, leg, leg_id=leg_id, passengers=share, sort_order=order)
+            order += 1
+            (created if (was_new or res.pk not in {m.pk for m in members}) else updated).append(res)
+
+    orphans = [res for leg_id, rows in existing.items() if leg_id not in seen for res in rows]
 
     lead.notes = build_notes(
         wedding_date=data["wedding_date"],

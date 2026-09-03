@@ -47,3 +47,66 @@ def test_booking_resolves_timezone_from_pickup_coordinates(db):
         )
     )
     assert lead.reservations.get().pickup_timezone == "America/Los_Angeles"
+
+
+# --- APC-14: a website wedding builds the coaches it told the couple about --------------
+
+
+def test_a_public_wedding_builds_one_trip_per_coach(db):
+    """The couple is shown "2 × 56-passenger coach" on the itinerary; the quote the
+    office picks up has to be those two coaches, not one trip for 105 people."""
+    from apps.public.forms import WeddingRequestForm
+    from apps.public.services import create_lead_from_wedding
+    from apps.public.tests.test_wedding_form import _post
+
+    form = WeddingRequestForm(_post())
+    assert form.is_valid(), form.errors
+
+    lead = create_lead_from_wedding(form.cleaned_data)
+
+    coaches = list(lead.reservations.filter(source_leg_id="guests-in").order_by("sort_order", "id"))
+    assert len(coaches) == 2
+    assert coaches[0].group_key is not None
+    assert coaches[0].group_key == coaches[1].group_key
+    assert [c.passengers for c in coaches] == [53, 52]
+    for coach in coaches:
+        assert [s.name for s in coach.ordered_stops] == [
+            "Hampton Inn Leesburg",
+            "The Oak Barn at Loyalty",
+        ]
+
+
+def test_a_public_wedding_leaves_a_small_leg_unlinked(db):
+    import json
+
+    from apps.public.forms import WeddingRequestForm
+    from apps.public.services import create_lead_from_wedding
+    from apps.public.tests.test_wedding_form import _legs, _post
+
+    legs = _legs()
+    for leg in legs:
+        leg["pax"] = 10
+    form = WeddingRequestForm(_post(legs_json=json.dumps(legs)))
+    assert form.is_valid(), form.errors
+
+    lead = create_lead_from_wedding(form.cleaned_data)
+
+    assert lead.reservations.count() == 2
+    assert set(lead.reservations.values_list("group_key", flat=True)) == {None}
+
+
+def test_the_notification_counts_movements_not_coaches(db):
+    """ "5 movements" is what the office reads on the alert — a wedding that needs nine
+    coaches is still the same day's work to look at."""
+    from apps.notifications.models import Notification
+    from apps.public.forms import WeddingRequestForm
+    from apps.public.services import create_lead_from_wedding
+    from apps.public.tests.test_wedding_form import _post
+
+    form = WeddingRequestForm(_post())
+    assert form.is_valid(), form.errors
+
+    lead = create_lead_from_wedding(form.cleaned_data)
+
+    alert = Notification.objects.get(lead=lead, kind=Notification.Kind.NEW_LEAD)
+    assert "2 movements" in alert.detail

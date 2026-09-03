@@ -489,3 +489,44 @@ def test_delete_group_on_an_ungrouped_reservation_removes_just_that_trip():
     groups.delete_group(res)
 
     assert [r.pk for r in lead.reservations.all()] == [other.pk]
+
+
+def test_a_clone_is_not_owned_by_the_wedding_builder():
+    """`source_leg_id` is the builder's handle on a trip it generated, so it is per-copy
+    like every other lineage field: a copy is a hand-added trip the builder must never
+    match, update or delete. The wedding rebuild stamps its own members explicitly."""
+    res = TransferReservationFactory(source_leg_id="guests-in")
+
+    clone = groups.clone_reservation(res, 5)
+
+    assert clone.source_leg_id == ""
+    assert "source_leg_id" not in groups.propagated_fields()
+
+
+def test_dissolving_a_set_clears_the_key_on_the_rows_it_hands_back():
+    """A caller may save these instances straight back — a stale key on one would write
+    itself onto the row the dissolve just cleared, resurrecting a group of one."""
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+    res.refresh_from_db()
+
+    survivors = groups.set_group_size(res, 1)
+
+    assert [r.group_key for r in survivors] == [None]
+    survivors[0].save()
+    survivors[0].refresh_from_db()
+    assert survivors[0].group_key is None
+
+
+def test_a_line_totals_the_headcount_across_its_set():
+    """The movement's own passenger count — what the customer asked for, before we split
+    it across the vehicles it takes."""
+    res = TransferReservationFactory(passengers=53)
+    groups.set_group_size(res, 2)
+    members = _group_of(res)
+    members[1].passengers = 52
+    members[1].save()
+
+    line = groups.as_lines(res.lead.reservations.all())[0]
+
+    assert line.passengers == 105
