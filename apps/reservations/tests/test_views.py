@@ -8,6 +8,7 @@ from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AirportFactory
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
+from apps.reservations import groups
 from apps.reservations.factories import TransferReservationFactory
 from apps.reservations.models import Reservation, Stop
 
@@ -261,3 +262,131 @@ def test_duplicate_leaves_the_copies_unlinked(client):
     client.post(reverse("reservation_duplicate", args=[res.pk]), {"count": 3})
 
     assert set(res.lead.reservations.values_list("group_key", flat=True)) == {None}
+
+
+# --- APC-14: quantity + apply-to-all on the editor save path ---------------------------
+
+
+def _grouped(lead):
+    return lead.reservations.exclude(group_key=None)
+
+
+def test_saving_with_a_quantity_creates_a_linked_set(client):
+    lead = LeadFactory()
+    client.force_login(UserFactory())
+
+    _post(client, _draft(lead, quantity=4))
+
+    assert lead.reservations.count() == 4
+    assert len(set(_grouped(lead).values_list("group_key", flat=True))) == 1
+
+
+def test_saving_with_a_quantity_of_one_leaves_the_trip_ungrouped(client):
+    lead = LeadFactory()
+    client.force_login(UserFactory())
+
+    _post(client, _draft(lead, quantity=1))
+
+    assert lead.reservations.count() == 1
+    assert lead.reservations.get().group_key is None
+
+
+def test_a_draft_with_no_quantity_never_resizes_the_set(client):
+    """An older payload, or one from a surface with no quantity control, must not
+    silently collapse a set of four to one."""
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 4)
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk))
+
+    assert res.lead.reservations.count() == 4
+
+
+def test_an_unparseable_quantity_leaves_the_set_alone(client):
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+    client.force_login(UserFactory())
+
+    for bad in ("", "abc", None, "2.5", 0, -4):
+        _post(client, _draft(res.lead, id=res.pk, quantity=bad))
+
+    assert res.lead.reservations.count() == 3
+
+
+def test_raising_the_quantity_on_a_saved_trip_grows_its_set(client):
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 2)
+    res.refresh_from_db()
+    key = res.group_key
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk, quantity=5))
+
+    assert res.lead.reservations.filter(group_key=key).count() == 5
+
+
+def test_lowering_the_quantity_on_a_saved_trip_shrinks_its_set(client):
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 5)
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk, quantity=2))
+
+    assert res.lead.reservations.count() == 2
+
+
+def test_apply_to_group_fans_the_edit_out_to_the_siblings(client):
+    res = TransferReservationFactory(passengers=2)
+    groups.set_group_size(res, 3)
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk, pax=48, applyToGroup=True))
+
+    assert list(res.lead.reservations.values_list("passengers", flat=True)) == [48, 48, 48]
+
+
+def test_a_plain_save_leaves_the_siblings_alone(client):
+    res = TransferReservationFactory(passengers=2)
+    groups.set_group_size(res, 3)
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk, pax=48))
+
+    assert sorted(res.lead.reservations.values_list("passengers", flat=True)) == [2, 2, 48]
+
+
+def test_apply_to_group_flags_every_la_synced_sibling_as_stale(client):
+    from apps.notifications.models import Notification
+
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+    synced = res.lead.reservations.exclude(pk=res.pk).first()
+    synced.la_reservation_id = "LA-7"
+    synced.save(update_fields=["la_reservation_id"])
+    client.force_login(UserFactory())
+
+    _post(client, _draft(res.lead, id=res.pk, pax=9, applyToGroup=True))
+
+    alerts = Notification.objects.filter(lead=res.lead, kind=Notification.Kind.LA_CHANGED)
+    assert [str(synced.pk) in a.detail for a in alerts] == [True]
+
+
+def test_group_delete_removes_the_whole_set(client):
+    lead = LeadFactory()
+    doomed = TransferReservationFactory(lead=lead)
+    keep = TransferReservationFactory(lead=lead)
+    groups.set_group_size(doomed, 4)
+    client.force_login(UserFactory())
+
+    resp = client.post(reverse("reservation_group_delete", args=[doomed.pk]))
+
+    assert resp.status_code == 302
+    assert [r.pk for r in lead.reservations.all()] == [keep.pk]
+
+
+def test_group_delete_requires_login(client):
+    res = TransferReservationFactory()
+    resp = client.post(reverse("reservation_group_delete", args=[res.pk]))
+    assert resp.status_code == 302
+    assert "/login" in resp.url

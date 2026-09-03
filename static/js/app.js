@@ -424,6 +424,12 @@ function quoteWorkspace(opts = {}) {
     // was reached with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
     draftIsNew: false,
+    // How many vehicles the open trip's linked set had when the editor opened (APC-14).
+    // 1 means it stands alone. Kept off `draft` because it is not part of the payload —
+    // `draft.quantity` is the target size, this is where it started, and the difference
+    // is what decides whether saving grows a set, shrinks one, or leaves it be.
+    groupSizeAtOpen: 1,
+    applyToGroup: false,
     // Set once the agent gives the drop-off a day / a time of its own; until then each
     // follows the pickup.  Component state, not draft state — neither may ride along in
     // the save payload.
@@ -598,7 +604,7 @@ function quoteWorkspace(opts = {}) {
         tripType: "transfer", serviceType: "", date: "", time: "",
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
-        pax: 1,
+        pax: 1, quantity: 1,
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         stops: [
@@ -628,6 +634,8 @@ function quoteWorkspace(opts = {}) {
     },
     newReservation() {
       this.draft = this.blankReservation();
+      this.groupSizeAtOpen = 1;
+      this.applyToGroup = false;
       this.dropoffPinned = false;
       this.dropoffTimePinned = false;
       this.draftIsNew = true;
@@ -638,6 +646,9 @@ function quoteWorkspace(opts = {}) {
       const r = this.reservations.find((x) => x.id === id);
       if (!r) return;
       this.draft = JSON.parse(JSON.stringify(r));
+      this.draft.quantity = Number(this.draft.quantity) || 1;
+      this.groupSizeAtOpen = this.draft.quantity;
+      this.applyToGroup = false;   // never carried over from the last trip edited
       if (!(Number(this.draft.hours) > 0)) this.draft.hours = "";  // a stored 0 is "no override" — show an empty box, not "0"
       // A stop already linked to a cached flight opens with its pill shown. `pill` comes
       // from the server draft; `verify` is client-only and keyed so any edit reverts it.
@@ -872,12 +883,31 @@ function quoteWorkspace(opts = {}) {
       return this.resSubtotal(r) * (Number(r.gratuityPct) || 0) / 100;
     },
     resTotal(r) { return this.resSubtotal(r) + this.resGratuity(r); },
+    /* A lower quantity than the set opened with deletes real reservations — ones that may
+     * already be assigned to an affiliate or synced to LA. Gate it on the shared modal
+     * (never window.confirm); everything else saves straight through. */
     saveReservation() {
+      const target = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
+      const removing = this.groupSizeAtOpen - target;
+      if (removing <= 0) return this.postReservation();
+      Alpine.store("modal").confirm({
+        variant: "danger",
+        title: "Remove " + removing + (removing === 1 ? " vehicle?" : " vehicles?"),
+        message:
+          "Saving with a quantity of " + target + " permanently deletes " + removing +
+          " trip" + (removing === 1 ? "" : "s") + " from this group and releases any affiliate offer on them. This cannot be undone.",
+        confirmText: "Save and remove",
+        onConfirm: () => this.postReservation(),
+      });
+    },
+    postReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
       d.stops.forEach((s) => { delete s.verify; delete s.verifying; delete s.pill; });  // client-only
       d.lead_id = this.leadId;
+      d.quantity = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
+      d.applyToGroup = this.groupSizeAtOpen > 1 && this.applyToGroup;
       if (this.draftIsNew) delete d.id;
-      fetch(this.saveUrl, {
+      return fetch(this.saveUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
         body: JSON.stringify(d),

@@ -32,6 +32,7 @@ from apps.messaging.models import TouchPoint
 from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import services as payment_services
+from apps.reservations import groups
 from apps.reservations.models import Stop
 
 from . import services
@@ -63,9 +64,12 @@ def _la_state(rows: list[dict]) -> str:
     return "unsent"
 
 
-def _reservation_draft(r) -> dict:
+def _reservation_draft(r, *, quantity: int = 1) -> dict:
+    """The editor's view of one saved trip. `quantity` is the size of the linked set it
+    belongs to (APC-14) — 1 for a trip that stands alone."""
     return {
         "id": r.pk,
+        "quantity": quantity,
         "tripType": r.trip_type,
         "serviceType": r.service_type_id or "",
         "date": r.pickup_date.isoformat() if r.pickup_date else "",
@@ -248,6 +252,9 @@ def lead_detail(request, pk):
         )
     )
     reservations = lead.reservations.all()
+    # A linked set is several trips in the database and one line on the screen (APC-14).
+    reservation_lines = groups.as_lines(reservations)
+    group_sizes = {m.pk: line.size for line in reservation_lines for m in line.members}
 
     la_events: dict[int, ZapEvent] = {}
     events = ZapEvent.objects.filter(lead=lead, action=ZapEvent.Action.CREATE_RESERVATION)
@@ -293,7 +300,11 @@ def lead_detail(request, pk):
         "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
         "channels": Channel.choices,
         "agents": services.agent_options(),
-        "reservations_json": [_reservation_draft(r) for r in lead.reservations.all()],
+        "reservation_lines": reservation_lines,
+        "duplicate_max": groups.DUPLICATE_MAX,
+        "reservations_json": [
+            _reservation_draft(r, quantity=group_sizes.get(r.pk, 1)) for r in reservations
+        ],
         "vehicles_json": [
             {
                 "id": v["id"],

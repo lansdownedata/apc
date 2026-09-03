@@ -21,7 +21,7 @@ from apps.notifications.models import Notification
 from . import flights
 from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
-from .groups import DUPLICATE_MAX, clone_reservation
+from .groups import DUPLICATE_MAX, apply_to_group, clone_reservation, delete_group, set_group_size
 from .models import FlightDirection, Reservation
 
 log = logging.getLogger(__name__)
@@ -65,12 +65,37 @@ def reservation_save(request) -> HttpResponse:
         instance = lead.reservations.filter(pk=rid).first()
     editing_existing = instance is not None
     try:
-        save_reservation_from_draft(lead, payload, instance=instance)
+        saved = save_reservation_from_draft(lead, payload, instance=instance)
     except DraftError as exc:
         return HttpResponseBadRequest(str(exc))
     if editing_existing:
         _alert_la_stale(instance)
+    # "Apply to all in group" first, so the copies a bigger quantity is about to make are
+    # cloned from a reservation that already agrees with its siblings.
+    if payload.get("applyToGroup"):
+        for sibling in apply_to_group(saved):
+            _alert_la_stale(sibling)
+    quantity = _quantity(payload)
+    if quantity is not None:
+        set_group_size(saved, quantity)
     return redirect("lead_detail", pk=lead.pk)
+
+
+def _quantity(payload: dict) -> int | None:
+    """The editor's vehicle quantity, or None to leave the set exactly as it is.
+
+    Absent-or-unparseable deliberately means "don't touch the size" rather than 1: a
+    payload from a surface with no quantity control — an older client, the wedding
+    builder — would otherwise silently collapse a set of four coaches down to one.
+    """
+    value = payload.get("quantity")
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
 
 
 def _duplicate_count(request) -> int:
@@ -95,6 +120,21 @@ def reservation_duplicate(request, pk) -> HttpResponse:
             # the editor's quantity field does (APC-14).
             clone_reservation(res, next_order + offset, stops=stops)
     return redirect("lead_detail", pk=res.lead_id)
+
+
+@login_required
+@require_POST
+def reservation_group_delete(request, pk) -> HttpResponse:
+    """Remove a whole linked set (APC-14) — the quote workspace shows one as one line.
+
+    `reservation_delete`'s single-trip door still exists for a member removed from inside
+    an expanded set; this is the line-level one.
+    """
+    res = get_object_or_404(Reservation, pk=pk)
+    lead_id = res.lead_id
+    _alert_la_stale(res)
+    delete_group(res)
+    return redirect("lead_detail", pk=lead_id)
 
 
 @login_required

@@ -49,15 +49,15 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
         </div>
 
         <!-- what's being booked -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="sm:col-span-2">
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div class="sm:col-span-4">
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Service</label>
             {# delegation — Tom Select fires change on the <select>, which bubbles to this wrapper #}
             <div class="mt-1.5" @change="draft.serviceType = $event.target.value">
               {% include "components/searchable_select.html" with name="service_type" field_id="f-res-service" options=service_type_options empty_label="Select a service" search="off" %}
             </div>
           </div>
-          <div>
+          <div class="sm:col-span-2">
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Vehicle</label>
             {# delegation — Tom Select fires change on the <select> which bubbles to this wrapper #}
             <div class="mt-1.5" @change="draft.vehicle = $event.target.value; applyVehicleRateCard()">
@@ -68,6 +68,33 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
             <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Passengers</label>
             <input x-model.number="draft.pax" type="number" min="1" class="field mt-1.5 text-[13px] num">
           </div>
+          {% comment %} Quantity (APC-14) — "56-Passenger Coach ×4" builds four linked trips
+             in one go instead of four passes through this editor. Each one stays
+             independently editable, priced and dispatchable afterwards. {% endcomment %}
+          <div>
+            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Quantity</label>
+            <input x-model.number="draft.quantity" type="number" min="1" max="{{ duplicate_max }}"
+                   class="field mt-1.5 text-[13px] num" title="How many identical vehicles">
+          </div>
+          <p x-cloak x-show="draft.quantity > 1" class="sm:col-span-4 -mt-1 text-[11.5px] text-muted">
+            <i class="ti ti-copy text-[13px]"></i>
+            <span x-text="draft.quantity"></span> identical trips, linked as one line on the quote —
+            each still editable, priced and dispatched on its own.
+          </p>
+          {% comment %} Only for a trip that is ALREADY in a set: fanning an edit out is
+             meaningless for a set this save is about to create, since those copies are
+             cloned from this very draft. {% endcomment %}
+          <label x-cloak x-show="groupSizeAtOpen > 1"
+                 class="sm:col-span-4 flex items-start gap-2.5 rounded-xl ring-1 ring-line bg-surface2 px-3.5 py-3 cursor-pointer">
+            <input type="checkbox" x-model="applyToGroup" class="mt-0.5">
+            <span class="text-[12.5px] text-ink">
+              Apply these changes to all <span class="num" x-text="groupSizeAtOpen"></span> vehicles in this group
+              <span class="block text-[11.5px] text-muted mt-0.5">
+                Copies the route, schedule, vehicle and pricing onto every trip in the set. Leave
+                it off to change only this one.
+              </span>
+            </span>
+          </label>
         </div>
 
         {% comment %}

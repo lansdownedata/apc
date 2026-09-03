@@ -360,18 +360,10 @@ def test_apply_to_group_on_an_ungrouped_reservation_does_nothing():
     res = TransferReservationFactory(lead=lead, passengers=3)
     other = TransferReservationFactory(lead=lead, passengers=9)
 
-    assert groups.apply_to_group(res) == 0
+    assert groups.apply_to_group(res) == []
 
     other.refresh_from_db()
     assert other.passengers == 9
-
-
-def test_apply_to_group_returns_how_many_siblings_it_updated():
-    res = TransferReservationFactory()
-    groups.set_group_size(res, 4)
-    res.refresh_from_db()
-
-    assert groups.apply_to_group(res) == 3
 
 
 def test_apply_to_group_reads_the_source_route_once_not_once_per_sibling():
@@ -390,3 +382,110 @@ def test_apply_to_group_reads_the_source_route_once_not_once_per_sibling():
     assert (nine - three) % 6 == 0
     per_sibling = (nine - three) // 6
     assert per_sibling == 3  # its own update, one stop-delete, one bulk_create
+
+
+def test_apply_to_group_returns_the_siblings_it_updated():
+    """The caller needs the rows, not just a count — an LA-synced sibling has to be
+    flagged stale the same way a hand-edited one is."""
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 4)
+    res.refresh_from_db()
+    expected = {r.pk for r in _group_of(res)} - {res.pk}
+
+    updated = groups.apply_to_group(res)
+
+    assert {r.pk for r in updated} == expected
+
+
+# --- collapsing a set into one quote line ---------------------------------------------
+
+
+def test_as_lines_collapses_a_set_into_a_single_line():
+    lead = LeadFactory()
+    alone = TransferReservationFactory(lead=lead)
+    setof3 = TransferReservationFactory(lead=lead)
+    groups.set_group_size(setof3, 3)
+
+    lines = groups.as_lines(lead.reservations.all())
+
+    assert [line.size for line in lines] == [1, 3]
+    assert [line.reservation.pk for line in lines] == [alone.pk, setof3.pk]
+    assert lines[0].is_group is False
+    assert lines[1].is_group is True
+
+
+def test_a_line_totals_every_trip_in_its_set():
+    res = TransferReservationFactory(rate=200, hours=1)
+    groups.set_group_size(res, 4)
+
+    line = groups.as_lines(res.lead.reservations.all())[0]
+
+    assert line.total == res.line_total * 4
+
+
+def test_as_lines_keeps_two_different_sets_apart():
+    lead = LeadFactory()
+    first = TransferReservationFactory(lead=lead)
+    second = TransferReservationFactory(lead=lead)
+    groups.set_group_size(first, 2)
+    groups.set_group_size(second, 3)
+
+    lines = groups.as_lines(lead.reservations.all())
+
+    assert [line.size for line in lines] == [2, 3]
+
+
+def test_a_lines_anchor_is_its_earliest_member():
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+
+    line = groups.as_lines(res.lead.reservations.all())[0]
+
+    assert line.reservation.pk == res.pk
+    assert [m.pk for m in line.members] == [r.pk for r in _group_of(res)]
+
+
+# --- removing a whole set --------------------------------------------------------------
+
+
+def test_delete_group_removes_every_member():
+    lead = LeadFactory()
+    doomed = TransferReservationFactory(lead=lead)
+    keep = TransferReservationFactory(lead=lead)
+    groups.set_group_size(doomed, 4)
+
+    groups.delete_group(doomed)
+
+    assert [r.pk for r in lead.reservations.all()] == [keep.pk]
+
+
+def test_delete_group_releases_coverage_on_every_member(monkeypatch):
+    from apps.dispatch import services as dispatch_services
+
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+    res.refresh_from_db()
+    for member in _group_of(res):
+        AssignmentFactory(reservation=member, status=Assignment.Status.OFFERED)
+    released = []
+    real = dispatch_services.release_trips
+    monkeypatch.setattr(
+        dispatch_services,
+        "release_trips",
+        lambda reservations, *, note: released.extend(real(reservations, note=note)) or released,
+    )
+
+    groups.delete_group(res)
+
+    assert len(released) == 3
+    assert not Assignment.objects.exists()
+
+
+def test_delete_group_on_an_ungrouped_reservation_removes_just_that_trip():
+    lead = LeadFactory()
+    res = TransferReservationFactory(lead=lead)
+    other = TransferReservationFactory(lead=lead)
+
+    groups.delete_group(res)
+
+    assert [r.pk for r in lead.reservations.all()] == [other.pk]

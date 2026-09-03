@@ -12,6 +12,8 @@ Every write to `group_key` lives here.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
+from decimal import Decimal
 
 from django.db import transaction
 
@@ -194,15 +196,19 @@ def _delete_members(doomed: list[Reservation]) -> None:
 
 
 @transaction.atomic
-def apply_to_group(reservation: Reservation) -> int:
-    """Copy `reservation`'s editor fields and route onto its siblings. Returns how many.
+def apply_to_group(reservation: Reservation) -> list[Reservation]:
+    """Copy `reservation`'s editor fields and route onto its siblings, and return them.
 
     The agent has already saved the copy they had open; this fans that state out. An
     ungrouped reservation has no siblings, so it is a no-op — callers can hand any
     reservation over without checking first.
+
+    The updated rows come back rather than a count because a sibling already pushed to
+    LimoAnywhere has just gone stale there, exactly as a hand-edited one does, and the
+    caller is what knows to raise that alert.
     """
     if reservation.group_key is None:
-        return 0
+        return []
     fields = sorted(propagated_fields())
     values = {name: getattr(reservation, name) for name in fields}
     route = list(reservation.stops.order_by("sequence"))
@@ -212,4 +218,65 @@ def apply_to_group(reservation: Reservation) -> int:
             setattr(sibling, name, value)
         sibling.save(update_fields=fields)
         _write_stops(sibling, route)
-    return len(siblings)
+    return siblings
+
+
+@transaction.atomic
+def delete_group(reservation: Reservation) -> int:
+    """Remove `reservation` and every trip linked to it. Returns how many rows went.
+
+    The quote workspace shows a set as one line, so its remove control has to take the
+    whole line — removing only the anchor would leave a ×4 coach set silently standing
+    at ×3. An ungrouped reservation is a set of one, so this is also a safe way to
+    delete any single trip.
+    """
+    members = (
+        [reservation] if reservation.group_key is None else list(_members(reservation.group_key))
+    )
+    _delete_members(members)
+    return len(members)
+
+
+@dataclass
+class ReservationLine:
+    """One line of a quote: a lone trip, or a whole linked set shown as "×4".
+
+    Presentation only — the members stay separate reservations underneath, each with its
+    own price, its own coverage and its own trip status.
+    """
+
+    reservation: Reservation
+    members: list[Reservation] = field(default_factory=list)
+
+    @property
+    def size(self) -> int:
+        return len(self.members)
+
+    @property
+    def is_group(self) -> bool:
+        return self.size > 1
+
+    @property
+    def total(self) -> Decimal:
+        return sum((m.line_total for m in self.members), Decimal("0"))
+
+
+def as_lines(reservations) -> list[ReservationLine]:
+    """Collapse an ordered run of reservations into quote lines, sets folded together.
+
+    A set takes the place of its earliest member, so the lines stay in the order the
+    agent built them however far apart a set's later copies were appended. Iterates
+    whatever it is handed — hand it a prefetched queryset and it costs no query of
+    its own.
+    """
+    lines: list[ReservationLine] = []
+    by_key: dict[uuid.UUID, ReservationLine] = {}
+    for res in reservations:
+        line = by_key.get(res.group_key) if res.group_key is not None else None
+        if line is None:
+            line = ReservationLine(reservation=res)
+            if res.group_key is not None:
+                by_key[res.group_key] = line
+            lines.append(line)
+        line.members.append(res)
+    return lines

@@ -207,8 +207,12 @@
       </button>
     </div>
     <div class="divide-y divide-line/70">
-      {% for res in reservations %}
-      <div class="px-5 py-4">
+      {% comment %} One line per quote line, not per reservation: a linked set of identical
+         trips (APC-14) folds into its first member and carries a ×N badge. The members
+         stay separate trips underneath — expand the line to reach each one. {% endcomment %}
+      {% for line in reservation_lines %}
+      {% with res=line.reservation %}
+      <div class="px-5 py-4" data-line="{{ res.pk }}" x-data="{ expanded: false }">
         <div class="flex items-start gap-3.5">
           <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 {% if res.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">
             <i class="ti {% if res.trip_type == 'hourly' %}ti-clock-hour-4{% else %}ti-arrow-narrow-right{% endif %} text-[18px]"></i>
@@ -217,6 +221,7 @@
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold text-ink text-[13.5px]">{{ res.service_label }}</span>
               <span class="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded {% if res.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">{{ res.get_trip_type_display }}</span>
+              {% if line.is_group %}<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-charcoal text-white num" title="{{ line.size }} identical trips">×{{ line.size }}</span>{% endif %}
               {% if res.is_multi_stop %}<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-goldl text-goldd">Multi-stop</span>{% endif %}
               {% if res.trip_status %}
               <span class="ml-auto inline-flex items-center gap-1 text-[10.5px] font-medium px-2 py-0.5 rounded-full ring-1 ring-inset {% if res.is_cancelled %}bg-rose-50 text-rose-600 ring-rose-600/20{% elif res.trip_phase == 'Completing' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% else %}bg-slate-100 text-slate-600 ring-slate-500/20{% endif %}">
@@ -259,11 +264,12 @@
             </div>
           </div>
           <div class="text-right shrink-0 flex flex-col items-end gap-1.5">
-            <div class="num font-semibold text-ink text-[14px]">${{ res.line_total|floatformat:2|intcomma }}</div>
+            <div class="num font-semibold text-ink text-[14px]">${{ line.total|floatformat:2|intcomma }}</div>
+            {% if line.is_group %}<div class="text-[10.5px] text-muted num mt-0.5">{{ line.size }} × ${{ res.line_total|floatformat:2|intcomma }}</div>{% endif %}
             {% if res.trip_type == 'hourly' %}<div class="text-[10.5px] text-muted num mt-0.5">${{ res.rate|floatformat:0 }}/hr</div>{% endif %}
             <div class="flex items-center gap-1 mt-1">
               <button @click="editReservation({{ res.pk }})"
-                      class="p-1 text-muted hover:text-ink transition-colors" title="Edit reservation">
+                      class="p-1 text-muted hover:text-ink transition-colors" title="{% if line.is_group %}Edit all {{ line.size }} trips{% else %}Edit reservation{% endif %}">
                 <i class="ti ti-pencil text-[15px]"></i>
               </button>
 
@@ -277,6 +283,23 @@
                 <i class="ti ti-copy text-[15px]"></i>
               </button>
 
+              {% if line.is_group %}
+              {# the line stands for the whole set, so its remove takes the whole set #}
+              <form method="post" action="{% url 'reservation_group_delete' res.pk %}" id="form-group-del-{{ res.pk }}" class="hidden">
+                {% csrf_token %}
+              </form>
+              <button type="button"
+                      class="p-1 text-muted hover:text-rose-600 transition-colors" title="Remove all {{ line.size }} trips"
+                      @click="$store.modal.confirm({
+                        variant: 'danger',
+                        title: 'Remove all {{ line.size }} trips',
+                        message: 'This permanently deletes every trip in this group and releases any affiliate offer on them. This cannot be undone.',
+                        confirmText: 'Remove all',
+                        onConfirm: () => document.getElementById('form-group-del-{{ res.pk }}').submit()
+                      })">
+                <i class="ti ti-trash text-[15px]"></i>
+              </button>
+              {% else %}
               {# delete form (gated by modal) #}
               <form method="post" action="{% url 'reservation_delete' res.pk %}" id="form-del-{{ res.pk }}" class="hidden">
                 {% csrf_token %}
@@ -292,10 +315,53 @@
                       })">
                 <i class="ti ti-trash text-[15px]"></i>
               </button>
+              {% endif %}
             </div>
           </div>
         </div>
+
+        {% if line.is_group %}
+        {% comment %} The set, opened up. Each vehicle is its own trip with its own price,
+           its own status and its own coverage — this is where you reach one of them. {% endcomment %}
+        <button type="button" @click="expanded = !expanded"
+                class="mt-2.5 ml-12 inline-flex items-center gap-1.5 text-[11.5px] font-medium text-muted hover:text-ink transition-colors">
+          <i class="ti text-[14px]" :class="expanded ? 'ti-chevron-down' : 'ti-chevron-right'"></i>
+          <span x-text="expanded ? 'Hide vehicles' : 'Show {{ line.size }} vehicles'">Show {{ line.size }} vehicles</span>
+        </button>
+        <div x-show="expanded" x-cloak class="mt-2 ml-12 pl-4 border-l border-line space-y-1.5">
+          {% for member in line.members %}
+          <div class="flex items-center gap-2.5 text-[12px]">
+            <span class="text-muted num shrink-0">Vehicle {{ forloop.counter }}</span>
+            {% if member.trip_status %}
+            <span class="inline-flex items-center gap-1 text-[10.5px] font-medium px-2 py-0.5 rounded-full ring-1 ring-inset {% if member.is_cancelled %}bg-rose-50 text-rose-600 ring-rose-600/20{% else %}bg-slate-100 text-slate-600 ring-slate-500/20{% endif %}">
+              <i class="ti ti-steering-wheel text-[12px]"></i> {{ member.get_trip_status_display }}
+            </span>
+            {% endif %}
+            <span class="ml-auto num text-ink">${{ member.line_total|floatformat:2|intcomma }}</span>
+            <button @click="editReservation({{ member.pk }})"
+                    class="p-1 text-muted hover:text-ink transition-colors" title="Edit this vehicle">
+              <i class="ti ti-pencil text-[14px]"></i>
+            </button>
+            <form method="post" action="{% url 'reservation_delete' member.pk %}" id="form-del-{{ member.pk }}" class="hidden">
+              {% csrf_token %}
+            </form>
+            <button type="button"
+                    class="p-1 text-muted hover:text-rose-600 transition-colors" title="Remove this vehicle"
+                    @click="$store.modal.confirm({
+                      variant: 'danger',
+                      title: 'Remove this vehicle',
+                      message: 'This permanently deletes one trip from the group. The rest stay linked.',
+                      confirmText: 'Remove',
+                      onConfirm: () => document.getElementById('form-del-{{ member.pk }}').submit()
+                    })">
+              <i class="ti ti-trash text-[14px]"></i>
+            </button>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
       </div>
+      {% endwith %}
       {% empty %}
       <div class="px-5 py-12 text-center text-[13px] text-muted">
         <i class="ti ti-car-off text-[26px] text-slate-300"></i>
