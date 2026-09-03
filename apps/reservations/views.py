@@ -23,6 +23,7 @@ from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .groups import DUPLICATE_MAX, apply_to_group, clone_reservation, delete_group, set_group_size
 from .models import FlightDirection, Reservation
+from .routing import reverse_route
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,22 @@ def reservation_duplicate(request, pk) -> HttpResponse:
             # No `group_key`: a duplicate is an independent trip. Linking a set is what
             # the editor's quantity field does (APC-14).
             clone_reservation(res, next_order + offset, stops=stops)
+    return redirect("lead_detail", pk=res.lead_id)
+
+
+@login_required
+@require_POST
+def reservation_reverse(request, pk) -> HttpResponse:
+    """Flip a saved itinerary end-for-end (APC-16) — pickup ↔ drop-off, no clone.
+
+    A linked set (APC-14) reverses as a whole so its members stay identical trips.
+    """
+    res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
+    reverse_route(res, propagate=True)
+    _alert_la_stale(res)
+    if res.group_key is not None:
+        for sibling in res.lead.reservations.exclude(pk=res.pk).filter(group_key=res.group_key):
+            _alert_la_stale(sibling)
     return redirect("lead_detail", pk=res.lead_id)
 
 

@@ -283,6 +283,22 @@
                 <i class="ti ti-copy text-[15px]"></i>
               </button>
 
+              {# reverse route (APC-16) — flips pickup ↔ drop-off in place; destructive to the saved route #}
+              <form method="post" action="{% url 'reservation_reverse' res.pk %}" id="form-rev-{{ res.pk }}" class="hidden">
+                {% csrf_token %}
+              </form>
+              <button type="button"
+                      class="p-1 text-muted hover:text-ink transition-colors" title="Reverse route{% if line.is_group %} on all {{ line.size }} trips{% endif %}"
+                      @click="$store.modal.confirm({
+                        variant: 'danger',
+                        title: 'Reverse this route',
+                        message: 'Flips the pickup and drop-off{% if line.is_group %} on all {{ line.size }} trips{% endif %}, reverses the stops in between and clears their times.{% if res.la_reservation_id %} This trip is already in LimoAnywhere — update it there afterwards.{% endif %} This cannot be undone.',
+                        confirmText: 'Reverse route',
+                        onConfirm: () => document.getElementById('form-rev-{{ res.pk }}').submit()
+                      })">
+                <i class="ti ti-arrows-exchange text-[15px]"></i>
+              </button>
+
               {% if line.is_group %}
               {# the line stands for the whole set, so its remove takes the whole set #}
               <form method="post" action="{% url 'reservation_group_delete' res.pk %}" id="form-group-del-{{ res.pk }}" class="hidden">
