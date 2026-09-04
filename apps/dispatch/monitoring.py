@@ -104,6 +104,24 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
         elif hours_to <= cfg.driver_info_warn_hours:
             out[K.NO_DRIVER_INFO] = T.WARNING
 
+    # "Affiliate unacknowledged" (APC-20) — a manual-channel farmed-out trip's T-48h
+    # confirmation still has no acknowledgement on file. Warning only (the client asked
+    # for a nudge, not an escalation), and — same reasoning as the two checks above —
+    # gated on EN_ROUTE_OR_BEYOND rather than ARRIVED_OR_BEYOND: once the affiliate is
+    # visibly underway the formal ack is moot. GNET is excluded: no email/ack-link flow
+    # ever schedules one for a GNet vendor (touchpoints.schedule_affiliate_confirmation),
+    # so affiliate_confirmed_at can never be set for one — this would otherwise flag
+    # every GNet trip as unacknowledged forever with no way to clear it.
+    if (
+        covered
+        and not confirmed.is_in_house
+        and confirmed.channel != Assignment.Channel.GNET
+        and status not in EN_ROUTE_OR_BEYOND
+        and confirmed.affiliate_confirmed_at is None
+        and hours_to <= cfg.affiliate_unacked_warn_hours
+    ):
+        out[K.AFFILIATE_UNACKED] = T.WARNING
+
     return out
 
 
@@ -111,10 +129,12 @@ def _monitored_trips(cfg: DispatchAlertConfig, now) -> list[Reservation]:
     """Booked, uncancelled trips whose pickup is close enough that a milestone could bite.
 
     The window is derived from the widest threshold so raising `unassigned_warn_hours` (or
-    `driver_info_warn_hours`) to days-out still works.
+    `driver_info_warn_hours` / `affiliate_unacked_warn_hours`) to days-out still works.
     """
     lookahead = timedelta(
-        hours=max(cfg.unassigned_warn_hours, cfg.driver_info_warn_hours)
+        hours=max(
+            cfg.unassigned_warn_hours, cfg.driver_info_warn_hours, cfg.affiliate_unacked_warn_hours
+        )
     ) + timedelta(days=1)
     lookback = timedelta(minutes=cfg.arrived_critical_minutes) + timedelta(days=1)
     return list(

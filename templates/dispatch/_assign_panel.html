@@ -32,17 +32,7 @@
     </div>
     {% comment %} T-72h trip confirmation state (APC-19) — the customer's own
          acknowledgement on the public /trip/<token>/ page. {% endcomment %}
-    {% if trip.customer_confirmed_at %}
-      <p class="flex items-center gap-1 text-[12px] text-emerald-700 mt-1.5">
-        <i class="ti ti-circle-check-filled text-[13px]"></i>
-        Confirmed {{ trip.customer_confirmed_at|date:"M j, g:i A" }}
-      </p>
-    {% else %}
-      <p class="flex items-center gap-1 text-[12px] text-muted mt-1.5">
-        <i class="ti ti-circle-dashed text-[13px]"></i>
-        Not yet confirmed by the customer
-      </p>
-    {% endif %}
+    {% include "dispatch/_ack_status_line.html" with confirmed_at=trip.customer_confirmed_at who="the customer" %}
   </section>
 
   <section class="mb-4">
@@ -162,6 +152,12 @@
         <p class="text-[11.5px] text-rose-600 mt-1">
           Preview — not sent. GNet is disarmed, so no affiliate has seen this offer.
         </p>
+      {% endif %}
+      {% comment %} T-48h affiliate confirmation state (APC-20) — the affiliate's own
+           acknowledgement on the public /trip/affiliate/<token>/ page. In-house has
+           nothing to acknowledge. {% endcomment %}
+      {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
+        {% include "dispatch/_ack_status_line.html" with confirmed_at=assignment.affiliate_confirmed_at who="the affiliate" %}
       {% endif %}
     </div>
 
