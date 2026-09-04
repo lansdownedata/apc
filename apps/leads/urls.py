@@ -12,6 +12,7 @@ urlpatterns = [
     path("<int:pk>/wedding/", views.lead_wedding_save, name="lead_wedding_save"),
     path("<int:pk>/reopen/", views.lead_reopen, name="lead_reopen"),
     path("<int:pk>/send-quote/", views.lead_send_quote, name="lead_send_quote"),
+    path("<int:pk>/reissue-quote/", views.lead_reissue_quote, name="lead_reissue_quote"),
     path("<int:pk>/resend-la/", views.lead_resend_la, name="lead_resend_la"),
     # public (no login) — Stripe redirect target + 3-D Secure return, keyed by signed token
     path(

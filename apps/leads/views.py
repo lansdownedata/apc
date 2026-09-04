@@ -478,6 +478,20 @@ def lead_resend_la(request, pk: int) -> HttpResponse:
 
 @login_required
 @require_POST
+def lead_reissue_quote(request, pk: int) -> HttpResponse:
+    """Reissue an expired quote (APC-25) — fresh expiry + restarted touch-points, no re-send."""
+    lead = get_object_or_404(Lead, pk=pk)
+    try:
+        expiry = services.reissue_quote(lead)
+    except services.ReissueQuoteError as exc:
+        messages.error(request, str(exc))
+        return redirect("lead_detail", pk=pk)
+    messages.success(request, f"Quote reissued — now expires {expiry:%b %-d, %Y}.")
+    return redirect("lead_detail", pk=pk)
+
+
+@login_required
+@require_POST
 def lead_send_quote(request, pk: int) -> JsonResponse:
     """Create/refresh the deposit plan, transition the lead, stamp the send/expiry, and
     deliver the public quote-page link on the requested channels. Returns the send result

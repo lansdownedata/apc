@@ -87,6 +87,28 @@ def compute_quote_expiry(lead: Lead) -> datetime:
     return cutoff if cutoff > timezone.now() else pickup
 
 
+class ReissueQuoteError(ValueError):
+    """The lead has no quote to reissue (never quoted, or already booked/lost)."""
+
+
+def reissue_quote(lead: Lead) -> datetime:
+    """Bring an expired quote back to life (APC-25) — a distinct action from Send / Resend.
+
+    The staff member has re-checked availability and pricing; this gives the quote a fresh
+    expiry window (`compute_quote_expiry`), clears the viewed flag, and restarts the
+    quote-nurture touch-points. It does **not** re-deliver the link — the customer's signed
+    quote-page URL is unchanged and works again the moment the expiry moves; "Send quote"
+    stays the way to email/text them. Returns the new expiry.
+    """
+    if lead.status != lead.Status.QUOTED:
+        raise ReissueQuoteError("Only a sent, not-yet-booked quote can be reissued.")
+    lead.quote_expires_at = compute_quote_expiry(lead)
+    lead.quote_viewed_at = None
+    lead.save(update_fields=["quote_expires_at", "quote_viewed_at", "updated_at"])
+    touchpoints.schedule_quote_sent(lead)
+    return lead.quote_expires_at
+
+
 def make_quote_page_url(lead: Lead, *, base_url: str) -> str:
     return f"{base_url}{reverse('quote_page', args=[make_deposit_token(lead)])}"
 
