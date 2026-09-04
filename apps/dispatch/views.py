@@ -11,7 +11,8 @@ from apps.contacts.models import Contact
 from apps.core.phone import to_e164
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
-from apps.reservations.models import Reservation, Stop
+from apps.reservations import services as reservation_services
+from apps.reservations.models import Reservation, Stop, TripStatusEvent
 from apps.vendors.models import Vendor
 
 from . import selectors, services
@@ -129,6 +130,15 @@ _COLUMNS = (
     ("total", "TOTAL", "right", True, "w-[96px] min-w-[96px]"),
 )
 
+# The only statuses the drawer's Trip status control sets — the three that drive a
+# customer notification (APC-22). Everything else on Reservation.TripStatus stays
+# LA-driven; this is a small, curated advance, not a full status state machine here.
+_MANUAL_STATUSES = (
+    Reservation.TripStatus.DISPATCHED,
+    Reservation.TripStatus.ON_THE_WAY,
+    Reservation.TripStatus.ARRIVED,
+)
+
 
 @login_required
 def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
@@ -166,6 +176,7 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
                 if assignment is None
                 else {"drivers": [], "vehicles": []}
             ),
+            "trip_status_options": [(s, s.label) for s in _MANUAL_STATUSES],
         },
     )
 
@@ -277,6 +288,25 @@ def assign_driver(request: HttpRequest, pk: int) -> JsonResponse:
     except services.AssignmentError as exc:
         return _fail(exc)
     return JsonResponse({"ok": True, "assignment": assignment.pk})
+
+
+@login_required
+@require_POST
+def set_status(request: HttpRequest, pk: int) -> JsonResponse:
+    """Advance a covered trip's status by hand (APC-22) — Dispatched / On The Way /
+    Arrived, each of which can fire a customer notification (Settings > Customer
+    notifications, off by default)."""
+    trip = get_object_or_404(Reservation, pk=pk)
+    status = request.POST.get("status", "")
+    if status not in _MANUAL_STATUSES:
+        return _fail(services.AssignmentError("Unknown status."))
+    covering = services.active_assignment(trip)
+    if covering is None or covering.status != Assignment.Status.CONFIRMED:
+        return _fail(services.AssignmentError("Confirm coverage before setting trip status."))
+    reservation_services.set_trip_status(
+        trip, status, user=request.user, source=TripStatusEvent.Source.MANUAL
+    )
+    return JsonResponse({"ok": True})
 
 
 @login_required
