@@ -1,4 +1,4 @@
-{# Coverage pill — mirrors components/status_badge.html's shape. #}
-<span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset {% if coverage == 'uncovered' %}bg-amber-50 text-amber-700 ring-amber-600/20{% elif coverage == 'offered' %}bg-sky-50 text-sky-700 ring-sky-600/20{% else %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% endif %}">
+{# Coverage pill — mirrors status_badge.html. uniform=1 fixes the width so the column never jitters. #}
+<span class="inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ring-1 ring-inset {% if uniform %}w-[86px]{% endif %} {% if coverage == 'uncovered' %}bg-amber-50 text-amber-700 ring-amber-600/20{% elif coverage == 'offered' %}bg-sky-50 text-sky-700 ring-sky-600/20{% else %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% endif %}">
   {% if coverage == 'uncovered' %}Unassigned{% elif coverage == 'offered' %}Offered{% else %}Confirmed{% endif %}
 </span>

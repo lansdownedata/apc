@@ -1,26 +1,90 @@
 {% comment %}
 One trip row on the dispatch board. `trip` comes from `selectors.board_trips` — already
-carries `pickup_stop` / `dropoff_stop` / `coverage`; never touch `trip.pickup` (N+1).
+carries `pickup_stop` / `dropoff_stop` / `coverage` / `active`; never touch `trip.pickup`
+(N+1). Every cell is one line: `whitespace-nowrap` on the row, ROUTING the only truncator.
+Sticky cells (PU, CONF#, TOTAL) carry an opaque bg so scrolled content can't bleed through.
+Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand.
 {% endcomment %}
 {% load humanize time_filters %}
-{% with fs=trip.flight_summary %}
-<tr class="border-t border-line hover:bg-surface2 cursor-pointer {% if trip.exception_tier == 'critical' or fs.state == 'cancelled' %}bg-rose-50/40{% elif trip.exception_tier == 'warning' or trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}bg-amber-50/40{% endif %}"
-    @click="$dispatch('drawer-open', {url: '{% url 'dispatch_assign_panel' trip.pk %}'})">
-  <td class="px-3 py-3 num font-semibold">{% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}—{% endif %}</td>
-  <td class="px-1 py-3">{% if fs %}<i class="ti {{ fs.icon }} text-[15px] {% if fs.state == 'verified' %}text-emerald-600{% elif fs.state == 'delayed' or fs.state == 'not_found' %}text-amber-600{% elif fs.state == 'cancelled' %}text-rose-600{% elif fs.state == 'partial' %}text-goldd{% else %}text-muted/60{% endif %}" title="{{ fs.label }}"></i>{% endif %}</td>
-  <td class="px-3 py-3 num text-muted">{{ trip.la_confirmation|default:trip.pk }}</td>
-  <td class="px-3 py-3 whitespace-nowrap">
-    {% include "dispatch/_coverage_badge.html" with coverage=trip.coverage %}
-    {% if trip.exception_tier %}<span class="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded {% if trip.exception_tier == 'critical' %}chip-danger{% else %}chip-warn{% endif %}"
+{% with fs=trip.flight_summary a=trip.active %}
+<tr data-trip="{{ trip.pk }}"
+    data-url="{% url 'dispatch_assign_panel' trip.pk %}"
+    data-pu="{{ trip.pickup_time|time:'H:i'|default:'00:00' }}"
+    data-conf="{{ trip.la_confirmation|default:trip.reference }}"
+    data-coverage="{{ trip.coverage }}"
+    data-tokens="{{ trip.lead.contact.name|lower }} {{ trip.reference|lower }} {{ trip.pk|add:600000 }} {{ trip.pk }} {{ trip.la_confirmation|lower }} {{ trip.vehicle.name|default:''|lower }}{% if a.is_in_house and a.vehicle %} {{ a.vehicle.name|lower }}{% endif %}{% if a %} {{ a.provider_name|lower }}{% endif %} {{ trip.pickup_stop.address|default:''|lower }} {{ trip.dropoff_stop.address|default:''|lower }} {% if trip.trip_type == 'hourly' %}hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}airport{% else %}p2p point-to-point{% endif %} {% if trip.coverage == 'uncovered' %}unassigned{% elif trip.coverage == 'offered' %}offered{% else %}confirmed{% endif %} {{ trip.passengers }}"
+    data-pax="{{ trip.passengers }}"
+    data-total="{{ trip.line_total|stringformat:'012.2f' }}"
+    data-passenger="{{ trip.lead.contact.name|lower }}"
+    data-veh="{{ trip.vehicle.name|default:''|lower }}"
+    data-svc="{% if trip.trip_type == 'hourly' %}hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}airport{% else %}p2p{% endif %}"
+    data-driver="{% if a.is_in_house %}{{ a.driver.name|lower }}{% endif %}"
+    data-affiliate="{% if a and not a.is_in_house %}{{ a.vendor.name|lower }}{% endif %}"
+    data-exception="{% if trip.coverage == 'uncovered' or trip.coverage == 'offered' or trip.exception_tier %}1{% else %}0{% endif %}"
+    class="group border-t border-line whitespace-nowrap cursor-pointer bg-surface hover:bg-surface2 {% if trip.exception_tier == 'critical' or fs.state == 'cancelled' %}row-danger{% elif trip.exception_tier == 'warning' or trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}row-warn{% endif %}"
+    @click="select($el)" @dblclick="open($el)">
+
+  {# PU — sticky left (opaque bg, set below) #}
+  <td class="w-[100px] min-w-[100px] sticky left-0 z-10 bg-surface group-hover:bg-surface2 px-3 num font-semibold text-ink">
+    {% if trip.pickup_time %}{{ trip|pickup_clock }}{% else %}<span class="text-amber-700 font-medium">No time</span>{% endif %}
+  </td>
+
+  {# CONF# — sticky left #}
+  <td class="w-[108px] min-w-[108px] sticky left-[100px] z-10 bg-surface group-hover:bg-surface2 px-3 num text-muted" title="{% if trip.la_confirmation %}LA confirmation{% else %}Trip reference{% endif %}">{{ trip.la_confirmation|default:trip.reference }}</td>
+
+  {# COVERAGE — uniform-width pill + exception glyph #}
+  <td class="min-w-[100px] px-3">
+    {% include "dispatch/_coverage_badge.html" with coverage=trip.coverage uniform=1 %}
+    {% if trip.exception_tier %}<span class="ml-1 inline-flex items-center align-middle text-[10px] font-semibold px-1 py-0.5 rounded {% if trip.exception_tier == 'critical' %}chip-danger{% else %}chip-warn{% endif %}"
       title="{% for e in trip.open_exceptions %}{{ e.get_kind_display }}{% if not forloop.last %} · {% endif %}{% endfor %}"><i class="ti ti-alert-triangle text-[11px]"></i></span>{% endif %}
   </td>
-  <td class="px-3 py-3">{{ trip.lead.contact.name }}</td>
-  <td class="px-3 py-3 text-muted">
-    {{ trip.pickup_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.pickup_stop compact=1 %}
-    → {{ trip.dropoff_stop.address|default:"—" }} {% include "components/flight_pill.html" with stop=trip.dropoff_stop compact=1 %}
+
+  {# PASSENGER #}
+  <td class="min-w-[124px] px-3 text-ink">{{ trip.lead.contact.name }}</td>
+
+  {# PAX #}
+  <td class="w-[44px] min-w-[44px] px-3 num text-right text-muted">{{ trip.passengers }}</td>
+
+  {# SVC — hourly / airport / P2P, derived from the trip + its route ends #}
+  <td class="min-w-[68px] px-3 text-muted">{% if trip.trip_type == 'hourly' %}Hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}Airport{% else %}P2P{% endif %}</td>
+
+  {# ROUTING — each end truncates on its own so the drop-off is never hidden #}
+  <td class="px-3 text-muted"
+      title="{{ trip.pickup_stop.address|default:'—' }} → {{ trip.dropoff_stop.address|default:'—' }}">
+    <div class="flex items-center gap-1.5 max-w-[380px]">
+      <span class="truncate">{{ trip.pickup_stop.address|default:"—" }}</span>
+      <span class="text-muted/40 shrink-0">→</span>
+      <span class="truncate">{{ trip.dropoff_stop.address|default:"—" }}</span>
+    </div>
   </td>
-  <td class="px-3 py-3 text-muted">{{ trip.vehicle.name|default:"—" }}</td>
-  <td class="px-3 py-3">{% include "dispatch/_coverage_cell.html" with trip=trip %}</td>
-  <td class="px-3 py-3 num text-right">${{ trip.line_total|floatformat:2|intcomma }}</td>
+
+  {# FLIGHT — its own narrow column; the cell title carries the trip's flight roll-up. #}
+  <td class="min-w-[96px] px-3"{% if fs %} title="{{ fs.label }}"{% endif %}>
+    {% if trip.pickup_stop.airport_id and trip.pickup_stop.flight_label %}
+      {% include "components/flight_pill.html" with stop=trip.pickup_stop compact=1 dispatch=1 %}
+    {% elif trip.dropoff_stop.airport_id and trip.dropoff_stop.flight_label %}
+      {% include "components/flight_pill.html" with stop=trip.dropoff_stop compact=1 dispatch=1 %}
+    {% elif fs %}
+      <span class="inline-flex items-center gap-1 text-[11px] {{ fs.chip }} px-1.5 py-0.5 rounded-full"><i class="ti {{ fs.icon }} text-[13px]"></i></span>
+    {% else %}<span class="text-muted/40">—</span>{% endif %}
+  </td>
+
+  {# VEH — class, plus the unit number on an in-house cover #}
+  <td class="min-w-[116px] px-3 text-muted">
+    {{ trip.vehicle.name|default:"—" }}{% if a.is_in_house and a.vehicle %} <span class="text-muted/60">· {{ a.vehicle.name }}</span>{% endif %}
+  </td>
+
+  {# DRIVER — in-house driver (house glyph), else the affiliate's driver once known, else — #}
+  <td class="min-w-[110px] px-3 text-muted">
+    {% if a.is_in_house %}<i class="ti ti-home text-[12px] text-muted/70" title="In-house"></i> {{ a.driver.name }}{% else %}<span class="text-muted/40">—</span>{% endif %}
+  </td>
+
+  {# AFFILIATE — company we farmed the trip to, with a handoff glyph #}
+  <td class="min-w-[138px] px-3 text-muted">
+    {% if a and not a.is_in_house %}<i class="ti ti-arrow-ramp-right-2 text-[13px] text-goldd"></i> {{ a.vendor.name }}{% else %}<span class="text-muted/40">—</span>{% endif %}
+  </td>
+
+  {# TOTAL — sticky right #}
+  <td class="w-[96px] min-w-[96px] sticky right-0 z-10 bg-surface group-hover:bg-surface2 px-3 num text-right font-semibold text-ink border-l border-line/60">${{ trip.line_total|floatformat:2|intcomma }}</td>
 </tr>
 {% endwith %}

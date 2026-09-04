@@ -104,8 +104,29 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
             "customer_options": customer_options,
             "nav": "dispatch",
             "page_title": "Dispatch",
+            "columns": _COLUMNS,
         },
     )
+
+
+# (key, label, alignment, client-sortable, width-class) — the row template carries a
+# matching `data-<key>` for every sortable column and the same width class per cell
+# (kept in sync by hand — see templates/dispatch/_board_row.html). ROUTING and FLIGHT
+# are deliberately not sortable (low value, and FLIGHT has no single orderable key).
+_COLUMNS = (
+    ("pu", "PU", "left", True, "w-[100px] min-w-[100px]"),
+    ("conf", "CONF#", "left", True, "w-[108px] min-w-[108px]"),
+    ("coverage", "COVERAGE", "left", True, "min-w-[100px]"),
+    ("passenger", "PASSENGER", "left", True, "min-w-[124px]"),
+    ("pax", "PAX", "right", True, "w-[44px] min-w-[44px]"),
+    ("svc", "SVC", "left", True, "min-w-[68px]"),
+    ("routing", "ROUTING", "left", False, "w-[380px] max-w-[380px]"),
+    ("flight", "FLIGHT", "left", False, "min-w-[96px]"),
+    ("veh", "VEH", "left", True, "min-w-[116px]"),
+    ("driver", "DRIVER", "left", True, "min-w-[110px]"),
+    ("affiliate", "AFFILIATE", "left", True, "min-w-[138px]"),
+    ("total", "TOTAL", "right", True, "w-[96px] min-w-[96px]"),
+)
 
 
 @login_required

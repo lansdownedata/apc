@@ -1200,6 +1200,175 @@ function pipelineBoard() {
 }
 window.pipelineBoard = pipelineBoard;
 
+/* -------------------------------------------------- dispatchGrid (APC-24 grid)
+   Client-side sort / exceptions-first / density + row selection for the dispatch
+   board. Every row is already server-rendered inside a bounded date window, so
+   reordering the DOM beats a round-trip. Sort / exceptions-first only run in the
+   flat (single-day) view — `sortable` is false when the board is grouped by day.
+
+   Interaction: single click selects (highlights) a row; double-click or Enter on
+   the selected row opens the assign drawer; ArrowUp/Down move the selection. */
+function dispatchGrid(opts = {}) {
+  return {
+    sortable: opts.sortable !== false,
+    sort: { col: "pu", dir: "asc" },
+    exceptionsFirst: false,
+    density: "compact",
+    q: "",
+    shown: 0,
+    total: 0,
+    noMatches: false,
+
+    init() {
+      try {
+        const d = localStorage.getItem("dispatch.density");
+        if (d === "comfortable" || d === "compact") this.density = d;
+      } catch (e) {
+        /* private mode / blocked storage — keep the default */
+      }
+      this.total = this.shown = this.rows().length;
+    },
+
+    rows() {
+      return Array.from(this.$refs.body.querySelectorAll("tr[data-trip]"));
+    },
+
+    visibleRows() {
+      return this.rows().filter((r) => !r.hidden);
+    },
+
+    // Search: every query word must prefix-match some token on the row (tokens are
+    // word-split values from every column — name, ref, route, vehicle, driver, …).
+    filter() {
+      const terms = this.q
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        // let a trip id be typed bare: "apc-600142", "600142", "#142" all work
+        .map((t) => t.replace(/^(?:#|apc[-\s]?)(?=\d)/, ""));
+      let shown = 0;
+      this.rows().forEach((tr) => {
+        const tokens = (tr.dataset.tokens || "").split(/\s+/);
+        const hit = terms.every((t) => tokens.some((tok) => tok.startsWith(t)));
+        tr.hidden = !hit;
+        if (hit) shown++;
+      });
+      // collapse day sub-headers that now have no visible rows under them
+      this.$refs.body.querySelectorAll("tr[data-group-header]").forEach((h) => {
+        let n = h.nextElementSibling;
+        let any = false;
+        while (n && !n.hasAttribute("data-group-header")) {
+          if (n.hasAttribute("data-trip") && !n.hidden) {
+            any = true;
+            break;
+          }
+          n = n.nextElementSibling;
+        }
+        h.hidden = !any;
+      });
+      const sel = this.selectedRow();
+      if (sel && sel.hidden) sel.classList.remove("is-selected");
+      this.shown = shown;
+      this.noMatches = terms.length > 0 && shown === 0;
+    },
+
+    selectedRow() {
+      return this.$refs.body.querySelector("tr[data-trip].is-selected");
+    },
+
+    // Single click: highlight this row. `.is-selected` drives the CSS.
+    select(tr) {
+      if (!tr) return;
+      const prev = this.selectedRow();
+      if (prev && prev !== tr) prev.classList.remove("is-selected");
+      tr.classList.add("is-selected");
+      tr.scrollIntoView({ block: "nearest" });
+    },
+
+    // Double click / Enter: open the drawer for `tr` (and select it).
+    open(tr) {
+      if (!tr || !tr.dataset.url) return;
+      this.select(tr);
+      this.$dispatch("drawer-open", { url: tr.dataset.url });
+    },
+
+    // True when the grid must not act on the arrow keys / Enter: the user is
+    // typing in a filter / date picker / dropdown, or the assign drawer is open.
+    _busy() {
+      const drawer = document.querySelector("[data-drawer]");
+      if (drawer && getComputedStyle(drawer).display !== "none") return true;
+      const a = document.activeElement;
+      if (!a || a === document.body) return false;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) || a.isContentEditable) return true;
+      return !!a.closest(".ts-wrapper, .ts-dropdown, .flatpickr-calendar");
+    },
+
+    move(step, event) {
+      if (this._busy()) return;
+      const rows = this.visibleRows();
+      if (!rows.length) return;
+      if (event) event.preventDefault();
+      const cur = rows.indexOf(this.selectedRow());
+      let next = cur === -1 ? (step > 0 ? 0 : rows.length - 1) : cur + step;
+      next = Math.max(0, Math.min(rows.length - 1, next));
+      this.select(rows[next]);
+    },
+
+    enterSelected(event) {
+      if (this._busy()) return;
+      const tr = this.selectedRow();
+      if (!tr) return;
+      if (event) event.preventDefault();
+      this.open(tr);
+    },
+
+    setDensity(value) {
+      this.density = value;
+      try {
+        localStorage.setItem("dispatch.density", value);
+      } catch (e) {
+        /* ignore */
+      }
+    },
+
+    sortBy(col) {
+      if (!this.sortable) return;
+      if (this.sort.col === col) this.sort.dir = this.sort.dir === "asc" ? "desc" : "asc";
+      else this.sort = { col, dir: "asc" };
+      this.apply();
+    },
+
+    // A cell value is compared numerically when both sides parse as finite numbers
+    // (pax, total, conf#), lexically otherwise (names, "07:15", "airport").
+    _cmp(a, b, col) {
+      const x = a.dataset[col] ?? "";
+      const y = b.dataset[col] ?? "";
+      const nx = Number(x);
+      const ny = Number(y);
+      if (x !== "" && y !== "" && Number.isFinite(nx) && Number.isFinite(ny)) return nx - ny;
+      return x.localeCompare(y);
+    },
+
+    apply() {
+      if (!this.sortable) return;
+      const body = this.$refs.body;
+      const dir = this.sort.dir === "asc" ? 1 : -1;
+      let ordered = this.rows()
+        .map((row, i) => ({ row, i }))
+        .sort((p, q) => this._cmp(p.row, q.row, this.sort.col) * dir || p.i - q.i)
+        .map(({ row }) => row);
+      if (this.exceptionsFirst) {
+        const bad = ordered.filter((r) => r.dataset.exception === "1");
+        const rest = ordered.filter((r) => r.dataset.exception !== "1");
+        ordered = bad.concat(rest);
+      }
+      ordered.forEach((row) => body.appendChild(row)); // moves nodes; .is-selected survives
+    },
+  };
+}
+window.dispatchGrid = dispatchGrid;
+
 /* -------------------------------------------------- Tom Select auto-init */
 function initTomSelects(root = document) {
   if (typeof TomSelect === "undefined") return;

@@ -151,6 +151,16 @@ class Reservation(TimeStampedModel):
     class Meta:
         ordering = ["sort_order", "id"]
 
+    @property
+    def reference(self) -> str:
+        """Readable per-trip id, derived from the pk (never stored) — "APC-600142".
+        A distinct 600k range so it never collides with an order's "APC-100xxx"
+        (leads.QUOTE_NUMBER_BASE). Change the base and every reference moves with it."""
+        from apps.leads.models import QUOTE_PREFIX
+
+        base = 600_000
+        return f"{QUOTE_PREFIX}-{base + self.pk}" if self.pk else f"{QUOTE_PREFIX}-—"
+
     # --- pricing ---
     _CENTS = Decimal("0.01")
 

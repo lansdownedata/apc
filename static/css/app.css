@@ -151,6 +151,9 @@ header, aside, main, .wash-gold {
 .tone-orange .tone-ic { color: rgb(var(--orange)); background: rgb(var(--orange) / .14); }
 .tone-warn { border:1px solid rgb(var(--warn) / .4); background: rgb(var(--warn-soft) / .5); }
 .tone-warn .tone-ic { color: rgb(var(--warn)); background: rgb(var(--warn) / .14); }
+/* theme-aware text colours (Tailwind has no warn/danger palette) — mirror .ins-* */
+.text-warn   { color: rgb(var(--warn)); }
+.text-danger { color: rgb(var(--danger)); }
 
 /* gold-tinted active row / hover wash — now a Tailwind utility so `hover:wash-gold`
    works; see the plugins block in tailwind.config.js. The transition rule above
@@ -241,6 +244,31 @@ header, aside, main, .wash-gold {
 
 /* route connector (multi-stop) */
 .route-line { background: repeating-linear-gradient(to bottom, rgb(var(--border)) 0 5px, transparent 5px 10px); }
+
+/* dispatch grid — row states. Painted on the cells (not the <tr>, which drops
+   box-shadow under border-collapse) over a SOLID `--surface` base so the tint is
+   opaque under a sticky column and never bleeds on horizontal scroll. Every tint
+   is a theme-aware token at low alpha — Tailwind's `amber-50` etc. are light-only
+   and turned to mud in dark mode (this is the dark-mode pass). Order matters:
+   `is-selected` is last so it wins over a warn/danger row. */
+.dispatch-grid tr.row-warn > td {
+  background: rgb(var(--surface)) linear-gradient(rgb(var(--warn) / .12) 0 0) !important;
+}
+.dispatch-grid tr.row-danger > td {
+  background: rgb(var(--surface)) linear-gradient(rgb(var(--danger) / .12) 0 0) !important;
+}
+.dispatch-grid tr.is-selected > td {
+  background: rgb(var(--surface)) linear-gradient(90deg, rgb(var(--gold) / .22), rgb(var(--gold) / .10)) !important;
+}
+.dispatch-grid tr.row-warn > td:first-child   { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
+.dispatch-grid tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--danger)); }
+.dispatch-grid tr.is-selected > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--gold)); }
+/* native search-field clear affordance — we render our own */
+.dispatch-search::-webkit-search-cancel-button { display: none; }
+
+/* toolbar filters shrink with the grid's Compact toggle (mirrors .ts-compact for
+   selects) — the flatpickr altInput carries the source input's `.field` class. */
+.fp-compact input.field { padding: .32rem .6rem; font-size: 12px; border-radius: 9px; }
 
 /* star rating */
 .stars i { color: rgb(var(--muted) / .5); }
@@ -360,6 +388,17 @@ header, aside, main, .wash-gold {
   border-color: rgb(var(--gold));
   box-shadow: 0 0 0 3px var(--ring);
 }
+/* Gold is the only focus affordance. In no-search mode Tom Select makes the
+   `.ts-control` div itself focusable, so the browser paints its default blue
+   ring on top of ours — kill every outline inside the widget. */
+.ts-wrapper :focus,
+.ts-wrapper :focus-visible,
+.ts-wrapper.focus .ts-control { outline: none !important; }
+/* A single select holds at most one item, so its control must never wrap: a
+   searchable filter was pushing its input onto a second line on focus, doubling
+   the control's height. Clip instead (the dropdown carries the full list). */
+.ts-wrapper.single .ts-control { flex-wrap: nowrap; }
+.ts-wrapper.single .ts-control > input { min-width: 2rem !important; }
 /* Tom Select's own stylesheet repaints the *focused* control white:
    `.ts-wrapper.single.input-active .ts-control{background:#fff}` — one class more
    specific than the surface rule above, so it wins however late app.css loads.

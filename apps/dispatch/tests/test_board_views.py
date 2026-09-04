@@ -16,7 +16,11 @@ from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
 
-DAY = timezone.localdate() + timedelta(days=30)
+# The Wednesday ~30 days out. Anchored mid-week on purpose: the week-view tests add
+# trips at DAY±1..3 and expect them inside the same Mon–Sun window, which only holds
+# when DAY isn't near a week boundary (it broke the day the +30 landed on a Sunday).
+_BASE = timezone.localdate() + timedelta(days=30)
+DAY = _BASE - timedelta(days=_BASE.weekday()) + timedelta(days=2)
 
 
 def _trip(day=DAY, **kw):
@@ -174,7 +178,7 @@ def test_board_flags_and_tallies_open_exceptions(logged_in_client):
     assert resp.context["exceptions"]["critical"] == 1
     body = resp.content.decode()
     assert "dispatch exception" in body  # the banner
-    assert "bg-rose-50/40" in body  # the row tint
+    assert "row-danger" in body  # the row tint
 
 
 def test_board_requires_login(client):

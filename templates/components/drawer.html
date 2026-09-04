@@ -5,7 +5,7 @@
   Open it from anywhere on the page:  $dispatch('drawer-open', {url: '/portal/…/panel/'})
   The fragment at `url` is fetched and injected — the drawer never knows what it holds.
 {% endcomment %}
-<div x-data="drawer()" x-show="open" x-cloak class="fixed inset-0 z-[55]"
+<div x-data="drawer()" x-show="open" x-cloak data-drawer class="fixed inset-0 z-[55]"
      @drawer-open.window="load($event.detail.url)"
      @keydown.escape.window="open && close()">
   <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>

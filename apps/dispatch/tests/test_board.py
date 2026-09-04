@@ -30,6 +30,14 @@ def _trip(**kwargs):
     return ReservationFactory(lead=lead, **kwargs)
 
 
+def _row_html(client, trip):
+    """The <tr> for `trip` from a day-view render, as a string."""
+    html = client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content.decode()
+    marker = f'data-trip="{trip.pk}"'
+    start = html.index(marker)
+    return html[start : html.index("</tr>", start)]
+
+
 def test_board_shows_only_booked_trips_for_the_requested_day(logged_in_client):
     today = _trip()
     _trip(pickup_date=DAY + timedelta(days=1))
@@ -57,13 +65,99 @@ def test_a_trip_with_no_pickup_time_sorts_first(logged_in_client):
 
 
 def test_the_grid_columns_are_labelled_for_what_they_hold(logged_in_client):
-    """The pill column is coverage state; the provider column names whoever covers it."""
+    """COVERAGE is the state pill; DRIVER and AFFILIATE split the old "Covered by"."""
     _trip()
     body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
-    assert b">Coverage<" in body
-    assert b">Covered by<" in body
-    assert b">Affiliate<" not in body
+    for label in (
+        b">PU<",
+        b">CONF#<",
+        b">COVERAGE<",
+        b">PASSENGER<",
+        b">PAX<",
+        b">SVC<",
+        b">ROUTING<",
+        b">FLIGHT<",
+        b">VEH<",
+        b">DRIVER<",
+        b">AFFILIATE<",
+        b">TOTAL<",
+    ):
+        assert label in body, label
+    assert b">Covered by<" not in body
     assert b">Status<" not in body
+
+
+def test_in_house_trip_names_the_driver_and_unit_not_the_affiliate_column(logged_in_client):
+    from apps.fleet.factories import DriverFactory, VehicleFactory
+
+    trip = _trip(stops=["IAD", "The Jefferson"])
+    services.assign_in_house(
+        trip,
+        DriverFactory(name="Marcus Bell"),
+        vehicle=VehicleFactory(name="Unit 4"),
+    )
+    row = _row_html(logged_in_client, trip)
+    assert "Marcus Bell" in row
+    # the affiliate cell is a dash for an in-house trip
+    assert row.count("Marcus Bell") == 1
+
+
+def test_farmed_out_trip_names_the_affiliate_and_leaves_the_driver_blank(logged_in_client):
+    trip = _trip(stops=["IAD", "The Jefferson"])
+    services.assign_direct(
+        trip, VendorFactory(name="Beltway Executive Coach"), payout=Decimal("120")
+    )
+    row = _row_html(logged_in_client, trip)
+    assert "Beltway Executive Coach" in row
+
+
+def test_unverified_flight_badge_is_amber_on_the_board(logged_in_client):
+    """Dispatchers read green = verified, amber = not — the board opts the flight pill
+    out of its default gold via `dispatch=1`."""
+    from apps.addresses.models import Airline, Airport
+
+    trip = _trip(stops=["Dulles Intl (IAD)", "The Jefferson"])
+    stop = trip.stops.get(sequence=0)
+    stop.airport = Airport.objects.get(iata="IAD")
+    stop.airline = Airline.objects.get(iata="UA")
+    stop.flight_number = "456"
+    stop.flight_direction = "arrival"
+    stop.save()
+    row = _row_html(logged_in_client, trip)
+    assert "chip-warn" in row and "chip-gold" not in row
+
+
+def test_pax_and_service_columns_render_from_the_trip(logged_in_client):
+    _trip(passengers=7, stops=["Dulles Intl (IAD)", "The Jefferson"])
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
+    assert b">7<" in body
+
+
+def test_conf_column_shows_the_readable_trip_reference_by_default(logged_in_client):
+    trip = _trip()
+    row = _row_html(logged_in_client, trip)
+    assert trip.reference in row  # "APC-6000xx", not a bare pk
+    assert trip.reference == f"APC-{600000 + trip.pk}"
+
+
+def test_conf_column_prefers_the_la_confirmation_when_set(logged_in_client):
+    trip = _trip(la_confirmation="LA-99887")
+    row = _row_html(logged_in_client, trip)
+    assert "LA-99887" in row
+
+
+def test_row_carries_prefix_search_tokens(logged_in_client):
+    trip = _trip(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        stops=["Dulles Intl (IAD)", "Salamander Resort"],
+    )
+    trip.lead.contact.name = "Priya Nair"
+    trip.lead.contact.save()
+    row = _row_html(logged_in_client, trip)
+    tokens = row.split('data-tokens="', 1)[1].split('"', 1)[0]
+    assert "priya" in tokens and "nair" in tokens
+    assert str(600000 + trip.pk) in tokens  # bare ref number, no "APC-"
+    assert "salamander" in tokens
 
 
 def test_the_trip_total_renders_as_money(logged_in_client):
@@ -254,8 +348,8 @@ def test_board_tints_delayed_and_cancelled_rows(logged_in_client):
     )
     resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
     html = resp.content.decode()
-    assert 'title="1 flight delayed"' in html and "bg-amber-50/40" in html
-    assert 'title="Flight cancelled"' in html and "bg-rose-50/40" in html
+    assert 'title="1 flight delayed"' in html and "row-warn" in html
+    assert 'title="Flight cancelled"' in html and "row-danger" in html
 
 
 def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert_max_num_queries):

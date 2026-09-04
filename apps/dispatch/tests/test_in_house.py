@@ -369,5 +369,5 @@ def test_board_names_the_driver_with_a_house_icon(logged_in_client):
         reverse("dispatch_board"), {"day": day.isoformat()}
     ).content.decode()
     assert "Marcus Bell" in body
-    assert "ti-home" in body
-    assert b">Covered by<" in body.encode()
+    assert "ti-home" in body  # house glyph in the DRIVER column
+    assert ">DRIVER<" in body
