@@ -85,7 +85,7 @@ def _claim(
         if reservation.assignments.active().exists():
             raise AssignmentError(f"Trip #{reservation.pk} already has an active assignment.")
         resolved = timezone.now() if status == Assignment.Status.CONFIRMED else None
-        return Assignment.objects.create(
+        assignment = Assignment.objects.create(
             reservation=reservation,
             vendor=vendor,
             driver=driver,
@@ -96,6 +96,23 @@ def _claim(
             channel=channel,
             resolved_at=resolved,
         )
+    if assignment.status == Assignment.Status.CONFIRMED:
+        _on_assignment_confirmed(assignment)
+    return assignment
+
+
+def _on_assignment_confirmed(assignment: Assignment) -> None:
+    """Schedule the T-48h affiliate confirmation for a newly-confirmed farm-out (APC-20)."""
+    from apps.messaging import touchpoints
+
+    touchpoints.schedule_affiliate_confirmation(assignment)
+
+
+def _on_assignment_released(reservation: Reservation) -> None:
+    """The affiliate no longer holds the trip — drop any pending T-48h confirmation."""
+    from apps.messaging import touchpoints
+
+    touchpoints.cancel_affiliate_confirmation(reservation)
 
 
 def _offer_logo() -> str | None:
@@ -213,6 +230,7 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
         raise AssignmentError(
             f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}."
         )
+    was_confirmed = assignment.status == Assignment.Status.CONFIRMED
     assignment.status = status
     assignment.resolved_at = timezone.now()
     fields = ["status", "resolved_at", "updated_at"]
@@ -220,6 +238,10 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
         assignment.note = note
         fields.append("note")
     assignment.save(update_fields=fields)
+    if status == Assignment.Status.CONFIRMED:
+        _on_assignment_confirmed(assignment)
+    elif was_confirmed and not assignment.is_in_house:
+        _on_assignment_released(assignment.reservation)
     return assignment
 
 

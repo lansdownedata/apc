@@ -304,6 +304,7 @@ def book_lead(lead: Lead) -> Lead:
         lead.status = lead.Status.BOOKED
         lead.save(update_fields=["status", "updated_at"])
         touchpoints.cancel_pending(lead)
+        touchpoints.schedule_service_touchpoints(lead)
 
     plan, created = PaymentPlan.objects.get_or_create(lead=lead)
     if created or plan.quote_total == 0:

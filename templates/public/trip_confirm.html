@@ -1,0 +1,28 @@
+{% extends "public/_trip_shell.html" %}
+{# APC-19 · customer trip confirmation. CLIENT COPY PENDING (APC-27). #}
+{% block title %}Confirm your trip · All Pro Charter{% endblock %}
+{% block body %}
+  {% if cancelled %}
+    <h1>Trip {{ sheet.quote_no }}</h1>
+    <p class="cancelled">This trip has been cancelled. If that's a surprise, please call us.</p>
+  {% elif confirmed %}
+    <div class="done">
+      <span class="mark">✓</span>
+      <h1>Thank you</h1>
+      <p class="sub">Your trip is confirmed. We'll be in touch as the date approaches.</p>
+      {% include "components/trip_sheet.html" %}
+    </div>
+  {% else %}
+    <h1>Please confirm your trip</h1>
+    <p class="sub">Check the details below, then confirm. Tell us right away if anything has changed.</p>
+    {% include "components/trip_sheet.html" %}
+    <form method="post">
+      {% csrf_token %}
+      <label class="check">
+        <input type="checkbox" name="ack" required>
+        <span>I confirm these details are correct.</span>
+      </label>
+      <button type="submit">Confirm trip</button>
+    </form>
+  {% endif %}
+{% endblock %}

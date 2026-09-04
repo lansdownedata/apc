@@ -242,6 +242,7 @@ def la_webhook(request, token: str):
             status=new_status,
             source=TripStatusEvent.Source.LIMOANYWHERE,
         )
+        touchpoints.notify_status_change(reservation, new_status)
         if new_status in EARNED_TERMINAL_STATUSES:
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):

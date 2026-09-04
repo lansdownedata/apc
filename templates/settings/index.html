@@ -48,6 +48,18 @@
         {% if dispatch_monitor_on %}Monitor on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Monitor off</span>{% endif %}{% if open_dispatch_exceptions %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ open_dispatch_exceptions }} open</span>{% endif %}
       </p>
     </a>
+    <a href="{% url 'notifications' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-message-2 text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Customer notifications</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        The automated trip-lifecycle messages — wedding details, trip confirmations, driver release, status updates.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">
+        {% if notifications_on %}Messaging on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Messaging off</span>{% endif %}
+      </p>
+    </a>
   </div>
 </div>
 {% endblock %}

@@ -285,6 +285,8 @@ def save_reservation_from_draft(
     data = parse_draft(payload, grandfathered_airline_ids=kept)
     stops = data.pop("stops")
     link_flights(stops, data.get("pickup_date"))
+    is_new = instance is None
+    prev_pickup = None if is_new else (instance.pickup_date, instance.pickup_time)
     if instance is None:
         instance = Reservation(lead=lead)
         last = lead.reservations.order_by("-sort_order").first()
@@ -314,4 +316,14 @@ def save_reservation_from_draft(
         ]
     )
     instance.refresh_pickup_timezone()
+
+    # Keep the per-trip service-date messaging (APC-18-22) in step with a booked order:
+    # a new trip gets its rows, a moved pickup reschedules them.
+    if lead.status == lead.Status.BOOKED:
+        from apps.messaging import touchpoints
+
+        if is_new:
+            touchpoints.schedule_service_touchpoints(lead)
+        elif prev_pickup != (instance.pickup_date, instance.pickup_time):
+            touchpoints.reschedule_service_touchpoints(instance)
     return instance

@@ -68,6 +68,16 @@ class Assignment(TimeStampedModel):
     offered_at = models.DateTimeField(default=timezone.now)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+    # Driver detail released to the customer at T-24h (APC-21). For a farmed-out trip we
+    # don't hold the affiliate's roster, so these are free-entry; an in-house row leaves
+    # them blank and `driver_info` reads through to `driver` / `vehicle`.
+    driver_name = models.CharField(max_length=200, blank=True)
+    driver_cell = models.CharField(max_length=32, blank=True)
+    vehicle_desc = models.CharField(max_length=200, blank=True)
+    vehicle_number = models.CharField(max_length=40, blank=True)
+    # Stamped when the affiliate acknowledges the T-48h confirmation (APC-20).
+    affiliate_confirmed_at = models.DateTimeField(null=True, blank=True)
+
     objects = AssignmentQuerySet.as_manager()
 
     class Meta(TimeStampedModel.Meta):
@@ -100,6 +110,44 @@ class Assignment(TimeStampedModel):
         """Who is covering the trip — the display seam every template reads instead of
         `assignment.vendor.name`, which is None on an in-house row."""
         return self.driver.name if self.is_in_house else self.vendor.name
+
+    @property
+    def driver_info(self) -> dict | None:
+        """Unified driver / vehicle payload for the customer message (APC-21), or None
+        when it isn't known yet. In-house rows derive it from the linked Driver / Vehicle;
+        farmed-out rows use the free-entry fields, gated on a driver name being present.
+        """
+        if self.is_in_house:
+            if not self.driver_id:
+                return None
+            v = self.vehicle
+            desc = (
+                " ".join(
+                    str(p) for p in (getattr(v, "year", ""), v.make, v.model_name) if p
+                ).strip()
+                if v
+                else ""
+            )
+            if v and v.color:
+                desc = f"{desc} ({v.color})".strip()
+            return {
+                "name": self.driver.name,
+                "cell": self.driver.phone,
+                "vehicle_desc": desc,
+                "vehicle_number": v.name if v else "",
+            }
+        if not self.driver_name:
+            return None
+        return {
+            "name": self.driver_name,
+            "cell": self.driver_cell,
+            "vehicle_desc": self.vehicle_desc,
+            "vehicle_number": self.vehicle_number,
+        }
+
+    @property
+    def has_driver_info(self) -> bool:
+        return self.driver_info is not None
 
     @property
     def margin(self) -> Decimal:

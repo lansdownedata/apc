@@ -13,12 +13,17 @@ from django.conf import settings
 @dataclass(frozen=True)
 class TouchPointTemplate:
     kind: str
-    anchor: str  # lead_created | quote_sent | quote_viewed | quote_expires | trips_done
+    # lead_created | quote_sent | quote_viewed | quote_expires | trips_done |
+    # balance_due | reservation_pickup | triggered
+    anchor: str
     offset: timedelta
     channels: tuple[str, ...]
     subject: str = ""
     email_body: str = ""
     sms_body: str = ""
+    # Who the message goes to. "customer" -> lead.contact; "affiliate" -> the confirmed
+    # Assignment's vendor. Only the reservation-anchored kinds use "affiliate".
+    audience: str = "customer"
 
 
 TEMPLATES: dict[str, TouchPointTemplate] = {
@@ -191,13 +196,225 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{card_last4}. Nothing to do — reply here if anything's changed. {pay_link}"
         ),
     ),
+    # ---------------------------------------------------------------------------------
+    # Reservation-lifecycle messaging (APC-18-22). Every body below is DRAFT starting
+    # copy from docs/touchpoints/2026-09-04-APC-18-22-draft-copy.md, NOT client-verbatim.
+    # CLIENT COPY PENDING (APC-27) — the client's final wording replaces each of these
+    # before anything ships. Tests assert structure / variables, never the wording.
+    # ---------------------------------------------------------------------------------
+    "wed_final_details": TouchPointTemplate(
+        kind="wed_final_details",
+        anchor="reservation_pickup",
+        offset=timedelta(days=-7),
+        channels=("email", "sms"),
+        subject="Final details for your {company_name} wedding transportation",
+        email_body=(
+            "{first_name},\n\n"
+            "Your wedding transportation is booked for {trip_pickup_date} — we're looking "
+            "forward to it.\n\n"
+            "About a week out, we ask every couple for two last things so the day runs "
+            "smoothly:\n\n"
+            "  1. Your day-of point of contact — the name and cell number of whoever we "
+            "should call if plans shift on the day (often a planner or a member of the "
+            "wedding party, not the couple).\n"
+            "  2. The wedding name as you'd like it to appear on our dispatch and driver "
+            "notes.\n\n"
+            "Please send those here: {confirm_link}\n\n"
+            "If anything about the schedule has changed, this is the perfect time to tell "
+            "us.\n\n"
+            "{company_name}\n{company_phone}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Your wedding transportation is "
+            "{trip_pickup_date}. We need two last details: your day-of point of contact "
+            "(name + cell) and the wedding name for our notes. Send them here: {confirm_link}"
+        ),
+    ),
+    "trip_confirm_customer": TouchPointTemplate(
+        kind="trip_confirm_customer",
+        anchor="reservation_pickup",
+        offset=timedelta(hours=-72),
+        channels=("email", "sms"),
+        subject="Please confirm your trip — {company_name} {quote_no}",
+        email_body=(
+            "{first_name},\n\n"
+            "Your trip is coming up. Please take a moment to confirm the details below are "
+            "correct.\n\n"
+            "  Date:       {trip_pickup_date} at {trip_pickup_time}\n"
+            "  Route:      {trip_routing}\n"
+            "  Passengers: {trip_passengers}\n"
+            "  Vehicle:    {trip_vehicle}\n"
+            "  We'll reach you at: {contact_on_file}\n\n"
+            "Confirm your trip: {confirm_link}\n\n"
+            "If anything is wrong, or your plans have changed, reply to this email or call "
+            "us right away at {company_phone} — the sooner we know, the better we can "
+            "adjust.\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Your trip on {trip_pickup_date} at "
+            "{trip_pickup_time} is coming up. Please confirm the details and let us know of "
+            "any changes: {confirm_link}"
+        ),
+    ),
+    "trip_confirm_affiliate": TouchPointTemplate(
+        kind="trip_confirm_affiliate",
+        anchor="reservation_pickup",
+        offset=timedelta(hours=-48),
+        channels=("email",),
+        audience="affiliate",
+        subject="Confirm coverage — {company_name} trip {trip_pickup_date}",
+        email_body=(
+            "{vendor_name},\n\n"
+            "Please confirm you're covering this trip for {company_name}.\n\n"
+            "{trip_sheet}\n\n"
+            "Payout: {payout}\n\n"
+            "Confirm here: {ack_link}\n\n"
+            "If you can no longer cover this trip, tell us now by replying or calling "
+            "{company_phone} so we can arrange a backup.\n\n"
+            "{company_name}\n{company_phone}"
+        ),
+    ),
+    "driver_released": TouchPointTemplate(
+        kind="driver_released",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="Your driver for {trip_pickup_date} — {company_name}",
+        email_body=(
+            "{first_name},\n\n"
+            "Here are your driver and vehicle details for {trip_pickup_date} at "
+            "{trip_pickup_time}:\n\n"
+            "  Driver:  {driver_name}\n"
+            "  Cell:    {driver_cell}\n"
+            "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
+            "Your driver will contact you as pickup approaches. If you need anything before "
+            "then, call us at {company_phone}.\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Your driver for {trip_pickup_date} at "
+            "{trip_pickup_time}: {driver_name}, cell {driver_cell}, {vehicle_description} "
+            "({vehicle_number}). They'll reach out as pickup nears."
+        ),
+    ),
+    "status_dispatched": TouchPointTemplate(
+        kind="status_dispatched",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="Your trip is confirmed and assigned — {company_name}",
+        email_body=(
+            "{first_name},\n\n"
+            "Your trip is confirmed and assigned for {trip_pickup_time} on "
+            "{trip_pickup_date}.\n\n"
+            "  Driver:  {driver_name}\n"
+            "  Cell:    {driver_cell}\n"
+            "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
+            "Full details: {confirm_link}\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Your trip is confirmed and assigned for "
+            "{trip_pickup_time} on {trip_pickup_date}. Driver: {driver_name}, "
+            "{vehicle_description}. Full details: {confirm_link}"
+        ),
+    ),
+    "status_on_the_way": TouchPointTemplate(
+        kind="status_on_the_way",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("sms",),
+        sms_body=(
+            "{first_name}, your {company_name} driver is on the way to your "
+            "{trip_pickup_time} pickup."
+        ),
+    ),
+    "status_arrived": TouchPointTemplate(
+        kind="status_arrived",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("sms",),
+        sms_body=("{first_name}, your {company_name} driver has arrived at the pickup location."),
+    ),
 }
 
 
-def build_context(lead) -> dict[str, str]:
+def _trip_context(reservation) -> dict[str, str]:
+    """Per-trip vars for the reservation-anchored kinds (APC-18-22).
+
+    Always returns every key; blank when there's no reservation or the datum is missing.
+    Times render in the trip's own timezone with its abbreviation (CLAUDE.md rules) — never
+    the viewer's.
+    """
+    keys = (
+        "trip_pickup_date",
+        "trip_pickup_time",
+        "trip_pickup_tz",
+        "trip_routing",
+        "trip_passengers",
+        "trip_vehicle",
+        "trip_sheet",
+        "contact_on_file",
+        "vendor_name",
+        "payout",
+        "driver_name",
+        "driver_cell",
+        "vehicle_description",
+        "vehicle_number",
+    )
+    ctx = dict.fromkeys(keys, "")
+    if reservation is None:
+        return ctx
+
+    pickup_at = reservation.pickup_at
+    if pickup_at is not None:
+        ctx["trip_pickup_date"] = f"{pickup_at:%b %d, %Y}"
+        if reservation.pickup_time is not None:
+            ctx["trip_pickup_time"] = f"{pickup_at:%-I:%M %p}"
+        ctx["trip_pickup_tz"] = reservation.pickup_tz_abbrev
+
+    stops = list(reservation.ordered_stops)
+    ctx["trip_routing"] = " → ".join(s.address for s in stops if s.address)
+    ctx["trip_passengers"] = str(reservation.passengers)
+    ctx["trip_vehicle"] = (reservation.vehicle.name if reservation.vehicle else "") or (
+        reservation.service_type.name if reservation.service_type else ""
+    )
+
+    lead = reservation.lead
+    contact = lead.contact
+    phone = (contact.phone or "").strip()
+    ctx["contact_on_file"] = f"{contact.name} · {phone}".strip(" ·") if contact.name else phone
+
+    from apps.dispatch.models import Assignment
+
+    confirmed = (
+        reservation.assignments.filter(status=Assignment.Status.CONFIRMED)
+        .select_related("vendor", "driver", "vehicle")
+        .first()
+    )
+    if confirmed is not None:
+        if confirmed.vendor_id:
+            ctx["vendor_name"] = confirmed.vendor.contact_name or confirmed.vendor.name
+        ctx["payout"] = f"${confirmed.payout:,.2f}"
+        info = confirmed.driver_info
+        if info:
+            ctx["driver_name"] = info["name"] or ""
+            ctx["driver_cell"] = info["cell"] or ""
+            ctx["vehicle_description"] = info["vehicle_desc"] or ""
+            ctx["vehicle_number"] = info["vehicle_number"] or ""
+
+    from apps.reservations.services import trip_sheet_text
+
+    ctx["trip_sheet"] = trip_sheet_text(reservation)
+    return ctx
+
+
+def build_context(lead, reservation=None) -> dict[str, str]:
     """Build rendering context from a lead and its relationships.
 
-    All keys are always present; missing values are empty strings.
+    All keys are always present; missing values are empty strings. Pass ``reservation``
+    for the per-trip kinds (APC-18-22) to fill the ``trip_*`` / driver / affiliate vars.
     """
     contact = lead.contact
     first = (contact.name or "").split(" ")[0] or "there"
@@ -243,9 +460,12 @@ def build_context(lead) -> dict[str, str]:
         "quote_link": "",  # filled by callers that have request/base-url context
         "pay_link": "",  # filled by the payment_reminder sender
         "review_link": "",  # filled by the review_request sender
+        "confirm_link": "",  # filled by the reservation-anchored senders
+        "ack_link": "",  # filled by the affiliate-confirmation sender
         "balance_amount": f"${plan.balance_amount:,.2f}" if plan else "",
         "balance_due_date": f"{balance_due:%b %d, %Y}" if balance_due else "",
         "card_last4": plan.card_last4 if plan else "",
+        **_trip_context(reservation),
     }
 
 

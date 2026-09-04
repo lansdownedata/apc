@@ -25,6 +25,11 @@ from apps.leads.views import (
 from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
 from apps.public.sitemaps import StaticViewSitemap
+from apps.reservations.public_views import (
+    affiliate_trip_confirm,
+    trip_confirm,
+    wedding_details,
+)
 
 
 def healthz(_request):
@@ -59,6 +64,10 @@ urlpatterns = [
     path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
     path("quote/<str:token>/intent/", quote_pay_intent, name="quote_pay_intent"),
     path("quote/<str:token>/complete/", quote_pay_complete, name="quote_pay_complete"),
+    # reservation-lifecycle acknowledgement pages (token-keyed, no login) — APC-18/19/20
+    path("trip/<str:token>/", trip_confirm, name="trip_confirm"),
+    path("trip/affiliate/<str:token>/", affiliate_trip_confirm, name="affiliate_trip_confirm"),
+    path("wedding/<str:token>/details/", wedding_details, name="wedding_details"),
     # integrations + webhooks + cron — unchanged
     path("integrations/", include("apps.integrations.urls")),
     path("webhooks/podium/", podium_webhook, name="podium_webhook"),

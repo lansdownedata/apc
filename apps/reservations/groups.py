@@ -43,6 +43,7 @@ _PER_COPY_FIELDS = frozenset(
         "la_reservation_id",
         "la_confirmation",
         "trip_status",
+        "customer_confirmed_at",
         "revenue_status",
         "recognized_at",
         "recognized_amount",

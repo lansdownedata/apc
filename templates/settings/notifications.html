@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Customer notifications</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      The automated messages sent to customers and affiliates around each booked trip. Turn any
+      one off without losing the others; the master switch stops them all.
+    </p>
+
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      <div class="flex items-center gap-2 pb-3 border-b border-line">
+        {{ form.enabled }}
+        <label for="{{ form.enabled.id_for_label }}" class="text-[12.5px] font-semibold text-ink">All lifecycle messaging is on</label>
+      </div>
+
+      <div class="space-y-3">
+        {% for field in form %}
+          {% if field.name != "enabled" %}
+            <div class="flex items-start gap-2.5">
+              <div class="pt-0.5">{{ field }}</div>
+              <div>
+                <label for="{{ field.id_for_label }}" class="block text-[12.5px] text-ink">{{ field.label }}</label>
+                {% if field.help_text %}<p class="text-[11.5px] text-muted">{{ field.help_text }}</p>{% endif %}
+                {% for error in field.errors %}<p class="text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <p class="text-[11.5px] text-muted">Message wording is being finalised with the client (APC-27); switches take effect immediately.</p>
+
+      {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <a href="{% url 'settings_index' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+        <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

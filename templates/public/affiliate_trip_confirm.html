@@ -1,0 +1,28 @@
+{% extends "public/_trip_shell.html" %}
+{# APC-20 · affiliate coverage confirmation. CLIENT COPY PENDING (APC-27). #}
+{% block title %}Confirm coverage · All Pro Charter{% endblock %}
+{% block body %}
+  {% if cancelled %}
+    <h1>Trip {{ sheet.quote_no }}</h1>
+    <p class="cancelled">This trip is no longer active. Please disregard.</p>
+  {% elif confirmed %}
+    <div class="done">
+      <span class="mark">✓</span>
+      <h1>Coverage confirmed</h1>
+      <p class="sub">Thank you. We've recorded that you're covering this trip.</p>
+      {% include "components/trip_sheet.html" %}
+    </div>
+  {% else %}
+    <h1>Confirm you're covering this trip</h1>
+    <p class="sub">Please review and confirm. If you can no longer cover it, call us now so we can arrange a backup.</p>
+    {% include "components/trip_sheet.html" %}
+    <form method="post">
+      {% csrf_token %}
+      <label class="check">
+        <input type="checkbox" name="ack" required>
+        <span>I confirm {{ company_name }} coverage of this trip.</span>
+      </label>
+      <button type="submit">Confirm coverage</button>
+    </form>
+  {% endif %}
+{% endblock %}

@@ -126,6 +126,9 @@ class Reservation(TimeStampedModel):
         max_length=32, choices=TripStatus.choices, blank=True, default=""
     )
     sort_order = models.PositiveIntegerField(default=0)
+    # Stamped when the customer acknowledges the T-72h trip confirmation on the public
+    # trip-sheet page (APC-19). Null until they do.
+    customer_confirmed_at = models.DateTimeField(null=True, blank=True)
     # The wedding builder's leg this trip was generated from ("guests-in", "early-out", …).
     # Blank for every trip an agent added by hand, which is what keeps a rebuild from
     # touching them. Not a foreign key: legs are derived from the event, never stored.

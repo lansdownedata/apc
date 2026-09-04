@@ -1,0 +1,36 @@
+{% extends "public/_trip_shell.html" %}
+{# APC-18 · wedding day-of details form. CLIENT COPY PENDING (APC-27). #}
+{% block title %}Wedding day-of details · All Pro Charter{% endblock %}
+{% block body %}
+  {% if cancelled %}
+    <h1>Wedding transportation</h1>
+    <p class="cancelled">This booking is no longer active. If that's a surprise, please call us.</p>
+  {% elif submitted %}
+    <div class="done">
+      <span class="mark">✓</span>
+      <h1>Got it — thank you</h1>
+      <p class="sub">We've noted your day-of contact and wedding name for our dispatch and drivers.</p>
+    </div>
+  {% else %}
+    <h1>A few last wedding details</h1>
+    <p class="sub">
+      About a week before {{ sheet.pickup_date }}, we ask for two things so the day runs smoothly.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <label class="fld">
+        <span>Wedding name (as it should appear on our notes)</span>
+        <input type="text" name="wedding_name" value="{{ wedding_name }}" required>
+      </label>
+      <label class="fld">
+        <span>Day-of point of contact — name</span>
+        <input type="text" name="contact_name" value="{{ contact_name }}" required>
+      </label>
+      <label class="fld">
+        <span>Day-of point of contact — cell</span>
+        <input type="text" name="contact_phone" value="{{ contact_phone }}" required>
+      </label>
+      <button type="submit">Send details</button>
+    </form>
+  {% endif %}
+{% endblock %}

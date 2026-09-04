@@ -125,6 +125,11 @@ class Lead(TimeStampedModel):
     promo_code = models.CharField(max_length=40, blank=True)
     quote_view_count = models.PositiveIntegerField(default=0)
     quote_last_viewed_at = models.DateTimeField(null=True, blank=True)
+    # Returned by the customer on the T-7d wedding message (APC-18). Order-level: a wedding
+    # is one order with several legs, and the day-of contact is entered once.
+    wedding_name = models.CharField(max_length=200, blank=True)
+    day_of_contact_name = models.CharField(max_length=200, blank=True)
+    day_of_contact_phone = models.CharField(max_length=32, blank=True)
 
     objects = LeadQuerySet.as_manager()
 

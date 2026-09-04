@@ -11,8 +11,14 @@ from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
+from apps.messaging.models import NotificationConfig
 
-from .forms import DispatchAlertConfigForm, ServiceTypeForm, VehicleTypeForm
+from .forms import (
+    DispatchAlertConfigForm,
+    NotificationConfigForm,
+    ServiceTypeForm,
+    VehicleTypeForm,
+)
 
 
 def _fleet_attention_count() -> int:
@@ -41,6 +47,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             "open_dispatch_exceptions": DispatchException.objects.filter(
                 resolved_at__isnull=True
             ).count(),
+            "notifications_on": NotificationConfig.load().enabled,
         },
     )
 
@@ -233,6 +240,23 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
         target.delete()
         messages.success(request, f"{name} deleted.")
     return redirect("renewal_type_list")
+
+
+@login_required
+@owner_admin_required
+def notifications(request: HttpRequest) -> HttpResponse:
+    """The reservation-lifecycle messaging switches (APC-18-22) — one singleton form."""
+    config = NotificationConfig.load()
+    form = NotificationConfigForm(request.POST or None, instance=config)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Notification settings saved.")
+        return redirect("notifications")
+    return render(
+        request,
+        "settings/notifications.html",
+        {"nav": "settings", "page_title": "Customer notifications", "form": form},
+    )
 
 
 @login_required
