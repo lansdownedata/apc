@@ -39,8 +39,13 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
       title="{% for e in trip.open_exceptions %}{{ e.get_kind_display }}{% if not forloop.last %} · {% endif %}{% endfor %}"><i class="ti ti-alert-triangle text-[11px]"></i></span>{% endif %}
   </td>
 
-  {# PASSENGER #}
-  <td class="min-w-[124px] px-3 text-ink">{{ trip.lead.contact.name }}</td>
+  {# PASSENGER — a filled check once the customer has acknowledged the T-72h trip
+       confirmation (APC-19); nothing shown before that, matching the sparse "—" the
+       other cells use for an absent state rather than a second warning glyph. #}
+  <td class="min-w-[124px] px-3 text-ink">
+    {{ trip.lead.contact.name }}
+    {% if trip.customer_confirmed_at %}<i class="ti ti-circle-check-filled text-[13px] text-emerald-600 align-middle ml-0.5" title="Confirmed {{ trip.customer_confirmed_at|date:'M j, g:i A' }}"></i>{% endif %}
+  </td>
 
   {# PAX #}
   <td class="w-[44px] min-w-[44px] px-3 num text-right text-muted">{{ trip.passengers }}</td>
