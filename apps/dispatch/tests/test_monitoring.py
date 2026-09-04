@@ -31,7 +31,7 @@ def _cfg(**over):
     return cfg
 
 
-def _trip(delta, *, status="", covered=False, with_driver_info=True, **kw):
+def _trip(delta, *, status="", covered=False, with_driver_info=True, with_affiliate_ack=True, **kw):
     when = timezone.localtime() + delta
     lead = kw.pop("lead", None) or LeadFactory(status=Lead.Status.BOOKED)
     trip = ReservationFactory(
@@ -43,14 +43,21 @@ def _trip(delta, *, status="", covered=False, with_driver_info=True, **kw):
     )
     if covered:
         a = services.assign_direct(trip, VendorFactory(), payout=1)
-        # Driver info present by default: these fixtures exist to test the *other*
-        # milestones, and every one of them predates the driver-info check — give it a
-        # value here so it doesn't quietly join every assertion. `with_driver_info=False`
-        # opts back into the gap for the tests that are actually about it.
+        # Driver info + affiliate ack present by default: these fixtures exist to test
+        # the *other* milestones, and every one of them predates those two checks — give
+        # them a value here so neither quietly joins every assertion. `with_driver_info=
+        # False` / `with_affiliate_ack=False` opt back into the gap for the tests that
+        # are actually about it.
+        fields = []
         if with_driver_info:
             a.driver_name = "Sam Rivera"
             a.driver_cell = "+15715551212"
-            a.save(update_fields=["driver_name", "driver_cell", "updated_at"])
+            fields += ["driver_name", "driver_cell"]
+        if with_affiliate_ack:
+            a.affiliate_confirmed_at = timezone.now()
+            fields.append("affiliate_confirmed_at")
+        if fields:
+            a.save(update_fields=[*fields, "updated_at"])
     return trip
 
 
@@ -224,6 +231,88 @@ def test_a_trip_with_no_pickup_time_is_skipped():
     trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), pickup_date=None)
 
     assert monitoring.evaluate(trip, cfg, timezone.now()) == {}
+
+
+# --- affiliate unacknowledged (APC-20) --------------------------------------------
+
+
+def test_unacknowledged_farmed_out_trip_warns():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12), covered=True, with_affiliate_ack=False)
+
+    assert monitoring.evaluate(trip, cfg, timezone.now())[K.AFFILIATE_UNACKED] == T.WARNING
+
+
+def test_affiliate_unacked_is_warning_only_even_close_to_pickup():
+    """The client asked for a nudge here, not an escalating critical alert."""
+    cfg = _cfg()
+    trip = _trip(timedelta(minutes=30), covered=True, with_affiliate_ack=False)
+
+    assert monitoring.evaluate(trip, cfg, timezone.now())[K.AFFILIATE_UNACKED] == T.WARNING
+
+
+def test_acknowledged_affiliate_raises_no_exception():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12), covered=True)  # with_affiliate_ack=True by default
+
+    assert K.AFFILIATE_UNACKED not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_an_in_house_assignment_has_nothing_to_acknowledge():
+    from apps.fleet.factories import DriverFactory
+
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12))
+    services.assign_in_house(trip, DriverFactory())
+
+    assert K.AFFILIATE_UNACKED not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_a_gnet_assignment_never_raises_unacked():
+    """GNet has no email/ack-link flow, so affiliate_confirmed_at can never be set for
+    one — without this exclusion every GNet trip would be flagged forever."""
+    from apps.dispatch.models import Assignment
+
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12))
+    a = services.assign_direct(trip, VendorFactory(), payout=1)
+    a.channel = Assignment.Channel.GNET
+    a.save(update_fields=["channel"])
+
+    assert K.AFFILIATE_UNACKED not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_an_uncovered_trip_raises_no_affiliate_unacked_exception():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12))
+
+    assert K.AFFILIATE_UNACKED not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_a_trip_already_en_route_raises_no_affiliate_unacked_exception():
+    """Visibly underway — the formal ack no longer matters."""
+    cfg = _cfg()
+    trip = _trip(
+        timedelta(minutes=10), covered=True, with_affiliate_ack=False, status=TS.ON_THE_WAY
+    )
+
+    assert K.AFFILIATE_UNACKED not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_acknowledging_resolves_the_open_exception():
+    _cfg()
+    trip = _trip(timedelta(hours=12), covered=True, with_affiliate_ack=False)
+    monitoring.run_dispatch_monitor()
+    exc = DispatchException.objects.get(kind=K.AFFILIATE_UNACKED)
+    assert exc.is_open
+
+    a = trip.assignments.get()
+    a.affiliate_confirmed_at = timezone.now()
+    a.save(update_fields=["affiliate_confirmed_at", "updated_at"])
+    monitoring.run_dispatch_monitor()
+
+    exc.refresh_from_db()
+    assert not exc.is_open
 
 
 # --- run_dispatch_monitor ----------------------------------------------------------

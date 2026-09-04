@@ -246,6 +246,18 @@ def test_in_house_assignment_gets_no_affiliate_confirmation():
     assert not TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_AFFILIATE).exists()
 
 
+def test_gnet_assignment_gets_no_affiliate_confirmation():
+    """A GNet vendor's acceptance is its acknowledgement — no email/ack-link flow exists
+    for one, and nothing would ever stamp affiliate_confirmed_at for it."""
+    lead = _booked_lead()
+    res = ReservationFactory(lead=lead, pickup_date=_future())
+    a = AssignmentFactory(
+        reservation=res, status=Assignment.Status.OFFERED, channel=Assignment.Channel.GNET
+    )
+    dispatch_services.confirm(a)
+    assert not TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_AFFILIATE).exists()
+
+
 # --- triggered kinds (APC-21 / APC-22) ---------------------------------------------
 
 

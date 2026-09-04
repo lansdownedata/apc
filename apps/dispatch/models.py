@@ -222,6 +222,10 @@ class DispatchAlertConfig(models.Model):
     # coverage already carries this via its Driver + Vehicle.
     driver_info_warn_hours = models.PositiveIntegerField(default=24)
     driver_info_critical_hours = models.PositiveIntegerField(default=6)
+    # "Affiliate unacknowledged" (APC-20) — hours before pickup a farmed-out trip's T-48h
+    # confirmation is still unacknowledged. Warning tier only: the client asked for an
+    # internal nudge here, not an escalating critical alert.
+    affiliate_unacked_warn_hours = models.PositiveIntegerField(default=24)
 
     alert_emails = models.TextField(
         blank=True,
@@ -269,6 +273,7 @@ class DispatchException(TimeStampedModel):
         NOT_ON_THE_WAY = "not_otw", "Not en route"
         NOT_ARRIVED = "not_arrived", "Not arrived"
         NO_DRIVER_INFO = "no_driver_info", "Driver info missing"
+        AFFILIATE_UNACKED = "affiliate_unacked", "Affiliate unacknowledged"
 
     class Tier(models.TextChoices):
         WARNING = "warning", "Warning"
