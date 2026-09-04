@@ -387,6 +387,10 @@ header, aside, main, .wash-gold {
   margin-top: 6px;
   overflow: hidden;
   font-size: 13px;
+  /* Stock Tom Select ships z-index:10, which ties the dispatch board's sticky
+     `thead` (z-10) and loses the paint order to it — the open menu renders behind
+     the grid. Clear every in-page sticky/card layer; still below the modal (z-50+). */
+  z-index: 45;
 }
 .ts-dropdown .option {
   padding: .5rem .85rem;
