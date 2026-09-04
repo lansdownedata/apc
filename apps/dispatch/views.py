@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.contacts.models import Contact
+from apps.core.phone import to_e164
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import Reservation, Stop
@@ -276,6 +277,30 @@ def assign_driver(request: HttpRequest, pk: int) -> JsonResponse:
     except services.AssignmentError as exc:
         return _fail(exc)
     return JsonResponse({"ok": True, "assignment": assignment.pk})
+
+
+@login_required
+@require_POST
+def driver_info(request: HttpRequest, pk: int) -> JsonResponse:
+    """Save a farmed-out trip's driver + vehicle detail (APC-21)."""
+    assignment = get_object_or_404(Assignment, pk=pk)
+    cell = (request.POST.get("driver_cell") or "").strip()
+    if cell:
+        normalized = to_e164(cell)
+        if normalized is None:
+            return _fail(services.AssignmentError("Enter a valid driver cell number."))
+        cell = normalized
+    try:
+        services.set_driver_info(
+            assignment,
+            name=(request.POST.get("driver_name") or "").strip(),
+            cell=cell,
+            vehicle_desc=(request.POST.get("vehicle_desc") or "").strip(),
+            vehicle_number=(request.POST.get("vehicle_number") or "").strip(),
+        )
+    except services.AssignmentError as exc:
+        return _fail(exc)
+    return JsonResponse({"ok": True})
 
 
 _RESOLVERS = {

@@ -6,6 +6,8 @@
 - **No coverage** — no confirmed driver / affiliate as pickup approaches.
 - **Not en route** — a covered trip still not marked On The Way near pickup.
 - **Not arrived** — a covered trip still not marked Arrived after pickup.
+- **Driver info missing** — a farmed-out trip still has no driver name / cell / vehicle
+  on file as pickup approaches.
 
 Thresholds come from the `DispatchAlertConfig` singleton (Settings screen). New and
 escalated exceptions are pushed to the notification tray, an email digest, and — for the
@@ -18,6 +20,7 @@ import logging
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from apps.leads.models import Lead
@@ -25,8 +28,8 @@ from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 
-from .models import DispatchAlertConfig, DispatchException
-from .selectors import CANCELLED_STATUSES, COVERAGE_CONFIRMED
+from .models import Assignment, DispatchAlertConfig, DispatchException
+from .selectors import CANCELLED_STATUSES, COVERAGE_CONFIRMED, confirmed_assignment
 
 log = logging.getLogger(__name__)
 
@@ -41,12 +44,18 @@ K = DispatchException.Kind
 T = DispatchException.Tier
 
 
-def _has_confirmed_coverage(trip: Reservation) -> bool:
-    # `active_list` is set by the board prefetch; fall back to a query off the board.
+def _confirmed_assignment(trip: Reservation) -> Assignment | None:
+    """The trip's active coverage, or None — the one place `evaluate()` needs the actual
+    row (driver info), not just whether it's covered.
+
+    `active_list` is set by the board prefetch (OFFERED + CONFIRMED); off the board,
+    `dispatch.selectors.confirmed_assignment` reads through `_monitored_trips`'s own
+    `assignments` prefetch instead of issuing a fresh query per trip.
+    """
     rows = getattr(trip, "active_list", None)
     if rows is not None:
-        return any(a.status == COVERAGE_CONFIRMED for a in rows)
-    return trip.assignments.filter(status=COVERAGE_CONFIRMED).exists()
+        return next((a for a in rows if a.status == COVERAGE_CONFIRMED), None)
+    return confirmed_assignment(trip)
 
 
 def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]:
@@ -56,7 +65,8 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
         return {}
     minutes_to = (pickup - now).total_seconds() / 60
     hours_to = minutes_to / 60
-    covered = _has_confirmed_coverage(trip)
+    confirmed = _confirmed_assignment(trip)
+    covered = confirmed is not None
     status = trip.trip_status
     out: dict[str, str] = {}
 
@@ -66,8 +76,8 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
         elif hours_to <= cfg.unassigned_warn_hours:
             out[K.UNASSIGNED] = T.WARNING
 
-    # The en-route / arrived milestones only make sense once someone is covering the trip —
-    # an uncovered trip's real problem is the one above.
+    # The en-route / arrived / driver-info milestones only make sense once someone is
+    # covering the trip — an uncovered trip's real problem is the one above.
     if covered and status not in EN_ROUTE_OR_BEYOND:
         if minutes_to <= cfg.otw_critical_minutes:
             out[K.NOT_ON_THE_WAY] = T.CRITICAL
@@ -81,16 +91,31 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
         elif minutes_past >= cfg.arrived_warn_minutes:
             out[K.NOT_ARRIVED] = T.WARNING
 
+    # "Driver info missing" (APC-21) — a farmed-out trip's driver name/cell/vehicle,
+    # which we don't hold a roster for. An in-house assignment already carries this
+    # (Driver + Vehicle), so `has_driver_info` is true for those and the check never bites.
+    # Gated on ARRIVED_OR_BEYOND like NOT_ARRIVED: once the trip has happened, releasing
+    # driver info to the customer is moot — without this a DONE trip that never got info
+    # entered stays CRITICAL (pickup is in the past, so `hours_to` is always inside the
+    # window) for as long as it's still inside the monitor's lookback window.
+    if covered and status not in ARRIVED_OR_BEYOND and not confirmed.has_driver_info:
+        if hours_to <= cfg.driver_info_critical_hours:
+            out[K.NO_DRIVER_INFO] = T.CRITICAL
+        elif hours_to <= cfg.driver_info_warn_hours:
+            out[K.NO_DRIVER_INFO] = T.WARNING
+
     return out
 
 
 def _monitored_trips(cfg: DispatchAlertConfig, now) -> list[Reservation]:
     """Booked, uncancelled trips whose pickup is close enough that a milestone could bite.
 
-    The window is derived from the widest threshold so raising `unassigned_warn_hours` to
-    days-out still works.
+    The window is derived from the widest threshold so raising `unassigned_warn_hours` (or
+    `driver_info_warn_hours`) to days-out still works.
     """
-    lookahead = timedelta(hours=cfg.unassigned_warn_hours) + timedelta(days=1)
+    lookahead = timedelta(
+        hours=max(cfg.unassigned_warn_hours, cfg.driver_info_warn_hours)
+    ) + timedelta(days=1)
     lookback = timedelta(minutes=cfg.arrived_critical_minutes) + timedelta(days=1)
     return list(
         Reservation.objects.filter(
@@ -99,7 +124,13 @@ def _monitored_trips(cfg: DispatchAlertConfig, now) -> list[Reservation]:
         )
         .exclude(trip_status__in=CANCELLED_STATUSES)
         .select_related("lead", "lead__contact")
-        .prefetch_related("assignments", "dispatch_exceptions")
+        .prefetch_related(
+            Prefetch(
+                "assignments",
+                queryset=Assignment.objects.select_related("vendor", "driver", "vehicle"),
+            ),
+            "dispatch_exceptions",
+        )
     )
 
 
