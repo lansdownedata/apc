@@ -9,4 +9,5 @@ urlpatterns = [
     path("<int:pk>/assign/", views.assign, name="dispatch_assign"),
     path("<int:pk>/assign-driver/", views.assign_driver, name="dispatch_assign_driver"),
     path("assignment/<int:pk>/resolve/", views.resolve, name="dispatch_resolve"),
+    path("assignment/<int:pk>/driver-info/", views.driver_info, name="dispatch_driver_info"),
 ]

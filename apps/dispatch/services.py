@@ -291,6 +291,32 @@ def withdraw(assignment: Assignment, *, note: str = "", release_gateway: bool = 
     return resolved
 
 
+def set_driver_info(
+    assignment: Assignment, *, name: str, cell: str, vehicle_desc: str, vehicle_number: str
+) -> Assignment:
+    """Record a farmed-out trip's driver + vehicle detail, and release it to the customer
+    the moment it's complete (APC-21).
+
+    In-house coverage already carries this via its `Driver` + `Vehicle` — there's nothing
+    free-entry to set, so this refuses rather than silently no-opping fields nobody reads.
+    """
+    if assignment.is_in_house:
+        raise AssignmentError("In-house coverage already has driver and vehicle on file.")
+    if assignment.status != Assignment.Status.CONFIRMED:
+        raise AssignmentError("Only confirmed coverage can carry driver info.")
+    assignment.driver_name = name
+    assignment.driver_cell = cell
+    assignment.vehicle_desc = vehicle_desc
+    assignment.vehicle_number = vehicle_number
+    assignment.save(
+        update_fields=["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
+    )
+    from apps.messaging import touchpoints
+
+    touchpoints.trigger_driver_released(assignment)
+    return assignment
+
+
 def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Assignment]:
     """Withdraw whatever active assignment each of `reservations` still has.
 
