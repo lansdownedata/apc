@@ -10,6 +10,21 @@ from __future__ import annotations
 from .models import Reservation, TripStatusEvent
 
 
+def is_wedding_trip(reservation: Reservation) -> bool:
+    """A leg the wedding builder generated, or a trip whose service type is the wedding
+    one (`apps.public.services.WEDDING_SERVICE_NAME`). The single gate for "is this a
+    wedding" — the T-7d touch-point (APC-18) and the workspace's day-of-details card both
+    need it, and drifting between two copies would mean scheduling a message for a trip
+    the screen doesn't think is a wedding, or the reverse.
+    """
+    from apps.public.services import WEDDING_SERVICE_NAME
+
+    if reservation.source_leg_id:
+        return True
+    st = reservation.service_type
+    return bool(st and st.name.strip().lower() == WEDDING_SERVICE_NAME.lower())
+
+
 def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> dict:
     """The one trip-sheet shape. Times render in the trip's own timezone with its
     abbreviation (CLAUDE.md rules), never the viewer's. ``affiliate`` adds the payout row.
