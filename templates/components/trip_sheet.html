@@ -1,6 +1,8 @@
 {% comment %}
 Shared trip sheet — the pickup / routing / pax / vehicle / flight block rendered on the
-public acknowledgement pages and (later) the affiliate offer email. Expects `sheet` = the
+public acknowledgement pages — customer and affiliate. The affiliate offer email keeps its
+own per-stop shape and deliberately does NOT use this (see the services docstring).
+Expects `sheet` = the
 dict from `apps.reservations.services.trip_sheet_context`. `sheet.payout` is present only
 for the affiliate variant.
 {% endcomment %}
@@ -15,10 +17,8 @@ for the affiliate variant.
   {% if sheet.vehicle %}
     <div><dt>Vehicle</dt><dd>{{ sheet.vehicle }}</dd></div>
   {% endif %}
-  {% for stop in sheet.stops %}
-    {% if stop.flight_label %}
-      <div><dt>Flight</dt><dd>{{ stop.flight_label }}</dd></div>
-    {% endif %}
+  {% for line in sheet.flight_lines %}
+    <div><dt>Flight</dt><dd>{{ line }}</dd></div>
   {% endfor %}
   {% if sheet.payout %}
     <div><dt>Payout</dt><dd>{{ sheet.payout }}</dd></div>
