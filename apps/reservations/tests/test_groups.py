@@ -1,16 +1,19 @@
 """APC-14 — linked sets of identical trips (`Reservation.group_key`)."""
 
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from apps.addresses.factories import AirlineFactory, AirportFactory
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
+from apps.leads.models import Lead
+from apps.messaging.models import TouchPoint
 from apps.reservations import groups
 from apps.reservations.factories import TransferReservationFactory
 from apps.reservations.models import Reservation, Stop
@@ -530,3 +533,66 @@ def test_a_line_totals_the_headcount_across_its_set():
     line = groups.as_lines(res.lead.reservations.all())[0]
 
     assert line.passengers == 105
+
+
+# --- reservation-lifecycle messaging wiring (APC-18-22 review fixes) -------------------
+
+
+def _booked(**kw):
+    return LeadFactory(status=Lead.Status.BOOKED, **kw)
+
+
+def _future(days=30):
+    return (timezone.now() + timedelta(days=days)).date()
+
+
+def test_clone_reservation_does_not_inherit_a_stale_confirmation():
+    source = TransferReservationFactory(customer_confirmed_at=timezone.now())
+    clone = groups.clone_reservation(source, sort_order=1)
+    assert clone.customer_confirmed_at is None
+
+
+def test_growing_a_group_on_a_booked_lead_schedules_the_new_members():
+    lead = _booked()
+    res = TransferReservationFactory(lead=lead, pickup_date=_future())
+    groups.set_group_size(res, 3)
+    assert (
+        TouchPoint.objects.filter(
+            kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER, reservation__lead=lead
+        ).count()
+        == 3
+    )
+
+
+def test_copy_to_dates_on_a_booked_lead_schedules_each_copy():
+    lead = _booked()
+    source = TransferReservationFactory(lead=lead, pickup_date=_future())
+    copies = groups.copy_to_dates(source, [_future(31), _future(32)])
+    for copy in copies:
+        assert TouchPoint.objects.filter(
+            reservation=copy, kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER
+        ).exists()
+
+
+def test_apply_to_group_reschedules_a_sibling_whose_pickup_date_moved():
+    lead = _booked()
+    res = TransferReservationFactory(lead=lead, pickup_date=_future())
+    groups.set_group_size(res, 2)
+    sibling = _group_of(res)[1]
+    original = TouchPoint.objects.get(
+        reservation=sibling, kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER
+    )
+
+    res.pickup_date = _future(45)
+    res.save(update_fields=["pickup_date"])
+    groups.apply_to_group(res)
+
+    original.refresh_from_db()
+    sibling.refresh_from_db()
+    assert original.status == TouchPoint.Status.CANCELLED
+    fresh = TouchPoint.objects.get(
+        reservation=sibling,
+        kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER,
+        status=TouchPoint.Status.SCHEDULED,
+    )
+    assert fresh.scheduled_for == sibling.pickup_at - timedelta(hours=72)

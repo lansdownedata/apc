@@ -22,6 +22,7 @@ from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
 from apps.messaging import touchpoints
 from apps.notifications.models import Notification
+from apps.reservations import services as reservations_services
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
 
 from . import la_sync, services, webhooks
@@ -235,14 +236,11 @@ def la_webhook(request, token: str):
 
     new_status = la_sync.LA_EVENT_TO_TRIP_STATUS.get(event_name)
     if new_status and new_status != reservation.trip_status:
-        reservation.trip_status = new_status
-        reservation.save(update_fields=["trip_status", "updated_at"])
-        TripStatusEvent.objects.create(
-            reservation=reservation,
-            status=new_status,
-            source=TripStatusEvent.Source.LIMOANYWHERE,
+        # The one seam every status change writes through (this webhook + the dispatch
+        # drawer's manual control) — see reservations.services.set_trip_status.
+        reservations_services.set_trip_status(
+            reservation, new_status, source=TripStatusEvent.Source.LIMOANYWHERE
         )
-        touchpoints.notify_status_change(reservation, new_status)
         if new_status in EARNED_TERMINAL_STATUSES:
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):

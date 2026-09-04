@@ -20,6 +20,36 @@ from django.db import transaction
 
 from .models import Reservation, Stop
 
+
+def _schedule_new_members(lead) -> None:
+    """New trips on a booked order need their service-date messages scheduled (APC-18-22).
+
+    Idempotent — safe to call after any clone, whether or not this particular lead is
+    booked or the new trips even have a pickup date yet.
+    """
+    if lead.status == lead.Status.BOOKED:
+        from apps.messaging import touchpoints
+
+        touchpoints.schedule_service_touchpoints(lead)
+
+
+def _reschedule_if_pickup_moved(reservation, lead, prev_pickup: tuple) -> None:
+    """A sibling's pickup date/time changed under `apply_to_group` — keep its service-date
+    messages (and its now-stale acknowledgement) in step, same as the reservation editor.
+
+    Takes `lead` from the caller (the group's anchor reservation, already loaded) rather
+    than reading `reservation.lead` — every member of a group shares one lead, and
+    `_members()` doesn't select_related it, so that would be a query per sibling.
+    """
+    if lead.status == lead.Status.BOOKED and prev_pickup != (
+        reservation.pickup_date,
+        reservation.pickup_time,
+    ):
+        from apps.messaging import touchpoints
+
+        touchpoints.reschedule_service_touchpoints(reservation)
+
+
 # A wedding shuttle is the motivating case — four minibuses on one itinerary — but a
 # hand-built count keeps one click from spawning hundreds of rows. Shared with the
 # quote workspace's Duplicate ×N control (APC-13).
@@ -128,6 +158,10 @@ def clone_reservation(
     clone.la_reservation_id = ""
     clone.la_confirmation = ""
     clone.trip_status = ""
+    # A fresh trip nobody has seen yet must not be born "confirmed" because the source
+    # happened to be — that stamp belongs to a specific customer looking at this specific
+    # trip's sheet (APC-19).
+    clone.customer_confirmed_at = None
     clone.revenue_status = Reservation.RevenueStatus.DEFERRED
     clone.recognized_at = None
     clone.recognized_amount = 0
@@ -179,6 +213,7 @@ def copy_to_dates(source: Reservation, dates: list[date]) -> list[Reservation]:
             fields.append("dropoff_date")
         clone.save(update_fields=fields)
         made.append(clone)
+    _schedule_new_members(source.lead)
     return made
 
 
@@ -230,6 +265,7 @@ def set_group_size(reservation: Reservation, count: int) -> list[Reservation]:
             current.append(
                 clone_reservation(reservation, next_order + offset, group_key=key, stops=route)
             )
+        _schedule_new_members(reservation.lead)
     elif count < len(current):
         doomed = [r for r in reversed(current) if r.pk != reservation.pk][: len(current) - count]
         _delete_members(doomed)
@@ -281,10 +317,12 @@ def apply_to_group(reservation: Reservation) -> list[Reservation]:
     route = list(reservation.stops.order_by("sequence"))
     siblings = list(_members(reservation.group_key).exclude(pk=reservation.pk))
     for sibling in siblings:
+        prev_pickup = (sibling.pickup_date, sibling.pickup_time)
         for name, value in values.items():
             setattr(sibling, name, value)
         sibling.save(update_fields=fields)
         _write_stops(sibling, route)
+        _reschedule_if_pickup_moved(sibling, reservation.lead, prev_pickup)
     return siblings
 
 

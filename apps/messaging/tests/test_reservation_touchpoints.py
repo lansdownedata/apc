@@ -139,6 +139,46 @@ def test_reservation_editor_reschedules_on_a_pickup_date_change():
     assert fresh.pk != original.pk
 
 
+def test_reschedule_cancels_an_already_sent_confirmation_and_makes_a_fresh_one():
+    """A trip inside its T-72h window already got the confirmation SENT; the pickup then
+    moves further out. The old (now-wrong) SENT row must not block a new one — `_ensure`
+    treats any non-CANCELLED row as "already handled"."""
+    lead = _booked_lead()
+    res = ReservationFactory(lead=lead, pickup_date=_future(2))
+    sent = TouchPoint.objects.create(
+        lead=lead,
+        reservation=res,
+        kind=K.TRIP_CONFIRM_CUSTOMER,
+        status=TouchPoint.Status.SENT,
+        scheduled_for=timezone.now() - timedelta(days=1),
+        sent_at=timezone.now() - timedelta(days=1),
+    )
+
+    touchpoints.reschedule_service_touchpoints(res)
+
+    sent.refresh_from_db()
+    assert sent.status == TouchPoint.Status.CANCELLED
+    fresh = TouchPoint.objects.get(
+        reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER, status=TouchPoint.Status.SCHEDULED
+    )
+    assert fresh.scheduled_for == res.pickup_at - timedelta(hours=72)
+
+
+def test_reschedule_clears_a_stale_customer_and_affiliate_acknowledgement():
+    lead = _booked_lead()
+    res = ReservationFactory(lead=lead, pickup_date=_future(), customer_confirmed_at=timezone.now())
+    a = AssignmentFactory(
+        reservation=res, status=Assignment.Status.CONFIRMED, affiliate_confirmed_at=timezone.now()
+    )
+
+    touchpoints.reschedule_service_touchpoints(res)
+
+    res.refresh_from_db()
+    a.refresh_from_db()
+    assert res.customer_confirmed_at is None
+    assert a.affiliate_confirmed_at is None
+
+
 def test_mark_lost_cancels_reservation_touchpoints(client):
     from django.urls import reverse
 
@@ -385,8 +425,32 @@ def test_build_context_fills_trip_vars_from_the_reservation():
     assert "Dulles Airport" in ctx["trip_routing"]
     assert "The Ritz-Carlton" in ctx["trip_routing"]
     assert ctx["trip_pickup_date"]
+    # No pickup_time on the trip: trip_pickup_time stays blank, and the combined var
+    # (what the templates actually interpolate) drops the "at" clause rather than
+    # rendering a dangling "... at ".
+    assert ctx["trip_pickup_time"] == ""
+    assert ctx["trip_pickup_when"] == ctx["trip_pickup_date"]
     # keys are always present even with no reservation
     assert build_context(lead)["trip_routing"] == ""
+
+
+def test_build_context_time_carries_the_trip_timezone_abbreviation():
+    """CLAUDE.md: a viewer must see the abbreviation whenever a trip's zone differs from
+    the project's own (`pickup_tz_abbrev` is blank in-zone by design — nothing to add)."""
+    from datetime import time
+
+    from apps.messaging.touchpoint_templates import build_context
+
+    lead = _booked_lead()
+    res = ReservationFactory(
+        lead=lead,
+        pickup_date=_future(),
+        pickup_time=time(14, 0),
+        pickup_timezone="America/Los_Angeles",  # differs from settings.TIME_ZONE
+    )
+    ctx = build_context(lead, res)
+    assert ctx["trip_pickup_time"].endswith(("PDT", "PST"))
+    assert ctx["trip_pickup_when"] == f"{ctx['trip_pickup_date']} at {ctx['trip_pickup_time']}"
 
 
 def test_run_touchpoints_disabled_in_dev_is_a_noop():

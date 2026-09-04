@@ -35,9 +35,9 @@ def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> 
         "stops": stops,
     }
     if affiliate:
-        from apps.dispatch.models import Assignment
+        from apps.dispatch.selectors import confirmed_assignment
 
-        confirmed = reservation.assignments.filter(status=Assignment.Status.CONFIRMED).first()
+        confirmed = confirmed_assignment(reservation)
         ctx["payout"] = f"${confirmed.payout:,.2f}" if confirmed else ""
     return ctx
 

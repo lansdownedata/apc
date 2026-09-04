@@ -172,17 +172,32 @@ def schedule_service_touchpoints(lead) -> None:
 
 
 def reschedule_service_touchpoints(reservation) -> None:
-    """Pickup date/time changed — cancel this trip's pending service-date rows and rebuild."""
-    from apps.dispatch.models import Assignment
-
+    """Pickup date/time changed — cancel this trip's service-date rows (SENT ones too, so
+    a trip already confirmed for the old date gets a fresh confirmation for the new one —
+    `_ensure` treats any non-CANCELLED row as "already handled") and rebuild. Any existing
+    acknowledgement is now for a date that no longer holds, so it's cleared along with it.
+    """
     TouchPoint.objects.filter(
         reservation=reservation,
         kind__in=_SERVICE_DATE_KINDS,
-        status=TouchPoint.Status.SCHEDULED,
+        status__in=(TouchPoint.Status.SCHEDULED, TouchPoint.Status.SENT),
     ).update(status=TouchPoint.Status.CANCELLED)
+
+    fields = []
+    if reservation.customer_confirmed_at is not None:
+        reservation.customer_confirmed_at = None
+        fields.append("customer_confirmed_at")
+
+    confirmed = _confirmed_assignment(reservation)
+    if confirmed is not None and confirmed.affiliate_confirmed_at is not None:
+        confirmed.affiliate_confirmed_at = None
+        confirmed.save(update_fields=["affiliate_confirmed_at", "updated_at"])
+
+    if fields:
+        reservation.save(update_fields=[*fields, "updated_at"])
+
     schedule_service_touchpoints(reservation.lead)
-    still_covered = reservation.assignments.filter(status=Assignment.Status.CONFIRMED).exists()
-    if still_covered and reservation.pickup_at is not None:
+    if confirmed is not None and reservation.pickup_at is not None:
         _ensure(reservation, TouchPoint.Kind.TRIP_CONFIRM_AFFILIATE, reservation.pickup_at)
 
 
@@ -292,9 +307,7 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
     if tp.kind == TouchPoint.Kind.WED_FINAL_DETAILS:
         ctx["confirm_link"] = wedding_details_url(res, base_url=base_url)
     elif tp.kind == TouchPoint.Kind.TRIP_CONFIRM_AFFILIATE:
-        from apps.dispatch.models import Assignment
-
-        a = res.assignments.filter(status=Assignment.Status.CONFIRMED).first()
+        a = _confirmed_assignment(res)
         if a is not None:
             ctx["ack_link"] = affiliate_ack_url(a, base_url=base_url)
     else:
@@ -388,25 +401,29 @@ _LINK_KINDS = frozenset(
 )
 
 
+def _confirmed_assignment(reservation):
+    """The trip's active coverage — the one shared lookup, see `dispatch.selectors`."""
+    if reservation is None:
+        return None
+    from apps.dispatch.selectors import confirmed_assignment
+
+    return confirmed_assignment(reservation)
+
+
 def _recipient(tp: TouchPoint, template):
     """The message's addressee — `lead.contact`, or the confirmed affiliate's vendor."""
     if template.audience == "affiliate":
-        from apps.dispatch.models import Assignment
-
-        res = tp.reservation
-        a = (
-            res.assignments.filter(status=Assignment.Status.CONFIRMED)
-            .select_related("vendor")
-            .first()
-            if res is not None
-            else None
-        )
+        a = _confirmed_assignment(tp.reservation)
         return a.vendor if a is not None and a.vendor_id else None
     return tp.lead.contact
 
 
-def _process(tp: TouchPoint) -> bool:
-    """Evaluate skip conditions at send time and send. Returns True iff SENT."""
+def _process(tp: TouchPoint, cfg=None) -> bool:
+    """Evaluate skip conditions at send time and send. Returns True iff SENT.
+
+    ``cfg`` lets `run_touchpoints` load the `NotificationConfig` singleton once for the
+    whole batch instead of once per row — it's a fresh row-by-row query otherwise.
+    """
     lead = tp.lead
     kind = tp.kind
 
@@ -432,7 +449,7 @@ def _process(tp: TouchPoint) -> bool:
         if kind in _SERVICE_DATE_KINDS and tp.reservation.pickup_at is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip has no pickup date")
             return False
-        if not _config().is_enabled(kind):
+        if not (cfg or _config()).is_enabled(kind):
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="message disabled")
             return False
         if kind in _LINK_KINDS and not settings.PUBLIC_BASE_URL:
@@ -506,13 +523,19 @@ def run_touchpoints() -> int:
             "reservation__vehicle",
             "reservation__service_type",
         )
-        .prefetch_related("reservation__stops", "reservation__assignments__vendor")
+        .prefetch_related(
+            "reservation__stops",
+            "reservation__assignments__vendor",
+            "reservation__assignments__driver",
+            "reservation__assignments__vehicle",
+        )
     )
 
+    cfg = _config()
     sent = 0
     for tp in due:
         try:
-            if _process(tp):
+            if _process(tp, cfg=cfg):
                 sent += 1
         except Exception:  # noqa: BLE001 - one bad row must not kill the run
             logger.exception("touch-point %s failed to send", tp.pk)

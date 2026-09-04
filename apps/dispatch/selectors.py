@@ -30,6 +30,21 @@ CANCELLED_STATUSES = tuple(
 )
 
 
+def confirmed_assignment(reservation: Reservation) -> Assignment | None:
+    """The trip's active coverage, or None. The one place this lookup lives — the
+    reservation-lifecycle messaging (recipient, driver info, affiliate payout) needs it in
+    several spots and used to re-type it each time.
+
+    Reads through `.assignments.all()` rather than `.filter(status=...)`: a related
+    manager's `.filter()` always issues a fresh query, but `.all()` returns a prefetched
+    queryset's cache when a caller already did `prefetch_related("...assignments...")`.
+    """
+    for a in reservation.assignments.all():
+        if a.status == Assignment.Status.CONFIRMED:
+            return a
+    return None
+
+
 def board_trips(filters: BoardFilters) -> list[Reservation]:
     """Booked trips picking up inside `filters`' date window, narrowed by its
     vehicle-type / customer / linked-set filters, each decorated with coverage + route ends.

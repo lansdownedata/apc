@@ -240,7 +240,7 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{first_name},\n\n"
             "Your trip is coming up. Please take a moment to confirm the details below are "
             "correct.\n\n"
-            "  Date:       {trip_pickup_date} at {trip_pickup_time}\n"
+            "  Date:       {trip_pickup_when}\n"
             "  Route:      {trip_routing}\n"
             "  Passengers: {trip_passengers}\n"
             "  Vehicle:    {trip_vehicle}\n"
@@ -252,9 +252,8 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{company_name}"
         ),
         sms_body=(
-            "{first_name}, it's {company_name}. Your trip on {trip_pickup_date} at "
-            "{trip_pickup_time} is coming up. Please confirm the details and let us know of "
-            "any changes: {confirm_link}"
+            "{first_name}, it's {company_name}. Your trip on {trip_pickup_when} is coming "
+            "up. Please confirm the details and let us know of any changes: {confirm_link}"
         ),
     ),
     "trip_confirm_affiliate": TouchPointTemplate(
@@ -283,8 +282,7 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         subject="Your driver for {trip_pickup_date} — {company_name}",
         email_body=(
             "{first_name},\n\n"
-            "Here are your driver and vehicle details for {trip_pickup_date} at "
-            "{trip_pickup_time}:\n\n"
+            "Here are your driver and vehicle details for {trip_pickup_when}:\n\n"
             "  Driver:  {driver_name}\n"
             "  Cell:    {driver_cell}\n"
             "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
@@ -293,9 +291,9 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{company_name}"
         ),
         sms_body=(
-            "{first_name}, it's {company_name}. Your driver for {trip_pickup_date} at "
-            "{trip_pickup_time}: {driver_name}, cell {driver_cell}, {vehicle_description} "
-            "({vehicle_number}). They'll reach out as pickup nears."
+            "{first_name}, it's {company_name}. Your driver for {trip_pickup_when}: "
+            "{driver_name}, cell {driver_cell}, {vehicle_description} ({vehicle_number}). "
+            "They'll reach out as pickup nears."
         ),
     ),
     "status_dispatched": TouchPointTemplate(
@@ -306,8 +304,7 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         subject="Your trip is confirmed and assigned — {company_name}",
         email_body=(
             "{first_name},\n\n"
-            "Your trip is confirmed and assigned for {trip_pickup_time} on "
-            "{trip_pickup_date}.\n\n"
+            "Your trip is confirmed and assigned for {trip_pickup_when}.\n\n"
             "  Driver:  {driver_name}\n"
             "  Cell:    {driver_cell}\n"
             "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
@@ -316,8 +313,8 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         ),
         sms_body=(
             "{first_name}, it's {company_name}. Your trip is confirmed and assigned for "
-            "{trip_pickup_time} on {trip_pickup_date}. Driver: {driver_name}, "
-            "{vehicle_description}. Full details: {confirm_link}"
+            "{trip_pickup_when}. Driver: {driver_name}, {vehicle_description}. Full "
+            "details: {confirm_link}"
         ),
     ),
     "status_on_the_way": TouchPointTemplate(
@@ -351,6 +348,7 @@ def _trip_context(reservation) -> dict[str, str]:
         "trip_pickup_date",
         "trip_pickup_time",
         "trip_pickup_tz",
+        "trip_pickup_when",
         "trip_routing",
         "trip_passengers",
         "trip_vehicle",
@@ -371,10 +369,23 @@ def _trip_context(reservation) -> dict[str, str]:
     if pickup_at is not None:
         ctx["trip_pickup_date"] = f"{pickup_at:%b %d, %Y}"
         if reservation.pickup_time is not None:
-            ctx["trip_pickup_time"] = f"{pickup_at:%-I:%M %p}"
-        ctx["trip_pickup_tz"] = reservation.pickup_tz_abbrev
+            # Include the abbreviation on every rendered time, per CLAUDE.md — a
+            # customer or affiliate outside the trip's own zone must never see a bare
+            # clock time and have to guess which zone it's in.
+            tz = reservation.pickup_tz_abbrev
+            ctx["trip_pickup_tz"] = tz
+            ctx["trip_pickup_time"] = f"{pickup_at:%-I:%M %p} {tz}".strip()
+            ctx["trip_pickup_when"] = f"{ctx['trip_pickup_date']} at {ctx['trip_pickup_time']}"
+        else:
+            # No pickup time on the trip — "{date} at {time}" would render a dangling
+            # "at " with nothing after it, so the combined var drops the "at" clause too.
+            ctx["trip_pickup_when"] = ctx["trip_pickup_date"]
 
-    stops = list(reservation.ordered_stops)
+    # `.stops.all()` (not `.ordered_stops`, which always re-queries — see the repo's
+    # `pickup`/`dropoff` gotcha) so a caller that prefetched "reservation__stops" (e.g.
+    # `run_touchpoints`) pays no extra query here. `Stop.Meta.ordering` is already
+    # sequence, so the prefetched cache comes back in the right order.
+    stops = list(reservation.stops.all())
     ctx["trip_routing"] = " → ".join(s.address for s in stops if s.address)
     ctx["trip_passengers"] = str(reservation.passengers)
     ctx["trip_vehicle"] = (reservation.vehicle.name if reservation.vehicle else "") or (
@@ -386,13 +397,9 @@ def _trip_context(reservation) -> dict[str, str]:
     phone = (contact.phone or "").strip()
     ctx["contact_on_file"] = f"{contact.name} · {phone}".strip(" ·") if contact.name else phone
 
-    from apps.dispatch.models import Assignment
+    from apps.dispatch.selectors import confirmed_assignment
 
-    confirmed = (
-        reservation.assignments.filter(status=Assignment.Status.CONFIRMED)
-        .select_related("vendor", "driver", "vehicle")
-        .first()
-    )
+    confirmed = confirmed_assignment(reservation)
     if confirmed is not None:
         if confirmed.vendor_id:
             ctx["vendor_name"] = confirmed.vendor.contact_name or confirmed.vendor.name
