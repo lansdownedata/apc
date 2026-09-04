@@ -257,8 +257,11 @@ header, aside, main, .wash-gold {
 .dispatch-grid tr.row-danger > td {
   background: rgb(var(--surface)) linear-gradient(rgb(var(--danger) / .12) 0 0) !important;
 }
+/* Selection is a NEUTRAL grey fill — a flat single-colour layer (a 90deg gradient
+   restarts per cell and reads as bumpy stripes), distinct from the warm exception
+   tints. The gold left bar is the only accent. */
 .dispatch-grid tr.is-selected > td {
-  background: rgb(var(--surface)) linear-gradient(90deg, rgb(var(--gold) / .22), rgb(var(--gold) / .10)) !important;
+  background: rgb(var(--surface)) linear-gradient(rgb(var(--muted) / .17) 0 0) !important;
 }
 .dispatch-grid tr.row-warn > td:first-child   { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
 .dispatch-grid tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--danger)); }
