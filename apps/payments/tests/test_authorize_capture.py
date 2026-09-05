@@ -254,3 +254,60 @@ def test_engaged_is_a_legal_transition_from_quoted_and_leads_to_booked_or_lost()
     lead.status = Lead.Status.ENGAGED
     assert lead.can_transition(Lead.Status.BOOKED)
     assert lead.can_transition(Lead.Status.LOST)
+
+
+# --- the three failure modes the manual-capture switch introduces ---------------------
+# Each of these fails without its guard; they exist because all three would have been
+# silent in production (a second hold, an erroring checkout, a vanished order).
+
+
+def test_owed_alone_would_ask_an_engaged_customer_for_a_second_hold():
+    """`_owed` resolves from the ledger, and an authorization deliberately writes no
+    ledger entry — so the raw calculation still thinks the deposit is outstanding."""
+    from apps.leads.views import _owed, _pay_state
+
+    plan = _authorizable_plan()
+    _authorize(plan)
+    lead = plan.lead
+    lead.refresh_from_db()
+
+    # the underlying calculation still says "deposit owed"...
+    assert _owed(lead) == (Charge.Kind.DEPOSIT, plan.deposit_amount)
+    # ...and the state gate is the only thing standing between that and a second hold
+    assert _pay_state(lead) == (None, Decimal("0.00"))
+
+
+def test_record_payment_rejects_an_authorized_intent():
+    """Why the inline `complete` path had to branch: a manual-capture deposit is
+    `requires_capture` at checkout, and record_payment only accepts `succeeded`."""
+    plan = _authorizable_plan()
+    with (
+        patch.object(services.stripe.PaymentIntent, "retrieve", return_value=_authorized_intent()),
+        pytest.raises(services.PaymentError) as exc,
+    ):
+        services.record_payment(plan, "pi_1", kind=Charge.Kind.DEPOSIT)
+
+    assert "requires_capture" in str(exc.value)
+
+
+def test_reconcile_recovers_an_authorization_whose_webhook_never_landed():
+    """The safety net in its new shape: without this the customer has paid, the money is
+    on hold, and the order appears nowhere."""
+    from apps.payments import tasks
+
+    plan = _authorizable_plan()
+    charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
+    charge.stripe_payment_intent_id = "pi_1"
+    charge.save(update_fields=["stripe_payment_intent_id"])
+    # age it past the sweep's guard
+    Charge.objects.filter(pk=charge.pk).update(
+        updated_at=timezone.now() - tasks.RECONCILE_MIN_AGE - timedelta(minutes=1)
+    )
+
+    with patch.object(services.stripe.PaymentIntent, "retrieve", return_value=_authorized_intent()):
+        assert tasks.reconcile_open_charges() == 1
+
+    charge.refresh_from_db()
+    plan.lead.refresh_from_db()
+    assert charge.status == Charge.Status.AUTHORIZED
+    assert plan.lead.status == Lead.Status.ENGAGED
