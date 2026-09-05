@@ -31,6 +31,7 @@ from apps.messaging import touchpoints
 from apps.messaging.models import TouchPoint
 from apps.notifications.models import Notification
 from apps.payments import ledger
+from apps.payments import reports as payment_reports
 from apps.payments import services as payment_services
 from apps.reservations import groups
 from apps.reservations import services as reservation_services
@@ -299,6 +300,8 @@ def lead_detail(request, pk):
         "booking_intent": request.GET.get("booking") == "1",
         "wedding_state": _wedding_state(lead),
         "is_wedding": any(reservation_services.is_wedding_trip(r) for r in reservations),
+        # The held deposit + its deadline, for the Confirm/Cancel controls (APC-26).
+        **payment_reports.authorized_hold(lead),
         "wedding_open": request.GET.get("wedding") == "1",
         # ?edit=<pk> reopens the editor on one trip after a redirect (APC-15 return trip).
         "open_editor_id": _open_editor_id(request, reservations),

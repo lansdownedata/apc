@@ -5,6 +5,7 @@ from django.shortcuts import render
 
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
+from apps.payments import reports as payment_reports
 
 
 @login_required
@@ -30,6 +31,10 @@ def dashboard(request):
         "nav": "dashboard",
         "page_title": "Dashboard",
         "counts": counts,
+        # Orders holding authorized money that nobody has confirmed yet (APC-26). The
+        # landing page's job is to say what needs a human *today*, and this is the only
+        # queue with a deadline the card networks enforce for us.
+        "awaiting": payment_reports.awaiting_confirmation_summary(),
         "open_pipeline": Lead.objects.open_pipeline_value(),
         "recent_leads": recent,
         "alerts": alerts,

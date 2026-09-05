@@ -17,6 +17,16 @@
     </a>
   </div>
 
+  {% comment %}
+    Awaiting-confirmation strip (APC-26). Exceptions-first: the landing page leads with the
+    one queue that has a deadline the card networks enforce for us — an authorization that
+    lapses is a customer who paid and got nothing. Hidden entirely when there's nothing to do.
+  {% endcomment %}
+  {% if awaiting.count %}
+  {% url 'orders_list' as orders_url %}
+  {% include "components/awaiting_banner.html" with summary=awaiting href=orders_url|add:"?filter=awaiting" %}
+  {% endif %}
+
   <!-- stat cards -->
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6 stagger">
     <div class="card p-4">

@@ -20,7 +20,7 @@ from apps.messaging import services as messaging_services
 from apps.messaging.models import Message
 from apps.reservations.models import Reservation
 
-from . import ledger, services, webhooks
+from . import ledger, reports, services, webhooks
 
 
 @csrf_exempt
@@ -44,6 +44,10 @@ def orders_list(request):
         .order_by("-created_at")
     )
     status_filter = request.GET.get("filter", "all")
+    # The engaged queue is a different shape from the finance table — a time-boxed
+    # worklist, not a money ledger — so it renders its own rows rather than being squeezed
+    # into nine columns of totals.
+    awaiting = reports.awaiting_confirmation_rows()
     orders = []
     for lead in leads:
         bals = ledger.order_balances(lead)
@@ -66,6 +70,8 @@ def orders_list(request):
         "orders/order_list.html",
         {
             "orders": orders,
+            "awaiting": awaiting,
+            "awaiting_summary": reports.awaiting_confirmation_summary(rows=awaiting),
             "filter": status_filter,
             "nav": "orders",
             "page_title": "Orders",
@@ -134,6 +140,59 @@ def order_retry_balance(request, lead_id):
 
 def _json_error(message: str, status: int = 400):
     return JsonResponse({"ok": False, "error": message}, status=status)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_confirm(request, lead_id):
+    """APC verified availability — capture the held deposit and book the order (APC-26).
+
+    The only place in the app that turns an authorization into money, so it is gated on
+    payment access like every other capture, and it is the moment the customer's booking
+    actually becomes real: LA push, balance schedule and the service-date messages all
+    follow from the `book_lead` this triggers.
+    """
+    lead, _ = _plan(lead_id)
+    try:
+        services.confirm_order(lead, user=request.user)
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    except stripe.error.StripeError as exc:
+        # The hold can lapse on the issuer's clock between the page render and the click —
+        # the queue deliberately still shows a Confirm button on a lapsed row. Say so
+        # instead of 500ing into a generic "Request failed."
+        return _json_error(
+            getattr(exc, "user_message", None) or "Stripe could not capture this hold.",
+            status=502,
+        )
+    messages.success(request, f"{lead.quote_no} confirmed — deposit captured.")
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_cancel(request, lead_id):
+    """APC could not cover the trip — release the hold, no money ever moves (APC-26)."""
+    lead, _ = _plan(lead_id)
+    # Once captured, an order is cancelled through the refund path — this one only ever
+    # releases a hold, and must not quietly mark a paid order lost with money still taken.
+    if lead.status != Lead.Status.ENGAGED:
+        return _json_error("Only an engaged order can have its authorization released.")
+    try:
+        services.cancel_order(
+            lead, user=request.user, reason=(request.POST.get("reason") or "").strip()
+        )
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    except stripe.error.StripeError as exc:
+        return _json_error(
+            getattr(exc, "user_message", None) or "Stripe could not release this hold.",
+            status=502,
+        )
+    messages.success(request, f"{lead.quote_no} cancelled — the authorization was released.")
+    return JsonResponse({"ok": True})
 
 
 @login_required

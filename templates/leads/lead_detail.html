@@ -187,6 +187,33 @@
       </button>
       {% endif %}
 
+      {% comment %}
+        Engaged (APC-26): the deposit is authorized and held, and this is where staff
+        verify the details they're confirming. Same two decisions as the Orders queue,
+        same modals — payment access only, since Confirm captures real money.
+      {% endcomment %}
+      {% if lead.status == 'engaged' and user.has_payments_access %}
+      <div x-data="orderConfirmations()" class="flex items-center gap-2">
+        <button type="button" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
+                :disabled="busy"
+                @click="confirmOrder('{% url 'order_confirm' lead.pk %}', '{{ lead.quote_no }}', '${{ authorized_held|floatformat:2|intcomma }}')">
+          <i class="ti ti-circle-check text-[15px]"></i> Confirm &amp; capture
+        </button>
+        <button type="button" class="btn-ghost flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
+                :disabled="busy"
+                @click="cancelOrder('{% url 'order_cancel' lead.pk %}', '{{ lead.quote_no }}')">
+          <i class="ti ti-circle-x text-[15px]"></i> Cancel order
+        </button>
+        {% if authorized_expires_at %}
+        <span class="text-[12px] {% if authorized_tier == 'critical' %}font-semibold text-rose-600{% elif authorized_tier == 'warning' %}text-amber-700{% else %}text-muted{% endif %}"
+              title="Authorized {{ authorized_at|date:'M j, g:i A' }}">
+          {# `timeuntil` renders "0 minutes" for a past deadline — say lapsed instead. #}
+          {% if authorized_lapsed %}hold has lapsed{% else %}hold expires {{ authorized_expires_at|timeuntil }}{% endif %}
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
+
       {% if lead.status != 'lost' %}
       <!-- Mark lost — hidden form + modal to collect reason -->
       <form id="form-mark-lost" method="post" action="{% url 'lead_mark_lost' lead.pk %}" class="hidden">

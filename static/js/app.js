@@ -1121,6 +1121,60 @@ function inbox(opts = {}) {
 }
 window.inbox = inbox;
 
+/* -------------------------------------------------- order confirmations (APC-26)
+ * Confirm captures a real authorization; Cancel releases it. Both are one-way and both
+ * touch the customer's money, so each states plainly what is about to happen and what the
+ * customer will be told before it runs. */
+function orderConfirmations() {
+  return {
+    busy: false,
+
+    async post(url, data = {}) {
+      this.busy = true;
+      try {
+        await postForm(url, data);
+        window.location.reload();
+      } catch (e) {
+        this.busy = false;
+        Alpine.store("toast").push({ type: "danger", title: "Could not save", message: e.message });
+        throw e;
+      }
+    },
+
+    confirmOrder(url, quoteNo, held) {
+      Alpine.store("modal").confirm({
+        title: `Confirm ${quoteNo}?`,
+        variant: "gold",
+        confirmText: "Confirm & capture",
+        message:
+          `This captures the ${held} deposit being held, books the order, and sends the ` +
+          `customer their confirmation. The trip becomes dispatchable.`,
+        onConfirm: () => this.post(url),
+      });
+    },
+
+    cancelOrder(url, quoteNo) {
+      Alpine.store("modal").show({
+        title: `Cancel ${quoteNo}?`,
+        variant: "danger",
+        html:
+          "<p class='text-[13px] text-muted mb-3'>The authorization is released — no money " +
+          "is taken, and the customer is told we could not confirm the trip.</p>" +
+          "<label class='block text-[12.5px] font-medium text-ink mb-1'>Reason</label>" +
+          "<input type='text' id='order-cancel-reason' class='w-full border border-line rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-rose-300' placeholder='e.g. No coach available that day'>",
+        confirmText: "Release hold",
+        showCancel: true,
+        cancelText: "Keep it",
+        onConfirm: () => {
+          const el = document.getElementById("order-cancel-reason");
+          return this.post(url, { reason: el ? el.value : "" });
+        },
+      });
+    },
+  };
+}
+window.orderConfirmations = orderConfirmations;
+
 /* -------------------------------------------------- pipeline (kanban) */
 function pipelineBoard() {
   return {

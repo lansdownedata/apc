@@ -1,0 +1,23 @@
+{% load humanize %}
+{% comment %}
+  Awaiting-confirmation strip (APC-26) — money on hold, a customer waiting, and a deadline
+  the issuer enforces. Shared by the dashboard and the orders console so the two can't
+  drift. Usage:
+    {% include "components/awaiting_banner.html" with summary=awaiting href=url %}
+  `summary` is `payments.reports.awaiting_confirmation_summary()`; the caller decides when
+  to show it. Optional `margin` overrides the default bottom spacing.
+{% endcomment %}
+<a href="{{ href }}"
+   class="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl px-4 py-3 {{ margin|default:'mb-5' }} ring-1 transition-colors {% if summary.tier == 'critical' %}bg-rose-50 ring-rose-600/20 hover:bg-rose-100{% elif summary.tier == 'warning' %}bg-amber-50 ring-amber-600/20 hover:bg-amber-100{% else %}bg-goldl ring-gold/25 hover:wash-gold{% endif %}">
+  <i class="ti ti-clock-dollar text-[17px] {% if summary.tier == 'critical' %}text-rose-600{% elif summary.tier == 'warning' %}text-amber-600{% else %}text-goldd{% endif %}"></i>
+  <span class="text-[13px] font-semibold text-ink">
+    {{ summary.count }} order{{ summary.count|pluralize }} awaiting confirmation
+  </span>
+  <span class="text-[12.5px] text-muted num">${{ summary.held|floatformat:2|intcomma }} held</span>
+  {% if summary.soonest_hours != None %}
+    <span class="text-[12.5px] {% if summary.tier == 'critical' %}font-semibold text-rose-600{% else %}text-muted{% endif %}">
+      {% if summary.soonest_hours <= 0 %}oldest hold has lapsed{% else %}oldest expires in {{ summary.soonest_hours|floatformat:0 }}h{% endif %}
+    </span>
+  {% endif %}
+  <span class="ml-auto text-[12.5px] font-semibold text-goldd">Review &rarr;</span>
+</a>

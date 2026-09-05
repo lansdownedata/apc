@@ -40,9 +40,23 @@
     </div>
   </div>
 
+  {% comment %}
+    Awaiting confirmation (APC-26) — money on hold, a customer waiting, and a deadline the
+    issuer enforces. Shown on every filter so it can't be missed, and it links to its own
+    queue rather than trying to live in the finance table's nine columns.
+  {% endcomment %}
+  {% if awaiting_summary.count and filter != 'awaiting' %}
+  {% include "components/awaiting_banner.html" with summary=awaiting_summary href="?filter=awaiting" margin="mb-4" %}
+  {% endif %}
+
   <!-- filter pills + new booking -->
   <div class="flex items-center gap-3 mb-4">
   <div class="flex items-center gap-0.5 bg-surface rounded-full p-1 ring-1 ring-line shadow-sm w-fit">
+    <a href="?filter=awaiting"
+       class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition inline-flex items-center gap-1.5 {% if filter == 'awaiting' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">
+      Awaiting confirmation
+      {% if awaiting_summary.count %}<span class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10.5px] font-semibold {% if filter == 'awaiting' %}bg-white/20 text-white{% elif awaiting_summary.tier == 'critical' %}bg-rose-100 text-rose-700{% else %}bg-goldl text-goldd{% endif %}">{{ awaiting_summary.count }}</span>{% endif %}
+    </a>
     <a href="?filter=all"
        class="px-3 py-1.5 rounded-full text-[12.5px] font-medium transition {% if filter == 'all' %}bg-charcoal text-white{% else %}text-muted hover:text-ink{% endif %}">
       All
@@ -70,6 +84,80 @@
       <i class="ti ti-heart text-[15px]"></i> New wedding
     </button>
   </div>
+
+  {% if filter == 'awaiting' %}
+  {% comment %}
+    The confirmation queue — deliberately NOT the finance table. This is a worklist: who is
+    waiting, what is held, how long is left, and the two decisions. Sorted by what lapses
+    soonest, because that is what to do next.
+  {% endcomment %}
+  <div class="card overflow-hidden" x-data="orderConfirmations()">
+    <div class="overflow-x-auto">
+      <table class="w-full text-[12.5px] min-w-[860px]">
+        <thead>
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-5 py-3">Order #</th>
+            <th class="font-medium px-3 py-3">Customer</th>
+            <th class="font-medium px-3 py-3">Service date</th>
+            <th class="font-medium px-3 py-3 text-right">Held</th>
+            <th class="font-medium px-3 py-3">Expires in</th>
+            <th class="font-medium px-5 py-3 text-right">Decision</th>
+          </tr>
+        </thead>
+        <tbody class="stagger">
+          {% for r in awaiting %}
+          <tr class="border-b border-line/70 last:border-0 {% if r.tier == 'critical' %}row-danger{% elif r.tier == 'warning' %}row-warn{% endif %}">
+            <td class="px-5 py-3.5 font-mono text-muted font-medium">
+              <a href="{% url 'lead_detail' r.lead.pk %}" class="hover:text-goldd">{{ r.quote_no }}</a>
+            </td>
+            <td class="px-3 py-3.5">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full bg-charcoal2 text-gold grid place-items-center text-[11px] font-semibold shrink-0 uppercase">{{ r.customer|slice:":2" }}</span>
+                <span class="font-semibold text-ink truncate max-w-[160px]">{{ r.customer }}</span>
+              </div>
+            </td>
+            <td class="px-3 py-3.5 num text-muted">
+              {% if r.earliest_pickup %}{{ r.earliest_pickup|date:"M j, Y" }}{% else %}<span class="text-muted/50">no date</span>{% endif %}
+              <span class="text-muted/60">· {{ r.trips }} trip{{ r.trips|pluralize }}</span>
+            </td>
+            <td class="px-3 py-3.5 text-right num font-semibold text-ink">${{ r.held|floatformat:2|intcomma }}</td>
+            <td class="px-3 py-3.5 num {% if r.tier == 'critical' %}text-rose-600 font-semibold{% elif r.tier == 'warning' %}text-amber-700 font-medium{% else %}text-muted{% endif %}"
+                title="Authorized {{ r.authorized_at|date:'M j, g:i A' }}">
+              {% if r.hours_left == None %}—
+              {% elif r.hours_left <= 0 %}<i class="ti ti-alert-triangle text-[13px]"></i> lapsed
+              {% elif r.hours_left < 24 %}{{ r.hours_left|floatformat:0 }}h
+              {% else %}{{ r.expires_at|timeuntil }}{% endif %}
+            </td>
+            <td class="px-5 py-3.5">
+              {# Both endpoints are behind payment access — don't offer a button that 403s. #}
+              {% if user.has_payments_access %}
+              <div class="flex items-center justify-end gap-2">
+                <button type="button" class="btn-gold px-3 py-1.5 rounded-lg text-[12px] font-semibold"
+                        :disabled="busy"
+                        @click="confirmOrder('{% url 'order_confirm' r.lead.pk %}', '{{ r.quote_no }}', '${{ r.held|floatformat:2|intcomma }}')">
+                  Confirm
+                </button>
+                <button type="button" class="btn-ghost px-3 py-1.5 rounded-lg text-[12px] font-semibold ring-1 ring-line text-rose-600"
+                        :disabled="busy"
+                        @click="cancelOrder('{% url 'order_cancel' r.lead.pk %}', '{{ r.quote_no }}')">
+                  Cancel
+                </button>
+              </div>
+              {% else %}
+              <div class="text-right text-muted text-[12px]">Payments access required</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="px-5 py-10 text-center text-muted text-[13px]">
+            Nothing awaiting confirmation — every authorized deposit has been decided.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
 
   <!-- table -->
   <div class="card overflow-hidden">
@@ -161,6 +249,7 @@
       </table>
     </div>
   </div>
+  {% endif %}
 
   {% include "leads/_new_lead_modal.html" %}
 

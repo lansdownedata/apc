@@ -4,6 +4,8 @@ from . import views
 
 urlpatterns = [
     path("", views.orders_list, name="orders_list"),
+    path("<int:lead_id>/confirm/", views.order_confirm, name="order_confirm"),
+    path("<int:lead_id>/cancel/", views.order_cancel, name="order_cancel"),
     path("<int:lead_id>/refund/", views.order_refund, name="order_refund"),
     path("<int:lead_id>/cancel-refund/", views.order_cancel_refund, name="order_cancel_refund"),
     path("<int:lead_id>/retry-balance/", views.order_retry_balance, name="order_retry_balance"),
