@@ -19,7 +19,14 @@ def test_columns_group_and_sum(logged_in_client):
     LeadFactory(status=Lead.Status.NEW)
     resp = logged_in_client.get(reverse("pipeline"))
     columns = {c["status"]: c for c in resp.context["columns"]}
-    assert [c["status"] for c in resp.context["columns"]] == ["new", "quoted", "booked", "lost"]
+    # Engaged sits between quoted and booked — the customer has paid, we haven't confirmed.
+    assert [c["status"] for c in resp.context["columns"]] == [
+        "new",
+        "quoted",
+        "engaged",
+        "booked",
+        "lost",
+    ]
     assert len(columns["quoted"]["leads"]) == 1
     assert columns["quoted"]["value"] == Decimal("500")
     assert len(columns["new"]["leads"]) == 1

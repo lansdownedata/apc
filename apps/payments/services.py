@@ -1,18 +1,27 @@
 """Stripe payments service — deposit checkout (saves the card) + off-session
 balance charge. Card data never touches our servers (Checkout + tokens)."""
 
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 import stripe
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
+from apps.messaging import touchpoints
+from apps.messaging.models import TouchPoint
 from apps.notifications.models import Notification
 
 from . import ledger
 from .models import Charge, JournalEntry, PaymentPlan
 
 ZERO = Decimal("0.00")
+
+# How long we assume a deposit authorization stays capturable (APC-26). The card networks
+# set the real ceiling — commonly ~7 days on credit, often less on debit — so this drives
+# the staff countdown and the expiry sweep, never the decision to attempt a capture.
+AUTH_HOLD_DAYS = 7
 
 
 class PaymentError(Exception):
@@ -71,6 +80,13 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount) -> tuple[Charge, st
 
     customer = get_or_create_customer(plan)
     charge = plan.record_charge(kind=kind, amount=amount)
+    extra = {}
+    if kind == Charge.Kind.DEPOSIT:
+        # APC-26: the deposit only *holds* at checkout. Availability can shift between
+        # quote and booking, so nothing moves until a human at APC confirms the order.
+        # A balance charge is money already owed on a confirmed booking — it still
+        # captures automatically.
+        extra["capture_method"] = "manual"
     intent = _stripe().PaymentIntent.create(
         amount=_cents(amount),
         currency="usd",
@@ -83,6 +99,7 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount) -> tuple[Charge, st
             "charge_id": str(charge.pk),
         },
         idempotency_key=charge.idempotency_key,
+        **extra,
     )
     charge.stripe_payment_intent_id = intent.id
     charge.stripe_client_secret = intent.client_secret
@@ -352,8 +369,129 @@ def record_payment(
     _store_card(plan, getattr(intent, "payment_method", None))
     sync_plan_from_collected(plan)
     plan.lead.refresh_from_db()
-    if plan.lead.status in (Lead.Status.NEW, Lead.Status.QUOTED):
+    # ENGAGED is here because capture is exactly the moment a confirmed order becomes a
+    # booking (APC-26) — `confirm_order` routes through this same tail.
+    if plan.lead.status in (Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED):
         book_lead(plan.lead)
+    return charge
+
+
+# --- authorize → confirm → capture (APC-26) -------------------------------------------
+
+
+def record_authorization(plan: PaymentPlan, payment_intent_id: str) -> Charge:
+    """Reconcile a deposit authorization: hold recorded, card stored, lead ENGAGED.
+
+    The mirror of `record_payment` for the half of the flow where *no money moves*. Called
+    from the customer's inline `complete` POST and from the
+    `payment_intent.amount_capturable_updated` webhook — under manual capture that event,
+    not `succeeded`, is what says the customer paid.
+
+    Deliberately posts **no ledger entry**: an authorization is not revenue, not cash, and
+    may never become either. The books only learn about it at capture.
+    """
+    from apps.leads.models import Lead
+
+    intent = _stripe().PaymentIntent.retrieve(payment_intent_id, expand=["payment_method"])
+    if intent.status not in ("requires_capture", "succeeded"):
+        raise PaymentError(f"Payment has not been authorized ({intent.status}).")
+
+    charge = plan.charges.filter(stripe_payment_intent_id=payment_intent_id).first()
+    if charge is None:
+        amount = (Decimal(intent.amount) / Decimal(100)).quantize(Decimal("0.01"))
+        charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=amount)
+        charge.stripe_payment_intent_id = payment_intent_id
+        charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+
+    if charge.status == Charge.Status.PENDING:
+        now = timezone.now()
+        charge.status = Charge.Status.AUTHORIZED
+        charge.authorized_at = now
+        charge.capture_expires_at = now + timedelta(days=AUTH_HOLD_DAYS)
+        charge.save(
+            update_fields=[
+                "status",
+                "authorized_at",
+                "capture_expires_at",
+                "updated_at",
+            ]
+        )
+
+    _store_card(plan, getattr(intent, "payment_method", None))
+    if plan.deposit_status != PaymentPlan.DepositStatus.PAID:
+        plan.deposit_status = PaymentPlan.DepositStatus.AUTHORIZED
+        plan.save(update_fields=["deposit_status", "updated_at"])
+
+    lead = plan.lead
+    lead.refresh_from_db()
+    if lead.status in (Lead.Status.NEW, Lead.Status.QUOTED):
+        lead.status = Lead.Status.ENGAGED
+        lead.save(update_fields=["status", "updated_at"])
+        # The customer has done their part — stop the quote-chasing program.
+        touchpoints.cancel_pending(lead)
+    return charge
+
+
+def _authorized_deposit(plan: PaymentPlan) -> Charge | None:
+    return plan.charges.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.AUTHORIZED).first()
+
+
+def confirm_order(lead, *, user=None) -> Charge:
+    """APC verified availability — capture the held deposit and book the order (APC-26).
+
+    Everything downstream of "booked" is untouched: `record_payment` posts the ledger
+    entry, stores the card, schedules the balance, pushes to LimoAnywhere and schedules the
+    service-date touch-points via `book_lead`. Confirm just decides *when* that happens.
+
+    Idempotent: an already-captured order returns its charge rather than double-capturing.
+    """
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        raise PaymentError("This order has no payment plan.")
+    charge = _authorized_deposit(plan)
+    if charge is None:
+        captured = plan.charges.filter(
+            kind=Charge.Kind.DEPOSIT, status=Charge.Status.SUCCEEDED
+        ).first()
+        if captured is not None:
+            return captured
+        raise PaymentError("This order has no authorized deposit to capture.")
+
+    _stripe().PaymentIntent.capture(charge.stripe_payment_intent_id)
+    charge.captured_at = timezone.now()
+    charge.save(update_fields=["captured_at", "updated_at"])
+    # PENDING so `record_payment`'s own guard does the ledger post exactly once.
+    charge.status = Charge.Status.PENDING
+    charge.save(update_fields=["status", "updated_at"])
+    return record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
+
+
+def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
+    """APC could not cover the trip — release the hold and lose the lead (APC-26).
+
+    `PaymentIntent.cancel()` returns the held funds; no money ever moved, so there is
+    nothing to refund and nothing for the ledger to say.
+    """
+    from apps.leads.models import Lead
+
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        raise PaymentError("This order has no payment plan.")
+    charge = _authorized_deposit(plan)
+    if charge is None:
+        raise PaymentError("This order has no authorized deposit to release.")
+
+    _stripe().PaymentIntent.cancel(charge.stripe_payment_intent_id)
+    charge.status = Charge.Status.RELEASED
+    charge.save(update_fields=["status", "updated_at"])
+
+    plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
+    plan.save(update_fields=["deposit_status", "updated_at"])
+
+    lead.status = Lead.Status.LOST
+    lead.lost_reason = (reason or "Could not confirm availability")[:255]
+    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
     return charge
 
 

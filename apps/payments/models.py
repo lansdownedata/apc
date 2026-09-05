@@ -20,6 +20,9 @@ class PaymentPlan(TimeStampedModel):
     class DepositStatus(models.TextChoices):
         UNSENT = "unsent", "Unsent"
         REQUESTED = "requested", "Requested"
+        # Card authorized, money on hold, nothing captured — waiting on APC to confirm
+        # the order (APC-26).
+        AUTHORIZED = "authorized", "Authorized"
         PAID = "paid", "Paid"
 
     class BalanceStatus(models.TextChoices):
@@ -112,7 +115,13 @@ class Charge(TimeStampedModel):
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
+        # Manual-capture deposit states (APC-26): the hold exists (AUTHORIZED), was taken
+        # (SUCCEEDED), was let go by us (RELEASED), or lapsed on the issuer's clock
+        # (EXPIRED). Only SUCCEEDED ever moves money.
+        AUTHORIZED = "authorized", "Authorized"
         SUCCEEDED = "succeeded", "Succeeded"
+        RELEASED = "released", "Released"
+        EXPIRED = "expired", "Expired"
         FAILED = "failed", "Failed"
 
     plan = models.ForeignKey(PaymentPlan, related_name="charges", on_delete=models.CASCADE)
@@ -129,6 +138,13 @@ class Charge(TimeStampedModel):
     failure_reason = models.CharField(max_length=255, blank=True)
     attempt_no = models.PositiveSmallIntegerField(default=1)
     attempted_at = models.DateTimeField(null=True, blank=True)
+    # Manual-capture timeline (APC-26). `capture_expires_at` is our *estimate* of the
+    # issuer's hold window — the card networks decide, and debit is often shorter than
+    # credit, so it drives the countdown and the alerts while Stripe's own state decides
+    # whether a capture actually succeeds.
+    authorized_at = models.DateTimeField(null=True, blank=True)
+    capture_expires_at = models.DateTimeField(null=True, blank=True)
+    captured_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def succeeded(self) -> bool:

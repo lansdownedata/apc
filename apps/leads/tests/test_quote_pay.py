@@ -165,21 +165,31 @@ def test_intent_get_not_allowed(client):
 
 
 # --- quote_pay_complete -------------------------------------------------------
-def test_complete_reconciles_and_books(client):
+def test_complete_engages_the_order_without_booking_it(client):
+    """APC-26 reversed this: a deposit *authorizes* at checkout. The customer is done, but
+    the order is not booked until APC confirms availability and captures."""
     lead = _lead()
     charge = lead.payment.record_charge(kind=Charge.Kind.DEPOSIT, amount=Decimal("500.00"))
     charge.stripe_payment_intent_id = "pi_1"
     charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
     with (
-        patch.object(services_stripe().PaymentIntent, "retrieve", return_value=_intent()),
-        patch("apps.integrations.la_sync.push_lead_bookings"),
+        patch.object(
+            services_stripe().PaymentIntent,
+            "retrieve",
+            return_value=_intent(status="requires_capture"),
+        ),
+        patch("apps.integrations.la_sync.push_lead_bookings") as push,
     ):
         resp = client.post(
             reverse("quote_pay_complete", args=[_tok(lead)]), {"payment_intent_id": "pi_1"}
         )
     assert resp.status_code == 200
     lead.refresh_from_db()
-    assert lead.status == Lead.Status.BOOKED
+    assert lead.status == Lead.Status.ENGAGED
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.AUTHORIZED
+    # nothing is dispatched or pushed on an unconfirmed order
+    push.assert_not_called()
 
 
 def test_complete_refuses_an_intent_from_another_lead(client):

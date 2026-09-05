@@ -84,6 +84,13 @@ def reconcile_open_charges(now=None) -> int:
                     charge.plan, charge.stripe_payment_intent_id, kind=charge.kind
                 )
                 reconciled += 1
+            elif intent.status == "requires_capture":
+                # A deposit hold whose `amount_capturable_updated` webhook never landed
+                # (APC-26). Without this the customer has paid, the money is on hold, and
+                # the order never reaches the confirmation queue — the exact failure this
+                # sweep exists to catch, in its new shape.
+                services.record_authorization(charge.plan, charge.stripe_payment_intent_id)
+                reconciled += 1
             elif intent.status == "canceled":
                 charge.status = Charge.Status.FAILED
                 charge.save(update_fields=["status", "updated_at"])

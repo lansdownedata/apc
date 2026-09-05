@@ -659,6 +659,11 @@ def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
         return None, ZERO
     if lead.status == Lead.Status.QUOTED and lead.quote_expired:
         return None, ZERO
+    if lead.status == Lead.Status.ENGAGED:
+        # Their deposit is authorized and held (APC-26). `_owed` reads the ledger, which an
+        # authorization deliberately never touches, so without this the pay page would ask
+        # a customer who has already paid to place a second hold.
+        return None, ZERO
     return _owed(lead)
 
 
@@ -713,8 +718,16 @@ def quote_pay_complete(request, token: str) -> JsonResponse:
     if charge is None:
         # The token identifies the lead; an intent from another lead must not reconcile here.
         return JsonResponse({"ok": False, "error": "Unknown payment."}, status=400)
+    from apps.payments.models import Charge
+
     try:
-        payment_services.record_payment(plan, pi_id, kind=charge.kind)
+        # A deposit only authorizes at checkout (APC-26) — the intent is `requires_capture`,
+        # not `succeeded`, so reconciling it as a payment would fail. The webhook is the
+        # safety net; this is what makes the state flip feel instant.
+        if charge.kind == Charge.Kind.DEPOSIT:
+            payment_services.record_authorization(plan, pi_id)
+        else:
+            payment_services.record_payment(plan, pi_id, kind=charge.kind)
     except payment_services.PaymentError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
     return JsonResponse({"ok": True})

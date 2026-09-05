@@ -1144,10 +1144,18 @@ function pipelineBoard() {
       const why = {
         new: "Leads return to New only by reopening a lost lead.",
         quoted: "Quoted happens when a quote is sent from the workspace.",
-        booked: "Booked happens when the deposit is paid or an admin books the lead.",
+        engaged: "Engaged happens when the customer authorizes their deposit at checkout.",
+        booked: "Booked happens when the deposit is captured or an admin books the lead.",
+        lost: "Mark a quote lost from the workspace, or cancel an engaged order from Orders.",
       }[to];
+      // An engaged order holds real money: confirming captures it and cancelling releases
+      // it, so both are deliberate actions with their own confirmation, never a drag.
       const message =
-        from === "booked" ? "Booked orders are cancelled from the Orders console." : why;
+        from === "booked"
+          ? "Booked orders are cancelled from the Orders console."
+          : from === "engaged"
+            ? "Confirm or cancel an engaged order from the Orders console."
+            : why;
       Alpine.store("toast").push({ type: "info", title: "Can't move quote", message });
     },
 

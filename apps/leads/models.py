@@ -87,6 +87,11 @@ class Lead(TimeStampedModel):
     class Status(models.TextChoices):
         NEW = "new", "New"
         QUOTED = "quoted", "Quoted"
+        # The customer has authorized their deposit and is waiting on us (APC-26). Money
+        # is on hold, nothing is captured, and the order is deliberately NOT dispatchable:
+        # every `status=BOOKED` gate in the app — the dispatch board, the LA push, the
+        # service-date touch-points, revenue — stays correctly shut until a human confirms.
+        ENGAGED = "engaged", "Engaged"
         BOOKED = "booked", "Booked"
         LOST = "lost", "Lost"
 
@@ -147,6 +152,10 @@ class Lead(TimeStampedModel):
 
     @property
     def quote_expired(self) -> bool:
+        """Never true once they've authorized (APC-26) — they have paid and are waiting on
+        us, so the quote must not lapse underneath them while we verify availability."""
+        if self.status in (self.Status.ENGAGED, self.Status.BOOKED):
+            return False
         return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
 
     @property
@@ -191,7 +200,11 @@ class Lead(TimeStampedModel):
 # NEW → BOOKED is the phone-booking path (spec 2026-08-29): no quote email, no payment.
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     Lead.Status.NEW: {Lead.Status.QUOTED, Lead.Status.LOST, Lead.Status.BOOKED},
-    Lead.Status.QUOTED: {Lead.Status.LOST, Lead.Status.BOOKED},
+    Lead.Status.QUOTED: {Lead.Status.ENGAGED, Lead.Status.LOST, Lead.Status.BOOKED},
+    # Confirm captures and books; Cancel releases the hold and loses it. Nothing else.
+    Lead.Status.ENGAGED: {Lead.Status.BOOKED, Lead.Status.LOST},
     Lead.Status.LOST: {Lead.Status.NEW},
     Lead.Status.BOOKED: set(),
 }
+# NEW/QUOTED -> BOOKED stays legal on purpose: the staff "Book now" path (direct bookings,
+# 2026-08-29) never involves a customer authorization and shouldn't grow a confirm step.

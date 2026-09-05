@@ -15,7 +15,10 @@ def test_transition_table_is_exactly_the_spec():
     S = Lead.Status
     assert ALLOWED_TRANSITIONS == {
         S.NEW: {S.QUOTED, S.LOST, S.BOOKED},
-        S.QUOTED: {S.LOST, S.BOOKED},
+        # QUOTED -> BOOKED stays legal alongside ENGAGED: staff "Book now" (direct
+        # bookings) never involves a customer authorization (APC-26).
+        S.QUOTED: {S.ENGAGED, S.LOST, S.BOOKED},
+        S.ENGAGED: {S.BOOKED, S.LOST},
         S.LOST: {S.NEW},
         S.BOOKED: set(),
     }

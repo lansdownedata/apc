@@ -21,8 +21,26 @@ def process_stripe_event(event) -> None:
     obj = event["data"]["object"]
     if etype == "payment_intent.succeeded":
         _payment_succeeded(obj)
+    elif etype == "payment_intent.amount_capturable_updated":
+        # APC-26: under manual capture `succeeded` fires at *capture*, days later — this
+        # is the only event that says the customer paid at checkout. Both endpoints
+        # (dev + prod) must subscribe to it, or engaged orders never appear.
+        _payment_authorized(obj)
     elif etype == "payment_intent.payment_failed":
         _balance_failed(obj)
+
+
+def _payment_authorized(intent) -> None:
+    """A deposit hold was placed — record it and engage the order. No money has moved."""
+    if (intent.get("metadata") or {}).get("kind") != Charge.Kind.DEPOSIT:
+        return
+    plan = _plan_from_metadata(intent)
+    if plan is None:
+        return
+    try:
+        services.record_authorization(plan, intent["id"])
+    except services.PaymentError:
+        logger.exception("authorization webhook could not reconcile %s", intent.get("id"))
 
 
 def _plan_from_metadata(obj):
