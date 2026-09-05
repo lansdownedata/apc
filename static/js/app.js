@@ -1135,9 +1135,12 @@ function orderConfirmations() {
         await postForm(url, data);
         window.location.reload();
       } catch (e) {
+        // Swallowed, like every other modal action here: `$store.modal.accept()` awaits
+        // onConfirm and only reaches close() if it settles, so rethrowing would strand the
+        // modal open over the toast (and raise an unhandled rejection). The toast is the
+        // report; a reload never happened, so nothing is lost by closing.
         this.busy = false;
         Alpine.store("toast").push({ type: "danger", title: "Could not save", message: e.message });
-        throw e;
       }
     },
 

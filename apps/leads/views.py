@@ -545,8 +545,16 @@ def quote_deposit_success(request, token: str) -> HttpResponse:
     if plan is not None and pi_id and request.GET.get("redirect_status") == "succeeded":
         charge = plan.charges.filter(stripe_payment_intent_id=pi_id).first()
         if charge is not None and charge.status != charge.Status.SUCCEEDED:
+            from apps.payments.models import Charge
+
             try:
-                payment_services.record_payment(plan, pi_id, kind=charge.kind)
+                # A 3-D Secure customer never runs the inline `complete` POST, so this
+                # redirect is their only inline path — and a manual-capture deposit lands
+                # here as `requires_capture`, which `record_payment` refuses (APC-26).
+                if charge.kind == Charge.Kind.DEPOSIT:
+                    payment_services.record_authorization(plan, pi_id)
+                else:
+                    payment_services.record_payment(plan, pi_id, kind=charge.kind)
             except payment_services.PaymentError:
                 pass
 
@@ -685,6 +693,7 @@ def quote_pay(request, token: str) -> HttpResponse:
     """The customer pay page — deposit or balance, whichever is owed."""
     lead = _lead_from_token(token)
     kind, amount = _pay_state(lead)
+    hold = payment_reports.authorized_hold(lead)
     return render(
         request,
         "public/pay.html",
@@ -697,6 +706,11 @@ def quote_pay(request, token: str) -> HttpResponse:
             "amount_cents": int(amount * 100),
             "is_expired": lead.status == Lead.Status.QUOTED and lead.quote_expired,
             "is_lost": lead.status == Lead.Status.LOST,
+            # ENGAGED has nothing to pay (`_pay_state`) but is emphatically NOT paid —
+            # the money is only held (APC-26). Without this the page falls through to
+            # "paid in full", which is false and invites a chargeback.
+            "is_engaged": lead.status == Lead.Status.ENGAGED,
+            "held_amount": hold["authorized_held"],
             # A previous authorization on this quote was released by the issuer before we
             # confirmed (APC-26) — the page has to say so before asking for another.
             "hold_released": _hold_was_released(lead),

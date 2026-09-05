@@ -385,6 +385,56 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "us at {company_phone}."
         ),
     ),
+    # CLIENT COPY PENDING (APC-27). The message the whole flow has been waiting to send —
+    # step 9's "order confirmation". This is the first moment the customer is genuinely
+    # booked, so it is the first time we're allowed to use the word.
+    "order_confirmed": TouchPointTemplate(
+        kind="order_confirmed",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="You're booked — {company_name} {quote_no}",
+        email_body=(
+            "{first_name},\n\n"
+            "Good news — we've confirmed your transportation and your booking is set.\n\n"
+            "{quote_breakdown}\n\n"
+            "Your deposit has now been charged. We'll be in touch before the day with your "
+            "final details, and the remaining balance is charged closer to the trip.\n\n"
+            "You can review everything here: {quote_link}\n\n"
+            "Thank you for choosing {company_name}.\n{company_phone}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. You're booked — we've confirmed your "
+            "transportation for {pickup_date} and charged your deposit. Details: "
+            "{quote_link}"
+        ),
+    ),
+    # CLIENT COPY PENDING (APC-27). Built from the confirmation, as the client asked. The
+    # hard part is the money: they authorized days ago, so the first thing to say is that
+    # nothing was taken — before they go looking for a charge to dispute.
+    "order_cancelled": TouchPointTemplate(
+        kind="order_cancelled",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="We couldn't confirm your {company_name} trip — {quote_no}",
+        email_body=(
+            "{first_name},\n\n"
+            "I'm sorry — after checking availability we aren't able to cover your trip on "
+            "{pickup_date}, so we've had to release your booking.\n\n"
+            "**You have not been charged.** The hold placed on your card has been released "
+            "and nothing was taken; there's nothing for you to cancel or dispute.\n\n"
+            "If your plans are flexible on timing or vehicle, we'd genuinely like another "
+            "go at it — call us at {company_phone} and we'll see what we can do.\n\n"
+            "With apologies,\n{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. We're sorry — we couldn't cover your trip "
+            "on {pickup_date} and have released the booking. You have NOT been charged; "
+            "the hold on your card is gone. Call {company_phone} if you'd like us to look "
+            "at other options."
+        ),
+    ),
 }
 
 

@@ -120,6 +120,8 @@ class TouchPoint(TimeStampedModel):
         # Lead-level, triggered: the customer's held deposit was released by the issuer
         # before APC confirmed the order (APC-26, Exception 1). Carries the way back.
         ORDER_AUTH_EXPIRED = "order_auth_expired", "Deposit hold released"
+        ORDER_CONFIRMED = "order_confirmed", "Order confirmed"
+        ORDER_CANCELLED = "order_cancelled", "Order cancelled"
 
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", "Scheduled"
@@ -178,6 +180,8 @@ class NotificationConfig(models.Model):
         "status_on_the_way": "status_on_the_way",
         "status_arrived": "status_arrived",
         "order_auth_expired": "order_auth_expired",
+        "order_confirmed": "order_confirmed",
+        "order_cancelled": "order_cancelled",
     }
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
@@ -208,6 +212,17 @@ class NotificationConfig(models.Model):
         default=True,
         help_text="APC-26 · deposit hold released before we confirmed — tells the customer "
         "no money was taken and gives them the link back.",
+    )
+
+    # Both default ON: these are the messages that end the customer's wait. An order
+    # confirmed in silence, or cancelled in silence, is the failure this flow exists to
+    # avoid (APC-26 step 9).
+    order_confirmed_enabled = models.BooleanField(
+        default=True, help_text="APC-26 · we confirmed the order and captured the deposit."
+    )
+    order_cancelled_enabled = models.BooleanField(
+        default=True,
+        help_text="APC-26 · we could not cover the trip; the hold was released untouched.",
     )
 
     class Meta:

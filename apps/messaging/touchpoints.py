@@ -46,6 +46,10 @@ _TRIGGERED_KINDS = frozenset(
 )
 _RESERVATION_KINDS = _SERVICE_DATE_KINDS | _TRIGGERED_KINDS
 
+# Lead-level outcome messages (APC-26): how the customer's wait ended. Each fires on a
+# lead status the quote-program skips exist to stop — that's why they get their own branch.
+_ORDER_KINDS = frozenset({_K.ORDER_AUTH_EXPIRED, _K.ORDER_CONFIRMED, _K.ORDER_CANCELLED})
+
 # Trip status -> the customer notification kind it fires (APC-22).
 _STATUS_KINDS = {
     "dispatched": _K.STATUS_DISPATCHED,
@@ -278,6 +282,21 @@ def trigger_auth_expired(lead) -> TouchPoint | None:
     return _create(lead, kind, timezone.now())
 
 
+def trigger_order_decided(lead, *, confirmed: bool) -> TouchPoint | None:
+    """Tell the customer how the wait ended (APC-26 step 9).
+
+    One function for both outcomes because they are the same event from the customer's
+    side — the answer they've been waiting on — and keeping them together makes it hard to
+    ship one without the other.
+    """
+    kind = TouchPoint.Kind.ORDER_CONFIRMED if confirmed else TouchPoint.Kind.ORDER_CANCELLED
+    if not _config().is_enabled(kind):
+        return None
+    if TouchPoint.objects.filter(lead=lead, kind=kind, status=TouchPoint.Status.SCHEDULED).exists():
+        return None
+    return _create(lead, kind, timezone.now())
+
+
 def _config():
     from .models import NotificationConfig
 
@@ -443,6 +462,10 @@ _LINK_KINDS = frozenset(
         _K.TRIP_CONFIRM_CUSTOMER_2,
         _K.TRIP_CONFIRM_AFFILIATE,
         _K.STATUS_DISPATCHED,
+        # Both carry a link the customer is meant to act on; sending one with a bare path
+        # burns the only message they get (APC-26).
+        _K.ORDER_AUTH_EXPIRED,
+        _K.ORDER_CONFIRMED,
     }
 )
 
@@ -497,7 +520,9 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
     kind = tp.kind
     group = None
 
-    if lead.status == lead.Status.LOST:
+    # ORDER_CANCELLED is the one message that exists *because* the lead is lost — telling
+    # a customer we released their booking is not something to skip for being lost.
+    if lead.status == lead.Status.LOST and kind != TouchPoint.Kind.ORDER_CANCELLED:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead LOST")
         return False
 
@@ -553,6 +578,21 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
         # fall through to the shared template / channel / _send path
+    elif kind in _ORDER_KINDS:
+        # Lead-level outcome messages (APC-26). They deliberately sit outside the
+        # status-based skips: `order_confirmed` fires on a lead that is now BOOKED, and
+        # `order_cancelled` on one that is now LOST — the very states those skips exist to
+        # stop the *quote* program in.
+        if not (cfg or _config()).is_enabled(kind):
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="message disabled")
+            return False
+        if kind in _LINK_KINDS and not settings.PUBLIC_BASE_URL:
+            # These messages are mostly "here is the link" — without a base URL the link
+            # renders as a bare path and the customer gets a dead one, permanently, because
+            # the row would be marked SENT. Leave it SCHEDULED like the quote kinds.
+            logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
+            return False
+        # fall through
     elif lead.status == lead.Status.BOOKED:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead BOOKED")
         return False
@@ -575,13 +615,6 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             # PUBLIC_BASE_URL is set, instead of silently SKIPPED/FAILED.
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
-
-    if kind == TouchPoint.Kind.ORDER_AUTH_EXPIRED and not settings.PUBLIC_BASE_URL:
-        # This message is nothing but "here is the link back" (APC-26) — without a base URL
-        # `pay_link` renders as a bare path and the customer gets a dead link, permanently,
-        # because the row would be marked SENT. Leave it SCHEDULED like the quote kinds.
-        logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
-        return False
 
     template = TEMPLATES[kind]
     recipient = _recipient(tp, template)

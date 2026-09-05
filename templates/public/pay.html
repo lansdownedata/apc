@@ -54,6 +54,20 @@
       <h1>This quote is no longer active</h1>
       <p>Please contact us for an updated quote for reservation {{ quote_no }}.</p>
 
+    {% elif is_engaged %}
+      {% comment %}
+        APC-26: an engaged order has nothing to pay, but nothing has been *paid* either —
+        the deposit is only held. Falling through to "paid in full" below would tell the
+        customer money changed hands when it hasn't.
+      {% endcomment %}
+      <div class="badge">{% icon "clock" attrs='width="26" height="26"' %}</div>
+      <h1>Your card is authorized</h1>
+      <p>
+        We've placed a hold{% if held_amount %} of <b>${{ held_amount|floatformat:2|intcomma }}</b>{% endif %}
+        on your card for reservation {{ quote_no }} while we confirm availability.
+        <b>Nothing has been charged yet</b> — we'll email you as soon as your trip is booked.
+      </p>
+
     {% elif not pay_kind %}
       <div class="badge">{% icon "check" attrs='width="28" height="28"' %}</div>
       <h1>You're all set</h1>
@@ -75,16 +89,20 @@
         Authorizing again below re-reserves the amount while we confirm.
       </div>
       {% endif %}
+      {# A deposit only ever *authorizes* (APC-26) — never call it "due" or "Pay". #}
       <div class="amt">
-        <span>{% if pay_kind == 'deposit' %}Deposit due{% else %}Balance due{% endif %}</span>
+        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% else %}Balance due{% endif %}</span>
         <span class="n">${{ amount|floatformat:2|intcomma }}</span>
       </div>
 
       <div id="card-mount"></div>
       <div id="pay-error" class="err"></div>
       <button id="pay-button" type="button" class="btn-gold">
-        Pay ${{ amount|floatformat:2|intcomma }}
+        {% if pay_kind == 'deposit' %}Authorize{% else %}Pay{% endif %} ${{ amount|floatformat:2|intcomma }}
       </button>
+      {% if pay_kind == 'deposit' %}
+      <p class="secure">This places a hold, not a charge — we take the deposit once we've confirmed your trip.</p>
+      {% endif %}
       <div class="secure">{% icon "lock" attrs='width="14" height="14" style="vertical-align:-2px"' %} Card details are handled securely by Stripe.</div>
 
       <script src="https://js.stripe.com/v3/"></script>

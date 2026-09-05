@@ -191,8 +191,10 @@
         Engaged (APC-26): the deposit is authorized and held, and this is where staff
         verify the details they're confirming. Same two decisions as the Orders queue,
         same modals — payment access only, since Confirm captures real money.
+        Gated on `authorized_held` too: both endpoints need an AUTHORIZED deposit, so
+        without one the buttons only offer a 400 and the modal reads "captures the $".
       {% endcomment %}
-      {% if lead.status == 'engaged' and user.has_payments_access %}
+      {% if lead.status == 'engaged' and authorized_held and user.has_payments_access %}
       <div x-data="orderConfirmations()" class="flex items-center gap-2">
         <button type="button" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
                 :disabled="busy"

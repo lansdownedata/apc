@@ -124,7 +124,7 @@
   {# ── The grid — its own horizontal scroll; the page body never scrolls sideways ── #}
   <div class="border border-line rounded-lg overflow-hidden bg-surface">
     <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-13rem)]">
-      <table class="dispatch-grid w-full min-w-[1340px] text-[12px] tabular-nums table-auto"
+      <table class="row-states w-full min-w-[1340px] text-[12px] tabular-nums table-auto"
              :class="density === 'comfortable' ? '[&_td]:py-2.5 [&_td]:h-11' : '[&_td]:py-1 [&_td]:h-8'">
         <thead>
           <tr class="text-[10.5px] tracking-wide text-muted bg-surface2 [&>th]:font-semibold [&>th]:px-3 [&>th]:py-2 [&>th]:sticky [&>th]:top-0 [&>th]:z-20 [&>th]:bg-surface2 [&>th]:whitespace-nowrap">

@@ -245,27 +245,28 @@ header, aside, main, .wash-gold {
 /* route connector (multi-stop) */
 .route-line { background: repeating-linear-gradient(to bottom, rgb(var(--border)) 0 5px, transparent 5px 10px); }
 
-/* dispatch grid — row states. Painted on the cells (not the <tr>, which drops
-   box-shadow under border-collapse) over a SOLID `--surface` base so the tint is
-   opaque under a sticky column and never bleeds on horizontal scroll. Every tint
-   is a theme-aware token at low alpha — Tailwind's `amber-50` etc. are light-only
-   and turned to mud in dark mode (this is the dark-mode pass). Order matters:
-   `is-selected` is last so it wins over a warn/danger row. */
-.dispatch-grid tr.row-warn > td {
+/* Table row states — shared by the dispatch grid and the orders confirmation queue,
+   so an amber row means the same thing on both. Put `.row-states` on the <table>.
+   Painted on the cells (not the <tr>, which drops box-shadow under border-collapse)
+   over a SOLID `--surface` base so the tint is opaque under a sticky column and never
+   bleeds on horizontal scroll. Every tint is a theme-aware token at low alpha —
+   Tailwind's `amber-50` etc. are light-only and turn to mud in dark mode. Order
+   matters: `is-selected` is last so it wins over a warn/danger row. */
+.row-states tr.row-warn > td {
   background: rgb(var(--surface)) linear-gradient(rgb(var(--warn) / .12) 0 0) !important;
 }
-.dispatch-grid tr.row-danger > td {
+.row-states tr.row-danger > td {
   background: rgb(var(--surface)) linear-gradient(rgb(var(--danger) / .12) 0 0) !important;
 }
 /* Selection is a NEUTRAL grey fill — a flat single-colour layer (a 90deg gradient
    restarts per cell and reads as bumpy stripes), distinct from the warm exception
    tints. The gold left bar is the only accent. */
-.dispatch-grid tr.is-selected > td {
+.row-states tr.is-selected > td {
   background: rgb(var(--surface)) linear-gradient(rgb(var(--muted) / .17) 0 0) !important;
 }
-.dispatch-grid tr.row-warn > td:first-child   { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
-.dispatch-grid tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--danger)); }
-.dispatch-grid tr.is-selected > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--gold)); }
+.row-states tr.row-warn > td:first-child   { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
+.row-states tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--danger)); }
+.row-states tr.is-selected > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--gold)); }
 /* native search-field clear affordance — we render our own */
 .dispatch-search::-webkit-search-cancel-button { display: none; }
 

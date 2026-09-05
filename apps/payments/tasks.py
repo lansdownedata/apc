@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import F
 from django.utils import timezone
 
 from apps.notifications.email import send_html_email
@@ -35,7 +36,10 @@ def sweep_authorization_holds(now=None) -> int:
         Charge.objects.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.AUTHORIZED)
         .exclude(stripe_payment_intent_id="")
         .select_related("plan__lead")
-        .order_by("capture_expires_at")[:RECONCILE_BATCH]
+        # nulls_last explicitly: a bare ASC puts NULLs first on MySQL (local + test) and
+        # last on Postgres (prod), so a backlog of deadline-less holds would eat the whole
+        # batch on one engine and never be reached on the other. Soonest deadline first.
+        .order_by(F("capture_expires_at").asc(nulls_last=True))[:RECONCILE_BATCH]
     )
     handled = 0
     for charge in open_holds:

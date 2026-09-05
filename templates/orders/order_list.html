@@ -93,7 +93,8 @@
   {% endcomment %}
   <div class="card overflow-hidden" x-data="orderConfirmations()">
     <div class="overflow-x-auto">
-      <table class="w-full text-[12.5px] min-w-[860px]">
+      {# `row-states` is what makes the warning/critical row tints below actually paint. #}
+      <table class="row-states w-full text-[12.5px] min-w-[860px]">
         <thead>
           <tr class="text-muted text-left bg-surface2 border-b border-line">
             <th class="font-medium px-5 py-3">Order #</th>

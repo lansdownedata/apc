@@ -114,6 +114,42 @@ def test_pay_page_owed_is_computed_from_the_ledger_after_a_partial_staff_charge(
     assert resp.context["amount"] == Decimal("700.00")  # 1000 deposit − 300 collected
 
 
+def test_pay_page_tells_an_engaged_customer_the_card_is_only_held(client):
+    """An engaged order has nothing to pay but nothing has been *paid* (APC-26).
+
+    `_pay_state` returns no kind for ENGAGED, which used to drop the page onto the
+    "paid in full" branch — telling a customer money changed hands when it never left
+    their account, which is exactly how you earn a chargeback on a charge that doesn't
+    exist.
+    """
+    lead = _lead()
+    lead.status = Lead.Status.ENGAGED
+    lead.save(update_fields=["status"])
+    charge = lead.payment.record_charge(kind=Charge.Kind.DEPOSIT, amount=Decimal("500.00"))
+    charge.status = Charge.Status.AUTHORIZED
+    charge.authorized_at = timezone.now()
+    charge.capture_expires_at = timezone.now() + timezone.timedelta(days=7)
+    charge.save(update_fields=["status", "authorized_at", "capture_expires_at"])
+
+    resp = client.get(reverse("quote_pay", args=[_tok(lead)]))
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert "apcPay.mount(" not in body
+    assert "paid in full" not in body
+    assert "Nothing has been charged yet" in body
+    assert "500.00" in body  # the amount being held
+    assert resp.context["is_engaged"] is True
+
+
+def test_pay_page_calls_a_deposit_an_authorization_not_a_payment(client):
+    """The deposit is a hold (APC-26) — the CTA must not promise a charge."""
+    lead = _lead()
+    body = client.get(reverse("quote_pay", args=[_tok(lead)])).content.decode()
+    assert "Authorize $500.00" in body
+    assert "Pay $500.00" not in body
+    assert "Deposit due" not in body
+
+
 def test_pay_page_bad_token_404s(client):
     assert client.get(reverse("quote_pay", args=["nope"])).status_code == 404
 
@@ -209,6 +245,9 @@ def test_complete_refuses_an_intent_from_another_lead(client):
 
 # --- quote_deposit_success reconciles the 3-D Secure return -------------------
 def test_success_page_reconciles_a_3ds_return(client):
+    """A 3-D Secure customer never runs the inline `complete` POST, so this redirect is
+    their only inline path. Since APC-26 a deposit lands here as `requires_capture`, and
+    reconciling it engages the order rather than booking it."""
     lead = _lead()
     charge = lead.payment.record_charge(kind=Charge.Kind.DEPOSIT, amount=Decimal("500.00"))
     charge.stripe_payment_intent_id = "pi_3ds"
@@ -216,14 +255,19 @@ def test_success_page_reconciles_a_3ds_return(client):
     url = reverse("quote_deposit_success", args=[_tok(lead)])
     with (
         patch.object(
-            services_stripe().PaymentIntent, "retrieve", return_value=_intent(pi="pi_3ds")
+            services_stripe().PaymentIntent,
+            "retrieve",
+            return_value=_intent(pi="pi_3ds", status="requires_capture"),
         ),
-        patch("apps.integrations.la_sync.push_lead_bookings"),
+        patch("apps.integrations.la_sync.push_lead_bookings") as push,
     ):
         resp = client.get(url, {"payment_intent": "pi_3ds", "redirect_status": "succeeded"})
     assert resp.status_code == 200
     lead.refresh_from_db()
-    assert lead.status == Lead.Status.BOOKED
+    charge.refresh_from_db()
+    assert lead.status == Lead.Status.ENGAGED
+    assert charge.status == Charge.Status.AUTHORIZED
+    push.assert_not_called()
 
 
 def test_success_page_3ds_reconcile_is_idempotent_with_the_webhook(client):

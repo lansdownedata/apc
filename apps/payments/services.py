@@ -463,7 +463,11 @@ def confirm_order(lead, *, user=None) -> Charge:
     # PENDING so `record_payment`'s own guard does the ledger post exactly once.
     charge.status = Charge.Status.PENDING
     charge.save(update_fields=["status", "updated_at"])
-    return record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
+    captured = record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
+    # After book_lead, so the confirmation isn't swept up by its cancel_pending.
+    lead.refresh_from_db()
+    touchpoints.trigger_order_decided(lead, confirmed=True)
+    return captured
 
 
 def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
@@ -492,6 +496,9 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     lead.lost_reason = (reason or "Could not confirm availability")[:255]
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
     touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
+    # Queued *after* the sweep above, which cancels every pending kind — the message
+    # explaining the cancellation must not be cancelled by the cancellation.
+    touchpoints.trigger_order_decided(lead, confirmed=False)
     return charge
 
 
@@ -507,6 +514,11 @@ def expire_authorization(charge: Charge) -> Charge:
     from apps.leads.services import compute_quote_expiry
 
     plan = charge.plan
+    # The sweep's row was read before its Stripe round-trip, and `cancel_order` cancels the
+    # intent *then* saves RELEASED — so a hold we released ourselves reads as `canceled` at
+    # Stripe while this in-memory row still says AUTHORIZED. Re-read before believing it, or
+    # the customer gets both "we cancelled your trip" and "your bank released the hold".
+    charge.refresh_from_db()
     if charge.status != Charge.Status.AUTHORIZED:
         return charge
 
