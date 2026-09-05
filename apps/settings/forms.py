@@ -140,4 +140,5 @@ class NotificationConfigForm(forms.ModelForm):
             "status_dispatched_enabled",
             "status_on_the_way_enabled",
             "status_arrived_enabled",
+            "order_auth_expired_enabled",
         ]

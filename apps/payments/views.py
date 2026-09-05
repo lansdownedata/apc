@@ -154,6 +154,11 @@ def order_confirm(request, lead_id):
     follow from the `book_lead` this triggers.
     """
     lead, _ = _plan(lead_id)
+    # Mirror of `order_cancel`'s guard. `record_payment` only calls `book_lead` from
+    # NEW/QUOTED/ENGAGED, so capturing a hold on a lead someone has since marked LOST would
+    # take the customer's money and never produce a booking, an LA push or a confirmation.
+    if lead.status not in (Lead.Status.ENGAGED, Lead.Status.BOOKED):
+        return _json_error("Only an engaged order can have its authorization captured.")
     try:
         services.confirm_order(lead, user=request.user)
     except services.PaymentError as exc:

@@ -257,6 +257,27 @@ def notify_status_change(reservation, status: str) -> None:
     _ensure(reservation, kind, timezone.now())
 
 
+def trigger_auth_expired(lead) -> TouchPoint | None:
+    """The customer's held deposit was released before we confirmed (APC-26).
+
+    Lead-level, not reservation-anchored — the order never became trips anyone is running.
+
+    Blocks only on an *undelivered* row, deliberately: a customer who re-authorizes and
+    then lapses a second time has to be told a second time. The sweep can't double-fire
+    within one lapse anyway — it only walks AUTHORIZED charges, and expiring one is what
+    takes it out of that set.
+    """
+    kind = TouchPoint.Kind.ORDER_AUTH_EXPIRED
+    if not _config().is_enabled(kind):
+        return None
+    undelivered = TouchPoint.objects.filter(
+        lead=lead, kind=kind, status=TouchPoint.Status.SCHEDULED
+    ).exists()
+    if undelivered:
+        return None
+    return _create(lead, kind, timezone.now())
+
+
 def _config():
     from .models import NotificationConfig
 
@@ -554,6 +575,13 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             # PUBLIC_BASE_URL is set, instead of silently SKIPPED/FAILED.
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
+
+    if kind == TouchPoint.Kind.ORDER_AUTH_EXPIRED and not settings.PUBLIC_BASE_URL:
+        # This message is nothing but "here is the link back" (APC-26) — without a base URL
+        # `pay_link` renders as a bare path and the customer gets a dead link, permanently,
+        # because the row would be marked SENT. Leave it SCHEDULED like the quote kinds.
+        logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
+        return False
 
     template = TEMPLATES[kind]
     recipient = _recipient(tp, template)

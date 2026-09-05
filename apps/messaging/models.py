@@ -117,6 +117,9 @@ class TouchPoint(TimeStampedModel):
         STATUS_DISPATCHED = "status_dispatched", "Trip status: Dispatched"
         STATUS_ON_THE_WAY = "status_on_the_way", "Trip status: On The Way"
         STATUS_ARRIVED = "status_arrived", "Trip status: Arrived"
+        # Lead-level, triggered: the customer's held deposit was released by the issuer
+        # before APC confirmed the order (APC-26, Exception 1). Carries the way back.
+        ORDER_AUTH_EXPIRED = "order_auth_expired", "Deposit hold released"
 
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", "Scheduled"
@@ -174,6 +177,7 @@ class NotificationConfig(models.Model):
         "status_dispatched": "status_dispatched",
         "status_on_the_way": "status_on_the_way",
         "status_arrived": "status_arrived",
+        "order_auth_expired": "order_auth_expired",
     }
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
@@ -198,6 +202,13 @@ class NotificationConfig(models.Model):
     status_dispatched_enabled = models.BooleanField(default=False, help_text="APC-22 · Dispatched.")
     status_on_the_way_enabled = models.BooleanField(default=False, help_text="APC-22 · On The Way.")
     status_arrived_enabled = models.BooleanField(default=False, help_text="APC-22 · Arrived.")
+    # Defaults ON, unlike the status messages: this one tells a customer their money was
+    # released and they need to book again. Silence here is the worst outcome (APC-26).
+    order_auth_expired_enabled = models.BooleanField(
+        default=True,
+        help_text="APC-26 · deposit hold released before we confirmed — tells the customer "
+        "no money was taken and gives them the link back.",
+    )
 
     class Meta:
         verbose_name = "notification configuration"

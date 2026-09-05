@@ -356,6 +356,35 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         channels=("sms",),
         sms_body=("{first_name}, your {company_name} driver has arrived at the pickup location."),
     ),
+    # CLIENT COPY PENDING (APC-27). The one message here that has to do real work: the
+    # customer believes they paid days ago. It has to say plainly that nothing was taken,
+    # why, and what to do — apologetically, without inviting a chargeback dispute over a
+    # charge that never existed.
+    "order_auth_expired": TouchPointTemplate(
+        kind="order_auth_expired",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="Your {company_name} booking needs a new payment authorization",
+        email_body=(
+            "{first_name},\n\n"
+            "We're sorry — we weren't able to confirm your trip in time, and your bank has "
+            "now released the hold on your card.\n\n"
+            "**No money was taken.** The hold has come off your account, and there is "
+            "nothing for you to cancel or dispute.\n\n"
+            "Your quote {quote_no} is still good and we'd still like to take the trip. To "
+            "book it, please authorize again here: {pay_link}\n\n"
+            "If anything about your plans has changed, or you'd rather talk it through, "
+            "call us at {company_phone} — we'd rather hear from you than lose the booking.\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. We couldn't confirm your trip in time and "
+            "your bank released the hold on your card — no money was taken. Your quote "
+            "{quote_no} is still good; you can authorize again here: {pay_link} Or call "
+            "us at {company_phone}."
+        ),
+    ),
 }
 
 

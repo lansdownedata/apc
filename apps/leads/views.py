@@ -656,6 +656,16 @@ def _owed(lead: Lead) -> tuple[str | None, Decimal]:
     return Charge.Kind.BALANCE, owed
 
 
+def _hold_was_released(lead: Lead) -> bool:
+    """True once an authorization on this quote lapsed without ever being captured."""
+    from apps.payments.models import Charge
+
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        return False
+    return plan.charges.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.EXPIRED).exists()
+
+
 def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
     """`_owed`, but gated on the states a pay form must not appear in."""
     if lead.status == Lead.Status.LOST:
@@ -687,6 +697,9 @@ def quote_pay(request, token: str) -> HttpResponse:
             "amount_cents": int(amount * 100),
             "is_expired": lead.status == Lead.Status.QUOTED and lead.quote_expired,
             "is_lost": lead.status == Lead.Status.LOST,
+            # A previous authorization on this quote was released by the issuer before we
+            # confirmed (APC-26) — the page has to say so before asking for another.
+            "hold_released": _hold_was_released(lead),
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
                 reverse("quote_deposit_success", args=[token])

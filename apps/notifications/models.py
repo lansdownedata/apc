@@ -21,6 +21,9 @@ class Notification(TimeStampedModel):
         LA_CHANGED = "la_changed", "Update LimoAnywhere"
         QUOTE_EXPIRED = "quote_expired", "Quote expired"
         DISPATCH_EXCEPTION = "dispatch_exception", "Dispatch exception"
+        # A held deposit nearing / past the issuer's release window (APC-26).
+        AUTH_EXPIRING = "auth_expiring", "Deposit hold expiring"
+        AUTH_EXPIRED = "auth_expired", "Deposit hold released"
 
     lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
     user = models.ForeignKey(

@@ -25,7 +25,7 @@ JOBS: dict[str, Callable[[], int]] = {
     "retry-la-sync": la_sync.retry_failed_pushes,
     "run-touchpoints": touchpoints.run_touchpoints,
     "deposit-report": tasks.send_unpaid_deposit_report,
-    "reconcile-payments": tasks.reconcile_open_charges,
+    "reconcile-payments": tasks.reconcile_payments,
     "monitor-dispatch": monitoring.run_dispatch_monitor,
     "unconfirmed-trips-report": reservation_tasks.send_unconfirmed_trip_report,
 }

@@ -19,6 +19,105 @@ RECONCILE_MIN_AGE = timedelta(minutes=10)
 RECONCILE_BATCH = 50
 
 
+def sweep_authorization_holds(now=None) -> int:
+    """Resolve deposit holds that are running out or already gone (APC-26, Exception 1).
+
+    **Stripe is the fact; `capture_expires_at` is only a prediction.** The issuer sets the
+    real window and debit is often shorter than credit, so a hold Stripe still reports as
+    `requires_capture` is left alone even past our estimate — expiring it ourselves would
+    throw away money we could still take. Our clock earns its keep by warning staff early
+    enough to act.
+
+    Returns how many holds were resolved or newly warned about.
+    """
+    now = now or timezone.now()
+    open_holds = (
+        Charge.objects.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.AUTHORIZED)
+        .exclude(stripe_payment_intent_id="")
+        .select_related("plan__lead")
+        .order_by("capture_expires_at")[:RECONCILE_BATCH]
+    )
+    handled = 0
+    for charge in open_holds:
+        try:
+            intent = services._stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+            if intent.status == "requires_capture":
+                if _warn_if_expiring(charge, now):
+                    handled += 1
+            elif intent.status == "canceled":
+                # `canceled` is what an auto-released authorization becomes — the only
+                # status that means the money went back.
+                services.expire_authorization(charge)
+                handled += 1
+            elif intent.status == "succeeded":
+                # Captured somewhere we didn't hear about (the Stripe dashboard, or a
+                # `confirm_order` whose local save lost the race after the capture went
+                # through). Money HAS moved — booking it is right; expiring it would post
+                # no ledger entry and tell the customer "no money was taken".
+                services.record_payment(
+                    charge.plan, charge.stripe_payment_intent_id, kind=charge.kind
+                )
+                handled += 1
+            else:
+                # requires_payment_method / processing / anything else: not capturable and
+                # not released either. Leave it for a human rather than guessing.
+                logger.warning(
+                    "auth sweep: charge %s intent %s in unexpected state %s",
+                    charge.pk,
+                    charge.stripe_payment_intent_id,
+                    intent.status,
+                )
+        except Exception:  # noqa: BLE001 - one bad row must not kill the run
+            logger.exception("auth sweep: charge %s failed", charge.pk)
+    return handled
+
+
+def _warn_if_expiring(charge: Charge, now) -> bool:
+    """One nudge per hold as its deadline closes in. Returns True if a warning was raised.
+
+    Deduped on the notification itself rather than a flag on the charge: the tray row IS
+    the record that staff were told, so there is nothing to keep in sync. Scoped to *this*
+    hold by `authorized_at` — a customer who lapses and re-authorizes gets a second hold,
+    and staff have to be nudged about it too.
+    """
+    from apps.notifications.models import Notification
+
+    expires = charge.capture_expires_at
+    if expires is None:
+        return False
+    hours_left = (expires - now).total_seconds() / 3600
+    if hours_left > reports.AUTH_WARN_HOURS:
+        return False
+    lead = charge.plan.lead
+    told = Notification.objects.filter(lead=lead, kind=Notification.Kind.AUTH_EXPIRING)
+    if charge.authorized_at is not None:
+        told = told.filter(created_at__gte=charge.authorized_at)
+    if told.exists():
+        return False
+    Notification.notify(
+        lead,
+        Notification.Kind.AUTH_EXPIRING,
+        title=f"Deposit hold expiring — {lead.quote_no}",
+        detail=(
+            f"${charge.amount:,.2f} held; the bank releases it "
+            f"{'shortly' if hours_left <= 0 else f'in about {hours_left:.0f}h'}. "
+            "Confirm or cancel the order before then."
+        ),
+    )
+    return True
+
+
+def reconcile_payments() -> int:
+    """The hourly money sweep — the `reconcile-payments` cron's whole job.
+
+    Two passes that answer the same question ("did something happen at Stripe that we
+    never heard about?"): finish payments whose webhook went missing, then resolve holds
+    that have lapsed. Deliberately one cron rather than two, because an unregistered
+    cron-job.org entry is a feature that silently never runs.
+    """
+    return reconcile_open_charges() + sweep_authorization_holds()
+
+
 def charge_due_balances() -> int:
     """Charge every scheduled balance whose due date (30 days before pickup) has arrived.
 

@@ -495,6 +495,51 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     return charge
 
 
+def expire_authorization(charge: Charge) -> Charge:
+    """The issuer released a hold before APC confirmed the order (APC-26, Exception 1).
+
+    Nobody is at fault and no money moved, so this is a *reversal of state, not of money*:
+    no ledger entry, no refund. The order stops being engaged and becomes a live quote
+    again, because the one thing the customer needs is a working way to book it a second
+    time — with an explanation, which `trigger_auth_expired` carries.
+    """
+    from apps.leads.models import Lead
+    from apps.leads.services import compute_quote_expiry
+
+    plan = charge.plan
+    if charge.status != Charge.Status.AUTHORIZED:
+        return charge
+
+    charge.status = Charge.Status.EXPIRED
+    charge.save(update_fields=["status", "updated_at"])
+    # Only ever a downgrade from "we hold their money". A plan that is already PAID has a
+    # separate captured deposit; a stale hold lapsing beside it must not reopen the ask.
+    if plan.deposit_status != PaymentPlan.DepositStatus.PAID:
+        plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
+        plan.save(update_fields=["deposit_status", "updated_at"])
+
+    lead = plan.lead
+    lead.refresh_from_db()
+    if lead.status == Lead.Status.ENGAGED:
+        lead.status = Lead.Status.QUOTED
+        # A quote that expired while we sat on it must not greet them with "expired" —
+        # they did their part. Give it a fresh window to act in.
+        lead.quote_expires_at = compute_quote_expiry(lead)
+        lead.save(update_fields=["status", "quote_expires_at", "updated_at"])
+        touchpoints.trigger_auth_expired(lead)
+
+    Notification.notify(
+        lead,
+        Notification.Kind.AUTH_EXPIRED,
+        title=f"Deposit hold released — {lead.quote_no}",
+        detail=(
+            f"${charge.amount:,.2f} was never captured and the bank has released it. "
+            "The quote is live again and the customer has been asked to re-authorize."
+        ),
+    )
+    return charge
+
+
 def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
     """Off-session charge of the card already on the plan."""
     amount = _parse_positive_amount(amount)
