@@ -238,14 +238,11 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         subject="Please confirm your trip — {company_name} {quote_no}",
         email_body=(
             "{first_name},\n\n"
-            "Your trip is coming up. Please take a moment to confirm the details below are "
-            "correct.\n\n"
-            "  Date:       {trip_pickup_when}\n"
-            "  Route:      {trip_routing}\n"
-            "  Passengers: {trip_passengers}\n"
-            "  Vehicle:    {trip_vehicle}\n"
+            "Your travel with us is coming up. Please take a moment to confirm the details "
+            "below are correct.\n\n"
+            "{trip_sheet}\n\n"
             "  We'll reach you at: {contact_on_file}\n\n"
-            "Confirm your trip: {confirm_link}\n\n"
+            "Confirm: {confirm_link}\n\n"
             "If anything is wrong, or your plans have changed, reply to this email or call "
             "us right away at {company_phone} — the sooner we know, the better we can "
             "adjust.\n\n"
@@ -254,6 +251,31 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         sms_body=(
             "{first_name}, it's {company_name}. Your trip on {trip_pickup_when} is coming "
             "up. Please confirm the details and let us know of any changes: {confirm_link}"
+        ),
+    ),
+    # Second wave of the same acknowledgement. Sent only when the day is still
+    # unconfirmed; at T-24h an unconfirmed day moves to the daily office report instead
+    # (APC-19), so this is the last thing the customer is asked automatically.
+    "trip_confirm_customer_2": TouchPointTemplate(
+        kind="trip_confirm_customer_2",
+        anchor="reservation_pickup",
+        offset=timedelta(hours=-48),
+        channels=("email", "sms"),
+        subject="Still need your confirmation — {company_name} {quote_no}",
+        email_body=(
+            "{first_name},\n\n"
+            "We haven't heard back on the details for your upcoming travel, and we'd rather "
+            "check than assume. Please take a moment to confirm:\n\n"
+            "{trip_sheet}\n\n"
+            "  We'll reach you at: {contact_on_file}\n\n"
+            "Confirm: {confirm_link}\n\n"
+            "If anything is wrong, or your plans have changed, reply to this email or call "
+            "us right away at {company_phone}.\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. We still need your confirmation for your "
+            "travel on {trip_pickup_when}. Please take a look: {confirm_link}"
         ),
     ),
     "trip_confirm_affiliate": TouchPointTemplate(

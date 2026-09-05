@@ -1,28 +1,41 @@
 {% extends "public/_trip_shell.html" %}
-{# APC-19 · customer trip confirmation. CLIENT COPY PENDING (APC-27). #}
+{% comment %}
+APC-19 · customer trip confirmation. Covers every trip the customer has on one date —
+`sheets` is the day group, so a single-trip day renders exactly as it always did.
+CLIENT COPY PENDING (APC-27).
+{% endcomment %}
 {% block title %}Confirm your trip · All Pro Charter{% endblock %}
 {% block body %}
   {% if cancelled %}
-    <h1>Trip {{ sheet.quote_no }}</h1>
-    <p class="cancelled">This trip has been cancelled. If that's a surprise, please call us.</p>
+    <h1>Nothing to confirm</h1>
+    <p class="cancelled">These trips have been cancelled. If that's a surprise, please call us.</p>
   {% elif confirmed %}
     <div class="done">
       <span class="mark">✓</span>
       <h1>Thank you</h1>
-      <p class="sub">Your trip is confirmed. We'll be in touch as the date approaches.</p>
-      {% include "components/trip_sheet.html" %}
+      <p class="sub">
+        {% if sheets|length > 1 %}Your trips are confirmed.{% else %}Your trip is confirmed.{% endif %}
+        We'll be in touch as the date approaches.
+      </p>
+      {% for sheet in sheets %}{% include "components/trip_sheet.html" %}{% endfor %}
     </div>
   {% else %}
-    <h1>Please confirm your trip</h1>
+    <h1>{% if sheets|length > 1 %}Please confirm your trips{% else %}Please confirm your trip{% endif %}</h1>
     <p class="sub">Check the details below, then confirm. Tell us right away if anything has changed.</p>
-    {% include "components/trip_sheet.html" %}
+    {% for sheet in sheets %}{% include "components/trip_sheet.html" %}{% endfor %}
     <form method="post">
       {% csrf_token %}
+      {% if ack_error %}
+        <p class="err">Please tick the box below to confirm these details are accurate.</p>
+      {% endif %}
       <label class="check">
         <input type="checkbox" name="ack" required>
-        <span>I confirm these details are correct.</span>
+        <span>
+          <strong class="who">{{ contact_name }}</strong>
+          I have read and acknowledge the trip information above is accurate.
+        </span>
       </label>
-      <button type="submit">Confirm trip</button>
+      <button type="submit">{% if sheets|length > 1 %}Confirm these trips{% else %}Confirm trip{% endif %}</button>
     </form>
   {% endif %}
 {% endblock %}

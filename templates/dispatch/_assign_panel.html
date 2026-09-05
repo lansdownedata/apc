@@ -33,6 +33,15 @@
     {% comment %} T-72h trip confirmation state (APC-19) — the customer's own
          acknowledgement on the public /trip/<token>/ page. {% endcomment %}
     {% include "dispatch/_ack_status_line.html" with confirmed_at=trip.customer_confirmed_at who="the customer" %}
+    {% comment %} At T-24h an unconfirmed trip leaves the automated cadence for the daily
+         office report and is confirmed by phone — this records that. {% endcomment %}
+    {% if not trip.customer_confirmed_at %}
+      <button type="button" class="mt-1.5 text-[12px] font-semibold text-gold hover:underline disabled:opacity-50"
+              :disabled="busy"
+              @click="$store.modal.confirm({ title: 'Mark as confirmed?', message: 'Records that the customer confirmed these trip details by phone. Use it only after you have actually reached them.', variant: 'gold', confirmText: 'Mark confirmed', onConfirm: () => post('{% url 'dispatch_confirm_customer' trip.pk %}') })">
+        Mark confirmed by phone
+      </button>
+    {% endif %}
   </section>
 
   <section class="mb-4">

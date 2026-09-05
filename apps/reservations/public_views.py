@@ -13,30 +13,41 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
+from apps.contacts.models import Contact
 from apps.core.phone import to_e164
 
 from . import acknowledgements as ack
 from .models import Reservation
-from .services import trip_sheet_context
+from .services import confirm_trip_day, trip_day_group, trip_sheet_context
 
 
 @require_http_methods(["GET", "POST"])
 def trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
-    """APC-19 — the customer confirms their trip details."""
+    """APC-19 — the customer confirms every trip they have on one day.
+
+    The token carries the customer and the date, so the trip set is resolved here rather
+    than frozen when the notice went out. One checkbox covers the whole day; a day whose
+    trips are all cancelled (or gone) has nothing to confirm and says so.
+    """
     try:
-        reservation = ack.read_trip_ack_token(token)
-    except (BadSignature, Reservation.DoesNotExist):
+        contact, day = ack.read_trip_day_ack_token(token)
+    except (BadSignature, Contact.DoesNotExist):
         raise Http404 from None
 
+    trips = trip_day_group(contact, day)
     ctx = {
-        "sheet": trip_sheet_context(reservation),
-        "cancelled": reservation.is_cancelled,
-        "confirmed": reservation.customer_confirmed_at is not None,
+        "sheets": [trip_sheet_context(t) for t in trips],
+        "contact_name": contact.name,
+        "cancelled": not trips,
+        "confirmed": bool(trips) and all(t.customer_confirmed_at is not None for t in trips),
+        "ack_error": False,
     }
-    if request.method == "POST" and not ctx["cancelled"]:
-        if reservation.customer_confirmed_at is None:
-            reservation.customer_confirmed_at = timezone.now()
-            reservation.save(update_fields=["customer_confirmed_at", "updated_at"])
+    if request.method == "POST" and trips:
+        if not request.POST.get("ack"):
+            # `required` on the input is client-side only — refuse the bare POST.
+            ctx["ack_error"] = True
+            return render(request, "public/trip_confirm.html", ctx)
+        confirm_trip_day(trips)
         return redirect("trip_confirm", token=token)
     return render(request, "public/trip_confirm.html", ctx)
 

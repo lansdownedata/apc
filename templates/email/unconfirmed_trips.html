@@ -1,0 +1,32 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Unconfirmed trips tomorrow — {{ rows|length }} customer{{ rows|length|pluralize }}{% endblock %}
+{% block preheader %}{{ trip_count }} trip{{ trip_count|pluralize }} for tomorrow the customer hasn't acknowledged. Confirm these by phone.{% endblock %}
+{% block content %}
+<p style="margin:0 0 6px;font-size:17px;color:#17191D;">Unconfirmed trips — {{ today|date:"l, F j, Y" }}</p>
+<p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">
+  {{ trip_count }} trip{{ trip_count|pluralize }} across {{ rows|length }} customer{{ rows|length|pluralize }} go out tomorrow without a customer acknowledgement. They've had the T-72h and T-48h notices — confirm these by phone.
+</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;">
+  <tr style="color:#6b7280;text-align:left;">
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Customer</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Trips tomorrow</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">
+      <div style="font-weight:600;color:#17191D;"><a href="{{ r.url }}" style="color:#8A6D1F;">{{ r.customer }}</a></div>
+      <div style="color:#6b7280;">{{ r.email|default:"no email" }}<br>{{ r.phone|default:"no phone" }}</div>
+    </td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">
+      {% for t in r.trips %}
+        <div style="margin:0 0 6px;">
+          <span style="font-weight:600;color:#17191D;">{{ t.when }}</span>
+          <span style="color:#6b7280;"> · {{ t.quote_no }}</span><br>
+          <span style="color:#4b5563;">{{ t.route }}</span>
+        </div>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

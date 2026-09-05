@@ -31,8 +31,16 @@ _K = TouchPoint.Kind
 # Reservation-anchored kinds (APC-18-22): they carry a `reservation` FK and fire for a
 # BOOKED lead — the inverse of the TP1-8 / quote skip rules.
 _SERVICE_DATE_KINDS = frozenset(
-    {_K.WED_FINAL_DETAILS, _K.TRIP_CONFIRM_CUSTOMER, _K.TRIP_CONFIRM_AFFILIATE}
+    {
+        _K.WED_FINAL_DETAILS,
+        _K.TRIP_CONFIRM_CUSTOMER,
+        _K.TRIP_CONFIRM_CUSTOMER_2,
+        _K.TRIP_CONFIRM_AFFILIATE,
+    }
 )
+# The two customer waves are one message sent twice: each collapses to a single send
+# per customer per pickup date (APC-19).
+_CUSTOMER_CONFIRM_KINDS = frozenset({_K.TRIP_CONFIRM_CUSTOMER, _K.TRIP_CONFIRM_CUSTOMER_2})
 _TRIGGERED_KINDS = frozenset(
     {_K.DRIVER_RELEASED, _K.STATUS_DISPATCHED, _K.STATUS_ON_THE_WAY, _K.STATUS_ARRIVED}
 )
@@ -162,6 +170,7 @@ def schedule_service_touchpoints(lead) -> None:
         if res.pickup_at is None:
             continue
         _ensure(res, TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER, res.pickup_at)
+        _ensure(res, TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER_2, res.pickup_at)
         if _is_wedding(res):
             _ensure(res, TouchPoint.Kind.WED_FINAL_DETAILS, res.pickup_at)
 
@@ -302,7 +311,7 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
     from apps.leads.services import make_pay_page_url, make_quote_page_url
     from apps.reservations.acknowledgements import (
         affiliate_ack_url,
-        trip_ack_url,
+        trip_day_ack_url,
         wedding_details_url,
     )
 
@@ -318,13 +327,21 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
         if a is not None:
             ctx["ack_link"] = affiliate_ack_url(a, base_url=base_url)
     else:
-        ctx["confirm_link"] = trip_ack_url(res, base_url=base_url)
+        ctx["confirm_link"] = trip_day_ack_url(tp.lead.contact, res.pickup_date, base_url=base_url)
 
 
-def _send(tp: TouchPoint, template, available: dict[str, str]) -> bool:
-    """Send over each available channel; SENT on any success, else FAILED."""
+def _send(tp: TouchPoint, template, available: dict[str, str], *, group=None) -> bool:
+    """Send over each available channel; SENT on any success, else FAILED.
+
+    ``group`` is the customer's whole day (APC-19) — its trip sheets replace the anchor
+    reservation's single sheet so one message covers every trip.
+    """
     base_url = settings.PUBLIC_BASE_URL or ""
     ctx = build_context(tp.lead, tp.reservation)
+    if group:
+        from apps.reservations.services import trip_sheet_text
+
+        ctx["trip_sheet"] = "\n\n".join(trip_sheet_text(t) for t in group)
     _fill_links(tp, ctx, base_url)
 
     first_uid = ""
@@ -402,6 +419,7 @@ _LINK_KINDS = frozenset(
     {
         _K.WED_FINAL_DETAILS,
         _K.TRIP_CONFIRM_CUSTOMER,
+        _K.TRIP_CONFIRM_CUSTOMER_2,
         _K.TRIP_CONFIRM_AFFILIATE,
         _K.STATUS_DISPATCHED,
     }
@@ -415,6 +433,29 @@ def _confirmed_assignment(reservation):
     from apps.dispatch.selectors import confirmed_assignment
 
     return confirmed_assignment(reservation)
+
+
+def _customer_confirm_group(tp: TouchPoint):
+    """The trips one customer-confirmation covers: everything this customer has that day."""
+    from apps.reservations.services import trip_day_group
+
+    return trip_day_group(tp.lead.contact, tp.reservation.pickup_date)
+
+
+def _already_covered(tp: TouchPoint, group) -> bool:
+    """A sibling row of the same wave already sent the grouped notice for this day.
+
+    Rows are scheduled per reservation (that is what `reschedule_service_touchpoints`
+    cancels and rebuilds); whichever comes due first sends for the whole day and the rest
+    stand down here, so the customer gets one message per wave rather than one per trip.
+    """
+    return (
+        TouchPoint.objects.filter(
+            kind=tp.kind, status=TouchPoint.Status.SENT, reservation__in=[t.pk for t in group]
+        )
+        .exclude(pk=tp.pk)
+        .exists()
+    )
 
 
 def _recipient(tp: TouchPoint, template):
@@ -433,6 +474,7 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
     """
     lead = tp.lead
     kind = tp.kind
+    group = None
 
     if lead.status == lead.Status.LOST:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead LOST")
@@ -462,6 +504,14 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
         if kind in _LINK_KINDS and not settings.PUBLIC_BASE_URL:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
+        if kind in _CUSTOMER_CONFIRM_KINDS:
+            group = _customer_confirm_group(tp)
+            if group and all(t.customer_confirmed_at is not None for t in group):
+                _mark(tp, status=TouchPoint.Status.SKIPPED, error="day already confirmed")
+                return False
+            if _already_covered(tp, group):
+                _mark(tp, status=TouchPoint.Status.SKIPPED, error="covered by the grouped notice")
+                return False
         # fall through to the shared template / recipient / _send path
     elif kind == TouchPoint.Kind.PAYMENT_REMINDER:
         from apps.payments.models import PaymentPlan
@@ -485,11 +535,19 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
     elif lead.status == lead.Status.BOOKED:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead BOOKED")
         return False
+    elif lead.status == lead.Status.ENGAGED:
+        # They authorized and are waiting on us (APC-26) — chasing them to book a quote
+        # they have already paid for is the worst message this system could send.
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead ENGAGED")
+        return False
 
     if kind in _QUOTE_KINDS:
         plan = getattr(lead, "payment", None)
-        if plan is not None and plan.deposit_status == plan.DepositStatus.PAID:
-            _mark(tp, status=TouchPoint.Status.SKIPPED, error="deposit already PAID")
+        if plan is not None and plan.deposit_status in (
+            plan.DepositStatus.PAID,
+            plan.DepositStatus.AUTHORIZED,
+        ):
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="deposit already taken")
             return False
         if not settings.PUBLIC_BASE_URL:
             # Config isn't ready yet — leave the row SCHEDULED so it sends once
@@ -511,7 +569,7 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="recipient has no usable channel")
         return False
 
-    return _send(tp, template, available)
+    return _send(tp, template, available, group=group)
 
 
 def run_touchpoints() -> int:

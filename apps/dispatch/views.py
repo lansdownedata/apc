@@ -311,6 +311,20 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
 
 @login_required
 @require_POST
+def confirm_customer(request: HttpRequest, pk: int) -> JsonResponse:
+    """Record the customer's acknowledgement by hand (APC-19).
+
+    The T-72h / T-48h notices ask the customer; at T-24h an unconfirmed trip moves to the
+    daily office report and gets confirmed by phone instead — this writes that down. Only
+    this trip, not the customer's whole day: the dispatcher confirmed what they confirmed.
+    """
+    trip = get_object_or_404(Reservation, pk=pk)
+    reservation_services.confirm_trip_day([trip])
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
 def driver_info(request: HttpRequest, pk: int) -> JsonResponse:
     """Save a farmed-out trip's driver + vehicle detail (APC-21)."""
     assignment = get_object_or_404(Assignment, pk=pk)

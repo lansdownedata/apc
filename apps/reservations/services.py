@@ -17,6 +17,9 @@ address, which this flat list can't express) — change one and change the other
 
 from __future__ import annotations
 
+from django.db.models import F
+from django.utils import timezone as dj_timezone
+
 from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent
 
 
@@ -67,6 +70,41 @@ def flight_line(stop: Stop) -> str:
         if flight.terminal:
             parts.append(f"Terminal {flight.terminal}")
     return " · ".join(parts)
+
+
+def trip_day_group(contact, day) -> list[Reservation]:
+    """Every live trip this customer has on one local pickup date, in running order.
+
+    Deliberately keyed on the contact rather than the lead: a customer with two separate
+    bookings on the same day gets one confirmation covering both (APC-19). Cancelled trips
+    and trips on an unbooked order are not something to confirm, so they drop out.
+    """
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.leads.models import Lead
+
+    return list(
+        Reservation.objects.filter(
+            lead__contact=contact, lead__status=Lead.Status.BOOKED, pickup_date=day
+        )
+        .exclude(trip_status__in=CANCELLED_STATUSES)
+        .select_related("lead", "lead__contact", "vehicle", "service_type")
+        .prefetch_related("stops")
+        .order_by(F("pickup_time").asc(nulls_first=True), "pk")
+    )
+
+
+def confirm_trip_day(trips) -> int:
+    """Stamp the customer's acknowledgement on every not-yet-confirmed trip in a day group.
+
+    Idempotent: an already-confirmed trip keeps its original timestamp, so re-opening the
+    link never rewrites when the customer actually acknowledged. Returns the number stamped.
+    """
+    pending = [t.pk for t in trips if t.customer_confirmed_at is None]
+    if not pending:
+        return 0
+    return Reservation.objects.filter(pk__in=pending, customer_confirmed_at__isnull=True).update(
+        customer_confirmed_at=dj_timezone.now(), updated_at=dj_timezone.now()
+    )
 
 
 def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> dict:

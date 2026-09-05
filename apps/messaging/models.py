@@ -108,6 +108,10 @@ class TouchPoint(TimeStampedModel):
         # FK and fire for a BOOKED lead — the inverse of the TP1-8 skip rules.
         WED_FINAL_DETAILS = "wed_final_details", "Wedding: final day-of details (T-7d)"
         TRIP_CONFIRM_CUSTOMER = "trip_confirm_customer", "Customer trip confirmation (T-72h)"
+        TRIP_CONFIRM_CUSTOMER_2 = (
+            "trip_confirm_customer_2",
+            "Customer trip confirmation — second notice (T-48h)",
+        )
         TRIP_CONFIRM_AFFILIATE = "trip_confirm_affiliate", "Affiliate trip confirmation (T-48h)"
         DRIVER_RELEASED = "driver_released", "Driver details released to customer"
         STATUS_DISPATCHED = "status_dispatched", "Trip status: Dispatched"
@@ -163,6 +167,8 @@ class NotificationConfig(models.Model):
     _STEM = {
         "wed_final_details": "wedding_final_details",
         "trip_confirm_customer": "trip_confirm_customer",
+        # Second wave of the same message — one switch governs both (APC-19).
+        "trip_confirm_customer_2": "trip_confirm_customer",
         "trip_confirm_affiliate": "trip_confirm_affiliate",
         "driver_released": "driver_released",
         "status_dispatched": "status_dispatched",
@@ -179,7 +185,8 @@ class NotificationConfig(models.Model):
         default=True, help_text="APC-18 · T-7d wedding: request day-of contact + wedding name."
     )
     trip_confirm_customer_enabled = models.BooleanField(
-        default=True, help_text="APC-19 · T-72h customer trip confirmation + acknowledgement."
+        default=True,
+        help_text="APC-19 · customer trip confirmation + acknowledgement (T-72h, repeated T-48h).",
     )
     trip_confirm_affiliate_enabled = models.BooleanField(
         default=True, help_text="APC-20 · T-48h affiliate trip confirmation + acknowledgement."

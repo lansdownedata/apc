@@ -60,3 +60,62 @@ def test_panel_shows_unconfirmed_state(logged_in_client):
     resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
     assert b"Not yet confirmed" in resp.content
+
+
+# --- manual confirmation (APC-19) ----------------------------------------------------
+# At T-24h an unconfirmed day leaves the automated cadence and goes on the daily office
+# report, where it gets confirmed by phone — this is where that lands.
+
+
+def test_manual_confirm_stamps_the_trip(logged_in_client):
+    trip = _trip()
+
+    resp = logged_in_client.post(reverse("dispatch_confirm_customer", args=[trip.pk]))
+
+    assert resp.status_code == 200
+    trip.refresh_from_db()
+    assert trip.customer_confirmed_at is not None
+
+
+def test_manual_confirm_keeps_the_original_timestamp(logged_in_client):
+    stamped = timezone.now() - timedelta(days=1)
+    trip = _trip(customer_confirmed_at=stamped)
+
+    logged_in_client.post(reverse("dispatch_confirm_customer", args=[trip.pk]))
+
+    trip.refresh_from_db()
+    assert trip.customer_confirmed_at == stamped
+
+
+def test_manual_confirm_requires_login(client):
+    trip = _trip()
+
+    resp = client.post(reverse("dispatch_confirm_customer", args=[trip.pk]))
+
+    assert resp.status_code in (302, 403)
+    trip.refresh_from_db()
+    assert trip.customer_confirmed_at is None
+
+
+def test_manual_confirm_rejects_get(logged_in_client):
+    trip = _trip()
+
+    url = reverse("dispatch_confirm_customer", args=[trip.pk])
+
+    assert logged_in_client.get(url).status_code == 405
+
+
+def test_panel_offers_the_manual_confirm_button_when_unconfirmed(logged_in_client):
+    trip = _trip()
+
+    body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+
+    assert "confirm-customer" in body
+
+
+def test_panel_hides_the_manual_confirm_button_once_confirmed(logged_in_client):
+    trip = _trip(customer_confirmed_at=timezone.now())
+
+    body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+
+    assert "confirm-customer" not in body

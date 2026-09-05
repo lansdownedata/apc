@@ -475,3 +475,116 @@ def test_run_touchpoints_disabled_in_dev_is_a_noop():
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
     assert touchpoints.run_touchpoints() == 0
+
+
+# --- grouped customer confirmation + second notice (APC-19) ---------------------------
+
+
+def _customer_trip(contact, day, **kw):
+    """A booked trip for this customer with its service-date messages scheduled."""
+    res = ReservationFactory(lead=_booked_lead(contact=contact), pickup_date=day, **kw)
+    touchpoints.schedule_service_touchpoints(res.lead)
+    return res
+
+
+def _make_due(kind):
+    TouchPoint.objects.filter(kind=kind).update(scheduled_for=timezone.now() - timedelta(minutes=1))
+
+
+def test_schedules_both_the_72h_and_48h_customer_notices():
+    res = ReservationFactory(lead=_booked_lead(), pickup_date=_future())
+
+    touchpoints.schedule_service_touchpoints(res.lead)
+
+    kinds = set(TouchPoint.objects.filter(reservation=res).values_list("kind", flat=True))
+    assert K.TRIP_CONFIRM_CUSTOMER in kinds
+    assert K.TRIP_CONFIRM_CUSTOMER_2 in kinds
+
+
+def test_the_second_notice_lands_24h_after_the_first():
+    res = ReservationFactory(lead=_booked_lead(), pickup_date=_future())
+
+    touchpoints.schedule_service_touchpoints(res.lead)
+
+    first = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
+    second = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER_2)
+    assert second.scheduled_for - first.scheduled_for == timedelta(hours=24)
+    assert res.pickup_at - second.scheduled_for == timedelta(hours=48)
+
+
+@override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
+def test_one_send_covers_every_trip_the_customer_has_that_day():
+    from apps.contacts.factories import ContactFactory
+
+    contact = ContactFactory(email="rider@example.com", phone="+12025550111")
+    day = _future()
+    for _ in range(3):
+        _customer_trip(contact, day)
+    _make_due(K.TRIP_CONFIRM_CUSTOMER)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}) as m:
+        touchpoints.run_touchpoints()
+
+    rows = TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_CUSTOMER)
+    assert rows.filter(status=TouchPoint.Status.SENT).count() == 1
+    assert rows.filter(status=TouchPoint.Status.SKIPPED).count() == 2
+    # one email + one SMS for the single grouped send, not three of each
+    assert m.call_count == 2
+
+
+@override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
+def test_trips_on_different_days_stay_separate_sends():
+    from apps.contacts.factories import ContactFactory
+
+    contact = ContactFactory(email="rider@example.com", phone="+12025550111")
+    _customer_trip(contact, _future(30))
+    _customer_trip(contact, _future(31))
+    _make_due(K.TRIP_CONFIRM_CUSTOMER)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}):
+        touchpoints.run_touchpoints()
+
+    assert (
+        TouchPoint.objects.filter(
+            kind=K.TRIP_CONFIRM_CUSTOMER, status=TouchPoint.Status.SENT
+        ).count()
+        == 2
+    )
+
+
+@override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
+def test_the_second_notice_is_skipped_once_the_day_is_confirmed():
+    from apps.contacts.factories import ContactFactory
+
+    contact = ContactFactory(email="rider@example.com", phone="+12025550111")
+    res = _customer_trip(contact, _future(), customer_confirmed_at=timezone.now())
+    tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER_2)
+    tp.scheduled_for = timezone.now() - timedelta(minutes=1)
+    tp.save(update_fields=["scheduled_for"])
+
+    with patch("apps.messaging.touchpoints.podium.send_message") as m:
+        touchpoints.run_touchpoints()
+
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SKIPPED
+    assert m.call_count == 0
+
+
+@override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
+def test_the_grouped_body_lists_every_trip_in_the_day():
+    from apps.contacts.factories import ContactFactory
+
+    contact = ContactFactory(email="rider@example.com", phone="+12025550111")
+    day = _future()
+    _customer_trip(contact, day, stops=["Dulles International", "The Willard"])
+    _customer_trip(contact, day, stops=["The Willard", "Reagan National"])
+    _make_due(K.TRIP_CONFIRM_CUSTOMER)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}) as m:
+        touchpoints.run_touchpoints()
+
+    email_body = next(
+        c.kwargs["body"] for c in m.call_args_list if c.kwargs["channel_type"] == "email"
+    )
+    assert "Dulles International" in email_body
+    assert "Reagan National" in email_body

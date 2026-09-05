@@ -265,6 +265,8 @@ COMPANY_PHONE = env("COMPANY_PHONE", default="")
 COMPANY_EMAIL = env("COMPANY_EMAIL", default="reservations@allprocharter.com")
 # Daily unpaid-deposit report (cron job `deposit-report`); one email per address.
 DEPOSIT_REPORT_EMAILS = env.list("DEPOSIT_REPORT_EMAILS", default=[COMPANY_EMAIL])
+# APC-19 · daily list of tomorrow's trips the customer never acknowledged.
+TRIP_CONFIRM_REPORT_EMAILS = env.list("TRIP_CONFIRM_REPORT_EMAILS", default=[COMPANY_EMAIL])
 # Public https base of the portal, e.g. https://<NGROK_HOST> in dev; required for touch-point
 # quote links (distinct from LA_WEBHOOK_BASE_URL, which is LimoAnywhere-specific).
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")

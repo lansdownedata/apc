@@ -8,28 +8,36 @@ its salt).
 
 from __future__ import annotations
 
+from datetime import date
+
 from django.core import signing
 from django.urls import reverse
 
-_TRIP_ACK_SALT = "apc.trip-ack.v1"
+_TRIP_DAY_ACK_SALT = "apc.trip-day-ack.v1"
 _AFFILIATE_ACK_SALT = "apc.affiliate-ack.v1"
 _WEDDING_DETAILS_SALT = "apc.wedding-details.v1"
 
 
 # --- customer trip confirmation (APC-19) ------------------------------------------------
-def make_trip_ack_token(reservation) -> str:
-    return signing.dumps({"reservation": reservation.pk}, salt=_TRIP_ACK_SALT)
+# Keyed on the customer + the local pickup date, not one reservation: a customer with
+# several trips that day confirms them together from one link. The trip set is resolved
+# when the link is opened, so a trip added or cancelled after the notice went out is
+# reflected then rather than frozen into the token.
+def make_trip_day_ack_token(contact, day) -> str:
+    return signing.dumps({"contact": contact.pk, "date": day.isoformat()}, salt=_TRIP_DAY_ACK_SALT)
 
 
-def read_trip_ack_token(token: str):
-    from .models import Reservation
+def read_trip_day_ack_token(token: str):
+    """Returns ``(contact, date)``. Raises BadSignature on a forged or foreign token."""
+    from apps.contacts.models import Contact
 
-    data = signing.loads(token, salt=_TRIP_ACK_SALT)
-    return Reservation.objects.get(pk=data["reservation"])
+    data = signing.loads(token, salt=_TRIP_DAY_ACK_SALT)
+    return Contact.objects.get(pk=data["contact"]), date.fromisoformat(data["date"])
 
 
-def trip_ack_url(reservation, *, base_url: str = "") -> str:
-    return f"{base_url}{reverse('trip_confirm', args=[make_trip_ack_token(reservation)])}"
+def trip_day_ack_url(contact, day, *, base_url: str = "") -> str:
+    token = make_trip_day_ack_token(contact, day)
+    return f"{base_url}{reverse('trip_confirm', args=[token])}"
 
 
 # --- affiliate trip confirmation (APC-20) -----------------------------------------------

@@ -17,6 +17,7 @@ from apps.dispatch import monitoring
 from apps.integrations import la_sync
 from apps.messaging import touchpoints
 from apps.payments import tasks
+from apps.reservations import tasks as reservation_tasks
 
 JOBS: dict[str, Callable[[], int]] = {
     "charge-due-balances": tasks.charge_due_balances,
@@ -26,6 +27,7 @@ JOBS: dict[str, Callable[[], int]] = {
     "deposit-report": tasks.send_unpaid_deposit_report,
     "reconcile-payments": tasks.reconcile_open_charges,
     "monitor-dispatch": monitoring.run_dispatch_monitor,
+    "unconfirmed-trips-report": reservation_tasks.send_unconfirmed_trip_report,
 }
 
 

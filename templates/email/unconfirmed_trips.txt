@@ -1,0 +1,12 @@
+{% autoescape off %}Unconfirmed trips — {{ today|date:"l, F j, Y" }}
+
+{{ trip_count }} trip{{ trip_count|pluralize }} across {{ rows|length }} customer{{ rows|length|pluralize }} go out tomorrow without a customer acknowledgement.
+They've had the T-72h and T-48h notices — confirm these by phone.
+{% for r in rows %}
+  {{ r.customer }} · {{ r.email|default:"no email" }} · {{ r.phone|default:"no phone" }}
+{% for t in r.trips %}    {{ t.when }} · {{ t.quote_no }} — {{ t.route }}
+{% endfor %}    {{ r.url }}
+{% endfor %}
+--
+{{ company_name }}
+{% endautoescape %}
