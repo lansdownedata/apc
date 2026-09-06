@@ -1,5 +1,5 @@
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -38,6 +38,27 @@ TRIP_PHASE_BY_STATUS = {
 # window has live coverage is a separate call — see flights.LIVE_LOOKAHEAD_DAYS (as of the
 # 2026-08-29 probe, only day 0 does; days 1-7 read as unavailable).
 LIVE_PHASE_DAYS = 7
+
+
+# One decimal place. NOT Decimal("0.10") — that has exponent -2 and quantizes to cents.
+_DIME = Decimal("0.1")
+_CENTS_EXP = Decimal("0.01")
+
+
+def round_to_dime(amount: Decimal | None) -> Decimal:
+    """Round a price up to the next dime (client, 2026-09-05).
+
+    Up rather than nearest: rounding down would price *below* the target cost ratio. The
+    most it ever adds is 9c. `ROUND_UP` is away-from-zero, which is ceiling for a price.
+
+    Applied to the stored `rate`, never to a derived total — rounding a derived value is
+    not idempotent, so it would be recomputed and re-rounded on every edit and drift.
+
+    Re-quantized to cents so the result carries the two decimal places every other money
+    value in the system does.
+    """
+    dimed = Decimal(amount or 0).quantize(_DIME, rounding=ROUND_UP)
+    return dimed.quantize(_CENTS_EXP)
 
 
 def today_at(tz_name: str) -> date:
@@ -186,15 +207,34 @@ class Reservation(TimeStampedModel):
         return (Decimal(self.rate or 0) * self.billed_hours).quantize(self._CENTS)
 
     @property
+    def discount(self) -> Decimal:
+        """Flat wins over percent when both are set — the `gratuity_flat` precedent."""
+        flat = Decimal(self.discount_flat or 0)
+        if flat > 0:
+            return flat.quantize(self._CENTS)
+        return (self.subtotal * Decimal(self.discount_pct or 0) / 100).quantize(self._CENTS)
+
+    @property
+    def discounted_base(self) -> Decimal:
+        """The base fare the customer actually pays.
+
+        Floored at zero: a discount bigger than the base must not produce a negative
+        `line_total`, which would post a negative ledger entry.
+        """
+        return max(self.subtotal - self.discount, Decimal("0.00")).quantize(self._CENTS)
+
+    @property
     def gratuity(self) -> Decimal:
+        """Computed on the *discounted* base — you don't tip on money the customer
+        didn't pay (spec 2026-09-05 §4.5)."""
         flat = Decimal(self.gratuity_flat or 0)
         if flat > 0:
             return flat.quantize(self._CENTS)
-        return (self.subtotal * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+        return (self.discounted_base * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
 
     @property
     def line_total(self) -> Decimal:
-        return (self.subtotal + self.gratuity).quantize(self._CENTS)
+        return (self.discounted_base + self.gratuity).quantize(self._CENTS)
 
     # --- routing ---
     @property

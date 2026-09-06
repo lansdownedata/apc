@@ -896,13 +896,24 @@ function quoteWorkspace(opts = {}) {
     },
     minApplied(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) > 0; },
     noMinimum(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) <= 0; },
+    /* These four mirror `Reservation.subtotal/discount/discounted_base/gratuity/line_total`
+     * in apps/reservations/models.py, which is the source of truth. They drive the editor's
+     * live Subtotal and Line total — if they drift from the Python, the agent is quoted one
+     * number and the customer is charged another. Change both or neither. */
     resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },
+    resDiscount(r) {
+      const flat = Number(r.discountFlat) || 0;               // flat wins over percent
+      if (flat > 0) return flat;
+      return this.resSubtotal(r) * (Number(r.discountPct) || 0) / 100;
+    },
+    /* Floored at 0 — a discount over the base must never make the total negative. */
+    resDiscountedBase(r) { return Math.max(this.resSubtotal(r) - this.resDiscount(r), 0); },
     resGratuity(r) {
       const flat = Number(r.gratuityFlat) || 0;
       if (flat > 0) return flat;
-      return this.resSubtotal(r) * (Number(r.gratuityPct) || 0) / 100;
+      return this.resDiscountedBase(r) * (Number(r.gratuityPct) || 0) / 100;
     },
-    resTotal(r) { return this.resSubtotal(r) + this.resGratuity(r); },
+    resTotal(r) { return this.resDiscountedBase(r) + this.resGratuity(r); },
     /* A lower quantity than the set opened with deletes real reservations — ones that may
      * already be assigned to an affiliate or synced to LA. Gate it on the shared modal
      * (never window.confirm); everything else saves straight through. */
