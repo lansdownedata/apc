@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_UP, Decimal
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -69,6 +70,37 @@ def today_at(tz_name: str) -> date:
     return dj_timezone.now().astimezone(ZoneInfo(tz_name)).date()
 
 
+class PriceLine(NamedTuple):
+    """One row of a customer-facing price breakdown (spec 2026-09-05 §4.2).
+
+    `amount` is signed so the lines sum to `line_total`; templates render `abs_amount`
+    behind a minus sign rather than stripping the "-" out of formatted text.
+    """
+
+    label: str
+    amount: Decimal
+
+    @property
+    def is_credit(self) -> bool:
+        return self.amount < 0
+
+    @property
+    def abs_amount(self) -> Decimal:
+        return abs(self.amount)
+
+
+def _trim_pct(value: Decimal) -> str:
+    """ "20.00" -> "20", "12.50" -> "12.5", for a rate shown to a customer.
+
+    Not `.normalize()`, which turns Decimal("20.00") into "2E+1", and not `:n`, which is
+    locale-dependent. The `"." in text` guard matters: a bare "20".rstrip("0") is "2".
+    """
+    text = format(Decimal(value or 0), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
 class FlightDirection(models.TextChoices):
     """Which side of a flight matters at a stop's airport: a pickup meets an *arrival*,
     a drop-off catches a *departure*; a middle stop is whichever the user says."""
@@ -134,7 +166,7 @@ class Reservation(TimeStampedModel):
     min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gratuity_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gratuity_flat = MoneyField()  # optional override; used when > 0
-    # reserved (not wired into pricing/editor yet — see the pricing-rework spec §4c)
+    # Comes off the base before gratuity; flat wins over percent (spec 2026-09-05 §4.5).
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_flat = MoneyField()
     # Cost-based pricing (APC-26 step 3, spec 2026-09-05). Internal only — neither value
@@ -245,6 +277,37 @@ class Reservation(TimeStampedModel):
     @property
     def line_total(self) -> Decimal:
         return (self.discounted_base + self.gratuity).quantize(self._CENTS)
+
+    # --- what the customer sees (spec 2026-09-05 §4) ---
+    @property
+    def has_extras(self) -> bool:
+        """True when the price is more than a base fare — the client's rule for whether the
+        customer copy itemises or shows a single total."""
+        return self.discount > 0 or self.gratuity > 0
+
+    def price_lines(self) -> list["PriceLine"]:
+        """The customer-facing composition, in reading order.
+
+        Empty when the price is one flat number — the caller then shows `line_total` alone,
+        labelled *Total*, and the word "Subtotal" never appears. Decided here rather than in
+        each template so the quote page and the touch-point message can't disagree.
+
+        The lines always sum to `line_total`; `test_the_lines_always_sum_to_the_line_total`
+        is what stops a display drifting away from the money.
+        """
+        if not self.has_extras:
+            return []
+        lines = [PriceLine("Base fare", self.subtotal)]
+        if self.discount > 0:
+            lines.append(PriceLine("Discount", -self.discount))
+        if self.gratuity > 0:
+            pct = Decimal(self.gratuity_pct or 0)
+            # Name the percentage so the customer can check it. A flat gratuity has no
+            # percentage to name, and one set alongside a percent overrides it.
+            flat = Decimal(self.gratuity_flat or 0)
+            label = "Gratuity" if flat > 0 or pct <= 0 else f"Gratuity ({_trim_pct(pct)}%)"
+            lines.append(PriceLine(label, self.gratuity))
+        return lines
 
     # --- cost-based pricing (spec 2026-09-05) ---
     @property
