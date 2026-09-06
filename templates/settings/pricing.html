@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Pricing</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      When you price a trip from an affiliate's rate, this is the share the affiliate keeps.
+      Every trip can override it.
+    </p>
+
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      {% include "components/form_field.html" with field=form.default_cost_ratio_pct %}
+
+      {% comment %} Spec 1.1: this number is NOT a margin. Read as one, 65 would be applied as
+      cost / (1 - 0.65) and price a $1,000 trip at $2,857 instead of $1,538.50. The worked
+      example is here so a misreading is caught on the screen that sets the default. {% endcomment %}
+      <div class="rounded-xl bg-surface2 ring-1 ring-line p-4">
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2.5">How it works</div>
+        <div class="space-y-1.5 text-[12.5px] text-ink">
+          <div class="flex items-center justify-between">
+            <span class="text-muted">Vendor cost</span><span class="num">$1,000.00</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted">&divide; vendor keeps 65%</span><span class="num">&nbsp;</span>
+          </div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-line">
+            <span class="font-medium">You quote</span><span class="num font-semibold">$1,538.50</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted">You keep</span><span class="num">$538.50 <span class="text-muted">(35% margin)</span></span>
+          </div>
+        </div>
+        <p class="text-[11.5px] text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/15 rounded-lg px-2.5 py-1.5 mt-3">
+          <i class="ti ti-info-circle text-[13px]"></i>
+          A <span class="font-semibold">lower</span> percentage means a <span class="font-semibold">higher</span> price. 60% quotes $1,666.70; 70% quotes $1,428.60.
+        </p>
+      </div>
+
+      {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <a href="{% url 'settings_index' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+        <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

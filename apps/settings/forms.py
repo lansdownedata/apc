@@ -124,6 +124,36 @@ class DispatchAlertConfigForm(forms.ModelForm):
         }
 
 
+class PricingConfigForm(forms.ModelForm):
+    """The default cost ratio (spec 2026-09-05). One row, no list."""
+
+    class Meta:
+        from apps.reservations.models import PricingConfig
+
+        model = PricingConfig
+        fields = ["default_cost_ratio_pct"]
+        widgets = {
+            "default_cost_ratio_pct": forms.NumberInput(
+                attrs={"class": "field w-full", "min": 1, "max": 100, "step": "0.01"}
+            )
+        }
+        labels = {"default_cost_ratio_pct": "Vendor keeps (%)"}
+        help_texts = {
+            "default_cost_ratio_pct": (
+                "The affiliate's share of the sell price. 65% means a $1,000 vendor cost is "
+                "quoted at $1,538.50, earning a 35% margin. A lower number means a higher "
+                "price. Every trip can override this."
+            )
+        }
+
+    def clean_default_cost_ratio_pct(self):
+        """0 would divide by zero; over 100 would price below cost."""
+        value = self.cleaned_data["default_cost_ratio_pct"]
+        if value <= 0 or value > 100:
+            raise forms.ValidationError("Enter a percentage between 1 and 100.")
+        return value
+
+
 class NotificationConfigForm(forms.ModelForm):
     """The reservation-lifecycle messaging switches (APC-18-22). One row, no list."""
 

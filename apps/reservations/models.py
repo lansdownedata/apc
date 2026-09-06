@@ -797,3 +797,29 @@ EARNED_TERMINAL_STATUSES = (
     Reservation.TripStatus.DONE,
     Reservation.TripStatus.NO_SHOW,
 )
+
+
+class PricingConfig(models.Model):
+    """Singleton — the default cost ratio the trip editor pre-fills (spec 2026-09-05 §3.4).
+
+    One row (pk=1), edited on the Settings screen. Lives here rather than in `apps.settings`
+    because pricing is this app's domain, matching `DispatchAlertConfig` in `apps.dispatch`
+    and `NotificationConfig` in `apps.messaging` — the settings app only renders it.
+    """
+
+    singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    # The affiliate's share of the sell price, NOT a margin — see `Reservation.cost_ratio_pct`.
+    # The client works between 60% and 70% depending on the deal; this is the starting point,
+    # and every trip can override it.
+    default_cost_ratio_pct = models.DecimalField(max_digits=5, decimal_places=2, default=65)
+
+    class Meta:
+        verbose_name = "Pricing settings"
+        verbose_name_plural = "Pricing settings"
+
+    def __str__(self) -> str:
+        return f"Pricing — vendor keeps {self.default_cost_ratio_pct}%"
+
+    @classmethod
+    def load(cls) -> "PricingConfig":
+        return cls.objects.get_or_create(pk=1)[0]

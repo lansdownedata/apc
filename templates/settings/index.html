@@ -36,6 +36,16 @@
       </p>
       <p class="text-[12.5px] text-muted mt-2">{{ renewal_type_count }} active{% if fleet_attention_count %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ fleet_attention_count }} need attention</span>{% endif %}</p>
     </a>
+    <a href="{% url 'pricing' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-calculator text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Pricing</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        The default share an affiliate keeps when you price a trip from their rate.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">Vendor keeps {{ default_cost_ratio_pct|floatformat:"-2" }}%</p>
+    </a>
     <a href="{% url 'dispatch_alerts' %}" class="card p-4 hover:wash-gold transition-colors">
       <div class="flex items-center gap-2">
         <i class="ti ti-bell-exclamation text-[18px] text-gold"></i>

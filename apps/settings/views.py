@@ -12,10 +12,12 @@ from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
 from apps.messaging.models import NotificationConfig
+from apps.reservations.models import PricingConfig
 
 from .forms import (
     DispatchAlertConfigForm,
     NotificationConfigForm,
+    PricingConfigForm,
     ServiceTypeForm,
     VehicleTypeForm,
 )
@@ -48,6 +50,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
                 resolved_at__isnull=True
             ).count(),
             "notifications_on": NotificationConfig.load().enabled,
+            "default_cost_ratio_pct": PricingConfig.load().default_cost_ratio_pct,
         },
     )
 
@@ -256,6 +259,23 @@ def notifications(request: HttpRequest) -> HttpResponse:
         request,
         "settings/notifications.html",
         {"nav": "settings", "page_title": "Customer notifications", "form": form},
+    )
+
+
+@login_required
+@owner_admin_required
+def pricing(request: HttpRequest) -> HttpResponse:
+    """The default cost ratio used to price trips from an affiliate's rate (spec 2026-09-05)."""
+    config = PricingConfig.load()
+    form = PricingConfigForm(request.POST or None, instance=config)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Pricing settings saved.")
+        return redirect("pricing")
+    return render(
+        request,
+        "settings/pricing.html",
+        {"nav": "settings", "page_title": "Pricing", "form": form},
     )
 
 
