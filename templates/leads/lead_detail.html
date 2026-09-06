@@ -20,6 +20,7 @@
        sendQuoteUrl: '{% url 'lead_send_quote' lead.pk %}',
        acUrl: '{% url 'integrations:geocode_autocomplete' %}',
        privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
+       defaultCostRatio: {{ default_cost_ratio_pct }},
        reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
        vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {

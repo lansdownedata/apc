@@ -420,12 +420,15 @@ function quoteWorkspace(opts = {}) {
     // One trip to reopen the editor on straight after load — Create Return Trip (APC-15)
     // redirects here with ?edit=<pk> so the dispatcher lands on the new trip's blank date.
     openEditorId: opts.openEditorId ?? null,
+    // PricingConfig's default vendor share, pre-filled on a new trip (spec 2026-09-05 §3.4).
+    defaultCostRatio: opts.defaultCostRatio ?? 65,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
     depositPct: 50,
     sending: false,
     editorOpen: false,
+    costOpen: false,
     // The wedding builder modal (spec 2026-08-30 §5.2). Opens itself when the workspace
     // was reached with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
@@ -623,6 +626,8 @@ function quoteWorkspace(opts = {}) {
         pax: 1, quantity: 1,
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
+        discountPct: 0, discountFlat: 0, discountMode: "flat",
+        affiliateCost: 0, costRatioPct: this.defaultCostRatio,
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
@@ -630,6 +635,13 @@ function quoteWorkspace(opts = {}) {
       };
     },
     money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
+    /* Cents kept. The cost calculator's whole job is landing on an exact dime, so rounding
+     * $1,538.50 to "$1,539" in its own preview would hide the thing being previewed. */
+    money2(n) {
+      return "$" + (Number(n) || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      });
+    },
     init() {
       this.draft = this.blankReservation();
       // Snapshot so saveHeader() posts only what changed; posting the whole
@@ -654,6 +666,7 @@ function quoteWorkspace(opts = {}) {
     },
     newReservation() {
       this.draft = this.blankReservation();
+      this.costOpen = false;
       this.groupSizeAtOpen = 1;
       this.applyToGroup = false;
       this.dropoffPinned = false;
@@ -678,6 +691,12 @@ function quoteWorkspace(opts = {}) {
         delete s.pill;
       });
       this.draftIsNew = false;
+      // The $/% toggle has no column of its own — infer it from which field carries a
+      // value, the same precedence the model applies (flat wins).
+      this.draft.discountMode = Number(this.draft.discountPct) > 0 ? "pct" : "flat";
+      // Open the cost calculator already expanded when this trip was priced from a cost,
+      // so the number behind the rate is visible rather than hidden a click away.
+      this.costOpen = Number(this.draft.affiliateCost) > 0;
       // A stored trip that already ends on another day, or at a time of its own, keeps
       // both through pickup edits.
       this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
@@ -896,13 +915,66 @@ function quoteWorkspace(opts = {}) {
     },
     minApplied(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) > 0; },
     noMinimum(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) <= 0; },
+    /* These four mirror `Reservation.subtotal/discount/discounted_base/gratuity/line_total`
+     * in apps/reservations/models.py, which is the source of truth. They drive the editor's
+     * live Subtotal and Line total — if they drift from the Python, the agent is quoted one
+     * number and the customer is charged another. Change both or neither. */
     resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },
+    resDiscount(r) {
+      const flat = Number(r.discountFlat) || 0;               // flat wins over percent
+      if (flat > 0) return flat;
+      return this.resSubtotal(r) * (Number(r.discountPct) || 0) / 100;
+    },
+    /* Floored at 0 — a discount over the base must never make the total negative. */
+    resDiscountedBase(r) { return Math.max(this.resSubtotal(r) - this.resDiscount(r), 0); },
     resGratuity(r) {
       const flat = Number(r.gratuityFlat) || 0;
       if (flat > 0) return flat;
-      return this.resSubtotal(r) * (Number(r.gratuityPct) || 0) / 100;
+      return this.resDiscountedBase(r) * (Number(r.gratuityPct) || 0) / 100;
     },
-    resTotal(r) { return this.resSubtotal(r) + this.resGratuity(r); },
+    resTotal(r) { return this.resDiscountedBase(r) + this.resGratuity(r); },
+
+    /* --- price from vendor cost (APC-26 step 3) ---------------------------------
+     * `costRatioPct` is the vendor's share of the SELL price, not a margin:
+     *     price = cost / (ratio / 100)
+     * Mirrors Reservation.target_price / solve_rate_from_cost. The preview runs the same
+     * dime rounding the solver does, so what the agent reads here is exactly what gets
+     * applied — a preview off by a few cents is the kind of thing nobody reports and
+     * everybody stops trusting. */
+    roundToDime(n) { return Math.ceil((Number(n) || 0) * 10 - 1e-9) / 10; },
+    costTarget(r) {
+      const cost = Number(r.affiliateCost) || 0;
+      const ratio = Number(r.costRatioPct) || 0;
+      if (cost <= 0 || ratio <= 0) return 0;
+      return cost / (ratio / 100);
+    },
+    /* The price actually reachable: solve the rate, round it, multiply back. */
+    costPreview(r) {
+      const hours = this.billedHours(r);
+      const target = this.costTarget(r);
+      if (target <= 0) return 0;
+      if (hours <= 0) return target;                  // shown, but Apply stays disabled
+      return this.roundToDime(target / hours) * hours;
+    },
+    costProfit(r) { return this.costPreview(r) - (Number(r.affiliateCost) || 0); },
+    costMarginPct(r) {
+      const price = this.costPreview(r);
+      if (price <= 0) return "0";
+      return (this.costProfit(r) / price * 100).toFixed(1).replace(/\.0$/, "");
+    },
+    applyCostPrice() {
+      const hours = this.billedHours(this.draft);
+      const target = this.costTarget(this.draft);
+      if (target <= 0 || hours <= 0) return;
+      this.draft.rate = this.roundToDime(target / hours);
+    },
+    /* The $/% toggle writes one field and zeroes the other, so the two existing columns
+     * carry the mode with no third field on the model. */
+    setDiscountMode(mode) {
+      this.draft.discountMode = mode;
+      if (mode === "pct") this.draft.discountFlat = 0;
+      else this.draft.discountPct = 0;
+    },
     /* A lower quantity than the set opened with deletes real reservations — ones that may
      * already be assigned to an affiliate or synced to LA. Gate it on the shared modal
      * (never window.confirm); everything else saves straight through. */

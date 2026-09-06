@@ -256,6 +256,10 @@ def test_propagated_fields_are_pinned():
         "gratuity_flat",
         "discount_pct",
         "discount_flat",
+        # Cost-based pricing propagates with the rest of the pricing: the four coaches in a
+        # set are bought from the affiliate at the same cost and sold at the same ratio.
+        "affiliate_cost",
+        "cost_ratio_pct",
     }
 
 

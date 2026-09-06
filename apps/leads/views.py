@@ -95,6 +95,8 @@ def _reservation_draft(r, *, quantity: int = 1) -> dict:
         "gratuityFlat": float(r.gratuity_flat),
         "discountPct": float(r.discount_pct),
         "discountFlat": float(r.discount_flat),
+        "affiliateCost": float(r.affiliate_cost),
+        "costRatioPct": float(r.cost_ratio_pct),
         "dropoffDate": r.dropoff_date.isoformat() if r.dropoff_date else "",
         "dropoffTime": r.dropoff_time.strftime("%H:%M") if r.dropoff_time else "",
         "stops": [

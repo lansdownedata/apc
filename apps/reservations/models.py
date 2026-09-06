@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -40,12 +41,64 @@ TRIP_PHASE_BY_STATUS = {
 LIVE_PHASE_DAYS = 7
 
 
+# One decimal place. NOT Decimal("0.10") — that has exponent -2 and quantizes to cents.
+_DIME = Decimal("0.1")
+_CENTS_EXP = Decimal("0.01")
+
+
+def round_to_dime(amount: Decimal | None) -> Decimal:
+    """Round a price up to the next dime (client, 2026-09-05).
+
+    Up rather than nearest: rounding down would price *below* the target cost ratio. The
+    most it ever adds is 9c. `ROUND_UP` is away-from-zero, which is ceiling for a price.
+
+    Applied to the stored `rate`, never to a derived total — rounding a derived value is
+    not idempotent, so it would be recomputed and re-rounded on every edit and drift.
+
+    Re-quantized to cents so the result carries the two decimal places every other money
+    value in the system does.
+    """
+    dimed = Decimal(amount or 0).quantize(_DIME, rounding=ROUND_UP)
+    return dimed.quantize(_CENTS_EXP)
+
+
 def today_at(tz_name: str) -> date:
     """Today's date in an airport's zone — a lookup at 11 PM Eastern for a Pacific airport
     must count days from the Pacific date. Blank zone → the project's local date."""
     if not tz_name:
         return dj_timezone.localdate()
     return dj_timezone.now().astimezone(ZoneInfo(tz_name)).date()
+
+
+class PriceLine(NamedTuple):
+    """One row of a customer-facing price breakdown (spec 2026-09-05 §4.2).
+
+    `amount` is signed so the lines sum to `line_total`; templates render `abs_amount`
+    behind a minus sign rather than stripping the "-" out of formatted text.
+    """
+
+    label: str
+    amount: Decimal
+
+    @property
+    def is_credit(self) -> bool:
+        return self.amount < 0
+
+    @property
+    def abs_amount(self) -> Decimal:
+        return abs(self.amount)
+
+
+def _trim_pct(value: Decimal) -> str:
+    """ "20.00" -> "20", "12.50" -> "12.5", for a rate shown to a customer.
+
+    Not `.normalize()`, which turns Decimal("20.00") into "2E+1", and not `:n`, which is
+    locale-dependent. The `"." in text` guard matters: a bare "20".rstrip("0") is "2".
+    """
+    text = format(Decimal(value or 0), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 
 class FlightDirection(models.TextChoices):
@@ -113,9 +166,19 @@ class Reservation(TimeStampedModel):
     min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gratuity_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gratuity_flat = MoneyField()  # optional override; used when > 0
-    # reserved (not wired into pricing/editor yet — see the pricing-rework spec §4c)
+    # Comes off the base before gratuity; flat wins over percent (spec 2026-09-05 §4.5).
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_flat = MoneyField()
+    # Cost-based pricing (APC-26 step 3, spec 2026-09-05). Internal only — neither value
+    # may ever reach the customer or the affiliate.
+    #
+    # `cost_ratio_pct` is the affiliate's share of the SELL PRICE, not a margin:
+    #     price = affiliate_cost / (cost_ratio_pct / 100)
+    # 65% on a $1,000 cost quotes $1,538.50 and earns a 35% gross margin. Read as a margin,
+    # `cost / (1 - 0.65)` gives $2,857 — 86% high, and plausible enough to ship. A LOWER
+    # ratio is a HIGHER price. Never label this "margin" in a field, a form or a template.
+    affiliate_cost = MoneyField()  # 0 = not cost-priced
+    cost_ratio_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     # drop-off (enables end times + overnight trips)
     dropoff_date = models.DateField(null=True, blank=True)
     dropoff_time = models.TimeField(null=True, blank=True)
@@ -186,15 +249,105 @@ class Reservation(TimeStampedModel):
         return (Decimal(self.rate or 0) * self.billed_hours).quantize(self._CENTS)
 
     @property
+    def discount(self) -> Decimal:
+        """Flat wins over percent when both are set — the `gratuity_flat` precedent."""
+        flat = Decimal(self.discount_flat or 0)
+        if flat > 0:
+            return flat.quantize(self._CENTS)
+        return (self.subtotal * Decimal(self.discount_pct or 0) / 100).quantize(self._CENTS)
+
+    @property
+    def discounted_base(self) -> Decimal:
+        """The base fare the customer actually pays.
+
+        Floored at zero: a discount bigger than the base must not produce a negative
+        `line_total`, which would post a negative ledger entry.
+        """
+        return max(self.subtotal - self.discount, Decimal("0.00")).quantize(self._CENTS)
+
+    @property
     def gratuity(self) -> Decimal:
+        """Computed on the *discounted* base — you don't tip on money the customer
+        didn't pay (spec 2026-09-05 §4.5)."""
         flat = Decimal(self.gratuity_flat or 0)
         if flat > 0:
             return flat.quantize(self._CENTS)
-        return (self.subtotal * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+        return (self.discounted_base * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
 
     @property
     def line_total(self) -> Decimal:
-        return (self.subtotal + self.gratuity).quantize(self._CENTS)
+        return (self.discounted_base + self.gratuity).quantize(self._CENTS)
+
+    # --- what the customer sees (spec 2026-09-05 §4) ---
+    @property
+    def has_extras(self) -> bool:
+        """True when the price is more than a base fare — the client's rule for whether the
+        customer copy itemises or shows a single total."""
+        return self.discount > 0 or self.gratuity > 0
+
+    def price_lines(self) -> list["PriceLine"]:
+        """The customer-facing composition, in reading order.
+
+        Empty when the price is one flat number — the caller then shows `line_total` alone,
+        labelled *Total*, and the word "Subtotal" never appears. Decided here rather than in
+        each template so the quote page and the touch-point message can't disagree.
+
+        The lines always sum to `line_total`; `test_the_lines_always_sum_to_the_line_total`
+        is what stops a display drifting away from the money.
+        """
+        if not self.has_extras:
+            return []
+        lines = [PriceLine("Base fare", self.subtotal)]
+        if self.discount > 0:
+            lines.append(PriceLine("Discount", -self.discount))
+        if self.gratuity > 0:
+            pct = Decimal(self.gratuity_pct or 0)
+            # Name the percentage so the customer can check it. A flat gratuity has no
+            # percentage to name, and one set alongside a percent overrides it.
+            flat = Decimal(self.gratuity_flat or 0)
+            label = "Gratuity" if flat > 0 or pct <= 0 else f"Gratuity ({_trim_pct(pct)}%)"
+            lines.append(PriceLine(label, self.gratuity))
+        return lines
+
+    # --- cost-based pricing (spec 2026-09-05) ---
+    @property
+    def target_price(self) -> Decimal:
+        """The ideal sell price for the affiliate's cost — `cost / ratio`, raw.
+
+        Dime rounding belongs to the solver, not here, so the calculator's preview and the
+        applied rate come from one code path.
+        """
+        cost = Decimal(self.affiliate_cost or 0)
+        ratio = Decimal(self.cost_ratio_pct or 0)
+        if cost <= 0 or ratio <= 0:
+            return Decimal("0.00")
+        return (cost / (ratio / 100)).quantize(self._CENTS)
+
+    @property
+    def quoted_profit(self) -> Decimal:
+        """What we keep, on the price actually quoted.
+
+        Reads `discounted_base`, not `target_price` — after dime rounding and any later
+        hand-edit of the rate, the real base is the truth, and a discount comes out of our
+        side rather than the affiliate's. Excludes gratuity, which is a pass-through.
+        """
+        cost = Decimal(self.affiliate_cost or 0)
+        base = self.discounted_base
+        # No cost, or a cost entered before a rate was applied: nothing has been quoted, so
+        # report nothing. Without the `base` guard an unpriced trip reads as a full-cost
+        # loss. A genuinely under-priced trip (base below cost) still returns negative,
+        # which is the point.
+        if cost <= 0 or base <= 0:
+            return Decimal("0.00")
+        return (base - cost).quantize(self._CENTS)
+
+    @property
+    def quoted_margin_pct(self) -> Decimal:
+        """Gross margin — the complement of `cost_ratio_pct`, and the honest headline."""
+        base = self.discounted_base
+        if base <= 0 or Decimal(self.affiliate_cost or 0) <= 0:
+            return Decimal("0.00")
+        return (self.quoted_profit / base * 100).quantize(self._CENTS)
 
     # --- routing ---
     @property
@@ -707,3 +860,29 @@ EARNED_TERMINAL_STATUSES = (
     Reservation.TripStatus.DONE,
     Reservation.TripStatus.NO_SHOW,
 )
+
+
+class PricingConfig(models.Model):
+    """Singleton — the default cost ratio the trip editor pre-fills (spec 2026-09-05 §3.4).
+
+    One row (pk=1), edited on the Settings screen. Lives here rather than in `apps.settings`
+    because pricing is this app's domain, matching `DispatchAlertConfig` in `apps.dispatch`
+    and `NotificationConfig` in `apps.messaging` — the settings app only renders it.
+    """
+
+    singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    # The affiliate's share of the sell price, NOT a margin — see `Reservation.cost_ratio_pct`.
+    # The client works between 60% and 70% depending on the deal; this is the starting point,
+    # and every trip can override it.
+    default_cost_ratio_pct = models.DecimalField(max_digits=5, decimal_places=2, default=65)
+
+    class Meta:
+        verbose_name = "Pricing settings"
+        verbose_name_plural = "Pricing settings"
+
+    def __str__(self) -> str:
+        return f"Pricing — vendor keeps {self.default_cost_ratio_pct}%"
+
+    @classmethod
+    def load(cls) -> "PricingConfig":
+        return cls.objects.get_or_create(pk=1)[0]

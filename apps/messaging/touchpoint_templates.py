@@ -535,14 +535,27 @@ def build_context(lead, reservation=None) -> dict[str, str]:
     stops = list(first_res.stops.all()) if first_res else []
 
     def format_breakdown(r):
+        """One line per trip, itemised only when the price is more than a base fare.
+
+        Reads `price_lines()` so this and the quote page describe the money the same way —
+        a customer holding both shouldn't have to reconcile them (spec 2026-09-05 §4.3).
+        """
         vehicle = r.vehicle.name if r.vehicle else "Vehicle TBD"
         passengers = f"{r.passengers} passengers"
         total = f"${r.line_total:,.2f}"
         if r.pickup_date and r.pickup_time:
             date_fmt = f"{r.pickup_date:%b %d}"
             time_fmt = f"{r.pickup_time:%-I:%M %p}"
-            return f"{date_fmt} · {time_fmt} — {vehicle} · {passengers} — {total}"
-        return f"{vehicle} · {passengers} — {total}"
+            head = f"{date_fmt} · {time_fmt} — {vehicle} · {passengers} — {total}"
+        else:
+            head = f"{vehicle} · {passengers} — {total}"
+        if not r.has_extras:
+            return head
+        extras = "\n".join(
+            f"    {line.label}: {'-' if line.is_credit else ''}${line.abs_amount:,.2f}"
+            for line in r.price_lines()
+        )
+        return f"{head}\n{extras}"
 
     breakdown = "\n".join(format_breakdown(r) for r in reservations)
     pickup_date = (

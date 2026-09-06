@@ -69,6 +69,9 @@
   .itinerary .addr{font-size:13px;color:rgb(var(--muted));overflow-wrap:anywhere}
   .itinerary .when{font-size:13px;color:rgb(var(--muted))}
   .trip-subtotal{text-align:right;font-size:13px;color:rgb(var(--muted));padding:6px 0 0}
+  .trip-lines{padding:8px 0 0;font-size:13px;color:rgb(var(--muted))}
+  .trip-lines .line{display:flex;justify-content:space-between;padding:3px 0}
+  .trip-lines .line.total{margin-top:5px;padding-top:7px;border-top:1px solid rgb(var(--border));color:rgb(var(--text))}
   @media (max-width:640px){
     .trip-card{flex-direction:column}
     .trip-vehicle{width:100%;flex:0 0 auto}
@@ -135,10 +138,28 @@
             </li>
             {% endfor %}
           </ul>
+          {% comment %} Spec 2026-09-05 §4: a flat price is ONE row labelled Total — the word
+          "Subtotal" only appears when there is genuinely something to sub-total. `price_lines`
+          decides, so this page and the touch-point message can't disagree. {% endcomment %}
+          {% if r.has_extras %}
+          <div class="trip-lines">
+            {% for line in r.price_lines %}
+            <div class="line">
+              <span>{{ line.label }}</span>
+              <span class="num">{% if line.is_credit %}&minus;{% endif %}${{ line.abs_amount|floatformat:2|intcomma }}</span>
+            </div>
+            {% endfor %}
+            <div class="line total">
+              <span>Total</span>
+              <strong class="num">${{ r.line_total|floatformat:2|intcomma }}</strong>
+            </div>
+          </div>
+          {% else %}
           <div class="trip-subtotal">
-            Vehicle Subtotal
+            Total
             <strong style="color:rgb(var(--text));">${{ r.line_total|floatformat:2|intcomma }}</strong>
           </div>
+          {% endif %}
         </div>
       </div>
       {% endfor %}
