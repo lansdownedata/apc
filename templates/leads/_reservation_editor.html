@@ -312,16 +312,91 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
                class="mt-2 flex items-center gap-1.5 text-[11.5px] text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/15 rounded-lg px-2.5 py-1.5">
             <i class="ti ti-alert-triangle text-[14px]"></i> No minimum for this trip — pick a vehicle or enter override hours
           </div>
-          <div class="mt-3">
-            <div class="text-[12px] text-muted mb-1">Gratuity %</div>
-            <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold w-1/3">
-              <input x-model.number="draft.gratuityPct" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
-              <span class="text-muted text-[13px]">%</span>
+          {% comment %} Price from the affiliate's cost (APC-26 step 3, spec 2026-09-05 §3.3).
+          The input is the vendor's SHARE of the sell price — never labelled "margin", which
+          read the textbook way would price this trip at nearly double. The derived margin is
+          read-only, beside it, so a misread is caught by eye before the quote goes out. {% endcomment %}
+          <div class="mt-3 pt-3 border-t border-line">
+            <button type="button" @click="costOpen = !costOpen"
+              class="w-full flex items-center gap-1.5 text-[12px] font-semibold text-muted uppercase tracking-wide hover:text-ink transition-colors">
+              <i class="ti text-[14px]" :class="costOpen ? 'ti-chevron-down' : 'ti-chevron-right'"></i>
+              Price from vendor cost
+              <span x-show="draft.affiliateCost > 0" class="ml-auto normal-case tracking-normal text-[11.5px] font-medium text-muted num"
+                    x-text="money2(draft.affiliateCost) + ' cost'"></span>
+            </button>
+            <div x-show="costOpen" x-cloak class="mt-2.5">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <div class="text-[12px] text-muted mb-1">Vendor cost</div>
+                  <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                    <span class="text-muted text-[13px]">$</span>
+                    <input x-model.number="draft.affiliateCost" type="number" min="0" step="0.01" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[12px] text-muted mb-1">Vendor keeps</div>
+                  <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                    <input x-model.number="draft.costRatioPct" type="number" min="1" max="100" step="0.01" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                    <span class="text-muted text-[13px]">%</span>
+                  </div>
+                </div>
+              </div>
+              <div x-show="costPreview(draft)" class="mt-2.5 rounded-lg bg-surface ring-1 ring-line px-3 py-2.5">
+                <div class="flex items-center justify-between text-[12.5px]">
+                  <span class="text-muted">Sell price</span>
+                  <span class="font-semibold text-ink num" x-text="money2(costPreview(draft))"></span>
+                </div>
+                <div class="mt-1 flex items-center justify-between text-[12.5px]">
+                  <span class="text-muted">You keep</span>
+                  <span class="text-ink num"><span x-text="money2(costProfit(draft))"></span> <span class="text-muted" x-text="'(' + costMarginPct(draft) + '% margin)'"></span></span>
+                </div>
+                <button type="button" @click="applyCostPrice()" :disabled="billedHours(draft) <= 0"
+                  class="mt-2.5 w-full btn-gold text-[12.5px] font-semibold rounded-lg px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Apply to rate
+                </button>
+                <p x-show="billedHours(draft) <= 0" class="mt-1.5 text-[11.5px] text-muted">Set override hours or pick a vehicle first — there are no hours to divide by.</p>
+              </div>
             </div>
           </div>
+
+          <div class="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[12px] text-muted mb-1">Gratuity %</div>
+              <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                <input x-model.number="draft.gratuityPct" type="number" min="0" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                <span class="text-muted text-[13px]">%</span>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-[12px] text-muted">Discount</span>
+                {% comment %} A toggle over the two existing fields — picking a mode zeroes the
+                other, so no third "mode" column is needed on the model. {% endcomment %}
+                <div class="ml-auto flex items-center rounded-lg ring-1 ring-line overflow-hidden">
+                  <button type="button" @click="setDiscountMode('flat')"
+                    class="px-2 py-0.5 text-[11px] font-semibold transition-colors"
+                    :class="draft.discountMode === 'pct' ? 'text-muted hover:text-ink' : 'bg-gold text-ink'">$</button>
+                  <button type="button" @click="setDiscountMode('pct')"
+                    class="px-2 py-0.5 text-[11px] font-semibold transition-colors"
+                    :class="draft.discountMode === 'pct' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">%</button>
+                </div>
+              </div>
+              <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                <span x-show="draft.discountMode !== 'pct'" class="text-muted text-[13px]">$</span>
+                <input x-show="draft.discountMode !== 'pct'" x-model.number="draft.discountFlat" type="number" min="0" step="0.01" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                <input x-show="draft.discountMode === 'pct'" x-model.number="draft.discountPct" type="number" min="0" max="100" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                <span x-show="draft.discountMode === 'pct'" class="text-muted text-[13px]">%</span>
+              </div>
+            </div>
+          </div>
+
           <div class="mt-3 pt-3 border-t border-line flex items-center justify-between">
             <span class="text-[12px] text-muted">Subtotal</span>
             <span class="text-[13px] font-medium text-ink num" x-text="money(resSubtotal(draft))"></span>
+          </div>
+          <div x-show="resDiscount(draft) > 0" class="mt-1 flex items-center justify-between">
+            <span class="text-[12px] text-muted">Discount</span>
+            <span class="text-[13px] font-medium text-ink num" x-text="'-' + money(resDiscount(draft))"></span>
           </div>
           <div class="mt-1 flex items-center justify-between">
             <span class="text-[12.5px] text-muted">Line total</span>
