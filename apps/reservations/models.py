@@ -137,6 +137,16 @@ class Reservation(TimeStampedModel):
     # reserved (not wired into pricing/editor yet — see the pricing-rework spec §4c)
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_flat = MoneyField()
+    # Cost-based pricing (APC-26 step 3, spec 2026-09-05). Internal only — neither value
+    # may ever reach the customer or the affiliate.
+    #
+    # `cost_ratio_pct` is the affiliate's share of the SELL PRICE, not a margin:
+    #     price = affiliate_cost / (cost_ratio_pct / 100)
+    # 65% on a $1,000 cost quotes $1,538.50 and earns a 35% gross margin. Read as a margin,
+    # `cost / (1 - 0.65)` gives $2,857 — 86% high, and plausible enough to ship. A LOWER
+    # ratio is a HIGHER price. Never label this "margin" in a field, a form or a template.
+    affiliate_cost = MoneyField()  # 0 = not cost-priced
+    cost_ratio_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     # drop-off (enables end times + overnight trips)
     dropoff_date = models.DateField(null=True, blank=True)
     dropoff_time = models.TimeField(null=True, blank=True)
@@ -235,6 +245,46 @@ class Reservation(TimeStampedModel):
     @property
     def line_total(self) -> Decimal:
         return (self.discounted_base + self.gratuity).quantize(self._CENTS)
+
+    # --- cost-based pricing (spec 2026-09-05) ---
+    @property
+    def target_price(self) -> Decimal:
+        """The ideal sell price for the affiliate's cost — `cost / ratio`, raw.
+
+        Dime rounding belongs to the solver, not here, so the calculator's preview and the
+        applied rate come from one code path.
+        """
+        cost = Decimal(self.affiliate_cost or 0)
+        ratio = Decimal(self.cost_ratio_pct or 0)
+        if cost <= 0 or ratio <= 0:
+            return Decimal("0.00")
+        return (cost / (ratio / 100)).quantize(self._CENTS)
+
+    @property
+    def quoted_profit(self) -> Decimal:
+        """What we keep, on the price actually quoted.
+
+        Reads `discounted_base`, not `target_price` — after dime rounding and any later
+        hand-edit of the rate, the real base is the truth, and a discount comes out of our
+        side rather than the affiliate's. Excludes gratuity, which is a pass-through.
+        """
+        cost = Decimal(self.affiliate_cost or 0)
+        base = self.discounted_base
+        # No cost, or a cost entered before a rate was applied: nothing has been quoted, so
+        # report nothing. Without the `base` guard an unpriced trip reads as a full-cost
+        # loss. A genuinely under-priced trip (base below cost) still returns negative,
+        # which is the point.
+        if cost <= 0 or base <= 0:
+            return Decimal("0.00")
+        return (base - cost).quantize(self._CENTS)
+
+    @property
+    def quoted_margin_pct(self) -> Decimal:
+        """Gross margin — the complement of `cost_ratio_pct`, and the honest headline."""
+        base = self.discounted_base
+        if base <= 0 or Decimal(self.affiliate_cost or 0) <= 0:
+            return Decimal("0.00")
+        return (self.quoted_profit / base * 100).quantize(self._CENTS)
 
     # --- routing ---
     @property

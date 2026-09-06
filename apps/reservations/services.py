@@ -17,10 +17,32 @@ address, which this flat list can't express) — change one and change the other
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.db.models import F
 from django.utils import timezone as dj_timezone
 
-from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent
+from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent, round_to_dime
+
+
+def solve_rate_from_cost(reservation: Reservation) -> Decimal | None:
+    """The rate that prices `reservation` at its affiliate cost over its cost ratio.
+
+    Returns the rate rather than saving it — the caller decides when to persist, and the
+    editor's preview calls this too so what an agent sees is exactly what gets applied.
+
+    `None` when there is nothing to solve: no cost, no ratio, or no billable hours (an
+    hourly trip with neither an override nor a rate-card minimum divides by zero).
+
+    Rounding lands on the rate, not the derived total, which keeps it idempotent —
+    re-applying to a saved trip returns the same number instead of walking the price up a
+    dime at a time. For a transfer (`billed_hours == 1`) the rate *is* the total.
+    """
+    target = reservation.target_price
+    hours = reservation.billed_hours
+    if target <= 0 or hours <= 0:
+        return None
+    return round_to_dime(target / hours)
 
 
 def is_wedding_trip(reservation: Reservation) -> bool:
