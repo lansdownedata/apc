@@ -71,6 +71,21 @@ def _private_airline_id() -> int | None:
     return Airline.objects.filter(iata=PRIVATE_AIRLINE_IATA).values_list("pk", flat=True).first()
 
 
+def _default_cost_ratio_pct() -> str:
+    """PricingConfig's default vendor share, for the trip editor's cost calculator
+    (spec 2026-09-05 §3.4). Lazy, same as `_airline_options` — only pages that render the
+    editor pay for the query.
+
+    Returned as a **string**, not the Decimal: the template drops it straight into a JS
+    number literal in `quoteWorkspace({...})`, and Django localizes a Decimal on the way out
+    — which crashes outright through SimpleLazyObject, and under a comma-decimal locale would
+    emit `65,00` and break the whole Alpine component. A plain string skips localization.
+    """
+    from apps.reservations.models import PricingConfig
+
+    return format(PricingConfig.load().default_cost_ratio_pct, "f")
+
+
 def chrome(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return {
@@ -94,4 +109,5 @@ def chrome(request):
         "airline_options": SimpleLazyObject(_airline_options),
         "private_airline_id": SimpleLazyObject(_private_airline_id),
         "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
+        "default_cost_ratio_pct": SimpleLazyObject(_default_cost_ratio_pct),
     }

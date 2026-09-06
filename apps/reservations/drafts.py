@@ -201,6 +201,11 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
         "gratuity_flat": _money(payload.get("gratuityFlat")),
         "discount_pct": _money(payload.get("discountPct")),
         "discount_flat": _money(payload.get("discountFlat")),
+        # Cost-based pricing inputs (spec 2026-09-05). Stored as the audit trail behind the
+        # rate — "paid 1,000, targeted 65%, sold 1,538.50" — so a price stays explainable
+        # long after the calculator ran. `_money` coerces junk to 0 = not cost-priced.
+        "affiliate_cost": _money(payload.get("affiliateCost")),
+        "cost_ratio_pct": _money(payload.get("costRatioPct")),
         "dropoff_date": _date(payload.get("dropoffDate")),
         "dropoff_time": _time(payload.get("dropoffTime")),
         "stops": [

@@ -420,6 +420,8 @@ function quoteWorkspace(opts = {}) {
     // One trip to reopen the editor on straight after load — Create Return Trip (APC-15)
     // redirects here with ?edit=<pk> so the dispatcher lands on the new trip's blank date.
     openEditorId: opts.openEditorId ?? null,
+    // PricingConfig's default vendor share, pre-filled on a new trip (spec 2026-09-05 §3.4).
+    defaultCostRatio: opts.defaultCostRatio ?? 65,
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
@@ -623,6 +625,8 @@ function quoteWorkspace(opts = {}) {
         pax: 1, quantity: 1,
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
+        discountPct: 0, discountFlat: 0, discountMode: "flat",
+        affiliateCost: 0, costRatioPct: this.defaultCostRatio,
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },

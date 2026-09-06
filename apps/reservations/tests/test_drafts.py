@@ -277,6 +277,100 @@ def test_discount_survives_the_draft_round_trip():
     assert again.discount_flat == Decimal("25.00"), "discount_flat silently blanked on round trip"
 
 
+def test_cost_pricing_survives_the_draft_round_trip():
+    """The audit trail is the point of storing the inputs — a round trip that blanks them
+    leaves a price nobody can explain (spec 2026-09-05 §3.1)."""
+    from apps.leads.factories import LeadFactory
+
+    lead = LeadFactory()
+    res = save_reservation_from_draft(
+        lead,
+        {
+            "tripType": "transfer",
+            "pax": 2,
+            "rate": "1538.50",
+            "hours": "1",
+            "minHours": "0",
+            "affiliateCost": "1000.00",
+            "costRatioPct": "65",
+            "date": "2026-08-29",
+            "time": "10:00",
+            "stops": [{"address": "A"}, {"address": "B"}],
+        },
+    )
+    assert res.affiliate_cost == Decimal("1000.00")
+    assert res.cost_ratio_pct == Decimal("65")
+
+    draft = _reservation_draft(res)
+    again = save_reservation_from_draft(lead, {**draft, "tripType": "transfer"}, instance=res)
+    assert again.affiliate_cost == Decimal("1000.00"), "affiliate_cost blanked on round trip"
+    assert again.cost_ratio_pct == Decimal("65"), "cost_ratio_pct blanked on round trip"
+
+
+def _cost_draft(**overrides):
+    return {
+        "tripType": "transfer",
+        "pax": 2,
+        "rate": "185.00",
+        "hours": "1",
+        "minHours": "0",
+        "date": "2026-08-29",
+        "time": "10:00",
+        "stops": [{"address": "A"}, {"address": "B"}],
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("blank", ["", None])
+def test_an_omitted_cost_reads_as_not_cost_priced(blank):
+    from apps.leads.factories import LeadFactory
+
+    res = save_reservation_from_draft(
+        LeadFactory(), _cost_draft(affiliateCost=blank, costRatioPct=blank)
+    )
+
+    assert res.affiliate_cost == Decimal("0")
+    assert res.cost_ratio_pct == Decimal("0")
+    assert res.target_price == Decimal("0.00")
+
+
+@pytest.mark.parametrize("junk", ["abc", "-", []])
+def test_a_garbled_cost_is_rejected_not_silently_zeroed(junk):
+    """`_money`'s contract for every other money field: reject rather than coerce. Zeroing
+    a garbled cost would silently un-price the trip and read as "not cost-priced"."""
+    from apps.leads.factories import LeadFactory
+
+    with pytest.raises(DraftError):
+        save_reservation_from_draft(LeadFactory(), _cost_draft(affiliateCost=junk))
+    with pytest.raises(DraftError):
+        save_reservation_from_draft(LeadFactory(), _cost_draft(costRatioPct=junk))
+
+
+def test_the_editor_draft_carries_the_cost_fields():
+    from apps.leads.factories import LeadFactory
+
+    res = save_reservation_from_draft(
+        LeadFactory(),
+        {
+            "tripType": "transfer",
+            "pax": 2,
+            "rate": "1538.50",
+            "hours": "1",
+            "minHours": "0",
+            "affiliateCost": "1000.00",
+            "costRatioPct": "65",
+            "date": "2026-08-29",
+            "time": "10:00",
+            "stops": [{"address": "A"}, {"address": "B"}],
+        },
+    )
+
+    draft = _reservation_draft(res)
+
+    assert draft["affiliateCost"] == 1000.0
+    assert draft["costRatioPct"] == 65.0
+
+
 def test_transfer_dropoff_before_pickup_is_rejected():
     from apps.leads.factories import LeadFactory
 
