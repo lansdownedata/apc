@@ -39,7 +39,7 @@ def test_it_inherits_the_passenger_bounds(pax):
 def test_it_still_re_derives_the_vehicle_recommendation():
     form = PortalWeddingForm(_portal())
     assert form.is_valid(), form.errors
-    assert form.cleaned_data["legs"][0]["vehicle"] == "2 × 56-passenger coach"
+    assert form.cleaned_data["legs"][0]["vehicle"] == "2 × Motor Coach"
 
 
 def test_an_assigned_vehicle_comes_back_keyed_by_leg():

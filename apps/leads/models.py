@@ -46,6 +46,11 @@ class VehicleType(TimeStampedModel):
     name = models.CharField(max_length=80, unique=True)
     capacity = models.PositiveIntegerField(default=1)
     active = models.BooleanField(default=True)
+    # Whether this class is offered for group transport — the wedding recommender and
+    # anything else sizing a shuttle pick from these. Capacity alone is the wrong test: a
+    # stretch limo seats ten and is still not a shuttle. A switch rather than a name match
+    # so renaming a vehicle in Settings never changes what it is used for.
+    group_transport = models.BooleanField(default=True)
     image = models.ImageField(upload_to="vehicle-types/", blank=True)
     description = models.TextField(blank=True)
     sort_order = models.PositiveIntegerField(default=0)

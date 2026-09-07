@@ -57,6 +57,56 @@ def test_a_set_of_four_renders_as_one_line(agent):
     assert re.findall(r'data-line="(\d+)"', html) == [str(alone.pk), str(coaches.pk)]
 
 
+def test_a_set_reports_the_movements_headcount_not_one_coachs_share(agent):
+    """A ×2 line said "50 pax" for a 100-guest movement.
+
+    The header renders the anchor reservation, so it showed that one coach's share of
+    the split. `ReservationLine.passengers` is the movement's own headcount and already
+    existed for exactly this — it just was not being used, so the workspace under-
+    reported every wedding run that takes more than one vehicle.
+    """
+    lead = LeadFactory()
+    coaches = TransferReservationFactory(lead=lead, passengers=50)
+    groups.set_group_size(coaches, 2)
+    for res in lead.reservations.all():
+        res.passengers = 50
+        res.save(update_fields=["passengers"])
+
+    html = _html(agent, lead)
+
+    assert "100 pax" in html
+    assert "50 pax" not in html
+
+
+def test_an_expanded_set_names_the_vehicle_and_its_load(agent):
+    """ "Vehicle 1 / Vehicle 2" told an agent nothing about what was turning up.
+
+    Each row is one real coach with its own price and its own coverage, so it reads as
+    the vehicle it is, with the passengers riding on that one beside it.
+    """
+    from apps.leads.factories import VehicleTypeFactory
+
+    lead = LeadFactory()
+    coach = VehicleTypeFactory(name="Motor Coach", capacity=56)
+    coaches = TransferReservationFactory(lead=lead, vehicle=coach, passengers=50)
+    groups.set_group_size(coaches, 2)
+
+    html = _html(agent, lead)
+
+    assert "Vehicle 1" not in html
+    assert html.count("Motor Coach") >= 2
+    assert "50 passengers" in html
+
+
+def test_a_member_with_no_vehicle_still_has_a_label(agent):
+    """A hand-added trip may have no vehicle yet — it must not render as a blank row."""
+    lead = LeadFactory()
+    res = TransferReservationFactory(lead=lead, vehicle=None)
+    groups.set_group_size(res, 2)
+
+    assert "Vehicle 1" in _html(agent, lead)
+
+
 def test_a_set_carries_a_multiplier_badge(agent):
     res = TransferReservationFactory()
     groups.set_group_size(res, 4)

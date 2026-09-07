@@ -23,7 +23,6 @@ from apps.integrations import podium
 from apps.messaging import touchpoints
 from apps.notifications.email import send_html_email
 from apps.payments.models import PaymentPlan
-from apps.public.wedding import MAX_COACH_SEATS
 
 logger = logging.getLogger(__name__)
 
@@ -320,28 +319,65 @@ def book_lead(lead: Lead) -> Lead:
     return lead
 
 
-def suggest_vehicle(passengers: int, cap: int | None = None) -> VehicleType | None:
-    """The smallest active vehicle that seats one run of this size.
+def group_fleet() -> list[VehicleType]:
+    """The active vehicles offered for group transport, smallest first.
 
-    Matched on capacity, never on the name `wedding.vehicle_for()` produces: those strings
-    are customer-facing copy ("Executive mini coach") and the catalog is edited in
-    Settings, so the two would drift the first time someone renamed a vehicle.
+    The single source of every shuttle-sizing answer in the app: the customer's wedding
+    itinerary, the trips the builder generates, and the vehicle prefilled onto each of
+    them all read this list. Nothing here is hardcoded — rename a vehicle, change its
+    capacity or untick "group transport" in Settings and every one of those follows on the
+    next page load, with no deploy.
+    """
+    from .models import VehicleType
+
+    return list(
+        VehicleType.objects.filter(active=True, group_transport=True).order_by(
+            "capacity", "sort_order"
+        )
+    )
+
+
+def fleet_payload() -> list[dict]:
+    """`group_fleet()` as plain JSON for the browser — the planner's copy of the catalog.
+
+    Name and capacity only: the browser recommends, it never prices, so no rate goes out
+    on a public page.
+    """
+    return [{"name": v.name, "capacity": v.capacity} for v in group_fleet()]
+
+
+def largest_group_capacity(fleet: list[VehicleType] | None = None) -> int | None:
+    """Seats on our biggest shuttle — the ceiling a run splits across when a POI sets no
+    smaller limit of its own. None when the catalog holds no group vehicle at all."""
+    fleet = group_fleet() if fleet is None else fleet
+    return fleet[-1].capacity if fleet else None
+
+
+def suggest_vehicle(
+    passengers: int, cap: int | None = None, fleet: list[VehicleType] | None = None
+) -> VehicleType | None:
+    """The smallest group vehicle that seats one run of this size.
+
+    Matched on capacity, never on a customer-facing name: the catalog is edited in
+    Settings, so the two would drift the first time someone renamed a vehicle. Capacity
+    alone is not enough either — a stretch limo seats ten and is not a shuttle — so the
+    pool is `group_fleet()` rather than every active vehicle.
 
     A group above the per-run limit splits, and it is the *run* that needs seating — 105
     guests at a 40-cap venue is three 40-seat coaches, not one impossible 105-seater.
     Returns None when nothing in the catalog fits, so the picker opens unset rather than
     quietly recommending a vehicle that cannot do the job.
     """
-    from .models import VehicleType
-
-    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
+    # Callers generating a whole wedding pass the catalog in — it is one list for the
+    # entire day, not one query per trip.
+    fleet = group_fleet() if fleet is None else fleet
+    ceiling = largest_group_capacity(fleet)
+    if ceiling is None:
+        return None
+    limit = min(cap or ceiling, ceiling)
     runs = math.ceil(passengers / limit) if passengers > limit else 1
     per_run = math.ceil(passengers / runs)
-    return (
-        VehicleType.objects.filter(active=True, capacity__gte=per_run)
-        .order_by("capacity", "sort_order")
-        .first()
-    )
+    return next((v for v in fleet if v.capacity >= per_run), None)
 
 
 def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
@@ -370,27 +406,44 @@ def apply_vehicle_rate_card(reservation, vehicle: VehicleType | None) -> None:
 
 
 def _apply_trip_window(reservation) -> None:
-    """Give an hourly trip the end its billed hours imply; clear both for a transfer.
+    """Give every leg the end its billed hours and its drive imply.
 
     Mirrors `reservations.drafts._derive_dropoff_and_hours`, which does the same for the
-    reservation editor: without it an hourly leg reaches dispatch and the customer's
-    itinerary with no end time. Switching a leg back to a transfer drops the hours it was
-    billing as well as the derived end, or the transfer keeps quoting them.
+    reservation editor: without it a leg reaches dispatch and the customer's itinerary with
+    no end time. An hourly leg ends at pickup + billed hours. A transfer ends at pickup +
+    whichever is longer, its billed minimum or the actual drive — the minimum alone would
+    promise an end a long drive cannot make.
+
+    Switching a leg back to a transfer still drops the hours it was billing, or the
+    transfer keeps quoting them; the derived end is then recomputed rather than cleared.
     """
     from apps.reservations.models import Reservation
+    from apps.reservations.services import derive_dropoff, reservation_drive_seconds
 
-    if reservation.trip_type != Reservation.TripType.HOURLY:
-        reservation.hours = 0
-        reservation.dropoff_date = None
-        reservation.dropoff_time = None
+    if reservation.trip_type == Reservation.TripType.HOURLY:
+        billed = reservation.billed_hours
+        if not (reservation.pickup_date and reservation.pickup_time and billed):
+            return
+        end = datetime.combine(reservation.pickup_date, reservation.pickup_time) + timedelta(
+            hours=float(billed)
+        )
+        reservation.dropoff_date, reservation.dropoff_time = end.date(), end.time()
+        reservation.dropoff_estimated = True
         return
-    billed = reservation.billed_hours
-    if not (reservation.pickup_date and reservation.pickup_time and billed):
-        return
-    end = datetime.combine(reservation.pickup_date, reservation.pickup_time) + timedelta(
-        hours=float(billed)
+
+    reservation.hours = 0
+    # Stops are rewritten straight after this in `write()`, so a brand-new leg has none to
+    # measure yet and falls back to the minimum. A rebuild of an existing leg measures the
+    # route it already has, which is the same route being written back.
+    drive = reservation_drive_seconds(reservation) if reservation.pk else None
+    end = derive_dropoff(
+        reservation.pickup_date,
+        reservation.pickup_time,
+        billed_hours=reservation.billed_hours,
+        drive_seconds=drive,
     )
-    reservation.dropoff_date, reservation.dropoff_time = end.date(), end.time()
+    reservation.dropoff_date, reservation.dropoff_time = end or (None, None)
+    reservation.dropoff_estimated = end is not None
 
 
 @dataclass
@@ -436,6 +489,7 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
     counts = data.get("counts") or {}
     venue = data.get("venue")
     cap = venue.vehicle_cap if venue else None
+    fleet = group_fleet()
 
     # A leg maps to a SET of trips, not a row (APC-14) — 150 guests is three coaches, and
     # each is its own reservation with its own price, coverage and trip status. Ordered so
@@ -466,6 +520,11 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
         # After the trip type, never before: the rate-card minimum depends on it.
         if leg_id in vehicles:
             apply_vehicle_rate_card(res, vehicles[leg_id])
+        elif res.vehicle_id is None:
+            # A leg the agent has not picked a vehicle for yet — seed it from the same
+            # rule the public flow uses, sized to this copy's share. Only ever fills a
+            # blank: an agent's own choice is never overwritten by a later rebuild.
+            apply_vehicle_rate_card(res, suggest_vehicle(passengers, cap, fleet))
         _apply_trip_window(res)
         res.save()
         # Stops are cheap and fully derived; rewriting both is simpler and safer than
@@ -491,7 +550,7 @@ def rebuild_wedding_trips(lead: Lead, data: dict) -> WeddingRebuild:
             )
         # The agent's own count wins; absent one the coach maths decides, so a leg whose
         # guest list grew gains a coach without anyone having to notice.
-        count = counts.get(leg_id) or vehicle_runs(leg["pax"], cap)
+        count = counts.get(leg_id) or vehicle_runs(leg["pax"], cap, fleet)
         # Write the anchor first: `set_group_size` clones it for any new member, so the
         # copies it makes are already this leg's trip rather than last edit's.
         write(anchor, leg, leg_id=leg_id, passengers=leg["pax"], sort_order=order)

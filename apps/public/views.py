@@ -26,8 +26,9 @@ from apps.core.phone import to_e164
 from apps.integrations import calendly
 from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
-from apps.integrations.geocoding import merged_autocomplete
+from apps.integrations.geocoding import haversine_miles, merged_autocomplete
 from apps.leads.models import Lead
+from apps.leads.services import fleet_payload
 from apps.reservations import groups
 
 from .forms import (
@@ -333,18 +334,30 @@ def geocode(request):
 def _locationiq_venue_results(q: str) -> list[dict]:
     """LocationIQ results reshaped into venue-typeahead rows.
 
-    Only reached when the curated directory has nothing: a couple marrying at a barn we
-    have never run to must still get a real address, not a dead end. `id` is None, which
-    is what tells the form to post `venue_name` instead of `venue_id`.
+    A couple marrying at a barn we have never run to must still get a real address, not
+    a dead end. `id` is None, which is what tells the form to post `venue_name` instead
+    of `venue_id` — and is why `place_id` rides along: it is the only unique key these
+    rows have, and the typeahead’s `x-for` needs one (two towns share a hotel brand
+    often enough that keying on the name alone collides).
+
+    Ranked by distance from the service area, and only then cut to the result limit.
+    The viewbox is sent for the same reason the address typeahead sends it, but it is
+    NOT enough on its own: probed 2026-09-06, "Red Roof Inn Leesburg Va" comes back in
+    exactly the same order with and without it — Marion, Chesapeake and Virginia Beach
+    first, Fredericksburg tenth. Keeping the API's own first eight showed a Loudoun
+    couple nothing inside 200 miles. Sorting, not filtering: a destination wedding is
+    rare but real, and it should sit at the bottom rather than vanish.
     """
+    lat, lon = settings.ADDRESS_BIAS_CENTER
     rows = []
-    for item in locationiq_autocomplete(q)[:VENUE_RESULT_LIMIT]:
+    for item in locationiq_autocomplete(q, lat=lat, lon=lon):
         name = item.get("landmark_name") or item.get("line1") or item.get("display_name") or ""
         if not name:
             continue
         rows.append(
             {
                 "id": None,
+                "place_id": item.get("place_id") or "",
                 "name": name[:160],
                 "kind": "",
                 "address": (item.get("line1") or "")[:255],
@@ -361,7 +374,16 @@ def _locationiq_venue_results(q: str) -> list[dict]:
                 "source": "locationiq",
             }
         )
-    return rows
+    rows.sort(key=lambda r: _miles_from_service_area(r, lat, lon))
+    return rows[:VENUE_RESULT_LIMIT]
+
+
+def _miles_from_service_area(row: dict, lat: float, lon: float) -> float:
+    """Great-circle miles from the service-area centre; unlocatable rows sort last."""
+    try:
+        return haversine_miles(lat, lon, float(row["latitude"]), float(row["longitude"]))
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 def _strong_directory_matches(q: str, rows: list[dict]) -> int:
@@ -408,20 +430,23 @@ def venue_search(request):
 
     Throttled like `public:geocode` — it is an unauthenticated endpoint that can reach a
     paid API — but on its own counter (see `_geocode_throttle_exceeded`).
+
+    `kind` narrows the *directory* half only, and the merge rule is deliberately the
+    same for every field: a room block is almost never a hotel we curate, so one weak
+    curated hit ("Hom" -> Homewood Suites Leesburg) must not hide the Home2 the couple
+    actually booked. LocationIQ rows carry no kind — they never did, even back when a
+    kinded field only fell through on a completely empty directory.
     """
     if _geocode_throttle_exceeded(request, scope="venues"):
         return JsonResponse({"results": [], "degraded": False}, status=429)
     q = request.GET.get("q", "")
     kind = request.GET.get("kind", "")
     results = search_venues(q, kind)
-    if len(q.strip()) >= MIN_VENUE_QUERY:
-        if kind:
-            # The hotel / ceremony-site typeaheads stay single-kind: only reach for
-            # LocationIQ when the directory has nothing, and never mix in unkinded rows.
-            if not results:
-                results = _locationiq_venue_results(q)
-        elif _strong_directory_matches(q, results) < VENUE_STRONG_MATCH_TARGET:
-            results = _merge_locationiq_venues(q, results)
+    if (
+        len(q.strip()) >= MIN_VENUE_QUERY
+        and _strong_directory_matches(q, results) < VENUE_STRONG_MATCH_TARGET
+    ):
+        results = _merge_locationiq_venues(q, results)
     return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})
 
 
@@ -459,7 +484,15 @@ def wedding_plan(request, token: str = ""):
     return render(
         request,
         "public/wedding_plan.html",
-        {"form": form, "resume": _resume_state(lead) if token else None, "resume_token": token},
+        {
+            "form": form,
+            "resume": _resume_state(lead) if token else None,
+            "resume_token": token,
+            # The browser sizes runs off the same catalog the server does. Serialized
+            # rather than hardcoded in app.js so a capacity edited in Settings reaches
+            # the customer's itinerary on the next page load, with no deploy.
+            "fleet": fleet_payload(),
+        },
     )
 
 

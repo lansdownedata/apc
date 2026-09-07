@@ -1,10 +1,15 @@
 """Forward geocoding via LocationIQ — LA requires lat/lng on every address."""
 
+import hashlib
+import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from apps.reservations.models import Stop
@@ -52,6 +57,12 @@ def geocode_stop(stop: "Stop") -> tuple[Decimal, Decimal]:
 
 
 AUTOCOMPLETE_URL = "https://api.locationiq.com/v1/autocomplete"
+
+# Typeahead answers for the same prefix repeat constantly — one visitor backspacing, and
+# every visitor who types "hilton garden inn". Cached briefly, that is both the cheapest
+# request we can make and the one least likely to be rate-limited. Short enough that a
+# newly curated place shows up the same afternoon.
+AUTOCOMPLETE_CACHE_SECONDS = 15 * 60
 
 # LocationIQ `class` values that are NOT a point of interest — a road, a locality/neighbourhood,
 # or an administrative area. For these, `address.name` is just the street/place name, not a venue.
@@ -110,16 +121,38 @@ def autocomplete(q: str, lat=None, lon=None) -> list[dict]:
         params["viewbox"] = (
             f"{round(clon - r, 4)},{round(clat + r, 4)},{round(clon + r, 4)},{round(clat - r, 4)}"
         )
+    key = _autocomplete_cache_key(params)
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
     try:
         resp = requests.get(AUTOCOMPLETE_URL, params=params, timeout=TIMEOUT)
         if resp.status_code >= 400:
+            # NOT cached, and loud about 429 in particular: LocationIQ rate-limits from
+            # the second request inside a second (probed 2026-09-06), which a typist can
+            # outrun. Storing this empty list would hide a real place for the whole TTL,
+            # and returning it silently is what made the limit look like "no such hotel".
+            logger.warning(
+                "LocationIQ autocomplete %s for %r: %s",
+                resp.status_code,
+                q,
+                (resp.text or "")[:200],
+            )
             return []
         payload = resp.json()
         if not isinstance(payload, list):
             return []
-        return [_decompose(item) for item in payload if isinstance(item, dict)]
+        rows = [_decompose(item) for item in payload if isinstance(item, dict)]
     except (requests.RequestException, ValueError):
         return []
+    cache.set(key, rows, AUTOCOMPLETE_CACHE_SECONDS)
+    return rows
+
+
+def _autocomplete_cache_key(params: dict) -> str:
+    """Hashed over the full parameter set so a viewbox change is a different entry."""
+    raw = "|".join(f"{k}={params[k]}" for k in sorted(params) if k != "key")
+    return f"liq-ac:{hashlib.sha256(raw.encode()).hexdigest()[:32]}"
 
 
 # A LocationIQ aeroway result this close to an airport we already emitted is the same
@@ -128,7 +161,7 @@ AIRPORT_DEDUPE_MILES = 0.5
 _EARTH_RADIUS_MILES = 3958.8
 
 
-def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     from math import asin, cos, radians, sin, sqrt
 
     dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
@@ -144,7 +177,7 @@ def _duplicates_an_airport(result: dict, airports: list[dict]) -> bool:
     except (KeyError, TypeError, ValueError):
         return False
     for airport in airports:
-        distance = _haversine_miles(
+        distance = haversine_miles(
             lat, lon, float(airport["latitude"]), float(airport["longitude"])
         )
         if distance <= AIRPORT_DEDUPE_MILES:
@@ -165,3 +198,62 @@ def merged_autocomplete(q: str, lat=None, lon=None) -> list[dict]:
     if airports:
         results = [r for r in results if not _duplicates_an_airport(r, airports)]
     return airports + results
+
+
+# --- drive time (LocationIQ Directions) ------------------------------------------------
+
+DIRECTIONS_URL = "https://us1.locationiq.com/v1/directions/driving"
+# A route between two fixed points barely changes; the cost of a stale answer is a
+# drop-off estimate a few minutes out, so this is cached hard.
+DIRECTIONS_CACHE_SECONDS = 7 * 24 * 60 * 60
+# ~11 m of precision. Enough that two stops at the same address share a cache entry
+# without ever merging genuinely different addresses.
+_COORD_PRECISION = 4
+
+
+def drive_seconds(from_lat, from_lon, to_lat, to_lon) -> int | None:
+    """Driving time between two points in seconds, or None when we cannot say.
+
+    None — not an exception and not a guess — for every failure mode: no API key, a stop
+    with no coordinates, an HTTP error, a rate limit, or no drivable route. Callers derive
+    a drop-off from the vehicle's billed minimum in that case, so the feature going dark
+    degrades a trip's end time rather than blocking the save that carries it.
+    """
+    if not settings.LOCATIONIQ_API_KEY:
+        return None
+    try:
+        coords = [round(float(v), _COORD_PRECISION) for v in (from_lat, from_lon, to_lat, to_lon)]
+    except (TypeError, ValueError):
+        return None
+    a_lat, a_lon, b_lat, b_lon = coords
+    # LocationIQ takes lon,lat — the reverse of every other coordinate in this file.
+    path = f"{a_lon},{a_lat};{b_lon},{b_lat}"
+    key = f"liq-dir:{path}"
+    hit = cache.get(key)
+    if hit is not None:
+        return hit or None
+    try:
+        resp = requests.get(
+            f"{DIRECTIONS_URL}/{path}",
+            params={"key": settings.LOCATIONIQ_API_KEY, "overview": "false"},
+            timeout=TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            # Not cached: a 429 is transient and caching it would blank every drop-off
+            # derived for the next week.
+            logger.warning(
+                "LocationIQ directions %s for %s: %s",
+                resp.status_code,
+                path,
+                (resp.text or "")[:200],
+            )
+            return None
+        routes = (resp.json() or {}).get("routes") or []
+        duration = routes[0].get("duration") if routes else None
+        seconds = int(round(float(duration))) if duration is not None else None
+    except (requests.RequestException, ValueError, TypeError, AttributeError, IndexError):
+        return None
+    if seconds is None:
+        return None
+    cache.set(key, seconds, DIRECTIONS_CACHE_SECONDS)
+    return seconds

@@ -80,6 +80,15 @@
         {% for error in form.active.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
       </div>
 
+      <div>
+        <div class="flex items-center gap-2">
+          {{ form.group_transport }}
+          <label for="{{ form.group_transport.id_for_label }}" class="text-[12.5px] text-ink">Offer for group transport</label>
+        </div>
+        <p class="text-[11.5px] text-muted mt-1 ml-6">{{ form.group_transport.help_text }}</p>
+        {% for error in form.group_transport.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+      </div>
+
       <!-- footer -->
       <div class="flex items-center justify-between gap-2.5 pt-2">
         {% if target %}

@@ -6,6 +6,7 @@ from django import forms
 
 from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline, Airport, Venue
 from apps.leads.models import ServiceType
+from apps.leads.services import group_fleet
 from apps.reservations.models import Reservation
 
 from .wedding import GROUPS, MAX_LEGS, Site, vehicle_for
@@ -318,7 +319,10 @@ def _site(venue: Venue | None, typed_name: str | None) -> Site | None:
             address=venue.address,
             latitude=str(venue.latitude) if venue.latitude is not None else None,
             longitude=str(venue.longitude) if venue.longitude is not None else None,
-            vehicle_cap=venue.vehicle_cap,
+            # The place's own limit — a vehicle picked in Settings, else the seeded
+            # contract figure. None means it imposes none, which sizes runs against our
+            # largest coach rather than against a number nobody stated.
+            vehicle_cap=venue.own_limit,
             cap_note=venue.cap_note,
             venue_id=venue.pk,
         )
@@ -473,10 +477,11 @@ class WeddingRequestForm(forms.Form):
         ]
 
         # The recommendation is ours, not the browser's: re-derive every leg's vehicle
-        # from our own rule and the venue's own cap, whatever the client posted.
-        cap = venue.vehicle_cap if venue else None
+        # from our own catalog and the venue's own limit, whatever the client posted.
+        cap = venue.own_limit if venue else None
+        fleet = group_fleet()
         for leg in cleaned.get("legs_json") or []:
-            leg["vehicle"] = vehicle_for(leg["pax"], cap)
+            leg["vehicle"] = vehicle_for(leg["pax"], cap, fleet)
         cleaned["legs"] = cleaned.get("legs_json") or []
         return cleaned
 

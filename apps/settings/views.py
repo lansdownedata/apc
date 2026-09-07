@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import owner_admin_required
+from apps.addresses.models import Venue
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
@@ -20,6 +21,7 @@ from .forms import (
     PricingConfigForm,
     ServiceTypeForm,
     VehicleTypeForm,
+    VenueForm,
 )
 
 
@@ -43,6 +45,12 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             "page_title": "Settings",
             "vehicle_type_count": VehicleType.objects.filter(active=True).count(),
             "service_type_count": ServiceType.objects.filter(active=True).count(),
+            "poi_count": Venue.objects.filter(is_active=True).count(),
+            # Places that cannot take our largest coach — the number worth glancing at,
+            # because each one reshapes any run quoted to it.
+            "capped_poi_count": Venue.objects.filter(is_active=True)
+            .exclude(max_vehicle__isnull=True, vehicle_cap__isnull=True)
+            .count(),
             "renewal_type_count": RenewalType.objects.filter(active=True).count(),
             "fleet_attention_count": _fleet_attention_count(),
             "dispatch_monitor_on": DispatchAlertConfig.load().enabled,
@@ -299,3 +307,70 @@ def dispatch_alerts(request: HttpRequest) -> HttpResponse:
             "open_exceptions": DispatchException.objects.filter(resolved_at__isnull=True).count(),
         },
     )
+
+
+# --- points of interest -------------------------------------------------------------
+# The curated venue / hotel / ceremony-site directory the wedding typeaheads search
+# before falling through to LocationIQ. Managed here rather than in Django admin because
+# `max_vehicle` is an operational decision the office makes, not seed data.
+
+
+@login_required
+@owner_admin_required
+def poi_list(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "settings/poi_list.html",
+        {
+            "nav": "settings",
+            "page_title": "Points of Interest",
+            # select_related: the list renders every row's ceiling, which would otherwise
+            # be a query per POI.
+            "pois": Venue.objects.select_related("max_vehicle").order_by("name"),
+        },
+    )
+
+
+@login_required
+@owner_admin_required
+def poi_create(request: HttpRequest) -> HttpResponse:
+    form = VenueForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Point of interest added.")
+        return redirect("poi_list")
+    return render(
+        request,
+        "settings/poi_form.html",
+        {"nav": "settings", "page_title": "New point of interest", "form": form, "target": None},
+    )
+
+
+@login_required
+@owner_admin_required
+def poi_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    target = get_object_or_404(Venue, pk=pk)
+    form = VenueForm(request.POST or None, instance=target)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Point of interest updated.")
+        return redirect("poi_list")
+    return render(
+        request,
+        "settings/poi_form.html",
+        {"nav": "settings", "page_title": target.name, "form": form, "target": target},
+    )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def poi_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Deactivate, never delete: the directory feeds typeaheads on quotes already sent,
+    and `Stop` rows keep the name they were given, so a hard delete would quietly change
+    what a customer's own itinerary page says."""
+    target = get_object_or_404(Venue, pk=pk)
+    target.is_active = False
+    target.save(update_fields=["is_active", "updated_at"])
+    messages.success(request, f"{target.name} deactivated.")
+    return redirect("poi_list")

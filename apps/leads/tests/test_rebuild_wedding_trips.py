@@ -5,7 +5,7 @@ id and its dispatch assignment alive across an edit.
 """
 
 import json
-from datetime import timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -284,7 +284,12 @@ def test_switching_a_leg_back_to_transfer_drops_the_stale_hours(lead):
     res = _anchor(lead, "guests-in")
     assert res.trip_type == "transfer"
     assert res.hours == 0
-    assert res.dropoff_time is None
+    # The end is re-derived as a transfer's, not left holding the hourly one it had: a
+    # transfer now carries an end too (pickup + its billed minimum, or the drive if that
+    # is longer), so "no stale hours" means the 10-hour window is gone — not that the
+    # trip has no end at all.
+    assert res.dropoff_time != time(1, 0)
+    assert res.dropoff_time == time(16, 0)  # 3pm + the 1h transfer minimum
 
 
 def test_a_rebuild_that_posts_no_trip_type_leaves_the_leg_alone(lead):

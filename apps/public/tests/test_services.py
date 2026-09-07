@@ -53,7 +53,7 @@ def test_booking_resolves_timezone_from_pickup_coordinates(db):
 
 
 def test_a_public_wedding_builds_one_trip_per_coach(db):
-    """The couple is shown "2 × 56-passenger coach" on the itinerary; the quote the
+    """The couple is shown "2 × Motor Coach" on the itinerary; the quote the
     office picks up has to be those two coaches, not one trip for 105 people."""
     from apps.public.forms import WeddingRequestForm
     from apps.public.services import create_lead_from_wedding

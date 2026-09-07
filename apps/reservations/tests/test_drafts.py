@@ -805,3 +805,63 @@ def test_save_re_resolves_when_the_pickup_moves():
     )
     res.refresh_from_db()
     assert res.pickup_timezone == "America/New_York"
+
+
+# --- a transfer's derived drop-off ------------------------------------------------------
+# A transfer used to reach dispatch and the affiliate sheet with no end time at all.
+
+
+def test_a_transfer_derives_its_dropoff_from_the_billed_minimum(monkeypatch):
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: None)
+    data = drafts.parse_draft(_payload(hours=0, minHours=2))
+    assert data["dropoff_date"].isoformat() == "2026-07-04"
+    assert data["dropoff_time"].strftime("%H:%M") == "17:00"
+
+
+def test_a_long_drive_beats_the_minimum(monkeypatch):
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: 3 * 60 * 60)
+    data = drafts.parse_draft(_payload(hours=0, minHours=2))
+    assert data["dropoff_time"].strftime("%H:%M") == "18:00"
+
+
+def test_an_agents_own_dropoff_is_never_overwritten(monkeypatch):
+    """The derivation only ever fills a blank."""
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: 3 * 60 * 60)
+    data = drafts.parse_draft(
+        _payload(hours=0, minHours=2, dropoffDate="2026-07-04", dropoffTime="16:30")
+    )
+    assert data["dropoff_time"].strftime("%H:%M") == "16:30"
+
+
+def test_the_last_stop_shows_the_derived_end(monkeypatch):
+    """`_derive_endpoint_stop_times` runs after this, so the customer's itinerary carries
+    the end time against the drop-off address rather than leaving it blank."""
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: None)
+    data = drafts.parse_draft(_payload(hours=0, minHours=2))
+    assert data["stops"][-1]["scheduled_time"].strftime("%H:%M") == "17:00"
+
+
+def test_a_transfer_with_no_minimum_and_no_drive_time_keeps_a_blank_end(monkeypatch):
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: None)
+    data = drafts.parse_draft(_payload(hours=0, minHours=0))
+    assert data["dropoff_date"] is None
+    assert data["dropoff_time"] is None
+
+
+def test_a_derived_dropoff_is_flagged_as_an_estimate(monkeypatch):
+    """The flag is what keeps an estimate out of a GNet farm-out payload."""
+    monkeypatch.setattr("apps.integrations.geocoding.drive_seconds", lambda *a: None)
+    assert drafts.parse_draft(_payload(hours=0, minHours=2))["dropoff_estimated"] is True
+
+
+def test_an_agent_typed_dropoff_is_not_an_estimate():
+    data = drafts.parse_draft(
+        _payload(hours=0, minHours=2, dropoffDate="2026-07-04", dropoffTime="16:30")
+    )
+    assert data["dropoff_estimated"] is False
+
+
+def test_an_hourly_end_is_an_estimate_too():
+    """Derived from billed hours, not typed — same standing as a transfer's."""
+    data = drafts.parse_draft(_payload(tripType="hourly", hours=5, minHours=4))
+    assert data["dropoff_estimated"] is True

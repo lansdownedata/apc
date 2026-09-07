@@ -8,6 +8,16 @@
     field_id     — the input id the <label> points at
     placeholder  — input placeholder
 
+  350ms of debounce, not the 200 this started with: LocationIQ rate-limits from the
+  second request inside a second (probed 2026-09-06), and at 200ms a steady typist
+  outruns it — every 429 came back as an empty dropdown, indistinguishable from "we
+  have never heard of that hotel". Paired with the short server-side cache in
+  `integrations.geocoding.autocomplete`.
+
+  The `:key` walks id -> place_id -> name on purpose: LocationIQ rows all have a null
+  `id`, and two towns share a hotel brand often enough ("Hampton Inn", twice) that
+  keying on the name alone hands Alpine duplicate keys and wedges the whole x-for.
+
   A plain combobox rather than the Tom Select component: the options are fetched per
   keystroke from a paid endpoint and a free-typed answer is a legitimate result (we
   have never run to every barn in Loudoun), which is the opposite of what a select is
@@ -25,7 +35,7 @@
          data-1p-ignore role="combobox" aria-autocomplete="list"
          :aria-expanded="open.{{ field }}" aria-controls="{{ field_id }}-list"
          x-model="query.{{ field }}"
-         @input.debounce.200ms="search('{{ field }}')"
+         @input.debounce.350ms="search('{{ field }}')"
          @focus="results.{{ field }}.length && (open.{{ field }} = true)"
          @keydown.arrow-down.prevent="move('{{ field }}', 1)"
          @keydown.arrow-up.prevent="move('{{ field }}', -1)"
@@ -35,7 +45,7 @@
 
   <div id="{{ field_id }}-list" role="listbox" x-cloak x-show="open.{{ field }}"
        class="absolute left-0 right-0 z-30 mt-1.5 max-h-[17rem] overflow-y-auto rounded-xl bg-surface shadow-xl ring-1 ring-line">
-    <template x-for="(place, i) in results.{{ field }}" :key="place.id || place.name">
+    <template x-for="(place, i) in results.{{ field }}" :key="place.id || place.place_id || place.name">
       <button type="button" role="option" :aria-selected="active.{{ field }} === i"
               @mousedown.prevent="pick('{{ field }}', place)"
               @mousemove="active.{{ field }} = i"

@@ -26,6 +26,16 @@
       </p>
       <p class="text-[12.5px] text-muted mt-2">{{ service_type_count }} active</p>
     </a>
+    <a href="{% url 'poi_list' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-map-pin text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Points of interest</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        Venues, hotels and ceremony sites we run to — and the largest vehicle each one can take.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">{{ poi_count }} active{% if capped_poi_count %} · {{ capped_poi_count }} size-limited{% endif %}</p>
+    </a>
     <a href="{% url 'renewal_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
       <div class="flex items-center gap-2">
         <i class="ti ti-calendar-check text-[18px] text-gold"></i>

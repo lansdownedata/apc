@@ -10,11 +10,13 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, ServiceType
+from apps.leads.services import apply_vehicle_rate_card, group_fleet, suggest_vehicle
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations import groups
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Reservation, Stop
+from apps.reservations.services import derive_dropoff, reservation_drive_seconds
 
 from .wedding import (
     Site,
@@ -205,6 +207,7 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
     sites = wedding_sites(data)
     venue = data.get("venue")
     cap = venue.vehicle_cap if venue else None
+    fleet = group_fleet()
     stops = []
     order = 0
     for leg in legs:
@@ -212,10 +215,10 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
         # coaches the itinerary already showed the couple, linked so the office handles
         # them as one line. Below the single-class threshold this is one unlinked trip
         # and nothing about the old shape changes.
-        runs = vehicle_runs(leg["pax"], cap)
+        runs = vehicle_runs(leg["pax"], cap, fleet)
         group_key = groups.key_for(runs)
         for share in split_passengers(leg["pax"], runs):
-            reservation = Reservation.objects.create(
+            reservation = Reservation(
                 lead=lead,
                 sort_order=order,
                 # Which generated leg this is. The office's builder matches on it to
@@ -229,12 +232,32 @@ def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
                 pickup_time=leg["time"],
                 passengers=share,
             )
+            # Arrive priced, not blank. The vehicle is sized to *this* trip's share of the
+            # movement, so a split run gets the vehicle each coach actually needs rather
+            # than one sized for the whole group. It is a starting point an agent can
+            # change — nothing reaches the customer until they send the quote.
+            apply_vehicle_rate_card(reservation, suggest_vehicle(share, cap, fleet))
+            reservation.save()
             order += 1
             stops.append(wedding_stop(reservation, 0, leg["from"], leg.get("from_sub", ""), sites))
             stops.append(wedding_stop(reservation, 1, leg["to"], leg.get("to_sub", ""), sites))
     Stop.objects.bulk_create(stops)
-    for res in lead.reservations.all():
+    for res in lead.reservations.prefetch_related("stops"):
         res.refresh_pickup_timezone()
+        # Only now: the drive is measured across the route, and the route did not exist
+        # until the bulk_create above. Falls back to the vehicle's billed minimum whenever
+        # we cannot measure it — a leg ending at a "Getting-ready location" we have not
+        # confirmed has no coordinates to route between.
+        end = derive_dropoff(
+            res.pickup_date,
+            res.pickup_time,
+            billed_hours=res.billed_hours,
+            drive_seconds=reservation_drive_seconds(res),
+        )
+        if end is not None:
+            res.dropoff_date, res.dropoff_time = end
+            res.dropoff_estimated = True
+            res.save(update_fields=["dropoff_date", "dropoff_time", "dropoff_estimated"])
 
     venue_name = data["venue"].name if data.get("venue") else "venue TBD"
     Notification.notify(
@@ -310,7 +333,14 @@ def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
     resume_url = (
         f"{base_url.rstrip('/')}{reverse('public:wedding_resume', args=[make_wedding_token(lead)])}"
     )
-    reservations = lead.reservations.prefetch_related("stops").order_by("sort_order", "id")
+    # Movements, not trips (APC-14) — the same fold the thanks page uses. Iterating the
+    # reservations put a 105-guest run in the email twice, as "53 passengers" and
+    # "52 passengers", which is our coach maths and not something the couple asked for.
+    movements = groups.as_lines(
+        lead.reservations.select_related("vehicle")
+        .prefetch_related("stops")
+        .order_by("sort_order", "id")
+    )
     return send_html_email(
         to=email,
         subject=f"Your wedding transportation plan · {lead.quote_no}",
@@ -318,7 +348,7 @@ def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
         context={
             "lead": lead,
             "contact": lead.contact,
-            "reservations": reservations,
+            "movements": movements,
             "resume_url": resume_url,
             "company_name": settings.COMPANY_NAME,
             "company_phone": settings.COMPANY_PHONE,

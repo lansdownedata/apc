@@ -100,13 +100,19 @@ def test_wedding_flow_persists_answers_across_a_full_navigation(client):
     assert planner.count("sessionStorage") >= 3  # persist + restore + clear
 
 
-def test_the_vehicle_chip_is_gated_on_what_we_can_honour(client):
-    """APC-6 / A3.1 — a specific coach size only shows with a venue cap or a small group;
-    otherwise the customer sees the 'we'll confirm once we've checked the venue' line."""
+def test_the_vehicle_chip_always_names_a_vehicle_from_our_own_catalog(client):
+    """Supersedes the APC-6 hedge.
+
+    Every place now has an effective ceiling — its own limit from Settings, or our
+    largest coach — so there is no "we can't say yet" state left to render. What the chip
+    must never do again is name a class the client does not own, which is why the fleet
+    is serialized onto the page instead of hardcoded in app.js.
+    """
     html = client.get(PLAN_URL).content.decode()
-    assert "vehicleCertain(leg.pax)" in html
-    assert "confirm the exact vehicle once we" in html
-    assert "checked the venue" in html
+    assert "vehicleFor(leg.pax)" in html
+    assert "confirm the exact vehicle once we" not in html
+    # The catalog reached the browser, so vehicleFor has real names to choose from.
+    assert "Motor Coach" in html
 
 
 def test_the_page_carries_the_honeypot(client):
@@ -185,14 +191,36 @@ def test_the_thanks_page_lists_the_movements_and_the_reference(client):
     assert "2 vehicles" in body
 
 
+def test_the_thanks_headline_counts_the_movements_and_names_the_date(client):
+    """The headline rendered "We've got all 0 movements for ." in production.
+
+    The template asked for `reservations`, which the view has never put in the context
+    (it passes `movements`), so the count fell to 0 and the date to empty — the one
+    sentence on the page that tells a couple we actually received their day.
+    """
+    resp = client.post(PLAN_URL, _post(), follow=True)
+    # The count sits on its own template line, so match on collapsed whitespace rather
+    # than the raw body — otherwise the assertion passes on any markup at all.
+    body = " ".join(resp.content.decode().split())
+    assert "all 0 movements" not in body
+    # Two movements, whatever the coach maths splits them into (APC-14).
+    assert "all 2 movements" in body
+    day = timezone.localdate() + timedelta(days=300)
+    assert f"movements for {day:%A, %B} {day.day}, {day.year}" in body
+
+
 def test_the_plain_thanks_page_still_works_without_a_token(client):
     assert client.get("/bookings/thanks/").status_code == 200
 
 
 def test_a_forged_thanks_token_falls_back_to_the_plain_page(client):
     resp = client.get("/bookings/thanks/?w=not-a-real-token")
+    body = resp.content.decode()
     assert resp.status_code == 200
-    assert "Movements" not in resp.content.decode()
+    # Assert on the wedding variant's own headline, not on a label it happens to carry:
+    # a heading that gets reworded silently turns this into a test of nothing.
+    assert "with our dispatch team" not in body
+    assert "We will follow up within one business day" in body
 
 
 # --- resume (spec §7.4) ------------------------------------------------------------
@@ -300,3 +328,30 @@ def test_the_customer_never_sees_how_a_leg_bills(client):
     assert "trip_types_json" not in html
     assert "Bills as" not in html
     assert "leg-hours-" not in html
+
+
+def test_a_fresh_visit_seeds_a_real_null_resume_not_the_string(client):
+    """`json_attr` already renders None as `null`; a `default:'null'` in front of it
+    JSON-encodes the *word*, and `weddingPlanner`'s `opts.resume` becomes a truthy
+    string that every `saved && saved.x` read then silently misses."""
+    html = client.get("/weddings/plan/").content.decode()
+    assert "resume: null" in html
+    assert "resume: &quot;null&quot;" not in html
+
+
+def test_the_wedding_flow_uses_no_native_date_or_time_inputs(client):
+    """The same rule the reservation editor is already held to.
+
+    Chrome's `<input type="time">` renders its own unstyleable picker — bright blue
+    spinner columns in the middle of the charcoal/gold flow. The date step was already
+    on flatpickr; the times step and the itinerary's per-leg inputs were missed.
+    """
+    html = client.get(PLAN_URL).content.decode()
+    assert 'type="time"' not in html
+    assert 'type="date"' not in html
+    assert "data-flatpickr-time" in html
+
+
+def test_the_public_shell_serves_flatpickr_to_the_wedding_page(client):
+    html = client.get(PLAN_URL).content.decode()
+    assert "flatpickr.min.js" in html and "flatpickr.min.css" in html

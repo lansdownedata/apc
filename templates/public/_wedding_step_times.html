@@ -19,16 +19,31 @@
     you to check.
   </p>
 
+  {% comment %}
+    flatpickr, not `type="time"`: Chrome draws its own unstyleable picker for the native
+    input — bright blue spinner columns dropped into the middle of a charcoal/gold flow.
+    Same build and options as the portal's reservation editor and the booking widget.
+
+    Two things the altInput costs us, both handled in the x-effect. fpSync repaints the
+    visible sibling, which never sees Alpine's write to the (hidden) real input. And
+    fpDisabled carries `:disabled` across to it — flatpickr copies attributes once at
+    init, so without it "We don't have times yet" greys out an input nobody can see
+    while the live picker sits on top of it.
+  {% endcomment %}
   <div class="mt-6 grid gap-4 sm:grid-cols-2">
     <div>
       <label for="wp-ceremony-time" class="mb-1.5 block text-[12px] font-medium text-muted">Ceremony starts</label>
-      <input type="time" id="wp-ceremony-time" x-model="ceremonyTime" :disabled="timesTbd"
-             @change="legs = null" class="field disabled:opacity-50">
+      <input type="text" id="wp-ceremony-time" data-flatpickr-time placeholder="Select a time"
+             x-model="ceremonyTime" :disabled="timesTbd" @change="legs = null"
+             x-effect="fpSync($el, ceremonyTime), fpDisabled($el, timesTbd)"
+             class="field disabled:opacity-50">
     </div>
     <div>
       <label for="wp-end-time" class="mb-1.5 block text-[12px] font-medium text-muted">Venue requires everyone out by</label>
-      <input type="time" id="wp-end-time" x-model="endTime" :disabled="timesTbd"
-             @change="legs = null" class="field disabled:opacity-50">
+      <input type="text" id="wp-end-time" data-flatpickr-time placeholder="Select a time"
+             x-model="endTime" :disabled="timesTbd" @change="legs = null"
+             x-effect="fpSync($el, endTime), fpDisabled($el, timesTbd)"
+             class="field disabled:opacity-50">
     </div>
   </div>
 

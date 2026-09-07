@@ -109,10 +109,15 @@ def test_the_limoanywhere_booking_payload_never_carries_it(costed_lead):
     _assert_clean(str(payload), "the LA booking payload")
 
 
-def test_the_limoanywhere_rate_lookup_never_carries_it(costed_lead):
+def test_the_limoanywhere_rate_lookup_never_carries_it(costed_lead, monkeypatch):
     """The rate lookup goes out *before* the booking — it must be clean too."""
     from apps.integrations.la_sync import build_rate_lookup_payload
 
+    # This payload geocodes its stops; stub the coordinates rather than spending a
+    # billed LocationIQ lookup on a test about what the payload must not contain.
+    monkeypatch.setattr(
+        "apps.integrations.la_sync.geocoding.geocode_stop", lambda stop: (38.9, -77.4)
+    )
     reservation = costed_lead.reservations.first()
 
     _assert_clean(str(build_rate_lookup_payload(reservation)), "the LA rate-lookup payload")

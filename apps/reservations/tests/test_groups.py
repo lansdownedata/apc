@@ -248,6 +248,9 @@ def test_propagated_fields_are_pinned():
         "pickup_timezone",
         "dropoff_date",
         "dropoff_time",
+        # Propagates: every copy in a set runs the same route on the same schedule, so
+        # whether that end time was derived or typed is true of all of them at once.
+        "dropoff_estimated",
         "passengers",
         "rate",
         "hours",

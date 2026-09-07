@@ -2,6 +2,7 @@
 
 from django import forms
 
+from apps.addresses.models import Venue
 from apps.leads.models import ServiceType, VehicleType
 
 
@@ -21,6 +22,7 @@ class VehicleTypeForm(forms.ModelForm):
             "transfer_min_hours",
             "sort_order",
             "active",
+            "group_transport",
         ]
         widgets = {
             "name": forms.TextInput(attrs={"class": "field w-full"}),
@@ -51,6 +53,10 @@ class VehicleTypeForm(forms.ModelForm):
                 "Minimum billable hours for transfers (1 = the rate is the flat price)."
             ),
             "sort_order": "Lower numbers appear first.",
+            "group_transport": (
+                "Weddings and other group jobs size their runs from these. "
+                "Turn it off for limousines and anything else that is not a shuttle."
+            ),
         }
 
 
@@ -174,3 +180,64 @@ class NotificationConfigForm(forms.ModelForm):
             "order_confirmed_enabled",
             "order_cancelled_enabled",
         ]
+
+
+class VenueForm(forms.ModelForm):
+    """A point of interest — venue, hotel or ceremony site — and what it can take.
+
+    `max_vehicle` is the whole reason this screen exists: a place's limit is a vehicle
+    ("nothing bigger than a Minibus gets down our drive"), not a number someone has to
+    remember the seat count for. Left blank it means no limit of its own, and the picker
+    labels that option with our largest coach so the default reads as what it does.
+    """
+
+    class Meta:
+        model = Venue
+        fields = [
+            "name",
+            "kind",
+            "address",
+            "city",
+            "state",
+            "max_vehicle",
+            "cap_note",
+            "access_note",
+            "is_active",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "field w-full"}),
+            # Tom Select, never a bare <select> (CLAUDE.md) — `data-tom` is what
+            # `initTomSelects()` in static/js/app.js enhances on page load.
+            "kind": forms.Select(attrs={"class": "field", "data-tom": "", "data-search": "off"}),
+            "max_vehicle": forms.Select(
+                attrs={"class": "field", "data-tom": "", "data-search": "off"}
+            ),
+            "address": forms.TextInput(attrs={"class": "field w-full"}),
+            "city": forms.TextInput(attrs={"class": "field w-full"}),
+            "state": forms.TextInput(attrs={"class": "field w-full", "maxlength": 2}),
+            "cap_note": forms.TextInput(attrs={"class": "field w-full"}),
+            "access_note": forms.TextInput(attrs={"class": "field w-full"}),
+        }
+        help_texts = {
+            "cap_note": "Why the limit exists — read by whoever quotes the run.",
+            "access_note": "Anything a driver needs on arrival (gate code, entrance, dock).",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only shuttles are meaningful ceilings, and the catalog is the source of both the
+        # options and the default label — rename a vehicle in Settings and this follows.
+        from apps.leads.services import group_fleet
+
+        fleet = group_fleet()
+        self.fields["max_vehicle"].queryset = VehicleType.objects.filter(
+            pk__in=[v.pk for v in fleet]
+        ).order_by("capacity", "sort_order")
+        biggest = fleet[-1] if fleet else None
+        self.fields["max_vehicle"].empty_label = (
+            f"{biggest.name} ({biggest.capacity} passengers) — no limit" if biggest else "No limit"
+        )
+        self.fields["max_vehicle"].label = "Largest vehicle that fits"
+        self.fields["max_vehicle"].help_text = (
+            "Defaults to our largest coach. Pick a smaller vehicle when the site cannot take one."
+        )

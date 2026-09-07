@@ -32,27 +32,30 @@
       it replaces what we&rsquo;re holding, it doesn&rsquo;t start a second request.</span>
   </p>
 
-  <dl class="mt-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-2xl bg-surface2 px-4 py-4 ring-1 ring-line sm:px-5">
-    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Date</dt>
-    <dd class="text-[13px] font-medium text-ink" x-text="fmtDate(date)"></dd>
+  {% comment %}
+    The day's facts, as a rule-separated list rather than a filled panel — four labelled
+    values do not need a background and a ring to be read as a group.
+  {% endcomment %}
+  <dl class="mt-6 grid grid-cols-[5.5rem_1fr] gap-y-0 border-t border-line text-[13px]">
+    <dt class="border-b border-line py-2.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Date</dt>
+    <dd class="border-b border-line py-2.5 font-medium text-ink" x-text="fmtDate(date)"></dd>
 
-    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Venue</dt>
-    <dd class="text-[13px] font-medium text-ink">
+    <dt class="border-b border-line py-2.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Venue</dt>
+    <dd class="border-b border-line py-2.5 font-medium text-ink">
       <span x-text="venueLabel"></span>
-      <span x-cloak x-show="!sameSite" class="chip chip-ring ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+      <span x-cloak x-show="!sameSite" class="text-muted"
             x-text="`+ ceremony at ${ceremonyLabel}`"></span>
     </dd>
 
-    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Riding</dt>
-    <dd class="text-[13px] font-medium text-ink"
+    <dt class="border-b border-line py-2.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Riding</dt>
+    <dd class="border-b border-line py-2.5 font-medium text-ink"
         x-text="groupsMeta.filter(g => who.includes(g.key)).map(g => g.title).join(' · ')"></dd>
 
-    <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Legs</dt>
-    <dd class="text-[13px] font-medium text-ink">
+    <dt class="border-b border-line py-2.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Legs</dt>
+    <dd class="border-b border-line py-2.5 font-medium text-ink">
       <span x-text="legCount"></span>
       <span x-text="legCount === 1 ? 'movement' : 'movements'"></span>
-      <span x-cloak x-show="timesTbd"
-            class="chip chip-warn ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">times estimated</span>
+      <span x-cloak x-show="timesTbd" class="ml-1 text-muted">&middot; times estimated</span>
     </dd>
   </dl>
 
@@ -62,9 +65,9 @@
           class="absolute bottom-7 left-[6px] top-3 w-0.5 bg-gradient-to-b from-gold/55 to-gold/20"></span>
 
     <template x-for="leg in legs" :key="leg.id">
-      <div class="relative mb-3">
+      <div class="relative mb-5">
         <span aria-hidden="true"
-              class="absolute -left-8 top-[1.15rem] h-3.5 w-3.5 rounded-full border-[2.5px] bg-surface"
+              class="absolute -left-8 top-[0.6rem] h-3 w-3 rounded-full border-2 bg-surface"
               :class="leg.optional ? 'border-dashed border-muted/50' : 'border-gold'"></span>
 
         {% comment %} removed — kept visible so it can be put back {% endcomment %}
@@ -75,20 +78,34 @@
                   class="rounded text-[13px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Add back</button>
         </div>
 
+        {% comment %}
+          Weight and spacing, not boxes (CLAUDE.md): the ring, the shadow and the inner
+          divider are gone. The rail already groups the legs, so a card around each one
+          was a second container saying the same thing. An optional leg stays dashed —
+          that border carries meaning the others don't.
+        {% endcomment %}
         <div x-show="!leg.skip"
-             :class="leg.optional ? 'border border-dashed border-line' : 'ring-1 ring-line'"
-             class="rounded-2xl bg-surface p-4 shadow-sm">
+             :class="leg.optional ? 'rounded-2xl border border-dashed border-line p-4' : 'py-1.5'">
           <div class="flex flex-wrap items-center gap-2.5">
             <label class="sr-only" :for="`leg-time-${leg.id}`" x-text="`Pickup time for ${leg.title}`"></label>
-            <input type="time" :id="`leg-time-${leg.id}`" :value="leg.time"
+            {% comment %}
+              flatpickr, like every other time field in the app — the native picker's
+              blue spinner columns have no place on this screen. Inside an x-for, so it
+              enhances its own element (x-init) rather than waiting on DOMContentLoaded.
+              Still :value + @change rather than x-model: setLegTime does more than
+              assign. flatpickr writes "H:i" into the real input, the same string the
+              native control produced, so the handler is unchanged.
+            {% endcomment %}
+            <input type="text" data-flatpickr-time :id="`leg-time-${leg.id}`" :value="leg.time"
+                   x-init="initFlatpickr($el)" x-effect="fpSync($el, leg.time)"
                    @change="setLegTime(leg, $event.target.value)"
-                   class="rounded-lg bg-goldl px-2 py-1 font-mono2 text-[13px] font-semibold text-goldd ring-1 ring-gold/35 focus-gold">
-            <span class="min-w-[7rem] flex-1 text-[13.5px] font-semibold text-ink" x-text="leg.title"></span>
+                   class="w-[5.25rem] rounded-md border-0 bg-transparent px-1 py-0.5 font-mono2 text-[13px] font-semibold tabular-nums text-goldd transition-colors focus-gold hover:bg-goldl">
+            <span class="min-w-[7rem] flex-1 text-[14px] font-semibold tracking-tight text-ink" x-text="leg.title"></span>
             {% if office %}
             {% comment %} A leg that takes more than one vehicle is a linked SET of trips
                (APC-14) — badge it here so the office reads the convoy before it reads the
                picker. Office only: the couple gets the same fact in plain words on the
-               vehicle chip below ("2 × 56-passenger coach"), never a multiplier. {% endcomment %}
+               vehicle chip below ("2 × Motor Coach"), never a multiplier. {% endcomment %}
             <span x-cloak x-show="legVehicles(leg) > 1"
                   class="shrink-0 rounded px-1.5 py-0.5 font-mono2 text-[10.5px] font-semibold bg-gold text-charcoal"
                   x-text="`×${legVehicles(leg)}`"></span>
@@ -114,41 +131,41 @@
             </div>
           </div>
 
-          <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             {% comment %}
               Passengers is a real input, not a display: the guest count is the number a
               couple firms up last, and the resume link exists precisely so they can come
               back and change it. Editing it re-derives the vehicle chip beside it.
             {% endcomment %}
-            <span class="chip-ring inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+            <span class="inline-flex items-center gap-1 text-[12px] text-muted">
               <label class="sr-only" :for="`leg-pax-${leg.id}`" x-text="`Passengers on ${leg.title}`"></label>
               {% comment %} Fixed width, not one sized from the value: a `ch`-based width
                  clipped "12" in the mono face once the number input's own spinner took
                  its share. 2.25rem comfortably fits three digits. {% endcomment %}
               <input type="number" :id="`leg-pax-${leg.id}`" min="1" max="400" :value="leg.pax"
                      @change="setLegPax(leg, $event.target.value)"
-                     class="w-9 border-0 bg-transparent p-0 text-right font-mono2 text-[11px] font-semibold text-ink focus:outline-none">
+                     class="w-9 rounded border-0 bg-transparent p-0 text-right font-mono2 text-[12px] font-semibold tabular-nums text-ink transition-colors focus-gold hover:bg-surface2">
               passengers
             </span>
             {% comment %}
-              The coach size shows only when we can honour it (APC-6 / feedback A3.1) —
-              a venue cap on file, or a group small enough that the class is unambiguous.
-              Otherwise a neutral chip, with the "we'll confirm" line below the timeline.
+              The vehicle is always nameable now: every place either sets its own limit in
+              Settings or defaults to our largest coach, so there is no "we can't say yet"
+              state left (this replaces the APC-6 hedge). The name is one of the client's
+              own — never an invented class.
             {% endcomment %}
-            <span x-show="vehicleCertain(leg.pax)"
-                  class="chip-gold inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
-                  x-text="vehicleFor(leg.pax)"></span>
-            <span x-cloak x-show="!vehicleCertain(leg.pax)"
-                  class="chip-ring inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium text-muted">vehicle confirmed after venue check</span>
-            <span x-cloak x-show="leg.optional"
-                  class="chip-ring inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">optional</span>
+            {% comment %} Gold is the screen's one accent and the vehicle is the one
+               thing here we are recommending — so it is the only coloured thing in the
+               row. Everything else is neutral. {% endcomment %}
+            <span x-cloak x-show="vehicleFor(leg.pax)"
+                  class="text-[12px] font-semibold text-goldd" x-text="vehicleFor(leg.pax)"></span>
+            <span x-cloak x-show="leg.optional" class="text-[12px] text-muted">optional</span>
           </div>
 
           {% comment %}
             Office only, and gated by the include rather than by x-show: the public page
-            must not ship a picker no customer can ever see. The public flow never assigns
-            a vehicle on purpose — doing so would snapshot a rate card off a guess — but an
-            agent should, and the pick seeds from the recommendation shown beside it.
+            must not ship a picker no customer can ever see. The public flow now assigns a
+            vehicle up front (a blank one left the office a quote reading $0.00 on every
+            row), and this is where an agent overrides that choice.
             Tom Select, never a bare <select>; initialised on the wrapper because x-for
             clones this row.
           {% endcomment %}
@@ -247,13 +264,6 @@
     <span><b class="font-semibold" x-text="`${venueLabel} caps vehicles at ${venueCap} passengers.`"></b>
       Every run above is already sized to fit &mdash; that&rsquo;s why the larger groups show more
       than one coach.</span>
-  </p>
-
-  {% comment %} no cap on file and a coach-sized group — don't name a size we can't stand behind (APC-6) {% endcomment %}
-  <p x-cloak x-show="anyVehicleTbc"
-     class="mt-4 flex gap-2.5 rounded-xl bg-surface2 px-3.5 py-3 text-[12.5px] leading-relaxed text-muted ring-1 ring-line">
-    {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
-    <span>We&rsquo;ll confirm the exact vehicle once we&rsquo;ve checked the venue&rsquo;s access.</span>
   </p>
 
   {% comment %} Recommendations, never a number — quoting stays with the office. {% endcomment %}

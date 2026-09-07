@@ -205,3 +205,46 @@ def set_trip_status(
 
     notify_status_change(reservation, status)
     return event
+
+
+# --- trip window -----------------------------------------------------------------------
+
+
+def derive_dropoff(
+    pickup_date, pickup_time, *, billed_hours, drive_seconds: int | None
+) -> tuple | None:
+    """When a trip ends: pickup + whichever is longer, the billed minimum or the drive.
+
+    The minimum is what the customer is charged for; the drive is how long the vehicle is
+    actually gone. Quoting the shorter of the two would put an end time on the sheet that
+    the vehicle cannot make. Returns None when there is nothing to derive from — a blank
+    pickup, or neither a minimum nor a drive time — rather than an end equal to the start.
+    """
+    from datetime import datetime, timedelta
+
+    if not (pickup_date and pickup_time):
+        return None
+    minimum = timedelta(hours=float(billed_hours or 0))
+    drive = timedelta(seconds=drive_seconds or 0)
+    span = max(minimum, drive)
+    if not span:
+        return None
+    end = datetime.combine(pickup_date, pickup_time) + span
+    return end.date(), end.time()
+
+
+def reservation_drive_seconds(reservation) -> int | None:
+    """Drive time across a reservation's own route, or None when we cannot say.
+
+    Endpoint to endpoint: intermediate stops add dwell time we do not model, and a wedding
+    run's ends are the two the customer actually named. A stop with no coordinates — a
+    "Getting-ready location" we have not confirmed yet — yields None, which falls the
+    caller back to the billed minimum.
+    """
+    from apps.integrations import geocoding
+
+    stops = list(reservation.stops.order_by("sequence"))
+    if len(stops) < 2:
+        return None
+    first, last = stops[0], stops[-1]
+    return geocoding.drive_seconds(first.latitude, first.longitude, last.latitude, last.longitude)

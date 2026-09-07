@@ -11,15 +11,27 @@ import pytest
 from apps.public.wedding import (
     DEFAULT_CEREMONY_TIME,
     DEFAULT_END_TIME,
-    VEHICLE_CERTAIN_MAX,
+    FleetVehicle,
     Site,
     WeddingPlan,
     early_return_leg,
     generate_legs,
     hotel_label,
     vehicle_for,
-    vehicle_is_certain,
+    vehicle_runs,
 )
+
+# The catalog these tests reason against. Every recommendation is now a name from the
+# client's own Settings, so the fixture *is* the fleet — there are no hardcoded brackets
+# left to test against.
+FLEET = [
+    FleetVehicle(name="Luxury Sedan", capacity=3),
+    FleetVehicle(name="Luxury SUV", capacity=6),
+    FleetVehicle(name="Sprinter Van", capacity=14),
+    FleetVehicle(name="Minibus", capacity=20),
+    FleetVehicle(name="Mini Coach", capacity=24),
+    FleetVehicle(name="Motor Coach", capacity=56),
+]
 
 
 def plan(**over) -> WeddingPlan:
@@ -169,7 +181,7 @@ def test_the_early_return_leg_never_drops_below_twelve():
 
 def test_the_early_return_leg_is_optional_and_carries_no_early_time():
     """Opt-in only (APC-7): it lands on the end time, for the couple to pull earlier."""
-    leg = early_return_leg(plan(guest_count=105, end_time=time(23, 0)))
+    leg = early_return_leg(plan(guest_count=105, end_time=time(23, 0)), FLEET)
     assert leg.optional
     assert leg.why
     assert leg.id == "early-out"
@@ -178,74 +190,93 @@ def test_the_early_return_leg_is_optional_and_carries_no_early_time():
 
 
 # --- vehicle recommendation --------------------------------------------------------
+# Every answer below is a name out of FLEET. Nothing is hardcoded: change a capacity in
+# Settings and the boundaries move with it, which is the whole point of the rewrite —
+# the old brackets invented an "Executive mini coach" the client does not own.
 
 
 @pytest.mark.parametrize(
     "count,expected",
     [
-        (1, "Executive SUV"),
-        (6, "Executive SUV"),
-        (7, "Sprinter van"),
-        (14, "Sprinter van"),
-        (15, "Mini bus"),
-        (24, "Mini bus"),
-        (25, "Executive mini coach"),
-        (38, "Executive mini coach"),
-        (39, "Motorcoach"),
-        (56, "Motorcoach"),
-        (57, "2 × 56-passenger coach"),
-        (112, "2 × 56-passenger coach"),
-        (113, "3 × 56-passenger coach"),
+        (1, "Luxury Sedan"),
+        (3, "Luxury Sedan"),
+        (4, "Luxury SUV"),
+        (6, "Luxury SUV"),
+        (7, "Sprinter Van"),
+        (14, "Sprinter Van"),
+        (15, "Minibus"),
+        (20, "Minibus"),
+        (21, "Mini Coach"),
+        (24, "Mini Coach"),
+        (25, "Motor Coach"),
+        (56, "Motor Coach"),
+        (57, "2 × Motor Coach"),
+        (112, "2 × Motor Coach"),
+        (113, "3 × Motor Coach"),
     ],
 )
-def test_vehicle_boundaries_with_no_venue_cap(count, expected):
-    assert vehicle_for(count, None) == expected
+def test_the_smallest_vehicle_that_seats_the_run_is_named(count, expected):
+    assert vehicle_for(count, None, FLEET) == expected
 
 
-def test_a_venue_cap_resizes_the_run():
-    assert vehicle_for(105, 40) == "3 × 40-passenger coach"
+def test_every_recommendation_is_a_vehicle_we_actually_own():
+    """The regression that started this: the itinerary offered vehicles off a hardcoded
+    list, so a couple read "Executive mini coach" and the office had none."""
+    names = {v.name for v in FLEET}
+    for count in range(1, 250):
+        label = vehicle_for(count, None, FLEET)
+        assert label.split(" × ")[-1] in names
 
 
-def test_a_cap_above_our_biggest_coach_is_ignored():
-    assert vehicle_for(105, 300) == "2 × 56-passenger coach"
+def test_a_poi_limit_resizes_the_run():
+    """105 guests where nothing bigger than a Minibus fits is six Minibuses."""
+    assert vehicle_for(105, 20, FLEET) == "6 × Minibus"
 
 
-def test_a_cap_does_not_split_a_run_that_already_fits_a_smaller_vehicle():
-    """Under 39 the class, not the coach count, is the recommendation."""
-    assert vehicle_for(24, 40) == "Mini bus"
+def test_a_limit_above_our_biggest_coach_cannot_raise_it():
+    assert vehicle_for(105, 300, FLEET) == "2 × Motor Coach"
 
 
-def test_generated_legs_carry_the_venues_cap():
+def test_a_limit_does_not_split_a_run_that_already_fits_a_smaller_vehicle():
+    """A ceiling is a ceiling, not a mandate — 8 riders under a Minibus cap take a van."""
+    assert vehicle_for(8, 20, FLEET) == "Sprinter Van"
+
+
+def test_a_split_run_is_sized_per_vehicle_not_by_the_whole_headcount():
+    """60 riders under a 24-seat ceiling is three runs of 20 — so the vehicle named only
+    has to seat 20, and a Minibus does. Sizing off the whole 60 would name a Motor Coach
+    and send three of them."""
+    assert vehicle_for(60, 24, FLEET) == "3 × Minibus"
+
+
+def test_an_empty_catalog_names_nothing_rather_than_guessing():
+    assert vehicle_for(40, None, []) == ""
+    assert vehicle_runs(40, None, []) == 1
+
+
+def test_vehicle_for_names_the_count_vehicle_runs_computes():
+    """The chip a couple reads and the trips the office gets must never disagree about
+    how many vehicles turn up (APC-14)."""
+    for count in (1, 20, 57, 105, 240):
+        for cap in (None, 20, 56):
+            runs = vehicle_runs(count, cap, FLEET)
+            label = vehicle_for(count, cap, FLEET)
+            assert label.startswith(f"{runs} × ") if runs > 1 else " × " not in label
+
+
+def test_generated_legs_carry_the_pois_limit():
     legs = generate_legs(
-        plan(venue=Site(name="The Oak Barn at Loyalty", vehicle_cap=40), guest_count=105)
+        plan(venue=Site(name="The Oak Barn at Loyalty", vehicle_cap=20), guest_count=105),
+        fleet=FLEET,
     )
-    assert at(legs, "guests-in").vehicle == "3 × 40-passenger coach"
+    assert at(legs, "guests-in").vehicle == "6 × Minibus"
 
 
-# --- when we can show a specific vehicle to the customer (APC-6 / feedback A3.1) ---
-
-
-def test_a_small_group_is_certain_without_any_venue_cap():
-    """At or below the coach threshold the class is unambiguous — no venue bans it."""
-    assert vehicle_is_certain(VEHICLE_CERTAIN_MAX, None)
-    assert vehicle_is_certain(6, None)
-
-
-def test_a_coach_sized_group_is_uncertain_without_a_venue_cap():
-    """Above the threshold the answer is 'how many coaches' — only the cap settles that."""
-    assert not vehicle_is_certain(VEHICLE_CERTAIN_MAX + 1, None)
-    assert not vehicle_is_certain(220, None)
-
-
-def test_a_venue_cap_on_file_makes_any_size_certain():
-    assert vehicle_is_certain(220, 40)
-    assert vehicle_is_certain(VEHICLE_CERTAIN_MAX + 1, 56)
-
-
-def test_the_certainty_threshold_is_the_vehicle_for_coach_boundary():
-    """The cut-off must track `vehicle_for`: the last count that names one class."""
-    assert vehicle_for(VEHICLE_CERTAIN_MAX, None) == "Executive mini coach"
-    assert vehicle_for(VEHICLE_CERTAIN_MAX + 1, None) == "Motorcoach"
+def test_generated_legs_without_a_fleet_carry_no_recommendation():
+    """No catalog, no claim — the itinerary shows the movement and leaves the vehicle to
+    the office rather than inventing one."""
+    legs = generate_legs(plan(guest_count=105), fleet=[])
+    assert at(legs, "guests-in").vehicle == ""
 
 
 # --- "not sure yet" ----------------------------------------------------------------
@@ -300,36 +331,21 @@ def test_no_hotels_reads_as_to_be_confirmed():
 # --- APC-14: how many vehicles a leg actually needs -------------------------------------
 
 
-def test_vehicle_runs_is_one_for_anything_a_single_class_covers():
-    from apps.public.wedding import vehicle_runs
-
-    assert vehicle_runs(1, None) == 1
-    assert vehicle_runs(24, None) == 1
-    assert vehicle_runs(VEHICLE_CERTAIN_MAX, None) == 1
+def test_vehicle_runs_is_one_for_anything_a_single_vehicle_covers():
+    assert vehicle_runs(1, None, FLEET) == 1
+    assert vehicle_runs(24, None, FLEET) == 1
+    assert vehicle_runs(56, None, FLEET) == 1
 
 
-def test_vehicle_runs_divides_the_group_by_the_venues_cap():
-    from apps.public.wedding import vehicle_runs
-
-    assert vehicle_runs(105, 40) == 3
-    assert vehicle_runs(80, 40) == 2
+def test_vehicle_runs_divides_the_group_by_the_pois_limit():
+    assert vehicle_runs(105, 40, FLEET) == 3
+    assert vehicle_runs(80, 40, FLEET) == 2
 
 
 def test_vehicle_runs_never_seats_more_than_our_largest_coach():
-    from apps.public.wedding import vehicle_runs
-
-    assert vehicle_runs(105, 300) == 2  # a generous venue cap can't raise MAX_COACH_SEATS
-    assert vehicle_runs(105, None) == 2
-
-
-def test_vehicle_for_names_the_count_vehicle_runs_computes():
-    """The chip and the trips it generates must never disagree about how many coaches."""
-    from apps.public.wedding import vehicle_runs
-
-    for count, cap in ((105, 40), (105, None), (200, 56), (39, None)):
-        runs = vehicle_runs(count, cap)
-        label = vehicle_for(count, cap)
-        assert (f"{runs} × " in label) if runs > 1 else ("×" not in label)
+    """A generous POI limit cannot raise the fleet's own ceiling."""
+    assert vehicle_runs(105, 300, FLEET) == 2
+    assert vehicle_runs(105, None, FLEET) == 2
 
 
 def test_split_passengers_divides_a_group_evenly():

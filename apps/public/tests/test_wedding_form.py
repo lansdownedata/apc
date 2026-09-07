@@ -160,14 +160,14 @@ def test_the_vehicle_recommendation_is_re_derived_server_side():
     legs[0]["vehicle"] = "Unicorn carriage"
     form = WeddingRequestForm(_post(legs_json=json.dumps(legs)))
     assert form.is_valid(), form.errors
-    assert form.cleaned_data["legs"][0]["vehicle"] == "2 × 56-passenger coach"
+    assert form.cleaned_data["legs"][0]["vehicle"] == "2 × Motor Coach"
 
 
 def test_the_venues_cap_resizes_the_re_derived_recommendation():
     venue = VenueFactory(name="The Oak Barn at Loyalty", vehicle_cap=40)
     form = WeddingRequestForm(_post(venue_id=str(venue.pk)))
     assert form.is_valid(), form.errors
-    assert form.cleaned_data["legs"][0]["vehicle"] == "3 × 40-passenger coach"
+    assert form.cleaned_data["legs"][0]["vehicle"] == "3 × Motor Coach"
 
 
 def test_an_unknown_venue_id_is_rejected():

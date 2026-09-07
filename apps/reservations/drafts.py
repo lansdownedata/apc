@@ -257,7 +257,14 @@ def _derive_endpoint_stop_times(data: dict) -> None:
 
 
 def _derive_dropoff_and_hours(data: dict, trip_type: str) -> None:
-    """Hourly: drop-off = pickup + billed hours. Transfer: only sanity-check the times.
+    """When the trip ends.
+
+    Hourly: pickup + billed hours, as it always has been.
+
+    Transfer: pickup + whichever is longer, the billed minimum or the actual drive — but
+    only when the agent left the drop-off blank. A transfer used to carry no end time at
+    all, which left dispatch and the affiliate trip sheet with an open-ended job; the
+    minimum alone would promise an end a long drive cannot make.
 
     `hours` is the agent's override and is stored exactly as posted for both types; a
     transfer no longer derives it from drop-off − pickup (it is priced at the rate-card
@@ -271,10 +278,48 @@ def _derive_dropoff_and_hours(data: dict, trip_type: str) -> None:
         if pd and pt and billed:
             end = datetime.combine(pd, pt) + timedelta(hours=float(billed))
             data["dropoff_date"], data["dropoff_time"] = end.date(), end.time()
-    else:
-        dd, dt_ = data.get("dropoff_date"), data.get("dropoff_time")
-        if pd and pt and dd and dt_ and datetime.combine(dd, dt_) <= datetime.combine(pd, pt):
+            # Derived from the billed hours, not typed — same standing as a transfer's.
+            data["dropoff_estimated"] = True
+        return
+
+    dd, dt_ = data.get("dropoff_date"), data.get("dropoff_time")
+    if dd and dt_:
+        if pd and pt and datetime.combine(dd, dt_) <= datetime.combine(pd, pt):
             raise DraftError("drop-off must be after pickup")
+        data["dropoff_estimated"] = False
+        return
+    _derive_transfer_dropoff(data)
+
+
+def _derive_transfer_dropoff(data: dict) -> None:
+    """Fill a transfer's blank drop-off from the minimum and the drive.
+
+    The drive is looked up from the route's two endpoints. It is a cached network call, so
+    it costs nothing on a repeat of a route we have seen, and it returns None rather than
+    raising whenever it cannot answer — no key configured, no coordinates on the stops, a
+    rate limit — in which case the billed minimum alone decides.
+    """
+    from apps.integrations import geocoding
+
+    from .services import derive_dropoff
+
+    stops = data.get("stops") or []
+    drive = None
+    if len(stops) >= 2:
+        first, last = stops[0], stops[-1]
+        drive = geocoding.drive_seconds(
+            first.get("latitude"),
+            first.get("longitude"),
+            last.get("latitude"),
+            last.get("longitude"),
+        )
+    billed = data["hours"] if data["hours"] > 0 else data["min_hours"]
+    end = derive_dropoff(
+        data.get("pickup_date"), data.get("pickup_time"), billed_hours=billed, drive_seconds=drive
+    )
+    if end is not None:
+        data["dropoff_date"], data["dropoff_time"] = end
+        data["dropoff_estimated"] = True
 
 
 @transaction.atomic

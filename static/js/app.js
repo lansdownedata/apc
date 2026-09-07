@@ -1701,6 +1701,19 @@ function fpSync(el, value) {
 }
 window.fpSync = fpSync;
 
+/* The same altInput divergence, for the disabled state. flatpickr copies the input's
+ * attributes once at init, so a later `:disabled` lands on the hidden real input while
+ * the visible altInput stays live and still opens the picker. The altInput inherits the
+ * original's className, so `disabled:opacity-50` greys it out on its own — nothing to
+ * toggle here but the property itself. */
+function fpDisabled(el, disabled) {
+  const fp = el && el._flatpickr;
+  if (!fp || !fp.altInput) return;
+  fp.altInput.disabled = !!disabled;
+  if (disabled) fp.close();
+}
+window.fpDisabled = fpDisabled;
+
 /** "15:30" → "3:30 PM". Empty for anything unparseable. */
 function time12(hhmm) {
   const [h, m] = String(hhmm || "").split(":").map(Number);
@@ -2459,6 +2472,9 @@ function weddingPlanner(opts = {}) {
     // saved plan at all, and it is just as much the office's builder.
     portal: !!opts.portal,
     vehicleOptions: opts.vehicleOptions || [],
+    /* The client's group-transport catalog: [{name, capacity}], smallest first. Sorted
+     * here rather than trusted from the payload so every lookup below can assume it. */
+    fleet: [...(opts.fleet || [])].sort((a, b) => a.capacity - b.capacity),
 
     step: 0,
     date: (saved && saved.wedding_date) || "",
@@ -2669,23 +2685,28 @@ function weddingPlanner(opts = {}) {
       const t = (((h * 60 + m + mins) % 1440) + 1440) % 1440;
       return `${this.pad(Math.floor(t / 60))}:${this.pad(t % 60)}`;
     },
+    /* Mirror of wedding.py:vehicle_for. There are no size brackets here and none there:
+     * both read the client's own catalog, handed in as `fleet` (name + capacity, smallest
+     * first). That is what stopped the itinerary offering an "Executive mini coach" the
+     * client has never owned — rename a vehicle in Settings and this follows. */
     vehicleFor(count) {
-      const cap = (this.venue && this.venue.vehicle_cap) || null;
-      const limit = Math.min(cap || 56, 56);
-      if (count <= 6) return "Executive SUV";
-      if (count <= 14) return "Sprinter van";
-      if (count <= 24) return "Mini bus";
-      if (count <= 38) return "Executive mini coach";
+      const fleet = this.fleet;
+      if (!fleet.length) return "";
       const runs = this.vehicleRuns(count);
-      return runs <= 1 ? "Motorcoach" : `${runs} × ${limit}-passenger coach`;
+      const perRun = Math.ceil(count / runs);
+      const pick = fleet.find((v) => v.capacity >= perRun) || fleet[fleet.length - 1];
+      return runs <= 1 ? pick.name : `${runs} × ${pick.name}`;
     },
     /* Mirror of wedding.py:vehicle_runs — the integer behind vehicleFor's "3 × …", so the
      * chip a couple reads and the trips the office gets can never disagree about how many
-     * coaches are turning up (APC-14). Change one, change the other. */
+     * vehicles are turning up (APC-14). Change one, change the other. */
     vehicleRuns(count) {
-      if (count <= 38) return 1;
-      const cap = (this.venue && this.venue.vehicle_cap) || null;
-      return Math.max(1, Math.ceil(count / Math.min(cap || 56, 56)));
+      const fleet = this.fleet;
+      if (!fleet.length) return 1;
+      const ceiling = fleet[fleet.length - 1].capacity;
+      const limit = Math.min(this.venueCap || ceiling, ceiling);
+      if (limit <= 0) return 1;
+      return Math.max(1, Math.ceil(count / limit));
     },
     /* How many vehicles this leg runs: the agent's own number when they set one, else
      * whatever the headcount needs. Office only — the public flow never asks. */
@@ -2697,15 +2718,6 @@ function weddingPlanner(opts = {}) {
       // Typing the derived number back clears the override rather than freezing it, so a
       // leg whose guest list grows later still gains a coach on its own.
       leg.vehicles = count === this.vehicleRuns(leg.pax) ? null : count;
-    },
-    /* Mirror of wedding.py:vehicle_is_certain — show a specific coach size only when the
-     * venue's cap is on file or the group is small enough (<= 38) that the class is
-     * unambiguous. Otherwise the itinerary shows the "we'll confirm" line (APC-6). */
-    vehicleCertain(count) {
-      return this.venueCap !== null || count <= 38;
-    },
-    get anyVehicleTbc() {
-      return (this.legs || []).some((l) => !l.skip && !this.vehicleCertain(l.pax));
     },
     shortName(place) {
       const suffix = ` ${place.city || ""}`;

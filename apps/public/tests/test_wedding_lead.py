@@ -99,9 +99,15 @@ def test_a_directory_venue_puts_its_address_on_the_stop():
     assert stop.latitude is not None
 
 
-def test_no_vehicle_is_assigned_programmatically():
-    """Assigning one would snapshot a rate card off a guess — a human picks it."""
-    assert all(r.vehicle_id is None for r in _lead().reservations.all())
+def test_every_trip_is_assigned_a_vehicle_up_front():
+    """Reverses the original "a human picks it" rule.
+
+    Leaving it unset avoided snapshotting a rate off a guess, but nothing filled it in
+    afterwards, so the office opened a ten-trip wedding quoting $0.00 with a picker to
+    work through on every row. The recommendation is a starting point an agent overrides;
+    the customer sees nothing until the agent sends the quote.
+    """
+    assert all(r.vehicle_id is not None for r in _lead().reservations.all())
 
 
 def test_the_office_gets_one_notification_naming_the_movement_count():
@@ -130,7 +136,7 @@ def test_the_notes_name_the_venues_cap():
 def test_the_notes_list_every_movement_with_its_recommendation():
     notes = _lead().notes
     assert "Legs: 3:00 PM Guests to the ceremony (105p" in notes
-    assert "2 × 56-passenger coach" in notes
+    assert "2 × Motor Coach" in notes
 
 
 def test_the_notes_flag_a_multi_coach_guest_run_for_agent_review():

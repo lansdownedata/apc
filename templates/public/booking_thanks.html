@@ -19,42 +19,61 @@
   </div>
 
   {% if wedding_lead %}
-    <h1 class="mt-5 text-center font-display text-[28px] font-semibold tracking-tight text-ink">
+    {% comment %}
+      Hierarchy through weight and spacing rather than boxes (CLAUDE.md): the day itself
+      is the content, so the movements read as a timeline, not as rows in a panel. The
+      reference and contact sit under it as quiet metadata — they matter on the second
+      read, not the first.
+    {% endcomment %}
+    <h1 class="mt-5 text-center font-display text-[30px] font-semibold tracking-tight text-ink">
       Your day is with our dispatch team.
     </h1>
     <p class="mx-auto mt-3 max-w-lg text-center text-[15px] leading-relaxed text-muted">
       We&rsquo;ve got all
-      {{ reservations|length }} movement{{ reservations|length|pluralize }} for
-      {{ reservations.0.pickup_date|date:"l, F j, Y" }}. You&rsquo;ll have a full quote within one
-      business day{% if wedding_lead.contact.email %} — and a link to change anything before then{% endif %}.
+      {{ movements|length }} movement{{ movements|length|pluralize }} for
+      {{ movements.0.reservation.pickup_date|date:"l, F j, Y" }}. You&rsquo;ll have a full quote within one
+      business day{% if wedding_lead.contact.email %} &mdash; and a link to change anything before then{% endif %}.
     </p>
 
-    <dl class="mt-8 grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 rounded-2xl bg-surface2 px-5 py-5 ring-1 ring-line">
-      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Reference</dt>
-      <dd class="font-mono2 text-[13px] font-semibold text-ink">{{ wedding_lead.quote_no }}</dd>
-
-      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Contact</dt>
-      <dd class="text-[13px] text-ink">
-        {{ wedding_lead.contact.name }}{% if wedding_lead.contact.email %} · {{ wedding_lead.contact.email }}{% endif %}
-      </dd>
-
-      <dt class="pt-0.5 font-mono2 text-[11.5px] uppercase tracking-[0.06em] text-muted">Movements</dt>
-      <dd class="space-y-1.5 text-[13px] text-ink">
+    <div class="mt-10">
+      <h2 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Your day</h2>
+      <ol class="mt-4 border-t border-line">
         {% for movement in movements %}{% with res=movement.reservation %}
-        <div class="flex flex-wrap items-baseline gap-x-2">
-          <span class="font-mono2 font-semibold">{{ res.pickup_time|time:"g:i A" }}</span>
-          <span>{{ res.stops.all.0.name }} &rarr; {{ res.stops.all.1.name }}</span>
-          <span class="text-[11.5px] text-muted">{{ movement.passengers }} passenger{{ movement.passengers|pluralize }}{% if movement.is_group %} &middot; {{ movement.size }} vehicles{% endif %}</span>
-        </div>
+        <li class="flex gap-4 border-b border-line py-3.5 sm:gap-6">
+          <span class="w-[4.75rem] shrink-0 pt-px font-mono2 text-[12.5px] font-semibold tabular-nums text-goldd">
+            {{ res.pickup_time|time:"g:i A" }}
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-[13.5px] font-medium leading-snug text-ink">
+              {{ res.stops.all.0.name }}
+              <span class="text-muted">&rarr;</span>
+              {{ res.stops.all.1.name }}
+            </span>
+            <span class="mt-0.5 block text-[12px] text-muted">
+              {{ movement.passengers }} passenger{{ movement.passengers|pluralize }}{% if movement.is_group %} &middot; {{ movement.size }} vehicles{% endif %}{% if res.vehicle %} &middot; {{ res.vehicle.name }}{% endif %}
+            </span>
+          </span>
+        </li>
         {% endwith %}{% endfor %}
-      </dd>
+      </ol>
+    </div>
+
+    <dl class="mt-8 flex flex-wrap gap-x-10 gap-y-3 text-[12.5px]">
+      <div>
+        <dt class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Reference</dt>
+        <dd class="mt-1 font-mono2 font-semibold text-ink">{{ wedding_lead.quote_no }}</dd>
+      </div>
+      <div>
+        <dt class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Contact</dt>
+        <dd class="mt-1 text-ink">{{ wedding_lead.contact.name }}{% if wedding_lead.contact.email %} &middot; {{ wedding_lead.contact.email }}{% endif %}</dd>
+      </div>
     </dl>
 
-    <p class="mt-6 text-center text-[13.5px] text-muted">
+    <p class="mt-10 text-center text-[13.5px] text-muted">
       Need us sooner?
       {% include "public/_call_cta.html" with class="rounded font-semibold text-ink focus-gold transition-colors hover:text-gold" label="Schedule a call" fallback_label="Call (202) 424-2600" %}
     </p>
-    <div class="mt-8 text-center">
+    <div class="mt-6 text-center">
       <a href="/" class="btn-gold focus-gold inline-flex rounded-full px-5 py-2.5 text-[13.5px] font-semibold">Back to home</a>
     </div>
   {% else %}

@@ -23,7 +23,7 @@
   page degrades to a long form rather than to nothing.
 {% endcomment %}
 <section class="mx-auto w-full px-4 py-10 sm:px-6 sm:py-14"
-         x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|default:'null'|json_attr }} })"
+         x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|json_attr }}, fleet: {{ fleet|json_attr }} })"
          :class="stepName === 'itinerary' ? 'max-w-3xl' : 'max-w-2xl'">
 
   <form method="post" @submit="onSubmit($event)" class="contents">

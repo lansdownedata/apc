@@ -3,10 +3,11 @@
 Your wedding day is with our dispatch team. Here's what we have:
 
   REFERENCE   {{ lead.quote_no }}
-{% for res in reservations %}
-  {{ res.pickup_time|time:"g:i A" }}  {{ res.stops.all.0.name }} -> {{ res.stops.all.1.name }} ({{ res.passengers }} passengers){% endfor %}
+{% for m in movements %}{% with res=m.reservation %}
+  {{ res.pickup_time|time:"g:i A" }}  {{ res.stops.all.0.name }} -> {{ res.stops.all.1.name }}
+              {{ m.passengers }} passenger{{ m.passengers|pluralize }}{% if res.vehicle %} · {{ res.vehicle.name }}{% endif %}{% if m.is_group %} ×{{ m.size }}{% endif %}{% endwith %}{% endfor %}
 
-We'll price all {{ reservations|length }} movement{{ reservations|length|pluralize }} together and come back within one business day.
+We'll price all {{ movements|length }} movement{{ movements|length|pluralize }} together and come back within one business day.
 
 Plans still firming up? Open your itinerary and change the guest count, the times, or
 any pickup — nothing is locked in:

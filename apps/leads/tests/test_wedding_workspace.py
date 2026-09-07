@@ -71,7 +71,12 @@ def test_an_ordinary_lead_has_no_wedding_state(client, agent):
 
 
 def test_the_saved_state_carries_the_vehicle_the_agent_assigned(client, agent):
-    """Reopening the builder shows what was chosen, not the recommendation again."""
+    """Reopening the builder shows what was chosen, not the recommendation again.
+
+    A leg the agent did not choose for is *seeded* rather than left blank — that is the
+    fix for the ten-trip $0.00 quote — but a seeded leg must never overwrite an explicit
+    pick, which is what this pins.
+    """
     from apps.leads.factories import VehicleTypeFactory
 
     lead = LeadFactory()
@@ -83,7 +88,9 @@ def test_the_saved_state_carries_the_vehicle_the_agent_assigned(client, agent):
     state = client.get(reverse("lead_detail", args=[lead.pk])).context["wedding_state"]
     legs = {leg["id"]: leg for leg in state["legs"]}
     assert legs["guests-in"]["vehicle_id"] == vehicle.pk
-    assert legs["final-out"]["vehicle_id"] is None
+    # Seeded, not blank — and not the agent's coach either, since it is sized to its own
+    # leg rather than copied from another one.
+    assert legs["final-out"]["vehicle_id"] is not None
 
 
 def test_the_workspace_summarises_the_day(client, agent):
@@ -245,3 +252,21 @@ def test_the_builder_offers_the_trip_type_control(client, agent):
     assert "setLegTripType(leg, 'hourly')" in body
     assert 'name="trip_types_json"' in body
     assert 'name="hours_json"' in body
+
+
+def test_the_builders_pickers_survive_escape_inside_the_modal():
+    """The times step is flatpickr now, and the builder is a modal.
+
+    flatpickr's own Escape handler closes its panel before any window listener sees the
+    key, so without the fpJustClosed() guard a couple nudging the ceremony time and
+    pressing Escape would lose the whole builder. The guard predates the time pickers
+    (the date step had one); this pins it now that two more fields depend on it.
+    """
+    from pathlib import Path
+
+    builder = Path("templates/leads/_wedding_builder.html").read_text()
+    times = Path("templates/public/_wedding_step_times.html").read_text()
+    assert "fpJustClosed()" in builder
+    assert "data-flatpickr-time" in times
+    # The attribute on a real element — the rule itself is quoted in a comment above it.
+    assert '<input type="time"' not in times

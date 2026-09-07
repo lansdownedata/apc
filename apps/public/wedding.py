@@ -21,6 +21,7 @@ one and change the other.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, time
 
@@ -41,17 +42,6 @@ HOP_DELAY_MINUTES = 45
 # default and carries no suggested time.
 EARLY_RETURN_SHARE = 0.4
 EARLY_RETURN_FLOOR = 12
-
-# Our largest coach. A venue may cap lower; it can never raise this.
-MAX_COACH_SEATS = 56
-
-# The last headcount `vehicle_for` answers with a single class ("Executive mini coach").
-# At or below it the recommendation is safe to show a customer with no venue cap on file —
-# nothing we run bans a mini coach. Above it the answer is "how many coaches", which only
-# the venue's own limit settles, so we don't name a size without that limit (APC-6). The
-# itinerary then shows "We'll confirm the exact vehicle once we've checked the venue's
-# access" (`_wedding_itinerary.html`) instead of a coach size.
-VEHICLE_CERTAIN_MAX = 38
 
 GROUP_GUESTS = "guests"
 GROUP_PARTY = "party"
@@ -76,6 +66,21 @@ EXIT_LABEL = "Hotel or home"
 EXIT_SUB = "we'll confirm with you"
 VENUE_FALLBACK = "Your venue"
 CEREMONY_FALLBACK = "Ceremony site"
+
+
+@dataclass(frozen=True)
+class FleetVehicle:
+    """One bookable class, as the recommender sees it: a name and how many it seats.
+
+    Structurally what `leads.VehicleType` already is, so callers pass their queryset rows
+    straight in — this module stays pure and imports no models. The catalog is the single
+    source of every vehicle answer: there are no size brackets in this file, and none in
+    `weddingPlanner()` either. Rename a vehicle or change a capacity in Settings and the
+    customer's itinerary follows on the next page load.
+    """
+
+    name: str
+    capacity: int
 
 
 @dataclass(frozen=True)
@@ -169,37 +174,47 @@ def shift(anchor: time, minutes: int) -> time:
     return time(total // 60, total % 60)
 
 
-def vehicle_for(count: int, cap: int | None = None) -> str:
-    """The vehicle class we'd send for `count` riders, capped by the venue's own limit.
+def _by_size(fleet: Sequence[FleetVehicle]) -> list[FleetVehicle]:
+    """Smallest first — the order every pick below depends on."""
+    return sorted(fleet, key=lambda v: v.capacity)
 
-    A *recommendation*, never a quote — the itinerary screen says so out loud. Below 39
-    the class is the answer and a cap is irrelevant (no venue bans a mini bus); above it
-    the answer is how many coaches, and the cap is what decides that.
+
+def vehicle_for(count: int, cap: int | None = None, fleet: Sequence[FleetVehicle] = ()) -> str:
+    """The vehicle we'd send for `count` riders, capped by what the pickup point can take.
+
+    A *recommendation*, never a quote — the itinerary screen says so out loud. The answer
+    is always a name from the client's own catalog: "Motor Coach", or "3 × Minibus" when
+    one vehicle cannot carry the group. Empty string when the catalog holds no group
+    vehicle at all, which the itinerary renders as no claim rather than a guess.
+
+    `cap` is a ceiling, not a mandate: eight riders at a Minibus-capped venue still take a
+    van. And a split run is sized *per vehicle* — 60 riders across two is 30 each, so the
+    vehicle named only has to seat 30.
     """
-    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
-    if count <= 6:
-        return "Executive SUV"
-    if count <= 14:
-        return "Sprinter van"
-    if count <= 24:
-        return "Mini bus"
-    if count <= VEHICLE_CERTAIN_MAX:
-        return "Executive mini coach"
-    runs = vehicle_runs(count, cap)
-    return "Motorcoach" if runs <= 1 else f"{runs} × {limit}-passenger coach"
+    fleet = _by_size(fleet)
+    if not fleet:
+        return ""
+    runs = vehicle_runs(count, cap, fleet)
+    per_run = math.ceil(count / runs) if runs else count
+    pick = next((v for v in fleet if v.capacity >= per_run), fleet[-1])
+    return pick.name if runs <= 1 else f"{runs} × {pick.name}"
 
 
-def vehicle_runs(count: int, cap: int | None = None) -> int:
+def vehicle_runs(count: int, cap: int | None = None, fleet: Sequence[FleetVehicle] = ()) -> int:
     """How many vehicles `count` riders actually need — the number behind `vehicle_for`.
 
-    `vehicle_for` says "3 × 40-passenger coach" as prose; this is the 3, so the chip a
-    couple reads and the trips the builder generates (APC-14) can never disagree about
-    how many coaches are turning up. Below the single-class threshold the answer is
-    always one vehicle, whatever the cap: no venue bans a mini coach.
+    `vehicle_for` says "3 × Minibus" as prose; this is the 3, so the chip a couple reads
+    and the trips the builder generates (APC-14) can never disagree about how many
+    vehicles are turning up. The ceiling is our own largest group vehicle: a POI may cap
+    lower, it can never raise it.
     """
-    if count <= VEHICLE_CERTAIN_MAX:
+    fleet = _by_size(fleet)
+    if not fleet:
         return 1
-    limit = min(cap or MAX_COACH_SEATS, MAX_COACH_SEATS)
+    ceiling = fleet[-1].capacity
+    limit = min(cap or ceiling, ceiling)
+    if limit <= 0:
+        return 1
     return max(1, math.ceil(count / limit))
 
 
@@ -216,18 +231,6 @@ def split_passengers(total: int, runs: int) -> list[int]:
         return [total]
     base, extra = divmod(total, runs)
     return [base + 1] * extra + [base] * (runs - extra)
-
-
-def vehicle_is_certain(count: int, cap: int | None = None) -> bool:
-    """Whether we can name a specific vehicle to the customer for `count` riders.
-
-    True when the venue's cap is on file (so the size is sized to fit it) or the group
-    is small enough that the class is unambiguous and no venue bans it. When neither
-    holds the itinerary shows a "we'll confirm once we've checked the venue" line
-    instead of a coach size (feedback A3.1 / APC-6). Mirrored in
-    `weddingPlanner.vehicleCertain()` — change one, change the other.
-    """
-    return cap is not None or count <= VEHICLE_CERTAIN_MAX
 
 
 def hotel_label(hotels: list[Site], hotels_tbd: bool) -> str:
@@ -261,7 +264,7 @@ def _hotel_site(plan: WeddingPlan) -> Site:
     return Site(name=label, sub=sub)
 
 
-def generate_legs(plan: WeddingPlan) -> list[Leg]:
+def generate_legs(plan: WeddingPlan, fleet: Sequence[FleetVehicle] = ()) -> list[Leg]:
     """Two time anchors plus who is riding => the full day, in time order.
 
     Returned sorted so the timeline reads top-to-bottom even for anchors that put an
@@ -353,13 +356,13 @@ def generate_legs(plan: WeddingPlan) -> list[Leg]:
         )
 
     for leg in legs:
-        leg.vehicle = vehicle_for(leg.passengers, venue.vehicle_cap)
+        leg.vehicle = vehicle_for(leg.passengers, venue.vehicle_cap, fleet)
         leg.estimated = plan.times_tbd
     legs.sort(key=lambda leg: leg.time)
     return legs
 
 
-def early_return_leg(plan: WeddingPlan) -> Leg:
+def early_return_leg(plan: WeddingPlan, fleet: Sequence[FleetVehicle] = ()) -> Leg:
     """The opt-in "some guests leave early" run — deliberately NOT in `generate_legs`
     (APC-7 / feedback A3.2).
 
@@ -379,7 +382,7 @@ def early_return_leg(plan: WeddingPlan) -> Leg:
         optional=True,
         why="Set the pickup time with the couple — many guests leave before the last call.",
     )
-    leg.vehicle = vehicle_for(leg.passengers, venue.vehicle_cap)
+    leg.vehicle = vehicle_for(leg.passengers, venue.vehicle_cap, fleet)
     leg.estimated = plan.times_tbd
     return leg
 

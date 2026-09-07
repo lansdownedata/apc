@@ -20,8 +20,9 @@
        x-data="weddingPlanner({
          portal: true,
          venuesUrl: '{% url 'public:wedding_venues' %}',
-         resume: {{ wedding_state|default:'null'|json_attr }},
-         vehicleOptions: {{ vehicle_options|json_attr }}
+         resume: {{ wedding_state|json_attr }},
+         vehicleOptions: {{ vehicle_options|json_attr }},
+         fleet: {{ fleet|json_attr }}
        })">
     <form method="post" action="{% url 'lead_wedding_save' lead.pk %}" class="flex flex-col min-h-0">
       {% csrf_token %}

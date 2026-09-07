@@ -14,6 +14,7 @@ from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
 from apps.leads.factories import LeadFactory
+from apps.leads.services import group_fleet
 from apps.public.wedding import vehicle_runs
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -114,7 +115,9 @@ def test_saving_the_day_builds_the_coaches_each_leg_needs(client):
     legs = _legs()
     for leg in legs:
         members = lead.reservations.filter(source_leg_id=leg["id"])
-        assert members.count() == vehicle_runs(leg["pax"], None)
+        # Same catalog the save used — `vehicle_runs` has no fleet of its own to fall
+        # back on any more, which is the point: there are no hardcoded sizes left.
+        assert members.count() == vehicle_runs(leg["pax"], None, group_fleet())
         assert len({m.group_key for m in members}) == 1
 
 

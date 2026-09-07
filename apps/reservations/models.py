@@ -182,6 +182,11 @@ class Reservation(TimeStampedModel):
     # drop-off (enables end times + overnight trips)
     dropoff_date = models.DateField(null=True, blank=True)
     dropoff_time = models.TimeField(null=True, blank=True)
+    # True when we worked the drop-off out (billed minimum vs. drive time) rather than an
+    # agent typing it. An estimate is fine on our own screens and on the customer's
+    # itinerary, and is deliberately NOT sent to an affiliate over GNet: a time in that
+    # payload reads as a commitment the affiliate is being held to.
+    dropoff_estimated = models.BooleanField(default=False)
 
     la_reservation_id = models.CharField(max_length=64, blank=True)
     la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)

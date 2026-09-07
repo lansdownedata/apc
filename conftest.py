@@ -13,6 +13,13 @@ fixture has already run (see `apps/integrations/tests/test_aviationstack.py`'s o
 a same-scope autouse fixture defined in a test module runs after one from a conftest.py
 higher up the tree, so those still win.
 
+Autouse: the same guard for LocationIQ. `config.settings.dev` reads the real key from
+`.env` too, and the venue typeahead merges a LocationIQ lookup into any query the curated
+directory answers thinly — so an unmocked test spends real, billed lookups. `geocoding.
+autocomplete()` returns [] on a blank key before it builds a request, so this is a complete
+guard. Tests that want LocationIQ rows monkeypatch the client (which bypasses the key check
+entirely) or set a key via the `settings` fixture.
+
 Autouse: an empty cache per test. The default cache is LocMemCache, which lives for the
 whole pytest process, so the public site's per-IP throttle counters leak from one test
 into the next — a test that POSTs a few bookings silently spends another file's budget,
@@ -27,6 +34,11 @@ from django.core.cache import cache
 @pytest.fixture(autouse=True)
 def _blank_aviationstack_key(settings):
     settings.AVIATIONSTACK_API_KEY = ""
+
+
+@pytest.fixture(autouse=True)
+def _blank_locationiq_key(settings):
+    settings.LOCATIONIQ_API_KEY = ""
 
 
 @pytest.fixture(autouse=True)

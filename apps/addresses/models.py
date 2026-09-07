@@ -163,6 +163,17 @@ class Venue(TimeStampedModel):
     # bridge, a short turning circle. Sizing the run around it up front is the
     # difference between a quote that works and one that gets rebuilt on site.
     vehicle_cap = models.PositiveIntegerField(null=True, blank=True)
+    # The same limit said as a *vehicle* — what the office picks in Settings. Blank means
+    # no limit of its own, which sizes runs against our largest coach. Deliberately not
+    # backfilled from `vehicle_cap` and never written by the CSV loader: that column stays
+    # the seeded contract figure, and this one is the office's own call on top of it.
+    max_vehicle = models.ForeignKey(
+        "leads.VehicleType",
+        related_name="capped_venues",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     cap_note = models.CharField(max_length=255, blank=True)
     access_note = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
@@ -172,6 +183,31 @@ class Venue(TimeStampedModel):
 
     class Meta:
         ordering = ["name"]
+
+    @property
+    def own_limit(self) -> int | None:
+        """A limit this place imposes *itself*, or None when it imposes none.
+
+        A vehicle chosen in Settings wins over the seeded contract figure. None is
+        meaningful and is not the same as "our largest coach": it is what tells the
+        recommender there is nothing to size down to, and what keeps the agent's notes
+        from claiming a cap that no venue actually stated.
+        """
+        if self.max_vehicle_id is not None:
+            return self.max_vehicle.capacity
+        return self.vehicle_cap or None
+
+    @property
+    def max_passengers(self) -> int | None:
+        """The most this place can take in one vehicle, limit or no limit.
+
+        `own_limit` when it has one, else our largest group vehicle — the "defaults to
+        coach" the office sees in Settings. None only when the catalog holds no group
+        vehicle at all.
+        """
+        from apps.leads.services import largest_group_capacity
+
+        return self.own_limit or largest_group_capacity()
 
     @property
     def location_line(self) -> str:

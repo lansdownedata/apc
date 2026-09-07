@@ -5,7 +5,9 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 
+@override_settings(LOCATIONIQ_API_KEY="k")
 def test_geocode_is_public_and_returns_results(db):
+    # The suite blanks the real key (conftest); `degraded` is about a *configured* key.
     stub = [{"line1": "123 Main St"}]
     with patch("apps.public.views.merged_autocomplete", return_value=stub) as m:
         resp = Client().get(reverse("public:geocode"), {"q": "123 Main"})

@@ -203,9 +203,16 @@ def build_send_payload(assignment: Assignment) -> dict:
     pickup = _location(
         pickup_stop, time_iso=_combine_iso(reservation.pickup_date, reservation.pickup_time)
     )
-    dropoff = _location(
-        dropoff_stop, time_iso=_combine_iso(reservation.dropoff_date, reservation.dropoff_time)
+    # An estimated end (one we derived from the billed minimum and the drive, rather than
+    # one an agent typed) is deliberately withheld: in this payload a drop-off time reads
+    # as a commitment the affiliate is held to, and `_location` omits an absent key rather
+    # than sending null, so GNet receives "we don't have this" — which is the truth.
+    dropoff_iso = (
+        None
+        if reservation.dropoff_estimated
+        else _combine_iso(reservation.dropoff_date, reservation.dropoff_time)
     )
+    dropoff = _location(dropoff_stop, time_iso=dropoff_iso)
     stops_payload = [
         _location(stop, time_iso=_combine_iso(reservation.pickup_date, stop.scheduled_time))
         for stop in middle_stops

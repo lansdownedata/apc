@@ -336,6 +336,8 @@ def lead_detail(request, pk):
             for v in _vehicles
         ],
         "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
+        # The builder's planner sizes runs off the same catalog the server does.
+        "fleet": services.fleet_payload(),
         "service_type_options": services.service_type_options(lead),
     }
     return render(request, "leads/lead_detail.html", context)
