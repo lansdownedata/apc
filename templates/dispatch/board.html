@@ -1,13 +1,22 @@
 {% extends "base.html" %}
-{% load humanize time_filters %}
+{% load humanize time_filters json_filters %}
 {% block title %}Dispatch{% endblock %}
 
 {% block content %}
 <div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6"
-     x-data="dispatchGrid({ sortable: {% if day_groups is None %}true{% else %}false{% endif %} })"
+     {% comment %} `boardState` is what the grid remembers between visits; `defaultRange`
+        is what it fills a remembered range with. Sent from the server so "today" has one
+        definition — the window selects trip-local pickup dates in company time. {% endcomment %}
+     x-data="dispatchGrid({
+       sortable: {% if day_groups is None %}true{% else %}false{% endif %},
+       boardState: {{ board_state|json_attr }},
+       defaultRange: {{ default_range|json_attr }}
+     })"
      @keydown.window.arrow-down="move(1, $event)"
      @keydown.window.arrow-up="move(-1, $event)"
-     @keydown.window.enter="enterSelected($event)">
+     @keydown.window.enter="enterSelected($event)"
+     {% comment %} "/" jumps to the search — a dispatcher works this board on the keyboard. {% endcomment %}
+     @keydown.window.slash="focusSearch($event)">
 
   {# ── Row 1 — title · view · date nav ───────────────────────────────── #}
   <div class="flex flex-wrap items-center gap-3 mb-2.5">
@@ -55,7 +64,7 @@
     <div class="flex items-center gap-1.5 bg-surface ring-1 ring-line rounded-full px-3 focus-within:ring-gold transition-colors"
          :class="density === 'compact' ? 'h-8' : 'h-9'">
       <i class="ti ti-search text-[13px] text-muted"></i>
-      <input x-model="q" @input="filter()" @keydown.escape="q=''; filter()" type="search"
+      <input x-ref="search" x-model="q" @input="filter()" @keydown.escape="q=''; filter(); $el.blur()" type="search"
              placeholder="Search name, ref, route…" aria-label="Search trips"
              class="dispatch-search bg-transparent text-[12px] outline-none w-44 placeholder:text-muted/60">
       <button type="button" x-show="q" @click="q=''; filter(); $el.previousElementSibling.focus()"
@@ -97,7 +106,7 @@
     {% endfor %}
 
     <div class="flex items-center gap-1.5 ml-auto text-[12px]">
-      <button type="button" x-show="sortable" @click="exceptionsFirst = !exceptionsFirst; apply()"
+      <button type="button" x-show="sortable" @click="exceptionsFirst = !exceptionsFirst; savePrefs(); apply()"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ring-1 transition"
               :class="exceptionsFirst ? 'bg-charcoal text-white ring-charcoal' : 'bg-surface text-muted ring-line hover:text-ink'">
         <i class="ti ti-alert-triangle text-[13px]"></i> Exceptions first

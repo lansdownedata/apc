@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
@@ -40,6 +41,7 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
     """Booked trips over a day, a week, or a custom range — with what still needs
     coverage called out on top, and vehicle-type / customer / linked-set filters."""
     filters = BoardFilters.from_request(request)
+    today = timezone.localdate()
     trips = selectors.board_trips(filters)
     counts = selectors.strip_counts(trips)  # whole window, before the coverage filter
     exceptions = selectors.exception_tally(trips)
@@ -113,6 +115,23 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
             "nav": "dispatch",
             "page_title": "Dispatch",
             "columns": _COLUMNS,
+            # What the grid remembers between visits, and what it fills a remembered
+            # range with. The browser could work these out itself — a Date is an absolute
+            # instant, and formatting it in a zone the server sent would be correct — but
+            # the window selects trip-local `pickup_date` values in COMPANY time, which
+            # `BoardFilters` already resolves right here. Sending it keeps one definition
+            # of "today" instead of two that can drift. (Each trip still renders in its
+            # own pickup zone — see `Reservation.pickup_timezone` / the `trip_clock` filter.)
+            "board_state": {
+                "view": filters.view,
+                "vehicle": filters.vehicle_type_id or "",
+                "customer": filters.contact_id or "",
+                "f": filters.coverage,
+            },
+            "default_range": {
+                "start": today.isoformat(),
+                "end": (today + timedelta(days=1)).isoformat(),
+            },
         },
     )
 

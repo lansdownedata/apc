@@ -1520,19 +1520,98 @@ function dispatchGrid(opts = {}) {
     sort: { col: "pu", dir: "asc" },
     exceptionsFirst: false,
     density: "compact",
+    /* How this board is currently filtered, and what to fill a remembered range with.
+     * The dates are handed over rather than worked out here: the window selects
+     * trip-local pickup dates in COMPANY time, which the server already resolves for the
+     * view's own default. Deriving a second "today" in the browser is how the two drift. */
+    boardState: opts.boardState || {},
+    defaultRange: opts.defaultRange || {},
+    // Deliberately not remembered — a stored query brings the board back half empty.
     q: "",
     shown: 0,
     total: 0,
     noMatches: false,
 
     init() {
-      try {
-        const d = localStorage.getItem("dispatch.density");
-        if (d === "comfortable" || d === "compact") this.density = d;
-      } catch (e) {
-        /* private mode / blocked storage — keep the default */
-      }
       this.total = this.shown = this.rows().length;
+      this.restorePrefs();
+      this.rememberOrRestoreWindow();
+    },
+
+    /* ---- what costs nothing: sort, exceptions-first, density ------------------ */
+
+    _read(key) {
+      try {
+        return JSON.parse(localStorage.getItem(key) || "null");
+      } catch (e) {
+        return null;  // private mode / blocked storage — the board still has to come up
+      }
+    },
+    _write(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (e) {
+        /* nothing to do — the board works, it just won't remember */
+      }
+    },
+
+    restorePrefs() {
+      const p = this._read("dispatch.prefs");
+      if (!p) return;
+      if (p.density === "comfortable" || p.density === "compact") this.density = p.density;
+      this.exceptionsFirst = !!p.exceptionsFirst;
+      if (p.sort && p.sort.col) this.sort = { col: p.sort.col, dir: p.sort.dir === "desc" ? "desc" : "asc" };
+      // Re-sort now: restoring the column without re-applying it would show the arrow on
+      // one header and leave the rows in the server's order underneath it.
+      if (this.sortable) this.apply();
+    },
+    savePrefs() {
+      this._write("dispatch.prefs", {
+        density: this.density,
+        exceptionsFirst: this.exceptionsFirst,
+        sort: this.sort,
+      });
+    },
+
+    /* ---- what costs a fetch: the date window and the filters ------------------ */
+
+    /* A default board is not worth a second request, so only a state a dispatcher
+     * actually chose is restored — and only when they arrived with a bare URL, since a
+     * querystring means they asked for that window on purpose. */
+    isDefault(state) {
+      return (state.view || "day") === "day" && !state.vehicle && !state.customer && !state.f;
+    },
+    rememberOrRestoreWindow() {
+      if (window.location.search) {
+        if (!this.isDefault(this.boardState)) this._write("dispatch.window", this.boardState);
+        else this._write("dispatch.window", null);
+        return;
+      }
+      const saved = this._read("dispatch.window");
+      if (!saved || this.isDefault(saved)) return;
+      const params = new URLSearchParams();
+      params.set("view", saved.view || "day");
+      // The shape is remembered, the dates are not: a week-old window is a stale board.
+      if (saved.view === "range" && this.defaultRange.start) {
+        params.set("start", this.defaultRange.start);
+        params.set("end", this.defaultRange.end);
+      }
+      for (const key of ["vehicle", "customer", "f"]) {
+        if (saved[key]) params.set(key, saved[key]);
+      }
+      window.location.replace(`${window.location.pathname}?${params}`);
+    },
+
+    /* ---- the keyboard, since a dispatcher lives on it ------------------------- */
+
+    focusSearch(event) {
+      if (this._busy()) return;
+      if (event) event.preventDefault();
+      const box = this.$refs.search;
+      if (box) {
+        box.focus();
+        box.select();
+      }
     },
 
     rows() {
@@ -1631,17 +1710,14 @@ function dispatchGrid(opts = {}) {
 
     setDensity(value) {
       this.density = value;
-      try {
-        localStorage.setItem("dispatch.density", value);
-      } catch (e) {
-        /* ignore */
-      }
+      this.savePrefs();
     },
 
     sortBy(col) {
       if (!this.sortable) return;
       if (this.sort.col === col) this.sort.dir = this.sort.dir === "asc" ? "desc" : "asc";
       else this.sort = { col, dir: "asc" };
+      this.savePrefs();
       this.apply();
     },
 
