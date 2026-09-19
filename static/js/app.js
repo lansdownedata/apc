@@ -605,14 +605,71 @@ function quoteWorkspace(opts = {}) {
     },
 
     duplicateReservation(pk) {
-      const go = (n) => {
+      const submit = (n) => {
         const count = Math.max(1, Math.min(20, Math.floor(Number(n)) || 1));
         const form = document.getElementById(`form-dup-${pk}`);
         if (!form) return;
         form.querySelector('input[name="count"]').value = count;
         form.submit();
       };
-      window.__apcDuplicateGo = go;
+
+      // Chip and box states, written out in full: the JIT only emits classes it can
+      // read as literal strings, and these are assembled at runtime.
+      const CHIP = "px-2.5 py-1 rounded-lg ring-1 text-[13px] font-semibold transition-colors";
+      const CHIP_ON = "bg-goldl ring-gold text-goldd";
+      const CHIP_OFF = "ring-line text-ink hover:bg-goldl";
+      const BOX = "field text-[13px] text-center";
+      const BOX_ON = "ring-gold";
+      const BOX_OFF = "text-muted";
+
+      /* The picker is plain DOM, not Alpine: the modal renders `html` through x-html,
+       * which Alpine never scans for directives. A chip only *selects* — cloning takes a
+       * second, deliberate click on Duplicate, because the chips used to submit on their
+       * own click and a mis-aimed ×3 costs four deletes to undo. */
+      const dup = {
+        count: 1, // what Duplicate will use, unless the box has taken over
+        custom: false, // the free-text box owns the count
+        input() {
+          return document.getElementById("apc-dup-count");
+        },
+        pick(n) {
+          this.count = n;
+          this.custom = false;
+          // One visible number, so there is never a question of which one Duplicate uses.
+          const box = this.input();
+          box.value = "";
+          box.readOnly = true;
+          this.paint();
+        },
+        /* readOnly, not disabled: a disabled input never receives the click asking for it. */
+        useCustom() {
+          if (this.custom) return;
+          this.custom = true;
+          const box = this.input();
+          box.readOnly = false;
+          // accept() always closes the modal, so a blank box has no second chance to ask.
+          box.value = String(this.count);
+          box.select();
+          this.paint();
+        },
+        paint() {
+          document.querySelectorAll("[data-dup-chip]").forEach((el) => {
+            const on = !this.custom && Number(el.dataset.dupChip) === this.count;
+            el.className = `${CHIP} ${on ? CHIP_ON : CHIP_OFF}`;
+            el.setAttribute("aria-pressed", on ? "true" : "false");
+          });
+          this.input().className = `${BOX} ${this.custom ? BOX_ON : BOX_OFF}`;
+        },
+        value() { return this.custom ? this.input().value : this.count; },
+      };
+      window.__apcDup = dup;
+
+      // ×1 ships already selected — Duplicate means something without touching a chip.
+      const chip = (n) =>
+        `<button type="button" data-dup-chip="${n}" aria-pressed="${n === 1}"
+           onclick="window.__apcDup.pick(${n})"
+           class="${CHIP} ${n === 1 ? CHIP_ON : CHIP_OFF}">×${n}</button>`;
+
       Alpine.store("modal").show({
         variant: "info",
         title: "Duplicate reservation",
@@ -620,14 +677,14 @@ function quoteWorkspace(opts = {}) {
         html: `
           <p class="text-[13px] leading-relaxed">Add copies of this trip to the quote — a wedding
           shuttle running several identical vehicles, say. Each copy stays independently editable.</p>
-          <div class="mt-3 flex flex-wrap items-center gap-1.5">
-            <button type="button" onclick="window.__apcDuplicateGo(1)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×1</button>
-            <button type="button" onclick="window.__apcDuplicateGo(2)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×2</button>
-            <button type="button" onclick="window.__apcDuplicateGo(3)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×3</button>
-            <button type="button" onclick="window.__apcDuplicateGo(5)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×5</button>
-            <span class="inline-block w-20"><input id="apc-dup-count" type="number" min="1" max="20" value="4" aria-label="Number of copies" class="field text-[13px]"></span>
+          <div class="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Number of copies">
+            ${[1, 2, 3, 5].map(chip).join("\n            ")}
+            <span class="inline-block w-20"><input id="apc-dup-count" type="number" min="1" max="20"
+              readonly placeholder="Other" aria-label="A number of copies of your own"
+              onfocus="window.__apcDup.useCustom()" onclick="window.__apcDup.useCustom()"
+              class="${BOX} ${BOX_OFF}"></span>
           </div>`,
-        onConfirm: () => go(document.getElementById("apc-dup-count").value),
+        onConfirm: () => submit(dup.value()),
       });
     },
 
