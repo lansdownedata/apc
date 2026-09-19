@@ -254,8 +254,23 @@
       </p>
     {% endif %}
   {% else %}
-    {% if in_house.drivers %}
-    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">In-house</p>
+    {% comment %} Uncovered: pick HOW to cover it first. The two forms used to sit stacked
+       with nothing saying they were alternatives — "I don't see a way to toggle from
+       in-house to farm-out" was the first thing the client said about this drawer.
+       Opens on In-house only when there is a roster to pick from. {% endcomment %}
+    <div x-data="{ mode: '{% if in_house.drivers %}in_house{% else %}farm_out{% endif %}' }">
+      {% if in_house.drivers %}
+      <div class="flex items-center rounded-lg ring-1 ring-line overflow-hidden w-fit mb-4">
+        <button type="button" @click="mode = 'in_house'"
+                class="px-3 py-1.5 text-[12px] font-semibold transition-colors focus-gold"
+                :class="mode === 'in_house' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">In-house</button>
+        <button type="button" @click="mode = 'farm_out'"
+                class="px-3 py-1.5 text-[12px] font-semibold transition-colors focus-gold"
+                :class="mode === 'farm_out' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">Farm-out</button>
+      </div>
+
+    <div x-show="mode === 'in_house'" x-cloak>
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Our driver</p>
     {% comment %} Own driver + optional unit → confirmed directly. No payout, no offer step.
          The button sits inside this form so assignPanel().send() posts these radios. {% endcomment %}
     <form x-data="{ selectedDriver: '' }" @submit.prevent class="mb-5 pb-5 border-b border-line/60">{% csrf_token %}
@@ -298,7 +313,10 @@
               :disabled="busy || !selectedDriver"
               @click="post('{% url 'dispatch_assign_driver' trip.pk %}')">Assign driver</button>
     </form>
+    </div>
     {% endif %}
+
+    <div x-show="mode === 'farm_out'" x-cloak>
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Offer to</p>
     {% comment %} Re-fetches the panel with ?q= so search reaches past the top-8 slice. {% endcomment %}
     <input type="search" placeholder="Search affiliates…" class="field w-full mb-2 text-[13px]"
@@ -350,5 +368,7 @@
         Add an email on the vendor page to send offers.
       </p>
     </form>
+    </div>
+    </div>
   {% endif %}
 </div>

@@ -151,3 +151,41 @@ def test_saving_from_the_drawer_puts_the_drawer_back_instead_of_reloading():
     close = app_js[app_js.index("closeEditor()") : app_js.index("closeEditor()") + 900]
     assert "returnDrawerUrl" in close
     assert "drawer-open" in close
+
+
+# --- choosing how to cover it --------------------------------------------------------
+
+
+def test_the_drawer_offers_a_way_to_choose_in_house_or_farm_out(client, agent):
+    """The two forms used to sit stacked with nothing saying they were alternatives."""
+    from apps.fleet.factories import DriverFactory
+    from apps.vendors.factories import VendorFactory
+
+    DriverFactory(name="Ray Delgado")
+    VendorFactory(name="Reston Coach Co")
+    body = client.get(reverse("dispatch_assign_panel", args=[_trip().pk])).content.decode()
+    assert "mode = 'in_house'" in body
+    assert "mode = 'farm_out'" in body
+    assert "In-house" in body and "Farm-out" in body
+
+
+def test_with_no_drivers_on_the_roster_it_opens_on_farm_out(client, agent):
+    from apps.vendors.factories import VendorFactory
+
+    VendorFactory(name="Reston Coach Co")
+    body = client.get(reverse("dispatch_assign_panel", args=[_trip().pk])).content.decode()
+    assert "mode: 'farm_out'" in body
+    # no roster, no choice to offer — the chooser stays away entirely
+    assert "mode = 'in_house'" not in body
+
+
+def test_a_covered_trip_shows_no_chooser(client, agent):
+    """Coverage is one active assignment; changing it means withdrawing first."""
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+
+    trip = _trip()
+    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+    assert "mode = 'farm_out'" not in body
+    assert "Withdraw" in body
