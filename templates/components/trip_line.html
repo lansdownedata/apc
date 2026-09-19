@@ -8,9 +8,10 @@
   Requires:
     line    — a reservations.groups.ReservationLine; a linked set (APC-14) folds into one
               line carrying a ×N badge, and expands to reach each vehicle.
-    actions — "sales": the whole build-a-quote set (duplicate, copy-to-dates, return,
-              reverse, remove). Needs an enclosing quoteWorkspace() scope.
-              anything else: Edit only, as a link back to the workspace's editor.
+    actions — "sales": adds the destructive build-a-quote set (return, reverse, remove).
+              anything else: edit, duplicate and copy-to-dates — everything that grows the
+              order, which ops needs on a booked one too.
+              A page including this must also include leads/_copy_dates_modal.html.
   Optional:
     res.task_rows / green_lit / task_blockers — from tasks.selectors.attach_green_lit (booked
               orders only). Present means the checklist icon renders.
@@ -102,12 +103,16 @@
                 class="p-1 text-muted hover:text-ink transition-colors" title="{% if line.is_group %}Edit all {{ line.size }} trips{% else %}Edit reservation{% endif %}">
           <i class="ti ti-pencil text-[15px]"></i>
         </button>
-        {% if actions == "sales" %}
+
+        {% comment %} Growing the order — offered wherever a trip is listed, because ops
+        needs a second vehicle or next week's run without going back to the quote. Both
+        are scope-free: a global function, and a window event. {% endcomment %}
 
         {# duplicate — opens the quantity picker ($store.modal); the count rides on this hidden form #}
         <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}" class="hidden">
           {% csrf_token %}
           <input type="hidden" name="count" value="1">
+          <input type="hidden" name="next" value="{{ request.path }}">
         </form>
         <button type="button" @click="duplicateReservation({{ res.pk }})"
                 class="p-1 text-muted hover:text-ink transition-colors" title="Duplicate reservation">
@@ -115,10 +120,14 @@
         </button>
 
         {# copy to dates (APC-17) — one independent copy per selected service date #}
-        <button type="button" @click="openCopyDates({{ res.pk }}, '{{ res.pickup_date|date:'Y-m-d' }}')"
+        <button type="button" @click="$dispatch('copy-dates-open', { id: {{ res.pk }}, date: '{{ res.pickup_date|date:'Y-m-d' }}' })"
                 class="p-1 text-muted hover:text-ink transition-colors" title="Copy to dates">
           <i class="ti ti-calendar-plus text-[15px]"></i>
         </button>
+
+        {% comment %} Undoing it stays with sales: an order is booked, and these three
+        rewrite or delete a trip somebody is already driving to. {% endcomment %}
+        {% if actions == "sales" %}
 
         {# create return trip (APC-15) — a new reversed trip with a blank schedule; opens the editor on it #}
         <form method="post" action="{% url 'reservation_return' res.pk %}" class="hidden" id="form-ret-{{ res.pk }}">

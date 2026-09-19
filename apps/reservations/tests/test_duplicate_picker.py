@@ -17,8 +17,8 @@ APP_JS = (ROOT / "static" / "js" / "app.js").read_text()
 
 def _picker() -> str:
     """Just the duplicateReservation() body — so a match elsewhere can't pass a test."""
-    start = APP_JS.index("duplicateReservation(pk)")
-    return APP_JS[start : APP_JS.index("\n    },", start)]
+    start = APP_JS.index("function duplicateReservation(pk)")
+    return APP_JS[start : APP_JS.index("\nwindow.duplicateReservation", start)]
 
 
 # --- a chip selects; Duplicate commits ----------------------------------------------

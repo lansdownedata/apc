@@ -27,7 +27,8 @@ def test_the_row_has_a_copy_to_dates_trigger(agent):
 
     html = agent.get(reverse("lead_detail", args=[res.lead.pk])).content.decode()
 
-    assert f"openCopyDates({res.pk}," in html
+    # a window event, not a workspace method — the order page offers this control too
+    assert f"'copy-dates-open', {{ id: {res.pk}," in html
     assert 'id="_copy_dates_modal"' not in html  # sanity: not a stray literal
     assert reverse("reservation_copy_dates") in html
 

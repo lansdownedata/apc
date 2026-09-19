@@ -12,6 +12,7 @@ from django.db.models import Prefetch
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Airline, Airport
@@ -148,6 +149,22 @@ def _duplicate_count(request) -> int:
     return max(1, min(n, DUPLICATE_MAX))
 
 
+def _back_to(request, lead_id: int) -> HttpResponse:
+    """Where a trip action returns the agent.
+
+    Growing an order is offered on the order page as well as the quote (see
+    `components/trip_line.html`), and landing back on the quote is landing on the screen
+    ops was trying not to be on. `next` says where they were; it arrives in a POST body,
+    so it is an open redirect until it is checked against this host.
+    """
+    target = request.POST.get("next", "")
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(target)
+    return redirect("lead_detail", pk=lead_id)
+
+
 @login_required
 @require_POST
 def reservation_duplicate(request, pk) -> HttpResponse:
@@ -160,7 +177,7 @@ def reservation_duplicate(request, pk) -> HttpResponse:
             # No `group_key`: a duplicate is an independent trip. Linking a set is what
             # the editor's quantity field does (APC-14).
             clone_reservation(res, next_order + offset, stops=stops)
-    return redirect("lead_detail", pk=res.lead_id)
+    return _back_to(request, res.lead_id)
 
 
 @login_required
@@ -213,7 +230,7 @@ def reservation_copy_dates(request) -> HttpResponse:
     if not dates:
         return HttpResponseBadRequest("no valid dates")
     copy_to_dates(res, dates)
-    return redirect("lead_detail", pk=res.lead_id)
+    return _back_to(request, res.lead_id)
 
 
 @login_required

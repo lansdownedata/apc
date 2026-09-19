@@ -7,9 +7,10 @@
   payments/_money_card.html for the money. Sales and ops reading two different renderings
   of the same order is the drift this page exists to stop.
 
-  What differs is emphasis, not markup: `actions="ops"` drops the build-a-quote controls
-  (duplicate, copy-to-dates, reverse, remove) and each line carries the driver chip that
-  opens the dispatch drawer.
+  What differs is emphasis, not markup: `actions="ops"` drops the controls that undo work
+  (return, reverse, remove) and keeps the ones that grow the order — edit, duplicate and
+  copy-to-dates — because a booked order still gains a second vehicle or next week's run.
+  Each line also carries the driver chip that opens the dispatch drawer.
 
   x-data is the Alpine scope the driver chips dispatch `drawer-open` from.
 {% endcomment %}
@@ -87,6 +88,11 @@
   {% comment %} The same editor the quote workspace opens — a trip is changed where it is
      being worked, not back on the quote. {% endcomment %}
   {% include "leads/_reservation_editor.html" %}
+
+  {% comment %} …and the same "Copy to dates" modal, opened by the trip line's calendar
+     icon. Both post back here, not to the quote — see the `next` field each carries.
+     {% endcomment %}
+  {% include "leads/_copy_dates_modal.html" %}
 
   {% comment %} The driver chip on each trip line opens this — the same drawer, and the
      same assign/farm-out implementation, the dispatch board uses. {% endcomment %}
