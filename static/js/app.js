@@ -727,6 +727,17 @@ function reservationEditor(opts = {}) {
      * from under the dispatcher would lose the trip they were working. */
     returnDrawerUrl: null,
     savedSomething: false,
+    /* The driver section. Its options are fetched when the editor opens rather than
+     * serialized into a page that may list twenty trips, and assigning posts to the very
+     * endpoints the dispatch drawer posts to — the rules stay in dispatch.services. */
+    assignUrls: opts.assignUrls || {},
+    coverage: null,
+    coverageMode: "in_house",
+    coverageBusy: false,
+    pickedDriver: "",
+    pickedUnit: "",
+    pickedVendor: "",
+    payout: "",
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
     defaultCostRatio: opts.defaultCostRatio ?? 65,
@@ -849,6 +860,79 @@ function reservationEditor(opts = {}) {
       // read-out shows the end time instead of the "set a date" prompt.
       this.onHoursChanged();
       this.syncVehicleSelect();
+      this.loadCoverage();
+    },
+
+    /* ---- the driver section -------------------------------------------------- */
+
+    coverageUrl(name, id) {
+      const raw = this.assignUrls[name];
+      return raw ? raw.replace("/0/", `/${id}/`) : "";
+    },
+    loadCoverage() {
+      this.coverage = null;
+      this.pickedDriver = this.pickedUnit = this.pickedVendor = "";
+      // Opened from the drawer? That has the full controls already — don't offer a
+      // second live form for the same trip on the same screen.
+      if (this.returnDrawerUrl || this.draftIsNew || !this.draft.id) return;
+      const url = this.coverageUrl("options", this.draft.id);
+      if (!url) return;
+      fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!body) return;
+          this.coverage = body;
+          this.payout = body.payout || "";
+          this.coverageMode = body.isInHouse ? "in_house" : this.coverageMode;
+        })
+        .catch(() => { /* the trip still edits — coverage just isn't offered */ });
+    },
+    setCoverageMode(mode) {
+      this.coverageMode = mode;
+    },
+    _assign(url, fields) {
+      if (!url || this.coverageBusy) return;
+      this.coverageBusy = true;
+      const form = new FormData();
+      Object.entries(fields).forEach(([k, v]) => v !== "" && form.set(k, v));
+      fetch(url, { method: "POST", body: form, headers: { "X-CSRFToken": getCookie("csrftoken") } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.ok) throw new Error(data.error || "Could not assign");
+          // Re-read rather than guess: the server decides what the coverage now is.
+          this.savedSomething = true;
+          this.loadCoverage();
+          Alpine.store("toast").push({ type: "success", title: "Coverage updated" });
+        })
+        .catch((e) =>
+          Alpine.store("toast").push({ type: "danger", title: e.message || "Could not assign" }),
+        )
+        .finally(() => { this.coverageBusy = false; });
+    },
+    assignInHouse() {
+      this._assign(this.coverageUrl("assignDriver", this.draft.id), {
+        driver: this.pickedDriver,
+        vehicle: this.pickedUnit,
+      });
+    },
+    assignVendor() {
+      this._assign(this.coverageUrl("assign", this.draft.id), {
+        vendor: this.pickedVendor,
+        payout: this.payout,
+      });
+    },
+    releaseCoverage() {
+      if (!this.coverage || !this.coverage.assignmentId) return;
+      Alpine.store("modal").confirm({
+        variant: "danger",
+        title: this.coverage.isInHouse ? "Unassign this driver?" : "Withdraw this assignment?",
+        message: "The trip goes back to unassigned. Nobody is notified automatically.",
+        confirmText: this.coverage.isInHouse ? "Unassign" : "Withdraw",
+        onConfirm: () =>
+          this._assign(this.coverageUrl("resolve", this.coverage.assignmentId), {
+            action: "withdraw",
+          }),
+      });
     },
     /* Closing decides what the screen behind has to do about it.
      *

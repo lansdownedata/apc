@@ -30,6 +30,15 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
        privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
        defaultCostRatio: {{ default_cost_ratio_pct }},
        openEditorId: {{ open_editor_id|default_if_none:'null' }},
+       {% comment %} The driver section posts to the dispatch endpoints, so the rules —
+          one active assignment, a booked lead, an active driver — stay in one place.
+          "/0/" is the trip (or assignment) id, swapped in when the section acts. {% endcomment %}
+       assignUrls: {
+         options: '{% url 'dispatch_assign_options' 0 %}',
+         assignDriver: '{% url 'dispatch_assign_driver' 0 %}',
+         assign: '{% url 'dispatch_assign' 0 %}',
+         resolve: '{% url 'dispatch_resolve' 0 %}'
+       },
        tripDefaults: JSON.parse(document.getElementById('res-editor-defaults').textContent),
        reservations: JSON.parse(document.getElementById('res-editor-trips').textContent),
        vehicles: JSON.parse(document.getElementById('res-editor-vehicles').textContent)
@@ -454,6 +463,100 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
               </span>
             </div>
           </div>
+        </div>
+        {% comment %} ---- Driver ------------------------------------------------------
+          Coverage on the trip itself, so an order can be covered without leaving the
+          screen it is being worked on. Hidden when the editor was opened from the
+          dispatch drawer: that has the fuller controls (offers, acknowledgements,
+          statuses) already open behind this, and two live forms for one trip is how a
+          dispatcher assigns it twice. {% endcomment %}
+        <div x-cloak x-show="coverage && coverage.canAssign && !returnDrawerUrl"
+             class="mt-5 pt-4 border-t border-line">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-[12px] font-semibold text-muted uppercase tracking-wide">Driver</span>
+            <template x-if="coverage && coverage.coverage !== 'uncovered'">
+              <span class="inline-flex items-center gap-1.5 text-[12px]">
+                <i class="ti text-[13px]" :class="coverage.isInHouse ? 'ti-home text-muted' : 'ti-arrow-ramp-right-2 text-goldd'"></i>
+                <span class="font-medium text-ink" x-text="coverage.provider"></span>
+                <span class="text-muted" x-text="coverage.coverage === 'offered' ? '· offered' : '· confirmed'"></span>
+              </span>
+            </template>
+            <button type="button" x-show="coverage && coverage.assignmentId" @click="releaseCoverage()"
+                    :disabled="coverageBusy"
+                    class="ml-auto rounded text-[12px] font-semibold text-rose-600 focus-gold hover:underline disabled:opacity-50"
+                    x-text="coverage && coverage.isInHouse ? 'Unassign' : 'Withdraw'"></button>
+          </div>
+
+          <template x-if="coverage && !coverage.assignmentId">
+            <div>
+              <div class="flex items-center rounded-lg ring-1 ring-line overflow-hidden w-fit mb-3">
+                <button type="button" @click="setCoverageMode('in_house')"
+                        class="px-3 py-1 text-[11.5px] font-semibold transition-colors focus-gold"
+                        :class="coverageMode === 'in_house' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">In-house</button>
+                <button type="button" @click="setCoverageMode('farm_out')"
+                        class="px-3 py-1 text-[11.5px] font-semibold transition-colors focus-gold"
+                        :class="coverageMode === 'farm_out' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">Farm-out</button>
+              </div>
+
+              {% comment %} Radio lists, not dropdowns — the same shape the dispatch drawer
+                 already presents drivers and affiliates in, and no native <select>. {% endcomment %}
+              <div x-show="coverageMode === 'in_house'">
+                <div class="text-[12px] text-muted mb-1.5">Driver</div>
+                <div class="space-y-1.5 max-h-40 overflow-y-auto">
+                  <template x-for="d in coverage.drivers" :key="d.id">
+                    <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2 text-[13px]">
+                      <input type="radio" name="ed-driver" :value="d.id" x-model="pickedDriver">
+                      <span class="text-ink" x-text="d.label"></span>
+                    </label>
+                  </template>
+                  <p x-show="!coverage.drivers.length" class="text-[12.5px] text-muted">No active drivers on the roster.</p>
+                </div>
+                <div class="text-[12px] text-muted mt-3 mb-1.5">Vehicle <span class="text-[10px] uppercase tracking-wide text-muted/70">Optional</span></div>
+                <div class="space-y-1.5 max-h-32 overflow-y-auto">
+                  <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2 text-[13px]">
+                    <input type="radio" name="ed-unit" value="" x-model="pickedUnit">
+                    <span class="text-muted">No vehicle</span>
+                  </label>
+                  <template x-for="u in coverage.units" :key="u.id">
+                    <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2 text-[13px]">
+                      <input type="radio" name="ed-unit" :value="u.id" x-model="pickedUnit">
+                      <span class="text-ink" x-text="u.label"></span>
+                      <span x-show="u.fits" class="ml-auto text-[10.5px] font-semibold uppercase tracking-wide text-goldd">fits</span>
+                    </label>
+                  </template>
+                </div>
+                <button type="button" @click="assignInHouse()" :disabled="!pickedDriver || coverageBusy"
+                        class="btn-gold w-full mt-3 text-[12.5px] font-semibold rounded-lg px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Assign driver
+                </button>
+              </div>
+
+              <div x-show="coverageMode === 'farm_out'" x-cloak>
+                <div class="text-[12px] text-muted mb-1.5">Affiliate</div>
+                <div class="space-y-1.5 max-h-40 overflow-y-auto">
+                  <template x-for="v in coverage.vendors" :key="v.id">
+                    <label class="flex items-center gap-3 rounded-lg ring-1 ring-line px-3 py-2 cursor-pointer hover:bg-surface2 text-[13px]">
+                      <input type="radio" name="ed-vendor" :value="v.id" x-model="pickedVendor">
+                      <span class="text-ink" x-text="v.name"></span>
+                    </label>
+                  </template>
+                  <p x-show="!coverage.vendors.length" class="text-[12.5px] text-muted">No active affiliates yet.</p>
+                </div>
+                <div class="text-[12px] text-muted mt-3 mb-1">Payout</div>
+                <div class="flex items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                  <span class="text-muted text-[13px]">$</span>
+                  <input x-model="payout" type="number" min="0" step="0.01" class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                </div>
+                <button type="button" @click="assignVendor()" :disabled="!pickedVendor || coverageBusy"
+                        class="btn-gold w-full mt-3 text-[12.5px] font-semibold rounded-lg px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                  Mark assigned
+                </button>
+                <p class="text-[11.5px] text-muted mt-2">
+                  Sending an offer and chasing the reply live on the dispatch board's drawer.
+                </p>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 

@@ -166,6 +166,55 @@ _MANUAL_STATUSES = (
 
 
 @login_required
+def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
+    """Who could cover this trip, and who has it — for the trip editor's driver section.
+
+    The drawer renders the same two choices as HTML because it also carries offers,
+    acknowledgements and trip statuses. The editor only needs the choice itself, so it
+    reads this when its section opens rather than every trip's drivers and vendors being
+    serialized into a page that lists twenty of them.
+
+    Assigning still goes through `dispatch_assign_driver` / `dispatch_assign`, so the
+    rules — one active assignment, a booked lead, an active driver — stay in services.
+    """
+    trip = get_object_or_404(
+        Reservation.objects.select_related("lead", "vehicle"), pk=pk
+    )
+    active = services.active_assignment(trip)
+    empty = {"drivers": [], "vehicles": []}
+    in_house = selectors.in_house_options(trip) if active is None else empty
+    vendors = selectors.vendor_options(trip) if active is None else []
+    return JsonResponse(
+        {
+            "coverage": active.status if active else selectors.COVERAGE_UNCOVERED,
+            "provider": active.provider_name if active else "",
+            "isInHouse": bool(active and active.is_in_house),
+            "assignmentId": active.pk if active else None,
+            # `_claim` refuses anything but a booked lead, so don't offer the controls.
+            "canAssign": trip.lead.status == Lead.Status.BOOKED,
+            "drivers": [
+                {"id": o["driver"].pk, "label": o["driver"].name} for o in in_house["drivers"]
+            ],
+            "units": [
+                {"id": o["vehicle"].pk, "label": o["vehicle"].name, "fits": o["fits_vehicle"]}
+                for o in in_house["vehicles"]
+            ],
+            "vendors": [
+                {
+                    "id": o["vendor"].pk,
+                    "name": o["vendor"].name,
+                    "email": o["vendor"].email,
+                    "gnet": o["is_gnet"],
+                }
+                for o in vendors
+            ],
+            # What the trip was quoted to pay, so quoted and actual margin start level.
+            "payout": f"{trip.vendor_pay:.2f}" if trip.vendor_pay else "",
+        }
+    )
+
+
+@login_required
 def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
     """Drawer body for one trip — a trip sheet, then the offer form or the coverage it has.
 
