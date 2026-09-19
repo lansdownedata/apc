@@ -665,6 +665,11 @@ function reservationEditor(opts = {}) {
     /* Whose lead the open trip belongs to. On the board that is not the page's lead —
      * there isn't one — so it comes back with the fetched draft and the save uses it. */
     draftLeadId: null,
+    /* Set when the edit was opened from the dispatch drawer: the panel to put back when
+     * the editor closes. The drawer is still open underneath — reloading the board out
+     * from under the dispatcher would lose the trip they were working. */
+    returnDrawerUrl: null,
+    savedSomething: false,
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
     defaultCostRatio: opts.defaultCostRatio ?? 65,
@@ -727,6 +732,7 @@ function reservationEditor(opts = {}) {
       });
     },
     newReservation() {
+      this.returnDrawerUrl = null;
       this.draftLeadId = this.leadId;
       this.draft = this.blankReservation();
       this.groupSizeAtOpen = 1;
@@ -737,7 +743,8 @@ function reservationEditor(opts = {}) {
       this.editorOpen = true;
       this.syncVehicleSelect();
     },
-    editReservation(id) {
+    editReservation(id, drawerUrl = null) {
+      this.returnDrawerUrl = drawerUrl || null;
       const r = this.reservations.find((x) => x.id === id);
       if (r) return this.openDraft(r, this.leadId);
       // Not one of this page's trips: fetch it, if this screen knows where from.
@@ -786,7 +793,24 @@ function reservationEditor(opts = {}) {
       this.onHoursChanged();
       this.syncVehicleSelect();
     },
-    closeEditor() { this.editorOpen = false; },
+    /* Closing decides what the screen behind has to do about it.
+     *
+     * From the dispatch drawer, the drawer is still open underneath, so a save puts the
+     * fresh panel back into it and the dispatcher carries on where they were. Everywhere
+     * else the page lists the trips, so it has to re-read them. Either way, closing
+     * without having saved anything leaves the screen alone. */
+    closeEditor() {
+      this.editorOpen = false;
+      const drawerUrl = this.returnDrawerUrl;
+      const saved = this.savedSomething;
+      this.returnDrawerUrl = null;
+      this.savedSomething = false;
+      if (drawerUrl) {
+        if (saved) window.dispatchEvent(new CustomEvent("drawer-open", { detail: { url: drawerUrl } }));
+        return;
+      }
+      if (saved) window.location.reload();
+    },
     /* "Copy Reservation ×N" — the wedding-shuttle case is several identical minibuses on
      * one itinerary (feedback B1). Opens the shared modal (never a native prompt); the
      * chosen count rides on the hidden per-row form, which posts normally. */
@@ -1046,10 +1070,10 @@ function reservationEditor(opts = {}) {
     /* A lower quantity than the set opened with deletes real reservations — ones that may
      * already be assigned to an affiliate or synced to LA. Gate it on the shared modal
      * (never window.confirm); everything else saves straight through. */
-    saveReservation() {
+    saveReservation(close = true) {
       const target = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
       const removing = this.groupSizeAtOpen - target;
-      if (removing <= 0) return this.postReservation();
+      if (removing <= 0) return this._save(close);
       Alpine.store("modal").confirm({
         variant: "danger",
         title: "Remove " + removing + (removing === 1 ? " vehicle?" : " vehicles?"),
@@ -1057,8 +1081,19 @@ function reservationEditor(opts = {}) {
           "Saving with a quantity of " + target + " permanently deletes " + removing +
           " trip" + (removing === 1 ? "" : "s") + " from this group and releases any affiliate offer on them. This cannot be undone.",
         confirmText: "Save and remove",
-        onConfirm: () => this.postReservation(),
+        onConfirm: () => this._save(close),
       });
+    },
+
+    /* Save, then either stay on the trip or hand the screen back. */
+    async _save(close) {
+      if (!(await this.postReservation())) return;
+      this.savedSomething = true;
+      if (close) return this.closeEditor();
+      // Staying put: the set is now whatever size was just saved, so a second save does
+      // not offer to remove the vehicles this one already removed.
+      this.groupSizeAtOpen = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
+      Alpine.store("toast").push({ type: "success", title: "Trip saved" });
     },
     postReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
@@ -1072,12 +1107,15 @@ function reservationEditor(opts = {}) {
         headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
         body: JSON.stringify(d),
       }).then((r) => {
-        // Reload where we are, rather than following the redirect to the quote: the
-        // same editor now opens from the order page, and landing somewhere else after
-        // a save would throw an ops user off the order they were working.
-        if (r.ok || r.redirected) window.location.reload();
-        else Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
-      }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
+        // Never navigate from here — `closeEditor` decides what the screen behind needs,
+        // because a reload would close the dispatch drawer this may have opened from.
+        if (r.ok || r.redirected) return true;
+        Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
+        return false;
+      }).catch(() => {
+        Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" });
+        return false;
+      });
     },
   };
 }

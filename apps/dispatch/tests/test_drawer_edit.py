@@ -6,7 +6,9 @@ The editor fetches the one trip it is opening instead, and `lead_id` rides with 
 save still posts against the right lead.
 """
 
+import re
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from django.urls import reverse
@@ -81,7 +83,7 @@ def test_the_drawer_offers_edit_trip(client, agent):
     trip = _trip()
     body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
     assert "Edit trip" in body
-    assert f"reservation-edit', {{ id: {trip.pk} }}" in body
+    assert f"reservation-edit', {{ id: {trip.pk}," in body
 
 
 def test_the_board_carries_the_editor_and_tells_it_where_to_fetch(client, agent):
@@ -106,3 +108,46 @@ def test_the_board_still_opens_the_assign_drawer(client, agent):
     body = client.get(reverse("dispatch_board")).content.decode()
     assert "data-drawer" in body
     assert "drawer-open" in body
+
+
+# --- the editor opens in front of the drawer, and hands it back ----------------------
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _z(template: str) -> int:
+    """The stacking level a modal/drawer template puts itself at."""
+    found = re.findall(r"z-\[?(\d+)\]?", (ROOT / "templates" / template).read_text())
+    return max(int(n) for n in found)
+
+
+def test_the_editor_opens_in_front_of_the_drawer():
+    """It opened behind it — the drawer's own backdrop greyed the editor out."""
+    assert _z("leads/_reservation_editor.html") > _z("components/drawer.html")
+
+
+def test_the_confirm_modal_still_wins_over_the_editor():
+    """Saving a smaller quantity asks to remove vehicles; that has to be reachable."""
+    assert _z("components/modal.html") > _z("leads/_reservation_editor.html")
+    assert _z("components/toasts.html") > _z("components/modal.html")
+
+
+def test_the_drawer_tells_the_editor_where_it_came_from(client, agent):
+    trip = _trip()
+    body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+    assert reverse("dispatch_assign_panel", args=[trip.pk]) in body
+    assert "drawerUrl" in body
+
+
+def test_an_existing_trip_offers_save_and_save_and_close():
+    editor = (ROOT / "templates" / "leads" / "_reservation_editor.html").read_text()
+    assert "saveReservation(false)" in editor  # save, stay put
+    assert "saveReservation(true)" in editor  # save, close back to where you came from
+    assert "Save &amp; close" in editor or "Save & close" in editor
+
+
+def test_saving_from_the_drawer_puts_the_drawer_back_instead_of_reloading():
+    app_js = (ROOT / "static" / "js" / "app.js").read_text()
+    close = app_js[app_js.index("closeEditor()") : app_js.index("closeEditor()") + 900]
+    assert "returnDrawerUrl" in close
+    assert "drawer-open" in close
