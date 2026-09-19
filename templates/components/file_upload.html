@@ -1,0 +1,51 @@
+{% comment %}
+Styled document picker: label + dropzone + help text + errors. Never render a bare file
+input — the browser's "Choose File / No file chosen" chrome can't be themed.
+Usage: {% include "components/file_upload.html" with field=form.certificate hint="PDF or image" %}
+The widget must be forms.FileInput(attrs={"class": "sr-only", ...}): the real input stays
+in the DOM and submits normally; imageUpload() (static/js/app.js) only layers filename +
+drag/drop over it. For a photo with a thumbnail preview see settings/vehicle_type_form.html.
+{% endcomment %}
+<div x-data="imageUpload('{% if field.value %}{{ field.value.url|escapejs }}{% endif %}')">
+  <span class="block text-[12px] font-medium text-muted mb-1.5">{{ field.label }}</span>
+
+  <label class="group relative flex items-center gap-3 rounded-2xl border border-dashed border-line bg-surface2/40 px-4 py-3 cursor-pointer transition-colors
+                hover:border-gold/60 hover:bg-surface2/70 focus-within:border-gold focus-within:ring-4 focus-within:ring-gold/25"
+         :class="dragging && 'border-gold ring-4 ring-gold/25 bg-surface2/70'"
+         @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false"
+         @drop.prevent="onDrop($event)">
+
+    {{ field }}
+
+    <span class="shrink-0 grid place-items-center w-9 h-9 rounded-full bg-goldl text-goldd ring-1 ring-gold/25">
+      <i class="ti text-[18px]" :class="preview ? 'ti-file-check' : 'ti-upload'"></i>
+    </span>
+
+    {# empty state — nothing chosen and nothing on file #}
+    <div x-show="!preview" class="min-w-0 flex-1">
+      <div class="text-[13px] text-ink">
+        Drop a file, or <span class="text-goldd font-medium group-hover:underline">browse</span>
+      </div>
+      {% if hint %}<p class="text-[11.5px] text-muted">{{ hint }}</p>{% endif %}
+    </div>
+
+    {# filled state — the file on record, or the one just picked #}
+    <div x-show="preview" x-cloak class="min-w-0 flex-1">
+      <div class="text-[13px] font-medium text-ink truncate" x-text="filename || 'Current file'"></div>
+      <div class="text-[11.5px] text-muted" x-text="picked ? 'Ready to save' : 'On file'"></div>
+    </div>
+
+    <div x-show="preview" x-cloak class="shrink-0 flex items-center gap-3">
+      {% if field.value and field.value.url %}
+      <a href="{{ field.value.url }}" target="_blank" rel="noopener" x-show="!picked" @click.stop
+         class="text-[12px] font-medium text-muted hover:text-ink transition-colors">View</a>
+      {% endif %}
+      <span class="text-[12px] font-medium text-goldd group-hover:underline">Replace</span>
+      <button type="button" x-show="picked" @click.prevent.stop="clear()"
+              class="text-[12px] font-medium text-muted hover:text-rose-600 transition-colors">Remove</button>
+    </div>
+  </label>
+
+  {% if field.help_text %}<p class="text-[11.5px] text-muted mt-1">{{ field.help_text }}</p>{% endif %}
+  {% for error in field.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+</div>

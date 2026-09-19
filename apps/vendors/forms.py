@@ -85,9 +85,7 @@ class VendorInsuranceForm(forms.ModelForm):
             "coverage_amount": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
             "effective_date": forms.DateInput(attrs=_DATE),
             "expiry_date": forms.DateInput(attrs=_DATE),
-            "certificate": forms.FileInput(
-                attrs={"class": "field w-full", "accept": ".pdf,image/*"}
-            ),
+            "certificate": forms.FileInput(attrs={"class": "sr-only", "accept": ".pdf,image/*"}),
             "notes": forms.Textarea(attrs={"class": "field w-full", "rows": 2}),
         }
 
@@ -106,5 +104,5 @@ class VendorDocumentForm(forms.ModelForm):
         fields = ["label", "file"]
         widgets = {
             "label": forms.TextInput(attrs=_TEXT),
-            "file": forms.FileInput(attrs={"class": "field w-full"}),
+            "file": forms.FileInput(attrs={"class": "sr-only"}),
         }

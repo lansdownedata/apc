@@ -122,3 +122,14 @@ def test_detail_page_carries_the_actions(logged_in_client):
 def test_renewal_views_require_login(client):
     row = RenewalFactory()
     assert client.get(reverse("fleet:renewal_edit", args=[row.pk])).status_code == 302
+
+
+def test_scan_field_uses_the_styled_uploader_not_native_chrome(logged_in_client):
+    """The browser's "Choose File / No file chosen" control must never show: the real
+    input stays in the DOM (sr-only, still submittable) under the shared dropzone."""
+    url = reverse("fleet:driver_renewal_create", args=[DriverFactory().pk])
+    html = logged_in_client.get(url).content.decode()
+    assert 'x-data="imageUpload(' in html
+    assert html.count('type="file"') == 1
+    file_input = html[html.index('<input type="file"') :].split(">", 1)[0]
+    assert 'name="document"' in file_input and "sr-only" in file_input

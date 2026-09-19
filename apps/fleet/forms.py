@@ -83,7 +83,7 @@ class RenewalForm(forms.ModelForm):
             "reference": forms.TextInput(attrs=_TEXT),
             "issued_on": forms.DateInput(attrs=_DATE),
             "expires_on": forms.DateInput(attrs=_DATE),
-            "document": forms.FileInput(attrs={"class": "field w-full", "accept": ".pdf,image/*"}),
+            "document": forms.FileInput(attrs={"class": "sr-only", "accept": ".pdf,image/*"}),
             "notes": forms.Textarea(attrs={"class": "field w-full", "rows": 2}),
         }
         labels = {"reference": "Number / reference", "document": "Scan (optional)"}
