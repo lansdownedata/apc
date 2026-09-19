@@ -12,8 +12,14 @@
       #{{ trip.la_confirmation|default:trip.pk }}
     </span>
     {% include "dispatch/_coverage_badge.html" with coverage=coverage %}
+    {% comment %} The same editor the quote and the order page open — the board mounts it
+       once and it fetches this trip's draft when asked (reservation_draft). {% endcomment %}
+    <button type="button" @click="$dispatch('reservation-edit', { id: {{ trip.pk }} })"
+            class="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-ink ring-1 ring-line rounded-lg px-2 py-0.5 hover:bg-surface2 focus-gold">
+      <i class="ti ti-pencil text-[13px]"></i> Edit trip
+    </button>
     <a href="{% url 'lead_detail' trip.lead.pk %}"
-       class="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-goldd hover:underline">
+       class="inline-flex items-center gap-1 text-[12px] font-medium text-goldd hover:underline">
       Open {{ trip.lead.quote_no }} <i class="ti ti-arrow-up-right text-[14px]"></i>
     </a>
   </div>

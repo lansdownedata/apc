@@ -74,11 +74,13 @@ def open_editor_id(request, reservations) -> int | None:
     return pk if any(r.pk == pk for r in reservations) else None
 
 
-def editor_context(request, lead: Lead, reservations) -> dict:
+def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=None) -> dict:
     """Everything `leads/_reservation_editor.html` needs, for any screen that includes it.
 
     `reservations` must already be the page's prefetched list — the drafts read each
-    trip's stops, so re-querying here would cost one round trip per row.
+    trip's stops, so re-querying here would cost one round trip per row. Pass an empty one
+    (and no lead) for a screen that spans several customers: the dispatch board hands the
+    editor nothing up front and lets it fetch the trip being opened.
     """
     from apps.leads import services as lead_services
 
@@ -90,6 +92,8 @@ def editor_context(request, lead: Lead, reservations) -> dict:
     sizes = {m.pk: line.size for line in groups.as_lines(reservations) for m in line.members}
     return {
         "open_editor_id": open_editor_id(request, reservations),
+        # What a new trip starts with. Only a wedding sets any — see leads.views.
+        "trip_defaults": trip_defaults or {},
         "duplicate_max": groups.DUPLICATE_MAX,
         "reservations_json": [
             reservation_draft(r, quantity=sizes.get(r.pk, 1)) for r in reservations

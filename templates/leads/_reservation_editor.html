@@ -5,8 +5,9 @@ screen that lists trips can open it: the quote workspace and the order page toda
 dispatch drawer next. Include it ONCE per page (the Tom Select ids inside are global) and
 open it from anywhere with `$dispatch("reservation-edit", { id: <pk> })`.
 
-Requires from the view: reservations_json, vehicles_json, trip_defaults, vehicle_options,
-service_type_options, duplicate_max — see reservations.editor.editor_context.
+Requires from the view: reservations.editor.editor_context(...). A page with one lead's
+trips (the quote, an order) hands them over up front; a page spanning several customers
+(the dispatch board) passes none and the editor fetches the trip being opened instead.
 Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMContentLoaded.
 
 Escape closes the editor, except the Escape that just dismissed a picker — see
@@ -22,7 +23,8 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
 {{ vehicles_json|json_script:"res-editor-vehicles" }}
 {{ trip_defaults|json_script:"res-editor-defaults" }}
 <div x-data="reservationEditor({
-       leadId: {{ lead.pk }},
+       leadId: {% if lead %}{{ lead.pk }}{% else %}null{% endif %},
+       draftUrl: '{% url 'reservation_draft' 0 %}',
        saveUrl: '{% url 'reservation_save' %}',
        acUrl: '{% url 'integrations:geocode_autocomplete' %}',
        privateAirlineId: {{ private_airline_id|default_if_none:'null' }},

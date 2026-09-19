@@ -247,7 +247,6 @@ def lead_detail(request, pk):
         "wedding_state": wedding_state,
         "wedding_answers": wedding_answers(wedding_state),
         "wedding_venue_cap": venue_cap_line(wedding_state),
-        "trip_defaults": _wedding_trip_defaults(wedding_state),
         "is_wedding": wedding_state is not None
         or any(reservation_services.is_wedding_trip(r) for r in reservations),
         # The held deposit + its deadline, for the Confirm/Cancel controls (APC-26).
@@ -268,7 +267,9 @@ def lead_detail(request, pk):
         "agents": services.agent_options(),
         "reservation_lines": reservation_lines,
         # Everything the shared trip editor needs — the order page feeds it the same way.
-        **reservation_editor.editor_context(request, lead, reservations),
+        **reservation_editor.editor_context(
+            request, lead, reservations, trip_defaults=_wedding_trip_defaults(wedding_state)
+        ),
     }
     return render(request, "leads/lead_detail.html", context)
 

@@ -11,6 +11,7 @@ from apps.contacts.models import Contact
 from apps.core.phone import to_e164
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
+from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
 from apps.vendors.models import Vendor
@@ -100,6 +101,11 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
                     ("confirmed", "covered"),
                 )
             ],
+            # The board spans every customer, so the editor is handed no lead and no
+            # trips — it fetches the one the drawer asks for. Spread first so the board's
+            # own `vehicle_options` (its filter, ordered by name) stays the one in play;
+            # both are the active vehicle list, so the editor's picker is happy with it.
+            **reservation_editor.editor_context(request, None, []),
             "vehicle_options": list(
                 VehicleType.objects.filter(active=True).order_by("name").values_list("id", "name")
             ),

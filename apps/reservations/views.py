@@ -8,6 +8,7 @@ from datetime import date, time
 
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models import Prefetch
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
@@ -19,7 +20,7 @@ from apps.integrations.aviationstack import AviationstackError
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
-from . import flights
+from . import editor, flights
 from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .groups import (
@@ -28,9 +29,10 @@ from .groups import (
     clone_reservation,
     copy_to_dates,
     delete_group,
+    group_size,
     set_group_size,
 )
-from .models import FlightDirection, Reservation
+from .models import FlightDirection, Reservation, Stop
 from .routing import create_return_trip, reverse_route
 
 log = logging.getLogger(__name__)
@@ -55,6 +57,36 @@ def _alert_la_stale(reservation: Reservation) -> None:
         Notification.Kind.LA_CHANGED,
         title="Update LimoAnywhere",
         detail=f"Trip #{reservation.pk} changed after LA sync — edit it in LimoAnywhere.",
+    )
+
+
+@login_required
+def reservation_draft(request, pk: int):
+    """One trip as the editor's draft, for a screen that cannot carry every trip's.
+
+    The quote and the order page serialize their lead's trips into the page, because they
+    hold one lead's worth. The dispatch board holds a whole week across every customer, so
+    it fetches the one trip being opened instead. `leadId` rides along because the save
+    posts against a lead, and the board's rows each belong to a different one.
+    """
+    trip = get_object_or_404(
+        Reservation.objects.select_related("lead").prefetch_related(
+            Prefetch(
+                "stops",
+                queryset=Stop.objects.select_related(
+                    "airport", "airline", "flight", "flight__airport", "flight__airline"
+                ).order_by("sequence"),
+            )
+        ),
+        pk=pk,
+    )
+    return JsonResponse(
+        {
+            "leadId": trip.lead_id,
+            # The linked set's size, so "apply to all N" means the same here as it does
+            # on the quote — the editor cannot count members it was never handed.
+            "draft": editor.reservation_draft(trip, quantity=group_size(trip)),
+        }
     )
 
 

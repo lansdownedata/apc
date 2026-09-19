@@ -178,5 +178,8 @@
   </p>
 
   {% include "components/drawer.html" with drawer_title="Assign trip" %}
+  {% comment %} The drawer's Edit trip opens this. The board spans every customer, so the
+     editor is given no trips up front — `draftUrl` is how it fetches the one asked for. {% endcomment %}
+  {% include "leads/_reservation_editor.html" %}
 </div>
 {% endblock %}

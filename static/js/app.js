@@ -656,9 +656,15 @@ window.quoteWorkspace = quoteWorkspace;
  */
 function reservationEditor(opts = {}) {
   return {
-    leadId: opts.leadId,
+    leadId: opts.leadId ?? null,
     saveUrl: opts.saveUrl,
     acUrl: opts.acUrl,
+    /* Where to fetch one trip's draft, "<pk>" standing in for its id. Set on the dispatch
+     * board, which spans every customer and so is handed no trips up front. */
+    draftUrl: opts.draftUrl || "",
+    /* Whose lead the open trip belongs to. On the board that is not the page's lead —
+     * there isn't one — so it comes back with the fetched draft and the save uses it. */
+    draftLeadId: null,
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
     defaultCostRatio: opts.defaultCostRatio ?? 65,
@@ -721,6 +727,7 @@ function reservationEditor(opts = {}) {
       });
     },
     newReservation() {
+      this.draftLeadId = this.leadId;
       this.draft = this.blankReservation();
       this.groupSizeAtOpen = 1;
       this.applyToGroup = false;
@@ -732,7 +739,21 @@ function reservationEditor(opts = {}) {
     },
     editReservation(id) {
       const r = this.reservations.find((x) => x.id === id);
-      if (!r) return;
+      if (r) return this.openDraft(r, this.leadId);
+      // Not one of this page's trips: fetch it, if this screen knows where from.
+      if (!this.draftUrl) return;
+      fetch(this.draftUrl.replace("0", String(id)), { headers: { "X-Requested-With": "XMLHttpRequest" } })
+        .then((res) => {
+          if (!res.ok) throw new Error("not found");
+          return res.json();
+        })
+        .then((body) => this.openDraft(body.draft, body.leadId))
+        .catch(() =>
+          Alpine.store("toast").push({ type: "danger", title: "Could not open that trip" }),
+        );
+    },
+    openDraft(r, leadId) {
+      this.draftLeadId = leadId ?? this.leadId;
       this.draft = JSON.parse(JSON.stringify(r));
       this.draft.quantity = Number(this.draft.quantity) || 1;
       this.groupSizeAtOpen = this.draft.quantity;
@@ -1042,7 +1063,7 @@ function reservationEditor(opts = {}) {
     postReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
       d.stops.forEach((s) => { delete s.verify; delete s.verifying; delete s.pill; });  // client-only
-      d.lead_id = this.leadId;
+      d.lead_id = this.draftLeadId ?? this.leadId;
       d.quantity = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
       d.applyToGroup = this.groupSizeAtOpen > 1 && this.applyToGroup;
       if (this.draftIsNew) delete d.id;

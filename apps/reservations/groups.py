@@ -230,6 +230,17 @@ def _members(group_key: uuid.UUID):
     return Reservation.objects.filter(group_key=group_key).order_by("sort_order", "id")
 
 
+def group_size(reservation: Reservation) -> int:
+    """How many trips this linked set holds — 1 for a trip that stands alone.
+
+    The editor needs it to say "apply to all N", and a screen that fetches one trip on its
+    own (the dispatch drawer) cannot count members it was never handed.
+    """
+    if reservation.group_key is None:
+        return 1
+    return _members(reservation.group_key).count()
+
+
 @transaction.atomic
 def set_group_size(reservation: Reservation, count: int) -> list[Reservation]:
     """Make the set `reservation` belongs to exactly `count` trips, and return it.
