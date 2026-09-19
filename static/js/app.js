@@ -931,7 +931,7 @@ function reservationEditor(opts = {}) {
         variant: "danger",
         title: "Reassign this trip?",
         message: gnet
-          ? `This trip was sent to ${who} over GNet. Reassigning withdraws it from GNet too — they are released on the network and will see it is gone. The trip then goes back to unassigned so you can pick someone else.`
+          ? `This trip was sent to ${who} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.`
           : this.coverage.isInHouse
             ? "It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you."
             : `It goes back to unassigned so you can pick someone else. ${who} is not notified automatically — tell them yourself.`,
