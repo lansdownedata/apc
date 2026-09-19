@@ -1,22 +1,23 @@
 {% comment %}
-  public/_wedding_step_times.html — Step 5 — the two anchors the whole itinerary is derived from.
+  public/_wedding_step_times.html — Step 5 — the two times the whole day hangs off.
 
-  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
-  builder (leads/_wedding_builder.html). An agent walking a couple through this on
-  the phone must be looking at the same screen they are, so this file has exactly
-  one copy. Requires an enclosing `weddingPlanner()` scope.
+  Shared verbatim by the public flow (public/wedding_plan.html), where it is one step
+  of the wizard, and the office's Edit details (leads/_wedding_details_editor.html),
+  where every category shows at once. An agent on the phone with a couple must be
+  reading the same questions they are, so this file has exactly one copy.
+  `showStep()` decides which of the two it is. Requires a `weddingPlanner()` scope.
 {% endcomment %}
-<fieldset x-show="stepName === 'times'">
-  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+<fieldset x-show="showStep('times')" :class="portal ? 'mb-10' : ''">
+  <span x-show="!portal" class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
     Step <span x-text="stepNumber"></span> of <span x-text="stepCount"></span>
   </span>
   <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
-    Two times, and we&rsquo;ll build the rest.
+    Two times, and we&rsquo;ll plan around them.
   </h2>
-  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+  <p x-show="!portal" class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
     You don&rsquo;t need to work out pickup times &mdash; that&rsquo;s our job. Give us the
-    ceremony and the venue&rsquo;s hard end time, and we&rsquo;ll lay out the whole day for
-    you to check.
+    ceremony and the venue&rsquo;s hard end time, and our team will plan every pickup
+    around them.
   </p>
 
   {% comment %}
@@ -34,14 +35,14 @@
     <div>
       <label for="wp-ceremony-time" class="mb-1.5 block text-[12px] font-medium text-muted">Ceremony starts</label>
       <input type="text" id="wp-ceremony-time" data-flatpickr-time placeholder="Select a time"
-             x-model="ceremonyTime" :disabled="timesTbd" @change="legs = null"
+             x-model="ceremonyTime" :disabled="timesTbd"
              x-effect="fpSync($el, ceremonyTime), fpDisabled($el, timesTbd)"
              class="field disabled:opacity-50">
     </div>
     <div>
       <label for="wp-end-time" class="mb-1.5 block text-[12px] font-medium text-muted">Venue requires everyone out by</label>
       <input type="text" id="wp-end-time" data-flatpickr-time placeholder="Select a time"
-             x-model="endTime" :disabled="timesTbd" @change="legs = null"
+             x-model="endTime" :disabled="timesTbd"
              x-effect="fpSync($el, endTime), fpDisabled($el, timesTbd)"
              class="field disabled:opacity-50">
     </div>
@@ -65,16 +66,16 @@
     <span x-cloak x-show="timesTbd"
           class="absolute right-3 top-3 grid h-[18px] w-[18px] place-items-center rounded-full bg-gold text-[10px] font-bold text-charcoal">{% icon "check" class="h-3 w-3" %}</span>
     <span class="block text-[14px] font-semibold text-ink">We don&rsquo;t have times yet</span>
-    <span class="block text-[12px] text-muted">We&rsquo;ll build a typical timeline you can adjust later &mdash; a 4:00 PM ceremony and an 11:00 PM end</span>
+    <span class="block text-[12px] text-muted">That&rsquo;s fine &mdash; we&rsquo;ll start from the rest and fill these in with you later</span>
   </button>
 
-  {% comment %} The portal builder has one shared footer instead — see _wedding_builder.html. {% endcomment %}
+  {% comment %} The office's Edit details has one shared footer instead — see leads/_wedding_details_editor.html. {% endcomment %}
   <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
     <button type="button" @click="back()"
             class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
     <span class="flex-1"></span>
     <button type="button" @click="next()"
-            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold">Build my day</button>
+            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold">Continue</button>
     {% include "public/_form_help_cta.html" %}
   </div>
 </fieldset>

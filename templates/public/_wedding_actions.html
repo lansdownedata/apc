@@ -1,9 +1,8 @@
 {% comment %}
   The Back / Continue pair every mid-flow step ends with. Requires an enclosing
-  `weddingPlanner()` scope. Steps whose primary button says something else (Times ->
-  "Build my day", Itinerary -> "Looks right", Contact -> submit) write their own.
+  `weddingPlanner()` scope. The first step (no Back) and the last (submit) write their own.
 {% endcomment %}
-{% comment %} Hidden in the portal builder, which carries one shared footer instead. {% endcomment %}
+{% comment %} Hidden in the office's Edit details, which carries one shared footer instead. {% endcomment %}
 <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
   <button type="button" @click="back()"
           class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">

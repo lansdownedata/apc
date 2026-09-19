@@ -422,6 +422,9 @@ function quoteWorkspace(opts = {}) {
     openEditorId: opts.openEditorId ?? null,
     // PricingConfig's default vendor share, pre-filled on a new trip (spec 2026-09-05 §3.4).
     defaultCostRatio: opts.defaultCostRatio ?? 65,
+    // What a new trip starts with on this lead. Empty except on a wedding, whose trips
+    // the office builds by hand — all on the same day, all the same occasion.
+    tripDefaults: opts.tripDefaults || {},
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
     header: opts.header || {},
@@ -429,8 +432,8 @@ function quoteWorkspace(opts = {}) {
     sending: false,
     editorOpen: false,
     costOpen: false,
-    // The wedding builder modal (spec 2026-08-30 §5.2). Opens itself when the workspace
-    // was reached with ?wedding=1, i.e. straight from the New wedding button.
+    // The wedding's Edit details modal. Opens itself when the workspace was reached
+    // with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
     // "Copy to dates…" (APC-17). `copyDatesFor` is the source trip's pk; `copyDatesSource`
     // is its pickup date (ISO, "" when unscheduled — weekly repeat is hidden then).
@@ -620,7 +623,8 @@ function quoteWorkspace(opts = {}) {
     blankReservation() {
       const v = this.vehicles.length ? this.vehicles[0] : null;
       return {
-        tripType: "transfer", serviceType: "", date: "", time: "",
+        tripType: "transfer", serviceType: this.tripDefaults.serviceType || "",
+        date: this.tripDefaults.date || "", time: "",
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
         pax: 1, quantity: 1,
@@ -2427,14 +2431,19 @@ function contactPicker(opts = {}) {
 window.contactPicker = contactPicker;
 
 /* ------------------------------------------------------- wedding intake (2026-08-30)
- * The customer describes their wedding; this derives the trips. Seven steps, all state
- * client-side, ONE post at the end — the same shape as quoteSteps() above, just longer.
+ * The customer describes their wedding and reviews what they told us. Seven steps, all
+ * state client-side, ONE post at the end — the same shape as quoteSteps() above, just
+ * longer. Nothing is derived from the answers (retired 2026-09-19): the office builds
+ * the trips. `answers` MIRRORS apps/public/wedding.py:wedding_answers, which is the
+ * authority for the categories, questions and wording — change one, change the other.
  *
- * The generation rules below MIRROR apps/public/wedding.py, which is the authority: the
- * server re-derives every vehicle recommendation on submit and ignores whatever this
- * sends. Change one and change the other, or the preview and the quote drift apart.
+ * In the office (`portal`) there are no steps at all: every category shows at once in
+ * the workspace's Edit details modal, and showStep() is what makes the shared step
+ * partials serve both.
  */
-const WEDDING_STEPS = ["date", "venue", "who", "hotels", "times", "itinerary", "contact"];
+const WEDDING_STEPS = ["date", "venue", "who", "hotels", "times", "review", "contact"];
+/* The categories an answer can be edited under — the steps minus review and contact. */
+const WEDDING_CATEGORIES = ["date", "venue", "who", "hotels", "times"];
 /* Tabler icon inner-markup (outline, stroke-width 2), matched to `static/icons/`.
  * The template supplies the <svg> wrapper (h-[22px] w-[22px], currentColor). */
 const WEDDING_GROUPS = [
@@ -2455,7 +2464,6 @@ const WEDDING_GROUPS = [
     icon: '<path d="M7 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M17 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M5 17h-2v-6l2 -5h9l4 5h1a2 2 0 0 1 2 2v4h-2m-4 0h-6m-6 -6h15m-6 0v-5"/>',
   },
 ];
-const WEDDING_MAX_LEGS = 12;
 
 function weddingPlanner(opts = {}) {
   const saved = opts.resume || null;
@@ -2465,16 +2473,11 @@ function weddingPlanner(opts = {}) {
     steps: WEDDING_STEPS,
     resumed: !!(saved && saved.resume),
     quoteNo: (saved && saved.quote_no) || "",
-    // Portal mode (the office's builder): the lead already has a contact, so that step
-    // is dropped, the per-step footers give way to one shared one, and each leg carries
-    // a real VehicleType the agent picked. An explicit option, NOT something read off
-    // the saved plan — a brand-new wedding started from the New wedding button has no
-    // saved plan at all, and it is just as much the office's builder.
+    // Portal mode (the office's Edit details): the lead already has a contact, there is
+    // nothing to review before sending, and every category is on screen at once. An
+    // explicit option, NOT something read off the saved answers — a brand-new wedding
+    // started from the New wedding button has none, and it is just as much the office's.
     portal: !!opts.portal,
-    vehicleOptions: opts.vehicleOptions || [],
-    /* The client's group-transport catalog: [{name, capacity}], smallest first. Sorted
-     * here rather than trusted from the payload so every lookup below can assume it. */
-    fleet: [...(opts.fleet || [])].sort((a, b) => a.capacity - b.capacity),
 
     step: 0,
     date: (saved && saved.wedding_date) || "",
@@ -2494,7 +2497,7 @@ function weddingPlanner(opts = {}) {
     ceremonyTime: (saved && saved.ceremony_time) || "16:00",
     endTime: (saved && saved.end_time) || "23:00",
     timesTbd: !!(saved && saved.times_tbd),
-    legs: (saved && saved.legs && saved.legs.length) ? saved.legs.map((l) => ({ ...l })) : null,
+    notes: (saved && saved.notes) || "",
     contact: {
       name: (saved && saved.name) || "",
       email: (saved && saved.email) || "",
@@ -2516,14 +2519,12 @@ function weddingPlanner(opts = {}) {
     _onHide: null,
 
     init() {
-      // A plan that already has an itinerary — a customer's resume link, or the office
-      // reopening a saved wedding — drops straight onto it. A brand-new customer visit
-      // rehydrates whatever a previous, abandoned visit had entered.
-      if ((this.resumed || this.portal) && this.legs) {
-        this.step = WEDDING_STEPS.indexOf("itinerary");
-      } else if (!this.portal) {
-        this._restore();
-      }
+      // The office has no steps, so no history to keep and no draft to restore.
+      if (this.portal) return;
+      // A customer's resume link drops straight onto the review of what they told us. A
+      // brand-new visit rehydrates whatever a previous, abandoned visit had entered.
+      if (this.resumed) this.step = WEDDING_STEPS.indexOf("review");
+      else this._restore();
       // Seed the entry for the step we open on. The first Back then leaves the page
       // (correct — Back off step 1 goes home) and every later Back walks one step.
       history.replaceState({ ...history.state, weddingStep: this.step }, "");
@@ -2549,7 +2550,7 @@ function weddingPlanner(opts = {}) {
           sameSite: this.sameSite, ceremony: this.ceremony, ceremonyName: this.ceremonyName,
           who: this.who, counts: this.counts, hotels: this.hotels, hotelsTbd: this.hotelsTbd,
           ceremonyTime: this.ceremonyTime, endTime: this.endTime, timesTbd: this.timesTbd,
-          legs: this.legs, contact: this.contact,
+          notes: this.notes, contact: this.contact,
         }));
       } catch (e) { /* private mode / quota — the flow still works, just no local resume */ }
     },
@@ -2570,7 +2571,7 @@ function weddingPlanner(opts = {}) {
       this.ceremonyTime = s.ceremonyTime || "16:00";
       this.endTime = s.endTime || "23:00";
       this.timesTbd = !!s.timesTbd;
-      this.legs = (s.legs && s.legs.length) ? s.legs.map((l) => ({ ...l })) : null;
+      this.notes = s.notes || "";
       this.contact = s.contact || this.contact;
       this.step = Math.min(Math.max(s.step || 0, 0), WEDDING_STEPS.length - 1);
     },
@@ -2580,14 +2581,23 @@ function weddingPlanner(opts = {}) {
 
     /* ------------------------------------------------------------------ step model */
     get stepName() { return WEDDING_STEPS[this.step]; },
+    // Nobody is being collected from a hotel, so don't ask which hotel.
+    get needsHotels() { return this.who.includes("guests") || this.who.includes("family"); },
     get visibleSteps() {
-      // Nobody is being collected from a hotel, so don't ask which hotel.
-      const needsHotels = this.who.includes("guests") || this.who.includes("family");
-      return WEDDING_STEPS.filter((s) => {
-        if (s === "hotels") return needsHotels;
-        if (s === "contact") return !this.portal; // the lead already has one
-        return true;
-      });
+      return WEDDING_STEPS.filter((s) => s !== "hotels" || this.needsHotels);
+    },
+    /* Whether a step partial is on screen. The website shows the current step; the
+     * office shows every category it would have asked about, all at once. */
+    showStep(name) {
+      if (!this.portal) return this.stepName === name;
+      return WEDDING_CATEGORIES.includes(name) && (name !== "hotels" || this.needsHotels);
+    },
+    /* The review step's "Change" links. A forward push, so Back returns to the review. */
+    editStep(name) { this._goto(WEDDING_STEPS.indexOf(name)); },
+    /* The office saves every category in one go, so it needs all of them answered. */
+    get canSave() {
+      return !!(this.date && (this.venue || this.venueName.trim()) && this.who.length
+        && (!this.needsHotels || this.hotelsTbd || this.hotels.length));
     },
     get stepNumber() { return this.visibleSteps.indexOf(this.stepName) + 1; },
     get stepCount() { return this.visibleSteps.length; },
@@ -2618,7 +2628,6 @@ function weddingPlanner(opts = {}) {
     _goto(i, push = true) {
       i = Math.max(0, Math.min(i, WEDDING_STEPS.length - 1));
       if (i === this.step) return;
-      if (WEDDING_STEPS[i] === "itinerary" && !this.legs) this.legs = this.generateLegs();
       if (i > this.step) this.track(this.stepName, "completed");
       this.step = i;
       if (push) history.pushState({ ...history.state, weddingStep: i }, "", `#${this.stepName}`);
@@ -2679,56 +2688,7 @@ function weddingPlanner(opts = {}) {
       return { tone: "info", text: "That's over a year out. We'll only ask what you already know — you can fill in the rest later." };
     },
 
-    /* ---------------------------------------------------------------- the rules */
-    shift(hhmm, mins) {
-      const [h, m] = hhmm.split(":").map(Number);
-      const t = (((h * 60 + m + mins) % 1440) + 1440) % 1440;
-      return `${this.pad(Math.floor(t / 60))}:${this.pad(t % 60)}`;
-    },
-    /* Mirror of wedding.py:vehicle_for. There are no size brackets here and none there:
-     * both read the client's own catalog, handed in as `fleet` (name + capacity, smallest
-     * first). That is what stopped the itinerary offering an "Executive mini coach" the
-     * client has never owned — rename a vehicle in Settings and this follows. */
-    vehicleFor(count) {
-      const fleet = this.fleet;
-      if (!fleet.length) return "";
-      const runs = this.vehicleRuns(count);
-      const perRun = Math.ceil(count / runs);
-      const pick = fleet.find((v) => v.capacity >= perRun) || fleet[fleet.length - 1];
-      return runs <= 1 ? pick.name : `${runs} × ${pick.name}`;
-    },
-    /* Mirror of wedding.py:vehicle_runs — the integer behind vehicleFor's "3 × …", so the
-     * chip a couple reads and the trips the office gets can never disagree about how many
-     * vehicles are turning up (APC-14). Change one, change the other. */
-    vehicleRuns(count) {
-      const fleet = this.fleet;
-      if (!fleet.length) return 1;
-      const ceiling = fleet[fleet.length - 1].capacity;
-      const limit = Math.min(this.venueCap || ceiling, ceiling);
-      if (limit <= 0) return 1;
-      return Math.max(1, Math.ceil(count / limit));
-    },
-    /* How many vehicles this leg runs: the agent's own number when they set one, else
-     * whatever the headcount needs. Office only — the public flow never asks. */
-    legVehicles(leg) {
-      return leg.vehicles > 0 ? leg.vehicles : this.vehicleRuns(leg.pax);
-    },
-    setLegVehicles(leg, value) {
-      const count = Math.max(1, Math.min(20, parseInt(value, 10) || 1));
-      // Typing the derived number back clears the override rather than freezing it, so a
-      // leg whose guest list grows later still gains a coach on its own.
-      leg.vehicles = count === this.vehicleRuns(leg.pax) ? null : count;
-    },
-    shortName(place) {
-      const suffix = ` ${place.city || ""}`;
-      return place.city && place.name.endsWith(suffix)
-        ? place.name.slice(0, -suffix.length) : place.name;
-    },
-    get hotelLabel() {
-      if (this.hotelsTbd || !this.hotels.length) return "Guest hotels (to be confirmed)";
-      if (this.hotels.length === 1) return this.hotels[0].name;
-      return `${this.hotels.length} hotels — ${this.hotels.map((h) => this.shortName(h)).join(", ")}`;
-    },
+    /* ------------------------------------------------------------------- places */
     siteName(place, typed, fallback) {
       if (place) return place.name;
       return (typed || "").trim() || fallback;
@@ -2741,147 +2701,30 @@ function weddingPlanner(opts = {}) {
       if (this.sameSite) return this.venueLabel;
       return this.siteName(this.ceremony, this.ceremonyName, "Ceremony site");
     },
-    get venueCap() { return (this.venue && this.venue.vehicle_cap) || null; },
 
-    generateLegs() {
-      const cer = this.timesTbd ? "16:00" : (this.ceremonyTime || "16:00");
-      const end = this.timesTbd ? "23:00" : (this.endTime || "23:00");
-      const venue = { name: this.venueLabel, sub: this.siteLine(this.venue) };
-      const site = { name: this.ceremonyLabel, sub: this.sameSite ? venue.sub : this.siteLine(this.ceremony) };
-      const hotel = {
-        name: this.hotelLabel,
-        sub: (this.hotelsTbd || !this.hotels.length) ? "hotel not booked yet"
-          : (this.hotels.length === 1 ? this.siteLine(this.hotels[0]) : ""),
-      };
-      const has = (k) => this.who.includes(k);
-      const legs = [];
-      if (has("party")) legs.push({
-        id: "party-in", time: this.shift(cer, -75), title: "Wedding party to the ceremony",
-        from: "Getting-ready location", from_sub: "we'll confirm the address with you",
-        to: site.name, to_sub: site.sub, pax: this.counts.party, optional: false,
-      });
-      if (has("family")) legs.push({
-        id: "family-in", time: this.shift(cer, -70), title: "Family & VIPs to the ceremony",
-        from: hotel.name, from_sub: hotel.sub, to: site.name, to_sub: site.sub,
-        pax: this.counts.family, optional: false,
-      });
-      if (has("guests")) legs.push({
-        id: "guests-in", time: this.shift(cer, -60), title: "Guests to the ceremony",
-        from: hotel.name, from_sub: hotel.sub, to: site.name, to_sub: site.sub,
-        pax: this.counts.guests, optional: false,
-      });
-      if (!this.sameSite) {
-        const aboard = (has("guests") ? this.counts.guests : 0) + (has("party") ? this.counts.party : 0)
-          + (has("family") ? this.counts.family : 0);
-        legs.push({
-          id: "hop", time: this.shift(cer, 45), title: "Ceremony to reception",
-          from: site.name, from_sub: site.sub, to: venue.name, to_sub: venue.sub,
-          pax: aboard || this.counts.guests, optional: false,
-        });
-      }
-      if (has("guests")) {
-        // No early return run by default (APC-7): the couple opts in with addEarlyReturn()
-        // and we never pre-fill an early time. Mirrors wedding.py.
-        legs.push({
-          id: "final-out", time: end, title: "Final return — last call",
-          from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
-          pax: this.counts.guests, optional: false,
-        });
-      }
-      if (has("couple")) legs.push({
-        id: "exit", time: end, title: "Your exit", from: venue.name, from_sub: venue.sub,
-        to: "Hotel or home", to_sub: "we'll confirm with you", pax: 2, optional: false,
-      });
-      // The default shape: every movement its own transfer. The office may switch any
-      // of them to hourly on the itinerary; a fresh generate returns to the default.
-      for (const leg of legs) { leg.trip_type = "transfer"; leg.hours = null; }
-      legs.sort((a, b) => a.time.localeCompare(b.time));
-      return legs;
-    },
-
-    /* ------------------------------------------------------------ itinerary edits */
-    get liveLegs() { return (this.legs || []).filter((l) => !l.skip); },
-    get legCount() { return this.liveLegs.length; },
-    get canAddLeg() { return this.legCount < WEDDING_MAX_LEGS; },
-    resort() { this.legs.sort((a, b) => a.time.localeCompare(b.time)); },
-    setLegTime(leg, value) {
-      if (!value) return;
-      leg.time = value;
-      this.timesTbd = false;
-      this.resort();
-    },
-    setLegPax(leg, value) {
-      leg.pax = Math.max(1, Math.min(400, parseInt(value, 10) || 1));
-    },
-    /* Office only. A wedding is N transfers by default — a set of movements, not one
-     * open-ended charter — but a continuous shuttle is billed by the hour, so each leg
-     * can be either. Switching back to a transfer drops the hours, mirroring what
-     * services._apply_trip_window does on save. */
-    setLegTripType(leg, value) {
-      leg.trip_type = value;
-      if (value !== "hourly") leg.hours = null;
-    },
-    setLegHours(leg, value) {
-      const hours = parseFloat(value);
-      leg.hours = Number.isFinite(hours) && hours >= 1 && hours <= 24 ? hours : null;
-    },
-    isHourly(leg) { return leg.trip_type === "hourly"; },
-    dropLeg(leg) { leg.skip = true; },
-    restoreLeg(leg) { leg.skip = false; },
-    regenerate() { this.legs = this.generateLegs(); },
-    /* Opt-in early return run (APC-7). Not in the generated set and never pre-timed —
-     * it lands co-timed with the final run and the couple / office pull it earlier.
-     * Mirrors wedding.py:early_return_leg. */
-    get hasEarlyReturn() { return (this.legs || []).some((l) => l.id === "early-out"); },
-    get canAddEarlyReturn() {
-      return this.who.includes("guests") && !this.hasEarlyReturn && this.canAddLeg;
-    },
-    addEarlyReturn() {
-      if (!this.legs || this.hasEarlyReturn) return;
-      const end = this.timesTbd ? "23:00" : (this.endTime || "23:00");
-      const venue = { name: this.venueLabel, sub: this.siteLine(this.venue) };
-      const hotel = {
-        name: this.hotelLabel,
-        sub: (this.hotelsTbd || !this.hotels.length) ? "hotel not booked yet"
-          : (this.hotels.length === 1 ? this.siteLine(this.hotels[0]) : ""),
-      };
-      this.legs.push({
-        id: "early-out", time: end, title: "Early return run",
-        from: venue.name, from_sub: venue.sub, to: hotel.name, to_sub: "",
-        pax: Math.max(12, Math.round(this.counts.guests * 0.4)), optional: true,
-        why: "Set the pickup time with the couple — many guests leave before the last call.",
-        trip_type: "transfer", hours: null,
-      });
-      this.resort();
-    },
+    /* ------------------------------------------------------------------ answers */
     bump(key, delta) {
       this.counts[key] = Math.max(1, Math.min(400, (this.counts[key] || 1) + delta));
-      this.legs = null;
     },
     setCount(key, value) {
       this.counts[key] = Math.max(1, Math.min(400, parseInt(value, 10) || 1));
-      this.legs = null;
     },
     toggleGroup(key) {
       this.who = this.who.includes(key) ? this.who.filter((k) => k !== key) : this.who.concat(key);
-      this.legs = null;
     },
     setSameSite(value) {
       this.sameSite = value;
       if (value) { this.ceremony = null; this.ceremonyName = ""; }
-      this.legs = null;
     },
     toggleHotelsTbd() {
       this.hotelsTbd = !this.hotelsTbd;
       if (this.hotelsTbd) this.hotels = [];
-      this.legs = null;
     },
     toggleTimesTbd() {
       this.timesTbd = !this.timesTbd;
       if (this.timesTbd) { this.ceremonyTime = "16:00"; this.endTime = "23:00"; }
-      this.legs = null;
     },
-    removeHotel(i) { this.hotels.splice(i, 1); this.legs = null; },
+    removeHotel(i) { this.hotels.splice(i, 1); },
     clearPlace(kind) {
       const field = kind === "venue" ? "venue" : "ceremony";
       if (field === "venue") { this.venue = null; this.venueName = ""; }
@@ -2891,7 +2734,6 @@ function weddingPlanner(opts = {}) {
       // open/active flags — so the first keystroke of a new name runs a clean search
       // instead of racing a stale AbortController or reopening the old dropdown.
       this.resetField(field);
-      this.legs = null;
     },
     resetField(field) {
       this._ctl[field]?.abort();
@@ -2939,7 +2781,6 @@ function weddingPlanner(opts = {}) {
       }
       this.query[field] = field === "hotel" ? "" : place.name;
       this.closeResults(field);
-      this.legs = null;
     },
     closeResults(field) { this.open[field] = false; this.active[field] = -1; },
 
@@ -2948,48 +2789,44 @@ function weddingPlanner(opts = {}) {
     get hotelsJson() {
       return JSON.stringify(this.hotels.map((h) => ({ venue_id: h.id || null, name: h.name })));
     },
-    /* {leg_id: VehicleType pk} for the office's builder. Only assigned legs are sent:
-     * an absent key means "leave whatever this trip already had", which is what stops a
-     * rebuild after a time change from silently un-pricing the day. */
-    get vehiclesJson() {
-      const out = {};
-      for (const leg of this.liveLegs) if (leg.vehicle_id) out[leg.id] = leg.vehicle_id;
-      return JSON.stringify(out);
-    },
-
-    get tripTypesJson() {
-      const out = {};
-      for (const leg of this.liveLegs) if (leg.trip_type) out[leg.id] = leg.trip_type;
-      return JSON.stringify(out);
-    },
-    get hoursJson() {
-      const out = {};
-      for (const leg of this.liveLegs) if (leg.hours) out[leg.id] = leg.hours;
-      return JSON.stringify(out);
-    },
-    /* Only the legs the agent overrode. An absent count means "however many the guest
-     * list needs", which the server derives — posting the derived number would freeze
-     * a leg at today's headcount. */
-    get countsJson() {
-      const out = {};
-      for (const leg of this.liveLegs) if (leg.vehicles > 0) out[leg.id] = leg.vehicles;
-      return JSON.stringify(out);
-    },
-
-    get legsJson() {
-      return JSON.stringify(this.liveLegs.map((l) => ({
-        id: l.id, time: l.time, title: l.title,
-        from: l.from, from_sub: l.from_sub || "",
-        to: l.to, to_sub: l.to_sub || "",
-        pax: l.pax, optional: !!l.optional,
-      })));
+    /* Mirror of wedding.py:wedding_answers, for the review step. `step` is the one
+     * thing the server's version doesn't carry: where "Change" takes them. */
+    get answers() {
+      const has = (k) => this.who.includes(k);
+      const venueRows = [
+        ["Reception venue", this.venueLabel],
+        ["Ceremony at the same place?", this.sameSite ? "Yes" : "No — two locations"],
+      ];
+      if (!this.sameSite) venueRows.push(["Ceremony location", this.ceremonyLabel]);
+      const riding = [["Who needs a ride?",
+        WEDDING_GROUPS.filter((g) => has(g.key)).map((g) => g.title).join(", ") || "—"]];
+      if (has("guests")) riding.push(["Guests riding the shuttle", String(this.counts.guests)]);
+      if (has("party")) riding.push(["Wedding party", String(this.counts.party)]);
+      if (has("family")) riding.push(["Family & VIPs", String(this.counts.family)]);
+      const out = [
+        { step: "date", title: "Date", rows: [["Wedding date", this.fmtDate(this.date)]] },
+        { step: "venue", title: "Venue & ceremony", rows: venueRows },
+        { step: "who", title: "Who's riding", rows: riding },
+      ];
+      if (this.needsHotels) {
+        const hotels = (this.hotelsTbd || !this.hotels.length)
+          ? "Not booked yet" : this.hotels.map((h) => h.name).join("; ");
+        out.push({ step: "hotels", title: "Hotels", rows: [["Where is everyone staying?", hotels]] });
+      }
+      out.push({
+        step: "times", title: "Times", rows: [
+          ["Ceremony starts", this.timesTbd ? "Not set yet" : this.fmtTime(this.ceremonyTime)],
+          ["Venue requires everyone out by", this.timesTbd ? "Not set yet" : this.fmtTime(this.endTime)],
+        ],
+      });
+      return out;
     },
     onSubmit(e) {
       if (!this.canAdvance()) { e.preventDefault(); return; }
       this.track("contact", "completed");
       this.submitting = true;
-      // The plan is being sent — drop the local draft so returning to /weddings/plan/
-      // starts fresh rather than resurrecting a submitted wedding.
+      // The details are being sent — drop the local draft so returning to
+      // /weddings/plan/ starts fresh rather than resurrecting a submitted wedding.
       this._submitted = true;
       this._clearPersist();
     },

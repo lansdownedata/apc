@@ -1,49 +1,14 @@
-"""Server-side validation of a submitted wedding itinerary.
-
-`legs_json` is the customer's *edited* plan, not the one we generated, so none of it is
-trusted: the shape is checked here and the vehicle recommendation is re-derived.
-"""
+"""Server-side validation of a submitted wedding: the answers, and nothing derived from them."""
 
 import json
-from datetime import date, time, timedelta
+from datetime import date, timedelta
 
 import pytest
 from django.utils import timezone
 
-from apps.addresses.factories import VenueFactory
 from apps.public.forms import WeddingRequestForm
 
 pytestmark = pytest.mark.django_db
-
-
-def _legs(n=2):
-    legs = [
-        {
-            "id": "guests-in",
-            "time": "15:00",
-            "title": "Guests to the ceremony",
-            "from": "Hampton Inn Leesburg",
-            "from_sub": "Leesburg, VA",
-            "to": "The Oak Barn at Loyalty",
-            "to_sub": "Leesburg, VA",
-            "pax": 105,
-            "optional": False,
-        },
-        {
-            "id": "final-out",
-            "time": "23:00",
-            "title": "Final return — last call",
-            "from": "The Oak Barn at Loyalty",
-            "from_sub": "",
-            "to": "Hampton Inn Leesburg",
-            "to_sub": "",
-            "pax": 105,
-            "optional": False,
-        },
-    ]
-    while len(legs) < n:
-        legs.append({**legs[0], "id": f"extra-{len(legs)}"})
-    return legs[:n]
 
 
 def _post(**over):
@@ -61,7 +26,6 @@ def _post(**over):
         "hotels_json": json.dumps([{"venue_id": None, "name": "Hampton Inn Leesburg"}]),
         "ceremony_time": "16:00",
         "end_time": "23:00",
-        "legs_json": json.dumps(_legs()),
         "company": "",
     }
     data.update(over)
@@ -112,73 +76,8 @@ def test_groups_keep_the_canonical_order():
 # --- legs_json ---------------------------------------------------------------------
 
 
-def test_at_least_one_leg_is_required():
-    form = WeddingRequestForm(_post(legs_json=json.dumps([])))
-    assert not form.is_valid()
-    assert "legs_json" in form.errors
-
-
-def test_thirteen_legs_are_rejected():
-    form = WeddingRequestForm(_post(legs_json=json.dumps(_legs(13))))
-    assert not form.is_valid()
-    assert "legs_json" in form.errors
-
-
-def test_twelve_legs_are_allowed():
-    assert WeddingRequestForm(_post(legs_json=json.dumps(_legs(12)))).is_valid()
-
-
-@pytest.mark.parametrize("pax", [0, 500, -3, "many"])
-def test_impossible_passenger_counts_are_rejected(pax):
-    legs = _legs()
-    legs[0]["pax"] = pax
-    assert not WeddingRequestForm(_post(legs_json=json.dumps(legs))).is_valid()
-
-
-@pytest.mark.parametrize("field", ["time", "title", "from", "to"])
-def test_every_leg_needs_its_core_fields(field):
-    legs = _legs()
-    legs[0][field] = ""
-    assert not WeddingRequestForm(_post(legs_json=json.dumps(legs))).is_valid()
-
-
-def test_an_unparseable_time_is_rejected():
-    legs = _legs()
-    legs[0]["time"] = "half past four"
-    assert not WeddingRequestForm(_post(legs_json=json.dumps(legs))).is_valid()
-
-
-def test_malformed_json_is_rejected_without_a_traceback():
-    form = WeddingRequestForm(_post(legs_json="{not json"))
-    assert not form.is_valid()
-    assert "legs_json" in form.errors
-
-
-def test_the_vehicle_recommendation_is_re_derived_server_side():
-    """Whatever the client claims is ignored — the office quotes off our own rule."""
-    legs = _legs()
-    legs[0]["vehicle"] = "Unicorn carriage"
-    form = WeddingRequestForm(_post(legs_json=json.dumps(legs)))
-    assert form.is_valid(), form.errors
-    assert form.cleaned_data["legs"][0]["vehicle"] == "2 × Motor Coach"
-
-
-def test_the_venues_cap_resizes_the_re_derived_recommendation():
-    venue = VenueFactory(name="The Oak Barn at Loyalty", vehicle_cap=40)
-    form = WeddingRequestForm(_post(venue_id=str(venue.pk)))
-    assert form.is_valid(), form.errors
-    assert form.cleaned_data["legs"][0]["vehicle"] == "3 × Motor Coach"
-
-
 def test_an_unknown_venue_id_is_rejected():
     assert not WeddingRequestForm(_post(venue_id="99999")).is_valid()
-
-
-def test_legs_are_returned_in_time_order():
-    legs = list(reversed(_legs()))
-    form = WeddingRequestForm(_post(legs_json=json.dumps(legs)))
-    assert form.is_valid(), form.errors
-    assert [leg["time"] for leg in form.cleaned_data["legs"]] == [time(15, 0), time(23, 0)]
 
 
 # --- the "not sure yet" path -------------------------------------------------------

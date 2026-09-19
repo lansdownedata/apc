@@ -3,28 +3,28 @@
 
 {% block meta %}
 <title>{% block title %}Plan your wedding transportation — All Pro Charter{% endblock %}</title>
-<meta name="description" content="Tell us about your wedding and we'll build the whole day's transportation — shuttles, the wedding party, guest hotels and the last run home. No pickup times to work out.">
+<meta name="description" content="Tell us about your wedding and one of our wedding professionals will build the whole day's transportation — shuttles, the wedding party, guest hotels and the last run home. No pickup times to work out.">
 <link rel="canonical" href="{{ canonical_url }}">
 <meta name="robots" content="noindex">
 <meta property="og:site_name" content="All Pro Charter">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Plan your wedding transportation — All Pro Charter">
-<meta property="og:description" content="Two times and a guest count is all we need. We'll lay out the whole day for you to check.">
+<meta property="og:description" content="Two times and a guest count is all we need. Our team builds the day from there.">
 {% endblock %}
 
 {% block content %}
 {% comment %}
-  THE WEDDING INTAKE (spec 2026-08-30 §5). Seven steps, every one of them client-side,
-  ONE post at the end — the same contract as the hero's two-step widget, just longer.
-  There is no wizard route and no server-side step state; `weddingPlanner()` in
-  static/js/app.js owns the whole thing and mirrors apps/public/wedding.py's rules.
+  THE WEDDING INTAKE. Seven steps, every one of them client-side, ONE post at the end —
+  the same contract as the hero's two-step widget, just longer. There is no wizard route
+  and no server-side step state; `weddingPlanner()` in static/js/app.js owns the whole
+  thing. Nothing is generated from the answers: the couple reviews them, we confirm them
+  back, and the office builds the trips (see apps/public/wedding.py).
 
   With Alpine absent every fieldset renders at once and the form still posts, so the
   page degrades to a long form rather than to nothing.
 {% endcomment %}
-<section class="mx-auto w-full px-4 py-10 sm:px-6 sm:py-14"
-         x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|json_attr }}, fleet: {{ fleet|json_attr }} })"
-         :class="stepName === 'itinerary' ? 'max-w-3xl' : 'max-w-2xl'">
+<section class="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-14"
+         x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|json_attr }} })">
 
   <form method="post" @submit="onSubmit($event)" class="contents">
     {% csrf_token %}
@@ -34,7 +34,7 @@
     <input type="text" id="wp-company" name="company" value="" class="hidden" aria-hidden="true"
            tabindex="-1" autocomplete="off">
 
-    {% comment %} Everything the browser derived, posted in one go and re-validated server-side. {% endcomment %}
+    {% comment %} Every answer, posted in one go and re-validated server-side. {% endcomment %}
     <input type="hidden" name="wedding_date" :value="date">
     <input type="hidden" name="venue_id" :value="venue ? venue.id : ''">
     <input type="hidden" name="venue_name" :value="venueLabel">
@@ -50,7 +50,6 @@
     <input type="hidden" name="ceremony_time" :value="timesTbd ? '' : ceremonyTime">
     <input type="hidden" name="end_time" :value="timesTbd ? '' : endTime">
     <input type="hidden" name="times_tbd" :value="timesTbd ? '1' : ''">
-    <input type="hidden" name="legs_json" :value="legsJson">
 
     {% comment %} progress rail — one segment per step this couple will actually see {% endcomment %}
     <nav class="mb-7 flex gap-1.5" aria-label="Progress">
@@ -89,19 +88,19 @@
       {% comment %} ---------------------------------------------------- 5 · times {% endcomment %}
       {% include "public/_wedding_step_times.html" %}
 
-      {% comment %} ------------------------------------------------ 6 · itinerary {% endcomment %}
-      {% include "public/_wedding_itinerary.html" %}
+      {% comment %} --------------------------------------------------- 6 · review {% endcomment %}
+      {% include "public/_wedding_review.html" %}
 
       {% comment %} -------------------------------------------------- 7 · contact {% endcomment %}
       <fieldset x-show="stepName === 'contact'">
         <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Last step</span>
         <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
-          Where should we send the quote?
+          Where should we send your confirmation?
         </h2>
         <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
-          We&rsquo;ll price all <span x-text="legCount"></span>
-          <span x-text="legCount === 1 ? 'movement' : 'movements'"></span> together and come back
-          within one business day. No deposit, nothing locked in.
+          We&rsquo;ll confirm every detail back to you right away, then one of our wedding
+          professionals builds your day and sends it with your quote. No deposit, nothing
+          locked in.
         </p>
 
         <div class="mt-6 grid gap-4">
@@ -132,8 +131,8 @@
 
         <p class="mt-4 flex gap-2.5 rounded-xl bg-sky-50 px-3.5 py-3 text-[12.5px] leading-relaxed text-sky-700">
           {% icon "info-circle" class="mt-0.5 h-4 w-4 shrink-0" %}
-          <span>We&rsquo;ll email you a link back to this itinerary so you can update the guest
-            count or times as your plans firm up.</span>
+          <span>We&rsquo;ll email you a link back to these details so you can update the guest
+            count, hotels or times as your plans firm up.</span>
         </p>
 
         <div class="mt-7 flex flex-wrap items-center gap-3">
@@ -142,7 +141,7 @@
           <span class="flex-1"></span>
           <button type="submit" :disabled="!canAdvance() || submitting"
                   class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
-            <span x-text="submitting ? 'Sending…' : 'Send my itinerary'">Send my itinerary</span>
+            <span x-text="submitting ? 'Sending…' : 'Send my details'">Send my details</span>
           </button>
           {% comment %} Every step carries this out (APC-10); it replaces the single
              page-level CTA that used to sit below the wizard. {% endcomment %}

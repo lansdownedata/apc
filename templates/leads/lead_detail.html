@@ -10,6 +10,7 @@
 {% block content %}
 {{ reservations_json|json_script:"ws-reservations" }}
 {{ vehicles_json|json_script:"ws-vehicles" }}
+{{ trip_defaults|json_script:"ws-trip-defaults" }}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="quoteWorkspace({
        weddingOpen: {% if wedding_open %}true{% else %}false{% endif %},
@@ -21,6 +22,7 @@
        acUrl: '{% url 'integrations:geocode_autocomplete' %}',
        privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
        defaultCostRatio: {{ default_cost_ratio_pct }},
+       tripDefaults: JSON.parse(document.getElementById('ws-trip-defaults').textContent),
        reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
        vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {
@@ -42,8 +44,7 @@
 
   {% comment %}
     Django messages, rendered here because the portal shell doesn't render them anywhere.
-    The wedding builder's "these trips are no longer in the plan" warning lands on this
-    page and must not be swallowed. (Wider gap: messages posted before a redirect to any
+    Edit details' "could not save" error lands on this page and must not be swallowed. (Wider gap: messages posted before a redirect to any
     other portal page are still dropped — worth fixing centrally in base.html.)
   {% endcomment %}
   {% if messages %}
@@ -293,7 +294,7 @@
               {% for stop in res.ordered_stops %}
               <div class="flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0 {% if forloop.first %}bg-emerald-500{% elif forloop.last %}bg-rose-500{% else %}bg-gold{% endif %}"></span>
-                {% comment %} name first: a wedding builder stop ("2 hotels — Hampton Inn, …")
+                {% comment %} name first: a legacy wedding-builder stop ("2 hotels — Hampton Inn, …")
                    is a place we name, not one with a street line of its own. {% endcomment %}
                 <span class="truncate">{{ stop.name|default:stop.address|default:"—" }}</span>
                 {% include "components/flight_pill.html" with stop=stop %}
@@ -610,7 +611,7 @@
   </div>
 
   {% include "leads/_reservation_editor.html" %}
-  {% include "leads/_wedding_builder.html" %}
+  {% if wedding_state %}{% include "leads/_wedding_details_editor.html" %}{% endif %}
   {% include "leads/_copy_dates_modal.html" %}
 
 </div>

@@ -1,10 +1,13 @@
 {% comment %}
-  leads/_wedding_builder.html — the wedding intake inside the workspace, posting to
-  lead_wedding_save. Requires: lead, wedding_state, wedding_open, vehicle_options.
+  leads/_wedding_details_editor.html — "Edit details": every category of the wedding
+  intake, its questions and the answers on file, editable in one modal. Posts to
+  lead_wedding_save, which replaces the answers and never touches the trips — the office
+  builds those by hand in the trip editor. Requires: lead, wedding_state.
 
-  The steps are INCLUDED from public/_wedding_step_*.html, not copied: an agent walking a
-  couple through this on the phone has to be looking at the same screen they are, and two
-  copies would drift the first time a line of copy changed.
+  The categories are INCLUDED from public/_wedding_step_*.html, not copied: an agent on
+  the phone with a couple has to be reading the same questions they are, and two copies
+  would drift the first time a line of copy changed. `portal: true` is what turns the
+  website's one-step-at-a-time wizard into every category at once (see showStep()).
 
   Modal rules copied from _reservation_editor.html deliberately — one x-show on the OUTER
   container and no x-transition anywhere. A transition there made Alpine defer the hide to
@@ -20,14 +23,12 @@
        x-data="weddingPlanner({
          portal: true,
          venuesUrl: '{% url 'public:wedding_venues' %}',
-         resume: {{ wedding_state|json_attr }},
-         vehicleOptions: {{ vehicle_options|json_attr }},
-         fleet: {{ fleet|json_attr }}
+         resume: {{ wedding_state|json_attr }}
        })">
     <form method="post" action="{% url 'lead_wedding_save' lead.pk %}" class="flex flex-col min-h-0">
       {% csrf_token %}
 
-      {% comment %} Everything the browser derived, re-validated server-side on arrival. {% endcomment %}
+      {% comment %} Every answer, re-validated server-side on arrival. {% endcomment %}
       <input type="hidden" name="wedding_date" :value="date">
       <input type="hidden" name="venue_id" :value="venue ? venue.id : ''">
       <input type="hidden" name="venue_name" :value="venueLabel">
@@ -43,52 +44,41 @@
       <input type="hidden" name="ceremony_time" :value="timesTbd ? '' : ceremonyTime">
       <input type="hidden" name="end_time" :value="timesTbd ? '' : endTime">
       <input type="hidden" name="times_tbd" :value="timesTbd ? '1' : ''">
-      <input type="hidden" name="legs_json" :value="legsJson">
-      <input type="hidden" name="vehicles_json" :value="vehiclesJson">
-      <input type="hidden" name="trip_types_json" :value="tripTypesJson">
-      <input type="hidden" name="hours_json" :value="hoursJson">
-      <input type="hidden" name="counts_json" :value="countsJson">
 
       <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
         <span class="w-9 h-9 rounded-lg grid place-items-center bg-goldl text-goldd shrink-0">
           <i class="ti ti-heart text-[17px]"></i>
         </span>
         <span class="min-w-0">
-          <span class="block font-display text-[17px] font-semibold text-ink">The wedding day</span>
-          <span class="block text-[12px] text-muted" x-text="`Step ${stepNumber} of ${stepCount}`"></span>
+          <span class="block font-display text-[17px] font-semibold text-ink">Wedding details</span>
+          <span class="block text-[12px] text-muted">What the couple told us. Trips are built separately, in the trip list.</span>
         </span>
         <button type="button" @click="weddingOpen = false" aria-label="Close"
                 class="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[17px] leading-none text-muted focus-gold hover:bg-surface2 hover:text-ink">&times;</button>
       </div>
 
-      <div class="overflow-y-auto px-6 py-5">
-        <nav class="mb-6 flex gap-1.5" aria-label="Progress">
-          <template x-for="name in visibleSteps" :key="name">
-            <span class="h-[3px] flex-1 rounded-full transition-colors"
-                  :class="railState(name) === 'on' ? 'bg-gold'
-                        : railState(name) === 'done' ? 'bg-gold/45' : 'bg-ink/10'"></span>
-          </template>
-        </nav>
-
+      <div class="overflow-y-auto px-6 py-6">
         {% include "public/_wedding_step_date.html" %}
         {% include "public/_wedding_step_venue.html" %}
         {% include "public/_wedding_step_who.html" %}
         {% include "public/_wedding_step_hotels.html" %}
         {% include "public/_wedding_step_times.html" %}
-        {% include "public/_wedding_itinerary.html" with office=1 %}
+
+        <div>
+          <label for="wp-notes" class="block font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">Anything else we should know?</label>
+          <textarea id="wp-notes" name="notes" x-model="notes" rows="4" maxlength="2000"
+                    placeholder="Getting-ready location, rehearsal dinner, guests leaving early, a grand exit&hellip;"
+                    class="field mt-4"></textarea>
+        </div>
       </div>
 
-      {% comment %} One shared footer — the per-step ones hide on `portal`. {% endcomment %}
       <div class="flex items-center gap-3 px-6 py-4 border-t border-line">
-        <button type="button" @click="back()" x-show="step > 0"
-                class="rounded-full px-5 py-2.5 text-[13px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
-        <button type="button" @click="regenerate()" x-cloak x-show="stepName === 'itinerary'"
-                class="rounded text-[12.5px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">Reset to our suggestion</button>
+        <span x-cloak x-show="!canSave" class="text-[12px] text-muted">A date, a venue and who&rsquo;s riding are needed to save.</span>
         <span class="flex-1"></span>
-        <button type="button" @click="next()" x-show="stepName !== 'itinerary'" :disabled="!canAdvance()"
-                class="btn-gold focus-gold rounded-full px-5 py-2.5 text-[13.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">Continue</button>
-        <button type="submit" x-cloak x-show="stepName === 'itinerary'" :disabled="!legCount"
-                class="btn-gold focus-gold rounded-full px-5 py-2.5 text-[13.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">Save the day</button>
+        <button type="button" @click="weddingOpen = false"
+                class="rounded-full px-5 py-2.5 text-[13px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Cancel</button>
+        <button type="submit" :disabled="!canSave"
+                class="btn-gold focus-gold rounded-full px-5 py-2.5 text-[13.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">Save details</button>
       </div>
     </form>
   </div>

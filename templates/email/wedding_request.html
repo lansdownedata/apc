@@ -1,12 +1,12 @@
 {% extends "email/base_email.html" %}
-{% block subject %}Your wedding transportation plan · {{ lead.quote_no }}{% endblock %}
-{% block preheader %}{{ movements|length }} movement{{ movements|length|pluralize }} on file — open the link to adjust the guest count or times.{% endblock %}
+{% block subject %}We have your wedding details · {{ lead.quote_no }}{% endblock %}
+{% block preheader %}One of our wedding professionals is building your day. Here is everything you told us.{% endblock %}
 {% block content %}
 <p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ contact.name|default:"there" }},</p>
 <p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">
-  Your wedding day is with our dispatch team. We'll price all
-  {{ movements|length }} movement{{ movements|length|pluralize }} together and come back
-  within one business day. No deposit, nothing locked in.
+  Thank you &mdash; we have your wedding details, and one of our wedding professionals is
+  building your day from them: every pickup, every vehicle. You'll have it, with a full
+  quote, within one business day. No deposit, nothing locked in.
 </p>
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
@@ -15,30 +15,28 @@
     <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;">REFERENCE</div>
     <div class="dm-ink" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:19px;font-weight:600;color:#17191D;padding-top:5px;">{{ lead.quote_no }}</div>
   </td></tr>
-  {% comment %} One row per movement, not per vehicle: a 105-guest run that takes two
-     coaches is still the one movement the couple asked for (APC-14). {% endcomment %}
-  {% for m in movements %}{% with res=m.reservation %}
-  <tr><td style="padding:14px 26px 0;">
+  {% comment %} `answers` is apps.public.wedding.wedding_answers — the same categories, questions and wording the confirmation page shows. {% endcomment %}
+  {% for category in answers %}
+  <tr><td style="padding:18px 26px 0;">
+    <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;text-transform:uppercase;">{{ category.title }}</div>
+    {% for question, answer in category.rows %}
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td width="26%" valign="top" class="dm-ink" style="font-size:15px;font-weight:bold;color:#17191D;">{{ res.pickup_time|time:"g:i A" }}</td>
-      <td width="74%" valign="top" class="dm-muted" style="font-size:14px;color:#4b5563;line-height:1.5;">
-        {{ res.stops.all.0.name }}<br>
-        &rarr; {{ res.stops.all.1.name }}<br>
-        <span class="dm-soft" style="color:#a59e90;font-size:12px;">{{ m.passengers }} passenger{{ m.passengers|pluralize }}{% if res.vehicle %} &middot; {{ res.vehicle.name }}{% if m.is_group %} &times;{{ m.size }}{% endif %}{% endif %}</span>
-      </td>
+      <td width="44%" valign="top" class="dm-muted" style="padding-top:6px;font-size:14px;color:#4b5563;line-height:1.5;">{{ question }}</td>
+      <td width="56%" valign="top" class="dm-ink" style="padding-top:6px;font-size:14px;font-weight:bold;color:#17191D;line-height:1.5;">{{ answer }}</td>
     </tr></table>
+    {% endfor %}
   </td></tr>
-  {% endwith %}{% endfor %}
+  {% endfor %}
   <tr><td style="padding:22px 26px 24px;"></td></tr>
 </table>
 
 <p class="dm-muted" style="margin:26px 0 14px;font-size:15px;color:#4b5563;line-height:1.6;">
-  Plans still firming up? Open your itinerary and change the guest count, the times, or any
-  pickup.
+  Plans still firming up? Open your details and change the guest count, the hotels or the
+  times &mdash; we'll build from whatever is current.
 </p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
   <td style="background:#C7A24E;border-radius:999px;">
-    <a href="{{ resume_url }}" style="display:inline-block;padding:13px 26px;font-family:Georgia,serif;font-size:15px;font-weight:bold;color:#1a1407;text-decoration:none;">Open my itinerary</a>
+    <a href="{{ resume_url }}" style="display:inline-block;padding:13px 26px;font-family:Georgia,serif;font-size:15px;font-weight:bold;color:#1a1407;text-decoration:none;">Update my details</a>
   </td>
 </tr></table>
 <p class="dm-soft" style="margin:20px 0 0;font-size:13px;color:#a59e90;line-height:1.6;">

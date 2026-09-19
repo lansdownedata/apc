@@ -19,7 +19,8 @@
     <!-- header -->
     <div class="flex items-center gap-3 px-6 py-5 border-b border-line bg-surface2">
       <span class="w-9 h-9 rounded-xl grid place-items-center bg-goldl text-goldd shrink-0">
-        <i class="ti text-[18px]" :class="newLeadIntent === 'booking' ? 'ti-calendar-plus' : 'ti-user-plus'"></i>
+        <i class="ti text-[18px]" :class="newLeadIntent === 'booking' ? 'ti-calendar-plus'
+                                        : newLeadIntent === 'wedding' ? 'ti-heart' : 'ti-user-plus'"></i>
       </span>
       <h2 class="font-display text-[19px] font-semibold text-ink tracking-tight"
           x-text="newLeadIntent === 'booking' ? 'New booking'
@@ -45,6 +46,9 @@
 
       <p x-show="newLeadIntent === 'booking'" x-cloak class="text-[12.5px] text-muted -mt-1">
         Creates the customer and opens the workspace — add the trips there, then <span class="font-semibold text-ink">Book now</span>. No quote is emailed.
+      </p>
+      <p x-show="newLeadIntent === 'wedding'" x-cloak class="text-[12.5px] text-muted -mt-1">
+        Creates the customer and opens the wedding details — the same questions the website asks a couple. You build the trips afterwards, in the workspace.
       </p>
 
       {% comment %}
@@ -166,7 +170,8 @@
         <button type="submit"
                 class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2">
           <i class="ti ti-plus text-[15px]"></i>
-          <span x-text="newLeadIntent === 'booking' ? 'Create booking' : 'Create lead'"></span>
+          <span x-text="newLeadIntent === 'booking' ? 'Create booking'
+                      : newLeadIntent === 'wedding' ? 'Create wedding' : 'Create lead'"></span>
         </button>
       </div>
     </form>

@@ -28,8 +28,6 @@ from apps.integrations.calendly import parse_start_time
 from apps.integrations.geocoding import autocomplete as locationiq_autocomplete
 from apps.integrations.geocoding import haversine_miles, merged_autocomplete
 from apps.leads.models import Lead
-from apps.leads.services import fleet_payload
-from apps.reservations import groups
 
 from .forms import (
     BookingRequestForm,
@@ -48,6 +46,7 @@ from .services import (
     read_wedding_token,
     send_wedding_confirmation,
 )
+from .wedding import wedding_answers
 
 logger = logging.getLogger(__name__)
 
@@ -215,24 +214,20 @@ def booking_thanks(request):
     """One thanks route for both forms.
 
     `?w=<signed token>` is what a wedding submission redirects with; it turns the page
-    into the wedding variant listing the confirmed movements and the quote reference.
-    The token is opaque and carries only the lead id — a wedding reaching this page must
-    never put the couple's details in a URL. A stale or forged token silently degrades
-    to the ordinary thanks page rather than erroring at the finish line.
+    into the wedding variant, which reads every detail back by category and says who is
+    building the day. The token is opaque and carries only the lead id — a wedding
+    reaching this page must never put the couple's details in a URL. A stale or forged
+    token silently degrades to the ordinary thanks page rather than erroring at the
+    finish line.
     """
     lead = _wedding_lead(request.GET.get("w", ""))
-    # Movements, not vehicles: a 105-guest run takes two coaches, but the couple asked for
-    # one movement carrying 105 guests and that is what they must read back (APC-14). The
-    # coach count rides along as ours to arrange, never as a split of their guest list.
-    lines = (
-        groups.as_lines(lead.reservations.prefetch_related("stops").order_by("sort_order", "id"))
-        if lead
-        else None
-    )
     return render(
         request,
         "public/booking_thanks.html",
-        {"wedding_lead": lead, "movements": lines},
+        {
+            "wedding_lead": lead,
+            "answers": wedding_answers(lead.intake_payload) if lead else [],
+        },
     )
 
 
@@ -451,12 +446,12 @@ def venue_search(request):
 
 
 def wedding_plan(request, token: str = ""):
-    """The wedding intake (spec 2026-08-30 §5) — seven client-side steps, one POST.
+    """The wedding intake — client-side steps, one POST, and no trips out the far end.
 
-    No wizard routes and no server-side step state: the whole plan lives in the Alpine
-    component until the customer confirms the itinerary, exactly like the hero widget's
+    No wizard routes and no server-side step state: the answers live in the Alpine
+    component until the customer has reviewed them, exactly like the hero widget's
     two-step disclosure. `token` is the emailed resume link, which rehydrates the saved
-    answers and rebuilds that same lead instead of creating a second one.
+    answers and updates that same lead instead of creating a second one.
     """
     lead = None
     if token:
@@ -488,59 +483,25 @@ def wedding_plan(request, token: str = ""):
             "form": form,
             "resume": _resume_state(lead) if token else None,
             "resume_token": token,
-            # The browser sizes runs off the same catalog the server does. Serialized
-            # rather than hardcoded in app.js so a capacity edited in Settings reaches
-            # the customer's itinerary on the next page load, with no deploy.
-            "fleet": fleet_payload(),
         },
     )
 
 
 def _resume_state(lead) -> dict:
-    """What the Alpine planner needs to open where the couple left off.
+    """What the Alpine planner needs to open on the answers the couple already gave.
 
-    Prefers the payload the lead was created from; falls back to rebuilding the
-    itinerary out of the reservations themselves, so a lead an agent has since edited
-    (or one created before the payload existed) still resumes instead of 500ing.
+    The contact comes off the lead rather than the payload: an agent may have corrected
+    a phone number since, and the form should not hand the old one back.
     """
     payload = dict(lead.intake_payload or {})
-    if not payload.get("legs"):
-        payload = {**payload, **_payload_from_reservations(lead)}
-    payload["resume"] = True
-    payload["quote_no"] = lead.quote_no
+    payload.update(
+        name=lead.contact.name,
+        email=lead.contact.email,
+        phone=lead.contact.phone,
+        resume=True,
+        quote_no=lead.quote_no,
+    )
     return payload
-
-
-def _payload_from_reservations(lead) -> dict:
-    legs = []
-    for res in lead.reservations.prefetch_related("stops").order_by("sort_order", "id"):
-        stops = list(res.stops.all())
-        if len(stops) < 2:
-            continue
-        origin, destination = stops[0], stops[-1]
-        legs.append(
-            {
-                "id": f"res-{res.pk}",
-                "time": res.pickup_time.strftime("%H:%M") if res.pickup_time else "",
-                # The customer-facing title lived only in the browser; rebuild a
-                # readable one from the trip itself rather than showing "Movement".
-                "title": f"{origin.name} → {destination.name}".strip(" →"),
-                "from": origin.name,
-                "from_sub": origin.address,
-                "to": destination.name,
-                "to_sub": destination.address,
-                "pax": res.passengers,
-                "optional": False,
-            }
-        )
-    first = lead.reservations.order_by("sort_order", "id").first()
-    return {
-        "name": lead.contact.name,
-        "email": lead.contact.email,
-        "phone": lead.contact.phone,
-        "wedding_date": first.pickup_date.isoformat() if first and first.pickup_date else "",
-        "legs": legs,
-    }
 
 
 # --- our own booking UI over Calendly -------------------------------------------

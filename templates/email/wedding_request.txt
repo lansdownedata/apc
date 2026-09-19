@@ -1,16 +1,16 @@
 {% autoescape off %}Hi {{ contact.name|default:"there" }},
 
-Your wedding day is with our dispatch team. Here's what we have:
+Thank you — we have your wedding details, and one of our wedding professionals is
+building your day from them: every pickup, every vehicle. You'll have it, with a full
+quote, within one business day. No deposit, nothing locked in.
 
   REFERENCE   {{ lead.quote_no }}
-{% for m in movements %}{% with res=m.reservation %}
-  {{ res.pickup_time|time:"g:i A" }}  {{ res.stops.all.0.name }} -> {{ res.stops.all.1.name }}
-              {{ m.passengers }} passenger{{ m.passengers|pluralize }}{% if res.vehicle %} · {{ res.vehicle.name }}{% endif %}{% if m.is_group %} ×{{ m.size }}{% endif %}{% endwith %}{% endfor %}
-
-We'll price all {{ movements|length }} movement{{ movements|length|pluralize }} together and come back within one business day.
-
-Plans still firming up? Open your itinerary and change the guest count, the times, or
-any pickup — nothing is locked in:
+{% for category in answers %}
+  {{ category.title|upper }}{% for question, answer in category.rows %}
+    {{ question }}: {{ answer }}{% endfor %}
+{% endfor %}
+Plans still firming up? Open your details and change the guest count, the hotels or the
+times — we'll build from whatever is current:
 {{ resume_url }}
 
 Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.

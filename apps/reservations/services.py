@@ -46,8 +46,8 @@ def solve_rate_from_cost(reservation: Reservation) -> Decimal | None:
 
 
 def is_wedding_trip(reservation: Reservation) -> bool:
-    """A leg the wedding builder generated, or a trip whose service type is the wedding
-    one (`apps.public.services.WEDDING_SERVICE_NAME`). The single gate for "is this a
+    """A trip whose service type is the wedding one, or a legacy leg the retired wedding
+    builder generated (`apps.public.services.WEDDING_SERVICE_NAME`). The single gate for "is this a
     wedding" — the T-7d touch-point (APC-18) and the workspace's day-of-details card both
     need it, and drifting between two copies would mean scheduling a message for a trip
     the screen doesn't think is a wedding, or the reverse.

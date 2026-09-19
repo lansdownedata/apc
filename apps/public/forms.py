@@ -1,17 +1,14 @@
 import json
 import re
-from datetime import time
 
 from django import forms
 
 from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline, Airport, Venue
 from apps.leads.models import ServiceType
-from apps.leads.services import group_fleet
 from apps.reservations.models import Reservation
 
-from .wedding import GROUPS, MAX_LEGS, Site, vehicle_for
+from .wedding import GROUPS, MAX_NOTES, Site
 from .wedding import MAX_PASSENGERS as MAX_WEDDING_PASSENGERS
-from .wedding import MIN_PASSENGERS as MIN_WEDDING_PASSENGERS
 
 
 def occasion_options() -> list[tuple[str, str]]:
@@ -275,35 +272,6 @@ class BookingRequestForm(forms.Form):
         return cleaned
 
 
-def _required_text(value, maxlen: int, message: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        raise forms.ValidationError(message)
-    return text[:maxlen]
-
-
-def _leg_time(value) -> time:
-    """ "HH:MM" off the timeline's <input type="time">, and nothing else."""
-    try:
-        hour, _, minute = str(value or "").partition(":")
-        return time(int(hour), int(minute))
-    except (TypeError, ValueError) as e:
-        raise forms.ValidationError("A movement has a pickup time we can't read.") from e
-
-
-def _leg_passengers(value) -> int:
-    try:
-        pax = int(value)
-    except (TypeError, ValueError) as e:
-        raise forms.ValidationError("A movement has a passenger count we can't read.") from e
-    if not MIN_WEDDING_PASSENGERS <= pax <= MAX_WEDDING_PASSENGERS:
-        raise forms.ValidationError(
-            f"A movement needs between {MIN_WEDDING_PASSENGERS} and "
-            f"{MAX_WEDDING_PASSENGERS} passengers."
-        )
-    return pax
-
-
 def _site(venue: Venue | None, typed_name: str | None) -> Site | None:
     """A directory row when the couple picked one, else whatever they typed.
 
@@ -331,13 +299,11 @@ def _site(venue: Venue | None, typed_name: str | None) -> Site | None:
 
 
 class WeddingRequestForm(forms.Form):
-    """The wedding intake's single POST (spec 2026-08-30 §6.2).
+    """The wedding intake's single POST.
 
     Same contract as `BookingRequestForm` — plain form, honeypot, one of email/phone —
-    but the payload describes an *event*, and `legs_json` is the itinerary the customer
-    edited rather than the one we generated. Nothing in it is trusted: shape, count and
-    headcount are checked here, and the vehicle recommendation is re-derived from our
-    own rule (a smaller coach is never a customer's decision to make).
+    but the payload describes an *event*: the answers to the intake's questions and
+    nothing derived from them. The office builds the trips (see `apps.public.wedding`).
     """
 
     name = forms.CharField(max_length=200)
@@ -351,7 +317,7 @@ class WeddingRequestForm(forms.Form):
     ceremony_venue_name = forms.CharField(max_length=255, required=False)
     same_site = forms.BooleanField(required=False, initial=True)
 
-    groups = forms.CharField()
+    groups = forms.CharField(required=False)
     guest_count = forms.IntegerField(min_value=1, max_value=MAX_WEDDING_PASSENGERS, required=False)
     party_count = forms.IntegerField(min_value=1, max_value=MAX_WEDDING_PASSENGERS, required=False)
     family_count = forms.IntegerField(min_value=1, max_value=MAX_WEDDING_PASSENGERS, required=False)
@@ -363,7 +329,7 @@ class WeddingRequestForm(forms.Form):
     end_time = forms.TimeField(required=False)
     times_tbd = forms.BooleanField(required=False)
 
-    legs_json = forms.CharField()
+    notes = forms.CharField(max_length=MAX_NOTES, required=False)
     company = forms.CharField(required=False)  # honeypot — bots fill it
 
     def _venue(self, field: str) -> Venue | None:
@@ -388,7 +354,7 @@ class WeddingRequestForm(forms.Form):
         raw = self.cleaned_data.get("groups") or ""
         chosen = {g.strip().lower() for g in raw.split(",") if g.strip()}
         # Canonical order, not the order the tiles happened to be clicked in, so the
-        # notes and the itinerary read the same for every customer.
+        # details read the same for every customer.
         groups = [g for g in GROUPS if g in chosen]
         if not groups:
             raise forms.ValidationError("Tell us who needs a ride.")
@@ -408,40 +374,6 @@ class WeddingRequestForm(forms.Form):
             h for h in data[:MAX_HOTELS] if isinstance(h, dict) and (h.get("name") or "").strip()
         ]
 
-    def clean_legs_json(self) -> list[dict]:
-        raw = (self.cleaned_data.get("legs_json") or "").strip()
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError) as e:
-            raise forms.ValidationError("Could not read the itinerary.") from e
-        if not isinstance(data, list) or not data:
-            raise forms.ValidationError("Add at least one movement to your day.")
-        if len(data) > MAX_LEGS:
-            raise forms.ValidationError(
-                f"That's more movements than we can quote in one go (max {MAX_LEGS})."
-            )
-        legs = []
-        for item in data:
-            if not isinstance(item, dict):
-                raise forms.ValidationError("That itinerary isn't in a shape we can read.")
-            legs.append(
-                {
-                    "id": str(item.get("id") or "")[:40],
-                    "time": _leg_time(item.get("time")),
-                    "title": _required_text(item.get("title"), 160, "Every movement needs a name."),
-                    "from": _required_text(item.get("from"), 255, "Every movement needs a pickup."),
-                    "from_sub": str(item.get("from_sub") or "").strip()[:255],
-                    "to": _required_text(
-                        item.get("to"), 255, "Every movement needs a destination."
-                    ),
-                    "to_sub": str(item.get("to_sub") or "").strip()[:255],
-                    "pax": _leg_passengers(item.get("pax")),
-                    "optional": bool(item.get("optional")),
-                }
-            )
-        legs.sort(key=lambda leg: leg["time"])
-        return legs
-
     def clean(self):
         cleaned = super().clean()
         if cleaned.get("company"):
@@ -451,7 +383,7 @@ class WeddingRequestForm(forms.Form):
         return self.resolve_wedding(cleaned)
 
     def resolve_wedding(self, cleaned: dict) -> dict:
-        """Turn posted ids into Sites and re-derive every leg's vehicle.
+        """Turn posted venue ids into Sites, looked up here and never taken from the client.
 
         Split out from `clean()` so the portal's subclass can reuse it without inheriting
         the honeypot and the email-or-phone rule, neither of which applies behind auth.
@@ -475,14 +407,6 @@ class WeddingRequestForm(forms.Form):
             _site(known.get(h.get("venue_id")), h.get("name"))
             for h in cleaned.get("hotels_json") or []
         ]
-
-        # The recommendation is ours, not the browser's: re-derive every leg's vehicle
-        # from our own catalog and the venue's own limit, whatever the client posted.
-        cap = venue.own_limit if venue else None
-        fleet = group_fleet()
-        for leg in cleaned.get("legs_json") or []:
-            leg["vehicle"] = vehicle_for(leg["pax"], cap, fleet)
-        cleaned["legs"] = cleaned.get("legs_json") or []
         return cleaned
 
 

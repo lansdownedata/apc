@@ -1,19 +1,20 @@
 {% comment %}
   public/_wedding_step_date.html — Step 1 — the date. The only answer we need before we can check coach availability.
 
-  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
-  builder (leads/_wedding_builder.html). An agent walking a couple through this on
-  the phone must be looking at the same screen they are, so this file has exactly
-  one copy. Requires an enclosing `weddingPlanner()` scope.
+  Shared verbatim by the public flow (public/wedding_plan.html), where it is one step
+  of the wizard, and the office's Edit details (leads/_wedding_details_editor.html),
+  where every category shows at once. An agent on the phone with a couple must be
+  reading the same questions they are, so this file has exactly one copy.
+  `showStep()` decides which of the two it is. Requires a `weddingPlanner()` scope.
 {% endcomment %}
-<fieldset x-show="stepName === 'date'">
-  <span class="flex items-center gap-1.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+<fieldset x-show="showStep('date')" :class="portal ? 'mb-10' : ''">
+  <span x-show="!portal" class="flex items-center gap-1.5 font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
     {% icon "diamond" class="h-3.5 w-3.5" %} Wedding transportation
   </span>
   <h1 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
     When&rsquo;s the big day?
   </h1>
-  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+  <p x-show="!portal" class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
     Start with the date. It&rsquo;s the only thing we need before we can check whether we
     have coaches free &mdash; everything else can come later.
   </p>
@@ -26,7 +27,7 @@
       silently refusing and leaving the couple wondering what's wrong.
     {% endcomment %}
     <input type="text" id="wp-date" data-flatpickr data-fp-past placeholder="Select a date"
-           x-model="date" @change="legs = null" x-effect="fpSync($el, date)" class="field">
+           x-model="date" x-effect="fpSync($el, date)" class="field">
   </div>
 
   <div x-cloak x-show="date" class="mt-4 flex gap-2.5 rounded-xl bg-goldl px-3.5 py-3 text-[12.5px] leading-relaxed text-goldd">
@@ -37,7 +38,7 @@
     </span>
   </div>
 
-  {% comment %} The portal builder has one shared footer instead — see _wedding_builder.html. {% endcomment %}
+  {% comment %} The office's Edit details has one shared footer instead — see leads/_wedding_details_editor.html. {% endcomment %}
   <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
     <button type="button" @click="next()" :disabled="!canAdvance()"
             class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">

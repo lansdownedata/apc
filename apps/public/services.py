@@ -10,22 +10,12 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, ServiceType
-from apps.leads.services import apply_vehicle_rate_card, group_fleet, suggest_vehicle
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
-from apps.reservations import groups
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Reservation, Stop
-from apps.reservations.services import derive_dropoff, reservation_drive_seconds
 
-from .wedding import (
-    Site,
-    build_notes,
-    hotel_label,
-    is_time_sensitive,
-    split_passengers,
-    vehicle_runs,
-)
+from .wedding import build_notes, is_time_sensitive, wedding_answers
 
 
 def with_submitted_name(notes: str, contact, submitted_name: str) -> str:
@@ -117,155 +107,78 @@ def wedding_service_type() -> ServiceType:
 
     Looked up case-insensitively because `ServiceType` carries a `Lower(name)` unique
     constraint — a plain `get_or_create(name=...)` would raise IntegrityError against a
-    differently-cased row rather than reusing it. The spec called this occasion
-    "Wedding"; the catalog seeded by leads.0008 already calls it "Wedding
-    Transportation", and one catalog for the website and the office is the whole point
-    of `ServiceType` — a second wedding row is exactly the drift it exists to stop.
+    differently-cased row rather than reusing it. One catalog for the website and the
+    office is the whole point of `ServiceType` — a second wedding row is exactly the
+    drift it exists to stop.
     """
     existing = ServiceType.objects.filter(name__iexact=WEDDING_SERVICE_NAME).first()
     return existing or ServiceType.objects.create(name=WEDDING_SERVICE_NAME)
 
 
-def wedding_sites(data: dict) -> dict[str, Site]:
-    """Every place this wedding touches, keyed by the name the legs refer to it by.
-
-    The legs arrive from the browser carrying names only; coordinates and street lines
-    are looked up here from the venues the *form* resolved, never taken from the client.
-    """
-    sites: dict[str, Site] = {}
-    for site in [data.get("venue"), data.get("ceremony"), *(data.get("hotels") or [])]:
-        if site is not None:
-            sites.setdefault(site.name, site)
-    # The composite "2 hotels — …" origin is a derived label, not a place; it still needs
-    # to resolve so its stop carries a name rather than an empty address.
-    label = hotel_label(data.get("hotels") or [], bool(data.get("hotels_tbd")))
-    sites.setdefault(label, Site(name=label))
-    return sites
-
-
-def wedding_stop(reservation: Reservation, sequence: int, name: str, sub: str, sites: dict) -> Stop:
-    site = sites.get(name)
-    return Stop(
-        reservation=reservation,
-        sequence=sequence,
-        name=name[:160],
-        address=((site.line if site else "") or sub)[:255],
-        latitude=site.latitude if site else None,
-        longitude=site.longitude if site else None,
-    )
-
-
 def create_lead_from_wedding(data: dict, *, lead: Lead | None = None) -> Lead:
-    """One wedding → one Lead holding one Reservation per confirmed leg.
+    """One wedding → one Lead holding every answer and NO trips.
 
-    Deliberately parallel to `create_lead_from_booking`: same Contact matching, same
-    Channel, same Notification. The only difference is that a wedding fans out into
-    several reservations instead of one, which is what Lead → Reservation already
-    models — a wedding is not a special case, it is the general case used properly.
+    Same Contact matching, Channel and Notification as `create_lead_from_booking`; the
+    difference is that nothing is derived from the answers. Weddings run too many
+    different ways for a rule to guess the legs, so the office builds the trips in the
+    workspace from the details kept here.
 
-    Pass `lead` to rebuild an existing one in place (the resume link, spec §7.4) rather
-    than leaving the office holding two versions of the same wedding.
+    Pass `lead` to update an existing one in place (the emailed resume link) rather than
+    leaving the office holding two versions of the same wedding. An update refreshes the
+    details and nothing else: by then the lead may carry trips an agent built and notes an
+    agent wrote, and neither is the customer's to overwrite.
     """
-    legs = data["legs"]
+    if lead is not None:
+        update_wedding_details(lead, data)
+        venue_name = lead.intake_payload["venue_name"] or "venue TBD"
+        Notification.notify(
+            lead,
+            Notification.Kind.NEW_LEAD,
+            title=f"Wedding details updated: {lead.contact.name}",
+            detail=venue_name,
+        )
+        return lead
+
+    payload = wedding_payload(data)
+    venue_name = payload["venue_name"] or "venue TBD"
     contact = Contact.objects.match_or_create(
         name=data["name"],
         phone=data.get("phone", ""),
         email=data.get("email", ""),
         channel=Channel.WEBSITE,
     )
-    notes = build_notes(
-        wedding_date=data["wedding_date"],
-        venue=data.get("venue"),
-        ceremony=data.get("ceremony"),
-        hotels=data.get("hotels") or [],
-        hotels_tbd=bool(data.get("hotels_tbd")),
-        groups=data["groups"],
-        times_tbd=bool(data.get("times_tbd")),
-        legs=legs,
+    lead = Lead.objects.create(
+        contact=contact,
+        status=Lead.Status.NEW,
+        channel=Channel.WEBSITE,
+        notes=with_submitted_name(build_notes(payload), contact, data.get("name", "")),
+        has_alert=is_time_sensitive(data["wedding_date"], timezone.localdate()),
+        intake_payload=payload,
     )
-    notes = with_submitted_name(notes, contact, data.get("name", ""))
-    has_alert = is_time_sensitive(data["wedding_date"], timezone.localdate())
-    payload = wedding_payload(data)
-    if lead is None:
-        lead = Lead.objects.create(
-            contact=contact,
-            status=Lead.Status.NEW,
-            channel=Channel.WEBSITE,
-            notes=notes,
-            has_alert=has_alert,
-            intake_payload=payload,
-        )
-    else:
-        lead.contact = contact
-        lead.notes = notes
-        lead.has_alert = has_alert
-        lead.intake_payload = payload
-        lead.save(update_fields=["contact", "notes", "has_alert", "intake_payload", "updated_at"])
-        lead.reservations.all().delete()
-
-    service_type = wedding_service_type()
-    sites = wedding_sites(data)
-    venue = data.get("venue")
-    cap = venue.vehicle_cap if venue else None
-    fleet = group_fleet()
-    stops = []
-    order = 0
-    for leg in legs:
-        # A leg is as many trips as it needs vehicles (APC-14): 105 guests is the two
-        # coaches the itinerary already showed the couple, linked so the office handles
-        # them as one line. Below the single-class threshold this is one unlinked trip
-        # and nothing about the old shape changes.
-        runs = vehicle_runs(leg["pax"], cap, fleet)
-        group_key = groups.key_for(runs)
-        for share in split_passengers(leg["pax"], runs):
-            reservation = Reservation(
-                lead=lead,
-                sort_order=order,
-                # Which generated leg this is. The office's builder matches on it to
-                # update a trip in place; without it, the first edit in the portal would
-                # read every website-built trip as hand-added and duplicate the whole day.
-                source_leg_id=leg["id"],
-                group_key=group_key,
-                trip_type=Reservation.TripType.TRANSFER,
-                service_type=service_type,
-                pickup_date=data["wedding_date"],
-                pickup_time=leg["time"],
-                passengers=share,
-            )
-            # Arrive priced, not blank. The vehicle is sized to *this* trip's share of the
-            # movement, so a split run gets the vehicle each coach actually needs rather
-            # than one sized for the whole group. It is a starting point an agent can
-            # change — nothing reaches the customer until they send the quote.
-            apply_vehicle_rate_card(reservation, suggest_vehicle(share, cap, fleet))
-            reservation.save()
-            order += 1
-            stops.append(wedding_stop(reservation, 0, leg["from"], leg.get("from_sub", ""), sites))
-            stops.append(wedding_stop(reservation, 1, leg["to"], leg.get("to_sub", ""), sites))
-    Stop.objects.bulk_create(stops)
-    for res in lead.reservations.prefetch_related("stops"):
-        res.refresh_pickup_timezone()
-        # Only now: the drive is measured across the route, and the route did not exist
-        # until the bulk_create above. Falls back to the vehicle's billed minimum whenever
-        # we cannot measure it — a leg ending at a "Getting-ready location" we have not
-        # confirmed has no coordinates to route between.
-        end = derive_dropoff(
-            res.pickup_date,
-            res.pickup_time,
-            billed_hours=res.billed_hours,
-            drive_seconds=reservation_drive_seconds(res),
-        )
-        if end is not None:
-            res.dropoff_date, res.dropoff_time = end
-            res.dropoff_estimated = True
-            res.save(update_fields=["dropoff_date", "dropoff_time", "dropoff_estimated"])
-
-    venue_name = data["venue"].name if data.get("venue") else "venue TBD"
     Notification.notify(
         lead,
         Notification.Kind.NEW_LEAD,
         title=f"New wedding request: {contact.name}",
-        detail=f"{len(legs)} movement{'' if len(legs) == 1 else 's'} · {venue_name}",
+        detail=f"{venue_name} · details ready to build",
     )
+    return lead
+
+
+def update_wedding_details(lead: Lead, data: dict) -> Lead:
+    """Replace a wedding's answers — and nothing else — from a validated form.
+
+    The one write path behind both the customer's resume link and the office's Edit
+    details. It never touches the trips (an agent builds those by hand) or `Lead.notes`
+    (an agent's to edit), and it keeps the contact the lead already has: the office form
+    carries no contact fields, and a customer updating a guest count is not renaming
+    themselves in the CRM.
+    """
+    contact = lead.contact
+    lead.intake_payload = wedding_payload(
+        {**data, "name": contact.name, "email": contact.email, "phone": contact.phone}
+    )
+    lead.has_alert = is_time_sensitive(data["wedding_date"], timezone.localdate())
+    lead.save(update_fields=["has_alert", "intake_payload", "updated_at"])
     return lead
 
 
@@ -291,11 +204,11 @@ def read_wedding_token(token: str) -> Lead:
 
 
 def wedding_payload(data: dict) -> dict:
-    """The answers, JSON-safe, exactly as the seven steps collected them.
+    """The answers, JSON-safe, exactly as the intake collected them.
 
-    Stored on the lead so the resume link rehydrates the form rather than only the
-    itinerary — "come back when the hotel block is set" has to land them where they
-    left off, not at step one.
+    The lead's record of the wedding: `wedding_answers` reads it back by category, and
+    the resume link rehydrates the form from it. Every hotel keeps its own address and
+    coordinates, which is what the office needs to build pickups from.
     """
     return {
         "name": data.get("name", ""),
@@ -317,12 +230,12 @@ def wedding_payload(data: dict) -> dict:
         else "",
         "end_time": data["end_time"].strftime("%H:%M") if data.get("end_time") else "",
         "times_tbd": bool(data.get("times_tbd")),
-        "legs": [{**leg, "time": leg["time"].strftime("%H:%M")} for leg in data.get("legs") or []],
+        "notes": (data.get("notes") or "").strip(),
     }
 
 
 def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
-    """Email the couple their itinerary and the link back into it. Best-effort.
+    """Email the couple every detail they gave us and the link back to them. Best-effort.
 
     Silently skipped without an email address (phone-only is a normal answer) or
     without PUBLIC_BASE_URL, since a relative resume link in an inbox is useless.
@@ -333,22 +246,14 @@ def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
     resume_url = (
         f"{base_url.rstrip('/')}{reverse('public:wedding_resume', args=[make_wedding_token(lead)])}"
     )
-    # Movements, not trips (APC-14) — the same fold the thanks page uses. Iterating the
-    # reservations put a 105-guest run in the email twice, as "53 passengers" and
-    # "52 passengers", which is our coach maths and not something the couple asked for.
-    movements = groups.as_lines(
-        lead.reservations.select_related("vehicle")
-        .prefetch_related("stops")
-        .order_by("sort_order", "id")
-    )
     return send_html_email(
         to=email,
-        subject=f"Your wedding transportation plan · {lead.quote_no}",
+        subject=f"We have your wedding details · {lead.quote_no}",
         template="wedding_request",
         context={
             "lead": lead,
             "contact": lead.contact,
-            "movements": movements,
+            "answers": wedding_answers(lead.intake_payload),
             "resume_url": resume_url,
             "company_name": settings.COMPANY_NAME,
             "company_phone": settings.COMPANY_PHONE,

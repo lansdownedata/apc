@@ -197,9 +197,10 @@ class Reservation(TimeStampedModel):
     # Stamped when the customer acknowledges the T-72h trip confirmation on the public
     # trip-sheet page (APC-19). Null until they do.
     customer_confirmed_at = models.DateTimeField(null=True, blank=True)
-    # The wedding builder's leg this trip was generated from ("guests-in", "early-out", …).
-    # Blank for every trip an agent added by hand, which is what keeps a rebuild from
-    # touching them. Not a foreign key: legs are derived from the event, never stored.
+    # Legacy lineage. The retired wedding builder (2026-08-30 → 2026-09-19) stamped each
+    # trip it generated with its leg ("guests-in", "early-out", …). Nothing writes it any
+    # more — the office builds wedding trips by hand — but trips generated before then
+    # still carry it, and `is_wedding_trip` still reads it to recognise them.
     source_leg_id = models.CharField(max_length=40, blank=True, db_index=True)
     # Trips generated together as one order line — "56-Passenger Coach ×4" — share a key
     # (APC-14). Null is the normal state: a lone trip is not a set of one. Deliberately a

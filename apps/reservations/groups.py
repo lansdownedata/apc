@@ -150,10 +150,8 @@ def clone_reservation(
     clone = Reservation.objects.get(pk=source.pk)
     clone.pk = None
     clone.group_key = group_key
-    # Lineage, not content: `source_leg_id` is the wedding builder's handle on a trip it
-    # generated, so a copy must not answer to it — otherwise the next rebuild of the day
-    # would match, update or delete a trip nobody generated. The builder stamps its own
-    # members itself (`rebuild_wedding_trips`).
+    # Lineage, not content: `source_leg_id` marks a trip the retired wedding builder
+    # generated, and a copy an agent makes was never one of those.
     clone.source_leg_id = ""
     clone.la_reservation_id = ""
     clone.la_confirmation = ""

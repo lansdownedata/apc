@@ -1,19 +1,20 @@
 {% comment %}
   public/_wedding_step_hotels.html — Step 4 — the room blocks. Multiple pickups run as one route in sequence.
 
-  Shared verbatim by the public flow (public/wedding_plan.html) and the office's
-  builder (leads/_wedding_builder.html). An agent walking a couple through this on
-  the phone must be looking at the same screen they are, so this file has exactly
-  one copy. Requires an enclosing `weddingPlanner()` scope.
+  Shared verbatim by the public flow (public/wedding_plan.html), where it is one step
+  of the wizard, and the office's Edit details (leads/_wedding_details_editor.html),
+  where every category shows at once. An agent on the phone with a couple must be
+  reading the same questions they are, so this file has exactly one copy.
+  `showStep()` decides which of the two it is. Requires a `weddingPlanner()` scope.
 {% endcomment %}
-<fieldset x-show="stepName === 'hotels'">
-  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+<fieldset x-show="showStep('hotels')" :class="portal ? 'mb-10' : ''">
+  <span x-show="!portal" class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
     Step <span x-text="stepNumber"></span> of <span x-text="stepCount"></span>
   </span>
   <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
     Where is everyone staying?
   </h2>
-  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+  <p x-show="!portal" class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
     Add every hotel with a room block &mdash; plenty of weddings use two or three, and
     we&rsquo;d rather build one route that catches them all than miss one.
   </p>

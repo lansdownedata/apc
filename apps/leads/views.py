@@ -33,6 +33,13 @@ from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import reports as payment_reports
 from apps.payments import services as payment_services
+from apps.public import services as public_services
+from apps.public.wedding import (
+    blank_payload,
+    is_wedding_payload,
+    venue_cap_line,
+    wedding_answers,
+)
 from apps.reservations import groups
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
@@ -223,26 +230,26 @@ def pipeline(request: HttpRequest) -> HttpResponse:
 
 
 def _wedding_state(lead) -> dict | None:
-    """The saved wedding plan, ready for `weddingPlanner()`, or None when this is not one.
-
-    Each leg is seeded with the vehicle already assigned to its reservation, so reopening
-    the builder shows what the agent chose rather than recommending all over again.
-    """
+    """The wedding's saved answers, ready for `weddingPlanner()`, or None when this lead
+    is not a wedding. `intake_payload` also archives Calendly bookings, so non-empty is
+    not the test — see `is_wedding_payload`."""
     payload = lead.intake_payload or {}
-    if not payload.get("legs"):
-        return None
-    saved = {
-        r.source_leg_id: {
-            "vehicle_id": r.vehicle_id,
-            "trip_type": r.trip_type,
-            # 0 is "no override, bill the rate-card minimum" — send null, not 0, so the
-            # Hours box shows its "min" placeholder rather than a literal zero.
-            "hours": float(r.hours) if r.hours else None,
-        }
-        for r in lead.reservations.exclude(source_leg_id="")
+    return dict(payload) if is_wedding_payload(payload) else None
+
+
+def _wedding_trip_defaults(wedding_state: dict | None) -> dict:
+    """What a new trip on a wedding starts with: the day and the occasion.
+
+    The office builds a wedding's trips by hand, one after another, in the ordinary trip
+    editor — retyping the date and re-picking "Wedding Transportation" on each is the
+    part a computer should do. Everything else about a trip is the agent's call.
+    """
+    if wedding_state is None:
+        return {}
+    return {
+        "date": wedding_state.get("wedding_date") or "",
+        "serviceType": public_services.wedding_service_type().pk,
     }
-    legs = [{**leg, **saved.get(leg.get("id"), {})} for leg in payload["legs"]]
-    return {**payload, "legs": legs, "portal": True}
 
 
 @login_required
@@ -295,13 +302,18 @@ def lead_detail(request, pk):
         for row in la_sync_rows
     )
 
+    wedding_state = _wedding_state(lead)
     context = {
         "nav": "leads",
         "page_title": lead.quote_no,
         "lead": lead,
         "booking_intent": request.GET.get("booking") == "1",
-        "wedding_state": _wedding_state(lead),
-        "is_wedding": any(reservation_services.is_wedding_trip(r) for r in reservations),
+        "wedding_state": wedding_state,
+        "wedding_answers": wedding_answers(wedding_state),
+        "wedding_venue_cap": venue_cap_line(wedding_state),
+        "trip_defaults": _wedding_trip_defaults(wedding_state),
+        "is_wedding": wedding_state is not None
+        or any(reservation_services.is_wedding_trip(r) for r in reservations),
         # The held deposit + its deadline, for the Confirm/Cancel controls (APC-26).
         **payment_reports.authorized_hold(lead),
         "wedding_open": request.GET.get("wedding") == "1",
@@ -336,8 +348,6 @@ def lead_detail(request, pk):
             for v in _vehicles
         ],
         "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
-        # The builder's planner sizes runs off the same catalog the server does.
-        "fleet": services.fleet_payload(),
         "service_type_options": services.service_type_options(lead),
     }
     return render(request, "leads/lead_detail.html", context)
@@ -800,13 +810,16 @@ def lead_create(request) -> HttpResponse:
             email=cd["email"],
             channel=cd["channel"],
         )
+    intent = cd.get("intent")
     lead = Lead.objects.create(
         contact=contact,
         channel=cd["channel"],
         assigned_agent=cd["agent"],
         status=Lead.Status.NEW,
+        # A wedding from its first second, so the details card — and the way back into
+        # Edit details — never depends on the agent finishing a first save.
+        intake_payload=blank_payload() if intent == "wedding" else {},
     )
-    intent = cd.get("intent")
     if intent == "booking":
         return redirect(f"{reverse('lead_detail', args=[lead.pk])}?booking=1")
     if intent == "wedding":
@@ -818,7 +831,7 @@ def lead_create(request) -> HttpResponse:
 @login_required
 @require_POST
 def lead_wedding_save(request, pk: int) -> HttpResponse:
-    """Rebuild a lead's wedding trips from the builder's plan (spec 2026-08-30 §6.1).
+    """Save the office's edits to a wedding's details. Answers only — never the trips.
 
     No honeypot and no throttle, unlike the public POST — this one is behind auth.
     """
@@ -827,20 +840,8 @@ def lead_wedding_save(request, pk: int) -> HttpResponse:
     if not form.is_valid():
         messages.error(
             request,
-            "; ".join(f"{k}: {e[0]}" for k, e in form.errors.items()) or "Could not save the day.",
+            "; ".join(e[0] for e in form.errors.values()) or "Could not save the details.",
         )
-        return redirect("lead_detail", pk=lead.pk)
-    result = services.rebuild_wedding_trips(lead, form.cleaned_data)
-    if result.orphans:
-        # Never deleted for the agent — a trip may already be priced, pushed to
-        # LimoAnywhere or assigned to an affiliate.
-        names = ", ".join(
-            f"{r.pickup_time:%-I:%M %p} {stop.name}" if (stop := r.stops.first()) else "a trip"
-            for r in result.orphans
-        )
-        messages.warning(
-            request,
-            f"No longer in the plan: {names}. They're still on the quote — remove them "
-            "from the trip list if they're off.",
-        )
+        return redirect(f"{reverse('lead_detail', args=[lead.pk])}?wedding=1")
+    public_services.update_wedding_details(lead, form.cleaned_data)
     return redirect("lead_detail", pk=lead.pk)

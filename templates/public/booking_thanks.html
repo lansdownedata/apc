@@ -8,9 +8,9 @@
 
 {% block content %}
 {% comment %}
-  One thanks route for both public forms (spec §7.1). A wedding arrives here with a
-  signed `?w=` token, which turns the page into the variant listing the confirmed
-  movements and the quote reference; everything else gets the short version. A stale or
+  One thanks route for both public forms. A wedding arrives here with a signed `?w=`
+  token, which turns the page into the variant that reads every detail back by category
+  and says who is building the day; everything else gets the short version. A stale or
   forged token simply falls through to the short version rather than erroring.
 {% endcomment %}
 <section class="mx-auto px-4 py-20 sm:px-6 lg:px-8 {% if wedding_lead %}max-w-2xl{% else %}max-w-xl text-center{% endif %}">
@@ -20,42 +20,35 @@
 
   {% if wedding_lead %}
     {% comment %}
-      Hierarchy through weight and spacing rather than boxes (CLAUDE.md): the day itself
-      is the content, so the movements read as a timeline, not as rows in a panel. The
-      reference and contact sit under it as quiet metadata — they matter on the second
-      read, not the first.
+      Hierarchy through weight and spacing rather than boxes (CLAUDE.md): the details are
+      the content, so each category is a quiet heading over its questions and answers. The
+      reference and contact sit under them as metadata — they matter on the second read.
+      `answers` is apps.public.wedding.wedding_answers — the same rendering the email and
+      the office's details card use.
     {% endcomment %}
     <h1 class="mt-5 text-center font-display text-[30px] font-semibold tracking-tight text-ink">
-      Your day is with our dispatch team.
+      We have your wedding details.
     </h1>
     <p class="mx-auto mt-3 max-w-lg text-center text-[15px] leading-relaxed text-muted">
-      We&rsquo;ve got all
-      {{ movements|length }} movement{{ movements|length|pluralize }} for
-      {{ movements.0.reservation.pickup_date|date:"l, F j, Y" }}. You&rsquo;ll have a full quote within one
-      business day{% if wedding_lead.contact.email %} &mdash; and a link to change anything before then{% endif %}.
+      One of our wedding professionals is building your day &mdash; every pickup, every
+      vehicle &mdash; from what you told us. You&rsquo;ll have it, with a full quote, within one
+      business day{% if wedding_lead.contact.email %} &mdash; and we&rsquo;ve emailed you a link to change anything before then{% endif %}.
     </p>
 
-    <div class="mt-10">
-      <h2 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Your day</h2>
-      <ol class="mt-4 border-t border-line">
-        {% for movement in movements %}{% with res=movement.reservation %}
-        <li class="flex gap-4 border-b border-line py-3.5 sm:gap-6">
-          <span class="w-[4.75rem] shrink-0 pt-px font-mono2 text-[12.5px] font-semibold tabular-nums text-goldd">
-            {{ res.pickup_time|time:"g:i A" }}
-          </span>
-          <span class="min-w-0 flex-1">
-            <span class="block text-[13.5px] font-medium leading-snug text-ink">
-              {{ res.stops.all.0.name }}
-              <span class="text-muted">&rarr;</span>
-              {{ res.stops.all.1.name }}
-            </span>
-            <span class="mt-0.5 block text-[12px] text-muted">
-              {{ movement.passengers }} passenger{{ movement.passengers|pluralize }}{% if movement.is_group %} &middot; {{ movement.size }} vehicles{% endif %}{% if res.vehicle %} &middot; {{ res.vehicle.name }}{% endif %}
-            </span>
-          </span>
-        </li>
-        {% endwith %}{% endfor %}
-      </ol>
+    <div class="mt-10 space-y-7">
+      {% for category in answers %}
+      <section>
+        <h2 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">{{ category.title }}</h2>
+        <dl class="mt-2 space-y-1.5">
+          {% for question, answer in category.rows %}
+          <div class="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
+            <dt class="text-[13px] text-muted sm:w-[15rem] sm:shrink-0">{{ question }}</dt>
+            <dd class="text-[13.5px] font-medium text-ink">{{ answer }}</dd>
+          </div>
+          {% endfor %}
+        </dl>
+      </section>
+      {% endfor %}
     </div>
 
     <dl class="mt-8 flex flex-wrap gap-x-10 gap-y-3 text-[12.5px]">

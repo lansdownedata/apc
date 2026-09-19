@@ -1,0 +1,59 @@
+{% comment %}
+  public/_wedding_review.html — Step 6 — every answer read back by category, plus the one
+  open question. This step REPLACED the generated itinerary (2026-09-19): weddings run too
+  many different ways for a rule to guess the legs, so the couple confirms their details
+  and one of our own people builds the day.
+
+  `answers` is weddingPlanner()'s mirror of apps/public/wedding.py:wedding_answers — the
+  same categories, questions and wording the confirmation page and email use. Change one,
+  change the other. Public flow only; the office edits the categories directly.
+{% endcomment %}
+<fieldset x-show="showStep('review')">
+  <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
+    Step <span x-text="stepNumber"></span> of <span x-text="stepCount"></span>
+  </span>
+  <h2 class="mt-2.5 font-display text-[clamp(1.5rem,4vw,1.95rem)] font-semibold leading-tight tracking-tight text-ink">
+    Here&rsquo;s what we have.
+  </h2>
+  <p class="mt-2 max-w-[60ch] text-[13.5px] leading-relaxed text-muted">
+    Check it over. One of our wedding professionals builds your day from these details
+    &mdash; every pickup, every vehicle &mdash; and sends it to you with your quote.
+  </p>
+
+  {% if resume %}
+  <p x-cloak x-show="resumed" class="mt-4 text-[12.5px] text-muted">
+    Welcome back &mdash; these are the details on file for
+    <span class="font-mono2 font-semibold text-ink" x-text="quoteNo"></span>. Change anything that has moved.
+  </p>
+  {% endif %}
+
+  <div class="mt-7 space-y-6">
+    <template x-for="category in answers" :key="category.title">
+      <section>
+        <div class="flex items-baseline gap-3">
+          <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted" x-text="category.title"></h3>
+          <button type="button" @click="editStep(category.step)"
+                  class="rounded text-[12px] font-semibold text-goldd transition-colors focus-gold hover:text-gold">Change</button>
+        </div>
+        <dl class="mt-2 space-y-1.5">
+          <template x-for="row in category.rows" :key="row[0]">
+            <div class="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
+              <dt class="text-[13px] text-muted sm:w-[15rem] sm:shrink-0" x-text="row[0]"></dt>
+              <dd class="text-[13.5px] font-medium text-ink" x-text="row[1]"></dd>
+            </div>
+          </template>
+        </dl>
+      </section>
+    </template>
+  </div>
+
+  <div class="mt-7">
+    <label for="wp-notes" class="mb-1.5 block text-[12px] font-medium text-muted">Anything else we should know?</label>
+    <textarea id="wp-notes" name="notes" x-model="notes" rows="4" maxlength="2000"
+              placeholder="Where the wedding party is getting ready, a rehearsal dinner, guests leaving early, a grand exit&hellip;"
+              class="field"></textarea>
+    <p class="mt-1.5 text-[12px] text-muted">The more you tell us here, the closer our first draft of your day will be.</p>
+  </div>
+
+  {% include "public/_wedding_actions.html" %}
+</fieldset>

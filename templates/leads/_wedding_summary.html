@@ -1,27 +1,24 @@
 {% comment %}
   leads/_wedding_summary.html — the always-visible face of a wedding on the quote
-  workspace. Reads Lead.intake_payload and never re-derives anything, so it shows what
-  was actually saved rather than what the rules would produce today.
+  workspace: every question the intake asked and the answer given, by category. The
+  office builds this wedding's trips by hand, so this card is what they build from.
 
-  Requires: wedding_state (from apps.leads.views._wedding_state). Sits inside the
-  quoteWorkspace() scope, which owns `weddingOpen`.
+  Requires: wedding_state (apps.leads.views._wedding_state), wedding_venue_cap and wedding_answers
+  (apps.public.wedding.wedding_answers — the same rendering the customer's confirmation
+  page and email use). Sits inside the quoteWorkspace() scope, which owns `weddingOpen`.
 {% endcomment %}
 {% if wedding_state %}
 <div class="card p-4 sm:p-5 mb-4">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
     <span class="chip-gold inline-flex items-center rounded-full px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em]">Wedding</span>
-    <span class="text-[13.5px] font-semibold text-ink">{{ wedding_state.venue_name }}</span>
-    <span class="text-[12.5px] text-muted">
-      {{ wedding_state.legs|length }} movement{{ wedding_state.legs|length|pluralize }}
-      {% if wedding_state.guest_count %}&middot; {{ wedding_state.guest_count }} guests{% endif %}
-    </span>
+    <span class="text-[13.5px] font-semibold text-ink">{{ wedding_state.venue_name|default:"Wedding details" }}</span>
 
-    {% comment %}
-      The same two flags Lead.notes leads with. An agent must see "these times are a
-      guess" before quoting, not only if they open the notes.
-    {% endcomment %}
+    {% comment %} An agent must see "this is unconfirmed" before quoting, not only if they read every row. {% endcomment %}
+    {% if not wedding_state.wedding_date %}
+    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">no details yet</span>
+    {% endif %}
     {% if wedding_state.times_tbd %}
-    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">times estimated</span>
+    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">times not set</span>
     {% endif %}
     {% if wedding_state.hotels_tbd %}
     <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">hotels not booked</span>
@@ -29,8 +26,36 @@
 
     <button type="button" @click="weddingOpen = true"
             class="ml-auto shrink-0 rounded text-[12.5px] font-semibold text-goldd focus-gold transition-colors hover:text-gold">
-      Edit the day
+      Edit details
     </button>
   </div>
+
+  {% if wedding_venue_cap %}
+  <p class="mt-3 flex items-center gap-1.5 text-[12.5px] text-muted">
+    <i class="ti ti-bus text-[15px] text-goldd"></i> {{ wedding_venue_cap }}
+  </p>
+  {% endif %}
+
+  {% if wedding_state.wedding_date %}
+  <div class="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
+    {% for category in wedding_answers %}
+    <section>
+      <h3 class="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted">{{ category.title }}</h3>
+      <dl class="mt-1.5 space-y-1">
+        {% for question, answer in category.rows %}
+        <div>
+          <dt class="text-[11.5px] text-muted">{{ question }}</dt>
+          <dd class="text-[13px] font-medium text-ink whitespace-pre-line">{{ answer }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="mt-3 text-[12.5px] text-muted">
+    Nothing captured yet. <span class="font-semibold text-ink">Edit details</span> walks through the same questions the website asks a couple.
+  </p>
+  {% endif %}
 </div>
 {% endif %}
