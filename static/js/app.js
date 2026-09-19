@@ -923,11 +923,19 @@ function reservationEditor(opts = {}) {
     },
     releaseCoverage() {
       if (!this.coverage || !this.coverage.assignmentId) return;
+      const who = this.coverage.provider || "They";
+      // Channel matters, and not for politeness: on GNet this is an outbound cancel that
+      // DOES tell the affiliate, so the manual wording would be a plain lie there.
+      const gnet = this.coverage.isGnet;
       Alpine.store("modal").confirm({
         variant: "danger",
-        title: this.coverage.isInHouse ? "Unassign this driver?" : "Withdraw this assignment?",
-        message: "The trip goes back to unassigned. Nobody is notified automatically.",
-        confirmText: this.coverage.isInHouse ? "Unassign" : "Withdraw",
+        title: "Reassign this trip?",
+        message: gnet
+          ? `This trip was sent to ${who} over GNet. Reassigning withdraws it from GNet too — they are released on the network and will see it is gone. The trip then goes back to unassigned so you can pick someone else.`
+          : this.coverage.isInHouse
+            ? "It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you."
+            : `It goes back to unassigned so you can pick someone else. ${who} is not notified automatically — tell them yourself.`,
+        confirmText: gnet ? "Withdraw from GNet & reassign" : "Reassign",
         onConfirm: () =>
           this._assign(this.coverageUrl("resolve", this.coverage.assignmentId), {
             action: "withdraw",

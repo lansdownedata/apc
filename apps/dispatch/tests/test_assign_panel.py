@@ -188,7 +188,7 @@ def test_panel_hides_confirm_and_declined_for_a_gnet_offer(logged_in_client):
 
     assert ">Confirm<" not in body
     assert ">Declined<" not in body
-    assert ">Withdraw<" in body
+    assert ">Reassign<" in body
     assert "affiliate" in body.lower()
 
 
@@ -199,7 +199,7 @@ def test_panel_keeps_confirm_and_declined_for_a_manual_offer(logged_in_client):
 
     assert ">Confirm<" in body
     assert ">Declined<" in body
-    assert ">Withdraw<" in body
+    assert ">Reassign<" in body
 
 
 # --- a GNet affiliate needs no email address ---

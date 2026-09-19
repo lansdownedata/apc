@@ -187,8 +187,10 @@ def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
     return JsonResponse(
         {
             "coverage": active.status if active else selectors.COVERAGE_UNCOVERED,
-            "provider": active.provider_name if active else "",
             "isInHouse": bool(active and active.is_in_house),
+            # Reassigning a GNet offer is an outbound cancel, so the confirm has to say so.
+            "isGnet": bool(active and active.channel == Assignment.Channel.GNET),
+            "provider": active.provider_name if active else "",
             "assignmentId": active.pk if active else None,
             # `_claim` refuses anything but a booked lead, so don't offer the controls.
             "canAssign": trip.lead.status == Lead.Status.BOOKED,

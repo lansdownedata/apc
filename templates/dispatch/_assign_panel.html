@@ -236,7 +236,7 @@
       {% if assignment.is_in_house %}
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
                 :disabled="busy"
-                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Unassign this driver?', message: 'The trip goes back to unassigned. Let the driver know yourself.', confirmText: 'Unassign'})">Unassign</button>
+                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you.', confirmText: 'Reassign'})">Reassign</button>
       {% else %}
         {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
           <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
@@ -244,13 +244,17 @@
           <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
                   :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
         {% endif %}
+        {% comment %} The copy has to differ by channel, and not for politeness: on GNet
+           this is an outbound cancel that DOES tell the affiliate, so the manual wording
+           ("not notified automatically") would be a plain lie there. {% endcomment %}
         <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
-                :disabled="busy" @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}')">Withdraw</button>
+                :disabled="busy"
+                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {% if assignment.channel == 'gnet' %}{title: 'Reassign this trip?', message: 'This trip was sent to {{ assignment.vendor.name|escapejs }} over GNet. Reassigning withdraws it from GNet too — they are released on the network and will see it is gone. The trip then goes back to unassigned so you can pick someone else.', confirmText: 'Withdraw from GNet &amp; reassign'}{% else %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. {{ assignment.vendor.name|escapejs }} is not notified automatically — tell them yourself.', confirmText: 'Reassign'}{% endif %})">Reassign</button>
       {% endif %}
     </div>
     {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
       <p class="text-[11.5px] text-muted mt-2">
-        This offer resolves when the affiliate answers over GNet. Withdraw releases it on the network.
+        This offer resolves when the affiliate answers over GNet. Reassigning releases it on the network.
       </p>
     {% endif %}
   {% else %}

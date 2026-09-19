@@ -133,3 +133,34 @@ def test_the_section_is_hidden_when_the_editor_came_from_the_drawer():
 def test_the_editor_loads_coverage_only_when_it_opens(client, agent):
     """Serializing every trip's driver and vendor lists into the page would be heavy."""
     assert "loadCoverage" in APP_JS
+
+
+# --- reassigning says what it actually does ------------------------------------------
+
+
+def test_a_gnet_offer_is_flagged_so_the_confirm_can_say_so(client, agent):
+    trip = _trip()
+    AssignmentFactory(
+        reservation=trip, vendor=VendorFactory(name="Reston Coach Co"),
+        status=Assignment.Status.OFFERED, channel=Assignment.Channel.GNET,
+    )
+    assert _options(client, trip).json()["isGnet"] is True
+
+
+def test_a_manual_offer_is_not(client, agent):
+    trip = _trip()
+    AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
+    assert _options(client, trip).json()["isGnet"] is False
+
+
+def test_the_confirm_tells_a_gnet_affiliate_apart_from_a_manual_one():
+    """On GNet the cancel goes out over the network, so "not notified" would be a lie."""
+    release = APP_JS[APP_JS.index("releaseCoverage()") :][:1400]
+    assert "isGnet" in release
+    assert "GNet" in release
+    assert "not notified automatically" in release
+
+
+def test_reassign_is_what_the_button_says_now():
+    assert "Reassign" in EDITOR
+    assert "'Unassign'" not in EDITOR
