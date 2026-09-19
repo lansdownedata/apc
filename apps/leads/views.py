@@ -24,6 +24,7 @@ from apps.contacts import services as contact_services
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
+from apps.dispatch import selectors as dispatch_selectors
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
@@ -49,12 +50,6 @@ from .forms import NewLeadForm, PortalWeddingForm
 from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, VehicleType
 
 ZERO = Decimal("0.00")
-
-
-def _balances_with_remaining(lead: Lead) -> dict:
-    bals = ledger.order_balances(lead)
-    bals["remaining"] = payment_services.remaining_balance(lead)
-    return bals
 
 
 def _la_state(rows: list[dict]) -> str:
@@ -265,6 +260,9 @@ def lead_detail(request, pk):
                 ).order_by("sequence"),
             ),
             "notifications",
+            # Who is driving each trip, for the shared trip line's driver chip. One
+            # prefetch for the whole page — see dispatch.selectors.coverage_prefetch.
+            dispatch_selectors.coverage_prefetch("reservations__assignments"),
         ),
         pk=pk,
     )
@@ -274,6 +272,10 @@ def lead_detail(request, pk):
         )
     )
     reservations = lead.reservations.all()
+    if lead.status == Lead.Status.BOOKED:
+        # Only a booked trip can be assigned (`dispatch.services._claim`), so only then
+        # does a trip carry `.coverage` and only then does the line render a driver chip.
+        dispatch_selectors.attach_coverage(reservations)
     # A linked set is several trips in the database and one line on the screen (APC-14).
     reservation_lines = groups.as_lines(reservations)
     group_sizes = {m.pk: line.size for line in reservation_lines for m in line.members}
@@ -324,7 +326,7 @@ def lead_detail(request, pk):
         "la_state": _la_state(la_sync_rows),
         "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
-        "balances": _balances_with_remaining(lead),
+        "balances": payment_reports.order_balances_with_remaining(lead),
         "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
         "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
             "posted_at", "id"

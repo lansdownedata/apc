@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% comment %}
+  orders/order_detail.html — one booked order. Deliberately made of the same partials the
+  quote workspace renders: components/trip_line.html for the trips and
+  payments/_money_card.html for the money. Sales and ops reading two different renderings
+  of the same order is the drift this page exists to stop.
+
+  What differs is emphasis, not markup: `actions="ops"` drops the build-a-quote controls
+  (duplicate, copy-to-dates, reverse, remove) and each line carries the driver chip that
+  opens the dispatch drawer.
+
+  x-data is the Alpine scope the driver chips dispatch `drawer-open` from.
+{% endcomment %}
+{% block content %}
+<div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6" x-data>
+
+  <a href="{% url 'orders_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
+    <i class="ti ti-arrow-left text-[15px]"></i> Orders
+  </a>
+
+  {% if messages %}{% for message in messages %}
+  <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mb-4 text-[13px]">
+    <span class="tone-ic"><i class="ti ti-alert-triangle text-[17px]"></i></span>
+    <span>{{ message }}</span>
+  </div>
+  {% endfor %}{% endif %}
+
+  {% comment %} Lead with the number and the customer, per the dashboards rule — the money
+     is the card below, and the trips are the work. {% endcomment %}
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-5">
+    <div class="min-w-0">
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight num">{{ lead.quote_no }}</h1>
+      <div class="text-[13px] text-muted">
+        {{ lead.contact.name }}{% if lead.contact.company %} &middot; {{ lead.contact.company.name }}{% endif %}
+      </div>
+    </div>
+    <span class="ml-auto num font-display text-[20px] font-semibold text-ink">${{ lead.quote_total|floatformat:2|intcomma }}</span>
+    <a href="{% url 'lead_detail' lead.pk %}"
+       class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5">
+      <i class="ti ti-file-invoice text-[14px]"></i> Open quote
+    </a>
+  </div>
+
+  <div class="card overflow-hidden mb-4">
+    <div class="flex items-center px-5 py-3.5 border-b border-line">
+      <i class="ti ti-route text-[17px] text-gold mr-2"></i>
+      <span class="font-display text-[15px] font-semibold text-ink">Trips</span>
+      <span class="ml-auto text-[12px] text-muted">{{ reservation_lines|length }} movement{{ reservation_lines|length|pluralize }}</span>
+    </div>
+    <div class="divide-y divide-line/70">
+      {% for line in reservation_lines %}
+      {% include "components/trip_line.html" with line=line actions="ops" %}
+      {% empty %}
+      <div class="px-5 py-12 text-center text-[13px] text-muted">
+        <i class="ti ti-car-off text-[26px] text-slate-300"></i>
+        <div class="mt-2">No trips on this order yet.</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% include "payments/_money_card.html" %}
+
+  {% comment %} The driver chip on each trip line opens this — the same drawer, and the
+     same assign/farm-out implementation, the dispatch board uses. {% endcomment %}
+  {% include "components/drawer.html" with drawer_title="Assign trip" %}
+</div>
+{% endblock %}

@@ -45,6 +45,35 @@ def confirmed_assignment(reservation: Reservation) -> Assignment | None:
     return None
 
 
+def coverage_prefetch(lookup: str = "assignments") -> Prefetch:
+    """The active-assignment prefetch that `attach_coverage` reads.
+
+    One definition, because three screens now show who is driving a trip — the dispatch
+    board, the quote workspace and the order page — and a second copy of this prefetch is
+    how one of them quietly starts costing a query per row. `lookup` is the path from
+    whatever is being fetched, e.g. "reservations__assignments" off a Lead.
+    """
+    return Prefetch(
+        lookup,
+        queryset=Assignment.objects.active().select_related("vendor", "driver", "vehicle"),
+        to_attr="active_list",
+    )
+
+
+def attach_coverage(reservations) -> list[Reservation]:
+    """Decorate prefetched trips with `.active` and `.coverage`.
+
+    Coverage is derived from the active assignment rather than stored on the trip, so a
+    declined offer puts the trip straight back in the uncovered bucket with no cleanup.
+    Requires `coverage_prefetch()` on the queryset that produced these rows.
+    """
+    trips = list(reservations)
+    for trip in trips:
+        trip.active = trip.active_list[0] if trip.active_list else None
+        trip.coverage = trip.active.status if trip.active else COVERAGE_UNCOVERED
+    return trips
+
+
 def board_trips(filters: BoardFilters) -> list[Reservation]:
     """Booked trips picking up inside `filters`' date window, narrowed by its
     vehicle-type / customer / linked-set filters, each decorated with coverage + route ends.
@@ -79,11 +108,7 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
                     "airline", "airport", "flight", "flight__airport", "flight__airline"
                 ).order_by("sequence"),
             ),
-            Prefetch(
-                "assignments",
-                queryset=Assignment.objects.active().select_related("vendor", "driver", "vehicle"),
-                to_attr="active_list",
-            ),
+            coverage_prefetch(),
             Prefetch(
                 "dispatch_exceptions",
                 queryset=DispatchException.objects.filter(resolved_at__isnull=True),
@@ -99,13 +124,11 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
     if filters.group_key:
         qs = qs.filter(group_key=filters.group_key)
 
-    trips = list(qs)
+    trips = attach_coverage(qs)
     for trip in trips:
         stops = list(trip.stops.all())  # prefetched, already in sequence order
         trip.pickup_stop = stops[0] if stops else None
         trip.dropoff_stop = stops[-1] if len(stops) > 1 else None
-        trip.active = trip.active_list[0] if trip.active_list else None
-        trip.coverage = trip.active.status if trip.active else COVERAGE_UNCOVERED
         trip.exception_tier = max(
             (e.tier for e in trip.open_exceptions), key=_TIER_RANK.get, default=""
         )

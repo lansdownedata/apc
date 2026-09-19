@@ -109,6 +109,8 @@
           {% for r in awaiting %}
           <tr class="border-b border-line/70 last:border-0 {% if r.tier == 'critical' %}row-danger{% elif r.tier == 'warning' %}row-warn{% endif %}">
             <td class="px-5 py-3.5 font-mono text-muted font-medium">
+              {% comment %} Still ENGAGED, not booked — the confirm/cancel decision is made on the
+                 workspace, so link there rather than bounce off the order page. {% endcomment %}
               <a href="{% url 'lead_detail' r.lead.pk %}" class="hover:text-goldd">{{ r.quote_no }}</a>
             </td>
             <td class="px-3 py-3.5">
@@ -179,7 +181,7 @@
         </thead>
         <tbody class="stagger">
           {% for o in orders %}
-          <tr onclick="window.location='{% url 'lead_detail' o.lead.pk %}'"
+          <tr onclick="window.location='{% url 'order_detail' o.lead.pk %}'"
               class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
 
             <!-- Order # -->

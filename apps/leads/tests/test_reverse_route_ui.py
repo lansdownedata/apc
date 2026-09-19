@@ -15,7 +15,9 @@ from apps.reservations import groups
 from apps.reservations.factories import TransferReservationFactory
 
 ROOT = Path(__file__).resolve().parents[3]
-DETAIL = ROOT / "templates" / "leads" / "lead_detail.html"
+# The trip line's markup moved into components/trip_line.html (2026-09-19) so the order
+# page renders the identical row; these read it where it now lives.
+TRIP_LINE = ROOT / "templates" / "components" / "trip_line.html"
 
 pytestmark = pytest.mark.django_db
 
@@ -40,7 +42,7 @@ def test_the_row_offers_a_reverse_route_form_posting_to_the_endpoint(agent):
 
 
 def test_reverse_is_gated_on_the_shared_modal_not_window_confirm():
-    source = DETAIL.read_text()
+    source = TRIP_LINE.read_text()
     block = source[source.index("form-rev-") :]
     block = block[: block.index("</button>")]
     assert "$store.modal.confirm" in block

@@ -1,0 +1,24 @@
+{% comment %}
+  components/coverage_chip.html — who is driving this trip, and the way to change it.
+
+  Requires: `res` decorated by dispatch.selectors.attach_coverage (`.coverage`, `.active`).
+  Opens the SAME assign drawer the dispatch board opens, so in-house driver/vehicle and
+  farm-out-to-a-vendor are the one implementation (dispatch/_assign_panel.html). The page
+  including this must also include components/drawer.html and sit inside an Alpine scope.
+
+  Only rendered for a booked trip: `dispatch.services._claim` refuses an assignment on
+  anything else, so on a quote there is nothing here to offer rather than a dead control.
+{% endcomment %}
+<button type="button"
+        @click="$dispatch('drawer-open', { url: '{% url 'dispatch_assign_panel' res.pk %}' })"
+        class="inline-flex items-center gap-1.5 rounded-full focus-gold transition-opacity hover:opacity-80"
+        title="{% if res.active %}{{ res.active.provider_name }} — change coverage{% else %}Assign a driver or farm this trip out{% endif %}">
+  {% include "dispatch/_coverage_badge.html" with coverage=res.coverage %}
+  {% if res.active %}
+    <span class="inline-flex items-center gap-1 text-[11.5px] text-muted">
+      {% comment %} Same two glyphs the board's DRIVER and AFFILIATE columns use. {% endcomment %}
+      <i class="ti {% if res.active.is_in_house %}ti-home{% else %}ti-arrow-ramp-right-2{% endif %} text-[12px] {% if not res.active.is_in_house %}text-goldd{% endif %}"></i>
+      {{ res.active.provider_name }}
+    </span>
+  {% endif %}
+</button>

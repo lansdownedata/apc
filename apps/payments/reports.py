@@ -22,6 +22,19 @@ AUTH_WARN_HOURS = 48
 AUTH_CRITICAL_HOURS = 12
 
 
+def order_balances_with_remaining(lead: Lead) -> dict:
+    """The order's ledger balances plus what the customer still owes.
+
+    The money card reads both, and it is rendered by the quote workspace and the order
+    page — so this lives here rather than being a private helper in one of their views.
+    """
+    from . import services
+
+    balances = ledger.order_balances(lead)
+    balances["remaining"] = services.remaining_balance(lead)
+    return balances
+
+
 def hold_tier(hours_left: float | None) -> str:
     """ "" / warning / critical — the same vocabulary as a DispatchException tier, so the
     board and the orders console mean the same thing by an amber row. A hold with no

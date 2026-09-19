@@ -20,7 +20,9 @@ from apps.reservations.factories import TransferReservationFactory
 
 ROOT = Path(__file__).resolve().parents[3]
 EDITOR = ROOT / "templates" / "leads" / "_reservation_editor.html"
-DETAIL = ROOT / "templates" / "leads" / "lead_detail.html"
+# The trip line's markup moved into components/trip_line.html (2026-09-19) so the order
+# page renders the identical row; these read it where it now lives.
+TRIP_LINE = ROOT / "templates" / "components" / "trip_line.html"
 APP_JS = ROOT / "static" / "js" / "app.js"
 
 pytestmark = pytest.mark.django_db
@@ -228,6 +230,6 @@ def test_shrinking_a_set_asks_before_deleting_trips():
 
 
 def test_removing_a_whole_set_is_gated_by_the_shared_modal():
-    detail = DETAIL.read_text()
+    detail = TRIP_LINE.read_text()
     assert "$store.modal.confirm" in detail
     assert "form-group-del-" in detail

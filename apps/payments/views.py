@@ -4,6 +4,7 @@ import stripe
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Prefetch
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
@@ -11,6 +12,7 @@ from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
 from apps.core.choices import Channel
+from apps.dispatch import selectors as dispatch_selectors
 from apps.dispatch import services as dispatch_services
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
@@ -18,7 +20,8 @@ from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.messaging import services as messaging_services
 from apps.messaging.models import Message
-from apps.reservations.models import Reservation
+from apps.reservations import groups
+from apps.reservations.models import Reservation, Stop
 
 from . import ledger, reports, services, webhooks
 
@@ -33,6 +36,59 @@ def stripe_webhook(request):
         return HttpResponseBadRequest("Invalid signature.")
     webhooks.process_stripe_event(event)
     return HttpResponse(status=200)
+
+
+@login_required
+def order_detail(request, lead_id):
+    """One order: its trips, who is driving each of them, and its money.
+
+    An order is a BOOKED lead — there is no Order model — so anything else redirects to
+    the quote workspace, where that record actually lives, rather than 404ing on a lead
+    that plainly exists.
+
+    The trip lines and the money block are the same partials the workspace renders. What
+    is different here is the emphasis: ops gets coverage and Edit, not the whole
+    build-a-quote action set.
+    """
+    lead = get_object_or_404(
+        Lead.objects.select_related("contact", "payment").prefetch_related(
+            "reservations__vehicle",
+            "reservations__service_type",
+            Prefetch(
+                "reservations__stops",
+                queryset=Stop.objects.select_related(
+                    "airport", "airline", "flight", "flight__airport", "flight__airline"
+                ).order_by("sequence"),
+            ),
+            dispatch_selectors.coverage_prefetch("reservations__assignments"),
+        ),
+        pk=lead_id,
+    )
+    if lead.status != Lead.Status.BOOKED:
+        return redirect("lead_detail", pk=lead.pk)
+
+    reservations = dispatch_selectors.attach_coverage(lead.reservations.all())
+    plan = getattr(lead, "payment", None)
+    return render(
+        request,
+        "orders/order_detail.html",
+        {
+            "nav": "orders",
+            "page_title": lead.quote_no,
+            "lead": lead,
+            # A linked set is several trips in the database and one line here (APC-14).
+            "reservation_lines": groups.as_lines(reservations),
+            "reservations": reservations,
+            **reports.authorized_hold(lead),
+            "payment": plan,
+            "balances": reports.order_balances_with_remaining(lead),
+            "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
+            "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
+                "posted_at", "id"
+            ),
+            "charges": list(plan.charges.all()) if plan else [],
+        },
+    )
 
 
 @login_required
