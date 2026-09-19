@@ -34,9 +34,17 @@ def test_target_price_is_cost_over_ratio():
     assert _priced().target_price == Decimal("1538.46")
 
 
+def _unsaved(**kwargs):
+    """Not yet saved, so `Reservation.save` has not filled a blank factor with the standard."""
+    return TransferReservationFactory.build(
+        rate=Decimal("0"), hours=Decimal("1"), min_hours=Decimal("0"), **kwargs
+    )
+
+
 def test_no_cost_or_no_ratio_means_no_target():
     assert _priced(affiliate_cost=Decimal("0")).target_price == Decimal("0.00")
-    assert _priced(cost_ratio_pct=Decimal("0")).target_price == Decimal("0.00")
+    no_ratio = _unsaved(affiliate_cost=Decimal("1000"), cost_ratio_pct=Decimal("0"))
+    assert no_ratio.target_price == Decimal("0.00")
 
 
 def test_a_hundred_percent_ratio_prices_at_cost():
@@ -96,12 +104,13 @@ def test_an_underpriced_trip_really_does_report_a_loss():
     assert r.quoted_margin_pct == Decimal("-25.00")
 
 
-def test_an_uncosted_trip_reports_no_profit():
-    """A trip priced the old way has no affiliate cost — don't claim its whole fare is
-    profit."""
+def test_a_trip_with_no_flat_rate_pays_by_the_factor():
+    """No flat rate does not mean the whole fare is profit — the vendor is paid their
+    share of the price (see test_vendor_pay.py)."""
     r = _priced(rate=Decimal("500"), affiliate_cost=Decimal("0"))
-    assert r.quoted_profit == Decimal("0.00")
-    assert r.quoted_margin_pct == Decimal("0.00")
+    assert r.vendor_pay == Decimal("325.00")
+    assert r.quoted_profit == Decimal("175.00")
+    assert r.quoted_margin_pct == Decimal("35.00")
 
 
 # --- solving for the rate ---------------------------------------------------
@@ -144,7 +153,8 @@ def test_no_billable_hours_means_no_rate_to_solve():
 
 def test_no_cost_means_nothing_to_solve():
     assert solve_rate_from_cost(_priced(affiliate_cost=Decimal("0"))) is None
-    assert solve_rate_from_cost(_priced(cost_ratio_pct=Decimal("0"))) is None
+    no_ratio = _unsaved(affiliate_cost=Decimal("1000"), cost_ratio_pct=Decimal("0"))
+    assert solve_rate_from_cost(no_ratio) is None
 
 
 def test_solving_twice_gives_the_same_rate():

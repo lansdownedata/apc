@@ -431,7 +431,6 @@ function quoteWorkspace(opts = {}) {
     depositPct: 50,
     sending: false,
     editorOpen: false,
-    costOpen: false,
     // The wedding's Edit details modal. Opens itself when the workspace was reached
     // with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
@@ -631,7 +630,7 @@ function quoteWorkspace(opts = {}) {
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         discountPct: 0, discountFlat: 0, discountMode: "flat",
-        affiliateCost: 0, costRatioPct: this.defaultCostRatio,
+        affiliateCost: 0, costRatioPct: this.defaultCostRatio, vendorPayMode: "factor",
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
@@ -670,7 +669,6 @@ function quoteWorkspace(opts = {}) {
     },
     newReservation() {
       this.draft = this.blankReservation();
-      this.costOpen = false;
       this.groupSizeAtOpen = 1;
       this.applyToGroup = false;
       this.dropoffPinned = false;
@@ -700,7 +698,9 @@ function quoteWorkspace(opts = {}) {
       this.draft.discountMode = Number(this.draft.discountPct) > 0 ? "pct" : "flat";
       // Open the cost calculator already expanded when this trip was priced from a cost,
       // so the number behind the rate is visible rather than hidden a click away.
-      this.costOpen = Number(this.draft.affiliateCost) > 0;
+      // Flat wins whenever a flat rate is set — the same inference the discount uses.
+      this.draft.vendorPayMode = Number(this.draft.affiliateCost) > 0 ? "flat" : "factor";
+      if (!(Number(this.draft.costRatioPct) > 0)) this.draft.costRatioPct = this.defaultCostRatio;
       // A stored trip that already ends on another day, or at a time of its own, keeps
       // both through pickup edits.
       this.dropoffPinned = !!this.draft.dropoffDate && this.draft.dropoffDate !== this.draft.date;
@@ -960,11 +960,27 @@ function quoteWorkspace(opts = {}) {
       if (hours <= 0) return target;                  // shown, but Apply stays disabled
       return this.roundToDime(target / hours) * hours;
     },
-    costProfit(r) { return this.costPreview(r) - (Number(r.affiliateCost) || 0); },
-    costMarginPct(r) {
-      const price = this.costPreview(r);
-      if (price <= 0) return "0";
-      return (this.costProfit(r) / price * 100).toFixed(1).replace(/\.0$/, "");
+    /* What this trip pays its vendor, and what we keep — mirrors Reservation.vendor_pay /
+     * quoted_profit / quoted_margin_pct. The factor is a share of the SUBTOTAL, so a
+     * discount comes out of our side and gratuity pays nobody a share. */
+    vendorPay(r) {
+      const flat = Number(r.affiliateCost) || 0;
+      if (r.vendorPayMode === "flat" && flat > 0) return flat;
+      return this.resSubtotal(r) * (Number(r.costRatioPct) || 0) / 100;
+    },
+    keepAmount(r) { return this.resDiscountedBase(r) - this.vendorPay(r); },
+    keepMarginPct(r) {
+      const base = this.resDiscountedBase(r);
+      if (base <= 0) return "0";
+      return (this.keepAmount(r) / base * 100).toFixed(1).replace(/\.0$/, "");
+    },
+    ratioIsCustom(r) { return Number(r.costRatioPct) !== Number(this.defaultCostRatio); },
+    resetCostRatio() { this.draft.costRatioPct = this.defaultCostRatio; },
+    /* Factor/Flat writes one field and zeroes the other, so the two existing columns
+     * carry the mode with no third field on the model — the discount toggle's trick. */
+    setVendorPayMode(mode) {
+      this.draft.vendorPayMode = mode;
+      if (mode !== "flat") this.draft.affiliateCost = 0;
     },
     applyCostPrice() {
       const hours = this.billedHours(this.draft);

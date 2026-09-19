@@ -26,6 +26,17 @@ def _money(value) -> Decimal:
     return amount
 
 
+def _cost_ratio(value) -> Decimal:
+    """The vendor's share of the sell price, 1-100. Blank or 0 means "the Settings
+    standard", which `Reservation.save` fills in. The range used to live only on the
+    Settings form and in the editor's HTML attributes, so a hand-built POST could save a
+    300% factor that then priced every calculation off it."""
+    ratio = _money(value)
+    if ratio and not Decimal("1") <= ratio <= Decimal("100"):
+        raise DraftError("vendor share must be between 1 and 100 percent")
+    return ratio
+
+
 def _date(value) -> date | None:
     if not value:
         return None
@@ -203,9 +214,10 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
         "discount_flat": _money(payload.get("discountFlat")),
         # Cost-based pricing inputs (spec 2026-09-05). Stored as the audit trail behind the
         # rate — "paid 1,000, targeted 65%, sold 1,538.50" — so a price stays explainable
-        # long after the calculator ran. `_money` coerces junk to 0 = not cost-priced.
+        # long after the calculator ran. A flat `affiliateCost` is what the vendor is paid;
+        # blank means they are paid by the factor. Garbled input raises, never coerces.
         "affiliate_cost": _money(payload.get("affiliateCost")),
-        "cost_ratio_pct": _money(payload.get("costRatioPct")),
+        "cost_ratio_pct": _cost_ratio(payload.get("costRatioPct")),
         "dropoff_date": _date(payload.get("dropoffDate")),
         "dropoff_time": _time(payload.get("dropoffTime")),
         "stops": [

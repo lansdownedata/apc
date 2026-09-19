@@ -23,8 +23,11 @@ pytestmark = pytest.mark.django_db
 
 COST = Decimal("1234.56")
 RATIO = Decimal("63.21")
+# Paid by the factor instead of a flat rate, the trip below owes its vendor 63.21% of
+# 1952.80 — a number no fixture holds, only `Reservation.vendor_pay` can produce.
+FACTOR_PAY = Decimal("1234.36")
 # What must not appear, in every rendering these surfaces plausibly use.
-FORBIDDEN = ("1234.56", "1,234.56", "63.21", "1234.6", "63.2")
+FORBIDDEN = ("1234.56", "1,234.56", "63.21", "1234.6", "63.2", "1234.36", "1,234.36", "1234.4")
 
 
 def _assert_clean(text: str, where: str) -> None:
@@ -32,8 +35,9 @@ def _assert_clean(text: str, where: str) -> None:
         assert needle not in text, f"{needle!r} leaked into {where}"
 
 
-@pytest.fixture
-def costed_lead():
+@pytest.fixture(params=["flat", "factor"])
+def costed_lead(request):
+    """Every surface is checked twice: a trip paying a flat rate, and one paying by factor."""
     lead = LeadFactory(status=Lead.Status.QUOTED)
     ReservationFactory(
         lead=lead,
@@ -43,10 +47,15 @@ def costed_lead():
         pickup_date=date(2026, 11, 14),
         pickup_time=time(9, 30),
         pickup_timezone="America/New_York",
-        affiliate_cost=COST,
+        affiliate_cost=COST if request.param == "flat" else 0,
         cost_ratio_pct=RATIO,
     )
     return lead
+
+
+def test_the_factor_fixture_really_owes_the_forbidden_number():
+    trip = ReservationFactory(rate=Decimal("1952.80"), hours=1, min_hours=0, cost_ratio_pct=RATIO)
+    assert trip.vendor_pay == FACTOR_PAY
 
 
 # --- customer-facing ---------------------------------------------------------

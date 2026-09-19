@@ -327,7 +327,11 @@
         {% endfor %}
       </div>
       <label class="block text-[11px] font-semibold uppercase tracking-wide text-muted mt-4 mb-1">Payout</label>
+      {% comment %} Starts on what the trip was quoted to pay — its flat rate, else the vendor's
+         share of the price — so quoted and actual margin start out the same number. The
+         dispatcher can still type over it. {% endcomment %}
       <input type="text" name="payout" inputmode="decimal" placeholder="0.00"
+             {% if trip.vendor_pay %}value="{{ trip.vendor_pay|stringformat:".2f" }}"{% endif %}
              class="field w-full num text-[13px]">
       <div class="flex gap-2 mt-4">
         <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"

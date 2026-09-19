@@ -322,7 +322,7 @@ def _cost_draft(**overrides):
 
 
 @pytest.mark.parametrize("blank", ["", None])
-def test_an_omitted_cost_reads_as_not_cost_priced(blank):
+def test_an_omitted_cost_pays_by_the_standard_factor(blank):
     from apps.leads.factories import LeadFactory
 
     res = save_reservation_from_draft(
@@ -330,8 +330,8 @@ def test_an_omitted_cost_reads_as_not_cost_priced(blank):
     )
 
     assert res.affiliate_cost == Decimal("0")
-    assert res.cost_ratio_pct == Decimal("0")
-    assert res.target_price == Decimal("0.00")
+    assert res.cost_ratio_pct == Decimal("65")  # the Settings standard, filled on save
+    assert res.target_price == Decimal("0.00")  # no flat rate, so nothing to price from
 
 
 @pytest.mark.parametrize("junk", ["abc", "-", []])
