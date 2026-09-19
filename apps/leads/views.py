@@ -41,13 +41,14 @@ from apps.public.wedding import (
     venue_cap_line,
     wedding_answers,
 )
+from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
 
 from . import services
 from .forms import NewLeadForm, PortalWeddingForm
-from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, VehicleType
+from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead
 
 ZERO = Decimal("0.00")
 
@@ -66,67 +67,6 @@ def _la_state(rows: list[dict]) -> str:
     if rows and results == {ZapEvent.Result.SUCCESS}:
         return "sent"
     return "unsent"
-
-
-def _open_editor_id(request, reservations) -> int | None:
-    """The `?edit=<pk>` trip to reopen the editor on, if it names a real trip on this
-    quote — a redirect from Create Return Trip (APC-15) uses it. Anything else is None."""
-    raw = request.GET.get("edit", "")
-    if not raw.isdigit():
-        return None
-    pk = int(raw)
-    return pk if any(r.pk == pk for r in reservations) else None
-
-
-def _reservation_draft(r, *, quantity: int = 1) -> dict:
-    """The editor's view of one saved trip. `quantity` is the size of the linked set it
-    belongs to (APC-14) — 1 for a trip that stands alone."""
-    return {
-        "id": r.pk,
-        "quantity": quantity,
-        "tripType": r.trip_type,
-        "serviceType": r.service_type_id or "",
-        "date": r.pickup_date.isoformat() if r.pickup_date else "",
-        "time": r.pickup_time.strftime("%H:%M") if r.pickup_time else "",
-        "vehicle": r.vehicle_id or "",
-        "pax": r.passengers,
-        "rate": float(r.rate),
-        "hours": float(r.hours),
-        "minHours": float(r.min_hours),
-        "gratuityPct": float(r.gratuity_pct),
-        "gratuityFlat": float(r.gratuity_flat),
-        "discountPct": float(r.discount_pct),
-        "discountFlat": float(r.discount_flat),
-        "affiliateCost": float(r.affiliate_cost),
-        "costRatioPct": float(r.cost_ratio_pct),
-        "dropoffDate": r.dropoff_date.isoformat() if r.dropoff_date else "",
-        "dropoffTime": r.dropoff_time.strftime("%H:%M") if r.dropoff_time else "",
-        "stops": [
-            {
-                "address": s.address,
-                "note": s.note,
-                "name": s.name,
-                "time": s.scheduled_time.strftime("%H:%M") if s.scheduled_time else "",
-                # Round-tripped so the delete-and-recreate in save_reservation_from_draft
-                # doesn't drop coordinates the user already picked.
-                "lat": str(s.latitude) if s.latitude is not None else "",
-                "lng": str(s.longitude) if s.longitude is not None else "",
-                "airport": s.airport_id or "",
-                "airportCode": s.airport.iata if s.airport_id else "",
-                # Gates the editor's Verify button (spec 2026-08-29 finding 2) — a stop's
-                # airport can have a real IATA code and still have no scheduled service
-                # (Andrews, Manassas, ...).
-                "hasScheduledService": bool(s.airport_id and s.airport.has_scheduled_service),
-                "airline": s.airline_id or "",
-                "flight": s.flight_number,
-                "direction": s.flight_direction,
-                # Pre-rendered pill for a stop already linked to a cached flight, so the
-                # editor opens with the check shown. Client-only; the parser ignores it.
-                "pill": s.flight_pill,
-            }
-            for s in r.stops.all()
-        ],
-    }
 
 
 @login_required
@@ -266,11 +206,6 @@ def lead_detail(request, pk):
         ),
         pk=pk,
     )
-    _vehicles = list(
-        VehicleType.objects.filter(active=True).values(
-            "id", "name", "rate", "hourly_min_hours", "transfer_min_hours"
-        )
-    )
     reservations = lead.reservations.all()
     if lead.status == Lead.Status.BOOKED:
         # Only a booked trip can be assigned (`dispatch.services._claim`), so only then
@@ -278,7 +213,6 @@ def lead_detail(request, pk):
         dispatch_selectors.attach_coverage(reservations)
     # A linked set is several trips in the database and one line on the screen (APC-14).
     reservation_lines = groups.as_lines(reservations)
-    group_sizes = {m.pk: line.size for line in reservation_lines for m in line.members}
 
     la_events: dict[int, ZapEvent] = {}
     events = ZapEvent.objects.filter(lead=lead, action=ZapEvent.Action.CREATE_RESERVATION)
@@ -319,8 +253,6 @@ def lead_detail(request, pk):
         # The held deposit + its deadline, for the Confirm/Cancel controls (APC-26).
         **payment_reports.authorized_hold(lead),
         "wedding_open": request.GET.get("wedding") == "1",
-        # ?edit=<pk> reopens the editor on one trip after a redirect (APC-15 return trip).
-        "open_editor_id": _open_editor_id(request, reservations),
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,
         "la_state": _la_state(la_sync_rows),
@@ -335,22 +267,8 @@ def lead_detail(request, pk):
         "channels": Channel.choices,
         "agents": services.agent_options(),
         "reservation_lines": reservation_lines,
-        "duplicate_max": groups.DUPLICATE_MAX,
-        "reservations_json": [
-            _reservation_draft(r, quantity=group_sizes.get(r.pk, 1)) for r in reservations
-        ],
-        "vehicles_json": [
-            {
-                "id": v["id"],
-                "name": v["name"],
-                "rate": float(v["rate"]),
-                "hourlyMin": float(v["hourly_min_hours"]),
-                "transferMin": float(v["transfer_min_hours"]),
-            }
-            for v in _vehicles
-        ],
-        "vehicle_options": [(v["id"], v["name"]) for v in _vehicles],
-        "service_type_options": services.service_type_options(lead),
+        # Everything the shared trip editor needs — the order page feeds it the same way.
+        **reservation_editor.editor_context(request, lead, reservations),
     }
     return render(request, "leads/lead_detail.html", context)
 

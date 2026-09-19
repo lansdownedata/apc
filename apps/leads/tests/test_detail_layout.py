@@ -274,7 +274,7 @@ def test_workspace_card_rollup_chip(page):
     stop = _with_flight(res)
     html = page(lead)
     assert "Verify flight" in html
-    assert f"editReservation({res.pk})" in html.split("Verify flight")[0][-400:]
+    assert f"reservation-edit', {{ id: {res.pk} }}" in html.split("Verify flight")[0][-500:]
     _verified(stop)
     html = page(lead)
     assert "Flight verified" in html and "ti-circle-check" in html

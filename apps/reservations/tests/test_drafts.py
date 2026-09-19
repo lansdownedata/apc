@@ -4,9 +4,9 @@ from decimal import Decimal
 import pytest
 
 from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
-from apps.leads.views import _reservation_draft
 from apps.reservations import drafts
 from apps.reservations.drafts import DraftError, save_reservation_from_draft
+from apps.reservations.editor import reservation_draft
 from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
@@ -158,7 +158,7 @@ def test_reservation_draft_serializes_stop_name_and_time():
             ],
         },
     )
-    draft = _reservation_draft(res)
+    draft = reservation_draft(res)
     assert draft["stops"][0]["name"] == "Ceresville Mansion"
     assert draft["stops"][0]["time"] == "11:30"
     assert draft["stops"][1]["time"] == "", "a missing time must serialize as '', not None"
@@ -271,7 +271,7 @@ def test_discount_survives_the_draft_round_trip():
     assert res.discount_flat == Decimal("25.00")
 
     # round trip: serialize back to a draft, feed it straight back in
-    draft = _reservation_draft(res)
+    draft = reservation_draft(res)
     again = save_reservation_from_draft(lead, {**draft, "tripType": "hourly"}, instance=res)
     assert again.discount_pct == Decimal("10"), "discount_pct silently blanked on round trip"
     assert again.discount_flat == Decimal("25.00"), "discount_flat silently blanked on round trip"
@@ -301,7 +301,7 @@ def test_cost_pricing_survives_the_draft_round_trip():
     assert res.affiliate_cost == Decimal("1000.00")
     assert res.cost_ratio_pct == Decimal("65")
 
-    draft = _reservation_draft(res)
+    draft = reservation_draft(res)
     again = save_reservation_from_draft(lead, {**draft, "tripType": "transfer"}, instance=res)
     assert again.affiliate_cost == Decimal("1000.00"), "affiliate_cost blanked on round trip"
     assert again.cost_ratio_pct == Decimal("65"), "cost_ratio_pct blanked on round trip"
@@ -365,7 +365,7 @@ def test_the_editor_draft_carries_the_cost_fields():
         },
     )
 
-    draft = _reservation_draft(res)
+    draft = reservation_draft(res)
 
     assert draft["affiliateCost"] == 1000.0
     assert draft["costRatioPct"] == 65.0
@@ -477,7 +477,7 @@ def test_flight_info_round_trips_through_the_draft(iad, united):
     res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
     stop = res.ordered_stops.first()
     assert (stop.airport, stop.airline, stop.flight_number) == (iad, united, "123")
-    draft_stop = _reservation_draft(res)["stops"][0]
+    draft_stop = reservation_draft(res)["stops"][0]
     assert draft_stop["airport"] == iad.pk
     assert draft_stop["airportCode"] == "IAD"
     assert draft_stop["airline"] == united.pk
@@ -486,7 +486,7 @@ def test_flight_info_round_trips_through_the_draft(iad, united):
 
 def test_a_stop_without_flight_info_drafts_empty_strings():
     res = save_reservation_from_draft(LeadFactory(), _payload())
-    draft_stop = _reservation_draft(res)["stops"][0]
+    draft_stop = reservation_draft(res)["stops"][0]
     assert (draft_stop["airport"], draft_stop["airportCode"]) == ("", "")
     assert (draft_stop["airline"], draft_stop["flight"]) == ("", "")
     assert draft_stop["hasScheduledService"] is False
@@ -496,7 +496,7 @@ def test_draft_carries_has_scheduled_service_for_an_airport_stop(iad, united):
     """IAD has real scheduled service — the editor's draft needs this flag to gate the
     Verify button (spec 2026-08-29 finding 2)."""
     res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
-    draft_stop = _reservation_draft(res)["stops"][0]
+    draft_stop = reservation_draft(res)["stops"][0]
     assert draft_stop["hasScheduledService"] is True
 
 
@@ -510,7 +510,7 @@ def test_draft_reports_no_scheduled_service_for_a_military_field(united):
     res = save_reservation_from_draft(LeadFactory(), _flight_payload(adw, united))
     stop = res.ordered_stops.first()
     assert stop.airport_id == adw.pk  # still selectable as a pickup
-    draft_stop = _reservation_draft(res)["stops"][0]
+    draft_stop = reservation_draft(res)["stops"][0]
     assert draft_stop["hasScheduledService"] is False
 
 
@@ -684,7 +684,7 @@ def test_direction_is_dropped_without_an_airport():
 def test_direction_round_trips_through_the_draft(iad, united):
     res = save_reservation_from_draft(LeadFactory(), _three_stop_payload(iad, united, "arrival"))
     assert [s.flight_direction for s in res.ordered_stops] == ["arrival", "arrival", "departure"]
-    assert [s["direction"] for s in _reservation_draft(res)["stops"]] == [
+    assert [s["direction"] for s in reservation_draft(res)["stops"]] == [
         "arrival",
         "arrival",
         "departure",
@@ -709,7 +709,7 @@ def test_saving_links_a_stop_to_the_cached_flight(iad, united):
     cached = _cached(iad, united)
     res = save_reservation_from_draft(LeadFactory(), _flight_payload(iad, united))
     assert res.ordered_stops.first().flight_id == cached.pk
-    draft_stop = _reservation_draft(res)["stops"][0]
+    draft_stop = reservation_draft(res)["stops"][0]
     assert draft_stop["pill"]["state"] == "verified"
 
 
@@ -725,7 +725,7 @@ def test_the_link_survives_an_unrelated_edit_and_drops_on_a_changed_flight(iad, 
         lead, _flight_payload(iad, united, flight="124"), instance=res
     )
     assert res.ordered_stops.first().flight_id is None
-    assert _reservation_draft(res)["stops"][0]["pill"] is None
+    assert reservation_draft(res)["stops"][0]["pill"] is None
 
 
 def test_the_link_needs_the_same_date_and_direction(iad, united):

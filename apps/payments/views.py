@@ -20,6 +20,7 @@ from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.messaging import services as messaging_services
 from apps.messaging.models import Message
+from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations.models import Reservation, Stop
 
@@ -79,6 +80,8 @@ def order_detail(request, lead_id):
             # A linked set is several trips in the database and one line here (APC-14).
             "reservation_lines": groups.as_lines(reservations),
             "reservations": reservations,
+            # The same trip editor the quote workspace opens, fed identically.
+            **reservation_editor.editor_context(request, lead, reservations),
             **reports.authorized_hold(lead),
             "payment": plan,
             "balances": reports.order_balances_with_remaining(lead),

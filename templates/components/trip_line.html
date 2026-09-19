@@ -61,7 +61,7 @@
         {% if res.trip_type == 'hourly' %}<span class="flex items-center gap-1 num"><i class="ti ti-clock text-[13px]"></i> {{ res.billed_hours|floatformat:"-2" }} hrs{% if res.min_applied %} (min){% endif %}</span>{% endif %}
         {% with fs=res.flight_summary %}{% if fs %}
           {% if fs.state == 'unverified' %}
-            <button type="button" @click="editReservation({{ res.pk }})"
+            <button type="button" @click="$dispatch('reservation-edit', { id: {{ res.pk }} })"
                     class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full chip-ring hover:text-ink">
               <i class="ti ti-plane text-[13px]"></i> {{ fs.label }}
             </button>
@@ -82,18 +82,14 @@
       {% if line.is_group %}<div class="text-[10.5px] text-muted num mt-0.5">{{ line.size }} × ${{ res.line_total|floatformat:2|intcomma }}</div>{% endif %}
       {% if res.trip_type == 'hourly' %}<div class="text-[10.5px] text-muted num mt-0.5">${{ res.rate|floatformat:0 }}/hr</div>{% endif %}
       <div class="flex items-center gap-1 mt-1">
-        {% if actions != "sales" %}
-        {% comment %} The editor lives in the workspace's Alpine scope, so ops edits a trip
-           where it was built — ?edit= reopens the editor on it after the redirect. {% endcomment %}
-        <a href="{% url 'lead_detail' res.lead_id %}?edit={{ res.pk }}"
-           class="p-1 text-muted hover:text-ink transition-colors" title="Edit reservation">
-          <i class="ti ti-pencil text-[15px]"></i>
-        </a>
-        {% else %}
-        <button @click="editReservation({{ res.pk }})"
+        {% comment %} Both screens open the same editor — it listens on the window, so the
+           row does not have to sit in its scope. Everything after it builds a quote and
+           belongs to the workspace alone. {% endcomment %}
+        <button type="button" @click="$dispatch('reservation-edit', { id: {{ res.pk }} })"
                 class="p-1 text-muted hover:text-ink transition-colors" title="{% if line.is_group %}Edit all {{ line.size }} trips{% else %}Edit reservation{% endif %}">
           <i class="ti ti-pencil text-[15px]"></i>
         </button>
+        {% if actions == "sales" %}
 
         {# duplicate — opens the quantity picker ($store.modal); the count rides on this hidden form #}
         <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}" class="hidden">
@@ -199,11 +195,11 @@
       {% endif %}
       {% if member.coverage %}{% include "components/coverage_chip.html" with res=member %}{% endif %}
       <span class="ml-auto num text-ink">${{ member.line_total|floatformat:2|intcomma }}</span>
-      {% if actions == "sales" %}
-      <button @click="editReservation({{ member.pk }})"
+      <button type="button" @click="$dispatch('reservation-edit', { id: {{ member.pk }} })"
               class="p-1 text-muted hover:text-ink transition-colors" title="Edit this vehicle">
         <i class="ti ti-pencil text-[14px]"></i>
       </button>
+      {% if actions == "sales" %}
       <form method="post" action="{% url 'reservation_delete' member.pk %}" id="form-del-{{ member.pk }}" class="hidden">
         {% csrf_token %}
       </form>

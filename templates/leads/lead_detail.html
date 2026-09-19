@@ -8,23 +8,12 @@
 {% endblock %}
 
 {% block content %}
-{{ reservations_json|json_script:"ws-reservations" }}
-{{ vehicles_json|json_script:"ws-vehicles" }}
-{{ trip_defaults|json_script:"ws-trip-defaults" }}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="quoteWorkspace({
        weddingOpen: {% if wedding_open %}true{% else %}false{% endif %},
-       openEditorId: {{ open_editor_id|default_if_none:'null' }},
        leadId: {{ lead.pk }},
        updateUrl: '{% url 'lead_update' lead.pk %}',
-       saveUrl: '{% url 'reservation_save' %}',
        sendQuoteUrl: '{% url 'lead_send_quote' lead.pk %}',
-       acUrl: '{% url 'integrations:geocode_autocomplete' %}',
-       privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
-       defaultCostRatio: {{ default_cost_ratio_pct }},
-       tripDefaults: JSON.parse(document.getElementById('ws-trip-defaults').textContent),
-       reservations: JSON.parse(document.getElementById('ws-reservations').textContent),
-       vehicles: JSON.parse(document.getElementById('ws-vehicles').textContent),
        header: {
          name: {{ lead.contact.name|json_string }},
          phone: {{ lead.contact.phone|json_string }},
@@ -260,7 +249,7 @@
     <div class="flex items-center px-5 py-3.5 border-b border-line">
       <span class="font-display text-[15px] font-semibold text-ink">Reservations</span>
       <span class="ml-2 text-[11px] text-muted">{{ reservations|length }} trip{{ reservations|length|pluralize }} on this quote</span>
-      <button @click="newReservation()"
+      <button @click="$dispatch('reservation-new')"
               class="ml-auto btn-gold flex items-center gap-1.5 text-[12px] font-semibold rounded-lg px-3 py-1.5">
         <i class="ti ti-plus text-[14px]"></i> Add reservation
       </button>

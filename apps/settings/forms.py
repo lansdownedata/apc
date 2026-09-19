@@ -238,6 +238,8 @@ class VenueForm(forms.ModelForm):
             f"{biggest.name} ({biggest.capacity} passengers) — no limit" if biggest else "No limit"
         )
         self.fields["max_vehicle"].label = "Largest vehicle that fits"
-        self.fields["max_vehicle"].help_text = (
+        self.fields[
+            "max_vehicle"
+        ].help_text = (
             "Defaults to our largest coach. Pick a smaller vehicle when the site cannot take one."
         )

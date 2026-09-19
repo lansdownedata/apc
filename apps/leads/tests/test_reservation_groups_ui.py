@@ -40,7 +40,7 @@ def _html(client, lead) -> str:
 
 def _drafts(html: str) -> list[dict]:
     payload = re.search(
-        r'<script id="ws-reservations" type="application/json">(.*?)</script>', html, re.S
+        r'<script id="res-editor-trips" type="application/json">(.*?)</script>', html, re.S
     )
     return json.loads(payload.group(1))
 
@@ -140,7 +140,7 @@ def test_every_member_of_a_set_is_reachable_from_the_expanded_line(agent):
     html = _html(agent, res.lead)
 
     for member in res.lead.reservations.all():
-        assert f"editReservation({member.pk})" in html
+        assert f"reservation-edit', {{ id: {member.pk} }}" in html
 
 
 def test_a_set_line_removes_the_whole_set(agent):

@@ -60,8 +60,9 @@ def test_edit_query_param_for_a_foreign_trip_is_ignored(agent):
 
 
 def test_app_js_reopens_the_editor_from_open_editor_id():
+    """Now reservationEditor's own init — the editor moved out of quoteWorkspace."""
     source = APP_JS.read_text()
-    start = source.find("openEditorId: opts.openEditorId")
+    start = source.find("function reservationEditor(")
     assert start != -1
     init = source.find("init()", start)
     assert "this.editReservation(Number(this.openEditorId))" in source[init : init + 600]

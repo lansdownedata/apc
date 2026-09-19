@@ -1,5 +1,12 @@
+{% load json_filters %}
 {% comment %}
-Reservation editor modal — used inside quoteWorkspace() x-data scope.
+Reservation editor modal — its own component (reservationEditor in app.js), so every
+screen that lists trips can open it: the quote workspace and the order page today, the
+dispatch drawer next. Include it ONCE per page (the Tom Select ids inside are global) and
+open it from anywhere with `$dispatch("reservation-edit", { id: <pk> })`.
+
+Requires from the view: reservations_json, vehicles_json, trip_defaults, vehicle_options,
+service_type_options, duplicate_max — see reservations.editor.editor_context.
 Uses x-show (not x-if / <template>) so Tom Select is initialised once on DOMContentLoaded.
 
 Escape closes the editor, except the Escape that just dismissed a picker — see
@@ -11,7 +18,23 @@ container itself never settled either — both left it `display:flex` after clos
 an invisible backdrop eating the next click on the page. The panel's entrance is the
 `.pop` CSS animation, so nothing is lost by hiding outright.
 {% endcomment %}
-<div x-cloak x-show="editorOpen" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="if (!fpJustClosed()) closeEditor()">
+{{ reservations_json|json_script:"res-editor-trips" }}
+{{ vehicles_json|json_script:"res-editor-vehicles" }}
+{{ trip_defaults|json_script:"res-editor-defaults" }}
+<div x-data="reservationEditor({
+       leadId: {{ lead.pk }},
+       saveUrl: '{% url 'reservation_save' %}',
+       acUrl: '{% url 'integrations:geocode_autocomplete' %}',
+       privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
+       defaultCostRatio: {{ default_cost_ratio_pct }},
+       openEditorId: {{ open_editor_id|default_if_none:'null' }},
+       tripDefaults: JSON.parse(document.getElementById('res-editor-defaults').textContent),
+       reservations: JSON.parse(document.getElementById('res-editor-trips').textContent),
+       vehicles: JSON.parse(document.getElementById('res-editor-vehicles').textContent)
+     })"
+     @reservation-edit.window="editReservation($event.detail.id)"
+     @reservation-new.window="newReservation()"
+     x-cloak x-show="editorOpen" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" @keydown.escape.window="if (!fpJustClosed()) closeEditor()">
   <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="closeEditor()"></div>
   <div class="pop relative w-full sm:max-w-[620px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
     <div class="flex flex-col min-h-0">

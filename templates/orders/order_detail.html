@@ -47,7 +47,11 @@
     <div class="flex items-center px-5 py-3.5 border-b border-line">
       <i class="ti ti-route text-[17px] text-gold mr-2"></i>
       <span class="font-display text-[15px] font-semibold text-ink">Trips</span>
-      <span class="ml-auto text-[12px] text-muted">{{ reservation_lines|length }} movement{{ reservation_lines|length|pluralize }}</span>
+      <span class="ml-auto text-[12px] text-muted mr-3">{{ reservation_lines|length }} movement{{ reservation_lines|length|pluralize }}</span>
+      <button type="button" @click="$dispatch('reservation-new')"
+              class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5">
+        <i class="ti ti-plus text-[14px]"></i> Add reservation
+      </button>
     </div>
     <div class="divide-y divide-line/70">
       {% for line in reservation_lines %}
@@ -62,6 +66,10 @@
   </div>
 
   {% include "payments/_money_card.html" %}
+
+  {% comment %} The same editor the quote workspace opens — a trip is changed where it is
+     being worked, not back on the quote. {% endcomment %}
+  {% include "leads/_reservation_editor.html" %}
 
   {% comment %} The driver chip on each trip line opens this — the same drawer, and the
      same assign/farm-out implementation, the dispatch board uses. {% endcomment %}

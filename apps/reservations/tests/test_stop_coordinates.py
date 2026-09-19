@@ -4,8 +4,8 @@ from unittest import mock
 import pytest
 
 from apps.leads.factories import LeadFactory
-from apps.leads.views import _reservation_draft
 from apps.reservations.drafts import parse_draft, save_reservation_from_draft
+from apps.reservations.editor import reservation_draft
 from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
@@ -67,7 +67,7 @@ def test_save_persists_stop_coordinates():
 def test_serializer_emits_stop_coordinates():
     lead = LeadFactory()
     reservation = save_reservation_from_draft(lead, _payload([AIRPORT_STOP, PLAIN_STOP]))
-    draft = _reservation_draft(reservation)
+    draft = reservation_draft(reservation)
     assert draft["stops"][0]["lat"] == "42.361970"
     assert draft["stops"][0]["lng"] == "-71.007900"
     assert draft["stops"][1]["lat"] == ""
@@ -79,7 +79,7 @@ def test_coordinates_survive_a_save_reload_save_round_trip():
     lead = LeadFactory()
     reservation = save_reservation_from_draft(lead, _payload([AIRPORT_STOP, PLAIN_STOP]))
 
-    reloaded = _reservation_draft(Reservation.objects.get(pk=reservation.pk))
+    reloaded = reservation_draft(Reservation.objects.get(pk=reservation.pk))
     reloaded["pax"] = 6  # any edit — the point is the second save round-trip
     save_reservation_from_draft(lead, reloaded, instance=reservation)
 

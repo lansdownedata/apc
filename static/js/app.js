@@ -398,8 +398,15 @@ window.showLaPayload = function (elementId, title) {
 };
 
 /* -------------------------------------------------- quoteWorkspace */
+/* -------------------------------------------------- quoteWorkspace
+ * The quote screen around the trips: the header's autosave, Send quote, Copy to dates and
+ * Duplicate. The editor itself is reservationEditor() below, opened by a window event.
+ */
 function quoteWorkspace(opts = {}) {
   return {
+    leadId: opts.leadId,
+    updateUrl: opts.updateUrl,
+    sendQuoteUrl: opts.sendQuoteUrl,
     leadId: opts.leadId,
     updateUrl: opts.updateUrl,
     saveUrl: opts.saveUrl,
@@ -407,21 +414,14 @@ function quoteWorkspace(opts = {}) {
     acUrl: opts.acUrl,
     // The seeded Private/tail-number carrier's pk (2026-08-29 §3) — lets the Verify gate
     // recognise it client-side the same way `Stop.verify_available` does server-side.
-    privateAirlineId: opts.privateAirlineId ?? null,
     // One trip to reopen the editor on straight after load — Create Return Trip (APC-15)
     // redirects here with ?edit=<pk> so the dispatcher lands on the new trip's blank date.
-    openEditorId: opts.openEditorId ?? null,
     // PricingConfig's default vendor share, pre-filled on a new trip (spec 2026-09-05 §3.4).
-    defaultCostRatio: opts.defaultCostRatio ?? 65,
     // What a new trip starts with on this lead. Empty except on a wedding, whose trips
     // the office builds by hand — all on the same day, all the same occasion.
-    tripDefaults: opts.tripDefaults || {},
-    reservations: opts.reservations || [],
-    vehicles: opts.vehicles || [],
     header: opts.header || {},
     depositPct: 50,
     sending: false,
-    editorOpen: false,
     // The wedding's Edit details modal. Opens itself when the workspace was reached
     // with ?wedding=1, i.e. straight from the New wedding button.
     weddingOpen: !!opts.weddingOpen,
@@ -435,19 +435,13 @@ function quoteWorkspace(opts = {}) {
       this.copyDatesSource = iso || "";
       this.copyDatesOpen = true;
     },
-    draftIsNew: false,
     // How many vehicles the open trip's linked set had when the editor opened (APC-14).
     // 1 means it stands alone. Kept off `draft` because it is not part of the payload —
     // `draft.quantity` is the target size, this is where it started, and the difference
     // is what decides whether saving grows a set, shrinks one, or leaves it be.
-    groupSizeAtOpen: 1,
-    applyToGroup: false,
     // Set once the agent gives the drop-off a day / a time of its own; until then each
     // follows the pickup.  Component state, not draft state — neither may ride along in
     // the save payload.
-    dropoffPinned: false,
-    dropoffTimePinned: false,
-    draft: null,
     _saved: null,
 
     onPhoneBlur(e) {
@@ -610,6 +604,76 @@ function quoteWorkspace(opts = {}) {
         .finally(() => { this.sending = false; });
     },
 
+    duplicateReservation(pk) {
+      const go = (n) => {
+        const count = Math.max(1, Math.min(20, Math.floor(Number(n)) || 1));
+        const form = document.getElementById(`form-dup-${pk}`);
+        if (!form) return;
+        form.querySelector('input[name="count"]').value = count;
+        form.submit();
+      };
+      window.__apcDuplicateGo = go;
+      Alpine.store("modal").show({
+        variant: "info",
+        title: "Duplicate reservation",
+        confirmText: "Duplicate",
+        html: `
+          <p class="text-[13px] leading-relaxed">Add copies of this trip to the quote — a wedding
+          shuttle running several identical vehicles, say. Each copy stays independently editable.</p>
+          <div class="mt-3 flex flex-wrap items-center gap-1.5">
+            <button type="button" onclick="window.__apcDuplicateGo(1)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×1</button>
+            <button type="button" onclick="window.__apcDuplicateGo(2)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×2</button>
+            <button type="button" onclick="window.__apcDuplicateGo(3)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×3</button>
+            <button type="button" onclick="window.__apcDuplicateGo(5)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×5</button>
+            <span class="inline-block w-20"><input id="apc-dup-count" type="number" min="1" max="20" value="4" aria-label="Number of copies" class="field text-[13px]"></span>
+          </div>`,
+        onConfirm: () => go(document.getElementById("apc-dup-count").value),
+      });
+    },
+
+    money(n) { return "$" + Math.round(n || 0).toLocaleString(); },
+
+    init() {
+      // Snapshot so saveHeader() posts only what changed; posting the whole header would
+      // let one invalid stored phone 400 every other edit.
+      this._saved = { ...this.header };
+    },
+  };
+}
+window.quoteWorkspace = quoteWorkspace;
+
+/* ------------------------------------------- reservationEditor (extracted 2026-09-19)
+ * The trip editor, as a component of its own.
+ *
+ * It used to live inside quoteWorkspace() and read ~45 of its members, so the only screen
+ * that could edit a trip was the quote: the order page had to link back to it to change a
+ * pickup time, and the dispatch drawer could not offer it at all.
+ *
+ * Nothing on the page holds a reference to this — a trip line opens it by dispatching
+ * `reservation-edit` / `reservation-new` on the window, the same way the drawer is opened.
+ * That is what lets any screen listing trips include the modal and open it from whatever
+ * Alpine scope its own rows happen to sit in.
+ */
+function reservationEditor(opts = {}) {
+  return {
+    leadId: opts.leadId,
+    saveUrl: opts.saveUrl,
+    acUrl: opts.acUrl,
+    privateAirlineId: opts.privateAirlineId ?? null,
+    openEditorId: opts.openEditorId ?? null,
+    defaultCostRatio: opts.defaultCostRatio ?? 65,
+    tripDefaults: opts.tripDefaults || {},
+    reservations: opts.reservations || [],
+    vehicles: opts.vehicles || [],
+    editorOpen: false,
+    draftIsNew: false,
+    groupSizeAtOpen: 1,
+    applyToGroup: false,
+    dropoffPinned: false,
+    dropoffTimePinned: false,
+    draft: null,
+    _stopResults: {},
+
     blankReservation() {
       const v = this.vehicles.length ? this.vehicles[0] : null;
       return {
@@ -636,12 +700,10 @@ function quoteWorkspace(opts = {}) {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
       });
     },
+
     init() {
       this.draft = this.blankReservation();
-      // Snapshot so saveHeader() posts only what changed; posting the whole
-      // header would let one invalid stored phone 400 every other edit.
-      this._saved = { ...this.header };
-      // Reopen the editor on the trip named by ?edit=<pk> (Create Return Trip).
+      // Reopen on the trip named by ?edit=<pk> (Create Return Trip, APC-15).
       if (this.openEditorId != null) {
         this.$nextTick(() => this.editReservation(Number(this.openEditorId)));
       }
@@ -707,32 +769,6 @@ function quoteWorkspace(opts = {}) {
     /* "Copy Reservation ×N" — the wedding-shuttle case is several identical minibuses on
      * one itinerary (feedback B1). Opens the shared modal (never a native prompt); the
      * chosen count rides on the hidden per-row form, which posts normally. */
-    duplicateReservation(pk) {
-      const go = (n) => {
-        const count = Math.max(1, Math.min(20, Math.floor(Number(n)) || 1));
-        const form = document.getElementById(`form-dup-${pk}`);
-        if (!form) return;
-        form.querySelector('input[name="count"]').value = count;
-        form.submit();
-      };
-      window.__apcDuplicateGo = go;
-      Alpine.store("modal").show({
-        variant: "info",
-        title: "Duplicate reservation",
-        confirmText: "Duplicate",
-        html: `
-          <p class="text-[13px] leading-relaxed">Add copies of this trip to the quote — a wedding
-          shuttle running several identical vehicles, say. Each copy stays independently editable.</p>
-          <div class="mt-3 flex flex-wrap items-center gap-1.5">
-            <button type="button" onclick="window.__apcDuplicateGo(1)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×1</button>
-            <button type="button" onclick="window.__apcDuplicateGo(2)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×2</button>
-            <button type="button" onclick="window.__apcDuplicateGo(3)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×3</button>
-            <button type="button" onclick="window.__apcDuplicateGo(5)" class="px-2.5 py-1 rounded-lg ring-1 ring-line text-[13px] font-semibold text-ink hover:bg-goldl transition-colors">×5</button>
-            <span class="inline-block w-20"><input id="apc-dup-count" type="number" min="1" max="20" value="4" aria-label="Number of copies" class="field text-[13px]"></span>
-          </div>`,
-        onConfirm: () => go(document.getElementById("apc-dup-count").value),
-      });
-    },
     applyVehicleRateCard() {
       const v = this.vehicles.find((x) => String(x.id) === String(this.draft.vehicle));
       // No (active) vehicle → no rate card → no minimum. Min hours is read-only, so a
@@ -1015,14 +1051,17 @@ function quoteWorkspace(opts = {}) {
         headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
         body: JSON.stringify(d),
       }).then((r) => {
-        if (r.redirected) window.location = r.url;
-        else if (r.ok) window.location.reload();
+        // Reload where we are, rather than following the redirect to the quote: the
+        // same editor now opens from the order page, and landing somewhere else after
+        // a save would throw an ops user off the order they were working.
+        if (r.ok || r.redirected) window.location.reload();
         else Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
       }).catch(() => Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" }));
     },
   };
 }
-window.quoteWorkspace = quoteWorkspace;
+window.reservationEditor = reservationEditor;
+
 
 /* -------------------------------------------------- copy reservation to dates (APC-17)
  * The "Copy to dates…" modal: an inline flatpickr calendar in mode:"multiple", or a
