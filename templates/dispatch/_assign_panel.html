@@ -155,7 +155,17 @@
   </section>
 
   {% if assignment %}
-    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Coverage</p>
+    {% comment %} Reassign sits on the Coverage header, not down with the offer replies:
+       it acts on the coverage shown right below it, and as a quiet link rather than a
+       third danger-coloured button competing with Confirm / Declined. {% endcomment %}
+    <div class="flex items-center gap-2 mb-2">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-muted">Coverage</p>
+      <button type="button" class="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded"
+              :disabled="busy"
+              @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {% if assignment.is_in_house %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you.', confirmText: 'Reassign'}{% elif assignment.channel == 'gnet' %}{title: 'Reassign this trip?', message: 'This trip was sent to {{ assignment.vendor.name|escapejs }} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.', confirmText: 'Withdraw from GNet &amp; reassign'}{% else %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. {{ assignment.vendor.name|escapejs }} is not notified automatically — tell them yourself.', confirmText: 'Reassign'}{% endif %})">
+        <i class="ti ti-refresh text-[13px]"></i> Reassign
+      </button>
+    </div>
     <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
       <p class="font-semibold text-ink text-[13px]">
         {% if assignment.is_in_house %}<span class="num">{{ assignment.driver.driver_number }}</span> · {{ assignment.driver.name }}{% if assignment.vehicle %} · {{ assignment.vehicle.name }}{% endif %}{% else %}{{ assignment.vendor.name }}{% endif %}
@@ -232,26 +242,16 @@
          by hand would leave a real booking live on the gateway with no way left to cancel
          it — Withdraw is the only staff action that releases it. Server-side too:
          dispatch.views.resolve refuses both marks on this channel. {% endcomment %}
+    {% comment %} Only the offer replies live here now that Reassign sits on the header,
+       so the row exists only when there is an offer to answer. {% endcomment %}
+    {% if not assignment.is_in_house and assignment.status == 'offered' and assignment.channel != 'gnet' %}
     <div class="flex gap-2 mt-4">
-      {% if assignment.is_in_house %}
-        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
-                :disabled="busy"
-                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you.', confirmText: 'Reassign'})">Reassign</button>
-      {% else %}
-        {% if assignment.status == 'offered' and assignment.channel != 'gnet' %}
-          <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
-                  :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
-          <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
-                  :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
-        {% endif %}
-        {% comment %} The copy has to differ by channel, and not for politeness: on GNet
-           this is an outbound cancel that DOES tell the affiliate, so the manual wording
-           ("not notified automatically") would be a plain lie there. {% endcomment %}
-        <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line text-rose-600"
-                :disabled="busy"
-                @click="confirmWithdraw('{% url 'dispatch_resolve' assignment.pk %}', {% if assignment.channel == 'gnet' %}{title: 'Reassign this trip?', message: 'This trip was sent to {{ assignment.vendor.name|escapejs }} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.', confirmText: 'Withdraw from GNet &amp; reassign'}{% else %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. {{ assignment.vendor.name|escapejs }} is not notified automatically — tell them yourself.', confirmText: 'Reassign'}{% endif %})">Reassign</button>
-      {% endif %}
+      <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+              :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
+      <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+              :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
     </div>
+    {% endif %}
     {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
       <p class="text-[11.5px] text-muted mt-2">
         This offer resolves when the affiliate answers over GNet. Reassigning releases it on the network.

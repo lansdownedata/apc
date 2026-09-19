@@ -272,7 +272,7 @@ def test_panel_shows_an_in_house_coverage_with_unassign_only(logged_in_client):
     body = _panel(logged_in_client, trip)
     assert "Marcus Bell" in body and "Unit 1" in body and "In-house" in body
     assert ">Confirm<" not in body and ">Declined<" not in body
-    assert ">Reassign<" in body  # renamed 2026-09-19: withdraw-and-pick-someone-else
+    assert "Reassign" in body  # renamed 2026-09-19: withdraw-and-pick-someone-else
     assert "Payout" not in body and "Margin" not in body
     assert reverse("dispatch_resolve", args=[a.pk]) in body
 
@@ -291,7 +291,7 @@ def test_panel_still_shows_payout_for_a_vendor_coverage(logged_in_client):
     trip = _trip()
     services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
     body = _panel(logged_in_client, trip)
-    assert "Payout" in body and "Margin" in body and ">Reassign<" in body
+    assert "Payout" in body and "Margin" in body and "Reassign" in body
 
 
 def test_panel_without_drivers_keeps_its_query_budget(
