@@ -14,9 +14,10 @@ def test_orders_requires_login(client):
     assert "/login" in resp.url
 
 
-def test_money_actions_partial_renders_the_take_payment_element(client, settings):
+def test_money_actions_partial_renders_the_take_payment_form(client, settings):
     """Regression guard for the shared-config rewire: the workspace still renders the
-    Payment Element mount + adminCardPay block for a payments-access user."""
+    card form + adminCardPay block for a payments-access user. The mount is our own
+    field layout now, not Stripe's tabbed Payment Element — see test_card_fields."""
     from apps.accounts.models import User
 
     settings.STRIPE_PUBLISHABLE_KEY = "pk_test_123"
@@ -27,7 +28,8 @@ def test_money_actions_partial_renders_the_take_payment_element(client, settings
     assert resp.status_code == 200
     body = resp.content.decode()
     assert "adminCardPay(" in body
-    assert 'x-ref="cardMount"' in body
+    assert 'x-ref="cardFields"' in body
+    assert "data-card-number" in body
     assert "js.stripe.com/v3" in body
     assert "sendPayLink(" in body  # the Send payment link action
 

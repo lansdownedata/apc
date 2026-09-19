@@ -24,7 +24,19 @@
   .amt{margin:18px 0;padding:14px 0;border-top:1px solid rgb(var(--border));border-bottom:1px solid rgb(var(--border));
        display:flex;justify-content:space-between;font-size:15px;font-weight:600}
   .amt .n{font-variant-numeric:tabular-nums}
-  #card-mount{min-height:48px;margin:18px 0 8px}
+  /* Our own card form — see apcPay.cardFields for why the tabbed Payment Element is
+     not used here either (Bank tab, Link sign-up, Country select). */
+  #card-mount{margin:18px 0 8px;display:grid;gap:12px;text-align:left}
+  #card-mount label{display:block;font-size:12px;font-weight:500;color:rgb(var(--muted));margin-bottom:5px}
+  #card-mount .opt{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.75}
+  #card-mount input,.card-slot{width:100%;box-sizing:border-box;background:rgb(var(--surface));
+       border:1px solid rgb(var(--border));border-radius:10px;padding:11px 12px;
+       font-family:inherit;font-size:14px;color:rgb(var(--text))}
+  #card-mount input:focus{outline:none;border-color:rgb(var(--gold));box-shadow:0 0 0 3px rgb(var(--gold)/.25)}
+  .card-slot.StripeElement--focus{border-color:rgb(var(--gold));box-shadow:0 0 0 3px rgb(var(--gold)/.25)}
+  .card-slot.StripeElement--invalid{border-color:#b4453a}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .zip{max-width:180px}
   .btn-gold{display:block;width:100%;text-align:center;background:rgb(var(--gold));color:#151515;
             border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;
             font-family:inherit;margin-top:14px}
@@ -95,7 +107,30 @@
         <span class="n">${{ amount|floatformat:2|intcomma }}</span>
       </div>
 
-      <div id="card-mount"></div>
+      <div id="card-mount">
+        <div>
+          <label for="pay-name">Cardholder name</label>
+          <input id="pay-name" data-card-name type="text" autocomplete="cc-name" placeholder="Name as printed on the card">
+        </div>
+        <div>
+          <label>Card number</label>
+          <div data-card-number class="card-slot"></div>
+        </div>
+        <div class="row2">
+          <div>
+            <label>Expiration</label>
+            <div data-card-expiry class="card-slot"></div>
+          </div>
+          <div>
+            <label>Security code</label>
+            <div data-card-cvc class="card-slot"></div>
+          </div>
+        </div>
+        <div class="zip">
+          <label for="pay-zip">ZIP code <span class="opt">Optional</span></label>
+          <input id="pay-zip" data-card-zip type="text" inputmode="numeric" autocomplete="postal-code" placeholder="20001">
+        </div>
+      </div>
       <div id="pay-error" class="err"></div>
       <button id="pay-button" type="button" class="btn-gold">
         {% if pay_kind == 'deposit' %}Authorize{% else %}Pay{% endif %} ${{ amount|floatformat:2|intcomma }}

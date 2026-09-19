@@ -746,3 +746,18 @@ header, aside, main, .wash-gold {
   background: rgb(var(--surface));
   border-radius: 8px;
 }
+
+/* One mounted Stripe card element (number / expiry / CVV), sized and framed to sit in a
+   row with our own `.field` inputs — the whole point of drawing the card form ourselves
+   rather than letting the Payment Element lay it out. `.StripeElement` is Stripe's own
+   class on the iframe wrapper; the focus/invalid variants come from it too. */
+.card-slot {
+  width: 100%;
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--border));
+  border-radius: 12px;
+  padding: .72rem .85rem;
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+.card-slot.StripeElement--focus { box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
+.card-slot.StripeElement--invalid { border-color: rgb(var(--danger)); }

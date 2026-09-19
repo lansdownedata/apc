@@ -1,7 +1,7 @@
 /* ==========================================================================
    All Pro Charter — shared Stripe Payment Element config
    - apcPay.appearance(mode)          → 'light' | 'dark' Stripe appearance object
-   - apcPay.elementsOptions({...})    → card-only Elements options, wallets off
+   - apcPay.cardFields({...})         → our own card form: name, number, expiry, CVV, ZIP
    - apcPay.mount({...})              → vanilla controller for the public pay pages
 
    Loaded BEFORE app.js in every shell. `adminCardPay` (app.js) consumes the first
@@ -18,6 +18,7 @@
     background: "#FFFFFF",
     text: "#17191D",
     border: "#E5E2D9",
+    placeholder: "#9AA1AB",
     danger: "#B4453A",
     ring: "rgba(199, 162, 78, 0.30)",
   };
@@ -26,6 +27,7 @@
     background: "#1A1D24",
     text: "#EBE9E3",
     border: "#2A2F38",
+    placeholder: "#767D88",
     danger: "#E88C82",
     ring: "rgba(205, 170, 90, 0.38)",
   };
@@ -54,26 +56,98 @@
     };
   }
 
-  // Card-only, wallets off. mode 'payment' carries amount + setupFutureUsage;
-  // mode 'setup' (staff save-a-card) takes neither.
-  function elementsOptions(opts) {
-    opts = opts || {};
-    var mode = opts.mode || "payment";
-    var out = {
-      mode: mode,
-      currency: "usd",
-      paymentMethodTypes: ["card"],
-      appearance: appearance(opts.appearanceMode || "light"),
+  /* The style for the individual card elements. They predate the appearance API and
+     take their own `style` object, so the tokens above are applied here by hand. */
+  function cardStyle(mode) {
+    var t = mode === "dark" ? DARK : LIGHT;
+    return {
+      base: {
+        color: t.text,
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: "14px",
+        fontSmoothing: "antialiased",
+        iconColor: t.primary,
+        "::placeholder": { color: t.placeholder },
+      },
+      invalid: { color: t.danger, iconColor: t.danger },
     };
-    if (mode === "payment") {
-      out.amount = Math.max(Math.round(opts.amount || 0), 50);
-      out.setupFutureUsage = "off_session";
-    }
-    return out;
   }
 
-  function paymentElementOptions() {
-    return { wallets: { applePay: "never", googlePay: "never" } };
+  /* Our own card form, instead of the tabbed Payment Element.
+
+     The Payment Element renders whatever the Stripe ACCOUNT has switched on: a Bank
+     (ACH) tab, a "save my info with Link" block asking for an email and a mobile
+     number, and a Country select. None of it belongs on a checkout that takes a card,
+     and none of it can be configured away — it rides on top of the card tab.
+     cardNumber / cardExpiry / cardCvc cannot render any of it.
+
+     The name and the ZIP are OUR inputs, which is the point: the layout is ours, the
+     name is required (the client asks for it), and the ZIP stays optional — the
+     Payment Element's own address block makes it mandatory for US cards.
+
+     `root` is any element containing [data-card-number], [data-card-expiry],
+     [data-card-cvc], [data-card-name] and optionally [data-card-zip].
+  */
+  function cardFields(opts) {
+    var stripe = opts.stripe;
+    var root = opts.root;
+    if (!stripe || !root) return null;
+
+    var style = cardStyle(opts.appearanceMode || "light");
+    var elements = stripe.elements();
+    var parts = {
+      cardNumber: elements.create("cardNumber", { style: style, showIcon: true }),
+      cardExpiry: elements.create("cardExpiry", { style: style }),
+      cardCvc: elements.create("cardCvc", { style: style }),
+    };
+    var complete = { cardNumber: false, cardExpiry: false, cardCvc: false };
+
+    function find(attr) {
+      return root.querySelector("[" + attr + "]");
+    }
+    function value(attr) {
+      var el = find(attr);
+      return el && el.value ? el.value.trim() : "";
+    }
+
+    Object.keys(parts).forEach(function (key) {
+      var slot = find("data-" + key.replace(/[A-Z]/g, function (c) {
+        return "-" + c.toLowerCase();
+      }));
+      if (slot) parts[key].mount(slot);
+      parts[key].on("change", function (event) {
+        complete[event.elementType] = event.complete;
+        if (opts.onError) opts.onError(event.error ? event.error.message : "");
+      });
+    });
+
+    return {
+      /* What createPaymentMethod / confirmCardPayment want. Throws rather than letting
+         Stripe take a nameless card — the name is the one field we validate ourselves. */
+      paymentMethod: function () {
+        var name = value("data-card-name");
+        if (!name) throw new Error("Enter the cardholder's name as printed on the card.");
+        var details = { name: name };
+        var zip = value("data-card-zip");
+        // Omitted rather than sent empty: a blank postal_code fails Stripe's own check.
+        if (zip) details.address = { postal_code: zip };
+        return { card: parts.cardNumber, billing_details: details };
+      },
+      isComplete: function () {
+        return complete.cardNumber && complete.cardExpiry && complete.cardCvc;
+      },
+      setTheme: function (mode) {
+        var next = cardStyle(mode);
+        Object.keys(parts).forEach(function (key) {
+          parts[key].update({ style: next });
+        });
+      },
+      clear: function () {
+        Object.keys(parts).forEach(function (key) {
+          parts[key].clear();
+        });
+      },
+    };
   }
 
   function readCookie(name) {
@@ -111,10 +185,15 @@
     if (!mountEl || !button || typeof Stripe === "undefined") return;
 
     var stripe = Stripe(opts.pk);
-    var elements = stripe.elements(
-      elementsOptions({ mode: "payment", amount: opts.amount, appearanceMode: "light" })
-    );
-    elements.create("payment", paymentElementOptions()).mount(mountEl);
+    var card = cardFields({
+      stripe: stripe,
+      root: mountEl,
+      appearanceMode: "light",
+      onError: function (message) {
+        if (errorEl) errorEl.textContent = message;
+      },
+    });
+    if (!card) return;
 
     var busy = false;
     function setBusy(on) {
@@ -132,18 +211,14 @@
       if (errorEl) errorEl.textContent = "";
       setBusy(true);
 
-      elements
-        .submit()
-        .then(function (r) {
-          if (r.error) throw new Error(r.error.message);
-          return postForm(opts.intentUrl, {});
-        })
-        .then(function (created) {
-          return stripe.confirmPayment({
-            elements: elements,
-            clientSecret: created.client_secret,
-            confirmParams: { return_url: opts.returnUrl },
-            redirect: "if_required",
+      Promise.resolve()
+        .then(function () {
+          var method = card.paymentMethod();  // throws when the name is blank
+          return postForm(opts.intentUrl, {}).then(function (created) {
+            return stripe.confirmCardPayment(created.client_secret, {
+              payment_method: method,
+              return_url: opts.returnUrl,
+            });
           });
         })
         .then(function (result) {
@@ -166,8 +241,8 @@
 
   window.apcPay = {
     appearance: appearance,
-    elementsOptions: elementsOptions,
-    paymentElementOptions: paymentElementOptions,
+    cardStyle: cardStyle,
+    cardFields: cardFields,
     mount: mount,
   };
 })();

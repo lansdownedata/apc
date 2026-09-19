@@ -231,8 +231,7 @@ async function postForm(url, data = {}) {
 function adminCardPay(opts) {
   return {
     stripe: null,
-    elements: null,
-    paymentElement: null,
+    card: null,
     amount: opts.remaining || "",
     remaining: opts.remaining || "0.00",
     hasCard: !!opts.hasCard,
@@ -249,7 +248,7 @@ function adminCardPay(opts) {
       if (!this.hasCard) this.mountElement();
       // Stripe re-themes a mounted element in place — no remount needed.
       this.$watch("$store.theme.mode", (m) => {
-        if (this.elements) this.elements.update({ appearance: apcPay.appearance(m) });
+        if (this.card) this.card.setTheme(m);
       });
     },
 
@@ -258,26 +257,22 @@ function adminCardPay(opts) {
       return Number.isFinite(n) ? n : 0;
     },
 
+    /* Our own fields, not Stripe's tabbed Payment Element — see apcPay.cardFields for
+       why (Bank tab, Link sign-up, Country select, none of them configurable away). */
     mountElement() {
       if (!this.stripe || this.mounted) return;
-      this.elements = this.stripe.elements(
-        apcPay.elementsOptions({
-          mode: "payment",
-          amount: this.cents(),
-          appearanceMode: Alpine.store("theme").mode,
-        }),
-      );
-      this.paymentElement = this.elements.create("payment", apcPay.paymentElementOptions());
       this.$nextTick(() => {
-        if (this.$refs.cardMount) this.paymentElement.mount(this.$refs.cardMount);
+        if (!this.$refs.cardFields) return;
+        this.card = apcPay.cardFields({
+          stripe: this.stripe,
+          root: this.$refs.cardFields,
+          appearanceMode: Alpine.store("theme").mode,
+          onError: (message) => {
+            this.error = message;
+          },
+        });
       });
       this.mounted = true;
-    },
-
-    onAmountChange() {
-      if (this.elements && this.cents() >= 50) {
-        this.elements.update({ amount: this.cents() });
-      }
     },
 
     startReplace() {
@@ -305,16 +300,13 @@ function adminCardPay(opts) {
           window.location.reload();
           return;
         }
-        if (!this.elements) throw new Error("Card field is not ready.");
-        const { error: submitError } = await this.elements.submit();
-        if (submitError) throw new Error(submitError.message);
+        if (!this.card) throw new Error("Card fields are not ready.");
+        const method = this.card.paymentMethod();  // throws when the name is blank
         const created = await postForm(opts.intentUrl, { amount });
-        const { error, paymentIntent } = await this.stripe.confirmPayment({
-          elements: this.elements,
-          clientSecret: created.client_secret,
-          confirmParams: { return_url: window.location.href },
-          redirect: "if_required",
-        });
+        const { error, paymentIntent } = await this.stripe.confirmCardPayment(
+          created.client_secret,
+          { payment_method: method, return_url: window.location.href },
+        );
         if (error) throw new Error(error.message);
         await postForm(opts.completeUrl, { payment_intent_id: paymentIntent.id });
         window.location.reload();
@@ -327,16 +319,15 @@ function adminCardPay(opts) {
 
     async saveCard() {
       this.error = "";
-      if (!this.elements) {
-        this.error = "Card field is not ready.";
+      if (!this.card) {
+        this.error = "Card fields are not ready.";
         return;
       }
       this.busy = true;
       try {
-        const { error: submitError } = await this.elements.submit();
-        if (submitError) throw new Error(submitError.message);
         const { error, paymentMethod } = await this.stripe.createPaymentMethod({
-          elements: this.elements,
+          type: "card",
+          ...this.card.paymentMethod(),  // throws when the name is blank
         });
         if (error) throw new Error(error.message);
         const saved = await postForm(opts.saveCardUrl, { payment_method_id: paymentMethod.id });

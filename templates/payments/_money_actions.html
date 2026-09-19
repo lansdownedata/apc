@@ -113,8 +113,41 @@
         <span class="num text-ink" x-text="'•••• ' + cardLast4"></span>
       </p>
     </template>
-    <div x-show="!hasCard || replacing" x-cloak>
-      <div x-ref="cardMount" class="stripe-element mb-3 px-3 py-2.5"></div>
+    {% comment %}
+      Our own card form. Stripe's tabbed Payment Element renders whatever the account has
+      switched on — a Bank (ACH) tab, a "save my info with Link" block asking for an email
+      and a mobile number, a Country select — and none of it can be configured away, so
+      the individual card elements are mounted into this layout instead (apcPay.cardFields).
+      Required: name, number, expiry, CVV. The ZIP is ours and stays optional.
+    {% endcomment %}
+    <div x-show="!hasCard || replacing" x-cloak x-ref="cardFields" class="mb-3 grid gap-3">
+      <div>
+        <label for="ap-card-name" class="mb-1.5 block text-[12px] font-medium text-muted">Cardholder name</label>
+        <input id="ap-card-name" data-card-name type="text" autocomplete="cc-name"
+               placeholder="Name as printed on the card" class="field">
+      </div>
+      <div>
+        <label class="mb-1.5 block text-[12px] font-medium text-muted">Card number</label>
+        <div data-card-number class="card-slot"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="mb-1.5 block text-[12px] font-medium text-muted">Expiration</label>
+          <div data-card-expiry class="card-slot"></div>
+        </div>
+        <div>
+          <label class="mb-1.5 block text-[12px] font-medium text-muted">Security code</label>
+          <div data-card-cvc class="card-slot"></div>
+        </div>
+      </div>
+      <div class="max-w-[12rem]">
+        <label for="ap-card-zip" class="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-muted">
+          ZIP code
+          <span class="text-[10px] font-semibold uppercase tracking-wide text-muted/70">Optional</span>
+        </label>
+        <input id="ap-card-zip" data-card-zip type="text" inputmode="numeric" autocomplete="postal-code"
+               placeholder="20001" class="field num">
+      </div>
     </div>
     <p class="text-[12px] text-rose-600 mb-2" x-show="error" x-text="error" x-cloak></p>
     <div class="flex flex-wrap items-center gap-1.5">
@@ -123,7 +156,6 @@
         step="0.01"
         min="0.01"
         x-model="amount"
-        @change="onAmountChange()"
         class="w-28 text-[12px] num border border-line rounded-lg px-2.5 py-1.5 bg-surface text-ink focus:outline-none focus:ring-2 focus:ring-gold/40"
         placeholder="Amount"
       >
