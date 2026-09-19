@@ -1,0 +1,37 @@
+{% extends "email/base_email.html" %}
+{% load time_filters %}
+{% block subject %}Trip cancelled — {{ trip.pickup_date|date:"M j" }}{% endblock %}
+{% block preheader %}We've released this trip — please take it out of your schedule.{% endblock %}
+{% block content %}
+{% comment %} The offer's counterpart. Carries the trip so they know WHICH one, and no
+   money at all: an offer names what we pay, a cancellation has nothing to pay. {% endcomment %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">{{ vendor.name }},</p>
+<p class="dm-muted" style="margin:0 0 24px;font-size:16px;color:#4b5563;line-height:1.6;">
+  We&rsquo;ve released the trip below. Please take it out of your schedule &mdash; nothing
+  further is needed from you.
+</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td style="padding:22px 26px 8px;">
+    <div class="dm-ink" style="font-size:16px;font-weight:bold;color:#17191D;">
+      {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+    </div>
+    <div class="dm-muted" style="font-size:14px;color:#4b5563;padding-top:4px;">
+      {{ trip.vehicle.name|default:"—" }} &middot; {{ trip.passengers }} passenger{{ trip.passengers|pluralize }}
+    </div>
+  </td></tr>
+  {% for stop in stops %}
+  <tr><td style="padding:{% if forloop.first %}10{% else %}4{% endif %}px 26px 0;">
+    <div class="dm-muted" style="font-size:14px;color:#4b5563;line-height:1.5;">
+      {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} <span class="dm-soft" style="color:#a59e90;">({{ stop.name }})</span>{% endif %}
+    </div>
+  </td></tr>
+  {% endfor %}
+  <tr><td style="padding:22px 26px 24px;"></td></tr>
+</table>
+
+<p class="dm-soft" style="margin:22px 0 0;font-size:13px;color:#a59e90;line-height:1.6;">
+  Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+</p>
+{% endblock %}

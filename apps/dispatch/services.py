@@ -199,6 +199,39 @@ def send_offer(
     return assignment
 
 
+def send_cancellation(assignment: Assignment) -> bool:
+    """Tell a farmed-out affiliate the trip is off. The offer email's counterpart.
+
+    Not automatic, and deliberately so: some reassignments are the affiliate's own doing
+    and a "we've released it" note reads oddly back at them. The dispatcher decides.
+
+    In-house has nobody to tell, and a GNet assignment is released over the gateway by
+    `withdraw` — a second message there would say what the network already said.
+
+    Best effort, like `send_offer`: coverage has already changed, so a mail problem must
+    never read as a failed reassignment. Returns whether anything went out.
+    """
+    vendor = assignment.vendor
+    if assignment.is_in_house or vendor is None or not vendor.email:
+        return False
+    trip = assignment.reservation
+    when = f" — {trip.pickup_date:%b %-d}" if trip.pickup_date else ""
+    return send_html_email(
+        to=vendor.email,
+        subject=f"Trip cancelled{when}",
+        template="vendor_cancel",
+        context={
+            "vendor": vendor,
+            "trip": trip,
+            # No payout, no total, no money of any kind — see the template.
+            "stops": list(trip.ordered_stops),
+            "company_name": settings.COMPANY_NAME,
+            "company_phone": settings.COMPANY_PHONE,
+            "company_email": settings.COMPANY_EMAIL,
+        },
+    )
+
+
 def assign_direct(
     reservation: Reservation, vendor: Vendor, *, payout: Decimal, note: str = ""
 ) -> Assignment:

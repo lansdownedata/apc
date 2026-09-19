@@ -155,7 +155,7 @@ def test_a_manual_offer_is_not(client, agent):
 
 def test_the_confirm_tells_a_gnet_affiliate_apart_from_a_manual_one():
     """On GNet the cancel goes out over the network, so "not notified" would be a lie."""
-    release = APP_JS[APP_JS.index("releaseCoverage()") :][:1400]
+    release = APP_JS[APP_JS.index("releaseCoverage()") :][:2200]
     assert "isGnet" in release
     assert "GNet" in release
     assert "not notified automatically" in release

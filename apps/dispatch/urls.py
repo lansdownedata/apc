@@ -16,5 +16,10 @@ urlpatterns = [
         name="dispatch_confirm_customer",
     ),
     path("assignment/<int:pk>/resolve/", views.resolve, name="dispatch_resolve"),
+    path(
+        "assignment/<int:pk>/cancel-notice/",
+        views.cancel_notice,
+        name="dispatch_cancel_notice",
+    ),
     path("assignment/<int:pk>/driver-info/", views.driver_info, name="dispatch_driver_info"),
 ]

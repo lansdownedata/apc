@@ -1,0 +1,16 @@
+{% load time_filters %}
+{{ vendor.name }} — this trip is cancelled
+
+We've released the trip below. Please take it out of your schedule.
+
+{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+Vehicle: {{ trip.vehicle.name|default:"—" }}
+Passengers: {{ trip.passengers }}
+
+Routing:
+{% for stop in stops %}  {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}
+{% endfor %}
+Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+
+--
+{{ company_name }}

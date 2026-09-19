@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Exists, OuterRef, Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -192,6 +193,13 @@ def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
             "isGnet": bool(active and active.channel == Assignment.Channel.GNET),
             "provider": active.provider_name if active else "",
             "assignmentId": active.pk if active else None,
+            # Offered only for a manual farm-out: GNet's release already told them, and
+            # in-house has nobody to tell.
+            "cancelNoticeUrl": (
+                reverse("dispatch_cancel_notice", args=[active.pk])
+                if active and not active.is_in_house and active.channel != Assignment.Channel.GNET
+                else ""
+            ),
             # `_claim` refuses anything but a booked lead, so don't offer the controls.
             "canAssign": trip.lead.status == Lead.Status.BOOKED,
             "drivers": [
@@ -420,6 +428,19 @@ def driver_info(request: HttpRequest, pk: int) -> JsonResponse:
         )
     except services.AssignmentError as exc:
         return _fail(exc)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def cancel_notice(request: HttpRequest, pk: int) -> JsonResponse:
+    """Send the affiliate the "this trip is off" note, on the dispatcher's say-so."""
+    assignment = get_object_or_404(Assignment.objects.select_related("vendor"), pk=pk)
+    if not services.send_cancellation(assignment):
+        return JsonResponse(
+            {"ok": False, "error": "No email on file for that affiliate — call them."},
+            status=400,
+        )
     return JsonResponse({"ok": True})
 
 

@@ -181,15 +181,49 @@ function assignPanel() {
       return this.send(url, { status });
     },
     confirmWithdraw(url, copy = {}) {
-      Alpine.store("modal").confirm({
+      /* On a manual farm-out the affiliate hears nothing unless we tell them, so the
+       * confirm offers it — ticked by default, because forgetting leaves them holding a
+       * trip in their diary. Not offered on GNet (the gateway release already said so)
+       * or in-house (nobody to tell), which is decided by the caller passing the url. */
+      const box = copy.cancelNoticeUrl
+        ? `<label class="mt-3 flex items-start gap-2 text-[13px] text-ink cursor-pointer">
+             <input type="checkbox" id="apc-cancel-notice" checked class="mt-0.5">
+             <span>Email ${copy.who || "the affiliate"} to say the trip is cancelled</span>
+           </label>`
+        : "";
+      Alpine.store("modal").show({
         title: copy.title || "Withdraw this assignment?",
         message:
           copy.message ||
           "The trip goes back to unassigned. The affiliate is not notified automatically.",
+        html: box,
         variant: "danger",
         confirmText: copy.confirmText || "Withdraw",
-        onConfirm: () => this.send(url, { action: "withdraw" }),
+        showCancel: true,
+        onConfirm: async () => {
+          const tick = document.getElementById("apc-cancel-notice");
+          // Send it BEFORE releasing: `withdraw` reloads the page out from under us.
+          if (copy.cancelNoticeUrl && tick && tick.checked) {
+            await this.notify(copy.cancelNoticeUrl);
+          }
+          return this.send(url, { action: "withdraw" });
+        },
       });
+    },
+
+    /* A send whose failure must not stop the reassignment — the dispatcher still has to
+     * be able to take the trip off this affiliate even if their mail bounces. */
+    async notify(url) {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || "Could not send the cancellation");
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "Cancellation not sent" });
+      }
     },
   };
 }
@@ -909,6 +943,20 @@ function reservationEditor(opts = {}) {
         )
         .finally(() => { this.coverageBusy = false; });
     },
+    /* Best effort — a bounced cancellation must not stop the dispatcher taking the trip
+     * off this affiliate. */
+    async notifyCancelled(url) {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || "Could not send the cancellation");
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "Cancellation not sent" });
+      }
+    },
     assignInHouse() {
       this._assign(this.coverageUrl("assignDriver", this.draft.id), {
         driver: this.pickedDriver,
@@ -927,8 +975,19 @@ function reservationEditor(opts = {}) {
       // Channel matters, and not for politeness: on GNet this is an outbound cancel that
       // DOES tell the affiliate, so the manual wording would be a plain lie there.
       const gnet = this.coverage.isGnet;
-      Alpine.store("modal").confirm({
+      // Same tick box the drawer offers, for the same reason: a manual affiliate hears
+      // nothing unless we tell them, and forgetting leaves them holding the trip.
+      const notice = this.coverage.cancelNoticeUrl;
+      const box = notice
+        ? `<label class="mt-3 flex items-start gap-2 text-[13px] text-ink cursor-pointer">
+             <input type="checkbox" id="apc-cancel-notice" checked class="mt-0.5">
+             <span>Email ${who} to say the trip is cancelled</span>
+           </label>`
+        : "";
+      Alpine.store("modal").show({
         variant: "danger",
+        showCancel: true,
+        html: box,
         title: "Reassign this trip?",
         message: gnet
           ? `This trip was sent to ${who} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.`
@@ -936,10 +995,13 @@ function reservationEditor(opts = {}) {
             ? "It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you."
             : `It goes back to unassigned so you can pick someone else. ${who} is not notified automatically — tell them yourself.`,
         confirmText: gnet ? "Withdraw from GNet & reassign" : "Reassign",
-        onConfirm: () =>
-          this._assign(this.coverageUrl("resolve", this.coverage.assignmentId), {
+        onConfirm: async () => {
+          const tick = document.getElementById("apc-cancel-notice");
+          if (notice && tick && tick.checked) await this.notifyCancelled(notice);
+          return this._assign(this.coverageUrl("resolve", this.coverage.assignmentId), {
             action: "withdraw",
-          }),
+          });
+        },
       });
     },
     /* Closing decides what the screen behind has to do about it.
