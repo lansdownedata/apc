@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from . import views
 
@@ -14,10 +15,12 @@ urlpatterns = [
     path("<int:pk>/send-quote/", views.lead_send_quote, name="lead_send_quote"),
     path("<int:pk>/reissue-quote/", views.lead_reissue_quote, name="lead_reissue_quote"),
     path("<int:pk>/resend-la/", views.lead_resend_la, name="lead_resend_la"),
-    # public (no login) — Stripe redirect target + 3-D Secure return, keyed by signed token
+    # The 3-D Secure return moved to /quote/<token>/done/ (2026-09-19) — it is a customer
+    # URL and belongs with the others, not inside the staff portal. This path is in
+    # inboxes already, so it keeps landing somewhere rather than 404ing.
     path(
         "quote/deposit/success/<str:token>/",
-        views.quote_deposit_success,
-        name="quote_deposit_success",
+        RedirectView.as_view(pattern_name="quote_deposit_success", permanent=True),
+        name="quote_deposit_success_legacy",
     ),
 ]

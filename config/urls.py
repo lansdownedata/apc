@@ -19,6 +19,7 @@ from apps.leads.views import (
     pipeline,
     quote_page,
     quote_pay,
+    quote_deposit_success,
     quote_pay_complete,
     quote_pay_intent,
 )
@@ -64,6 +65,8 @@ urlpatterns = [
     path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
     path("quote/<str:token>/intent/", quote_pay_intent, name="quote_pay_intent"),
     path("quote/<str:token>/complete/", quote_pay_complete, name="quote_pay_complete"),
+    # Where Stripe sends the customer back after a 3-D Secure challenge.
+    path("quote/<str:token>/done/", quote_deposit_success, name="quote_deposit_success"),
     # reservation-lifecycle acknowledgement pages (token-keyed, no login) — APC-18/19/20
     path("trip/<str:token>/", trip_confirm, name="trip_confirm"),
     path("trip/affiliate/<str:token>/", affiliate_trip_confirm, name="affiliate_trip_confirm"),

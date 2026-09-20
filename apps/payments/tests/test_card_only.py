@@ -62,10 +62,3 @@ def test_charge_saved_card_is_card_only():
     assert create.call_args.kwargs["payment_method_types"] == ["card"]
 
 
-def test_setup_intent_is_card_only():
-    plan = _plan()
-    with patch.object(
-        services.stripe.SetupIntent, "create", return_value=MagicMock(client_secret="seti_1_secret")
-    ) as create:
-        services.create_setup_intent(plan)
-    assert create.call_args.kwargs["payment_method_types"] == ["card"]

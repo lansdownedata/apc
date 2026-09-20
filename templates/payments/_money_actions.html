@@ -73,7 +73,7 @@
     </form>
     {% endif %}
 
-    <!-- Send payment link (customer self-serves the pay page) -->
+    <!-- The pay page link (the customer settles it themselves) -->
     {% if lead.status != 'lost' %}
     <div x-data="sendPayLink('{% url 'order_send_pay_link' lead.pk %}')">
       <button
@@ -89,7 +89,9 @@
     {% endif %}
   </div>
 
-  {% if lead.status != 'lost' %}
+  {% comment %} Nothing owed, nothing to take: the block used to render with 0.00 in the
+     amount box, which the server then refused. `remaining` is what is still owed. {% endcomment %}
+  {% if lead.status != 'lost' and balances.remaining %}
   <!-- Take payment (Stripe Payment Element) -->
   <div class="mt-4 pt-4 border-t border-line"
        x-data="adminCardPay({

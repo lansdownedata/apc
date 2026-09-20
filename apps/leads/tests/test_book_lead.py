@@ -159,12 +159,12 @@ def test_send_link_label_follows_whether_the_link_was_sent(logged_in_client):
     lead = _quoted_lead(status=Lead.Status.BOOKED)
     PaymentPlan.objects.create(lead=lead, quote_total=Decimal("500.00"))
     body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
-    assert "Send payment link" in body and "Resend payment link" not in body
+    assert "Send quote" in body and "Resend quote" not in body
 
     lead.quote_sent_at = timezone.now()
     lead.save(update_fields=["quote_sent_at"])
     body = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
-    assert "Resend payment link" in body
+    assert "Resend quote" in body
 
 
 def test_booking_banner_shows_only_with_the_flag_on_a_new_lead(logged_in_client):

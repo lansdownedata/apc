@@ -325,7 +325,8 @@ def test_detail_shows_send_quote_for_new(client, agent):
 def test_detail_shows_resend_for_quoted(client, agent):
     lead = _quotable_lead()
     lead.status = Lead.Status.QUOTED
-    lead.save(update_fields=["status"])
+    lead.quote_sent_at = timezone.now()  # what put it in QUOTED in the first place
+    lead.save(update_fields=["status", "quote_sent_at"])
     client.force_login(agent)
     body = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
-    assert "Resend payment link" in body
+    assert "Resend quote" in body

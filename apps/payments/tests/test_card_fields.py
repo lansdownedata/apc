@@ -35,7 +35,11 @@ def owner(client, settings):
 
 
 def _staff_checkout(client) -> str:
+    """A booked order that still owes something — Take payment is gated on that now."""
+    from apps.payments.factories import PaymentPlanFactory
+
     lead = LeadFactory(status=Lead.Status.BOOKED)
+    PaymentPlanFactory(lead=lead, quote_total=Decimal("1000.00"), deposit_pct=50)
     return client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
 
 

@@ -1,5 +1,6 @@
-"""Stripe payments service — deposit checkout (saves the card) + off-session
-balance charge. Card data never touches our servers (Checkout + tokens)."""
+"""Stripe payments service — deposit authorization + balance charge, both on our own
+pages. Card data never touches our servers: it is entered into Stripe's own iframes and
+we only ever hold a PaymentMethod id (hosted Checkout was retired 2026-08-30)."""
 
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -105,15 +106,6 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount) -> tuple[Charge, st
     charge.stripe_client_secret = intent.client_secret
     charge.save(update_fields=["stripe_payment_intent_id", "stripe_client_secret", "updated_at"])
     return charge, intent.client_secret
-
-
-def create_deposit_intent(plan: PaymentPlan) -> tuple[Charge, str]:
-    """The deposit intent for our own pay page. Saves the card for the balance cron."""
-    charge, secret = open_intent_for(plan, kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
-    if plan.deposit_status != PaymentPlan.DepositStatus.REQUESTED:
-        plan.deposit_status = PaymentPlan.DepositStatus.REQUESTED
-        plan.save(update_fields=["deposit_status", "updated_at"])
-    return charge, secret
 
 
 def charge_balance(plan: PaymentPlan) -> Charge:
@@ -296,15 +288,6 @@ def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]
     """
     amount = _parse_positive_amount(amount)
     return open_intent_for(plan, kind=Charge.Kind.BALANCE, amount=amount)
-
-
-def create_setup_intent(plan: PaymentPlan) -> str:
-    """Client secret so staff can save a card without charging."""
-    customer = get_or_create_customer(plan)
-    intent = _stripe().SetupIntent.create(
-        customer=customer, usage="off_session", payment_method_types=["card"]
-    )
-    return intent.client_secret
 
 
 def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPlan:
@@ -569,7 +552,12 @@ def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
             confirm=True,
             metadata={
                 "lead_id": str(plan.lead_id),
-                "kind": "admin",
+                # "balance", matching the Charge recorded above, and NOT the "admin" this
+                # carried until 2026-09-19: `webhooks._SUCCESS_KINDS` has no entry for
+                # that, so `payment_intent.succeeded` returned early and the safety net
+                # skipped the event. Invisible while the inline reconcile below works,
+                # and exactly the money nobody finds on the one occasion it doesn't.
+                "kind": "balance",
                 "charge_id": str(charge.pk),
             },
             idempotency_key=charge.idempotency_key,

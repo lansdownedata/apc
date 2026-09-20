@@ -21,8 +21,14 @@ def test_money_actions_partial_renders_the_take_payment_form(client, settings):
     from apps.accounts.models import User
 
     settings.STRIPE_PUBLISHABLE_KEY = "pk_test_123"
+    from decimal import Decimal
+
+    from apps.payments.factories import PaymentPlanFactory
+
     owner = UserFactory(role=User.Role.OWNER_ADMIN)
     lead = LeadFactory(status=Lead.Status.BOOKED)
+    # Take payment only renders when something is still owed.
+    PaymentPlanFactory(lead=lead, quote_total=Decimal("1000.00"), deposit_pct=50)
     client.force_login(owner)
     resp = client.get(reverse("lead_detail", args=[lead.pk]))
     assert resp.status_code == 200

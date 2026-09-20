@@ -294,19 +294,6 @@ def order_admin_complete(request, lead_id):
 @login_required
 @payment_access_required
 @require_POST
-def order_setup_intent(request, lead_id):
-    lead, plan = _plan(lead_id)
-    plan = plan or services.ensure_plan(lead)
-    try:
-        client_secret = services.create_setup_intent(plan)
-    except services.PaymentError as exc:
-        return _json_error(str(exc))
-    return JsonResponse({"ok": True, "client_secret": client_secret})
-
-
-@login_required
-@payment_access_required
-@require_POST
 def order_save_card(request, lead_id):
     lead, plan = _plan(lead_id)
     plan = plan or services.ensure_plan(lead)

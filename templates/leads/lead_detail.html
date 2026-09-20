@@ -131,7 +131,9 @@
         <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
                 @click="openSendQuoteModal()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
           <i class="ti ti-send text-[15px]"></i>
-          {% if lead.status == 'new' %}Send quote{% elif lead.status == 'booked' and not lead.quote_sent_at %}Send payment link{% else %}Resend payment link{% endif %}
+          {% comment %} This sends the QUOTE page. The pay page has its own button in the money
+             card — two controls labelled the same is how a customer gets the wrong link. {% endcomment %}
+          {% if lead.quote_sent_at %}Resend quote{% else %}Send quote{% endif %}
         </button>
         {% if lead.quote_expires_at and lead.status != 'new' %}
         <span class="text-[11px] {% if lead.quote_expired %}text-rose-600{% else %}text-muted{% endif %} num">
