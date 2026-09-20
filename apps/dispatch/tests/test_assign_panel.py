@@ -159,11 +159,28 @@ def test_panel_shows_the_gnet_badge_for_a_gnet_capable_vendor_only(logged_in_cli
     VendorFactory(name="Manual Co")
     body = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
 
-    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
-    grid_label = next(label for label in labels if "Grid Co" in label)
-    manual_label = next(label for label in labels if "Manual Co" in label)
-    assert "GNET" in grid_label
-    assert "GNET" not in manual_label
+    grid = _option(body, "Grid Co")
+    manual = _option(body, "Manual Co")
+    assert grid["badge"] == "GNET"
+    assert manual["badge"] == ""
+
+
+def _option(body: str, name: str) -> dict:
+    """One affiliate's own option data, as searchable_select.html wrote it.
+
+    APC-48 moved the affiliate picker from a radio list to the shared searchable select,
+    so what used to be `data-email` / `data-gnet` attributes on a radio now rides in Tom
+    Select's own `data-data` JSON. Read it back rather than searching the whole page: a
+    string that could have come from any row proves nothing about this one.
+    """
+    import html as html_mod
+    import json
+
+    match = re.search(
+        rf'<option[^>]*data-data="([^"]*)"[^>]*>\s*{re.escape(name)}\s*</option>', body
+    )
+    assert match, f"no option for {name!r}"
+    return json.loads(html_mod.unescape(match.group(1)))
 
 
 # --- staff-marking buttons are for non-GNet vendors only ---
@@ -212,11 +229,9 @@ def test_the_send_button_is_not_gated_on_email_for_a_gnet_vendor(logged_in_clien
     VendorFactory(name="Grid Co", gnet_grid_id="gnet-1", email="")
     body = _panel(logged_in_client, trip)
 
-    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
-    grid_label = next(label for label in labels if "Grid Co" in label)
-    assert 'data-gnet="1"' in grid_label
-    # Both the button's :disabled expression and the hint's x-show must let it through.
-    assert body.count("selectedGnet") >= 3
+    assert _option(body, "Grid Co")["gnet"] is True
+    # Both the button's :disabled expression and the hint's x-show read the same flag.
+    assert body.count("canOffer") >= 2
 
 
 def test_a_non_gnet_vendor_still_carries_an_empty_gnet_flag(logged_in_client):
@@ -224,9 +239,9 @@ def test_a_non_gnet_vendor_still_carries_an_empty_gnet_flag(logged_in_client):
     VendorFactory(name="Manual Co", gnet_grid_id="", email="")
     body = _panel(logged_in_client, trip)
 
-    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
-    manual_label = next(label for label in labels if "Manual Co" in label)
-    assert 'data-gnet=""' in manual_label
+    manual = _option(body, "Manual Co")
+    assert manual["gnet"] is False
+    assert manual["email"] == ""
 
 
 # --- preview mode must be visible in the drawer, not just in Django admin ---

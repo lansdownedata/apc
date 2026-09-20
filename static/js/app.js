@@ -130,6 +130,9 @@ function drawer() {
         const resp = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
         if (!resp.ok) throw new Error(resp.status);
         this.body = await resp.text();
+        // The panel carries the shared coverage fragment, whose pickers are Tom Selects.
+        // Injected markup missed initTomSelects on page load, so it has to run here.
+        this.$nextTick(() => initTomSelects(this.$root));
       } catch (e) {
         this.body = "";
         this.open = false;
@@ -228,6 +231,130 @@ function assignPanel() {
   };
 }
 window.assignPanel = assignPanel;
+
+/* The shared coverage controls (APC-48) — templates/dispatch/_coverage_controls.html.
+ *
+ * One component for both surfaces: the dispatch drawer renders the fragment inline, the
+ * trip editor fetches it. Everything posts to the dispatch endpoints, so the rules stay
+ * in dispatch/services.py and nothing about them is repeated here.
+ *
+ * Reassign is withdraw-then-assign on purpose and stays two steps — `withdraw` releases on
+ * the gateway before anything a transaction could roll back, so there is no atomic
+ * reassign to offer. */
+function coverageControls(opts = {}) {
+  return {
+    busy: false,
+    mode: opts.mode || "farm_out",
+    driver: "",
+    vendor: "",
+    /* Whether an offer can actually go out. GNet sends over the network rather than by
+     * email, so an affiliate with a grid id and no address is still offerable — they are
+     * precisely who that channel exists for. */
+    canOffer: false,
+
+    /* One delegated listener rather than x-model on each picker: Tom Select fires a real
+     * change event on the original <select>, and it bubbles. Binding x-model instead would
+     * mean teaching the shared select partial to pass arbitrary attributes through. */
+    onPick(event) {
+      const el = event.target;
+      if (el.name === "driver") this.driver = el.value;
+      if (el.name === "vendor") {
+        this.vendor = el.value;
+        const data = this.optionData(el);
+        this.canOffer = Boolean(data.email || data.gnet);
+      }
+    },
+
+    /* The rich option's own data, as searchable_select.html wrote it. */
+    optionData(select) {
+      const option = select.selectedOptions && select.selectedOptions[0];
+      try {
+        return JSON.parse((option && option.dataset.data) || "{}");
+      } catch (e) {
+        return {};
+      }
+    },
+
+    async send(url, extra) {
+      this.busy = true;
+      // $el/closest, not $root/querySelector: several forms share this component's scope,
+      // and the button that was clicked is the only thing that knows which one it is in.
+      const form = new FormData(this.$el.closest("form") || undefined);
+      Object.entries(extra || {}).forEach(([k, v]) => form.set(k, v));
+      let data;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          body: form,
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+        });
+        data = await resp.json();
+      } catch (e) {
+        data = { ok: false, error: "Network error — nothing was saved" };
+      }
+      this.busy = false;
+      if (data.ok) window.location.reload();
+      else Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+    },
+
+    post(url) {
+      return this.send(url, {});
+    },
+
+    resolve(url, action) {
+      return this.send(url, { action });
+    },
+
+    confirmReassign(url, copy = {}) {
+      /* On a manual farm-out the affiliate hears nothing unless we tell them, so the
+       * confirm offers it — ticked by default, because forgetting leaves them holding a
+       * trip in their diary. Not offered on GNet (the gateway release already said so) or
+       * in-house (nobody to tell), decided by the caller passing the url.
+       *
+       * Telling the CUSTOMER their driver changed stays the agent's job (Moe, 2026-09-19):
+       * a second automatic message about a driver who is no longer coming is worse than
+       * none. Do not add a re-send here. */
+      const box = copy.cancelNoticeUrl
+        ? `<label class="mt-3 flex items-start gap-2 text-[13px] text-ink cursor-pointer">
+             <input type="checkbox" id="apc-cancel-notice" checked class="mt-0.5">
+             <span>Email ${escapeHtml(copy.who || "the affiliate")} to say the trip is cancelled</span>
+           </label>`
+        : "";
+      Alpine.store("modal").show({
+        title: copy.title || "Reassign this trip?",
+        message: copy.message || "The trip goes back to unassigned.",
+        html: box,
+        variant: "danger",
+        confirmText: copy.confirmText || "Reassign",
+        showCancel: true,
+        onConfirm: async () => {
+          const tick = document.getElementById("apc-cancel-notice");
+          // Send it BEFORE releasing: `withdraw` reloads the page out from under us.
+          if (copy.cancelNoticeUrl && tick && tick.checked) {
+            await this.notify(copy.cancelNoticeUrl);
+          }
+          return this.send(url, { action: "withdraw" });
+        },
+      });
+    },
+
+    /* A send whose failure must not stop the reassignment — the dispatcher still has to be
+     * able to take the trip off this affiliate even if their mail bounces. */
+    async notify(url) {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken") },
+        });
+        const data = await resp.json();
+        if (!data.ok) throw new Error(data.error || "Could not send the cancellation");
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "Cancellation not sent" });
+      }
+    },
+  };
+}
+window.coverageControls = coverageControls;
 
 /* -------------------------------------------------- CSRF helper */
 function getCookie(name) {
@@ -902,13 +1029,10 @@ function reservationEditor(opts = {}) {
      * serialized into a page that may list twenty trips, and assigning posts to the very
      * endpoints the dispatch drawer posts to — the rules stay in dispatch.services. */
     assignUrls: opts.assignUrls || {},
-    coverage: null,
-    coverageMode: "in_house",
-    coverageBusy: false,
-    pickedDriver: "",
-    pickedUnit: "",
-    pickedVendor: "",
-    payout: "",
+    /* The shared coverage fragment's HTML, fetched when the editor opens a saved trip.
+     * It used to be a JSON payload driving a second set of radio lists here — see
+     * templates/dispatch/_coverage_controls.html for why there is only one now. */
+    coverageHtml: "",
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
     defaultCostRatio: opts.defaultCostRatio ?? 65,
@@ -1034,113 +1158,29 @@ function reservationEditor(opts = {}) {
       this.loadCoverage();
     },
 
-    /* ---- the driver section -------------------------------------------------- */
+    /* ---- coverage ------------------------------------------------------------
+     *
+     * One fetch of the shared fragment, which brings its own Alpine component and its own
+     * endpoints with it. Nothing about assigning lives here any more. */
 
-    coverageUrl(name, id) {
-      const raw = this.assignUrls[name];
-      return raw ? raw.replace("/0/", `/${id}/`) : "";
-    },
     loadCoverage() {
-      this.coverage = null;
-      this.pickedDriver = this.pickedUnit = this.pickedVendor = "";
-      // Opened from the drawer? That has the full controls already — don't offer a
-      // second live form for the same trip on the same screen.
+      this.coverageHtml = "";
+      // Opened from the drawer? That has the same controls already open behind this —
+      // don't offer a second live form for the same trip on the same screen.
       if (this.returnDrawerUrl || this.draftIsNew || !this.draft.id) return;
-      const url = this.coverageUrl("options", this.draft.id);
+      const url = (this.assignUrls.coverage || "").replace("/0/", `/${this.draft.id}/`);
       if (!url) return;
       fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((body) => {
-          if (!body) return;
-          this.coverage = body;
-          this.payout = body.payout || "";
-          this.coverageMode = body.isInHouse ? "in_house" : this.coverageMode;
+        .then((r) => (r.ok ? r.text() : ""))
+        .then((html) => {
+          this.coverageHtml = html;
+          // Injected markup is not in the DOM when initTomSelects ran on load, so the
+          // pickers inside it would stay plain <select>s without this.
+          this.$nextTick(() => initTomSelects(this.$root));
         })
         .catch(() => { /* the trip still edits — coverage just isn't offered */ });
     },
-    setCoverageMode(mode) {
-      this.coverageMode = mode;
-    },
-    _assign(url, fields) {
-      if (!url || this.coverageBusy) return;
-      this.coverageBusy = true;
-      const form = new FormData();
-      Object.entries(fields).forEach(([k, v]) => v !== "" && form.set(k, v));
-      fetch(url, { method: "POST", body: form, headers: { "X-CSRFToken": getCookie("csrftoken") } })
-        .then((r) => r.json())
-        .then((data) => {
-          if (!data.ok) throw new Error(data.error || "Could not assign");
-          // Re-read rather than guess: the server decides what the coverage now is.
-          this.savedSomething = true;
-          this.loadCoverage();
-          Alpine.store("toast").push({ type: "success", title: "Coverage updated" });
-        })
-        .catch((e) =>
-          Alpine.store("toast").push({ type: "danger", title: e.message || "Could not assign" }),
-        )
-        .finally(() => { this.coverageBusy = false; });
-    },
-    /* Best effort — a bounced cancellation must not stop the dispatcher taking the trip
-     * off this affiliate. */
-    async notifyCancelled(url) {
-      try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "X-CSRFToken": getCookie("csrftoken") },
-        });
-        const data = await resp.json();
-        if (!data.ok) throw new Error(data.error || "Could not send the cancellation");
-      } catch (e) {
-        Alpine.store("toast").push({ type: "danger", title: e.message || "Cancellation not sent" });
-      }
-    },
-    assignInHouse() {
-      this._assign(this.coverageUrl("assignDriver", this.draft.id), {
-        driver: this.pickedDriver,
-        vehicle: this.pickedUnit,
-      });
-    },
-    assignVendor() {
-      this._assign(this.coverageUrl("assign", this.draft.id), {
-        vendor: this.pickedVendor,
-        payout: this.payout,
-      });
-    },
-    releaseCoverage() {
-      if (!this.coverage || !this.coverage.assignmentId) return;
-      const who = this.coverage.provider || "They";
-      // Channel matters, and not for politeness: on GNet this is an outbound cancel that
-      // DOES tell the affiliate, so the manual wording would be a plain lie there.
-      const gnet = this.coverage.isGnet;
-      // Same tick box the drawer offers, for the same reason: a manual affiliate hears
-      // nothing unless we tell them, and forgetting leaves them holding the trip.
-      const notice = this.coverage.cancelNoticeUrl;
-      const box = notice
-        ? `<label class="mt-3 flex items-start gap-2 text-[13px] text-ink cursor-pointer">
-             <input type="checkbox" id="apc-cancel-notice" checked class="mt-0.5">
-             <span>Email ${who} to say the trip is cancelled</span>
-           </label>`
-        : "";
-      Alpine.store("modal").show({
-        variant: "danger",
-        showCancel: true,
-        html: box,
-        title: "Reassign this trip?",
-        message: gnet
-          ? `This trip was sent to ${who} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.`
-          : this.coverage.isInHouse
-            ? "It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you."
-            : `It goes back to unassigned so you can pick someone else. ${who} is not notified automatically — tell them yourself.`,
-        confirmText: gnet ? "Withdraw from GNet & reassign" : "Reassign",
-        onConfirm: async () => {
-          const tick = document.getElementById("apc-cancel-notice");
-          if (notice && tick && tick.checked) await this.notifyCancelled(notice);
-          return this._assign(this.coverageUrl("resolve", this.coverage.assignmentId), {
-            action: "withdraw",
-          });
-        },
-      });
-    },
+
     /* Closing decides what the screen behind has to do about it.
      *
      * From the dispatch drawer, the drawer is still open underneath, so a save puts the
@@ -2065,6 +2105,51 @@ function initTomSelects(root = document) {
     // input exactly as `null` does — which silently made every "searchable" select in
     // the app unsearchable. The key must be absent, not undefined.
     if (el.dataset.search === "off") options.controlInput = null;
+
+    /* A row that is more than a label (data-rich). Picking an affiliate means weighing
+       their insurance standing and whether they are on GNet, so a dropdown that showed
+       the name alone would make the picker prettier and the decision worse. The detail
+       rides in `data-data`, which Tom Select parses into the option's own data. */
+    if (el.dataset.rich !== undefined) {
+      const row = (data, escape, compact) => {
+        const badge = data.badge
+          ? ` <span class="ts-badge">${escape(data.badge)}</span>`
+          : "";
+        const sub =
+          data.sub && !compact
+            ? `<span class="ts-sub${data.warn ? " ts-sub-warn" : ""}">${escape(data.sub)}</span>`
+            : "";
+        return `<div><span class="ts-name">${escape(data.text || data.label || "")}</span>${badge}${sub}</div>`;
+      };
+      options.render = {
+        option: (data, escape) => row(data, escape, false),
+        item: (data, escape) => row(data, escape, true),
+      };
+    }
+
+    /* Create-on-type that reaches the server (data-create-url). Tom Select's own `create`
+       invents a client-side option whose value is the typed text; when the thing being
+       typed has to become a real row — an affiliate's driver, say — it has to post first
+       so the option carries a real id. A failure calls back empty, which leaves the text
+       in the box rather than inventing an option that does not exist. */
+    if (el.dataset.createUrl) {
+      options.create = (input, callback) => {
+        fetch(el.dataset.createUrl, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body: new URLSearchParams({ name: input }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (!data.ok) throw new Error(data.error || "Could not add that");
+            callback({ value: String(data.id), text: data.name });
+          })
+          .catch((e) => {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Could not add that" });
+            callback();
+          });
+      };
+    }
     new TomSelect(el, options);
   });
 }

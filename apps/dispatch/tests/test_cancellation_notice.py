@@ -149,19 +149,40 @@ def test_a_gnet_assignment_does_not_offer_it(client, agent):
     assert reverse("dispatch_cancel_notice", args=[a.pk]) not in body
 
 
+# The editor renders the very same fragment (APC-48), so there is no second tick box to
+# keep in step — but it is fetched from its own endpoint, so that endpoint is checked too.
+
+
+def _editor_fragment(client, assignment) -> str:
+    url = reverse("dispatch_coverage_controls", args=[assignment.reservation_id])
+    return client.get(url).content.decode()
+
+
 def test_the_editor_offers_the_same_tick_box(client, agent):
     a = _assignment()
-    body = client.get(reverse("dispatch_assign_options", args=[a.reservation_id])).json()
-    assert body["cancelNoticeUrl"] == reverse("dispatch_cancel_notice", args=[a.pk])
+    assert reverse("dispatch_cancel_notice", args=[a.pk]) in _editor_fragment(client, a)
 
 
 def test_the_editor_does_not_offer_it_for_gnet(client, agent):
     a = _assignment(channel=Assignment.Channel.GNET)
-    body = client.get(reverse("dispatch_assign_options", args=[a.reservation_id])).json()
-    assert body["cancelNoticeUrl"] == ""
+    assert reverse("dispatch_cancel_notice", args=[a.pk]) not in _editor_fragment(client, a)
 
 
 def test_the_editor_does_not_offer_it_in_house(client, agent):
     a = _assignment(vendor=None, driver=DriverFactory(), payout=0)
-    body = client.get(reverse("dispatch_assign_options", args=[a.reservation_id])).json()
-    assert body["cancelNoticeUrl"] == ""
+    assert reverse("dispatch_cancel_notice", args=[a.pk]) not in _editor_fragment(client, a)
+
+
+def test_both_surfaces_get_it_from_one_place(client, agent):
+    """The drawer and the editor cannot disagree about this, because it is one fragment."""
+    a = _assignment()
+    panel = client.get(reverse("dispatch_assign_panel", args=[a.reservation_id]))
+    assert 'include "dispatch/_coverage_controls.html"' in _panel_source()
+    assert reverse("dispatch_cancel_notice", args=[a.pk]) in panel.content.decode()
+
+
+def _panel_source() -> str:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    return (root / "templates" / "dispatch" / "_assign_panel.html").read_text()

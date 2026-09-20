@@ -180,7 +180,7 @@ def offer_was_previewed(assignment: Assignment | None) -> bool:
     ).exists()
 
 
-def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> list[dict]:
+def vendor_options(trip: Reservation, *, search: str = "", limit: int | None = 8) -> list[dict]:
     """Affiliates to offer this trip to — most-used first, or whatever the search matches.
 
     "Most used" counts every past assignment regardless of outcome: a vendor he offers to
@@ -210,7 +210,13 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int = 8) -> li
     term = (search or "").strip()
     if term:
         qs = qs.filter(name__icontains=term)
-    qs = qs.order_by("-used", "name")[:limit]
+    qs = qs.order_by("-used", "name")
+    # `limit=None` means every active affiliate. The cap exists because a radio list of two
+    # hundred is unusable; a searchable dropdown of two hundred is not, and capping the
+    # picker would silently make the ninth affiliate unpickable (the search box that used
+    # to reach past the cap went with the radios — APC-48).
+    if limit is not None:
+        qs = qs[:limit]
 
     return [
         {
@@ -267,3 +273,95 @@ def in_house_options(trip: Reservation) -> dict:
             for v in vehicles
         ],
     }
+
+
+# --- the shared coverage controls (APC-48) -------------------------------------------
+#
+# One fragment serves the dispatch drawer and the trip editor, so the options it draws are
+# packaged once, here, rather than once per surface. `rich_options` is the shape
+# templates/components/searchable_select.html wants: a value, a label, and the detail that
+# has to survive being put in a dropdown (see its own docstring for why that matters).
+
+
+def driver_rich_options(in_house: dict) -> list[dict]:
+    """Our drivers, as picker rows. The renewal warning rides along — dispatch warns, it
+    never blocks, so an expired licence is a red sub-line and still selectable."""
+    rows = []
+    for option in in_house["drivers"]:
+        driver, renewal = option["driver"], option["renewal"]
+        warn = renewal["status"] not in ("none", "valid")
+        sub = f"used {option['used']}×"
+        if warn:
+            sub = f"{renewal['type']}: {renewal['label']} · {sub}"
+        rows.append(
+            {
+                "value": driver.pk,
+                "label": f"{driver.driver_number} · {driver.name}",
+                "sub": sub,
+                "warn": warn,
+            }
+        )
+    return rows
+
+
+def vehicle_rich_options(in_house: dict) -> list[dict]:
+    """Our units. The one that matches the trip's class is badged rather than sorted alone,
+    because `in_house_options` has already floated it to the top."""
+    rows = []
+    for option in in_house["vehicles"]:
+        vehicle, renewal = option["vehicle"], option["renewal"]
+        warn = renewal["status"] not in ("none", "valid")
+        sub = vehicle.vehicle_type.name
+        if vehicle.license_plate:
+            sub = f"{sub} · {vehicle.license_plate}"
+        if warn:
+            sub = f"{sub} · {renewal['type']}: {renewal['label']}"
+        rows.append(
+            {
+                "value": vehicle.pk,
+                "label": vehicle.name,
+                "sub": sub,
+                "badge": "FITS" if option["fits_vehicle"] else "",
+                "warn": warn,
+            }
+        )
+    return rows
+
+
+def vendor_rich_options(options: list[dict]) -> list[dict]:
+    """Affiliates. `email` and `gnet` ride along because they decide whether an offer can
+    be sent at all: the GNet channel goes over the network rather than by email, so an
+    affiliate with a grid id and no email address is still offerable — they are precisely
+    who that channel exists for. Dropping them into a plain dropdown would have lost that
+    guard along with the insurance standing.
+    """
+    rows = []
+    for option in options:
+        vendor, insurance = option["vendor"], option["insurance"]
+        sub = f"{vendor.service_area or '—'} · used {option['used']}× · {insurance['label']}"
+        rows.append(
+            {
+                "value": vendor.pk,
+                "label": vendor.name,
+                "sub": sub,
+                "badge": "GNET" if option["is_gnet"] else "",
+                "warn": insurance["status"] not in ("valid",),
+                "email": vendor.email,
+                "gnet": bool(option["is_gnet"]),
+            }
+        )
+    return rows
+
+
+def vendor_driver_options(vendor) -> list[dict]:
+    """The affiliate's own roster — `vendors.VendorDriver`, which dispatch had never read.
+
+    One query. A driver with no phone still lists: the dispatcher may know the name before
+    the number, and refusing to show them would push the work back into free text.
+    """
+    if vendor is None:
+        return []
+    return [
+        {"value": d.pk, "label": d.name, "sub": d.phone or "No cell on file", "phone": d.phone}
+        for d in vendor.drivers.filter(active=True)
+    ]

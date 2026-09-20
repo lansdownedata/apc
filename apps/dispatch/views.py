@@ -16,7 +16,7 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
-from apps.vendors.models import Vendor
+from apps.vendors.models import Vendor, VendorDriver
 
 from . import selectors, services
 from .board_filters import BoardFilters
@@ -167,59 +167,78 @@ _MANUAL_STATUSES = (
 
 
 @login_required
-def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
-    """Who could cover this trip, and who has it — for the trip editor's driver section.
+def coverage_controls(request: HttpRequest, pk: int) -> HttpResponse:
+    """The shared coverage fragment for one trip — the drawer includes it, the editor
+    loads it (APC-48).
 
-    The drawer renders the same two choices as HTML because it also carries offers,
-    acknowledgements and trip statuses. The editor only needs the choice itself, so it
-    reads this when its section opens rather than every trip's drivers and vendors being
-    serialized into a page that lists twenty of them.
+    There used to be two of these: this endpoint answered JSON for the editor's radio
+    lists while the drawer rendered its own HTML. They drifted, which is the whole reason
+    for the ticket. Tom Select needs real <option> elements and the drawer was already
+    server-rendered, so one fragment is now the only implementation and "identical" is
+    structural rather than maintained by hand.
 
-    Assigning still goes through `dispatch_assign_driver` / `dispatch_assign`, so the
-    rules — one active assignment, a booked lead, an active driver — stay in services.
+    Assigning still posts to `dispatch_assign_driver` / `dispatch_assign` / `dispatch_offer`
+    / `dispatch_resolve`, so the rules — one active assignment, a booked lead, an active
+    driver — stay in services and are not touched here.
     """
-    trip = get_object_or_404(Reservation.objects.select_related("lead", "vehicle"), pk=pk)
-    active = services.active_assignment(trip)
-    empty = {"drivers": [], "vehicles": []}
-    in_house = selectors.in_house_options(trip) if active is None else empty
-    vendors = selectors.vendor_options(trip) if active is None else []
-    return JsonResponse(
-        {
-            "coverage": active.status if active else selectors.COVERAGE_UNCOVERED,
-            "isInHouse": bool(active and active.is_in_house),
-            # Reassigning a GNet offer is an outbound cancel, so the confirm has to say so.
-            "isGnet": bool(active and active.channel == Assignment.Channel.GNET),
-            "provider": active.provider_name if active else "",
-            "assignmentId": active.pk if active else None,
-            # Offered only for a manual farm-out: GNet's release already told them, and
-            # in-house has nobody to tell.
-            "cancelNoticeUrl": (
-                reverse("dispatch_cancel_notice", args=[active.pk])
-                if active and not active.is_in_house and active.channel != Assignment.Channel.GNET
-                else ""
-            ),
-            # `_claim` refuses anything but a booked lead, so don't offer the controls.
-            "canAssign": trip.lead.status == Lead.Status.BOOKED,
-            "drivers": [
-                {"id": o["driver"].pk, "label": o["driver"].name} for o in in_house["drivers"]
-            ],
-            "units": [
-                {"id": o["vehicle"].pk, "label": o["vehicle"].name, "fits": o["fits_vehicle"]}
-                for o in in_house["vehicles"]
-            ],
-            "vendors": [
-                {
-                    "id": o["vendor"].pk,
-                    "name": o["vendor"].name,
-                    "email": o["vendor"].email,
-                    "gnet": o["is_gnet"],
-                }
-                for o in vendors
-            ],
-            # What the trip was quoted to pay, so quoted and actual margin start level.
-            "payout": f"{trip.vendor_pay:.2f}" if trip.vendor_pay else "",
-        }
+    trip = get_object_or_404(
+        Reservation.objects.select_related("lead", "vehicle"),
+        pk=pk,
     )
+    return render(
+        request,
+        "dispatch/_coverage_controls.html",
+        coverage_context(trip, search=request.GET.get("q", "")),
+    )
+
+
+def coverage_context(trip: Reservation, *, search: str = "") -> dict:
+    """Everything the coverage fragment draws, for whichever surface is drawing it.
+
+    Built once here so the drawer (which renders it inline, inside a bigger panel) and the
+    editor (which fetches it) cannot diverge again.
+    """
+    assignment = services.active_assignment(trip)
+    uncovered = assignment is None
+    in_house = selectors.in_house_options(trip) if uncovered else {"drivers": [], "vehicles": []}
+    # No cap: the picker searches client-side, so every affiliate has to be in it.
+    vendors = selectors.vendor_options(trip, search=search, limit=None) if uncovered else []
+    farmed_out = bool(assignment and not assignment.is_in_house)
+    roster = selectors.vendor_driver_options(assignment.vendor) if farmed_out else []
+    return {
+        "trip": trip,
+        "assignment": assignment,
+        "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
+        "previewed": selectors.offer_was_previewed(assignment),
+        # `_claim` refuses anything but a booked lead, so don't offer the controls at all.
+        "can_assign": trip.lead.status == Lead.Status.BOOKED,
+        "driver_options": selectors.driver_rich_options(in_house),
+        "vehicle_options": selectors.vehicle_rich_options(in_house),
+        "vendor_options": selectors.vendor_rich_options(vendors),
+        # The affiliate's own roster, for the driver-and-vehicle form on confirmed
+        # coverage. Empty for in-house, which carries its driver on the assignment.
+        "vendor_driver_options": roster,
+        "vendor_driver_create_url": (
+            reverse("dispatch_vendor_driver_create", args=[assignment.vendor_id])
+            if farmed_out
+            else ""
+        ),
+        # The assignment stores the driver's NAME, not a roster id — it predates the roster
+        # being read here at all, and a name typed before the row existed still has to show.
+        # Match back to the row so an already-saved driver comes up selected.
+        "selected_vendor_driver": next(
+            (
+                option["value"]
+                for option in roster
+                if assignment and option["label"] == assignment.driver_name
+            ),
+            "",
+        ),
+        "search": search,
+        # The toggle only appears when there is a real choice to make — with no active
+        # drivers the affiliate list stands alone.
+        "has_roster": bool(in_house["drivers"]),
+    }
 
 
 @login_required
@@ -241,23 +260,14 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
         ),
         pk=pk,
     )
-    assignment = services.active_assignment(trip)
     return render(
         request,
         "dispatch/_assign_panel.html",
         {
-            "trip": trip,
+            # The coverage half is the shared fragment's own context — one source, so the
+            # drawer and the editor cannot drift apart again (APC-48).
+            **coverage_context(trip, search=request.GET.get("q", "")),
             "stops": list(trip.stops.all()),
-            "assignment": assignment,
-            "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
-            "previewed": selectors.offer_was_previewed(assignment),
-            "options": selectors.vendor_options(trip, search=request.GET.get("q", "")),
-            "search": request.GET.get("q", ""),
-            "in_house": (
-                selectors.in_house_options(trip)
-                if assignment is None
-                else {"drivers": [], "vehicles": []}
-            ),
             "trip_status_options": [(s, s.label) for s in _MANUAL_STATUSES],
         },
     )
@@ -409,17 +419,28 @@ def confirm_customer(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 def driver_info(request: HttpRequest, pk: int) -> JsonResponse:
     """Save a farmed-out trip's driver + vehicle detail (APC-21)."""
-    assignment = get_object_or_404(Assignment, pk=pk)
+    assignment = get_object_or_404(Assignment.objects.select_related("vendor"), pk=pk)
     cell = (request.POST.get("driver_cell") or "").strip()
     if cell:
         normalized = to_e164(cell)
         if normalized is None:
             return _fail(services.AssignmentError("Enter a valid driver cell number."))
         cell = normalized
+    name = (request.POST.get("driver_name") or "").strip()
+    # The picker posts a VendorDriver id; `driver_name` stays accepted so anything still
+    # posting free text keeps working. A roster driver's own cell fills a blank box rather
+    # than overwriting one the dispatcher typed.
+    picked = (request.POST.get("vendor_driver") or "").strip()
+    if picked.isdigit():
+        roster = VendorDriver.objects.filter(pk=picked, vendor_id=assignment.vendor_id).first()
+        if roster is None:
+            return _fail(services.AssignmentError("That driver is not on this affiliate's roster."))
+        name = roster.name
+        cell = cell or roster.phone
     try:
         services.set_driver_info(
             assignment,
-            name=(request.POST.get("driver_name") or "").strip(),
+            name=name,
             cell=cell,
             vehicle_desc=(request.POST.get("vehicle_desc") or "").strip(),
             vehicle_number=(request.POST.get("vehicle_number") or "").strip(),
@@ -427,6 +448,31 @@ def driver_info(request: HttpRequest, pk: int) -> JsonResponse:
     except services.AssignmentError as exc:
         return _fail(exc)
     return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def vendor_driver_create(request: HttpRequest, pk: int) -> JsonResponse:
+    """Add a driver to an affiliate's roster, from the coverage picker's create-on-type.
+
+    Deliberately does nothing but create the row. `set_driver_info` is what releases a
+    driver's details to the customer, and typing a name into a picker is not the same act
+    as saving the trip's driver — so this must never become a send. Saving still does,
+    exactly once, as it always has.
+    """
+    vendor = get_object_or_404(Vendor, pk=pk)
+    name = (request.POST.get("name") or "").strip()
+    if not name:
+        return _fail(services.AssignmentError("Enter the driver's name."))
+    # Case-insensitive, because the roster is small and two spellings of one person is
+    # worse than reusing the row that is already there.
+    driver = vendor.drivers.filter(name__iexact=name).first()
+    if driver is None:
+        driver = VendorDriver.objects.create(vendor=vendor, name=name)
+    elif not driver.active:
+        driver.active = True
+        driver.save(update_fields=["active", "updated_at"])
+    return JsonResponse({"ok": True, "id": driver.pk, "name": driver.name})
 
 
 @login_required

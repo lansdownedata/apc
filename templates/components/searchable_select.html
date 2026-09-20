@@ -1,17 +1,40 @@
+{% load json_filters %}
 {% comment %}
   Reusable searchable dropdown (Tom Select) — never a native <select> UI.
+
   Include with: name, field_id, options (iterable of value/label pairs, e.g. a
   TextChoices.choices), selected, empty_label, placeholder, autosubmit, search, multiple.
+
+  Two extras, added for the coverage controls (APC-48) and available to any picker:
+
+  * `rich_options` in place of `options` — a list of dicts, each {value, label} plus any of
+    `sub` (a second line), `badge` (a small uppercase chip), `warn` (draw the sub line as a
+    warning) and anything else the page needs about that option, e.g. an affiliate's email
+    and whether they are on GNet. The whole dict goes into `data-data`, which is Tom
+    Select's own option-data attribute, and `data-rich` tells initTomSelects to draw the
+    row rather than a bare label. Without this, choosing an affiliate in a dropdown would
+    silently lose the insurance standing and the GNet badge the radio list showed.
+  * `create_url` — where a typed-in value is POSTed to become a real row. Without it,
+    `create` stays Tom Select's client-side-only behaviour, where the value IS the text.
 {% endcomment %}
 <select name="{{ name }}" id="{{ field_id|default:name }}" data-tom
         {% if placeholder %}data-placeholder="{{ placeholder }}"{% endif %}
         {% if autosubmit %}data-autosubmit{% endif %}
         {% if search == 'off' %}data-search="off"{% endif %}
-        {% if create %}data-create{% endif %}
+        {% if create or create_url %}data-create{% endif %}
+        {% if create_url %}data-create-url="{{ create_url }}"{% endif %}
+        {% if rich_options %}data-rich{% endif %}
         {% if multiple %}multiple{% endif %}
         class="field">
   {% if empty_label %}<option value="">{{ empty_label }}</option>{% endif %}
-  {% for value, label in options %}
-    <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" %} selected{% endif %}>{{ label }}</option>
-  {% endfor %}
+  {% if rich_options %}
+    {% for option in rich_options %}
+      <option value="{{ option.value }}"{% if option.value|stringformat:"s" == selected|stringformat:"s" %} selected{% endif %}
+              data-data="{{ option|json_attr }}">{{ option.label }}</option>
+    {% endfor %}
+  {% else %}
+    {% for value, label in options %}
+      <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  {% endif %}
 </select>

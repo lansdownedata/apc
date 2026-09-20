@@ -188,4 +188,6 @@ def test_a_covered_trip_shows_no_chooser(client, agent):
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
     body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
     assert "mode = 'farm_out'" not in body
-    assert "Withdraw" in body
+    # Renamed 2026-09-19: the control withdraws and leaves the trip uncovered, ready to
+    # pick someone else, so it says what it is for.
+    assert "Reassign" in body

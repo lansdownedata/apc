@@ -1,0 +1,195 @@
+{% comment %}
+  dispatch/_coverage_controls.html — who is covering this trip, and how to change it.
+
+  THE one implementation. The dispatch drawer includes it inline; the trip editor fetches
+  it into an x-html container (dispatch_coverage_controls). There used to be two — the
+  drawer's server-rendered radios and the editor's JSON-fed ones — and they drifted, which
+  is what "they should be identical really" was about (Moe, 2026-09-19).
+
+  Every control posts to the dispatch endpoints, so the rules — one active assignment, a
+  booked lead, an active driver — stay in dispatch/services.py and are not repeated here.
+
+  Reassign is withdraw-then-assign and deliberately stays two steps: `withdraw`'s gateway
+  release commits before anything a transaction could roll back, so there is no atomic
+  reassign to offer. The trip genuinely is uncovered in between and the board says so.
+
+  The pickers are Tom Selects, and the change event they fire bubbles to the root here —
+  that is what `onPick` listens for. Binding x-model on each one would need the shared
+  select partial to take arbitrary attributes; one delegated listener does not.
+
+  Requires views.coverage_context(trip).
+{% endcomment %}
+{% if can_assign %}
+<div x-data="coverageControls({ mode: '{% if has_roster %}in_house{% else %}farm_out{% endif %}' })"
+     @change="onPick($event)">
+  {% if assignment %}
+    {% comment %} Reassign sits on the Coverage header, not down with the offer replies: it
+       acts on the coverage shown right below it, and reads as a quiet control rather than a
+       third danger-coloured button competing with Confirm / Declined. {% endcomment %}
+    <div class="flex items-center gap-2 mb-2">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-muted">Coverage</p>
+      <button type="button" class="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded"
+              :disabled="busy"
+              @click="confirmReassign('{% url 'dispatch_resolve' assignment.pk %}', {% if assignment.is_in_house %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else. Let the driver know yourself — nothing is sent for you.', confirmText: 'Reassign'}{% elif assignment.channel == 'gnet' %}{title: 'Reassign this trip?', message: 'This trip was sent to {{ assignment.vendor.name|escapejs }} over GNet. Reassigning withdraws it from GNet too. The trip then goes back to unassigned so you can pick someone else.', confirmText: 'Withdraw from GNet &amp; reassign'}{% else %}{title: 'Reassign this trip?', message: 'It goes back to unassigned so you can pick someone else.', confirmText: 'Reassign', cancelNoticeUrl: '{% url 'dispatch_cancel_notice' assignment.pk %}', who: '{{ assignment.vendor.name|escapejs }}'}{% endif %})">
+        <i class="ti ti-refresh text-[13px]"></i> Reassign
+      </button>
+    </div>
+    <div class="rounded-lg ring-1 ring-line px-3 py-2.5 mb-4">
+      <p class="font-semibold text-ink text-[13px]">
+        {% if assignment.is_in_house %}<span class="num">{{ assignment.driver.driver_number }}</span> · {{ assignment.driver.name }}{% if assignment.vehicle %} · {{ assignment.vehicle.name }}{% endif %}{% else %}{{ assignment.vendor.name }}{% endif %}
+      </p>
+      <p class="text-[12px] text-muted mt-0.5">
+        {{ assignment.get_status_display }} · {% if assignment.is_in_house %}In-house{% else %}{{ assignment.get_channel_display }}{% endif %}
+      </p>
+      {% if previewed %}
+        <p class="text-[11.5px] text-rose-600 mt-1">
+          Preview — not sent. GNet is disarmed, so no affiliate has seen this offer.
+        </p>
+      {% endif %}
+      {% comment %} T-48h affiliate confirmation state (APC-20) — the affiliate's own
+           acknowledgement on the public /trip/affiliate/<token>/ page. In-house has
+           nothing to acknowledge. {% endcomment %}
+      {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
+        {% include "dispatch/_ack_status_line.html" with confirmed_at=assignment.affiliate_confirmed_at who="the affiliate" %}
+      {% endif %}
+    </div>
+
+    {% comment %} Driver + vehicle (APC-21) — farmed-out only; in-house already carries both
+         on the assignment. Saving a name here releases those details to the customer
+         (touchpoints.trigger_driver_released), so this is the one control on this fragment
+         that fires a customer-facing send. Picking a roster driver does not, and neither
+         does creating one — only Save does. {% endcomment %}
+    {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
+      Driver &amp; vehicle
+      {% if not assignment.has_driver_info %}
+        <span class="chip-warn inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ml-1 normal-case tracking-normal">not on file</span>
+      {% endif %}
+    </p>
+    <form @submit.prevent class="mb-5 pb-5 border-b border-line/60 space-y-2">
+      {% csrf_token %}
+      {% comment %} The affiliate's own roster (vendors.VendorDriver), which dispatch had
+         never read — it was free text on both surfaces. Typing a name this vendor does not
+         have yet POSTs it to dispatch_vendor_driver_create and it becomes a real row on
+         THAT vendor. Creating sends nothing to the customer. {% endcomment %}
+      <div>
+        <label for="cov-driver-pick" class="mb-1 block text-[11.5px] text-muted">Driver</label>
+        {% include "components/searchable_select.html" with name="vendor_driver" field_id="cov-driver-pick" rich_options=vendor_driver_options selected=selected_vendor_driver empty_label="Not on file yet" placeholder="Search or type a new name…" create_url=vendor_driver_create_url %}
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="tel" name="driver_cell" placeholder="Driver cell" class="field text-[13px]"
+               value="{{ assignment.driver_cell }}">
+        <input type="text" name="vehicle_number" placeholder="Vehicle #" class="field text-[13px]"
+               value="{{ assignment.vehicle_number }}">
+      </div>
+      {% comment %} Free text on purpose: the affiliate's vehicle is not in our fleet, so
+         there is nothing to pick it from. Same place and shape as the in-house unit. {% endcomment %}
+      <input type="text" name="vehicle_desc" placeholder="Vehicle description (e.g. black Suburban)"
+             class="field text-[13px] w-full" value="{{ assignment.vehicle_desc }}">
+      <button type="button" class="btn-ghost px-3 py-2 rounded-lg text-[12.5px] font-semibold ring-1 ring-line w-full"
+              :disabled="busy" @click="post('{% url 'dispatch_driver_info' assignment.pk %}')">
+        Save driver &amp; vehicle
+      </button>
+      {% if not assignment.has_driver_info %}
+      <p class="text-[11px] text-muted">
+        Saving a name here sends the customer their driver + vehicle details automatically.
+      </p>
+      {% endif %}
+    </form>
+    {% endif %}
+
+    {% comment %} Confirm/Declined are the fallback for an affiliate we can't hear back
+         from. A GNet offer resolves from their own callback, and marking one declined by
+         hand would leave a real booking live on the gateway with no way left to cancel it
+         — Reassign is the only staff action that releases it. Server-side too:
+         dispatch.views.resolve refuses both marks on that channel. {% endcomment %}
+    {% if not assignment.is_in_house and assignment.status == 'offered' and assignment.channel != 'gnet' %}
+    <div class="flex gap-2 mt-4">
+      <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+              :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
+      <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+              :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
+    </div>
+    {% endif %}
+    {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
+      <p class="text-[11.5px] text-muted mt-2">
+        This offer resolves when the affiliate answers over GNet. Reassigning releases it on the network.
+      </p>
+    {% endif %}
+
+  {% else %}
+    {% comment %} Uncovered: pick HOW to cover it first. The two forms used to sit stacked
+       with nothing saying they were alternatives — "I don't see a way to toggle from
+       in-house to farm-out" was the first thing the client said about this drawer. Opens
+       on In-house only when there is a roster to pick from; with none, the affiliate side
+       stands alone rather than offering a choice that is not one. {% endcomment %}
+    {% if has_roster %}
+      <div class="flex items-center rounded-lg ring-1 ring-line overflow-hidden w-fit mb-4">
+        <button type="button" @click="mode = 'in_house'"
+                class="px-3 py-1.5 text-[12px] font-semibold transition-colors focus-gold"
+                :class="mode === 'in_house' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">In-house</button>
+        <button type="button" @click="mode = 'farm_out'"
+                class="px-3 py-1.5 text-[12px] font-semibold transition-colors focus-gold"
+                :class="mode === 'farm_out' ? 'bg-gold text-ink' : 'text-muted hover:text-ink'">Farm-out</button>
+      </div>
+
+      {% comment %} Our own driver + an optional unit → confirmed directly. No payout and
+         no offer step: there is no counterparty to answer. {% endcomment %}
+      <div x-show="mode === 'in_house'" x-cloak>
+        <form @submit.prevent class="mb-5 pb-5 border-b border-line/60 space-y-3">
+          {% csrf_token %}
+          <div>
+            <label for="cov-driver" class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">Our driver</label>
+            {% include "components/searchable_select.html" with name="driver" field_id="cov-driver" rich_options=driver_options empty_label="Choose a driver" placeholder="Search drivers…" %}
+          </div>
+          <div>
+            <label for="cov-vehicle" class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Vehicle <span class="text-[10px] normal-case tracking-normal text-muted/70">Optional</span>
+            </label>
+            {% include "components/searchable_select.html" with name="vehicle" field_id="cov-vehicle" rich_options=vehicle_options empty_label="No vehicle" placeholder="Search vehicles…" %}
+          </div>
+          <input type="text" name="note" placeholder="Note (optional)" class="field text-[13px] w-full">
+          <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold w-full"
+                  :disabled="busy || !driver"
+                  @click="post('{% url 'dispatch_assign_driver' trip.pk %}')">Assign driver</button>
+        </form>
+      </div>
+    {% endif %}
+
+    <div x-show="mode === 'farm_out'" {% if has_roster %}x-cloak{% endif %}>
+      <form @submit.prevent class="space-y-3">
+        {% csrf_token %}
+        <div>
+          <label for="cov-vendor" class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">Offer to</label>
+          {% comment %} The row carries insurance standing and the GNet badge, and the
+             option's own data carries `email` / `gnet` — which is what decides whether
+             Send offer can go out at all. GNet sends over the network, so an affiliate
+             with a grid id and no email is still offerable; they are exactly who that
+             channel is for. {% endcomment %}
+          {% include "components/searchable_select.html" with name="vendor" field_id="cov-vendor" rich_options=vendor_options empty_label="Choose an affiliate" placeholder="Search affiliates…" %}
+        </div>
+        <div>
+          <label for="cov-payout" class="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">Payout</label>
+          {% comment %} Starts on what the trip was quoted to pay — its flat rate, else the
+             vendor's share of the price — so quoted and actual margin start level. The
+             dispatcher can still type over it. {% endcomment %}
+          <input type="text" name="payout" id="cov-payout" inputmode="decimal" placeholder="0.00"
+                 {% if trip.vendor_pay %}value="{{ trip.vendor_pay|stringformat:".2f" }}"{% endif %}
+                 class="field w-full num text-[13px]">
+        </div>
+        <div class="flex gap-2">
+          <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
+                  :disabled="busy || !vendor || !canOffer"
+                  @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
+          <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
+                  :disabled="busy || !vendor"
+                  @click="post('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
+        </div>
+        <p class="text-[11.5px] text-muted" x-show="vendor && !canOffer" x-cloak>
+          Add an email on the vendor page to send offers.
+        </p>
+      </form>
+    </div>
+  {% endif %}
+</div>
+{% endif %}
