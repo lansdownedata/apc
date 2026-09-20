@@ -134,6 +134,13 @@ class Charge(TimeStampedModel):
     # handed to is already authorised to pay this charge.
     stripe_client_secret = models.CharField(max_length=255, blank=True)
     stripe_refund_id = models.CharField(max_length=64, blank=True)
+    # The card that actually paid *this* charge, snapshotted when the money moved or was
+    # held. `PaymentPlan.card_brand` is only ever the card currently on file, and
+    # `save_payment_method` overwrites it — so without this, a customer swapping cards
+    # leaves nothing able to say what paid the deposit but Stripe. Brand and last four
+    # only; never a PAN, an expiry or a CVC. Blank on every row that predates APC-40.
+    card_brand = models.CharField(max_length=20, blank=True)
+    card_last4 = models.CharField(max_length=4, blank=True)
     idempotency_key = models.CharField(max_length=120, unique=True)
     failure_reason = models.CharField(max_length=255, blank=True)
     attempt_no = models.PositiveSmallIntegerField(default=1)

@@ -125,6 +125,12 @@
             {% if charge.status == 'succeeded' %}bg-emerald-50 text-emerald-700{% elif charge.status == 'failed' %}bg-rose-50 text-rose-600{% else %}bg-slate-100 text-slate-500{% endif %}">
             {{ charge.get_status_display }}
           </span>
+          {% comment %} The card that paid THIS charge, not the one currently on file —
+             they differ the moment a customer swaps cards. Blank on rows predating
+             APC-40, and nothing is shown for them. {% endcomment %}
+          {% if charge.card_last4 %}
+          <span class="text-[11px] text-muted">{{ charge.card_brand|title }} &bull;&bull;&bull;&bull; {{ charge.card_last4 }}</span>
+          {% endif %}
           {% if charge.stripe_payment_intent_id %}
           <span class="font-mono2 text-[10.5px] text-muted truncate ml-auto">{{ charge.stripe_payment_intent_id }}</span>
           {% endif %}
