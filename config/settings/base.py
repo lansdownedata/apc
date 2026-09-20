@@ -47,6 +47,7 @@ LOCAL_APPS = [
     "apps.reservations",
     "apps.dispatch",
     "apps.payments",
+    "apps.billing",
     "apps.messaging",
     "apps.integrations",
     "apps.notifications",
