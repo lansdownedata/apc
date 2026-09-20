@@ -60,5 +60,3 @@ def test_charge_saved_card_is_card_only():
     ):
         services.charge_saved_card(plan, Decimal("400.00"))
     assert create.call_args.kwargs["payment_method_types"] == ["card"]
-
-

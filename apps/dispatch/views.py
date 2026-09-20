@@ -178,9 +178,7 @@ def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
     Assigning still goes through `dispatch_assign_driver` / `dispatch_assign`, so the
     rules — one active assignment, a booked lead, an active driver — stay in services.
     """
-    trip = get_object_or_404(
-        Reservation.objects.select_related("lead", "vehicle"), pk=pk
-    )
+    trip = get_object_or_404(Reservation.objects.select_related("lead", "vehicle"), pk=pk)
     active = services.active_assignment(trip)
     empty = {"drivers": [], "vehicles": []}
     in_house = selectors.in_house_options(trip) if active is None else empty
