@@ -1,10 +1,10 @@
 {% load time_filters %}
 {{ vendor.name }} — trip cancelled
 
-Thanks for holding this one for us. Our plans have changed, so we've released the
-trip below — there's nothing further needed on your side.
+Thank you for covering this trip. Our plans have changed and we have released it,
+so no further action is required on your side.
 
-We'll be in touch with the next one.
+We appreciate your time and look forward to working with you again soon.
 
 {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
 Vehicle: {{ trip.vehicle.name|default:"—" }}
