@@ -1,7 +1,10 @@
 {% load time_filters %}
-{{ vendor.name }} — this trip is cancelled
+{{ vendor.name }} — trip cancelled
 
-We've released the trip below. Please take it out of your schedule.
+Thanks for holding this one for us. Our plans have changed, so we've released the
+trip below — there's nothing further needed on your side.
+
+We'll be in touch with the next one.
 
 {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
 Vehicle: {{ trip.vehicle.name|default:"—" }}
