@@ -1,12 +1,44 @@
 {% comment %}
   billing/_cards_tab.html — the cards this customer has paid with.
 
-  Display-only: brand, last four and where it was last used. Adding, removing and choosing
-  a default need a card store on the contact rather than one per order, which is its own
-  ticket. `billing_cards` is empty until APC-39 fills the selector in.
+  Display-only by decision. There is no card store on a contact, so this list is derived
+  from their orders (see selectors.cards_for). Adding, removing and choosing a default all
+  need the customer-level vault (APC-47) — and Remove is unsafe until then: the
+  charge-due-balances cron charges the plan's saved card 30 days before pickup, so
+  detaching one in Stripe while a plan still points at it makes that charge fail.
+
+  No expiry, and no Default chip. The mockup shows both; we store neither, and inventing
+  them — or calling Stripe once per row to fetch them — would both be worse than leaving
+  them out. The vault ticket adds them for real.
+
+  Requires `billing_cards` from apps/billing/selectors.py.
 {% endcomment %}
-{% comment %} APC-39 adds the list itself. Until then `billing_cards` is always empty and
-   this is the only branch — deliberately no markup for a row that does not exist yet. {% endcomment %}
+{% if billing_cards %}
+  <ul class="divide-y divide-line/70">
+    {% for card in billing_cards %}
+      <li class="flex items-center gap-3.5 px-5 py-3.5">
+        <span class="w-10 h-7 rounded-md ring-1 ring-line grid place-items-center text-[10px] font-bold tracking-wide text-ink bg-surface2 shrink-0">
+          {{ card.brand|upper|default:"CARD" }}
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="text-[13.5px] font-semibold text-ink num">&bull;&bull;&bull;&bull; {{ card.last4 }}</div>
+          <div class="text-[11.5px] text-muted mt-0.5 truncate">
+            {% comment %} A card can sit on an order without ever being charged. Saying it
+               was "used" would be a small lie on a money screen. {% endcomment %}
+            {% if card.used %}last used on{% else %}on file for{% endif %}
+            <a class="text-ink hover:text-goldd focus-gold rounded num"
+               href="{% if card.lead.status == 'booked' %}{% url 'order_detail' card.lead.pk %}{% else %}{% url 'lead_detail' card.lead.pk %}{% endif %}">{{ card.lead.quote_no }}</a>,
+            {{ card.used_at|date:"M j" }}
+          </div>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+  <p class="px-5 py-3 text-[11.5px] text-muted border-t border-line bg-surface2">
+    <i class="ti ti-lock text-[13px] align-[-2px]"></i>
+    Card numbers are held by Stripe. We keep the brand and the last four &mdash; nothing else.
+  </p>
+{% else %}
   <div class="px-5 py-12 text-center">
     <i class="ti ti-credit-card-off text-[28px] text-muted/50"></i>
     <p class="mt-2 text-[13.5px] font-semibold text-ink">No cards on file</p>
@@ -14,3 +46,4 @@
       A card is saved the first time this customer pays a deposit.
     </p>
   </div>
+{% endif %}
