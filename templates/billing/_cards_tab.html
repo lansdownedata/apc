@@ -1,0 +1,16 @@
+{% comment %}
+  billing/_cards_tab.html — the cards this customer has paid with.
+
+  Display-only: brand, last four and where it was last used. Adding, removing and choosing
+  a default need a card store on the contact rather than one per order, which is its own
+  ticket. `billing_cards` is empty until APC-39 fills the selector in.
+{% endcomment %}
+{% comment %} APC-39 adds the list itself. Until then `billing_cards` is always empty and
+   this is the only branch — deliberately no markup for a row that does not exist yet. {% endcomment %}
+  <div class="px-5 py-12 text-center">
+    <i class="ti ti-credit-card-off text-[28px] text-muted/50"></i>
+    <p class="mt-2 text-[13.5px] font-semibold text-ink">No cards on file</p>
+    <p class="mt-1 text-[12.5px] text-muted max-w-sm mx-auto">
+      A card is saved the first time this customer pays a deposit.
+    </p>
+  </div>

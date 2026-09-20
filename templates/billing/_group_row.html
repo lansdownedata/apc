@@ -1,0 +1,33 @@
+{% comment %}
+  billing/_group_row.html — one account group: who an invoice is made out to.
+
+  Requires `group` and `account` (the row reads the account's terms to decide whether its
+  own are worth showing). Phase 3's order-side group picker reuses this row.
+{% endcomment %}
+<li class="px-5 py-3.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+  <div class="min-w-0 flex-1">
+    <div class="flex items-center gap-2 text-[13.5px]">
+      <span class="font-semibold text-ink">{{ group.name }}</span>
+      {% if group.is_default %}
+        <span class="chip-gold rounded-full px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.06em]">Default</span>
+      {% endif %}
+    </div>
+    <div class="text-[11.5px] text-muted mt-0.5">
+      {% if group.invoice_email %}{{ group.invoice_email }}{% else %}No invoice email yet{% endif %}
+      {% comment %} Only when they actually differ from the account's. A group may be set
+         explicitly to the same terms it would have inherited; repeating them on the row
+         tells the office nothing. {% endcomment %}
+      {% if group.terms and group.terms != account.terms %} &middot; {{ group.get_terms_display }}{% endif %}
+      {% if group.po_required %} &middot; PO number required{% endif %}
+    </div>
+    {% if qbo_connected and group.qbo_sync_state == 'error' and group.qbo_sync_error %}
+      <div class="text-[11.5px] text-rose-600 mt-0.5">{{ group.qbo_sync_error }}</div>
+    {% endif %}
+  </div>
+
+  {% include "billing/_sync_chip.html" with record=group synced_label="Synced" %}
+
+  {% if qbo_connected and group.qbo_sync_state == 'error' %}
+    <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded">Retry sync</button>
+  {% endif %}
+</li>

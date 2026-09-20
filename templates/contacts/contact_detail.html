@@ -167,9 +167,15 @@
 
     </div>
 
+    {% comment %} Right column: what the office can act on (billing) above the record of
+       what already happened (orders). {% endcomment %}
+    <div class="lg:col-span-2 space-y-4">
+
+    {% include "billing/_billing_card.html" %}
+
     <!-- order history -->
     {% if leads %}
-    <div class="lg:col-span-2 card overflow-hidden">
+    <div class="card overflow-hidden">
       <div class="flex items-center px-5 py-3.5 border-b border-line">
         <span class="font-display text-[15px] font-semibold text-ink">Order history</span>
         <span class="ml-2 text-[11px] text-muted">{{ leads|length }} most recent</span>
@@ -187,10 +193,12 @@
       </div>
     </div>
     {% else %}
-    <div class="lg:col-span-2 pt-1 text-[12.5px] text-muted">
+    <div class="pt-1 text-[12.5px] text-muted">
       No orders yet · <a href="{% url 'lead_list' %}" class="font-semibold hover:underline" style="color:rgb(var(--gold-deep));">Create a lead</a>
     </div>
     {% endif %}
+
+    </div>
 
   </div>
 </div>
