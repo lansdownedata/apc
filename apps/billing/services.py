@@ -84,6 +84,41 @@ def add_group(
 
 
 @transaction.atomic
+def update_account(account: BillingAccount, *, name: str, terms: str) -> BillingAccount:
+    """Rename the account or move its terms.
+
+    The name is the customer's name in QuickBooks, so a rename here is a rename there —
+    which is why Phase 2 marks the record for re-sync rather than assuming the two agree.
+    """
+    account.name = _required(name, "An account name")
+    account.terms = terms
+    account.save(update_fields=["name", "terms", "updated_at"])
+    return account
+
+
+@transaction.atomic
+def update_group(
+    group: AccountGroup,
+    *,
+    name: str,
+    invoice_email: str = "",
+    terms: str = "",
+    po_required: bool = False,
+) -> AccountGroup:
+    """Edit a group in place. Never touches `is_default` — that is `set_default_group`."""
+    name = _required(name, "A group name")
+    clash = group.account.groups.filter(name=name).exclude(pk=group.pk)
+    if clash.exists():
+        raise BillingError(f"{group.account.name} already has a group called “{name}”.")
+    group.name = name
+    group.invoice_email = invoice_email.strip()
+    group.terms = terms
+    group.po_required = po_required
+    group.save(update_fields=["name", "invoice_email", "terms", "po_required", "updated_at"])
+    return group
+
+
+@transaction.atomic
 def set_default_group(group: AccountGroup) -> AccountGroup:
     """Make this the group orders bill to, and the only one.
 

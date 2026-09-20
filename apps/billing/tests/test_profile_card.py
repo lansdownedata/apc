@@ -24,7 +24,14 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def agent(client):
-    client.force_login(UserFactory())
+    """Someone who may act on what the card shows.
+
+    Reading it is open to every agent, but the controls on it are not — changing terms or
+    who gets the invoice is a money decision, gated the same way the endpoints are
+    (`test_account_views.py`). This file is about what the card renders, so its viewer is
+    the one who sees all of it.
+    """
+    client.force_login(UserFactory(can_manage_payments=True))
 
 
 def _account(contact=None, **over):
@@ -94,22 +101,31 @@ def test_a_group_shows_where_its_invoices_go(client, agent):
     assert "ap@ridgeline.example" in _profile(client, account.contact)
 
 
+def _row(group, account) -> str:
+    """One group row on its own.
+
+    Counting a phrase across the whole page cannot answer this: the modals' terms picker
+    lists every option, so "Net 30" is on the page whatever the rows say.
+    """
+    from django.template.loader import render_to_string
+
+    return render_to_string("billing/_group_row.html", {"group": group, "account": account})
+
+
 def test_a_group_names_its_terms_only_when_they_differ(client, agent):
     account = _account(terms=Terms.NET_30)
-    body = _profile(client, account.contact)
     # the only group inherits, so its row must not repeat the account's terms
-    assert body.count("Net 30") == 1
+    assert "Net 30" not in _row(account.groups.get(), account)
 
-    services.add_group(account, name="Marketing", terms=Terms.NET_15)
-    assert "Net 15" in _profile(client, account.contact)
+    other = services.add_group(account, name="Marketing", terms=Terms.NET_15)
+    assert "Net 15" in _row(other, account)
 
 
 def test_a_group_set_to_the_same_terms_does_not_repeat_them(client, agent):
     """Having its own terms is not the same as differing from the account's."""
     account = _account(terms=Terms.NET_30)
-    services.add_group(account, name="Marketing", terms=Terms.NET_30)
-    # once in the account header, and nowhere on the rows
-    assert _profile(client, account.contact).count("Net 30") == 1
+    group = services.add_group(account, name="Marketing", terms=Terms.NET_30)
+    assert "Net 30" not in _row(group, account)
 
 
 def test_the_po_flag_shows_only_when_it_is_set(client, agent):

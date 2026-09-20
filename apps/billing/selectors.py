@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from django.conf import settings
 
-from .models import BillingAccount
+from .models import BillingAccount, Terms
 
 ZERO = Decimal("0.00")
 
@@ -41,9 +41,16 @@ def billing_context(contact) -> dict:
     with the groups rather than each row fetching its parent.
     """
     account = BillingAccount.objects.filter(contact=contact).prefetch_related("groups").first()
+    groups = list(account.groups.all()) if account else []
     return {
         "billing_account": account,
-        "billing_groups": list(account.groups.all()) if account else [],
+        "billing_groups": groups,
+        # The last group cannot be removed (an account needs one to invoice against), so
+        # the row hides the control rather than offering one that can only fail.
+        "billing_multiple_groups": len(groups) > 1,
+        # The modals' terms picker. Rendered through components/searchable_select.html,
+        # so it wants the plain (value, label) pairs.
+        "billing_terms": Terms.choices,
         "account_figures": account_figures(account) if account else None,
         # Filled in by APC-39, which reads the cards off this contact's payment plans.
         "billing_cards": [],

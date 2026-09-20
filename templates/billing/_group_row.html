@@ -1,3 +1,4 @@
+{% load json_filters %}
 {% comment %}
   billing/_group_row.html — one account group: who an invoice is made out to.
 
@@ -29,5 +30,25 @@
 
   {% if qbo_connected and group.qbo_sync_state == 'error' %}
     <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded">Retry sync</button>
+  {% endif %}
+
+  {% if user.has_payments_access %}
+    <div class="flex items-center gap-3 text-[12px] font-medium">
+      <button type="button" class="text-muted hover:text-ink focus-gold rounded"
+              @click="openGroup({ id: {{ group.pk }}, name: {{ group.name|json_string }}, email: {{ group.invoice_email|json_string }}, terms: '{{ group.terms }}', po: {% if group.po_required %}true{% else %}false{% endif %} })">
+        Edit
+      </button>
+      {% if not group.is_default %}
+        <button type="button" class="text-muted hover:text-ink focus-gold rounded"
+                @click="makeDefault({{ group.pk }})">Make default</button>
+      {% endif %}
+      {% comment %} The last group cannot go — an account needs one to invoice against, and
+         a control that can only fail is worse than none. The default still offers it: the
+         refusal names what to do first, which a missing button cannot. {% endcomment %}
+      {% if billing_multiple_groups %}
+        <button type="button" class="text-muted hover:text-rose-600 focus-gold rounded"
+                @click="removeGroup({{ group.pk }}, {{ group.name|json_string }})">Remove group</button>
+      {% endif %}
+    </div>
   {% endif %}
 </li>

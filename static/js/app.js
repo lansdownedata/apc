@@ -261,6 +261,143 @@ async function postForm(url, data = {}) {
   return json;
 }
 
+/* -------------------------------------------------- billing accounts (customer profile)
+   Drives templates/billing/_billing_card.html and its two modals. The modals are x-show
+   (never x-if) so the Tom Select terms pickers are in the DOM for initTomSelects() on
+   load, and carry no x-transition — see _account_modal.html for the bug that rule is for.
+
+   Every action reloads on success rather than patching the card in place: a new group
+   changes the sync chips, the default marker, whether "Remove group" may show at all, and
+   Phase 4's figures. Re-rendering one row would have to know all of that; the server
+   already does. */
+function billingCard(opts = {}) {
+  return {
+    tab: opts.initialTab === "accounts" ? "accounts" : "cards",
+    modal: null,
+    saving: false,
+    errors: {},
+    account: { mode: "create" },
+    group: { mode: "add", id: null },
+    urls: opts.urls || {},
+    accountTerms: opts.accountTerms || "net_30",
+
+    init() {
+      /* Remembered per viewer; private mode throws on read, and the default handed in
+         above (accounts when they have one) is the right answer when it does. */
+      try {
+        const saved = localStorage.getItem("billing.tab");
+        if (saved === "cards" || saved === "accounts") this.tab = saved;
+      } catch (e) {}
+    },
+
+    go(next) {
+      this.tab = next;
+      try { localStorage.setItem("billing.tab", next); } catch (e) {}
+    },
+
+    close() {
+      this.modal = null;
+      this.errors = {};
+    },
+
+    /* Tom Select owns what the picker shows; setting the <select>'s value alone changes
+       nothing on screen. Same reason as the reservation editor's vehicle picker. */
+    _setTerms(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.tomselect) el.tomselect.setValue(value || "", true);
+      else el.value = value || "";
+    },
+
+    openAccount(current = null) {
+      this.errors = {};
+      this.account.mode = current ? "edit" : "create";
+      this.$refs.accountForm.reset();
+      this.$refs.accountName.value = current ? current.name : "";
+      this._setTerms("billing-account-terms", current ? current.terms : this.accountTerms);
+      this.modal = "account";
+      this.$nextTick(() => this.$refs.accountName.focus());
+    },
+
+    openGroup(current = null) {
+      this.errors = {};
+      this.group = { mode: current ? "edit" : "add", id: current ? current.id : null };
+      this.$refs.groupForm.reset();
+      this.$refs.groupName.value = current ? current.name : "";
+      this.$refs.groupForm.elements.invoice_email.value = current ? current.email : "";
+      this.$refs.groupPo.checked = !!(current && current.po);
+      this._setTerms("billing-group-terms", current ? current.terms : "");
+      this.modal = "group";
+      this.$nextTick(() => this.$refs.groupName.focus());
+    },
+
+    submitAccount() {
+      const url = this.account.mode === "edit" ? this.urls.update : this.urls.create;
+      return this._save(url, this.$refs.accountForm);
+    },
+
+    submitGroup() {
+      const url =
+        this.group.mode === "edit" ? this._for(this.urls.group, this.group.id) : this.urls.addGroup;
+      return this._save(url, this.$refs.groupForm);
+    },
+
+    makeDefault(id) {
+      return this._act(this._for(this.urls.groupDefault, id));
+    },
+
+    removeGroup(id, name) {
+      Alpine.store("modal").confirm({
+        title: "Remove this account group?",
+        message:
+          `“${name}” will no longer be available to invoice against. Orders already ` +
+          "billed to it keep their history.",
+        variant: "danger",
+        confirmText: "Remove group",
+        onConfirm: () => this._act(this._for(this.urls.groupDelete, id)),
+      });
+    },
+
+    /* The reversed URLs carry a 0 where the id goes — the same swap the reservation
+       editor's assign endpoints use. */
+    _for(url, id) {
+      return (url || "").replace("/0/", `/${id}/`);
+    },
+
+    async _save(url, form) {
+      if (this.saving) return;
+      this.saving = true;
+      this.errors = {};
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body: new FormData(form),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.ok) return window.location.reload();
+        /* Field errors mark the input and leave the modal open with everything typed
+           still in it; a rule refusing the change as a whole is a toast. */
+        if (data.errors) this.errors = data.errors;
+        else Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" });
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async _act(url) {
+      try {
+        await postForm(url);
+        window.location.reload();
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "Could not save" });
+      }
+    },
+  };
+}
+
 /* -------------------------------------------------- staff card payment (Stripe Payment Element) */
 function adminCardPay(opts) {
   return {

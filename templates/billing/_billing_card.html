@@ -8,30 +8,35 @@
   The header action follows the tab so there is only ever one primary action on screen.
   Tabs are weight and an underline rather than boxes, per the repo's design rules.
 
+  Reading it is open to every agent; changing terms, or who gets the invoice, is a money
+  decision — so every control below is behind the same `has_payments_access` the endpoints
+  are gated on, and the card reads fine without them.
+
   Requires billing_context(contact) from apps/billing/selectors.py.
 {% endcomment %}
 <div class="card overflow-hidden"
-     x-data="{
-       tab: '{% if billing_account %}accounts{% else %}cards{% endif %}',
-       init() {
-         /* Remembered per viewer; private mode throws on read, and the default above
-            (accounts when they have one) is the right answer when it does. */
-         try { const saved = localStorage.getItem('billing.tab');
-               if (saved === 'cards' || saved === 'accounts') this.tab = saved; } catch (e) {}
-       },
-       go(next) {
-         this.tab = next;
-         try { localStorage.setItem('billing.tab', next); } catch (e) {}
+     x-data="billingCard({
+       initialTab: '{% if billing_account %}accounts{% else %}cards{% endif %}',
+       accountTerms: '{{ billing_account.terms|default:"net_30" }}',
+       urls: {
+         create: '{% url 'billing_account_create' contact.pk %}',
+         {% if billing_account %}
+         update: '{% url 'billing_account_update' billing_account.pk %}',
+         addGroup: '{% url 'billing_group_add' billing_account.pk %}',
+         {% endif %}
+         group: '{% url 'billing_group_update' 0 %}',
+         groupDefault: '{% url 'billing_group_default' 0 %}',
+         groupDelete: '{% url 'billing_group_delete' 0 %}'
        }
-     }">
+     })">
 
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 pt-4">
     <i class="ti ti-receipt-2 text-[17px] text-gold"></i>
     <span class="font-display text-[15px] font-semibold text-ink">Billing</span>
     {% comment %} Adding a group needs an account to hang it on; with none, the empty
        state below carries the only action. Adding a card is APC-47's, not Phase 1's. {% endcomment %}
-    {% if billing_account %}
-      <button type="button" x-show="tab === 'accounts'" x-cloak
+    {% if billing_account and user.has_payments_access %}
+      <button type="button" x-show="tab === 'accounts'" x-cloak @click="openGroup()"
               class="ml-auto btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5">
         <i class="ti ti-plus text-[14px]"></i> Add account group
       </button>
@@ -66,11 +71,21 @@
           Set one up to book this customer on terms and invoice them, instead of taking a card.
           The account becomes a customer in QuickBooks, and each account group a sub-customer under it.
         </p>
-        <button type="button"
-                class="btn-gold mt-5 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold">
-          <i class="ti ti-plus text-[15px]"></i> New billing account
-        </button>
+        {% if user.has_payments_access %}
+          <button type="button" @click="openAccount()"
+                  class="btn-gold mt-5 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold">
+            <i class="ti ti-plus text-[15px]"></i> New billing account
+          </button>
+        {% endif %}
       </div>
     {% endif %}
   </div>
+
+  {% comment %} Inside the component so the modals share its state. x-show (not x-if) keeps
+     the Tom Select pickers in the DOM for initTomSelects() on load — the same reason
+     _reservation_editor.html gives. {% endcomment %}
+  {% if user.has_payments_access %}
+    {% include "billing/_account_modal.html" %}
+    {% if billing_account %}{% include "billing/_group_modal.html" %}{% endif %}
+  {% endif %}
 </div>
