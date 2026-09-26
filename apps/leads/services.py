@@ -293,6 +293,7 @@ def book_lead(lead: Lead) -> Lead:
     staff card charge book regardless, since money has arrived.
     """
     from apps.integrations import la_sync
+    from apps.tasks import services as tasks
 
     if lead.status == lead.Status.LOST:
         raise BookLeadError("Lost leads cannot be booked.")
@@ -308,6 +309,7 @@ def book_lead(lead: Lead) -> Lead:
     if created or plan.quote_total == 0:
         plan.snapshot_total()
 
+    tasks.sync(lead)
     if already_booked:
         return lead
 

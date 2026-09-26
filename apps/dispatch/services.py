@@ -101,7 +101,15 @@ def _claim(
         assignment.save()
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
+    _sync_tasks(reservation)
     return assignment
+
+
+def _sync_tasks(reservation: Reservation) -> None:
+    """Coverage changed — let the trip's tasks close (or a system-closed one reopen)."""
+    from apps.tasks import services as tasks
+
+    tasks.ensure_tasks(reservation.lead)
 
 
 def _on_assignment_confirmed(assignment: Assignment) -> None:
@@ -278,6 +286,7 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
         _on_assignment_confirmed(assignment)
     elif was_confirmed and not assignment.is_in_house:
         _on_assignment_released(assignment.reservation)
+    _sync_tasks(assignment.reservation)
     return assignment
 
 
@@ -351,6 +360,7 @@ def set_driver_info(
     from apps.messaging import touchpoints
 
     touchpoints.trigger_driver_released(assignment)
+    _sync_tasks(assignment.reservation)
     return assignment
 
 
