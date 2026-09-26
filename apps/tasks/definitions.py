@@ -108,6 +108,10 @@ def _balance_paid(task: Task, facts: LeadFacts) -> bool:
     return bool(plan and plan.balance_status == plan.BalanceStatus.PAID)
 
 
+def _terms_accepted(task: Task, facts: LeadFacts) -> bool:
+    return facts.lead.accepted_terms_at is not None
+
+
 def _wedding_names(task: Task, facts: LeadFacts) -> bool:
     return bool(facts.lead.wedding_name.strip())
 
@@ -158,6 +162,16 @@ REGISTRY: tuple[TaskKind, ...] = (
         level=Level.ORDER,
         due=AfterOpen(hours=72),  # PLACEHOLDER
         auto_complete=_deposit_paid,
+    ),
+    TaskKind(
+        # APC-55. Staff-booked orders never see the pay page, so nobody accepts anything —
+        # staff check it off by hand until the client decides how those should close.
+        key="contract_signed",
+        label="Contract signed",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpen(hours=72),  # PLACEHOLDER
+        auto_complete=_terms_accepted,
     ),
     TaskKind(
         key="wedding_names",

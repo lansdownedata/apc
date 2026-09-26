@@ -177,7 +177,10 @@
 
   /* The public pay page: one fixed amount decided server-side, one Pay button.
      el ids default to #card-mount / #pay-button / #pay-error / #pay-busy.
-     opts: { pk, amount (cents), intentUrl, completeUrl, returnUrl, onDone } */
+     opts: { pk, amount (cents), intentUrl, completeUrl, returnUrl, onDone, consent }
+     `consent` (APC-55) is an optional terms checkbox: Pay stays disabled until it's
+     ticked, and the intent request carries accept_terms=1. The server refuses a deposit
+     without it, so the checkbox is convenience, not the guard. */
   function mount(opts) {
     var mountEl = opts.mountEl || document.getElementById("card-mount");
     var button = opts.button || document.getElementById("pay-button");
@@ -196,10 +199,19 @@
     if (!card) return;
 
     var busy = false;
+    var consent = opts.consent || null;
+    function blocked() {
+      return !!consent && !consent.checked;
+    }
     function setBusy(on) {
       busy = on;
-      button.disabled = on;
+      button.disabled = on || blocked();
       button.classList.toggle("is-busy", on);
+    }
+    if (consent) {
+      consent.addEventListener("change", function () {
+        if (!busy) button.disabled = blocked();
+      });
     }
     function fail(message) {
       if (errorEl) errorEl.textContent = message;
@@ -207,14 +219,15 @@
     }
 
     button.addEventListener("click", function () {
-      if (busy) return;
+      if (busy || blocked()) return;
       if (errorEl) errorEl.textContent = "";
       setBusy(true);
 
       Promise.resolve()
         .then(function () {
           var method = card.paymentMethod();  // throws when the name is blank
-          return postForm(opts.intentUrl, {}).then(function (created) {
+          var data = consent ? { accept_terms: "1" } : {};
+          return postForm(opts.intentUrl, data).then(function (created) {
             return stripe.confirmCardPayment(created.client_secret, {
               payment_method: method,
               return_url: opts.returnUrl,

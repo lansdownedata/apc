@@ -649,6 +649,7 @@ def quote_pay(request, token: str) -> HttpResponse:
             # A previous authorization on this quote was released by the issuer before we
             # confirmed (APC-26) — the page has to say so before asking for another.
             "hold_released": _hold_was_released(lead),
+            "needs_terms": kind == "deposit" and lead.accepted_terms_at is None,
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
                 reverse("quote_deposit_success", args=[token])
@@ -666,6 +667,15 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
         return JsonResponse(
             {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
         )
+    # The terms checkbox is the contract (APC-55). Enforced here, not just by the disabled
+    # button: no deposit is opened for a customer who hasn't accepted.
+    if kind == "deposit" and lead.accepted_terms_at is None:
+        if request.POST.get("accept_terms") != "1":
+            return JsonResponse(
+                {"ok": False, "error": "Please agree to the terms and conditions first."},
+                status=400,
+            )
+        services.accept_terms(lead)
     plan = payment_services.ensure_plan(lead)
     _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
     return JsonResponse({"ok": True, "client_secret": secret, "amount": str(amount)})

@@ -14,6 +14,11 @@
     <div class="flex items-center px-5 py-3.5 border-b border-line">
       <i class="ti ti-report-money text-[17px] text-gold mr-2"></i>
       <span class="font-display text-[15px] font-semibold text-ink">Payments &amp; Ledger</span>
+      {% if lead.accepted_terms_at %}
+      <span class="ml-auto text-[12px] text-muted" title="The customer accepted the terms on the pay page">Terms accepted {{ lead.terms_accepted_on }} · v{{ lead.accepted_terms_version }}</span>
+      {% elif lead.status == 'booked' %}
+      <span class="ml-auto text-[12px] text-muted">Terms not accepted online</span>
+      {% endif %}
     </div>
 
     <!-- Money summary row -->

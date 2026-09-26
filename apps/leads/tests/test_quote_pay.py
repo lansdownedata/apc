@@ -161,7 +161,7 @@ def test_intent_returns_a_client_secret(client):
         "apps.leads.views.payment_services.open_intent_for",
         return_value=(MagicMock(pk=1), "pi_1_secret"),
     ):
-        resp = client.post(reverse("quote_pay_intent", args=[_tok(lead)]))
+        resp = client.post(reverse("quote_pay_intent", args=[_tok(lead)]), {"accept_terms": "1"})
     assert resp.status_code == 200
     assert resp.json()["client_secret"] == "pi_1_secret"
 
@@ -174,8 +174,8 @@ def test_intent_reuses_the_same_intent_on_a_second_call(client):
             MagicMock(id="pi_2", client_secret="pi_2_secret"),
         ]
         url = reverse("quote_pay_intent", args=[_tok(lead)])
-        first = client.post(url).json()
-        second = client.post(url).json()
+        first = client.post(url, {"accept_terms": "1"}).json()
+        second = client.post(url, {"accept_terms": "1"}).json()
     assert first["client_secret"] == second["client_secret"]
     assert lead.payment.charges.count() == 1
 

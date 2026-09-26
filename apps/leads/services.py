@@ -6,14 +6,17 @@ the view stays thin.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.core import signing
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
@@ -277,6 +280,29 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     return SendQuoteResult(
         ok=True, http_status=200, link=link, status=lead.status, delivery=delivery
     )
+
+
+@lru_cache(maxsize=1)
+def terms_version() -> str:
+    """A stable id for the T&C text a customer accepts (APC-55): the first 8 hex chars of
+    the SHA-256 of the rendered `public/_terms.html`. Editing the terms is a new version
+    automatically — nobody has to remember to bump a constant. Cached per process; a
+    deploy is the only way the file changes."""
+    text = render_to_string("public/_terms.html")
+    return hashlib.sha256(text.encode()).hexdigest()[:8]
+
+
+def accept_terms(lead: Lead) -> bool:
+    """Stamp the customer's acceptance the first time; never overwrite it. Returns whether
+    this call stamped. Conditional UPDATE so two racing requests can't both stamp."""
+    stamped = (
+        type(lead)
+        .objects.filter(pk=lead.pk, accepted_terms_at__isnull=True)
+        .update(accepted_terms_at=timezone.now(), accepted_terms_version=terms_version())
+    )
+    if stamped:
+        lead.refresh_from_db(fields=["accepted_terms_at", "accepted_terms_version"])
+    return bool(stamped)
 
 
 class BookLeadError(Exception):
