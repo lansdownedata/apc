@@ -2826,8 +2826,8 @@ window.contactPicker = contactPicker;
  * The customer describes their wedding and reviews what they told us. Seven steps, all
  * state client-side, ONE post at the end — the same shape as quoteSteps() above, just
  * longer. Nothing is derived from the answers (retired 2026-09-19): the office builds
- * the trips. `answers` MIRRORS apps/public/wedding.py:wedding_answers, which is the
- * authority for the categories, questions and wording — change one, change the other.
+ * the trips. The review step's labels repeat apps/public/wedding.py:wedding_answers,
+ * which is the authority for the categories and wording — change one, change the other.
  *
  * In the office (`portal`) there are no steps at all: every category shows at once in
  * the workspace's Edit details modal, and showStep() is what makes the shared step
@@ -3181,38 +3181,32 @@ function weddingPlanner(opts = {}) {
     get hotelsJson() {
       return JSON.stringify(this.hotels.map((h) => ({ venue_id: h.id || null, name: h.name })));
     },
-    /* Mirror of wedding.py:wedding_answers, for the review step. `step` is the one
-     * thing the server's version doesn't carry: where "Change" takes them. */
-    get answers() {
-      const has = (k) => this.who.includes(k);
-      const venueRows = [
-        ["Reception venue", this.venueLabel],
-        ["Ceremony at the same place?", this.sameSite ? "Yes" : "No — two locations"],
-      ];
-      if (!this.sameSite) venueRows.push(["Ceremony location", this.ceremonyLabel]);
-      const riding = [["Who needs a ride?",
-        WEDDING_GROUPS.filter((g) => has(g.key)).map((g) => g.title).join(", ") || "—"]];
-      if (has("guests")) riding.push(["Guests riding the shuttle", String(this.counts.guests)]);
-      if (has("party")) riding.push(["Wedding party", String(this.counts.party)]);
-      if (has("family")) riding.push(["Family & VIPs", String(this.counts.family)]);
-      const out = [
-        { step: "date", title: "Date", rows: [["Wedding date", this.fmtDate(this.date)]] },
-        { step: "venue", title: "Venue & ceremony", rows: venueRows },
-        { step: "who", title: "Who's riding", rows: riding },
-      ];
-      if (this.needsHotels) {
-        const hotels = (this.hotelsTbd || !this.hotels.length)
-          ? "Not booked yet" : this.hotels.map((h) => h.name).join("; ");
-        out.push({ step: "hotels", title: "Hotels", rows: [["Where is everyone staying?", hotels]] });
-      }
-      out.push({
-        step: "times", title: "Times", rows: [
-          ["Ceremony starts", this.timesTbd ? "Not set yet" : this.fmtTime(this.ceremonyTime)],
-          ["Venue requires everyone out by", this.timesTbd ? "Not set yet" : this.fmtTime(this.endTime)],
-        ],
-      });
-      return out;
+    /* The review step's cards. Their labels repeat wedding.py:wedding_answers (the
+     * confirmation page and email) — change one, change the other. */
+    get reviewDay() {
+      if (!this.date) return "—";
+      return new Date(`${this.date}T12:00:00`).toLocaleDateString("en-US",
+        { weekday: "long", month: "long", day: "numeric" });
     },
+    get reviewDayNote() {
+      const days = this.daysOut(this.date);
+      if (days === null) return "";
+      const year = this.date.slice(0, 4);
+      if (days < 0) return year;
+      const away = days === 0 ? "Today" : days === 1 ? "Tomorrow"
+        : days < 60 ? `${days} days away` : `About ${Math.round(days / 30)} months away`;
+      return `${year} · ${away}`;
+    },
+    get riderGroups() {
+      const labels = { guests: "Guests riding the shuttle", party: "Wedding party", family: "Family & VIPs" };
+      const groups = Object.keys(labels).filter((k) => this.who.includes(k))
+        .map((k) => ({ key: k, label: labels[k], count: this.counts[k], couple: false }));
+      if (this.who.includes("couple")) {
+        groups.push({ key: "couple", label: "The two of you", count: 2, couple: true });
+      }
+      return groups;
+    },
+    get riderTotal() { return this.riderGroups.reduce((sum, g) => sum + g.count, 0); },
     onSubmit(e) {
       if (!this.canAdvance()) { e.preventDefault(); return; }
       this.track("contact", "completed");

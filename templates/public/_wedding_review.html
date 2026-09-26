@@ -1,12 +1,10 @@
 {% comment %}
-  public/_wedding_review.html — Step 6 — every answer read back by category, plus the one
-  open question. This step REPLACED the generated itinerary (2026-09-19): weddings run too
+  public/_wedding_review.html — Step 6 — every answer read back as a card per category,
+  plus the one open question. This step REPLACED the generated itinerary (2026-09-19): weddings run too
   many different ways for a rule to guess the legs, so the couple confirms their details
   and one of our own people builds the day.
 
-  `answers` is weddingPlanner()'s mirror of apps/public/wedding.py:wedding_answers — the
-  same categories, questions and wording the confirmation page and email use. Change one,
-  change the other. Public flow only; the office edits the categories directly.
+  Public flow only; the office edits the categories directly.
 {% endcomment %}
 <fieldset x-show="showStep('review')">
   <span class="block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">
@@ -27,24 +25,127 @@
   </p>
   {% endif %}
 
-  <div class="mt-7 space-y-6">
-    <template x-for="category in answers" :key="category.title">
-      <section>
-        <div class="flex items-baseline gap-3">
-          <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted" x-text="category.title"></h3>
-          <button type="button" @click="editStep(category.step)"
-                  class="rounded text-[12px] font-semibold text-goldd transition-colors focus-gold hover:text-gold">Change</button>
-        </div>
-        <dl class="mt-2 space-y-1.5">
-          <template x-for="row in category.rows" :key="row[0]">
-            <div class="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
-              <dt class="text-[13px] text-muted sm:w-[15rem] sm:shrink-0" x-text="row[0]"></dt>
-              <dd class="text-[13.5px] font-medium text-ink" x-text="row[1]"></dd>
+  {% comment %}
+    One card per category, read straight off weddingPlanner() (reviewDay, riderGroups, …).
+    The labels repeat apps/public/wedding.py:wedding_answers, which the confirmation page
+    and email render — change one, change the other.
+  {% endcomment %}
+  <section class="mt-7 rounded-2xl bg-goldl ring-1 ring-gold/40">
+    <div class="flex items-start justify-between gap-4 px-5 pt-5 sm:px-6 sm:pt-6">
+      <div>
+        <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">The day</h3>
+        <p class="mt-1.5 font-display text-[1.6rem] font-semibold leading-tight text-ink" x-text="reviewDay"></p>
+        <p class="text-[13px] text-muted" x-text="reviewDayNote"></p>
+      </div>
+      <button type="button" @click="editStep('date')" aria-label="Edit the date"
+              class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-semibold text-goldd transition-colors focus-gold hover:bg-surface/70">
+        {% icon "pencil" class="h-3.5 w-3.5" %}Edit
+      </button>
+    </div>
+    <div class="px-5 pb-5 pt-6 sm:px-6">
+      <template x-if="!timesTbd">
+        <div>
+          <div class="relative flex items-center justify-between">
+            <span class="absolute inset-x-1.5 top-1/2 h-0.5 -translate-y-1/2 bg-gold"></span>
+            <span class="relative h-3 w-3 rounded-full bg-gold ring-4 ring-goldl"></span>
+            <span class="relative h-3 w-3 rounded-full border-2 border-gold bg-surface ring-4 ring-goldl"></span>
+          </div>
+          <div class="mt-3 flex justify-between gap-4 text-[12px]">
+            <div>
+              <p class="font-semibold text-ink" x-text="fmtTime(ceremonyTime)"></p>
+              <p class="text-muted">Ceremony starts</p>
             </div>
-          </template>
-        </dl>
-      </section>
-    </template>
+            <div class="text-right">
+              <p class="font-semibold text-ink" x-text="fmtTime(endTime)"></p>
+              <p class="text-muted">Everyone out by</p>
+            </div>
+          </div>
+        </div>
+      </template>
+      <p x-show="timesTbd" class="text-[13px] text-muted">Times not set yet</p>
+    </div>
+    <div class="flex items-center justify-between border-t border-gold/25 px-5 py-3 text-[12px] sm:px-6">
+      <span class="text-muted">Times</span>
+      <button type="button" @click="editStep('times')"
+              class="rounded font-semibold text-goldd transition-colors focus-gold hover:text-ink">Edit times</button>
+    </div>
+  </section>
+
+  <div class="mt-4 grid gap-4 sm:grid-cols-2">
+    <section class="rounded-2xl bg-surface2 p-5" :class="needsHotels ? '' : 'sm:col-span-2'">
+      <div class="flex items-center justify-between gap-3">
+        <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Venue &amp; ceremony</h3>
+        <button type="button" @click="editStep('venue')" aria-label="Edit the venue"
+                class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-semibold text-goldd transition-colors focus-gold hover:bg-goldl">
+          {% icon "pencil" class="h-3.5 w-3.5" %}Edit
+        </button>
+      </div>
+      <template x-for="place in (sameSite
+                  ? [{ role: '', name: venueLabel, line: siteLine(venue) }]
+                  : [{ role: 'Ceremony', name: ceremonyLabel, line: siteLine(ceremony) },
+                     { role: 'Reception', name: venueLabel, line: siteLine(venue) }])"
+                :key="place.role">
+        <div class="mt-3 flex gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
+            {% icon "map-pin" class="h-5 w-5" %}
+          </span>
+          <div class="min-w-0">
+            <p x-show="place.role" class="text-[11.5px] font-medium text-muted" x-text="place.role"></p>
+            <p class="text-[14.5px] font-semibold leading-snug text-ink" x-text="place.name"></p>
+            <p x-show="place.line" class="mt-0.5 text-[12.5px] text-muted" x-text="place.line"></p>
+          </div>
+        </div>
+      </template>
+      <span x-show="sameSite"
+            class="mt-4 inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-[11.5px] font-medium text-ink ring-1 ring-line">
+        {% icon "check" class="h-3 w-3 text-goldd" %}Ceremony &amp; reception in one place
+      </span>
+    </section>
+
+    <section x-show="needsHotels" class="rounded-2xl bg-surface2 p-5">
+      <div class="flex items-center justify-between gap-3">
+        <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">
+          Hotels<span x-show="!hotelsTbd && hotels.length" x-text="' · ' + hotels.length"></span>
+        </h3>
+        <button type="button" @click="editStep('hotels')" aria-label="Edit the hotels"
+                class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-semibold text-goldd transition-colors focus-gold hover:bg-goldl">
+          {% icon "pencil" class="h-3.5 w-3.5" %}Edit
+        </button>
+      </div>
+      <ul x-show="!hotelsTbd && hotels.length" class="mt-3 space-y-2">
+        <template x-for="hotel in hotels" :key="hotel.name">
+          <li class="flex items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
+            {% icon "bed" class="h-4 w-4 shrink-0 text-goldd" %}
+            <span class="text-[13.5px] font-medium leading-snug text-ink" x-text="hotel.name"></span>
+          </li>
+        </template>
+      </ul>
+      <p x-show="hotelsTbd || !hotels.length" class="mt-3 text-[13px] text-muted">Not booked yet</p>
+    </section>
+
+    <section class="rounded-2xl bg-surface2 p-5 sm:col-span-2">
+      <div class="flex items-center justify-between gap-3">
+        <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Who&rsquo;s riding</h3>
+        <button type="button" @click="editStep('who')" aria-label="Edit who's riding"
+                class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-semibold text-goldd transition-colors focus-gold hover:bg-goldl">
+          {% icon "pencil" class="h-3.5 w-3.5" %}Edit
+        </button>
+      </div>
+      <div class="mt-2 flex items-baseline gap-2">
+        <span class="font-display text-[2.4rem] font-semibold leading-none text-ink" x-text="riderTotal"></span>
+        <span class="text-[13px] text-muted" x-text="riderTotal === 1 ? 'person' : 'people'"></span>
+      </div>
+      <div class="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <template x-for="group in riderGroups" :key="group.key">
+          <div class="rounded-xl px-3.5 py-3"
+               :class="group.couple ? 'bg-goldl ring-1 ring-gold/40' : 'bg-surface ring-1 ring-line'">
+            <p class="text-[1.35rem] font-semibold leading-none" :class="group.couple ? 'text-goldd' : 'text-ink'"
+               x-text="group.count"></p>
+            <p class="mt-1.5 text-[12px]" :class="group.couple ? 'text-goldd' : 'text-muted'" x-text="group.label"></p>
+          </div>
+        </template>
+      </div>
+    </section>
   </div>
 
   <div class="mt-7">

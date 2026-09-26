@@ -218,6 +218,21 @@ def test_the_flow_reviews_the_answers_instead_of_building_a_day(client):
     assert 'name="notes"' in html
 
 
+def test_the_review_step_reads_the_answers_back_as_cards(client):
+    page = client.get(PLAN_URL).content.decode()
+    html = page[page.index("showStep('review')") :]
+    html = html[: html.index("</fieldset>")]
+    # the day: date headline + a ceremony-to-last-call timeline, and its own Edit times
+    assert 'x-text="reviewDay"' in html
+    assert "Everyone out by" in html
+    assert "Edit times" in html
+    # riders: a headline total over one tile per group
+    assert 'x-text="riderTotal"' in html
+    assert "roughly" not in html
+    # every card edits in place — no bare "Change" links left over from the list
+    assert ">Change</button>" not in html
+
+
 def test_a_submission_creates_a_trip_less_lead_and_redirects_to_thanks(client):
     response = client.post(PLAN_URL, _post())
     assert response.status_code == 302
