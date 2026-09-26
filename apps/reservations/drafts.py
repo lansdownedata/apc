@@ -392,4 +392,6 @@ def save_reservation_from_draft(
         from apps.tasks import services as tasks
 
         tasks.ensure_tasks(lead)
+        if not is_new and prev_pickup != (instance.pickup_date, instance.pickup_time):
+            tasks.reschedule(lead)
     return instance

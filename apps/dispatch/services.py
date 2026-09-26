@@ -367,7 +367,8 @@ def set_driver_info(
 def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Assignment]:
     """Withdraw whatever active assignment each of `reservations` still has.
 
-    Called when trips stop needing coverage — a cancelled order, a deleted trip. The board
+    Called when trips stop needing coverage — a cancelled order, a deleted trip. Their
+    tasks go not-applicable here too (APC-51), so coverage and task work stay in step. The board
     excludes both, and no screen lists assignments by vendor, so an assignment left active
     is one no dispatcher can reach while the affiliate is still holding a trip that no
     longer exists. One query for the whole set rather than a lookup per trip.
@@ -380,6 +381,10 @@ def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Ass
     skipped; the rest of the batch still releases, and the return value is only the
     assignments that actually did.
     """
+    reservations = list(reservations)
+    from apps.tasks import services as tasks
+
+    tasks.cancel_for_trips(reservations)
     released = []
     for assignment in Assignment.objects.active().filter(reservation__in=reservations):
         try:

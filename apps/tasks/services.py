@@ -37,13 +37,16 @@ def _anchor(kind: TaskKind, facts: LeadFacts, reservation) -> datetime | None:
     return facts.first_pickup_at
 
 
-def schedule(kind: TaskKind, facts: LeadFacts, reservation, *, now: datetime):
+def schedule(kind: TaskKind, facts: LeadFacts, reservation, *, now: datetime, opened_at=None):
     """(opens_at, due_at) for a task of `kind`. Opens now unless the kind opens later; a
     due date already behind the open time (a short-notice booking) is pulled up to it, so
-    a task is never born overdue by days."""
+    a task is never born overdue by days. `opened_at` pins the open time of a task that
+    has already opened — rescheduling moves its due date, not when it opened."""
     anchor = _anchor(kind, facts, reservation)
     opens_at = now
-    if kind.opens is not None:
+    if opened_at is not None:
+        opens_at = opened_at
+    elif kind.opens is not None:
         opens_at = max(kind.opens.resolve(anchor) or now, now)
     if isinstance(kind.due, AfterOpen):
         due_at = kind.due.resolve_from(opens_at)
@@ -152,6 +155,67 @@ def evaluate_lead(lead: Lead) -> int:
 def evaluate(task: Task) -> Task:
     _evaluate_many([task], load_facts([Lead.objects.get(pk=task.lead_id)]))
     return task
+
+
+def reschedule(lead: Lead) -> int:
+    """Re-date `lead`'s unresolved tasks after a pickup moved. Closed tasks keep their
+    history; an already-open task keeps its open time; `escalated_tier` is left alone, so
+    a task pushed back out of overdue won't re-alert for a tier it already raised."""
+    lead = Lead.objects.get(pk=lead.pk)
+    facts = load_facts([lead])[lead.pk]
+    trips = {t.pk: t for t in facts.trips}
+    now = timezone.now()
+    changed = []
+    for task in Task.objects.filter(lead=lead, status__in=Task.UNRESOLVED):
+        kind = KINDS.get(task.kind)
+        if kind is None:
+            continue
+        opened = task.opens_at if task.status == Task.Status.OPEN else None
+        opens_at, due_at = schedule(
+            kind, facts, trips.get(task.reservation_id), now=now, opened_at=opened
+        )
+        if (opens_at, due_at) != (task.opens_at, task.due_at):
+            task.opens_at, task.due_at, task.updated_at = opens_at, due_at, now
+            if task.status == Task.Status.SCHEDULED and opens_at <= now:
+                task.status = Task.Status.OPEN
+            changed.append(task)
+    Task.objects.bulk_update(changed, ["opens_at", "due_at", "status", "updated_at"])
+    return len(changed)
+
+
+def _mark_not_applicable(tasks) -> int:
+    return tasks.filter(status__in=Task.UNRESOLVED).update(
+        status=Task.Status.NOT_APPLICABLE,
+        completed_at=timezone.now(),
+        completed_by=None,
+        updated_at=timezone.now(),
+    )
+
+
+def cancel_for_trips(reservations) -> int:
+    """Trips stopped needing work (cancelled, or about to be deleted). Their unresolved
+    tasks become not-applicable; if that leaves an order with no live trips, its
+    order-level tasks go too. Called from `dispatch.services.release_trips`, so coverage
+    and tasks are released through the same door."""
+    ids = [r.pk for r in reservations]
+    if not ids:
+        return 0
+    count = _mark_not_applicable(Task.objects.filter(reservation_id__in=ids))
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.reservations.models import Reservation
+
+    lead_ids = set(Reservation.objects.filter(pk__in=ids).values_list("lead_id", flat=True))
+    live = set(
+        Reservation.objects.filter(lead_id__in=lead_ids)
+        .exclude(trip_status__in=CANCELLED_STATUSES)
+        .values_list("lead_id", flat=True)
+    )
+    dead = lead_ids - live
+    if dead:
+        count += _mark_not_applicable(
+            Task.objects.filter(lead_id__in=dead, reservation__isnull=True)
+        )
+    return count
 
 
 def complete(task: Task, user=None, note: str = "") -> Task:
