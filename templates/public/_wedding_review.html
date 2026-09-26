@@ -71,8 +71,8 @@
     </div>
   </section>
 
-  <div class="mt-4 grid gap-4 sm:grid-cols-2">
-    <section class="rounded-2xl bg-surface2 p-5" :class="needsHotels ? '' : 'sm:col-span-2'">
+  <div class="mt-4 space-y-4">
+    <section class="rounded-2xl bg-surface2 p-5">
       <div class="flex items-center justify-between gap-3">
         <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Venue &amp; ceremony</h3>
         <button type="button" @click="editStep('venue')" aria-label="Edit the venue"
@@ -80,22 +80,24 @@
           {% icon "pencil" class="h-3.5 w-3.5" %}Edit
         </button>
       </div>
-      <template x-for="place in (sameSite
-                  ? [{ role: '', name: venueLabel, line: siteLine(venue) }]
-                  : [{ role: 'Ceremony', name: ceremonyLabel, line: siteLine(ceremony) },
-                     { role: 'Reception', name: venueLabel, line: siteLine(venue) }])"
-                :key="place.role">
-        <div class="mt-3 flex gap-3">
-          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
-            {% icon "map-pin" class="h-5 w-5" %}
-          </span>
-          <div class="min-w-0">
-            <p x-show="place.role" class="text-[11.5px] font-medium text-muted" x-text="place.role"></p>
-            <p class="text-[14.5px] font-semibold leading-snug text-ink" x-text="place.name"></p>
-            <p x-show="place.line" class="mt-0.5 text-[12.5px] text-muted" x-text="place.line"></p>
+      <div class="grid sm:grid-cols-2 sm:gap-4">
+        <template x-for="place in (sameSite
+                    ? [{ role: '', name: venueLabel, line: siteLine(venue) }]
+                    : [{ role: 'Ceremony', name: ceremonyLabel, line: siteLine(ceremony) },
+                       { role: 'Reception', name: venueLabel, line: siteLine(venue) }])"
+                  :key="place.role">
+          <div class="mt-3 flex gap-3">
+            <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
+              {% icon "map-pin" class="h-5 w-5" %}
+            </span>
+            <div class="min-w-0">
+              <p x-show="place.role" class="text-[11.5px] font-medium text-muted" x-text="place.role"></p>
+              <p class="text-[14.5px] font-semibold leading-snug text-ink" x-text="place.name"></p>
+              <p x-show="place.line" class="mt-0.5 text-[12.5px] text-muted" x-text="place.line"></p>
+            </div>
           </div>
-        </div>
-      </template>
+        </template>
+      </div>
       <span x-show="sameSite"
             class="mt-4 inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-[11.5px] font-medium text-ink ring-1 ring-line">
         {% icon "check" class="h-3 w-3 text-goldd" %}Ceremony &amp; reception in one place
@@ -112,7 +114,7 @@
           {% icon "pencil" class="h-3.5 w-3.5" %}Edit
         </button>
       </div>
-      <ul x-show="!hotelsTbd && hotels.length" class="mt-3 space-y-2">
+      <ul x-show="!hotelsTbd && hotels.length" class="mt-3 grid gap-2 sm:grid-cols-2">
         <template x-for="hotel in hotels" :key="hotel.name">
           <li class="flex items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
             {% icon "bed" class="h-4 w-4 shrink-0 text-goldd" %}
@@ -123,7 +125,7 @@
       <p x-show="hotelsTbd || !hotels.length" class="mt-3 text-[13px] text-muted">Not booked yet</p>
     </section>
 
-    <section class="rounded-2xl bg-surface2 p-5 sm:col-span-2">
+    <section class="rounded-2xl bg-surface2 p-5">
       <div class="flex items-center justify-between gap-3">
         <h3 class="font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-muted">Who&rsquo;s riding</h3>
         <button type="button" @click="editStep('who')" aria-label="Edit who's riding"
