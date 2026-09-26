@@ -65,23 +65,30 @@ class ContactManager(models.Manager):
         )
         phone_digits = re.sub(r"\D", "", query)
         if len(phone_digits) >= 3:
-            lookup |= Q(phone__icontains=phone_digits)
+            lookup |= Q(phone__icontains=phone_digits) | Q(
+                pk__in=ContactPhone.objects.filter(number__icontains=phone_digits).values("contact")
+            )
         return self.filter(lookup)
 
     def find_match(self, *, phone: str = "", email: str = "") -> "Contact | None":
+        """The contact a returning customer's details belong to.
+
+        Email is the key: when there is one, it alone decides — a known phone on a new
+        email is a different person (family members share numbers). Only with no email
+        (a Podium text, a phone-only entry) does the phone match, against every number
+        on file rather than just the texting one.
+        """
         phone, email = (phone or "").strip(), (email or "").strip()
-        lookup = Q()
-        if phone:
-            # Match the canonical form *and* the raw input: rows that predate the
-            # backfill, and numbers to_e164 rejects, are only reachable as typed.
-            lookup |= Q(phone__iexact=phone)
-            normalized = to_e164(phone)
-            if normalized and normalized != phone:
-                lookup |= Q(phone__iexact=normalized)
         if email:
-            lookup |= Q(email__iexact=email)
-        if not lookup:
+            return self.filter(email__iexact=email).first()
+        if not phone:
             return None
+        # Match the canonical form *and* the raw input: rows that predate the
+        # backfill, and numbers to_e164 rejects, are only reachable as typed.
+        numbers = {phone, to_e164(phone) or phone}
+        lookup = Q(phone__in=numbers) | Q(
+            pk__in=ContactPhone.objects.filter(number__in=numbers).values("contact")
+        )
         return self.filter(lookup).order_by("-created_at").first()
 
     def match_or_create(
@@ -93,18 +100,34 @@ class ContactManager(models.Manager):
         email: str = "",
         channel: str = Channel.WEBSITE,
     ) -> "Contact":
-        existing = self.find_match(phone=phone, email=email)
-        if existing is not None:
-            return existing
-        from apps.contacts.models import Company  # local import avoids ordering issues
+        """Find the customer by `find_match`, or create them.
 
-        return self.create(
-            name=name,
-            company=Company.objects.get_or_create_by_name(company_name),
-            phone=to_e164(phone) or (phone or "").strip(),
-            email=(email or "").strip(),
-            channel=channel,
-        )
+        An email match takes the name they gave this time (the most recent one wins; a
+        phone-only match never renames — shared numbers). Any new phone is added as an
+        extra number — never a swap, so the number Podium texts only
+        changes when an agent says so. Company and channel are left as they were.
+        """
+        from apps.contacts import services  # local import: services imports this module
+
+        existing = self.find_match(phone=phone, email=email)
+        if existing is None:
+            return self.create(
+                name=name,
+                company=Company.objects.get_or_create_by_name(company_name),
+                phone=to_e164(phone) or (phone or "").strip(),
+                email=(email or "").strip(),
+                channel=channel,
+            )
+        name = (name or "").strip()
+        if (email or "").strip() and name and name != existing.name:
+            existing.name = name
+            existing.save(update_fields=["name", "updated_at"])
+        if (phone or "").strip():
+            try:
+                services.add_phone(existing, phone)
+            except services.PhoneError:
+                pass  # an undiallable extra number is not worth failing a booking over
+        return existing
 
 
 class Contact(TimeStampedModel):
@@ -150,7 +173,59 @@ class Contact(TimeStampedModel):
         """Billing address, falling back to the primary when 'same as primary' is set."""
         return self.primary_address if self.billing_same_as_primary else self.billing_address
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._saved_phone = instance.__dict__.get("phone")
+        return instance
+
     def save(self, *args, **kwargs):
         # Blank email → NULL (many allowed); otherwise store lowercase for CI uniqueness.
         self.email = (self.email or "").strip().lower() or None
         super().save(*args, **kwargs)
+        if self.phone != getattr(self, "_saved_phone", None):
+            self._sync_texting_phone()
+            self._saved_phone = self.phone
+
+    def _sync_texting_phone(self) -> None:
+        """Keep the ContactPhone rows agreeing with `phone`, the number Podium texts.
+
+        Every path that writes `phone` (the lead header, the New-lead modal, a Podium
+        contact, the admin) lands here, so the old number is kept as an extra rather
+        than lost, and exactly one row is marked texting.
+        """
+        self.phones.filter(texting=True).exclude(number=self.phone).update(texting=False)
+        if self.phone:
+            row, created = self.phones.get_or_create(number=self.phone, defaults={"texting": True})
+            if not created and not row.texting:
+                self.phones.filter(pk=row.pk).update(texting=True)
+
+
+class ContactPhone(TimeStampedModel):
+    """One number on file for a contact. The `texting` one is mirrored on `Contact.phone`.
+
+    Manage them through `apps.contacts.services` (add / update / use for texting /
+    remove), which keeps the mirror right.
+    """
+
+    class Label(models.TextChoices):
+        MOBILE = "mobile", "Mobile"
+        WORK = "work", "Work"
+        HOME = "home", "Home"
+        OTHER = "other", "Other"
+
+    contact = models.ForeignKey(Contact, related_name="phones", on_delete=models.CASCADE)
+    number = models.CharField(max_length=32)
+    label = models.CharField(max_length=10, choices=Label.choices, default=Label.MOBILE)
+    texting = models.BooleanField(
+        default=False, help_text="The number Podium texts. One per contact."
+    )
+
+    class Meta:
+        ordering = ["-texting", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["contact", "number"], name="uniq_contact_phone"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_label_display()} {self.number}"

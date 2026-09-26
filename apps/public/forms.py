@@ -79,7 +79,7 @@ class BookingRequestForm(forms.Form):
     """
 
     name = forms.CharField(max_length=200)
-    email = forms.EmailField(required=False)
+    email = forms.EmailField()  # the key a returning customer is found by
     phone = forms.CharField(max_length=32, required=False)
     pickup_date = forms.DateField(required=False)
     pickup_time = forms.TimeField(required=False)
@@ -222,8 +222,6 @@ class BookingRequestForm(forms.Form):
         cleaned = super().clean()
         if cleaned.get("company"):
             raise forms.ValidationError("spam detected")
-        if not cleaned.get("email") and not cleaned.get("phone"):
-            raise forms.ValidationError("Provide an email or phone so we can reach you.")
 
         trip_type = cleaned.get("trip_type") or Reservation.TripType.TRANSFER
         cleaned["trip_type"] = trip_type
@@ -301,13 +299,13 @@ def _site(venue: Venue | None, typed_name: str | None) -> Site | None:
 class WeddingRequestForm(forms.Form):
     """The wedding intake's single POST.
 
-    Same contract as `BookingRequestForm` — plain form, honeypot, one of email/phone —
+    Same contract as `BookingRequestForm` — plain form, honeypot, a required email —
     but the payload describes an *event*: the answers to the intake's questions and
     nothing derived from them. The office builds the trips (see `apps.public.wedding`).
     """
 
     name = forms.CharField(max_length=200)
-    email = forms.EmailField(required=False)
+    email = forms.EmailField()  # the key a returning customer is found by
     phone = forms.CharField(max_length=32, required=False)
 
     wedding_date = forms.DateField()
@@ -378,15 +376,13 @@ class WeddingRequestForm(forms.Form):
         cleaned = super().clean()
         if cleaned.get("company"):
             raise forms.ValidationError("spam detected")
-        if not cleaned.get("email") and not cleaned.get("phone"):
-            raise forms.ValidationError("Provide an email or phone so we can reach you.")
         return self.resolve_wedding(cleaned)
 
     def resolve_wedding(self, cleaned: dict) -> dict:
         """Turn posted venue ids into Sites, looked up here and never taken from the client.
 
         Split out from `clean()` so the portal's subclass can reuse it without inheriting
-        the honeypot and the email-or-phone rule, neither of which applies behind auth.
+        the honeypot and the contact fields, neither of which applies behind auth.
         This is the half that must never fork between the website and the office.
         """
         venue = self._venue("venue_id")

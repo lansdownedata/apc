@@ -42,9 +42,9 @@ def test_the_honeypot_rejects_the_whole_form():
     assert not form.is_valid()
 
 
-def test_an_email_or_a_phone_is_required():
-    assert not WeddingRequestForm(_post(email="", phone="")).is_valid()
-    assert WeddingRequestForm(_post(email="", phone="2024242600")).is_valid()
+def test_an_email_is_required_and_a_phone_is_optional():
+    assert not WeddingRequestForm(_post(email="", phone="2024242600")).is_valid()
+    assert WeddingRequestForm(_post(phone="")).is_valid()
 
 
 def test_the_date_is_required():

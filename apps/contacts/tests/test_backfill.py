@@ -35,3 +35,17 @@ def test_ignores_blank_phones():
     backfill_phone_e164(Contact)
     contact.refresh_from_db()
     assert contact.phone == ""
+
+
+def test_every_existing_phone_becomes_a_texting_number():
+    from apps.contacts.models import ContactPhone
+    from apps.contacts.services import backfill_contact_phones
+
+    with_phone = Contact.objects.create(name="Ada", phone="+16175550207")
+    Contact.objects.create(name="No phone")
+    ContactPhone.objects.all().delete()  # as the rows were before the table existed
+
+    assert backfill_contact_phones(Contact, ContactPhone) == 1
+    (row,) = ContactPhone.objects.all()
+    assert (row.contact_id, row.number, row.texting) == (with_phone.pk, "+16175550207", True)
+    assert backfill_contact_phones(Contact, ContactPhone) == 0, "re-running adds nothing"

@@ -8,6 +8,22 @@ urlpatterns = [
     path("search/", views.contact_search, name="contact_search"),
     path("<int:pk>/", views.contact_detail, name="contact_detail"),
     path("<int:pk>/update/", views.contact_update, name="contact_update"),
+    path("<int:pk>/phones/add/", views.contact_phone_add, name="contact_phone_add"),
+    path(
+        "<int:pk>/phones/<int:phone_pk>/update/",
+        views.contact_phone_update,
+        name="contact_phone_update",
+    ),
+    path(
+        "<int:pk>/phones/<int:phone_pk>/texting/",
+        views.contact_phone_texting,
+        name="contact_phone_texting",
+    ),
+    path(
+        "<int:pk>/phones/<int:phone_pk>/delete/",
+        views.contact_phone_delete,
+        name="contact_phone_delete",
+    ),
     path(
         "<int:pk>/address/<slug:slot>/update/",
         views.contact_address_update,

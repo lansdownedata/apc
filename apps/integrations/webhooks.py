@@ -9,7 +9,6 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -130,18 +129,12 @@ def _ingest_inbound(data: dict) -> Conversation | None:
 
 
 def _contact_by_phone(identifier: str) -> Contact | None:
-    """Match a Podium identifier (E.164) against stored phones in either format.
+    """Match a Podium identifier against every number on file, in either format.
 
     Both `_resolve_lead` and `_resolve_lead_readonly` match on phone. Sharing one
     helper keeps them from drifting — they have already been duplicated once.
     """
-    if not identifier:
-        return None
-    normalized = to_e164(identifier)
-    lookup = Q(phone=identifier)
-    if normalized and normalized != identifier:
-        lookup |= Q(phone=normalized)
-    return Contact.objects.filter(lookup).first()
+    return Contact.objects.find_match(phone=identifier)
 
 
 def _resolve_conversation(contact_data: dict, identifier: str) -> Conversation:

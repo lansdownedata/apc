@@ -50,15 +50,14 @@ def test_a_date_in_the_past_still_raises_an_alert():
     assert _lead(wedding_date=past).has_alert is True
 
 
-def test_a_wedding_records_the_name_on_the_form_when_it_differs(db):
-    """Same reason as the booking form: the office needs to see who actually filled it."""
+def test_a_returning_email_takes_the_name_on_the_wedding_form(db):
     from apps.contacts.factories import ContactFactory
 
-    ContactFactory(name="James Bond", email="jane@example.com")
+    jane = ContactFactory(name="Jane Doe", email="jane@example.com")
     lead = _lead(name="Priya Whitfield")
-    assert lead.contact.name == "James Bond"
-    assert lead.notes.startswith("Submitted as: Priya Whitfield")
-    assert "WEDDING — " in lead.notes
+    assert lead.contact == jane
+    assert lead.contact.name == "Priya Whitfield"
+    assert lead.notes.startswith("WEDDING — ")
 
 
 def test_a_confirmed_plan_carries_no_warning_line():

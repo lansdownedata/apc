@@ -206,9 +206,9 @@
     </div>
 
     <div>
-      <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email <span class="text-muted/70">(optional)</span></label>
+      <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email</label>
       <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
-             autocomplete="email" placeholder="you@example.com"
+             required autocomplete="email" placeholder="you@example.com"
              class="field w-full{% if form.email.errors %} field-error{% endif %}">
       {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
     </div>

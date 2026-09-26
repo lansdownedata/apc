@@ -33,14 +33,6 @@ def test_contact_update_writes_fields_and_resolves_company(client):
     assert c.company.name == "Anand Family Office"
 
 
-def test_contact_update_rejects_invalid_phone(client):
-    c = ContactFactory()
-    client.force_login(UserFactory())
-    resp = client.post(reverse("contact_update", args=[c.pk]), {"phone": "12345"})
-    assert resp.status_code == 400
-    assert "valid phone" in resp.json()["error"]
-
-
 def test_contact_update_rejects_duplicate_email(client):
     ContactFactory(email="taken@example.com")
     c = ContactFactory(email="me@example.com")
@@ -132,16 +124,15 @@ def test_contact_page_smart_address_starts_in_view_mode(logged_in_client):
 def test_zero_orders_hides_card_and_shows_note(logged_in_client):
     contact = ContactFactory()
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
-    assert "Order history" not in html
+    assert "Orders &amp; quotes" not in html
     assert "No orders yet" in html
-    assert "Create a lead" in html
 
 
 def test_orders_render_with_trip_count_text(logged_in_client):
     contact = ContactFactory()
     ReservationFactory.create_batch(2, lead=LeadFactory(contact=contact))
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
-    assert "Order history" in html
+    assert "Orders &amp; quotes" in html
     assert "2 trips" in html
     assert "No orders yet" not in html
 

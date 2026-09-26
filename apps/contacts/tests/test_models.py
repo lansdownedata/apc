@@ -42,9 +42,7 @@ def test_find_match_none_when_blank_or_no_hit():
 
 def test_match_or_create_reuses_existing():
     c = ContactFactory(phone="(202) 555-0100", email="a@example.com")
-    got = Contact.objects.match_or_create(
-        name="Someone Else", phone="(202) 555-0100", email="new@example.com"
-    )
+    got = Contact.objects.match_or_create(name="Someone Else", phone="", email="A@example.com")
     assert got == c
     assert Contact.objects.count() == 1
 

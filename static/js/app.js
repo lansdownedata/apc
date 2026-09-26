@@ -478,22 +478,6 @@ function quoteWorkspace(opts = {}) {
     // the save payload.
     _saved: null,
 
-    onPhoneBlur(e) {
-      const el = e.target;
-      if (!phoneIsValid(el)) {
-        el.classList.add("field-error");
-        Alpine.store("toast").push({
-          type: "danger",
-          title: "Invalid phone number",
-          message: "Check the number for the country you selected.",
-        });
-        return;
-      }
-      el.classList.remove("field-error");
-      this.header.phone = phoneValue(el);
-      this.saveHeader();
-    },
-
     saveHeader() {
       const changed = {};
       for (const [key, value] of Object.entries(this.header)) {
@@ -1398,7 +1382,6 @@ function contactProfile(opts = {}) {
   return {
     updateUrl: opts.updateUrl,
     header: opts.header || {},
-    display: opts.display || {},
     _saved: null,
 
     onPhoneBlur(e) {
@@ -1457,6 +1440,83 @@ function contactProfile(opts = {}) {
   };
 }
 window.contactProfile = contactProfile;
+
+/* The profile's phone numbers. Every change answers with the whole list, so the server
+ * (which keeps Contact.phone mirroring the texting number) stays the source of truth.
+ * One add/edit form serves every row, so its label picker is a single Tom Select. */
+function contactPhones(opts = {}) {
+  return {
+    phones: opts.phones || [],
+    addUrl: opts.addUrl,
+    rowUrl: opts.rowUrl, // ".../phones/0/update/" — the 0 and the action are swapped in
+    formOpen: false,
+    editingId: null,
+    busy: false,
+    form: { number: "", label: "mobile", texting: false },
+
+    urlFor(id, action) {
+      return this.rowUrl.replace(/\/0\/update\/$/, `/${id}/${action}/`);
+    },
+    setLabel(value) {
+      const el = document.getElementById("cp-label");
+      if (el && el.tomselect) el.tomselect.setValue(value, true);
+      this.form.label = value;
+    },
+    openForm(values, id) {
+      this.form = { texting: false, ...values };
+      this.editingId = id;
+      this.setLabel(values.label);
+      this.formOpen = true;
+      this.$nextTick(() => this.$refs.number.focus());
+    },
+    startAdd() { this.openForm({ number: "", label: "mobile" }, null); },
+    startEdit(p) { this.openForm({ number: p.display, label: p.label }, p.id); },
+    closeForm() { this.formOpen = false; this.editingId = null; },
+
+    post(url, data = {}) {
+      this.busy = true;
+      return fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        body: new URLSearchParams(data),
+      })
+        .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => {
+          if (!ok) throw new Error(d.error || "Could not save");
+          this.phones = d.phones;
+          Alpine.store("toast").push({ type: "success", title: "Saved" });
+          return true;
+        })
+        .catch((err) => {
+          Alpine.store("toast").push({ type: "danger", title: "Could not save", message: err.message });
+          return false;
+        })
+        .finally(() => { this.busy = false; });
+    },
+    submit() {
+      if (this.busy || !this.form.number.trim()) return;
+      const data = { number: this.form.number, label: this.form.label };
+      const url = this.editingId ? this.urlFor(this.editingId, "update") : this.addUrl;
+      if (!this.editingId) data.texting = this.form.texting ? "true" : "false";
+      this.post(url, data).then((ok) => ok && this.closeForm());
+    },
+    useForTexting(p) { this.post(this.urlFor(p.id, "texting")); },
+    remove() {
+      const id = this.editingId;
+      Alpine.store("modal").confirm({
+        title: "Remove this number?",
+        message: `${this.form.number} comes off this contact.`,
+        variant: "danger",
+        confirmText: "Remove",
+        onConfirm: () => this.post(this.urlFor(id, "delete")).then((ok) => ok && this.closeForm()),
+      });
+    },
+  };
+}
+window.contactPhones = contactPhones;
 
 /* -------------------------------------------------- inbox */
 function inbox(opts = {}) {
@@ -2723,6 +2783,7 @@ window.smartAddress = smartAddress;
 function contactPicker(opts = {}) {
   return {
     searchUrl: opts.searchUrl,
+    preset: opts.preset || null, // a contact_search row to open already linked to
     query: "",
     results: [],
     open: false,
@@ -2811,6 +2872,9 @@ function contactPicker(opts = {}) {
 
     closeResults() { this.open = false; this.results = []; this.active = -1; },
 
+    usePreset() {
+      if (this.preset && !this.selected) this.$nextTick(() => this.link(this.preset));
+    },
     /* A reopened modal starts clean — otherwise the next booking silently inherits the
      * last one's customer, which is the one mistake this feature must not introduce. */
     reset() {
@@ -3008,8 +3072,7 @@ function weddingPlanner(opts = {}) {
         // inquiries are six months out and genuinely cannot answer this.
         case "hotels": return this.hotelsTbd || this.hotels.length > 0;
         case "contact":
-          return !!(this.contact.name.trim() &&
-            (this.contact.email.trim() || this.contact.phone.trim()));
+          return !!(this.contact.name.trim() && this.contact.email.trim());
         default: return true;
       }
     },

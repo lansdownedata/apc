@@ -29,11 +29,13 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
 from apps.core.choices import Channel
-from apps.core.phone import to_e164
+from apps.core.templatetags.phone_filters import phone_display
 from apps.leads.models import Lead
+from apps.messaging.models import Message
 from apps.payments.models import PaymentPlan
 
-from .models import Company, Contact
+from . import services
+from .models import Company, Contact, ContactPhone
 
 # Type-ahead results the modal shows at once — more than this is a search, not a pick.
 SEARCH_LIMIT = 8
@@ -169,27 +171,60 @@ def contact_create(request: HttpRequest) -> HttpResponse:
     return redirect("contact_detail", pk=contact.pk)
 
 
-def _contact_stats(contact: Contact) -> dict[str, object]:
-    """LTV / orders / trips for one contact — reuses the directory's booked-plan LTV rule."""
+# Leads still in play, for the header's "Open quotes" and the table's Open filter.
+OPEN_STATUSES = (Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED)
+# The profile's order table shows this many; the directory is where you go for more.
+PROFILE_ORDER_LIMIT = 25
+
+
+def _contact_stats(contact: Contact, leads: list[Lead]) -> dict[str, object]:
+    """Header numbers: lifetime value (the directory's booked-plan rule), booked orders,
+    trips, and what is still open. `leads` is every lead, already carrying trip_count."""
     ltv = PaymentPlan.objects.filter(
         lead__contact=contact, lead__status=Lead.Status.BOOKED
     ).aggregate(total=Sum("quote_total"))["total"] or Decimal("0.00")
-    orders = contact.leads.filter(status=Lead.Status.BOOKED).count()
-    trips = sum(lead.reservation_count for lead in contact.leads.all())
-    return {"ltv": ltv, "orders": orders, "trips": trips}
+    open_leads = [lead for lead in leads if lead.status in OPEN_STATUSES]
+    return {
+        "ltv": ltv,
+        "orders": sum(lead.status == Lead.Status.BOOKED for lead in leads),
+        "trips": sum(lead.trip_count for lead in leads),
+        "open_quotes": len(open_leads),
+        "open_value": sum((lead.quote_total for lead in open_leads), Decimal("0.00")),
+    }
+
+
+def _phones_payload(contact: Contact) -> list[dict[str, object]]:
+    """Every number on file, texting first — the profile's Alpine state."""
+    return [
+        {
+            "id": p.pk,
+            "number": p.number,
+            "display": phone_display(p.number),
+            "label": p.label,
+            "label_display": p.get_label_display(),
+            "texting": p.texting,
+        }
+        for p in contact.phones.all()
+    ]
 
 
 @login_required
 def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    """Editable contact profile — header stats, contact-details card, order history."""
-    contact = get_object_or_404(
-        Contact.objects.select_related("company").prefetch_related("leads__reservations"), pk=pk
-    )
+    """The customer profile — header stats, phone numbers, details, messages, orders."""
+    contact = get_object_or_404(Contact.objects.select_related("company"), pk=pk)
     leads = list(
         contact.leads.select_related("payment")
         .prefetch_related("reservations")
         .annotate(trip_count=Count("reservations"))
-        .order_by("-id")[:10]
+        .order_by("-id")
+    )
+    for lead in leads:
+        lead.is_open = lead.status in OPEN_STATUSES
+    latest_message = (
+        Message.objects.filter(conversation__contact=contact)
+        .select_related("conversation")
+        .order_by("-created_at")
+        .first()
     )
     company_names = [(co.name, co.name) for co in Company.objects.order_by("name")]
     return render(
@@ -198,8 +233,14 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
         {
             "nav": "contacts",
             "contact": contact,
-            "stats": _contact_stats(contact),
-            "leads": leads,
+            "stats": _contact_stats(contact, leads),
+            "leads": leads[:PROFILE_ORDER_LIMIT],
+            "lead_total": len(leads),
+            "latest_message": latest_message,
+            # The New-lead modal opens already linked to this customer.
+            "preset_contact": _search_row(contact, len(leads)),
+            "phones": _phones_payload(contact),
+            "phone_labels": ContactPhone.Label.choices,
             "channels": Channel.choices,
             "company_names": company_names,
             "primary_addr_url": reverse("contact_address_update", args=[contact.pk, "primary"]),
@@ -209,10 +250,69 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+def _phone_result(contact: Contact, action) -> JsonResponse:
+    """Run one phone change and answer with the whole list, or the reason it can't."""
+    try:
+        action()
+    except services.PhoneError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    contact.refresh_from_db()
+    return JsonResponse({"ok": True, "phones": _phones_payload(contact)})
+
+
+def _label(request: HttpRequest) -> str:
+    label = request.POST.get("label", "")
+    return label if label in ContactPhone.Label.values else ContactPhone.Label.MOBILE
+
+
+@login_required
+@require_POST
+def contact_phone_add(request: HttpRequest, pk: int) -> JsonResponse:
+    contact = get_object_or_404(Contact, pk=pk)
+    return _phone_result(
+        contact,
+        lambda: services.add_phone(
+            contact,
+            request.POST.get("number", ""),
+            label=_label(request),
+            texting=request.POST.get("texting") == "true",
+        ),
+    )
+
+
+@login_required
+@require_POST
+def contact_phone_update(request: HttpRequest, pk: int, phone_pk: int) -> JsonResponse:
+    row = get_object_or_404(ContactPhone.objects.select_related("contact"), pk=phone_pk, contact=pk)
+    return _phone_result(
+        row.contact,
+        lambda: services.update_phone(
+            row, number=request.POST.get("number", ""), label=_label(request)
+        ),
+    )
+
+
+@login_required
+@require_POST
+def contact_phone_texting(request: HttpRequest, pk: int, phone_pk: int) -> JsonResponse:
+    row = get_object_or_404(ContactPhone.objects.select_related("contact"), pk=phone_pk, contact=pk)
+    return _phone_result(row.contact, lambda: services.use_for_texting(row))
+
+
+@login_required
+@require_POST
+def contact_phone_delete(request: HttpRequest, pk: int, phone_pk: int) -> JsonResponse:
+    row = get_object_or_404(ContactPhone.objects.select_related("contact"), pk=phone_pk, contact=pk)
+    return _phone_result(row.contact, lambda: services.remove_phone(row))
+
+
 @login_required
 @require_POST
 def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
-    """Partial-field autosave for the contact profile — validates phone/email/company."""
+    """Partial-field autosave for the contact profile — validates email, resolves company.
+
+    Phone numbers are not here: they have their own endpoints (`contact_phone_*`).
+    """
     contact = get_object_or_404(Contact, pk=pk)
     if "name" in request.POST and not request.POST.get("name", "").strip():
         return JsonResponse({"ok": False, "error": "Name cannot be blank."}, status=400)
@@ -225,18 +325,6 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
                 return JsonResponse(
                     {"ok": False, "error": "Enter a valid email address."}, status=400
                 )
-    phone = None
-    if "phone" in request.POST:
-        raw = request.POST.get("phone", "").strip()
-        if raw:
-            phone = to_e164(raw)
-            if phone is None:
-                return JsonResponse(
-                    {"ok": False, "error": "Enter a valid phone number."}, status=400
-                )
-        else:
-            phone = ""
-
     fields = []
     for f in ("name", "notes"):
         if f in request.POST:
@@ -251,9 +339,6 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
     if "company" in request.POST:
         contact.company = Company.objects.get_or_create_by_name(request.POST.get("company", ""))
         fields.append("company")
-    if phone is not None:
-        contact.phone = phone
-        fields.append("phone")
     if "billing_same_as_primary" in request.POST:
         contact.billing_same_as_primary = request.POST["billing_same_as_primary"] == "true"
         fields.append("billing_same_as_primary")

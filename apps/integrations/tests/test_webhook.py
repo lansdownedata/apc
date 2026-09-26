@@ -65,6 +65,19 @@ def test_received_reuses_an_existing_contacts_conversation():
     assert Message.objects.get().conversation == convo
 
 
+def test_received_from_a_contacts_other_number_lands_in_their_thread():
+    from apps.contacts.services import add_phone
+
+    contact = ContactFactory(phone="+16175550207")
+    add_phone(contact, "+12025550134")
+    convo = ConversationFactory(contact=contact)
+
+    process_podium_webhook(_received(uid="m3", phone="+12025550134", cuid=""))
+
+    assert Contact.objects.count() == 1
+    assert Message.objects.get().conversation == convo
+
+
 def test_received_stamps_last_message_at():
     process_podium_webhook(_received())
     assert Conversation.objects.get().last_message_at is not None

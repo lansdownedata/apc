@@ -59,6 +59,6 @@ class PortalWeddingForm(WeddingRequestForm):
     company = None
 
     def clean(self):
-        """No honeypot and no email-or-phone rule; everything else still applies."""
+        """No honeypot and no contact fields; everything else still applies."""
         cleaned = super(WeddingRequestForm, self).clean()
         return self.resolve_wedding(cleaned)

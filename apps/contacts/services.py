@@ -7,6 +7,68 @@ from django.db import IntegrityError, transaction
 from apps.core.phone import to_e164
 
 
+class PhoneError(ValueError):
+    """A phone change that can't be made; the message is safe to show an agent."""
+
+
+def _dialable(number: str) -> str:
+    normalized = to_e164(number or "")
+    if not normalized:
+        raise PhoneError("Enter a valid phone number.")
+    return normalized
+
+
+def add_phone(contact, number: str, *, label: str = "", texting: bool = False):
+    """Put a number on file for `contact`, or return the row already holding it.
+
+    It becomes the texting number when asked to, or when the contact has none yet —
+    otherwise the number Podium texts stays exactly where it was.
+    """
+    from apps.contacts.models import ContactPhone  # local import: models imports this module
+
+    number = _dialable(number)
+    row = contact.phones.filter(number=number).first()
+    if row is None:
+        row = contact.phones.create(number=number, label=label or ContactPhone.Label.MOBILE)
+    elif label and row.label != label:
+        row.label = label
+        row.save(update_fields=["label", "updated_at"])
+    if texting or not contact.phone:
+        use_for_texting(row)
+    return row
+
+
+def use_for_texting(row) -> None:
+    """Make `row` the number Podium texts. `Contact.save` moves the flag."""
+    contact = row.contact
+    contact.phone = row.number
+    contact.save(update_fields=["phone", "updated_at"])
+    row.texting = True
+
+
+def update_phone(row, *, number: str, label: str) -> None:
+    """Change a number's digits and label; the texting number carries Contact.phone along."""
+    number = _dialable(number)
+    if number != row.number and row.contact.phones.filter(number=number).exists():
+        raise PhoneError("That number is already on this contact.")
+    row.number, row.label = number, label or row.label
+    row.save(update_fields=["number", "label", "updated_at"])
+    if row.texting:
+        use_for_texting(row)
+
+
+def remove_phone(row) -> None:
+    """Delete a number. The texting one only goes when it is the last number on file,
+    so a customer is never silently moved to a different Podium thread."""
+    contact = row.contact
+    if row.texting and contact.phones.exclude(pk=row.pk).exists():
+        raise PhoneError("Choose another number for texting before removing this one.")
+    row.delete()
+    if row.texting:
+        contact.phone = ""
+        contact.save(update_fields=["phone", "updated_at"])
+
+
 def backfill_phone_e164(contact_model) -> int:
     """Rewrite stored phones to canonical E.164. Returns the number of rows changed.
 
@@ -23,6 +85,22 @@ def backfill_phone_e164(contact_model) -> int:
     return updated
 
 
+def backfill_contact_phones(contact_model, phone_model) -> int:
+    """Give every contact's existing `phone` its ContactPhone row, marked texting.
+
+    Takes the model classes so a migration can pass its historical versions (which
+    have none of `Contact.save`'s syncing). Returns the number of rows created.
+    """
+    have = set(phone_model.objects.values_list("contact_id", "number"))
+    rows = [
+        phone_model(contact_id=pk, number=phone, label="mobile", texting=True)
+        for pk, phone in contact_model.objects.exclude(phone="").values_list("pk", "phone")
+        if (pk, phone) not in have
+    ]
+    phone_model.objects.bulk_create(rows)
+    return len(rows)
+
+
 def apply_booking_edits(
     contact,
     *,
@@ -34,7 +112,8 @@ def apply_booking_edits(
     """Write the contact modal's edits back onto a customer the agent explicitly picked.
 
     Only non-blank values are applied: a blank field in the modal means "I didn't fill
-    this in", never "erase what's on file". Clearing a value is done on the contact
+    this in", never "erase what's on file". A phone is added as another number rather
+    than replacing the one Podium texts. Clearing a value is done on the contact
     profile, where it reads as a deliberate act.
 
     `channel` is pointedly absent — that dropdown is the *lead's* source, while
@@ -45,11 +124,15 @@ def apply_booking_edits(
     """
     from apps.contacts.models import Company  # local import: models imports nothing here
 
+    if phone.strip():
+        # Added, never swapped: which number Podium texts changes only on the profile.
+        try:
+            add_phone(contact, phone)
+        except PhoneError:
+            pass  # the modal validates the number; a legacy value is not worth a failed booking
     updates: dict[str, object] = {}
     if name.strip():
         updates["name"] = name.strip()
-    if phone.strip():
-        updates["phone"] = phone.strip()
     if email.strip():
         updates["email"] = email.strip()
     if company.strip():

@@ -142,38 +142,22 @@ def test_a_spoofed_forwarded_header_cannot_buy_a_fresh_budget(client, settings):
     assert resp.status_code == 200
 
 
-# --- a submission that matches an existing customer (spec: the name is not lost) -----
+# --- a submission that matches an existing customer: email is the key -------------
 
 
-def test_a_matched_contact_keeps_its_own_name(client):
-    """A stranger who knows your email must not be able to rename you in the CRM."""
+def test_a_returning_email_takes_the_name_they_gave_this_time(client):
+    """Email is the key; the most recent name on it wins."""
     from apps.contacts.factories import ContactFactory
 
-    ContactFactory(name="James Bond", email="jane@example.com")
-    client.post("/bookings/", {**VALID, "name": "Someone Else"})
-    assert Lead.objects.get().contact.name == "James Bond"
+    jane = ContactFactory(name="Jane Doe", email="jane@example.com")
+    client.post("/bookings/", {**VALID, "name": "Jane Rider"})
+    jane.refresh_from_db()
+    assert Lead.objects.get().contact == jane
+    assert jane.name == "Jane Rider"
 
 
-def test_the_name_on_the_form_is_recorded_when_it_is_not_the_one_on_file(client):
-    """Otherwise the office scans the leads list for the name the customer typed and
-    never finds it — the lead is filed under whoever owned that email first."""
-    from apps.contacts.factories import ContactFactory
-
-    ContactFactory(name="James Bond", email="jane@example.com")
-    client.post("/bookings/", {**VALID, "name": "Priya Whitfield", "notes": "IAD pickup"})
-    notes = Lead.objects.get().notes
-    assert notes.startswith("Submitted as: Priya Whitfield")
-    assert "IAD pickup" in notes
-
-
-def test_a_matching_name_adds_no_noise(client):
-    from apps.contacts.factories import ContactFactory
-
-    ContactFactory(name="Jane Rider", email="jane@example.com")
-    client.post("/bookings/", VALID)
-    assert "Submitted as" not in Lead.objects.get().notes
-
-
-def test_a_brand_new_customer_adds_no_noise(client):
-    client.post("/bookings/", VALID)
-    assert "Submitted as" not in Lead.objects.get().notes
+def test_a_booking_without_an_email_is_refused(client):
+    """Email is how we find a returning customer, so the form insists on one."""
+    response = client.post("/bookings/", {**VALID, "email": ""})
+    assert not Lead.objects.exists()
+    assert response.status_code in (200, 302)

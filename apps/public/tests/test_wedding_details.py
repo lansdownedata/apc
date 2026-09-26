@@ -268,3 +268,9 @@ def test_a_resume_link_rehydrates_the_answers(client):
 def test_a_lead_that_is_not_a_wedding_has_no_answers():
     assert wedding_answers(LeadFactory().intake_payload) == []
     assert wedding_answers({"event": "invitee.created"}) == []
+
+
+def test_a_wedding_without_an_email_is_refused(client):
+    response = client.post(PLAN_URL, _post(email="", phone="2024242600"))
+    assert response.status_code == 200
+    assert not Lead.objects.exists()

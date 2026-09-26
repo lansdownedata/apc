@@ -65,7 +65,10 @@ def test_edits_in_the_modal_update_the_customers_profile(staff):
 
     contact.refresh_from_db()
     assert contact.name == "Ada Lovelace"
-    assert contact.phone == "+12025559999"
+    # A different number is added, not swapped in: which number Podium texts is only
+    # ever changed deliberately, on the contact profile.
+    assert contact.phone == "+12025550100"
+    assert set(contact.phones.values_list("number", flat=True)) == {"+12025550100", "+12025559999"}
     assert contact.email == "ada@new.com"
     assert contact.company.name == "Analytical Engines"
 

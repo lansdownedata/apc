@@ -196,6 +196,8 @@ header, aside, main, .wash-gold {
   transition: box-shadow .15s ease, border-color .15s ease;
 }
 .field::placeholder { color: rgb(var(--muted) / .7); }
+/* Dense profile rows (contact details): the same field, sized to sit inside a list row. */
+.field-compact .field { padding: .35rem .6rem; font-size: 13px; border-radius: 8px; }
 .field:focus { outline: none; box-shadow: 0 0 0 3px var(--ring); border-color: rgb(var(--gold)); }
 
 /* Room for an icon / affordance overlaid inside the field.  Tailwind's `pl-*`/`pr-*`

@@ -2,18 +2,22 @@
 {% load humanize json_filters phone_filters %}
 
 {% block content %}
+{% comment %}
+  The customer profile. Header (who, how to reach them, the numbers that matter), then a
+  rail — phone numbers, details, notes — beside the latest message and the orders table.
+  Everything edits in place: `contactProfile` autosaves the scalar fields to
+  contact_update; `contactPhones` owns the numbers through the contact_phone_* endpoints.
+{% endcomment %}
 <div class="max-w-[1120px] mx-auto px-4 sm:px-6 py-6"
      x-data="contactProfile({
        updateUrl: '{% url 'contact_update' contact.pk %}',
        header: {
          name: {{ contact.name|json_string }},
-         phone: {{ contact.phone|json_string }},
          email: {{ contact.email|json_string }},
          company: {{ contact.company.name|default_if_none:''|json_string }},
          channel: '{{ contact.channel }}',
          notes: {{ contact.notes|json_string }}
-       },
-       display: { phone: {{ contact.phone|phone_display|json_string }} }
+       }
      })">
 
   <a href="{% url 'contact_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
@@ -21,177 +25,318 @@
   </a>
 
   <!-- header -->
-  <div class="card p-5 sm:p-6 mb-4">
-    <div class="flex flex-wrap items-start gap-4">
-      <span class="w-12 h-12 rounded-full bg-charcoal2 text-gold grid place-items-center text-[14px] font-semibold shrink-0 uppercase">{{ contact.name|slice:":2" }}</span>
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-2.5 flex-wrap">
-          <input type="text" x-model="header.name" @blur="saveHeader()"
-                 class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 w-full max-w-xs"
+  <div x-data="{ newLeadOpen: false, newLeadIntent: 'lead' }">
+    <section class="card overflow-hidden">
+      <div class="flex flex-wrap items-center gap-4 p-5 sm:p-6">
+        <span class="w-14 h-14 rounded-full bg-charcoal2 text-gold grid place-items-center text-[16px] font-semibold shrink-0 uppercase">{{ contact.name|slice:":2" }}</span>
+        <div class="min-w-0 flex-1">
+          <input type="text" x-model="header.name" @blur="saveHeader()" @keydown.enter="$el.blur()"
+                 aria-label="Contact name"
+                 class="inline-edit -ml-2 w-full max-w-md px-2 py-0.5 font-display text-[26px] font-semibold leading-tight tracking-tight text-ink"
                  placeholder="Contact name">
-        </div>
-        <div class="flex items-center gap-x-3 gap-y-2 flex-wrap text-[12.5px] text-muted mt-2">
-          <span class="flex items-center gap-1 shrink-0">
-            <i class="ti ti-building text-[14px]"></i>
+          <p class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-muted">
             {% if contact.company %}
               <a href="{% url 'company_detail' contact.company.pk %}" class="text-ink hover:text-goldd hover:underline">{{ contact.company.name }}</a>
             {% else %}
               <span>No company</span>
             {% endif %}
-          </span>
-          <span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted">{{ contact.get_channel_display }}</span>
+            <span class="text-line">&bull;</span>
+            <span>Came in via {{ contact.get_channel_display }}</span>
+            <span class="text-line">&bull;</span>
+            <span>Customer since {{ contact.created_at|date:"M j, Y" }}</span>
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          {% if latest_message %}
+          <a href="{% url 'inbox' %}?conversation={{ latest_message.conversation_id }}"
+             class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold">
+            <i class="ti ti-message text-[15px] text-goldd"></i>Text
+          </a>
+          {% endif %}
+          {% if contact.phone %}
+          <a href="tel:{{ contact.phone }}"
+             class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold">
+            <i class="ti ti-phone text-[15px] text-goldd"></i>Call
+          </a>
+          {% endif %}
+          {% if contact.email %}
+          <a href="mailto:{{ contact.email }}"
+             class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold">
+            <i class="ti ti-mail text-[15px] text-goldd"></i>Email
+          </a>
+          {% endif %}
+          <button type="button" @click="newLeadIntent = 'lead'; newLeadOpen = true"
+                  class="btn-gold focus-gold inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-semibold">
+            <i class="ti ti-plus text-[14px]"></i>New lead
+          </button>
         </div>
       </div>
-      <div class="flex items-center gap-5 sm:gap-7">
-        <div class="text-right">
-          <div class="text-[11px] text-muted">Lifetime value</div>
-          <div class="font-display text-[20px] font-semibold text-ink leading-none num mt-0.5">${{ stats.ltv|floatformat:2|intcomma }}</div>
+      <div class="grid grid-cols-2 border-t border-line sm:grid-cols-4">
+        <div class="px-5 py-4 sm:px-6">
+          <p class="text-[11.5px] text-muted">Lifetime value</p>
+          <p class="mt-1 font-display text-[22px] font-semibold leading-none text-ink num">${{ stats.ltv|floatformat:2|intcomma }}</p>
         </div>
-        <div class="text-right">
-          <div class="text-[11px] text-muted">Orders</div>
-          <div class="font-display text-[20px] font-semibold text-ink leading-none num mt-0.5">{{ stats.orders }}</div>
+        <div class="border-l border-line px-5 py-4 sm:px-6">
+          <p class="text-[11.5px] text-muted">Booked orders</p>
+          <p class="mt-1 font-display text-[22px] font-semibold leading-none text-ink num">{{ stats.orders }}</p>
         </div>
-        <div class="text-right">
-          <div class="text-[11px] text-muted">Trips</div>
-          <div class="font-display text-[20px] font-semibold text-ink leading-none num mt-0.5">{{ stats.trips }}</div>
+        <div class="border-t border-line px-5 py-4 sm:border-l sm:border-t-0 sm:px-6">
+          <p class="text-[11.5px] text-muted">Trips</p>
+          <p class="mt-1 font-display text-[22px] font-semibold leading-none text-ink num">{{ stats.trips }}</p>
+        </div>
+        <div class="border-l border-t border-line px-5 py-4 sm:border-t-0 sm:px-6">
+          <p class="text-[11.5px] text-muted">Open quotes</p>
+          <p class="mt-1 font-display text-[22px] font-semibold leading-none text-ink num">
+            {{ stats.open_quotes }}{% if stats.open_quotes %} <span class="font-sans text-[12px] font-medium text-muted">&middot; ${{ stats.open_value|floatformat:0|intcomma }}</span>{% endif %}
+          </p>
         </div>
       </div>
-    </div>
+    </section>
+    {% include "leads/_new_lead_modal.html" with preset=preset_contact %}
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+  <div class="mt-4 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
 
-    <!-- profile rail -->
+    <!-- rail -->
     <div class="space-y-4">
 
-      <!-- contact details -->
-      <div class="card p-5 sm:p-6"
-           x-data="{ editing: false, channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}} }">
-        <div class="flex items-center justify-between mb-4">
-          <span class="font-display text-[15px] font-semibold text-ink">Contact details</span>
-          <button type="button" @click="editing = !editing"
-                  class="inline-flex items-center gap-1 text-[12px] font-semibold text-muted hover:text-ink focus-gold transition-colors">
-            <i class="ti ti-pencil text-[13px]" x-show="!editing"></i>
-            <span x-text="editing ? 'Done' : 'Edit'">Edit</span>
-          </button>
+      <!-- phone numbers -->
+      <section class="card p-5"
+               x-data="contactPhones({
+                 phones: {{ phones|json_attr }},
+                 addUrl: '{% url 'contact_phone_add' contact.pk %}',
+                 rowUrl: '{% url 'contact_phone_update' contact.pk 0 %}'
+               })">
+        <div class="flex items-center justify-between">
+          <h2 class="font-display text-[15px] font-semibold text-ink">Phone numbers</h2>
+          <span class="text-[11.5px] text-muted" x-text="phones.length || ''">{{ phones|length|default:'' }}</span>
         </div>
 
-        <!-- view -->
-        <dl class="space-y-3.5" x-show="!editing">
-          <div>
-            <dt class="text-[11px] font-semibold text-muted uppercase tracking-wide">Company</dt>
-            <dd class="mt-0.5 text-[13px] text-ink">{% if contact.company %}<a href="{% url 'company_detail' contact.company.pk %}" class="hover:text-goldd hover:underline" x-text="header.company || '—'">{{ contact.company.name }}</a>{% else %}<span x-text="header.company || '—'">—</span>{% endif %}</dd>
+        <ul class="mt-3 space-y-1.5">
+          <template x-for="p in phones" :key="p.id">
+            <li class="group flex items-center gap-2 rounded-xl px-3 py-2.5 transition-colors"
+                :class="p.texting ? 'bg-goldl/60 ring-1 ring-gold/30' : 'hover:bg-surface2'">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="text-[11px] font-semibold uppercase tracking-wide text-muted" x-text="p.label_display"></span>
+                  <span x-show="p.texting"
+                        class="inline-flex items-center gap-1 rounded-full bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-goldd ring-1 ring-gold/40">
+                    <i class="ti ti-message text-[11px]"></i>Podium texting
+                  </span>
+                </div>
+                <a :href="'tel:' + p.number" class="mt-0.5 block text-[13.5px] font-medium text-ink hover:text-goldd" x-text="p.display"></a>
+              </div>
+              <button type="button" x-show="!p.texting" @click="useForTexting(p)" :disabled="busy"
+                      class="rounded-md px-2 py-1 text-[11.5px] font-semibold text-goldd transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:bg-goldl disabled:opacity-50">
+                Use for texting
+              </button>
+              <button type="button" @click="startEdit(p)" aria-label="Edit number"
+                      class="rounded-md p-1.5 text-muted transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:bg-surface hover:text-ink">
+                <i class="ti ti-pencil text-[14px]"></i>
+              </button>
+            </li>
+          </template>
+        </ul>
+        <p x-show="!phones.length && !formOpen"{% if phones %} style="display:none"{% endif %} class="mt-1 text-[12.5px] text-muted">No numbers on file</p>
+
+        <div x-show="formOpen" style="display:none" class="ts-compact mt-2 rounded-xl bg-surface2 p-2.5 ring-1 ring-line"
+             @keydown.escape="closeForm()">
+          <div class="flex gap-2">
+            <div class="w-[6.75rem] shrink-0" @change="form.label = $event.target.value">
+              {% include "components/searchable_select.html" with name="phone_label" field_id="cp-label" options=phone_labels selected="mobile" search="off" %}
+            </div>
+            <input type="tel" x-ref="number" x-model="form.number" @keydown.enter.prevent="submit()"
+                   aria-label="Phone number" placeholder="(202) 555-0134"
+                   class="h-8 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 text-[13px] text-ink outline-none transition focus:border-gold focus:ring-2 focus:ring-gold/30">
           </div>
-          <div>
-            <dt class="text-[11px] font-semibold text-muted uppercase tracking-wide">Phone</dt>
-            <dd class="mt-0.5 text-[13px] text-ink">{% if contact.phone %}<a href="tel:{{ contact.phone }}" :href="'tel:' + header.phone" class="hover:text-goldd" x-text="display.phone || '—'">{{ contact.phone|phone_display }}</a>{% else %}<span x-text="display.phone || '—'">—</span>{% endif %}</dd>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <label x-show="!editingId" class="inline-flex items-center gap-1.5 text-[12px] text-muted">
+              <input type="checkbox" x-model="form.texting" class="accent-[rgb(var(--gold))]"> Use for texting
+            </label>
+            <button type="button" x-show="editingId" @click="remove()" :disabled="busy"
+                    class="rounded-md px-2 py-1 text-[12px] font-semibold text-rose-600 transition hover:bg-rose-50 focus-gold disabled:opacity-50">
+              Remove
+            </button>
+            <span class="flex-1"></span>
+            <button type="button" @click="closeForm()"
+                    class="h-7 rounded-md px-2.5 text-[12px] font-semibold text-muted transition hover:text-ink focus-gold">Cancel</button>
+            <button type="button" @click="submit()" :disabled="busy || !form.number.trim()"
+                    class="h-7 rounded-md bg-charcoal2 px-3 text-[12px] font-semibold text-white transition hover:bg-charcoal focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+              Save
+            </button>
           </div>
-          <div>
-            <dt class="text-[11px] font-semibold text-muted uppercase tracking-wide">Email</dt>
-            <dd class="mt-0.5 text-[13px] text-ink">{% if contact.email %}<a href="mailto:{{ contact.email }}" :href="'mailto:' + header.email" class="hover:text-goldd" x-text="header.email || '—'">{{ contact.email }}</a>{% else %}<span x-text="header.email || '—'">—</span>{% endif %}</dd>
+        </div>
+
+        <button type="button" x-show="!formOpen" @click="startAdd()"
+                class="mt-2 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-semibold text-goldd transition hover:bg-goldl focus-gold">
+          <i class="ti ti-plus text-[13px]"></i>Add a number
+        </button>
+      </section>
+
+      <!-- details -->
+      <section class="card p-5 ts-compact"
+               x-data="{ edit: null, channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}} }">
+        <h2 class="font-display text-[15px] font-semibold text-ink">Details</h2>
+        <dl class="mt-2 divide-y divide-line/70 text-[13px]">
+
+          <div class="group flex items-center gap-3 py-2.5">
+            <dt class="w-20 shrink-0 text-muted">Email</dt>
+            <dd class="min-w-0 flex-1 truncate" x-show="edit !== 'email'">
+              {% if contact.email %}<a href="mailto:{{ contact.email }}" :href="'mailto:' + header.email" class="font-medium text-ink hover:text-goldd" x-text="header.email">{{ contact.email }}</a>{% else %}<span class="text-muted" :class="header.email && 'font-medium text-ink'" x-text="header.email || 'Add an email'">Add an email</span>{% endif %}
+            </dd>
+            <dd class="min-w-0 flex-1" x-show="edit === 'email'" style="display:none">
+              <input type="email" x-model="header.email" x-ref="email"
+                     @blur="saveHeader(); edit = null" @keydown.enter.prevent="$el.blur()"
+                     aria-label="Email" placeholder="name@example.com"
+                     class="h-8 w-full rounded-lg border border-line bg-surface px-2.5 text-[13px] text-ink outline-none transition focus:border-gold focus:ring-2 focus:ring-gold/30">
+            </dd>
+            <button type="button" x-show="edit !== 'email'" @click="edit = 'email'; $nextTick(() => $refs.email.focus())" aria-label="Edit email"
+                    class="rounded-md p-1 text-muted transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:text-ink">
+              <i class="ti ti-pencil text-[14px]"></i>
+            </button>
           </div>
-          <div>
-            <dt class="text-[11px] font-semibold text-muted uppercase tracking-wide">Channel</dt>
-            <dd class="mt-1"><span class="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted" x-text="channelLabels[header.channel] || header.channel">{{ contact.get_channel_display }}</span></dd>
+
+          <div class="group flex items-center gap-3 py-2.5">
+            <dt class="w-20 shrink-0 text-muted">Company</dt>
+            <dd class="min-w-0 flex-1 truncate" x-show="edit !== 'company'">
+              {% if contact.company %}<a href="{% url 'company_detail' contact.company.pk %}" class="font-medium text-ink hover:text-goldd hover:underline" x-text="header.company || 'Add a company'">{{ contact.company.name }}</a>{% else %}<span class="text-muted" :class="header.company && 'font-medium text-ink'" x-text="header.company || 'Add a company'">Add a company</span>{% endif %}
+            </dd>
+            <dd class="min-w-0 flex-1" x-show="edit === 'company'" style="display:none"
+                @change="header.company = $event.target.value; saveHeader(); edit = null">
+              {% include "components/searchable_select.html" with name="company" field_id="c-company" options=company_names selected=contact.company.name empty_label="No company" create=1 %}
+            </dd>
+            <button type="button" @click="edit = edit === 'company' ? null : 'company'" :aria-label="edit === 'company' ? 'Close' : 'Edit company'"
+                    class="rounded-md p-1 text-muted transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:text-ink">
+              <i class="ti text-[14px]" :class="edit === 'company' ? 'ti-x' : 'ti-pencil'"></i>
+            </button>
           </div>
-          <div x-show="header.notes"{% if not contact.notes %} style="display:none"{% endif %}>
-            <dt class="text-[11px] font-semibold text-muted uppercase tracking-wide">Notes</dt>
-            <dd class="mt-0.5 text-[13px] text-ink whitespace-pre-line" x-text="header.notes">{{ contact.notes }}</dd>
+
+          <div class="group flex items-center gap-3 py-2.5">
+            <dt class="w-20 shrink-0 text-muted">Channel</dt>
+            <dd class="min-w-0 flex-1" x-show="edit !== 'channel'">
+              <span class="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium text-muted ring-1 ring-inset ring-line" x-text="channelLabels[header.channel] || header.channel">{{ contact.get_channel_display }}</span>
+            </dd>
+            <dd class="min-w-0 flex-1" x-show="edit === 'channel'" style="display:none"
+                @change="header.channel = $event.target.value; saveHeader(); edit = null">
+              {% include "components/searchable_select.html" with name="channel" field_id="c-channel" options=channels selected=contact.channel search="off" %}
+            </dd>
+            <button type="button" @click="edit = edit === 'channel' ? null : 'channel'" :aria-label="edit === 'channel' ? 'Close' : 'Edit channel'"
+                    class="rounded-md p-1 text-muted transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:text-ink">
+              <i class="ti text-[14px]" :class="edit === 'channel' ? 'ti-x' : 'ti-pencil'"></i>
+            </button>
+          </div>
+
+          <div class="group py-2.5" x-data="{ get editing() { return edit === 'address' } }">
+            <div class="flex flex-wrap items-start gap-x-3 gap-y-2">
+              <dt class="w-20 shrink-0 text-muted">Address</dt>
+              <dd class="field-compact min-w-0 flex-1" :class="editing && 'order-last basis-full'">
+                {% include "components/smart_address.html" with address=contact.primary_address update_url=primary_addr_url autocomplete_url=ac_url prefix="primary" viewmode=1 %}
+              </dd>
+              <button type="button" @click="edit = edit === 'address' ? null : 'address'" :aria-label="edit === 'address' ? 'Done' : 'Edit address'"
+                      class="rounded-md p-1 text-muted transition focus-gold sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 hover:text-ink">
+                <i class="ti text-[14px]" :class="edit === 'address' ? 'ti-check' : 'ti-pencil'"></i>
+              </button>
+            </div>
+            <div x-data="{ same: {{ contact.billing_same_as_primary|yesno:'true,false' }} }" class="field-compact mt-3"
+                 :class="editing || 'pl-[5.75rem]'"
+                 {% if contact.billing_same_as_primary %}style="display:none"{% endif %}
+                 x-show="editing || !same">
+              <label class="inline-flex items-center gap-2 text-[12px] text-muted" style="display:none" x-show="editing">
+                <input type="checkbox" x-model="same" class="accent-[rgb(var(--gold))]"
+                       @change="fetch('{% url 'contact_update' contact.pk %}', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCookie('csrftoken')}, body: 'billing_same_as_primary=' + same})
+                         .then(r => Alpine.store('toast').push(r.ok ? {type:'success',title:'Saved'} : {type:'danger',title:'Could not save'}))
+                         .catch(() => Alpine.store('toast').push({type:'danger',title:'Network error — not saved'}))">
+                Billing address same as primary
+              </label>
+              <div {% if contact.billing_same_as_primary %}style="display:none"{% endif %} x-show="!same" class="mt-2">
+                <p class="mb-1 text-[11.5px] font-medium text-muted">Billing</p>
+                {% include "components/smart_address.html" with address=contact.billing_address update_url=billing_addr_url autocomplete_url=ac_url prefix="billing" viewmode=1 %}
+              </div>
+            </div>
           </div>
         </dl>
+      </section>
 
-        <!-- edit -->
-        <div class="space-y-4" style="display:none" x-show="editing">
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Name</label>
-            <input type="text" x-model="header.name" @blur="saveHeader()" class="field mt-1.5" placeholder="Contact name">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Company</label>
-            <div class="mt-1.5" @change="header.company = $event.target.value; saveHeader()">
-              {% include "components/searchable_select.html" with name="company" field_id="c-company" options=company_names selected=contact.company.name empty_label="No company" create=1 %}
-            </div>
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Phone</label>
-            <input type="tel" data-phone value="{{ contact.phone }}" @blur="onPhoneBlur($event)" class="field mt-1.5" placeholder="Phone">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Email</label>
-            <input type="email" x-model="header.email" @blur="saveHeader()" class="field mt-1.5" placeholder="Email">
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Channel</label>
-            <div class="mt-1.5" @change="header.channel = $event.target.value; saveHeader()">
-              {% include "components/searchable_select.html" with name="channel" field_id="c-channel" options=channels selected=contact.channel %}
-            </div>
-          </div>
-          <div>
-            <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Notes</label>
-            <textarea x-model="header.notes" @blur="saveHeader()" rows="4" class="field mt-1.5" placeholder="Notes about this contact"></textarea>
-          </div>
-        </div>
-      </div>
-
-      <!-- addresses -->
-      <div class="card p-5 sm:p-6" x-data="{ editing: false }">
-        <div class="flex items-center justify-between mb-4">
-          <span class="font-display text-[15px] font-semibold text-ink">Addresses</span>
-          <button type="button" @click="editing = !editing"
-                  class="inline-flex items-center gap-1 text-[12px] font-semibold text-muted hover:text-ink focus-gold transition-colors">
-            <i class="ti ti-pencil text-[13px]" x-show="!editing"></i>
-            <span x-text="editing ? 'Done' : 'Edit'">Edit</span>
-          </button>
-        </div>
-
-        <div class="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Primary</div>
-        {% include "components/smart_address.html" with address=contact.primary_address update_url=primary_addr_url autocomplete_url=ac_url prefix="primary" viewmode=1 %}
-
-        <div x-data="{ same: {{ contact.billing_same_as_primary|yesno:'true,false' }} }"
-             class="mt-5 pt-4 border-t border-line"
-             {% if contact.billing_same_as_primary %}style="display:none"{% endif %}
-             x-show="editing || !same">
-          <label class="inline-flex items-center gap-2 text-[12.5px] text-muted" style="display:none" x-show="editing">
-            <input type="checkbox" x-model="same"
-                   @change="fetch('{% url 'contact_update' contact.pk %}', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCookie('csrftoken')}, body: 'billing_same_as_primary=' + same})
-                     .then(r => Alpine.store('toast').push(r.ok ? {type:'success',title:'Saved'} : {type:'danger',title:'Could not save'}))
-                     .catch(() => Alpine.store('toast').push({type:'danger',title:'Network error — not saved'}))">
-            Billing address same as primary
-          </label>
-          <div {% if contact.billing_same_as_primary %}style="display:none"{% endif %} x-show="!same" class="mt-3">
-            <div class="text-[11px] font-semibold text-muted uppercase tracking-wide mb-2">Billing</div>
-            {% include "components/smart_address.html" with address=contact.billing_address update_url=billing_addr_url autocomplete_url=ac_url prefix="billing" viewmode=1 %}
-          </div>
-        </div>
-      </div>
-
+      <!-- notes -->
+      <section class="card p-5">
+        <h2 class="font-display text-[15px] font-semibold text-ink">Notes</h2>
+        <textarea x-model="header.notes" @blur="saveHeader()" rows="3" data-autogrow aria-label="Notes"
+                  placeholder="Preferences, VIP details, billing quirks&hellip;"
+                  class="mt-3 w-full resize-none rounded-lg border border-transparent bg-surface2 px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-muted/70 hover:border-line focus:border-gold focus:bg-surface focus:ring-2 focus:ring-gold/30"></textarea>
+      </section>
     </div>
 
-    <!-- order history -->
-    {% if leads %}
-    <div class="lg:col-span-2 card overflow-hidden">
-      <div class="flex items-center px-5 py-3.5 border-b border-line">
-        <span class="font-display text-[15px] font-semibold text-ink">Order history</span>
-        <span class="ml-2 text-[11px] text-muted">{{ leads|length }} most recent</span>
-      </div>
-      <div class="divide-y divide-line/70">
-        {% for lead in leads %}
-        <a href="{% url 'lead_detail' lead.pk %}" class="flex items-center gap-3 px-5 py-3.5 hover:wash-gold transition-colors">
-          {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
-          <span class="font-mono2 text-[12.5px] text-ink">{{ lead.quote_no }}</span>
-          <span class="text-[11.5px] text-muted shrink-0">{{ lead.trip_count }} trip{{ lead.trip_count|pluralize }}</span>
-          <span class="ml-auto num font-semibold text-ink text-[13.5px]">${{ lead.quote_total|floatformat:2|intcomma }}</span>
-          <span class="text-[11.5px] text-muted w-24 text-right shrink-0">{{ lead.created_at|date:"M j, Y" }}</span>
-        </a>
-        {% endfor %}
-      </div>
-    </div>
-    {% else %}
-    <div class="lg:col-span-2 pt-1 text-[12.5px] text-muted">
-      No orders yet · <a href="{% url 'lead_list' %}" class="font-semibold hover:underline" style="color:rgb(var(--gold-deep));">Create a lead</a>
-    </div>
-    {% endif %}
+    <!-- main -->
+    <div class="space-y-4 lg:col-span-2">
 
+      {% if latest_message %}
+      <section class="card flex items-start gap-4 p-5">
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
+          <i class="ti ti-message text-[19px]"></i>
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 class="font-display text-[15px] font-semibold text-ink">Latest message</h2>
+            <span class="shrink-0 text-[11.5px] text-muted">{{ latest_message.is_inbound|yesno:"From them,From us" }} &middot; {{ latest_message.created_at|naturaltime }}</span>
+          </div>
+          <p class="mt-1 line-clamp-2 text-[13px] text-muted">{{ latest_message.body|default:"(no text)" }}</p>
+          <a href="{% url 'inbox' %}?conversation={{ latest_message.conversation_id }}"
+             class="mt-2 inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-ink focus-gold">
+            Open in inbox <i class="ti ti-arrow-right text-[13px]"></i>
+          </a>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if leads %}
+      <section class="card overflow-hidden" x-data="{ orderFilter: 'all' }">
+        <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <div class="flex items-baseline gap-2">
+            <h2 class="font-display text-[15px] font-semibold text-ink">Orders &amp; quotes</h2>
+            <span class="text-[11.5px] text-muted">{% if lead_total > leads|length %}{{ leads|length }} most recent of {{ lead_total }}{% else %}{{ lead_total }}{% endif %}</span>
+          </div>
+          <div class="inline-flex rounded-lg bg-surface2 p-0.5 text-[12px] font-semibold ring-1 ring-line" role="group" aria-label="Filter orders">
+            <template x-for="f in [['all', 'All'], ['open', 'Open'], ['booked', 'Booked']]" :key="f[0]">
+              <button type="button" @click="orderFilter = f[0]" x-text="f[1]" :aria-pressed="orderFilter === f[0]"
+                      class="rounded-md px-2.5 py-1 transition focus-gold"
+                      :class="orderFilter === f[0] ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'"></button>
+            </template>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[13px]">
+            <thead class="sticky top-0 bg-surface2 text-left text-[11px] uppercase tracking-wide text-muted">
+              <tr>
+                <th class="px-5 py-2 font-semibold">Quote</th>
+                <th class="py-2 font-semibold">Status</th>
+                <th class="py-2 font-semibold">Trips</th>
+                <th class="py-2 text-right font-semibold">Total</th>
+                <th class="px-5 py-2 text-right font-semibold">Created</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-line/70">
+              {% for lead in leads %}
+              <tr class="cursor-pointer transition-colors hover:bg-surface2"
+                  x-show="orderFilter === 'all' || orderFilter === '{% if lead.status == 'booked' %}booked{% elif lead.is_open %}open{% else %}other{% endif %}'"
+                  @click="window.location = '{% url 'lead_detail' lead.pk %}'">
+                <td class="px-5 py-3"><a href="{% url 'lead_detail' lead.pk %}" class="font-mono2 text-[12.5px] text-ink hover:text-goldd" @click.stop>{{ lead.quote_no }}</a></td>
+                <td class="py-3">{% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}</td>
+                <td class="py-3 text-muted">{{ lead.trip_count }} trip{{ lead.trip_count|pluralize }}</td>
+                <td class="py-3 text-right font-semibold text-ink num">${{ lead.quote_total|floatformat:2|intcomma }}</td>
+                <td class="px-5 py-3 text-right text-muted">{{ lead.created_at|date:"M j, Y" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% else %}
+      <section class="card px-5 py-8 text-center">
+        <p class="font-display text-[15px] font-semibold text-ink">No orders yet</p>
+        <p class="mt-1 text-[12.5px] text-muted">Quotes and bookings for {{ contact.name }} show up here.</p>
+      </section>
+      {% endif %}
+    </div>
   </div>
 </div>
 {% endblock %}
