@@ -32,6 +32,7 @@ pytestmark = pytest.mark.django_db
 ORDER_KINDS = {"deposit_received", "contract_signed", "final_itinerary", "final_balance_paid"}
 WEDDING_KINDS = {"wedding_names", "day_of_contact"}
 TRIP_KINDS = {
+    "details_finalized",
     "affiliate_assigned",
     "affiliate_confirmed",
     "driver_assigned",

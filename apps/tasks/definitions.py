@@ -242,6 +242,15 @@ REGISTRY: tuple[TaskKind, ...] = (
         auto_complete=_driver_released,
     ),
     TaskKind(
+        # APC-56 — the one checkpoint that can't be read off data: dispatch confirms the
+        # trip needs no further customer follow-up. Feeds green-lit with everything else.
+        key="details_finalized",
+        label="Details finalized",
+        department=_D.OPERATIONS,
+        level=Level.TRIP,
+        due=BeforePickup(days=2),  # PLACEHOLDER
+    ),
+    TaskKind(
         key="final_balance_paid",
         label="Final balance paid",
         department=_D.ACCOUNTING,

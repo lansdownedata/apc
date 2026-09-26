@@ -300,7 +300,8 @@ def test_panel_without_drivers_keeps_its_query_budget(
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     # Budget 10, not 9: selectors.in_house_options adds one query (the active-drivers read)
     # even when there are no drivers to show.
-    with django_assert_max_num_queries(10):
+    # +3 for the green-lit pill (APC-56): trip tasks, order blockers, open exceptions.
+    with django_assert_max_num_queries(13):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
 

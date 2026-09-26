@@ -16,6 +16,7 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
+from apps.tasks.selectors import attach_green_lit
 from apps.vendors.models import Vendor
 
 from . import selectors, services
@@ -242,6 +243,7 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
         pk=pk,
     )
     assignment = services.active_assignment(trip)
+    attach_green_lit([trip])
     return render(
         request,
         "dispatch/_assign_panel.html",

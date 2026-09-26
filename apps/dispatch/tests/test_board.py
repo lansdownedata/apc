@@ -260,7 +260,8 @@ def test_board_query_count_does_not_grow_with_trips(
         services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
     # 17, not 15: the board now mounts the trip editor, whose vehicle and service pickers
     # cost two queries. Constant — the point of this test is that nothing grows per trip.
-    with django_assert_max_num_queries(17):
+    # +2 for the green-lit task prefetches (APC-56) — constant, not per trip.
+    with django_assert_max_num_queries(19):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
 
 
@@ -359,7 +360,8 @@ def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert
         trip = _trip(pickup_time=time(hour, 0))
         services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
         _verified_on_board(trip, number=str(hour))
-    with django_assert_max_num_queries(17):
+    # +2 for the green-lit task prefetches (APC-56) — constant, not per trip.
+    with django_assert_max_num_queries(19):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
 
 
