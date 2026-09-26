@@ -123,7 +123,11 @@ function drawer() {
   return {
     open: false,
     body: "",
-    async load(url) {
+    /* Set when an action inside changed what the page behind shows, but the drawer stayed
+     * open to carry on (a reassign). Closing then re-reads the page instead. */
+    stale: false,
+    async load(url, stale = false) {
+      this.stale = this.stale || stale;
       this.body = '<p class="text-muted text-[13px]">Loading…</p>';
       this.open = true;
       try {
@@ -139,13 +143,14 @@ function drawer() {
     close() {
       this.open = false;
       this.body = "";
+      if (this.stale) window.location.reload();
     },
   };
 }
 window.drawer = drawer;
 
 /* Assign drawer — posts the offer form and the resolve actions, then refreshes the board. */
-function assignPanel() {
+function assignPanel(panelUrl = "") {
   return {
     busy: false,
     async send(url, extra) {
@@ -168,8 +173,16 @@ function assignPanel() {
         data = { ok: false, error: "Network error — nothing was saved" };
       }
       this.busy = false;
-      if (data.ok) window.location.reload();
-      else Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+      if (!data.ok) {
+        Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+      } else if (extra && extra.action === "withdraw" && panelUrl) {
+        // Reassign means "pick someone else", so stay on this trip: put its now-unassigned
+        // panel back in the drawer. The page behind catches up when the drawer closes.
+        window.dispatchEvent(new CustomEvent("drawer-open", { detail: { url: panelUrl, stale: true } }));
+        Alpine.store("toast").push({ type: "success", title: "Unassigned — pick who covers it" });
+      } else {
+        window.location.reload();
+      }
     },
     post(url) {
       return this.send(url, {});
@@ -202,7 +215,7 @@ function assignPanel() {
         showCancel: true,
         onConfirm: async () => {
           const tick = document.getElementById("apc-cancel-notice");
-          // Send it BEFORE releasing: `withdraw` reloads the page out from under us.
+          // Send it BEFORE releasing: `withdraw` swaps this panel out from under us.
           if (copy.cancelNoticeUrl && tick && tick.checked) {
             await this.notify(copy.cancelNoticeUrl);
           }

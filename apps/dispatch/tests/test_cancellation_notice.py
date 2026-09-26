@@ -165,3 +165,26 @@ def test_the_editor_does_not_offer_it_in_house(client, agent):
     a = _assignment(vendor=None, driver=DriverFactory(), payout=0)
     body = client.get(reverse("dispatch_assign_options", args=[a.reservation_id])).json()
     assert body["cancelNoticeUrl"] == ""
+
+
+def test_reassigning_keeps_the_drawer_open_on_the_same_trip():
+    """Reassign means "pick someone else" — reloading the page closed the drawer on them.
+
+    A withdraw puts this trip's fresh panel back into the drawer instead, and flags the
+    drawer so closing it re-reads the page behind (the board row is stale until then).
+    """
+    from pathlib import Path as _P
+
+    js = (_P(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    send = js[js.index("async send(url, extra)") :][:1600]
+    assert "drawer-open" in send
+    assert "stale: true" in send
+    drawer = js[js.index("function drawer()") :][:1000]
+    assert "this.stale" in drawer
+    assert "window.location.reload()" in drawer
+
+
+def test_the_panel_knows_its_own_url(client, agent):
+    a = _assignment()
+    body = client.get(reverse("dispatch_assign_panel", args=[a.reservation_id])).content.decode()
+    assert f"assignPanel('{reverse('dispatch_assign_panel', args=[a.reservation_id])}')" in body

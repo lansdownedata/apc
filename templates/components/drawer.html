@@ -6,7 +6,7 @@
   The fragment at `url` is fetched and injected — the drawer never knows what it holds.
 {% endcomment %}
 <div x-data="drawer()" x-show="open" x-cloak data-drawer class="fixed inset-0 z-[55]"
-     @drawer-open.window="load($event.detail.url)"
+     @drawer-open.window="load($event.detail.url, $event.detail.stale)"
      @keydown.escape.window="open && close()">
   <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>
   <aside class="absolute right-0 top-0 h-full w-full max-w-[520px] bg-surface shadow-2xl overflow-y-auto"

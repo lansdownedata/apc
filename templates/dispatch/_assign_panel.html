@@ -4,7 +4,7 @@
 {% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
      assignPanel()'s busy flag and post/resolve/confirmWithdraw methods. {% endcomment %}
-<div x-data="assignPanel()">
+<div x-data="assignPanel('{% url 'dispatch_assign_panel' trip.pk %}')">
   {% comment %} Trip sheet — read-only, in the same sections as the reservation editor.
        `stops` is the view's prefetched list; never trip.pickup / trip.dropoff here. {% endcomment %}
   <div class="flex items-center gap-2 flex-wrap mb-4">
