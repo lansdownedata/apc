@@ -1,9 +1,10 @@
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower
-from django.utils import timezone
+from django.utils import dateformat, timezone
 
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
@@ -140,6 +141,11 @@ class Lead(TimeStampedModel):
     wedding_name = models.CharField(max_length=200, blank=True)
     day_of_contact_name = models.CharField(max_length=200, blank=True)
     day_of_contact_phone = models.CharField(max_length=32, blank=True)
+    # The customer ticked "I agree to the terms" on the pay page (APC-55) — the client's
+    # contract. Stamped once by `services.accept_terms`, never overwritten. The version is
+    # `services.terms_version()`: a hash of the rendered public/_terms.html.
+    accepted_terms_at = models.DateTimeField(null=True, blank=True)
+    accepted_terms_version = models.CharField(max_length=16, blank=True)
 
     objects = LeadQuerySet.as_manager()
 
@@ -162,6 +168,15 @@ class Lead(TimeStampedModel):
         if self.status in (self.Status.ENGAGED, self.Status.BOOKED):
             return False
         return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
+
+    @property
+    def terms_accepted_on(self) -> str:
+        """The acceptance date in the order's own zone (its first trip's), e.g. `Sep 4, 2026`."""
+        if not self.accepted_terms_at:
+            return ""
+        first = self.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+        zone = (first.pickup_timezone if first else "") or settings.TIME_ZONE
+        return dateformat.format(self.accepted_terms_at.astimezone(ZoneInfo(zone)), "M j, Y")
 
     @property
     def effective_billing_contact(self) -> Contact:

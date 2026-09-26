@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("", views.settings_index, name="settings_index"),
     path("dispatch-alerts/", views.dispatch_alerts, name="dispatch_alerts"),
+    path("tasks/", views.task_settings, name="task_settings"),
     path("notifications/", views.notifications, name="notifications"),
     path("pricing/", views.pricing, name="pricing"),
     path("vehicle-types/", views.vehicle_type_list, name="vehicle_type_list"),

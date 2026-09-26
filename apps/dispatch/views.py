@@ -16,6 +16,8 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
+from apps.tasks import selectors as task_selectors
+from apps.tasks.selectors import attach_green_lit
 from apps.vendors.models import Vendor
 
 from . import selectors, services
@@ -178,9 +180,7 @@ def assign_options(request: HttpRequest, pk: int) -> JsonResponse:
     Assigning still goes through `dispatch_assign_driver` / `dispatch_assign`, so the
     rules — one active assignment, a booked lead, an active driver — stay in services.
     """
-    trip = get_object_or_404(
-        Reservation.objects.select_related("lead", "vehicle"), pk=pk
-    )
+    trip = get_object_or_404(Reservation.objects.select_related("lead", "vehicle"), pk=pk)
     active = services.active_assignment(trip)
     empty = {"drivers": [], "vehicles": []}
     in_house = selectors.in_house_options(trip) if active is None else empty
@@ -244,11 +244,14 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
         pk=pk,
     )
     assignment = services.active_assignment(trip)
+    attach_green_lit([trip])
+    checklist = task_selectors.checklist_for_trip(trip)
     return render(
         request,
         "dispatch/_assign_panel.html",
         {
             "trip": trip,
+            "checklist": checklist,
             "stops": list(trip.stops.all()),
             "assignment": assignment,
             "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,

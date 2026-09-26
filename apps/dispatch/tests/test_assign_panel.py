@@ -341,7 +341,9 @@ def test_panel_route_comes_from_one_stops_query(logged_in_client, django_assert_
     trip = _trip(stops=[f"Stop {i}" for i in range(8)])
     # Budget 10, not 9: selectors.in_house_options adds one query (the active-drivers read)
     # even when there are no drivers to show.
-    with django_assert_max_num_queries(10):
+    # +3 for the green-lit pill (APC-56): trip tasks, order blockers, open exceptions;
+    # +1 for the drawer's checklist (APC-54), +1 for the nav task badge (APC-53).
+    with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
 
@@ -438,7 +440,9 @@ def test_panel_flight_join_adds_no_query(logged_in_client, django_assert_max_num
     _with_flight(trip)
     # Budget 10, not 9: selectors.in_house_options adds one query (the active-drivers read)
     # even when there are no drivers to show.
-    with django_assert_max_num_queries(10):
+    # +3 for the green-lit pill (APC-56): trip tasks, order blockers, open exceptions;
+    # +1 for the drawer's checklist (APC-54), +1 for the nav task badge (APC-53).
+    with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
 
@@ -458,5 +462,7 @@ def test_panel_verified_flight_join_adds_no_query(logged_in_client, django_asser
     # Budget 10, not 9: the in-house fleet merge added one query to the drawer
     # (selectors.in_house_options' active-drivers read). The flight join itself
     # is still free — that is what this test pins.
-    with django_assert_max_num_queries(10):
+    # +3 for the green-lit pill (APC-56): trip tasks, order blockers, open exceptions;
+    # +1 for the drawer's checklist (APC-54), +1 for the nav task badge (APC-53).
+    with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))

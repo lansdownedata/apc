@@ -158,6 +158,25 @@
     </div>
   </div>
 
+  <!-- departments (APC-49): route work only, grant nothing -->
+  <div class="card mt-4">
+    <div class="flex items-center px-5 py-3.5 border-b border-line">
+      <i class="ti ti-users-group text-[16px] text-muted mr-2"></i>
+      <span class="font-display text-[15px] font-semibold text-ink">Departments</span>
+    </div>
+    <form method="post" class="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      {% csrf_token %}
+      <input type="hidden" name="departments_form" value="1">
+      <div class="flex-1 min-w-0">
+        {% include "components/searchable_select.html" with name="departments" field_id="f-departments" options=departments selected_list=user_departments multiple=1 search="off" placeholder="No departments" %}
+        <p class="text-[11.5px] text-muted mt-1">Tasks for these departments can be routed here. Departments don't change what this user can access.</p>
+      </div>
+      <button type="submit" class="btn-gold self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-semibold">
+        <i class="ti ti-check text-[15px]"></i> Save
+      </button>
+    </form>
+  </div>
+
   <!-- django messages (shown after redirect) -->
   {% comment %}
   Styled per level: a refused guard or a failed invite email arrives here as

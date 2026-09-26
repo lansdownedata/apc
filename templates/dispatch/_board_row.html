@@ -37,6 +37,7 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
     {% include "dispatch/_coverage_badge.html" with coverage=trip.coverage uniform=1 %}
     {% if trip.exception_tier %}<span class="ml-1 inline-flex items-center align-middle text-[10px] font-semibold px-1 py-0.5 rounded {% if trip.exception_tier == 'critical' %}chip-danger{% else %}chip-warn{% endif %}"
       title="{% for e in trip.open_exceptions %}{{ e.get_kind_display }}{% if not forloop.last %} · {% endif %}{% endfor %}"><i class="ti ti-alert-triangle text-[11px]"></i></span>{% endif %}
+    {% include "components/green_lit_pill.html" %}
   </td>
 
   {% comment %}

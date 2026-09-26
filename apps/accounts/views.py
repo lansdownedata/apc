@@ -10,7 +10,7 @@ from django.views.decorators.http import require_POST
 
 from . import services
 from .forms import AcceptInviteForm, UserInviteForm
-from .models import User
+from .models import Department, User
 from .permissions import owner_admin_required
 
 # Per-user capability toggles shown in the Access section. Add new ones here.
@@ -60,6 +60,10 @@ def user_detail(request, pk):
             except services.UserManagementError as exc:
                 messages.error(request, str(exc))
             return redirect("user_detail", pk=user.pk)
+        if "departments_form" in request.POST:
+            services.set_departments(user, request.POST.getlist("departments"))
+            messages.success(request, "Departments updated.")
+            return redirect("user_detail", pk=user.pk)
         cap = request.POST.get("capability")
         if cap in valid:
             setattr(user, cap, request.POST.get("enabled") == "on")
@@ -72,6 +76,8 @@ def user_detail(request, pk):
         {
             "target": user,
             "capabilities": CAPABILITIES,
+            "departments": Department.choices,
+            "user_departments": user.department_list,
             "nav": "users",
             "page_title": user.get_full_name() or user.username,
         },

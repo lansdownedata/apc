@@ -1,7 +1,7 @@
 {% comment %}
   Reusable searchable dropdown (Tom Select) — never a native <select> UI.
   Include with: name, field_id, options (iterable of value/label pairs, e.g. a
-  TextChoices.choices), selected, empty_label, placeholder, autosubmit, search, multiple.
+  TextChoices.choices), selected (or selected_list for a multiple), empty_label, placeholder, autosubmit, search, multiple.
 {% endcomment %}
 <select name="{{ name }}" id="{{ field_id|default:name }}" data-tom
         {% if placeholder %}data-placeholder="{{ placeholder }}"{% endif %}
@@ -12,6 +12,6 @@
         class="field">
   {% if empty_label %}<option value="">{{ empty_label }}</option>{% endif %}
   {% for value, label in options %}
-    <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" %} selected{% endif %}>{{ label }}</option>
+    <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" or value in selected_list %} selected{% endif %}>{{ label }}</option>
   {% endfor %}
 </select>

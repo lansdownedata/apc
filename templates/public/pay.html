@@ -53,6 +53,18 @@
          background:rgb(var(--gold)/.14);color:rgb(var(--gold))}
   .secure{margin-top:14px;font-size:11.5px;color:rgb(var(--muted));text-align:center}
   a.back{display:block;text-align:center;margin-top:14px;font-size:13px;color:rgb(var(--muted))}
+  /* Terms acceptance (APC-55) — the checkbox is the contract, the terms sit right under it. */
+  .consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0 0;font-size:13.5px;line-height:1.5;
+           color:rgb(var(--text));text-align:left;cursor:pointer}
+  .consent input{margin-top:3px;width:16px;height:16px;accent-color:rgb(var(--gold));flex-shrink:0}
+  .consent input:focus-visible{outline:2px solid rgb(var(--gold));outline-offset:2px}
+  .consent a{color:inherit;font-weight:600}
+  .tc{margin-top:8px;text-align:left}
+  .tc summary{font-size:12.5px;color:rgb(var(--muted));cursor:pointer}
+  .tc .body{max-height:220px;overflow:auto;margin-top:8px;padding:4px 12px;border:1px solid rgb(var(--border));border-radius:10px}
+  .tc p,.tc h3{margin:.6rem 0;text-align:left}
+  .tc h3{font-size:12px;color:rgb(var(--text));font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+  .tc p{font-size:12px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -131,8 +143,18 @@
           <input id="pay-zip" data-card-zip type="text" inputmode="numeric" autocomplete="postal-code" placeholder="20001">
         </div>
       </div>
+      {% if needs_terms %}
+      <label class="consent" for="accept-terms">
+        <input id="accept-terms" type="checkbox">
+        <span>I agree to the <a href="#terms" onclick="document.getElementById('terms').open=true">terms and conditions</a>.</span>
+      </label>
+      <details class="tc" id="terms">
+        <summary>Read the terms and conditions</summary>
+        <div class="body">{% include "public/_terms.html" %}</div>
+      </details>
+      {% endif %}
       <div id="pay-error" class="err"></div>
-      <button id="pay-button" type="button" class="btn-gold">
+      <button id="pay-button" type="button" class="btn-gold"{% if needs_terms %} disabled{% endif %}>
         {% if pay_kind == 'deposit' %}Authorize{% else %}Pay{% endif %} ${{ amount|floatformat:2|intcomma }}
       </button>
       {% if pay_kind == 'deposit' %}
@@ -149,6 +171,7 @@
           intentUrl: "{% url 'quote_pay_intent' token %}",
           completeUrl: "{% url 'quote_pay_complete' token %}",
           returnUrl: "{{ success_url|escapejs }}",
+          consent: {% if needs_terms %}document.getElementById("accept-terms"){% else %}null{% endif %},
         });
       </script>
     {% endif %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% load json_filters %}
+{% block content %}
+{% comment %}
+  The task queue (APC-53) — the layout signed off 2026-09-26. Four columns; row actions
+  post JSON (apps/tasks/views.py) and the row leaves the list in place. Due times are
+  pre-formatted in the trip's own zone (Task.due_display) — never `|date` here.
+{% endcomment %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6" x-data="taskQueue({ team: {{ team|json_string }}, mine: {% if filters.assignee == 'me' %}true{% else %}false{% endif %} })">
+
+  <div class="flex items-baseline gap-3.5 flex-wrap mb-4">
+    <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Tasks</h1>
+    <p class="text-[13px] text-muted">
+      {% if overdue_count %}<span class="font-semibold text-rose-600">{{ overdue_count }} overdue</span> · {% endif %}
+      {% if today_count %}<span class="font-semibold text-ink">{{ today_count }} due today</span> · {% endif %}
+      <span x-text="remaining">{{ rows|length }}</span> open{% if filters.assignee == 'me' %}, assigned to you{% endif %}
+    </p>
+  </div>
+
+  <form method="get" class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mb-3">
+    {% include "components/searchable_select.html" with name="department" field_id="f-department" options=department_options selected=filters.department empty_label="All departments" autosubmit=1 search="off" %}
+    {% include "components/searchable_select.html" with name="assignee" field_id="f-assignee" options=assignee_options selected=filters.assignee autosubmit=1 %}
+    {% include "components/searchable_select.html" with name="due" field_id="f-due" options=due_options selected=filters.due empty_label="Any time" autosubmit=1 search="off" %}
+    {% include "components/searchable_select.html" with name="kind" field_id="f-kind" options=kind_options selected=filters.kind empty_label="All tasks" autosubmit=1 %}
+  </form>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-auto max-h-[70vh]">
+      <table class="w-full text-[13px] min-w-[760px]">
+        <thead class="sticky top-0 z-10">
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[32%]">Task</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[28%]">Order / trip</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[18%]">Due</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide">Assignee</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="group border-t border-line/70 first:border-0 hover:bg-surface2" data-task="{{ r.pk }}">
+            <td class="px-4 py-3 align-top border-l-2 {% if r.is_overdue %}border-rose-500{% else %}border-transparent{% endif %}">
+              <div class="font-semibold text-ink">{{ r.label }}</div>
+              <div class="text-[12px] text-muted mt-0.5">{{ r.department_label }}</div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              {% if r.reservation_id %}
+              <a href="{% url 'dispatch_board' %}?day={{ r.reservation.pickup_date|date:'Y-m-d' }}&amp;trip={{ r.reservation_id }}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
+              {% else %}
+              <a href="{% url 'lead_detail' r.lead_id %}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
+              {% endif %}
+              <span class="text-[12px] text-muted">· {{ r.lead.contact.name }}</span>
+              <div class="text-[12px] text-muted mt-0.5">{% if r.reservation_id %}Trip{% else %}Order · first pickup{% endif %}{% if r.pickup_display %} {{ r.pickup_display }}{% endif %}</div>
+            </td>
+            <td class="px-4 py-3 align-top whitespace-nowrap">
+              {% if r.due_at %}
+              <div class="num {% if r.is_overdue %}font-semibold text-rose-600{% else %}text-ink{% endif %}">{{ r.due_display }}</div>
+              {% if r.is_overdue %}<span class="inline-block mt-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-danger">{{ r.due_at|timesince }} overdue</span>{% endif %}
+              {% else %}<span class="text-muted">No due date</span>{% endif %}
+            </td>
+            <td class="px-4 py-3 align-top">
+              <div class="flex items-center justify-between gap-3">
+                <span class="flex items-center gap-2 whitespace-nowrap" data-assignee>
+                  {% if r.assignee %}
+                  <span class="w-6 h-6 rounded-full bg-charcoal2 text-gold grid place-items-center text-[10px] font-bold uppercase">{{ r.assignee.get_full_name|default:r.assignee.username|slice:":2" }}</span>
+                  <span class="text-ink">{{ r.assignee.get_full_name|default:r.assignee.username }}</span>
+                  {% else %}<span class="text-muted">Unassigned</span>{% endif %}
+                </span>
+                <span class="flex gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity">
+                  <button type="button" class="btn-gold text-[12px] font-semibold rounded-lg px-2.5 py-1 disabled:opacity-50" :disabled="busy"
+                          @click="complete('{% url 'task_complete' r.pk %}', $el)">Complete</button>
+                  <button type="button" class="text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50" :disabled="busy"
+                          @click="skip('{% url 'task_skip' r.pk %}', {{ r.label|json_string }}, $el)">Skip</button>
+                  <button type="button" class="text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50" :disabled="busy"
+                          @click="reassign('{% url 'task_reassign' r.pk %}', {{ r.label|json_string }}, {{ r.assignee_id|default_if_none:'null' }}, $el)">Reassign</button>
+                </span>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+          <tr x-show="remaining === 0" {% if rows %}x-cloak{% endif %}>
+            <td colspan="4" class="px-4 py-14 text-center text-muted">
+              <div class="font-display text-[18px] font-semibold text-ink mb-1">Nothing due — nice.</div>
+              No open tasks match these filters.{% if filters.assignee == 'me' %} Pick "Anyone" to see the team's queue.{% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

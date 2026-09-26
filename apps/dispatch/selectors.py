@@ -9,6 +9,7 @@ from django.db.models import Count, Exists, F, OuterRef, Prefetch
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.reservations.models import TRIP_PHASE_BY_STATUS, Reservation, Stop
+from apps.tasks import selectors as task_selectors
 from apps.vendors.models import Vendor, VendorInsurance
 
 from .board_filters import BoardFilters
@@ -114,6 +115,8 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
                 queryset=DispatchException.objects.filter(resolved_at__isnull=True),
                 to_attr="open_exceptions",
             ),
+            # Green-lit (APC-56): the task rows behind the pill, two queries for the window.
+            *[p for p in task_selectors.task_prefetches() if p.to_attr != "open_exceptions"],
         )
         .order_by("pickup_date", F("pickup_time").asc(nulls_first=True), "pk")
     )
@@ -132,7 +135,7 @@ def board_trips(filters: BoardFilters) -> list[Reservation]:
         trip.exception_tier = max(
             (e.tier for e in trip.open_exceptions), key=_TIER_RANK.get, default=""
         )
-    return trips
+    return task_selectors.attach_green_lit(trips)
 
 
 def exception_tally(trips: list[Reservation]) -> dict[str, int]:

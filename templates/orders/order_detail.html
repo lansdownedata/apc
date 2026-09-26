@@ -65,6 +65,20 @@
     </div>
   </div>
 
+  {% comment %} Order-level checklist (APC-54). Trip-level checks live in the dispatch drawer
+     and behind each trip line's checklist icon. {% endcomment %}
+  <div class="card overflow-hidden mb-4">
+    <div class="flex items-center px-5 py-3.5 border-b border-line">
+      <i class="ti ti-checklist text-[17px] text-gold mr-2"></i>
+      <span class="font-display text-[15px] font-semibold text-ink">Checklist</span>
+      <span class="ml-2 text-[11px] text-muted">Order · trip checks are on each trip</span>
+    </div>
+    <div class="px-5 py-2">
+      {% url 'order_checklist' lead.pk as order_checklist_url %}
+      {% include "components/task_checklist.html" with tasks=order_tasks reload_url=order_checklist_url booked=is_booked %}
+    </div>
+  </div>
+
   {% include "payments/_money_card.html" %}
 
   {% comment %} The same editor the quote workspace opens — a trip is changed where it is

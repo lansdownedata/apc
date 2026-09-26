@@ -12,6 +12,7 @@
       #{{ trip.la_confirmation|default:trip.pk }}
     </span>
     {% include "dispatch/_coverage_badge.html" with coverage=coverage %}
+    {% include "components/green_lit_pill.html" %}
     {% comment %} The same editor the quote and the order page open — the board mounts it
        once and it fetches this trip's draft when asked (reservation_draft). {% endcomment %}
     <button type="button" @click="$dispatch('reservation-edit', { id: {{ trip.pk }}, drawerUrl: '{% url 'dispatch_assign_panel' trip.pk %}' })"
@@ -23,6 +24,16 @@
       Open {{ trip.lead.quote_no }} <i class="ti ti-arrow-up-right text-[14px]"></i>
     </a>
   </div>
+
+  {% if checklist %}
+  {% comment %} The trip's checklist (APC-54) — where dispatch ticks off trip-level checks.
+       Reloads itself from trip_checklist after each action. {% endcomment %}
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">Checklist</p>
+    {% url 'trip_checklist' trip.pk as checklist_url %}
+    {% include "components/task_checklist.html" with tasks=checklist reload_url=checklist_url %}
+  </section>
+  {% endif %}
 
   <section class="mb-4">
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Passenger</p>

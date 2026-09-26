@@ -13,10 +13,16 @@
         {% if archived_count %}<span class="text-line">·</span><span>{{ archived_count }} archived</span>{% endif %}
       </p>
     </div>
-    <a href="{% url 'vendor_create' %}"
-       class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0">
-      <i class="ti ti-plus text-[15px]"></i> New vendor
-    </a>
+    <div class="flex items-center gap-2 shrink-0">
+      <a href="{% url 'vendor_compliance' %}"
+         class="flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold">
+        <i class="ti ti-shield-check text-[15px]"></i> Compliance
+      </a>
+      <a href="{% url 'vendor_create' %}"
+         class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2">
+        <i class="ti ti-plus text-[15px]"></i> New vendor
+      </a>
+    </div>
   </div>
 
   <form method="get" class="flex flex-wrap items-center gap-2 mb-4">

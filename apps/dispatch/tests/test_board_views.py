@@ -158,7 +158,9 @@ def test_week_query_count_stays_flat(logged_in_client, django_assert_max_num_que
             t = _trip(monday + timedelta(days=offset), pickup_time=time(hour, 0))
             services.assign_direct(t, VendorFactory(), payout=1)
 
-    with django_assert_max_num_queries(16):
+    # +2 for the green-lit task prefetches (APC-56), +1 for the nav task badge (APC-53) —
+    # constant, not per trip.
+    with django_assert_max_num_queries(19):
         logged_in_client.get(reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat()})
 
 

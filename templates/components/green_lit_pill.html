@@ -1,0 +1,13 @@
+{% comment %}
+  Green-lit pill (APC-56) — `trip` must come through tasks.selectors.attach_green_lit
+  (board_trips does it), which sets `green_lit` and `task_blockers`. Nothing renders for a
+  trip with no tasks (booked before the task engine), so an untracked trip never reads
+  as either state.
+{% endcomment %}
+{% if trip.green_lit %}
+<span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-ok align-middle" title="Every checkpoint is done and nothing is open">
+  <i class="ti ti-circle-check text-[12px]"></i> Green-lit
+</span>
+{% elif trip.task_blockers %}
+<span class="inline-flex items-center gap-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-ring align-middle" title="Still open: {{ trip.task_blockers|join:' · ' }}">{{ trip.task_blockers|length }} open</span>
+{% endif %}

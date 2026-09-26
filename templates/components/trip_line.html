@@ -12,6 +12,8 @@
               reverse, remove). Needs an enclosing quoteWorkspace() scope.
               anything else: Edit only, as a link back to the workspace's editor.
   Optional:
+    res.task_rows / green_lit / task_blockers — from tasks.selectors.attach_green_lit (booked
+              orders only). Present means the checklist icon renders.
     res.coverage / res.active — from dispatch.selectors.attach_coverage. Present means the
               trip can be assigned (its lead is booked), so the driver chip renders; the
               including page must then also include components/drawer.html.
@@ -85,6 +87,17 @@
         {% comment %} Both screens open the same editor — it listens on the window, so the
            row does not have to sit in its scope. Everything after it builds a quote and
            belongs to the workspace alone. {% endcomment %}
+        {% comment %} This trip's checklist (APC-54) — present once the order is booked and the
+           view ran tasks.selectors.attach_green_lit. Green when the trip is green-lit,
+           otherwise how many checks are still open. {% endcomment %}
+        {% if res.task_rows %}
+        <button type="button" data-checklist-url="{% url 'trip_checklist' res.pk %}"
+                @click="openTripChecklist('{% url 'trip_checklist' res.pk %}', 'Checklist · {{ res.service_label|escapejs }}{% if res.pickup_date %} · {{ res.pickup_date|date:'M j' }}{% endif %}')"
+                class="inline-flex items-center gap-0.5 p-1 rounded transition-colors focus-gold {% if res.green_lit %}text-emerald-600 hover:text-emerald-700{% else %}text-muted hover:text-ink{% endif %}"
+                title="{% if res.green_lit %}Green-lit — every check done{% else %}{{ res.task_blockers|length }} open: {{ res.task_blockers|join:' · ' }}{% endif %}">
+          <i class="ti ti-checklist text-[15px]"></i>{% if not res.green_lit and res.task_blockers %}<span class="text-[10.5px] font-semibold num">{{ res.task_blockers|length }}</span>{% endif %}
+        </button>
+        {% endif %}
         <button type="button" @click="$dispatch('reservation-edit', { id: {{ res.pk }} })"
                 class="p-1 text-muted hover:text-ink transition-colors" title="{% if line.is_group %}Edit all {{ line.size }} trips{% else %}Edit reservation{% endif %}">
           <i class="ti ti-pencil text-[15px]"></i>

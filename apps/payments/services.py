@@ -145,6 +145,11 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             stripe_ref=intent.id,
             memo="Balance captured",
         )
+    # Not through record_payment, so it needs its own hook — or every cron-charged
+    # balance would leave "Final balance paid" open until the next run-tasks tick.
+    from apps.tasks import services as tasks
+
+    tasks.sync(plan.lead)
     return charge
 
 
@@ -355,7 +360,11 @@ def record_payment(
     # ENGAGED is here because capture is exactly the moment a confirmed order becomes a
     # booking (APC-26) — `confirm_order` routes through this same tail.
     if plan.lead.status in (Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED):
-        book_lead(plan.lead)
+        book_lead(plan.lead)  # syncs tasks itself
+    else:
+        from apps.tasks import services as tasks
+
+        tasks.sync(plan.lead)
     return charge
 
 

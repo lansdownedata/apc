@@ -17,7 +17,7 @@ from django.utils.http import urlsafe_base64_encode
 
 from apps.notifications.email import send_html_email
 
-from .models import User
+from .models import Department, User, UserDepartment
 
 
 class UserManagementError(Exception):
@@ -160,3 +160,14 @@ def revoke_invite(*, target: User) -> None:
     """Delete a pending user. They never signed in and own no data."""
     _assert_pending(target)
     target.delete()
+
+
+def set_departments(user: User, departments: list[str]) -> None:
+    """Replace `user`'s department memberships with `departments`. Unknown values are
+    dropped rather than refused — the picker only offers real ones."""
+    wanted = {d for d in departments if d in Department.values}
+    user.departments.exclude(department__in=wanted).delete()
+    have = set(user.departments.values_list("department", flat=True))
+    UserDepartment.objects.bulk_create(
+        UserDepartment(user=user, department=d) for d in Department.values if d in wanted - have
+    )

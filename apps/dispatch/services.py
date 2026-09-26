@@ -85,7 +85,7 @@ def _claim(
         if reservation.assignments.active().exists():
             raise AssignmentError(f"Trip #{reservation.pk} already has an active assignment.")
         resolved = timezone.now() if status == Assignment.Status.CONFIRMED else None
-        assignment = Assignment.objects.create(
+        assignment = Assignment(
             reservation=reservation,
             vendor=vendor,
             driver=driver,
@@ -96,9 +96,20 @@ def _claim(
             channel=channel,
             resolved_at=resolved,
         )
+        # In-house coverage carries its driver from the start, so its info is on file now.
+        assignment.stamp_driver_info()
+        assignment.save()
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
+    _sync_tasks(reservation)
     return assignment
+
+
+def _sync_tasks(reservation: Reservation) -> None:
+    """Coverage changed — let the trip's tasks close (or a system-closed one reopen)."""
+    from apps.tasks import services as tasks
+
+    tasks.ensure_tasks(reservation.lead)
 
 
 def _on_assignment_confirmed(assignment: Assignment) -> None:
@@ -275,6 +286,7 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
         _on_assignment_confirmed(assignment)
     elif was_confirmed and not assignment.is_in_house:
         _on_assignment_released(assignment.reservation)
+    _sync_tasks(assignment.reservation)
     return assignment
 
 
@@ -341,19 +353,22 @@ def set_driver_info(
     assignment.driver_cell = cell
     assignment.vehicle_desc = vehicle_desc
     assignment.vehicle_number = vehicle_number
-    assignment.save(
-        update_fields=["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
-    )
+    fields = ["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
+    if assignment.stamp_driver_info():
+        fields.append("driver_info_at")
+    assignment.save(update_fields=fields)
     from apps.messaging import touchpoints
 
     touchpoints.trigger_driver_released(assignment)
+    _sync_tasks(assignment.reservation)
     return assignment
 
 
 def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Assignment]:
     """Withdraw whatever active assignment each of `reservations` still has.
 
-    Called when trips stop needing coverage — a cancelled order, a deleted trip. The board
+    Called when trips stop needing coverage — a cancelled order, a deleted trip. Their
+    tasks go not-applicable here too (APC-51), so coverage and task work stay in step. The board
     excludes both, and no screen lists assignments by vendor, so an assignment left active
     is one no dispatcher can reach while the affiliate is still holding a trip that no
     longer exists. One query for the whole set rather than a lookup per trip.
@@ -366,6 +381,10 @@ def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Ass
     skipped; the rest of the batch still releases, and the return value is only the
     assignments that actually did.
     """
+    reservations = list(reservations)
+    from apps.tasks import services as tasks
+
+    tasks.cancel_for_trips(reservations)
     released = []
     for assignment in Assignment.objects.active().filter(reservation__in=reservations):
         try:

@@ -1,0 +1,14 @@
+{% autoescape off %}Overdue tasks — {{ now|date:"D M j" }}
+
+{{ count }} task{{ count|pluralize }} past due, oldest first.
+{% for department, lines in groups %}
+{{ department }}
+{% for l in lines %}  {{ l.label }} — {{ l.quote_no }} · {{ l.customer }}{% if l.trip_id %} · trip #{{ l.trip_id }}{% endif %}
+    due {{ l.due|default:"—" }}{% if l.assignee %} · {{ l.assignee.get_full_name|default:l.assignee.username }}{% else %} · unassigned{% endif %}
+{% endfor %}{% endfor %}
+{% if queue_url %}
+Task queue: {{ queue_url }}
+{% endif %}
+--
+{{ company_name }}
+{% endautoescape %}

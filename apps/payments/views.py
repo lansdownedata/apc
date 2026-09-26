@@ -23,6 +23,7 @@ from apps.messaging.models import Message
 from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations.models import Reservation, Stop
+from apps.tasks import selectors as task_selectors
 
 from . import ledger, reports, services, webhooks
 
@@ -68,7 +69,9 @@ def order_detail(request, lead_id):
     if lead.status != Lead.Status.BOOKED:
         return redirect("lead_detail", pk=lead.pk)
 
-    reservations = dispatch_selectors.attach_coverage(lead.reservations.all())
+    reservations = task_selectors.attach_green_lit(
+        dispatch_selectors.attach_coverage(lead.reservations.all())
+    )
     plan = getattr(lead, "payment", None)
     return render(
         request,
@@ -80,6 +83,8 @@ def order_detail(request, lead_id):
             # A linked set is several trips in the database and one line here (APC-14).
             "reservation_lines": groups.as_lines(reservations),
             "reservations": reservations,
+            "order_tasks": task_selectors.checklist_for_order(lead),
+            "is_booked": True,
             # The same trip editor the quote workspace opens, fed identically.
             **reservation_editor.editor_context(request, lead, reservations),
             **reports.authorized_hold(lead),
