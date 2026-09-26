@@ -56,7 +56,7 @@ def test_the_grid_remembers_sort_and_exceptions_first_next_to_density():
 
 def test_restoring_a_sort_re_sorts_the_grid():
     """Storing the column without re-applying it would show the arrow and the old order."""
-    body = GRID[GRID.index('restorePrefs() {') :][:900]
+    body = GRID[GRID.index("restorePrefs() {") :][:900]
     assert "this.apply()" in body
 
 

@@ -77,7 +77,8 @@ def test_the_payout_starts_on_what_the_trip_pays_its_vendor(client, agent):
 def test_a_covered_trip_says_who_has_it(client, agent):
     trip = _trip()
     AssignmentFactory(
-        reservation=trip, vendor=VendorFactory(name="Reston Coach Co"),
+        reservation=trip,
+        vendor=VendorFactory(name="Reston Coach Co"),
         status=Assignment.Status.CONFIRMED,
     )
     body = _options(client, trip).json()
@@ -141,8 +142,10 @@ def test_the_editor_loads_coverage_only_when_it_opens(client, agent):
 def test_a_gnet_offer_is_flagged_so_the_confirm_can_say_so(client, agent):
     trip = _trip()
     AssignmentFactory(
-        reservation=trip, vendor=VendorFactory(name="Reston Coach Co"),
-        status=Assignment.Status.OFFERED, channel=Assignment.Channel.GNET,
+        reservation=trip,
+        vendor=VendorFactory(name="Reston Coach Co"),
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
     )
     assert _options(client, trip).json()["isGnet"] is True
 
