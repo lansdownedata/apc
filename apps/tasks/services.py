@@ -254,3 +254,11 @@ def reopen(task: Task, user) -> Task:
         update_fields=["status", "completed_at", "completed_by", "escalated_tier", "updated_at"]
     )
     return task
+
+
+def reassign(task: Task, assignee) -> Task:
+    """Hand the task to `assignee` (None = unassigned). The escalation tier is kept: a
+    reset would re-send tier 2 to every admin, and the new owner sees it in their queue."""
+    task.assignee = assignee
+    task.save(update_fields=["assignee", "updated_at"])
+    return task

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -205,6 +205,24 @@ class Task(TimeStampedModel):
         """`Sep 4, 7:30 AM EDT` in the task's trip zone, abbreviation always shown. Use
         this, never `due_at|date` — the date filter renders in TIME_ZONE, not the trip's."""
         return format_local(self.due_local)
+
+    @property
+    def department_label(self) -> str:
+        return self.get_department_display()
+
+    @property
+    def pickup_display(self) -> str:
+        """The pickup this task is about, in that trip's zone: its own trip, or for an
+        order-level task the order's first trip (from `queue.queue_for`'s annotations —
+        without them an order-level row shows nothing rather than querying)."""
+        if self.reservation_id:
+            at = self.reservation.pickup_at
+            return format_local(at) if at else ""
+        day = getattr(self, "order_pickup_date", None)
+        if day is None:
+            return ""
+        clock = getattr(self, "order_pickup_time", None) or time(0, 0)
+        return format_local(datetime.combine(day, clock, tzinfo=ZoneInfo(self.tz_name)))
 
     @property
     def is_closed(self) -> bool:
