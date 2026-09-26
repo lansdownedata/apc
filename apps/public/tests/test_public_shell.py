@@ -224,3 +224,16 @@ def test_the_sms_opt_in_is_present_and_never_pre_ticked(db):
     assert 'x-model="form.sms_consent"' in html
     checkbox = html.split('x-model="form.sms_consent"')[0].rsplit("<input", 1)[1]
     assert "checked" not in checkbox
+
+
+def test_public_shell_links_favicons(db):
+    html = Client().get("/").content.decode()
+    assert '<link rel="icon" href="/static/brand/favicon.svg"' in html
+    assert "/static/brand/favicon-dark.svg" in html
+    assert '<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">' in html
+
+
+def test_favicon_ico_redirects_to_the_crest(db):
+    resp = Client().get("/favicon.ico")
+    assert resp.status_code == 301
+    assert resp["Location"] == "/static/brand/favicon-32.png"

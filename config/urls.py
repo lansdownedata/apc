@@ -4,8 +4,9 @@ from django.conf import settings
 from django.contrib import admin
 from django.contrib.sitemaps.views import sitemap
 from django.http import JsonResponse
+from django.templatetags.static import static
 from django.urls import include, path, re_path
-from django.views.generic import TemplateView
+from django.views.generic import RedirectView, TemplateView
 
 from apps.accounts.views import accept_invite
 from apps.core.cron import run_job
@@ -92,6 +93,12 @@ urlpatterns = [
         "robots.txt",
         TemplateView.as_view(template_name="robots.txt", content_type="text/plain"),
         name="robots",
+    ),
+    # browsers request /favicon.ico on their own when a response carries no icon link
+    path(
+        "favicon.ico",
+        RedirectView.as_view(url=static("brand/favicon-32.png"), permanent=True),
+        name="favicon",
     ),
     # public marketing site at root — added in Task 2 (MUST stay last)
     path("", include("apps.public.urls")),  # public marketing site — keep last
