@@ -5,15 +5,83 @@ any task; `completed_by` records who did.
 """
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, JsonResponse
-from django.shortcuts import get_object_or_404
-from django.views.decorators.http import require_POST
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
+from django.views.decorators.http import require_GET, require_POST
 
-from apps.accounts.models import User
+from apps.accounts.models import Department, User
+from apps.leads.models import Lead
+from apps.reservations.models import Reservation
 
-from . import services
+from . import selectors, services
+from .definitions import KIND_CHOICES
 from .models import Task
-from .queue import row_json
+from .queue import QueueFilters, end_of_local_day, queue_for, row_json
+
+_ASSIGNEE_SCOPES = [("me", "Me"), ("anyone", "Anyone"), ("unassigned", "Unassigned")]
+_DUE_WINDOWS = [("overdue", "Overdue"), ("today", "Due today"), ("week", "Next 7 days")]
+
+
+def _team() -> list[tuple[int, str]]:
+    users = User.objects.filter(is_active=True).order_by("first_name", "username")
+    return [(u.pk, u.get_full_name() or u.username) for u in users]
+
+
+@login_required
+@require_GET
+def task_queue(request: HttpRequest) -> HttpResponse:
+    """What I owe, worst first (APC-53). The layout Moe signed off 2026-09-26."""
+    filters = QueueFilters.from_query(request.GET)
+    rows = list(queue_for(request.user, filters))
+    end_of_today = end_of_local_day()
+    team = _team()
+    return render(
+        request,
+        "tasks/queue.html",
+        {
+            "nav": "tasks",
+            "page_title": "Tasks",
+            "rows": rows,
+            "filters": filters,
+            "overdue_count": sum(1 for r in rows if r.is_overdue),
+            "today_count": sum(
+                1 for r in rows if not r.is_overdue and r.due_at and r.due_at < end_of_today
+            ),
+            "department_options": Department.choices,
+            "assignee_options": _ASSIGNEE_SCOPES + [(str(pk), name) for pk, name in team],
+            "due_options": _DUE_WINDOWS,
+            "kind_options": KIND_CHOICES,
+            "team": team,
+        },
+    )
+
+
+@login_required
+@require_GET
+def trip_checklist(request: HttpRequest, pk: int) -> HttpResponse:
+    """One trip's checklist as a fragment — the trip-line icon's modal reloads from it."""
+    trip = get_object_or_404(Reservation.objects.only("pk", "lead_id"), pk=pk)
+    return render(
+        request,
+        "tasks/_checklist.html",
+        {"tasks": selectors.checklist_for_trip(trip), "reload_url": request.path},
+    )
+
+
+@login_required
+@require_GET
+def order_checklist(request: HttpRequest, pk: int) -> HttpResponse:
+    lead = get_object_or_404(Lead.objects.only("pk", "status"), pk=pk)
+    return render(
+        request,
+        "tasks/_checklist.html",
+        {
+            "tasks": selectors.checklist_for_order(lead),
+            "reload_url": reverse("order_checklist", args=[lead.pk]),
+            "booked": lead.status == Lead.Status.BOOKED,
+        },
+    )
 
 
 def _task(pk: int) -> Task:

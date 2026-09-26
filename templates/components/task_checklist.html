@@ -1,0 +1,53 @@
+{% comment %}
+  components/task_checklist.html — ONE checklist, used in the dispatch drawer, the
+  trip-line checklist modal and the order checklist card (APC-54).
+
+  Requires: tasks (Task rows, already in display order), reload_url (a GET that re-renders
+  this partial — tasks.views.trip_checklist / order_checklist).
+  Optional: booked (False shows the "No tasks yet" state for an unbooked quote).
+
+  Actions post to the APC-53 endpoints and then re-fetch this partial, so every place it
+  lives stays in step with the server. Skip takes its note inline: the checklist may itself
+  be inside $store.modal, which can't open a second one. Due times come pre-formatted in
+  the trip's zone (Task.due_display).
+{% endcomment %}
+<div x-data="taskChecklist('{{ reload_url }}')" class="text-[13px]" data-checklist="{{ reload_url }}">
+  {% for t in tasks %}
+  <div class="flex items-start gap-3 py-2 {% if not forloop.first %}border-t border-line/60{% endif %}">
+    <span class="mt-0.5 w-4 h-4 rounded-[5px] grid place-items-center shrink-0 {% if t.status == 'done' %}bg-emerald-600 text-white{% elif t.is_closed %}bg-line text-muted{% else %}ring-1 ring-inset ring-line{% endif %}">
+      {% if t.status == 'done' %}<i class="ti ti-check text-[11px]"></i>{% elif t.is_closed %}<i class="ti ti-minus text-[11px]"></i>{% endif %}
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="{% if t.is_closed %}text-muted{% else %}font-medium text-ink{% endif %}">{{ t.label }}</div>
+      <div class="text-[11.5px] {% if t.is_overdue_now %}text-rose-600 font-medium{% else %}text-muted{% endif %}">
+        {% if t.status == 'done' %}{% if t.closed_by_system %}auto{% else %}{{ t.completed_by.get_full_name|default:t.completed_by.username }}{% endif %}{% if t.completed_at %} · {{ t.completed_display }}{% endif %}
+        {% elif t.status == 'skipped' %}Skipped by {{ t.completed_by.get_full_name|default:t.completed_by.username|default:"—" }}{% if t.note %} · “{{ t.note }}”{% endif %}
+        {% elif t.status == 'not_applicable' %}No longer applies
+        {% elif t.status == 'scheduled' %}Opens {{ t.opens_display }}
+        {% elif t.due_at %}Due {{ t.due_display }}{% if t.is_overdue_now %} · overdue{% endif %}
+        {% else %}Open{% endif %}
+      </div>
+      {% if not t.is_closed %}
+      <div x-show="skipping === {{ t.pk }}" x-cloak class="mt-2 flex flex-col sm:flex-row gap-2">
+        <input type="text" x-model="note" id="skip-note-{{ t.pk }}" placeholder="Why skip it? (required)" class="field flex-1 text-[12.5px]" @keydown.enter.prevent="skipNow('{% url 'task_skip' t.pk %}')">
+        <div class="flex gap-1.5">
+          <button type="button" class="text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink disabled:opacity-50" :disabled="busy || !note.trim()" @click="skipNow('{% url 'task_skip' t.pk %}')">Skip task</button>
+          <button type="button" class="text-[12px] text-muted hover:text-ink px-1.5" @click="skipping = null">Cancel</button>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="flex gap-1.5 shrink-0" x-show="skipping !== {{ t.pk }}">
+      {% if t.is_closed %}
+        {% if t.status != 'not_applicable' %}<button type="button" class="text-[11.5px] text-muted hover:text-ink px-1 disabled:opacity-50" :disabled="busy" @click="act('{% url 'task_reopen' t.pk %}')">Reopen</button>{% endif %}
+      {% else %}
+        <button type="button" class="btn-gold text-[12px] font-semibold rounded-lg px-2.5 py-1 disabled:opacity-50" :disabled="busy" @click="act('{% url 'task_complete' t.pk %}')">Complete</button>
+        <button type="button" class="text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50" :disabled="busy" @click="skipping = {{ t.pk }}; note = ''; $nextTick(() => document.getElementById('skip-note-{{ t.pk }}')?.focus())">Skip</button>
+      {% endif %}
+    </div>
+  </div>
+  {% empty %}
+  <p class="py-3 text-muted">{% if booked is False %}No tasks yet — they start when the order is booked.{% else %}No tasks yet.{% endif %}</p>
+  {% endfor %}
+  <p x-show="error" x-cloak x-text="error" class="mt-2 text-[12px] text-rose-600"></p>
+</div>

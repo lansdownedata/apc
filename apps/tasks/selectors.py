@@ -112,3 +112,31 @@ def attach_green_lit(trips) -> list[Reservation]:
         trip.task_blockers = blockers
         trip.green_lit = bool(trip.task_rows) and not blockers
     return trips
+
+
+def _in_registry_order(tasks) -> list[Task]:
+    return sorted(tasks, key=lambda t: (_ORDER.get(t.kind, 99), t.pk))
+
+
+def checklist_for_trip(reservation: Reservation) -> list[Task]:
+    """What the drawer and the trip-line checklist show (APC-54): the trip's own tasks,
+    then the order-level tasks that hold up its green-lit. One query."""
+    qs = (
+        Task.objects.filter(
+            Q(reservation_id=reservation.pk)
+            | Q(lead_id=reservation.lead_id, reservation__isnull=True, kind__in=ORDER_BLOCKERS)
+        )
+        .select_related("reservation", "completed_by", "assignee")
+        .with_order_tz()
+    )
+    return _in_registry_order(qs)
+
+
+def checklist_for_order(lead) -> list[Task]:
+    """The order-level checklist on the workspace and order page. One query."""
+    qs = (
+        Task.objects.filter(lead_id=lead.pk, reservation__isnull=True)
+        .with_order_tz()
+        .select_related("completed_by", "assignee")
+    )
+    return _in_registry_order(qs)

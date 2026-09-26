@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import models
 from django.db.models import OuterRef, Subquery
-from django.utils import dateformat
+from django.utils import dateformat, timezone
 
 from apps.accounts.models import Department
 from apps.core.models import TimeStampedModel
@@ -205,6 +205,22 @@ class Task(TimeStampedModel):
         """`Sep 4, 7:30 AM EDT` in the task's trip zone, abbreviation always shown. Use
         this, never `due_at|date` — the date filter renders in TIME_ZONE, not the trip's."""
         return format_local(self.due_local)
+
+    @property
+    def opens_display(self) -> str:
+        return format_local(self.local(self.opens_at))
+
+    @property
+    def completed_display(self) -> str:
+        return format_local(self.local(self.completed_at))
+
+    @property
+    def is_overdue_now(self) -> bool:
+        return (
+            self.status == self.Status.OPEN
+            and self.due_at is not None
+            and self.due_at < timezone.now()
+        )
 
     @property
     def department_label(self) -> str:

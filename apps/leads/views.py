@@ -45,6 +45,7 @@ from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
+from apps.tasks import selectors as task_selectors
 
 from . import services
 from .forms import NewLeadForm, PortalWeddingForm
@@ -211,6 +212,8 @@ def lead_detail(request, pk):
         # Only a booked trip can be assigned (`dispatch.services._claim`), so only then
         # does a trip carry `.coverage` and only then does the line render a driver chip.
         dispatch_selectors.attach_coverage(reservations)
+        # The trip line's checklist icon (APC-54) — three queries for the whole order.
+        task_selectors.attach_green_lit(reservations)
     # A linked set is several trips in the database and one line on the screen (APC-14).
     reservation_lines = groups.as_lines(reservations)
 
@@ -266,6 +269,8 @@ def lead_detail(request, pk):
         "channels": Channel.choices,
         "agents": services.agent_options(),
         "reservation_lines": reservation_lines,
+        "order_tasks": task_selectors.checklist_for_order(lead),
+        "is_booked": lead.status == Lead.Status.BOOKED,
         # Everything the shared trip editor needs — the order page feeds it the same way.
         **reservation_editor.editor_context(
             request, lead, reservations, trip_defaults=_wedding_trip_defaults(wedding_state)

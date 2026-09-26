@@ -25,13 +25,13 @@ TRIP_KIND_KEYS = frozenset(k.key for k in KINDS.values() if k.level == Level.TRI
 DUE_WINDOWS = ("overdue", "today", "week")
 
 
-def _end_of_local_day(days_ahead: int = 0) -> datetime:
+def end_of_local_day(days_ahead: int = 0) -> datetime:
     day = timezone.localdate() + timedelta(days=days_ahead + 1)
     return datetime.combine(day, time(0, 0), tzinfo=timezone.get_current_timezone())
 
 
 def _start_of_local_day() -> datetime:
-    return _end_of_local_day(-1)
+    return end_of_local_day(-1)
 
 
 @dataclass(frozen=True)
@@ -98,9 +98,9 @@ def queue_for(user, filters: QueueFilters):
     if filters.due == "overdue":
         qs = qs.filter(due_at__lt=now)
     elif filters.due == "today":
-        qs = qs.filter(due_at__gte=_start_of_local_day(), due_at__lt=_end_of_local_day())
+        qs = qs.filter(due_at__gte=_start_of_local_day(), due_at__lt=end_of_local_day())
     elif filters.due == "week":
-        qs = qs.filter(due_at__gte=now, due_at__lt=_end_of_local_day(7))
+        qs = qs.filter(due_at__gte=now, due_at__lt=end_of_local_day(7))
     return qs.order_by("-is_overdue", F("due_at").asc(nulls_last=True), "pk")
 
 
@@ -109,7 +109,7 @@ def badge_count(user) -> int:
     if not getattr(user, "is_authenticated", False):
         return 0
     return Task.objects.filter(
-        Q(status=Task.Status.OPEN), assignee=user, due_at__lt=_end_of_local_day()
+        Q(status=Task.Status.OPEN), assignee=user, due_at__lt=end_of_local_day()
     ).count()
 
 

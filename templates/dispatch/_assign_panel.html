@@ -25,6 +25,16 @@
     </a>
   </div>
 
+  {% if checklist %}
+  {% comment %} The trip's checklist (APC-54) — where dispatch ticks off trip-level checks.
+       Reloads itself from trip_checklist after each action. {% endcomment %}
+  <section class="mb-4">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">Checklist</p>
+    {% url 'trip_checklist' trip.pk as checklist_url %}
+    {% include "components/task_checklist.html" with tasks=checklist reload_url=checklist_url %}
+  </section>
+  {% endif %}
+
   <section class="mb-4">
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Passenger</p>
     <p class="font-semibold text-ink text-[14px]">{{ trip.lead.contact.name }}</p>

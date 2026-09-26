@@ -8,6 +8,7 @@ from django.utils.functional import SimpleLazyObject
 from apps.core.us_states import US_STATES
 from apps.messaging.models import Conversation, Message
 from apps.notifications.models import Notification
+from apps.tasks import queue as task_queue
 
 # Screens lifted from the prototype that aren't wired up yet — shown dimmed.
 NAV_SOON = []
@@ -106,6 +107,8 @@ def chrome(request):
         "unread_notifications": list(unread.order_by("-created_at")[:8]),
         "unread_count": unread.count(),
         "inbox_unread": _inbox_unread_count(),
+        # My overdue + due-today tasks (APC-53) — one COUNT, however many tasks exist.
+        "task_badge": task_queue.badge_count(request.user),
         "airline_options": SimpleLazyObject(_airline_options),
         "private_airline_id": SimpleLazyObject(_private_airline_id),
         "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),

@@ -16,6 +16,7 @@ from apps.leads.models import Lead, VehicleType
 from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
+from apps.tasks import selectors as task_selectors
 from apps.tasks.selectors import attach_green_lit
 from apps.vendors.models import Vendor
 
@@ -244,11 +245,13 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
     )
     assignment = services.active_assignment(trip)
     attach_green_lit([trip])
+    checklist = task_selectors.checklist_for_trip(trip)
     return render(
         request,
         "dispatch/_assign_panel.html",
         {
             "trip": trip,
+            "checklist": checklist,
             "stops": list(trip.stops.all()),
             "assignment": assignment,
             "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,

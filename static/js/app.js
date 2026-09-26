@@ -261,6 +261,147 @@ async function postForm(url, data = {}) {
   return json;
 }
 
+/* -------------------------------------------------- tasks (APC-53 / APC-54) */
+/* The queue page. Each action posts to the shared JSON endpoints; a handled row leaves
+   the list in place. Skip and Reassign go through $store.modal — never a native dialog. */
+function taskQueue(opts = {}) {
+  return {
+    busy: false,
+    remaining: 0,
+    team: opts.team || [],
+    init() {
+      this.remaining = this.$root.querySelectorAll("tr[data-task]").length;
+    },
+    _done(el, title) {
+      const row = el.closest("tr[data-task]");
+      if (row) row.remove();
+      this.remaining = this.$root.querySelectorAll("tr[data-task]").length;
+      Alpine.store("toast").push({ type: "success", title });
+    },
+    async _post(url, data) {
+      this.busy = true;
+      try {
+        return await postForm(url, data);
+      } finally {
+        this.busy = false;
+      }
+    },
+    async complete(url, el) {
+      try {
+        await this._post(url, {});
+        this._done(el, "Task completed");
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "Could not complete the task" });
+      }
+    },
+    skip(url, label, el) {
+      Alpine.store("modal").show({
+        title: "Skip this task?",
+        message: `${label} — say why. The note stays on the task so the next person knows.`,
+        html: '<textarea id="task-skip-note" rows="3" class="field w-full mt-3" placeholder="e.g. Single transfer, no itinerary needed"></textarea>',
+        confirmText: "Skip task",
+        variant: "gold",
+        onConfirm: async () => {
+          const note = (document.getElementById("task-skip-note") || {}).value || "";
+          if (!note.trim()) {
+            Alpine.store("toast").push({ type: "danger", title: "Add a note to skip a task" });
+            return;
+          }
+          try {
+            await this._post(url, { note });
+            this._done(el, "Task skipped");
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Could not skip the task" });
+          }
+        },
+      });
+      setTimeout(() => document.getElementById("task-skip-note")?.focus(), 60);
+    },
+    reassign(url, label, current, el) {
+      const options = ['<option value="">Unassigned</option>']
+        .concat(this.team.map(([id, name]) =>
+          `<option value="${id}"${id === current ? " selected" : ""}>${escapeHtml(name)}</option>`))
+        .join("");
+      Alpine.store("modal").show({
+        title: "Reassign task",
+        message: label,
+        html: `<div class="mt-3"><select id="task-reassign" data-tom class="field">${options}</select></div>`,
+        confirmText: "Reassign",
+        variant: "gold",
+        onConfirm: async () => {
+          const pick = document.getElementById("task-reassign");
+          try {
+            const res = await this._post(url, { assignee: pick ? pick.value : "" });
+            const who = res.task.assignee || "Unassigned";
+            if (opts.mine) {
+              this._done(el, `Reassigned to ${who}`);
+            } else {
+              const cell = el.closest("tr[data-task]")?.querySelector("[data-assignee]");
+              if (cell) cell.textContent = who;
+              Alpine.store("toast").push({ type: "success", title: `Reassigned to ${who}` });
+            }
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Could not reassign" });
+          }
+        },
+      });
+      setTimeout(() => initTomSelects(document), 60);
+    },
+  };
+}
+window.taskQueue = taskQueue;
+
+/* One checklist (components/task_checklist.html). After any action it re-fetches its own
+   fragment and swaps itself out, so the drawer, the trip modal and the order card always
+   show what the server has. Skip is inline — this may already be inside $store.modal. */
+function taskChecklist(reloadUrl) {
+  return {
+    busy: false,
+    skipping: null,
+    note: "",
+    error: "",
+    async act(url, data = {}) {
+      this.busy = true;
+      this.error = "";
+      try {
+        await postForm(url, data);
+        await this.reload();
+      } catch (e) {
+        this.error = e.message || "That didn't save. Try again.";
+        this.busy = false;
+      }
+    },
+    skipNow(url) {
+      if (!this.note.trim()) return;
+      return this.act(url, { note: this.note });
+    },
+    async reload() {
+      const resp = await fetch(reloadUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+      if (!resp.ok) throw new Error("Couldn't refresh the checklist.");
+      const holder = document.createElement("div");
+      holder.innerHTML = (await resp.text()).trim();
+      const fresh = holder.querySelector("[data-checklist]");
+      if (fresh) this.$root.replaceWith(fresh);
+      window.dispatchEvent(new CustomEvent("tasks-changed", { detail: { url: reloadUrl } }));
+    },
+  };
+}
+window.taskChecklist = taskChecklist;
+
+/* The checklist icon on a trip line opens that trip's checklist in the modal. */
+async function openTripChecklist(url, title) {
+  const modal = Alpine.store("modal");
+  modal.show({ title, html: '<p class="text-muted text-[13px] mt-3">Loading…</p>', confirmText: "Done", showCancel: false });
+  try {
+    const resp = await fetch(url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+    if (!resp.ok) throw new Error();
+    modal.html = `<div class="mt-3 text-left">${await resp.text()}</div>`;
+  } catch (e) {
+    modal.html = '<p class="text-rose-600 text-[13px] mt-3">The checklist didn\'t load. Close this and try again.</p>';
+  }
+}
+window.openTripChecklist = openTripChecklist;
+
 /* -------------------------------------------------- staff card payment (Stripe Payment Element) */
 function adminCardPay(opts) {
   return {
@@ -1690,6 +1831,15 @@ function dispatchGrid(opts = {}) {
       this.total = this.shown = this.rows().length;
       this.restorePrefs();
       this.rememberOrRestoreWindow();
+      this.openLinkedTrip();
+    },
+
+    /* `?trip=<pk>` (the task queue's trip links) opens that trip's drawer on arrival. */
+    openLinkedTrip() {
+      const id = new URLSearchParams(window.location.search).get("trip");
+      if (!id || !/^\d+$/.test(id)) return;
+      const tr = this.$root.querySelector(`tr[data-trip="${id}"]`);
+      if (tr) this.$nextTick(() => this.open(tr));
     },
 
     /* ---- what costs nothing: sort, exceptions-first, density ------------------ */
@@ -1736,6 +1886,8 @@ function dispatchGrid(opts = {}) {
       return (state.view || "day") === "day" && !state.vehicle && !state.customer && !state.f;
     },
     rememberOrRestoreWindow() {
+      // A deep link to one trip is a visit, not a choice of window — don't remember it.
+      if (new URLSearchParams(window.location.search).has("trip")) return;
       if (window.location.search) {
         if (!this.isDefault(this.boardState)) this._write("dispatch.window", this.boardState);
         else this._write("dispatch.window", null);
