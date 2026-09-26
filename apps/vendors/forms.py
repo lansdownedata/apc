@@ -101,8 +101,19 @@ class VendorInsuranceForm(forms.ModelForm):
 class VendorDocumentForm(forms.ModelForm):
     class Meta:
         model = VendorDocument
-        fields = ["label", "file"]
+        fields = ["kind", "label", "file"]
         widgets = {
+            "kind": forms.Select(
+                attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}
+            ),
             "label": forms.TextInput(attrs=_TEXT),
             "file": forms.FileInput(attrs={"class": "sr-only"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Optional on the form: an upload with no kind picked is filed as Other.
+        self.fields["kind"].required = False
+
+    def clean_kind(self) -> str:
+        return self.cleaned_data.get("kind") or VendorDocument.Kind.OTHER

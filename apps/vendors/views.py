@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import re
 
 from django import forms
@@ -17,6 +18,7 @@ from django.views.decorators.http import require_POST
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
 
+from . import compliance
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
 from .models import (
     INSURANCE_SEVERITY,
@@ -96,6 +98,57 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
             "q": query,
             "status_filter": status_filter,
             "status_options": _STATUS_FILTERS,
+        },
+    )
+
+
+_WINDOWS = [(str(n), f"Within {n} days") for n in (7, 14, 30, 60, 90)]
+
+
+@login_required
+def vendor_compliance(request: HttpRequest) -> HttpResponse:
+    """Affiliate compliance (APC-73): active affiliates, worst coverage first. The CSV
+    (`?format=csv`) is built from the same rows the screen shows, filters included."""
+    status = request.GET.get("status", "")
+    status = status if status in compliance.STATUS_ORDER else ""
+    raw_within = request.GET.get("within", "")
+    within = int(raw_within) if raw_within.isdigit() else None
+    rows = compliance.report(status=status, within=within)
+
+    if request.GET.get("format") == "csv":
+        resp = HttpResponse(content_type="text/csv")
+        resp["Content-Disposition"] = 'attachment; filename="affiliate-compliance.csv"'
+        writer = csv.writer(resp)
+        writer.writerow(["Affiliate", "Status", "Soonest expiry", "Missing documents"])
+        for r in rows:
+            writer.writerow(
+                [
+                    r.vendor.name,
+                    r.status_label,
+                    r.expiry.isoformat() if r.expiry else "",
+                    r.missing_documents,
+                ]
+            )
+        return resp
+
+    # Counts are always across every active affiliate, so the strip reads the same
+    # whatever filter is applied below it.
+    counts = compliance.status_counts(compliance.report())
+    return render(
+        request,
+        "vendors/compliance.html",
+        {
+            "nav": "vendors",
+            "page_title": "Affiliate compliance",
+            "rows": rows,
+            "counts": counts,
+            "strip": [(s, compliance.STATUS_LABELS[s], counts[s]) for s in compliance.STATUS_ORDER],
+            "status_order": [(s, compliance.STATUS_LABELS[s]) for s in compliance.STATUS_ORDER],
+            "status": status,
+            "within": str(within) if within is not None else "",
+            "window_options": _WINDOWS,
+            "expected_documents": [k.label for k in compliance.EXPECTED_DOCUMENT_KINDS],
+            "csv_query": request.GET.urlencode(),
         },
     )
 

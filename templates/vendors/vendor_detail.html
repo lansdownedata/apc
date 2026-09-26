@@ -85,7 +85,7 @@
       </div>
       {% for doc in vendor.documents.all %}
       <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
-        <a href="{{ doc.file.url }}" class="font-medium text-ink hover:text-goldd text-[13px]"><i class="ti ti-paperclip text-[13px]"></i> {{ doc.label }}</a>
+        <a href="{{ doc.file.url }}" class="font-medium text-ink hover:text-goldd text-[13px]"><i class="ti ti-paperclip text-[13px]"></i> {{ doc.label }}</a>{% if doc.kind != 'other' %}<span class="text-[11px] text-muted ml-2">{{ doc.get_kind_display }}</span>{% endif %}
         <span class="text-[11px] text-muted">Uploaded by {{ doc.uploaded_by|default:"—" }} on {{ doc.created_at|date:"M j, Y" }}</span>
       </div>
       {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">No documents attached yet.</p>{% endfor %}
