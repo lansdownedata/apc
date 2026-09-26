@@ -1,9 +1,21 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from django.conf import settings
 from django.db import models
+from django.db.models import OuterRef, Subquery
+from django.utils import dateformat
 
 from apps.accounts.models import Department
 from apps.core.models import TimeStampedModel
 from apps.dispatch.models import _split_list
+
+
+def format_local(moment: datetime | None, fmt: str = "M j, g:i A") -> str:
+    """An already-localised aware datetime as `Sep 4, 7:30 AM EDT`."""
+    if moment is None:
+        return ""
+    return f"{dateformat.format(moment, fmt)} {moment.tzname()}"
 
 
 def _owner(label: str) -> models.ForeignKey:
@@ -43,6 +55,9 @@ class TaskConfig(models.Model):
         help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "
         "Blank falls back to the company email.",
     )
+    # The business-timezone date the overdue digest last went out (APC-52) — the
+    # once-a-day guard, so a 15-minute cron can't send it 96 times.
+    digest_sent_on = models.DateField(null=True, blank=True, editable=False)
 
     OWNER_FIELDS = {
         Department.SALES: "sales_owner",
@@ -76,6 +91,16 @@ class TaskQuerySet(models.QuerySet):
     def unresolved(self):
         """Work still owed — open now or opening later."""
         return self.filter(status__in=Task.UNRESOLVED)
+
+    def with_order_tz(self):
+        """Annotate `order_tz`: the zone of the order's first pickup, which is what an
+        order-level task's due date is anchored on — one subquery, not a lookup per row."""
+        from apps.reservations.models import Reservation
+
+        first = Reservation.objects.filter(lead_id=OuterRef("lead_id")).order_by(
+            "pickup_date", "pickup_time", "pk"
+        )
+        return self.annotate(order_tz=Subquery(first.values("pickup_timezone")[:1]))
 
 
 class Task(TimeStampedModel):
@@ -157,6 +182,29 @@ class Task(TimeStampedModel):
     def label(self) -> str:
         d = self.definition
         return d.label if d else self.kind
+
+    @property
+    def tz_name(self) -> str:
+        """The zone this task's times display in: its trip's, or for an order-level task
+        the first trip's (`with_order_tz`). Never the viewer's."""
+        if self.reservation_id:
+            zone = self.reservation.pickup_timezone
+        else:
+            zone = getattr(self, "order_tz", None) or ""
+        return zone or settings.TIME_ZONE
+
+    def local(self, moment: datetime | None) -> datetime | None:
+        return moment.astimezone(ZoneInfo(self.tz_name)) if moment else None
+
+    @property
+    def due_local(self) -> datetime | None:
+        return self.local(self.due_at)
+
+    @property
+    def due_display(self) -> str:
+        """`Sep 4, 7:30 AM EDT` in the task's trip zone, abbreviation always shown. Use
+        this, never `due_at|date` — the date filter renders in TIME_ZONE, not the trip's."""
+        return format_local(self.due_local)
 
     @property
     def is_closed(self) -> bool:

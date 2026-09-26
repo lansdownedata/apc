@@ -24,6 +24,7 @@ class Notification(TimeStampedModel):
         # A held deposit nearing / past the issuer's release window (APC-26).
         AUTH_EXPIRING = "auth_expiring", "Deposit hold expiring"
         AUTH_EXPIRED = "auth_expired", "Deposit hold released"
+        TASK_OVERDUE = "task_overdue", "Task overdue"
 
     lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
     user = models.ForeignKey(
