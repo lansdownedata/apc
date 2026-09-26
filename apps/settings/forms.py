@@ -130,6 +130,46 @@ class DispatchAlertConfigForm(forms.ModelForm):
         }
 
 
+_OWNER = {"class": "field w-full", "data-tom": "", "data-placeholder": "No default owner"}
+
+
+class TaskConfigForm(forms.ModelForm):
+    """The single Tasks settings screen (APC-49) — department owners, escalation, digest."""
+
+    class Meta:
+        from apps.tasks.models import TaskConfig
+
+        model = TaskConfig
+        fields = [
+            "enabled",
+            "sales_owner",
+            "operations_owner",
+            "affiliate_mgmt_owner",
+            "customer_service_owner",
+            "accounting_owner",
+            "overdue_grace_hours",
+            "digest_emails",
+        ]
+        widgets = {
+            "sales_owner": forms.Select(attrs=_OWNER),
+            "operations_owner": forms.Select(attrs=_OWNER),
+            "affiliate_mgmt_owner": forms.Select(attrs=_OWNER),
+            "customer_service_owner": forms.Select(attrs=_OWNER),
+            "accounting_owner": forms.Select(attrs=_OWNER),
+            "overdue_grace_hours": forms.NumberInput(attrs=_NUM),
+            "digest_emails": forms.Textarea(attrs=_AREA),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.accounts.models import User
+
+        active = User.objects.filter(is_active=True).order_by("first_name", "username")
+        for name in self.Meta.model.OWNER_FIELDS.values():
+            self.fields[name].queryset = active
+            self.fields[name].empty_label = "No default owner"
+
+
 class PricingConfigForm(forms.ModelForm):
     """The default cost ratio (spec 2026-09-05). One row, no list."""
 

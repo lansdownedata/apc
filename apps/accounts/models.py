@@ -1,5 +1,24 @@
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
+
+
+class Department(models.TextChoices):
+    """Who owns a piece of work (APC-49). Routes tasks; grants no permissions (D1)."""
+
+    SALES = "sales", "Sales"
+    OPERATIONS = "operations", "Operations"
+    AFFILIATE_MGMT = "affiliate_mgmt", "Affiliate Management"
+    CUSTOMER_SERVICE = "customer_service", "Customer Service"
+    ACCOUNTING = "accounting", "Accounting"
+
+
+class UserQuerySet(models.QuerySet):
+    def in_department(self, department: str) -> "UserQuerySet":
+        return self.filter(departments__department=department)
+
+
+class UserAccountManager(UserManager.from_queryset(UserQuerySet)):
+    pass
 
 
 class User(AbstractUser):
@@ -36,6 +55,8 @@ class User(AbstractUser):
         related_name="invitees",
     )
 
+    objects = UserAccountManager()
+
     @property
     def status(self) -> str:
         """Derived, never stored — a stored status drifts out of sync with is_active.
@@ -57,5 +78,26 @@ class User(AbstractUser):
     def is_owner_admin(self) -> bool:
         return self.role == self.Role.OWNER_ADMIN
 
+    @property
+    def department_list(self) -> list[str]:
+        """Department values in the order they were granted."""
+        return list(self.departments.order_by("pk").values_list("department", flat=True))
+
     def __str__(self) -> str:
         return self.get_full_name() or self.username
+
+
+class UserDepartment(models.Model):
+    """One membership row per (user, department) — a table rather than a JSON list so the
+    task queue can filter on it with a plain join."""
+
+    user = models.ForeignKey(User, related_name="departments", on_delete=models.CASCADE)
+    department = models.CharField(max_length=32, choices=Department.choices)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "department"], name="one_membership_per_dept")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user} · {self.get_department_display()}"

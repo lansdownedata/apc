@@ -14,12 +14,14 @@ from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
 from apps.messaging.models import NotificationConfig
 from apps.reservations.models import PricingConfig
+from apps.tasks.models import TaskConfig
 
 from .forms import (
     DispatchAlertConfigForm,
     NotificationConfigForm,
     PricingConfigForm,
     ServiceTypeForm,
+    TaskConfigForm,
     VehicleTypeForm,
     VenueForm,
 )
@@ -58,6 +60,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
                 resolved_at__isnull=True
             ).count(),
             "notifications_on": NotificationConfig.load().enabled,
+            "tasks_on": TaskConfig.load().enabled,
             "default_cost_ratio_pct": PricingConfig.load().default_cost_ratio_pct,
         },
     )
@@ -306,6 +309,23 @@ def dispatch_alerts(request: HttpRequest) -> HttpResponse:
             "form": form,
             "open_exceptions": DispatchException.objects.filter(resolved_at__isnull=True).count(),
         },
+    )
+
+
+@login_required
+@owner_admin_required
+def task_settings(request: HttpRequest) -> HttpResponse:
+    """The Tasks config (APC-49) — department owners, escalation grace, digest recipients."""
+    config = TaskConfig.load()
+    form = TaskConfigForm(request.POST or None, instance=config)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Task settings saved.")
+        return redirect("task_settings")
+    return render(
+        request,
+        "settings/tasks.html",
+        {"nav": "settings", "page_title": "Tasks", "form": form},
     )
 
 

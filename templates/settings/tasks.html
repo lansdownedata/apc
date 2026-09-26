@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Tasks</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      Tasks open as orders and trips progress. A new task goes to its department's default owner;
+      overdue work escalates to that owner and every admin.
+    </p>
+
+    <form method="post" class="space-y-5">
+      {% csrf_token %}
+
+      <div class="flex items-center gap-2">
+        {{ form.enabled }}
+        <label for="{{ form.enabled.id_for_label }}" class="text-[12.5px] text-ink">Tasks are on</label>
+      </div>
+
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Default owner by department</div>
+        <div class="grid sm:grid-cols-2 gap-3">
+          {% include "components/form_field.html" with field=form.sales_owner %}
+          {% include "components/form_field.html" with field=form.operations_owner %}
+          {% include "components/form_field.html" with field=form.affiliate_mgmt_owner %}
+          {% include "components/form_field.html" with field=form.customer_service_owner %}
+          {% include "components/form_field.html" with field=form.accounting_owner %}
+        </div>
+      </div>
+
+      {% include "components/form_field.html" with field=form.overdue_grace_hours %}
+      {% include "components/form_field.html" with field=form.digest_emails %}
+
+      {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
+      <div class="flex items-center justify-end gap-2.5 pt-2">
+        <a href="{% url 'settings_index' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+        <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

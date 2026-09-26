@@ -1,11 +1,17 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
-from .models import User
+from .models import User, UserDepartment
+
+
+class UserDepartmentInline(admin.TabularInline):
+    model = UserDepartment
+    extra = 0
 
 
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
+    inlines = [UserDepartmentInline]
     fieldsets = DjangoUserAdmin.fieldsets + (
         (
             "Lead Manager",
