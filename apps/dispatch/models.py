@@ -77,6 +77,9 @@ class Assignment(TimeStampedModel):
     vehicle_number = models.CharField(max_length=40, blank=True)
     # Stamped when the affiliate acknowledges the T-48h confirmation (APC-20).
     affiliate_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # When driver info was first complete (APC-57) — affiliate-performance history for
+    # Phase D. Stamped once by `services`, never overwritten; rows before it stay null.
+    driver_info_at = models.DateTimeField(null=True, blank=True)
 
     objects = AssignmentQuerySet.as_manager()
 
@@ -148,6 +151,21 @@ class Assignment(TimeStampedModel):
     @property
     def has_driver_info(self) -> bool:
         return self.driver_info is not None
+
+    @property
+    def driver_info_complete(self) -> bool:
+        """Enough for the customer to reach the driver — a name and a cell. Stricter than
+        `has_driver_info` (name alone), and what `driver_info_at` measures."""
+        info = self.driver_info
+        return bool(info and info["name"] and info["cell"])
+
+    def stamp_driver_info(self) -> bool:
+        """Set `driver_info_at` the first time the info is complete. Returns whether it did;
+        the caller saves."""
+        if self.driver_info_at is None and self.driver_info_complete:
+            self.driver_info_at = timezone.now()
+            return True
+        return False
 
     @property
     def margin(self) -> Decimal:

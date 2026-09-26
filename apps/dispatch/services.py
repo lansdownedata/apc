@@ -85,7 +85,7 @@ def _claim(
         if reservation.assignments.active().exists():
             raise AssignmentError(f"Trip #{reservation.pk} already has an active assignment.")
         resolved = timezone.now() if status == Assignment.Status.CONFIRMED else None
-        assignment = Assignment.objects.create(
+        assignment = Assignment(
             reservation=reservation,
             vendor=vendor,
             driver=driver,
@@ -96,6 +96,9 @@ def _claim(
             channel=channel,
             resolved_at=resolved,
         )
+        # In-house coverage carries its driver from the start, so its info is on file now.
+        assignment.stamp_driver_info()
+        assignment.save()
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
     return assignment
@@ -341,9 +344,10 @@ def set_driver_info(
     assignment.driver_cell = cell
     assignment.vehicle_desc = vehicle_desc
     assignment.vehicle_number = vehicle_number
-    assignment.save(
-        update_fields=["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
-    )
+    fields = ["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
+    if assignment.stamp_driver_info():
+        fields.append("driver_info_at")
+    assignment.save(update_fields=fields)
     from apps.messaging import touchpoints
 
     touchpoints.trigger_driver_released(assignment)
