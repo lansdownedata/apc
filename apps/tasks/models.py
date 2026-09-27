@@ -151,9 +151,22 @@ class Task(TimeStampedModel):
     CLOSED = (Status.DONE, Status.SKIPPED, Status.NOT_APPLICABLE)
 
     kind = models.CharField(max_length=40)
-    # Always set today. Phase E adds vendor-anchored tasks, so nothing beyond this column
-    # should assume it.
-    lead = models.ForeignKey("leads.Lead", related_name="tasks", on_delete=models.CASCADE)
+    # An order task (lead set) or a vendor task (vendor set, APC-71) — never both, never
+    # neither (the `task_order_or_vendor` check).
+    lead = models.ForeignKey(
+        "leads.Lead", related_name="tasks", null=True, blank=True, on_delete=models.CASCADE
+    )
+    vendor = models.ForeignKey(
+        "vendors.Vendor", related_name="tasks", null=True, blank=True, on_delete=models.CASCADE
+    )
+    # The policy an `insurance_renewal` task chases (APC-71) — one task per policy.
+    insurance = models.ForeignKey(
+        "vendors.VendorInsurance",
+        related_name="tasks",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
     reservation = models.ForeignKey(
         "reservations.Reservation",
         related_name="tasks",
@@ -191,7 +204,13 @@ class Task(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["lead", "reservation", "kind"], name="one_task_per_kind"
-            )
+            ),
+            models.UniqueConstraint(fields=["insurance", "kind"], name="one_task_per_policy"),
+            models.CheckConstraint(
+                condition=models.Q(lead__isnull=False, vendor__isnull=True)
+                | models.Q(lead__isnull=True, vendor__isnull=False),
+                name="task_order_or_vendor",
+            ),
         ]
         indexes = [
             models.Index(fields=["status", "due_at"]),

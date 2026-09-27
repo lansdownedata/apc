@@ -11,10 +11,12 @@ with nothing new changes nothing and returns 0. Each tick:
    system-closed tasks on upcoming trips (so a withdrawn offer reopens its task). This is
    what closes work whose data arrived with no seam hook: the GNet callback, the admin,
    the LA webhook, a touch-point the send loop just delivered.
-4. **Post-trip** (APC-58) — trips that finished (Done, or past their scheduled end plus
+4. **Vendor tasks** (APC-71) — insurance renewals created, closed by a later policy,
+   retired with an inactive vendor (`vendor_tasks`).
+5. **Post-trip** (APC-58) — trips that finished (Done, or past their scheduled end plus
    the grace with no status) enter the post-trip workflow, and any stage whose
    predecessors closed through a path with no hook opens its successors.
-5. **Escalate** — overdue tasks (APC-52).
+6. **Escalate** — overdue tasks (APC-52), vendor tasks included.
 
 The cost is a fixed handful of queries per batch of orders, not per task — plus one
 `ensure_tasks` per order that actually has a stage to open this tick.
@@ -31,7 +33,7 @@ from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
-from . import escalation, post_trip
+from . import escalation, post_trip, vendor_tasks
 from .definitions import POST_TRIP_KINDS, PREDECESSOR_KINDS, REGISTRY, Level, _always
 from .facts import load_facts
 from .models import Task, TaskConfig
@@ -50,7 +52,8 @@ def _sweep(now) -> int:
         "completed_by": None,
         "updated_at": now,
     }
-    unresolved = Task.objects.filter(status__in=Task.UNRESOLVED)
+    # Order tasks only — a vendor task has no lead, and `vendor_tasks` retires its own.
+    unresolved = Task.objects.filter(status__in=Task.UNRESOLVED, lead__isnull=False)
     count = unresolved.exclude(lead__status=Lead.Status.BOOKED).update(**na)
     count += unresolved.filter(reservation__trip_status__in=CANCELLED_STATUSES).update(**na)
     return count
@@ -144,5 +147,6 @@ def run_tasks() -> int:
     evaluated = _evaluate(now)
     processed += len(evaluated)
     processed += _post_trip(config, now, evaluated)
+    processed += vendor_tasks.run(now)
     processed += escalation.run(config, now)
     return processed

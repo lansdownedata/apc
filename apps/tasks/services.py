@@ -126,6 +126,8 @@ def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
         # Registry order matters: a row created this pass is unresolved, so a later kind
         # that waits on it (thank-you on affiliate paid) correctly holds off.
         for kind in REGISTRY:
+            if kind.level == Level.VENDOR:
+                continue
             if kind.level == Level.ORDER:
                 targets = [None] if _order_wants(kind, facts, statuses) else []
             else:

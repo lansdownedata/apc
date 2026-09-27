@@ -21,12 +21,14 @@ from collections import defaultdict
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.accounts.models import Department, User
 from apps.leads.models import Lead
 from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
+from apps.vendors.models import Vendor
 
 from .definitions import KINDS
 from .models import Task, TaskConfig
@@ -42,19 +44,19 @@ _ESCALATING = [k.key for k in KINDS.values() if k.escalates]
 
 def _overdue(now):
     return (
-        Task.objects.filter(
-            status=Task.Status.OPEN,
-            due_at__lt=now,
-            kind__in=_ESCALATING,
-            lead__status=Lead.Status.BOOKED,
-        )
+        Task.objects.filter(status=Task.Status.OPEN, due_at__lt=now, kind__in=_ESCALATING)
+        .filter(Q(lead__status=Lead.Status.BOOKED) | Q(vendor__status=Vendor.Status.ACTIVE))
         .with_order_tz()
-        .select_related("lead__contact", "reservation", "assignee")
+        .select_related("lead__contact", "reservation", "assignee", "vendor", "insurance")
         .order_by("due_at", "pk")
     )
 
 
 def _detail(task: Task) -> str:
+    if task.vendor_id:
+        policy = f" · {task.insurance}" if task.insurance_id else ""
+        due = f" · due {task.due_display}" if task.due_at else ""
+        return f"{task.vendor.name}{policy}{due}"[:255]
     trip = f" · trip #{task.reservation_id}" if task.reservation_id else ""
     due = f" · due {task.due_display}" if task.due_at else ""
     return f"{task.lead.quote_no} · {task.lead.contact.name}{trip}{due}"[:255]
@@ -100,6 +102,7 @@ def _notes(task: Task, recipients, prefix: str) -> list[Notification]:
         out.append(
             Notification(
                 lead=task.lead,
+                vendor=task.vendor,
                 user=user,
                 kind=Notification.Kind.TASK_OVERDUE,
                 title=f"{prefix}: {task.label}"[:160],
@@ -120,8 +123,9 @@ def _maybe_send_digest(config: TaskConfig, tasks: list[Task], now) -> bool:
         groups[task.department].append(
             {
                 "label": task.label,
-                "quote_no": task.lead.quote_no,
-                "customer": task.lead.contact.name,
+                # A vendor task names the affiliate and policy where an order would be.
+                "quote_no": task.vendor.name if task.vendor_id else task.lead.quote_no,
+                "customer": str(task.insurance or "") if task.vendor_id else task.lead.contact.name,
                 "trip_id": task.reservation_id,
                 "due": task.due_display,
                 "assignee": task.assignee,

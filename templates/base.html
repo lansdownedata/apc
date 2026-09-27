@@ -228,7 +228,7 @@
             </div>
             <div class="max-h-[340px] overflow-y-auto">
               {% for n in unread_notifications %}
-              <a href="{% url 'lead_detail' n.lead_id %}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-surface2 transition-colors bg-goldl/40">
+              <a href="{{ n.url }}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-surface2 transition-colors bg-goldl/40">
                 <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
                   <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-circle-check{% endif %} text-[16px]"></i>
                 </span>
