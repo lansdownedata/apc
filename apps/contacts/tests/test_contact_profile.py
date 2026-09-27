@@ -143,3 +143,10 @@ def test_orders_and_quotes_can_be_filtered(logged_in_client, jane):
     html = logged_in_client.get(reverse("contact_detail", args=[jane.pk])).content.decode()
     assert "Orders &amp; quotes" in html
     assert "orderFilter" in html
+
+
+def test_the_number_box_is_the_shared_us_phone_input(logged_in_client, jane):
+    """data-phone is what gives it intl-tel-input: US default, formatted as you type."""
+    html = logged_in_client.get(reverse("contact_detail", args=[jane.pk])).content.decode()
+    box = html[html.index('id="cp-number"') - 200 : html.index('id="cp-number"') + 300]
+    assert "data-phone" in box

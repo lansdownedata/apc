@@ -1625,6 +1625,13 @@ function contactPhones(opts = {}) {
     urlFor(id, action) {
       return this.rowUrl.replace(/\/0\/update\/$/, `/${id}/${action}/`);
     },
+    numberEl() { return document.getElementById("cp-number"); },
+    setNumber(value) {
+      const el = this.numberEl();
+      if (el.iti) el.iti.setNumber(value || "");
+      else el.value = value || "";
+      this.form.number = el.value;
+    },
     setLabel(value) {
       const el = document.getElementById("cp-label");
       if (el && el.tomselect) el.tomselect.setValue(value, true);
@@ -1634,11 +1641,12 @@ function contactPhones(opts = {}) {
       this.form = { texting: false, ...values };
       this.editingId = id;
       this.setLabel(values.label);
+      this.setNumber(values.number);
       this.formOpen = true;
-      this.$nextTick(() => this.$refs.number.focus());
+      this.$nextTick(() => this.numberEl().focus());
     },
     startAdd() { this.openForm({ number: "", label: "mobile" }, null); },
-    startEdit(p) { this.openForm({ number: p.display, label: p.label }, p.id); },
+    startEdit(p) { this.openForm({ number: p.number, label: p.label }, p.id); },
     closeForm() { this.formOpen = false; this.editingId = null; },
 
     post(url, data = {}) {
@@ -1666,7 +1674,14 @@ function contactPhones(opts = {}) {
     },
     submit() {
       if (this.busy || !this.form.number.trim()) return;
-      const data = { number: this.form.number, label: this.form.label };
+      const el = this.numberEl();
+      if (!phoneIsValid(el)) {
+        Alpine.store("toast").push({ type: "danger", title: "Invalid phone number",
+          message: "Check the number — US numbers are 10 digits." });
+        return;
+      }
+      // E.164 from the widget; the server normalizes it again either way.
+      const data = { number: phoneValue(el), label: this.form.label };
       const url = this.editingId ? this.urlFor(this.editingId, "update") : this.addUrl;
       if (!this.editingId) data.texting = this.form.texting ? "true" : "false";
       this.post(url, data).then((ok) => ok && this.closeForm());

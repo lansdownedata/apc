@@ -215,9 +215,10 @@
             <div class="w-[6.75rem] shrink-0" @change="form.label = $event.target.value">
               {% include "components/searchable_select.html" with name="phone_label" field_id="cp-label" options=phone_labels selected="mobile" search="off" %}
             </div>
-            <input type="tel" x-ref="number" x-model="form.number" @keydown.enter.prevent="submit()"
-                   aria-label="Phone number" placeholder="(202) 555-0134"
-                   class="h-8 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 text-[13px] text-ink outline-none transition focus:border-gold focus:ring-2 focus:ring-gold/30">
+            <div class="field-compact min-w-0 flex-1" x-ref="numberBox"
+                 @input="form.number = $event.target.value" @keydown.enter.prevent="submit()">
+              {% include "components/phone_input.html" with name="phone_number" field_id="cp-number" label="" %}
+            </div>
           </div>
           <div class="mt-2 flex flex-wrap items-center gap-2">
             <label x-show="!editingId" class="inline-flex items-center gap-1.5 text-[12px] text-muted">
