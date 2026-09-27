@@ -1,0 +1,12 @@
+{% comment %}
+Django flash messages → toasts. Included by the shells after the page content has rendered,
+so `messages.used` is already true on a page that shows its own inline banners (lead, order,
+user detail) and they are not repeated here. Every other page drains the queue here — a
+message left unrendered stays in the session and surfaces on whatever page renders next.
+Read by `flashToasts()` in static/js/app.js; text is autoescaped and read back via textContent.
+{% endcomment %}
+{% if messages and not messages.used %}
+<template id="flash-messages">
+  {% for message in messages %}<p data-level="{{ message.level_tag }}">{{ message }}</p>{% endfor %}
+</template>
+{% endif %}

@@ -58,6 +58,12 @@ Blocks: title · heading · subheading · body · footnote.
         <p class="text-[13px] text-muted mt-1">{% block subheading %}Sign in to manage leads, quotes &amp; reservations.{% endblock %}</p>
       </div>
 
+      {% for message in messages %}
+      <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mx-7 mt-3 text-[13px]">
+        <span class="tone-ic"><i class="ti {% if message.level_tag == 'success' %}ti-circle-check{% else %}ti-alert-triangle{% endif %} text-[17px]"></i></span>
+        <span>{{ message }}</span>
+      </div>
+      {% endfor %}
       {% block body %}{% endblock %}
 
       <div class="gold-rule h-px"></div>
