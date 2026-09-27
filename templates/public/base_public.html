@@ -55,6 +55,7 @@
   {% include "public/_footer.html" %}
   {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
   {% include "components/modal.html" %}
+  {% include "components/flash_messages.html" %}
   {% include "components/toasts.html" %}
   {% if calendly_url %}{% include "public/_calendly.html" %}
                        {% include "public/_schedule_form.html" %}{% endif %}

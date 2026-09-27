@@ -106,7 +106,21 @@ document.addEventListener("alpine:init", () => {
       this.items = this.items.filter((t) => t.id !== id);
     },
   });
+
+  flashToasts();
 });
+
+/* Django flash messages the page didn't render inline (components/flash_messages.html). */
+function flashToasts() {
+  const tpl = document.getElementById("flash-messages");
+  if (!tpl) return;
+  const types = { success: "success", error: "danger", warning: "danger" };
+  tpl.content.querySelectorAll("p").forEach((p) => {
+    const type = types[p.dataset.level] || "info";
+    // A problem stays until dismissed; a confirmation fades like any other toast.
+    Alpine.store("toast").push({ type, title: p.textContent, timeout: type === "danger" ? 0 : 4200 });
+  });
+}
 
 /* The app shell: sidebar collapse + notification tray. */
 function shell() {
