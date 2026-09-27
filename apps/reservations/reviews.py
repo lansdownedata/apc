@@ -15,6 +15,7 @@ the trip's own zone, which is how the form enters them.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -121,6 +122,8 @@ def save_review(
     overtime_waived: bool | None = None,
     waive_reason: str = "",
     affiliate_rating=_UNSET,
+    driver_overtime_minutes=_UNSET,
+    affiliate_rate=_UNSET,
 ) -> TripReview:
     """Apply what the form sent. Fields left out keep their value.
 
@@ -150,6 +153,15 @@ def save_review(
             if not 1 <= int(affiliate_rating) <= 5:
                 raise ReviewError("Rate the affiliate from 1 to 5.")
         review.affiliate_rating = affiliate_rating
+
+    if driver_overtime_minutes is not _UNSET:
+        if driver_overtime_minutes is not None and int(driver_overtime_minutes) < 0:
+            raise ReviewError("Driver overtime can't be negative.")
+        review.driver_overtime_minutes = driver_overtime_minutes
+    if affiliate_rate is not _UNSET:
+        if affiliate_rate is not None and Decimal(affiliate_rate) < 0:
+            raise ReviewError("The affiliate rate can't be negative.")
+        review.affiliate_rate = affiliate_rate
 
     _stamp_suggestion(review)
     deciding = billable_overtime_minutes is not None or overtime_waived is not None
@@ -218,3 +230,100 @@ def resolve_issue(issue: TripIssue, *, user) -> TripIssue:
         issue.resolved_by = user
         issue.save(update_fields=["resolved_at", "resolved_by", "updated_at"])
     return issue
+
+
+# --- the review screen's figures ---------------------------------------------------------
+
+_CENTS = Decimal("0.01")
+
+
+def _money(minutes: int, rate: Decimal) -> Decimal:
+    return (Decimal(minutes) * Decimal(rate) / 60).quantize(_CENTS)
+
+
+@dataclass(frozen=True)
+class Figures:
+    """Everything the two panes show, from one review. Customer billing and driver pay
+    share the actual times and nothing else."""
+
+    billed_minutes: int
+    actual_minutes: int | None
+    over_minutes: int | None
+    suggested_minutes: int
+    rule: str
+    # customer billing
+    billable_minutes: int
+    customer_rate: Decimal
+    customer_amount: Decimal
+    # driver pay: "affiliate" · "in_house" · "none"
+    coverage: str
+    provider: str
+    payout: Decimal
+    driver_minutes: int
+    affiliate_rate: Decimal | None
+    affiliate_overtime_amount: Decimal | None
+    expected_affiliate_amount: Decimal | None
+
+
+def _rule(over: int | None, *, grace: int, increment: int) -> str:
+    if over is None:
+        return "Enter the actual times to see the suggestion."
+    if over <= grace:
+        return f"{over} min over, inside the {grace}-min grace, so nothing to suggest."
+    return (
+        f"{over} min over. Past the {grace}-min grace, so the whole overage rounds up to "
+        f"{increment}-min steps."
+    )
+
+
+def figures(review: TripReview, coverage, *, config=None) -> Figures:
+    """`coverage` is the trip's active Assignment (or None), and `config` the TaskConfig —
+    both passed in so a page showing many trips loads them once."""
+    from apps.tasks.models import TaskConfig
+
+    config = config or TaskConfig.load()
+    trip = review.reservation
+    billed = int(Decimal(trip.billed_hours) * 60)
+    actual = review.actual_minutes
+    over = max(0, actual - billed) if actual is not None else None
+    billable = 0 if review.overtime_waived else review.billable_overtime_minutes
+    rate = Decimal(trip.rate or 0)
+
+    kind, provider, payout = "none", "", Decimal("0")
+    if coverage is not None:
+        kind = "in_house" if coverage.is_in_house else "affiliate"
+        provider = coverage.provider_name
+        payout = Decimal(coverage.payout or 0)
+    driver = review.driver_overtime_minutes
+    if driver is None:
+        driver = over or 0
+
+    aff_rate = aff_ot = expected = None
+    if kind == "affiliate":
+        aff_rate = review.affiliate_rate
+        if aff_rate is None and billed:
+            aff_rate = (payout / (Decimal(billed) / 60)).quantize(_CENTS)
+        aff_ot = _money(driver, aff_rate or 0)
+        expected = payout + aff_ot
+
+    return Figures(
+        billed_minutes=billed,
+        actual_minutes=actual,
+        over_minutes=over,
+        suggested_minutes=review.suggested_overtime_minutes,
+        rule=_rule(
+            over,
+            grace=config.overtime_grace_minutes,
+            increment=config.overtime_increment_minutes,
+        ),
+        billable_minutes=billable,
+        customer_rate=rate,
+        customer_amount=_money(billable, rate),
+        coverage=kind,
+        provider=provider,
+        payout=payout,
+        driver_minutes=driver,
+        affiliate_rate=aff_rate,
+        affiliate_overtime_amount=aff_ot,
+        expected_affiliate_amount=expected,
+    )

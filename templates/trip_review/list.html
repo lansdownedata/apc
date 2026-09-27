@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block content %}
+{% comment %}
+  Trip Review list (APC-59, design signed off 2026-09-26). One row per order whose trips
+  have all finished; four columns, count strip first, exceptions-first sort (ops review,
+  then billing, oldest finish first). Rows come from reservations.review_queue.
+{% endcomment %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
+
+  <div class="flex items-baseline gap-3.5 flex-wrap mb-4">
+    <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Trip Review</h1>
+    <p class="text-[13px] text-muted">Orders whose trips have all finished, most urgent first</p>
+  </div>
+
+  <div class="flex flex-wrap gap-2 mb-3 text-[12px]">
+    {% url 'trip_review_list' as base %}
+    <a href="{{ base }}?finished={{ filters.finished }}" class="inline-flex items-baseline gap-1.5 px-3 py-1.5 rounded-full ring-1 focus-gold {% if not filters.stage and not filters.issues and not filters.balance %}ring-gold bg-goldl text-ink{% else %}ring-line bg-surface text-muted hover:text-ink{% endif %}"><b class="num text-ink">{{ counts.in_review }}</b> in review</a>
+    <a href="{{ base }}?stage=needs_review&amp;finished={{ filters.finished }}" class="inline-flex items-baseline gap-1.5 px-3 py-1.5 rounded-full ring-1 focus-gold {% if filters.stage == 'needs_review' %}ring-gold bg-goldl text-ink{% else %}ring-line bg-surface text-muted hover:text-ink{% endif %}"><b class="num text-ink">{{ counts.needs_review }}</b> needs ops review</a>
+    <a href="{{ base }}?stage=billing&amp;finished={{ filters.finished }}" class="inline-flex items-baseline gap-1.5 px-3 py-1.5 rounded-full ring-1 focus-gold {% if filters.stage == 'billing' %}ring-gold bg-goldl text-ink{% else %}ring-line bg-surface text-muted hover:text-ink{% endif %}"><b class="num text-ink">{{ counts.billing }}</b> in billing</a>
+    <a href="{{ base }}?issues=1&amp;finished={{ filters.finished }}" class="inline-flex items-baseline gap-1.5 px-3 py-1.5 rounded-full ring-1 focus-gold {% if filters.issues %}ring-gold bg-goldl text-ink{% else %}ring-line bg-surface text-muted hover:text-ink{% endif %}"><b class="num text-ink">{{ counts.with_issues }}</b> with open issues</a>
+    <a href="{{ base }}?balance=owed&amp;finished={{ filters.finished }}" class="inline-flex items-baseline gap-1.5 px-3 py-1.5 rounded-full ring-1 focus-gold {% if filters.balance == 'owed' %}ring-gold bg-goldl text-ink{% else %}ring-line bg-surface text-muted hover:text-ink{% endif %}"><b class="num text-ink">${{ counts.owed|floatformat:2|intcomma }}</b> still owed</a>
+  </div>
+
+  <form method="get" class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3">
+    {% if filters.issues %}<input type="hidden" name="issues" value="1">{% endif %}
+    {% include "components/searchable_select.html" with name="stage" field_id="f-stage" options=stage_options selected=filters.stage empty_label="All open stages" autosubmit=1 search="off" %}
+    {% include "components/searchable_select.html" with name="balance" field_id="f-balance" options=balance_options selected=filters.balance empty_label="Any balance" autosubmit=1 search="off" %}
+    {% include "components/searchable_select.html" with name="finished" field_id="f-finished" options=window_options selected=filters.finished autosubmit=1 search="off" %}
+  </form>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-auto max-h-[70vh]">
+      <table class="w-full text-[13px] min-w-[760px]">
+        <thead class="sticky top-0 z-10">
+          <tr class="text-muted text-left bg-surface2 border-b border-line">
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[32%]">Order</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[22%]">Trips</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide w-[26%]">Money</th>
+            <th class="font-medium px-4 py-2.5 uppercase text-[10.5px] tracking-wide">Stage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="border-t border-line/70 first:border-0 hover:bg-surface2 cursor-pointer" onclick="window.location='{% url 'trip_review_order' r.lead.pk %}'">
+            <td class="px-4 py-3 align-top">
+              <a href="{% url 'trip_review_order' r.lead.pk %}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
+              <span class="text-muted">· {{ r.lead.contact.name }}</span>
+              <div class="text-[12px] text-muted mt-0.5">{{ r.service_summary }}{% if r.finished_display %} · finished {{ r.finished_display }}{% endif %}</div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              <div class="text-ink">{{ r.reviewed }} of {{ r.live_trips|length }} reviewed</div>
+              <div class="flex gap-[3px] mt-1.5">
+                {% for t in r.live_trips %}<i class="w-[18px] h-1.5 rounded-sm {% if t.state == 'reviewed' %}bg-emerald-600{% elif t.open_issues %}bg-rose-500{% else %}bg-line{% endif %}"></i>{% endfor %}
+              </div>
+              <div class="text-[11.5px] text-muted mt-1">{{ r.to_review }} pending</div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              <div class="grid grid-cols-[auto_auto] gap-x-3 text-[12px] justify-start">
+                <span class="text-muted">Collected</span><b class="num font-medium text-right">${{ r.collected|floatformat:2|intcomma }}</b>
+                <span class="text-muted">Total due</span><b class="num font-medium text-right">${{ r.total_due|floatformat:2|intcomma }}</b>
+                <span class="text-muted">Remaining</span><b class="num font-semibold text-right {% if r.remaining %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ r.remaining|floatformat:2|intcomma }}</b>
+              </div>
+            </td>
+            <td class="px-4 py-3 align-top">
+              <span class="inline-flex text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if r.stage == 'needs_review' %}chip-warn{% elif r.stage == 'billing' %}chip-gold{% else %}chip-ok{% endif %}">{{ r.stage_label }}</span>
+              {% if r.open_issues %}<div class="mt-1.5"><span class="inline-flex text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-danger">{{ r.open_issues }} open issue{{ r.open_issues|pluralize }}</span></div>{% endif %}
+              {% if r.stage == 'billing' and r.approved_overtime %}<div class="text-[11.5px] text-muted mt-1">Overtime ${{ r.approved_overtime|floatformat:2|intcomma }} to bill</div>{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="4" class="px-4 py-14 text-center text-muted">
+              <div class="font-display text-[18px] font-semibold text-ink mb-1">Nothing to review</div>
+              No orders match these filters. An order shows up here once every one of its trips has finished.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="text-[12px] text-muted mt-3"><b class="text-ink font-medium">Total due</b> is the order total plus approved overtime; <b class="text-ink font-medium">Remaining</b> is total due minus collected. A reviewed and paid order leaves this list; pick "Closed" in Stage to find it.</p>
+</div>
+{% endblock %}

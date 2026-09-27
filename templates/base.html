@@ -99,6 +99,11 @@
         <span x-show="navOpen" data-task-badge="{{ task_badge }}" title="Overdue or due today" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ task_badge }}</span>
         {% endif %}
       </a>
+      <a href="{% url 'trip_review_list' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'trip_review' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-clipboard-check text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Trip Review</span>
+      </a>
       <a href="{% url 'pipeline' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'pipeline' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-layout-kanban text-[18px] shrink-0"></i>

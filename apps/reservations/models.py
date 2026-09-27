@@ -926,6 +926,16 @@ class TripReview(TimeStampedModel):
     )
     decided_at = models.DateTimeField(null=True, blank=True)
 
+    # Driver pay, decoupled from customer billing (Trip Review design): the same actual
+    # times, but its own minutes — billing the customer 45 never changes what the driver
+    # is owed, and waiving the customer's overtime doesn't waive the driver's. Null =
+    # nobody has set it, so it reads as the actual time over. For an in-house driver it's
+    # the minutes recorded for payroll; for an affiliate, what the payable pays.
+    driver_overtime_minutes = models.PositiveIntegerField(null=True, blank=True)
+    # The affiliate's overtime rate / hr. Null = the placeholder, payout ÷ billed hours,
+    # until the client says how affiliate overtime is priced.
+    affiliate_rate = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+
     # Farmed-out trips only; feeds affiliate performance (Phase D).
     affiliate_rating = models.PositiveSmallIntegerField(null=True, blank=True)
 

@@ -447,6 +447,165 @@ function leadPeople(addUrl) {
 }
 window.leadPeople = leadPeople;
 
+/* -------------------------------------------------- trip review (APC-59)
+ * tripReviewPanel: the order-in-review page's pop-up — the reservation editor's overlay,
+ * widened. It fetches one trip's review fragment and, once anything was saved, reloads
+ * the page on close so the trip lines and billing figures catch up.
+ * tripReviewForm: inside the fragment. Saves as you go, one group of fields per POST, so
+ * touching the times never counts as deciding the customer's overtime. */
+function tripReviewPanel() {
+  return {
+    panelOpen: false,
+    loading: false,
+    error: "",
+    html: "",
+    changed: false,
+    async open(url) {
+      this.panelOpen = true;
+      this.loading = true;
+      this.error = "";
+      try {
+        const resp = await fetch(url, { headers: { Accept: "text/html" } });
+        if (!resp.ok) throw new Error();
+        this.html = await resp.text();
+        this.$nextTick(() => {
+          initFlatpickr(this.$refs.body);
+          initTomSelects(this.$refs.body);
+        });
+      } catch (e) {
+        this.error = "The review didn't load. Close this and try again.";
+      } finally {
+        this.loading = false;
+      }
+    },
+    close() {
+      if (!this.panelOpen) return;
+      this.panelOpen = false;
+      this.html = "";
+      if (this.changed) window.location.reload();
+    },
+  };
+}
+window.tripReviewPanel = tripReviewPanel;
+
+function tripReviewForm(opts) {
+  const s = opts.state;
+  return {
+    state: s,
+    times: opts.times,
+    billable: s.billable_minutes,
+    waived: s.waived,
+    waiveReason: opts.waiveReason || "",
+    driverMinutes: s.driver_minutes,
+    affiliateRate: s.affiliate_rate || "",
+    logging: false,
+    issueNote: "",
+    busy: false,
+    saving: false,
+    error: "",
+    hm(minutes) {
+      if (minutes === null || minutes === undefined) return "—";
+      return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+    },
+    async _save(data) {
+      this.saving = true;
+      this.error = "";
+      try {
+        const res = await postForm(opts.saveUrl, data);
+        this.state = res.review;
+        // The server's figures win: billable tracks the suggestion until someone decides,
+        // and a cleared driver field falls back to the actual time over.
+        if (!this.state.decided) this.billable = this.state.billable_minutes;
+        this.driverMinutes = this.state.driver_minutes;
+        this.affiliateRate = this.state.affiliate_rate || "";
+        this.$dispatch("trip-review-changed");
+      } catch (e) {
+        this.error = e.message || "That didn't save.";
+      } finally {
+        this.saving = false;
+      }
+    },
+    saveTimes() {
+      const t = this.times;
+      const pickupHalf = !t.pickup_date !== !t.pickup_time;
+      const dropoffHalf = !t.dropoff_date !== !t.dropoff_time;
+      if (pickupHalf || dropoffHalf) return; // wait for the other half
+      this._save({ ...t });
+    },
+    saveDecision() {
+      if (this.waived && !this.waiveReason.trim()) {
+        this.error = "Give a reason for waiving the overtime.";
+        return;
+      }
+      this._save({
+        billable_minutes: this.waived ? 0 : (this.billable || 0),
+        waived: this.waived ? "1" : "0",
+        waive_reason: this.waiveReason,
+      });
+    },
+    saveDriver() {
+      this._save({ driver_minutes: this.driverMinutes ?? "", affiliate_rate: this.affiliateRate ?? "" });
+    },
+    rate(n) {
+      this._save({ rating: n });
+    },
+    _reload() {
+      // The panel re-fetches this fragment, so the issue list is the server's.
+      this.$dispatch("trip-review-open", { url: opts.reloadUrl });
+    },
+    async addIssue() {
+      const category = this.$root.querySelector("#issue-category")?.value || "";
+      const severity = this.$root.querySelector("#issue-severity")?.value || "";
+      this.busy = true;
+      try {
+        await postForm(opts.issueUrl, { category, severity, note: this.issueNote });
+        this.$dispatch("trip-review-changed");
+        this._reload();
+      } catch (e) {
+        this.error = e.message || "The issue wasn't logged.";
+      } finally {
+        this.busy = false;
+      }
+    },
+    async resolveIssue(url) {
+      this.busy = true;
+      try {
+        await postForm(url);
+        this.$dispatch("trip-review-changed");
+        this._reload();
+      } catch (e) {
+        this.error = e.message || "Couldn't resolve that issue.";
+      } finally {
+        this.busy = false;
+      }
+    },
+    complete() {
+      const st = this.state;
+      const decision = st.waived
+        ? "Overtime is waived."
+        : st.billable_minutes
+          ? `Bill ${st.billable_minutes} min of overtime ($${st.customer_amount}) on the final bill.`
+          : "No overtime to bill.";
+      Alpine.store("modal").confirm({
+        title: "Complete this review?",
+        message: `${decision} Completing hands the trip to Accounting.`,
+        variant: "gold",
+        confirmText: "Complete review",
+        onConfirm: async () => {
+          try {
+            await postForm(opts.completeUrl);
+            this.$dispatch("trip-review-changed");
+            this.$dispatch("trip-review-close");
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Couldn't complete the review" });
+          }
+        },
+      });
+    },
+  };
+}
+window.tripReviewForm = tripReviewForm;
+
 /* One checklist (components/task_checklist.html). After any action it re-fetches its own
    fragment and swaps itself out, so the drawer, the trip modal and the order card always
    show what the server has. Skip is inline — this may already be inside $store.modal. */

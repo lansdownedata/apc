@@ -1,0 +1,177 @@
+{% load json_filters humanize %}
+{% comment %}
+  One trip's review (APC-59, signed-off design) — a fragment for the trip review pop-up.
+  Shared at the top (the trip as booked, actual times) and bottom (issues); between them
+  customer billing and driver pay, decoupled: both read the same actual times, each keeps
+  its own overtime minutes. Saves as you go (tripReviewForm in app.js posts one group of
+  fields at a time). Times are entered and shown in the trip's own zone ({{ tz_abbr }}).
+  PLACEHOLDER markers flag what the client hasn't confirmed yet.
+{% endcomment %}
+<div class="flex flex-col min-h-0 flex-1"
+     x-data="tripReviewForm({
+       saveUrl: '{% url 'trip_review_save' trip.pk %}',
+       completeUrl: '{% url 'trip_review_complete' trip.pk %}',
+       issueUrl: '{% url 'trip_review_issue_add' trip.pk %}',
+       reloadUrl: '{% url 'trip_review_trip' trip.pk %}',
+       state: {{ state|json_string }},
+       times: {{ times|json_string }},
+       waiveReason: {{ review.waive_reason|json_string }}
+     })">
+  <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
+    <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 {% if trip.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">
+      <i class="ti {% if trip.trip_type == 'hourly' %}ti-clock-hour-4{% else %}ti-arrow-narrow-right{% endif %} text-[18px]"></i>
+    </span>
+    <div class="min-w-0">
+      <h2 class="font-display text-[17px] font-semibold text-ink leading-tight truncate">Review · {{ trip.service_label }}</h2>
+      <div class="text-[12px] text-muted">{{ trip.lead.quote_no }} · {{ trip.lead.contact.name }}</div>
+    </div>
+    <span class="font-mono2 text-[12px] font-semibold text-goldd bg-goldl px-2 py-0.5 rounded-lg num">#{{ trip.la_confirmation|default:trip.reference }}</span>
+    <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if trip.trip_status %}chip-ok{% else %}chip-ring{% endif %}">{% if trip.trip_status %}{{ trip.get_trip_status_display }}{% else %}No status · ended by schedule{% endif %}</span>
+    <span x-show="state.complete" x-cloak class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed</span>
+    <button type="button" @click="$dispatch('trip-review-close')" class="ml-auto w-8 h-8 grid place-items-center rounded-lg text-muted hover:text-ink hover:bg-surface2 focus-gold" aria-label="Close"><i class="ti ti-x text-[18px]"></i></button>
+  </div>
+
+  <div class="overflow-y-auto min-h-0 flex-1 text-[13px]">
+    <section class="px-6 py-4">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Trip <span class="normal-case tracking-normal font-medium ml-1 px-1.5 py-0.5 rounded-full chip-ring">as booked · edit it from the order</span></p>
+      <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
+        <div><dt class="text-[10.5px] text-muted">Vehicle</dt><dd class="font-medium">{{ trip.vehicle.name|default:"Any vehicle" }}</dd></div>
+        <div><dt class="text-[10.5px] text-muted">Passengers</dt><dd class="font-medium num">{{ trip.passengers }}</dd></div>
+        <div><dt class="text-[10.5px] text-muted">Scheduled</dt><dd class="font-medium num">{{ trip.pickup_date|date:"M j" }}, {{ trip.pickup_time|time:"g:i A" }} {{ tz_abbr }}</dd></div>
+        <div><dt class="text-[10.5px] text-muted">Rate · trip total</dt><dd class="font-medium num">${{ trip.rate|floatformat:2|intcomma }}/hr · ${{ trip.line_total|floatformat:2|intcomma }}</dd></div>
+        <div class="col-span-2 sm:col-span-4"><dt class="text-[10.5px] text-muted">Route</dt><dd>{% for s in stops %}{% if not forloop.first %} → {% endif %}{{ s.address }}{% endfor %}</dd></div>
+      </dl>
+    </section>
+
+    <section class="px-6 py-4 border-t border-line grid md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-5">
+      <div>
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Actual times <span class="normal-case tracking-normal font-medium ml-1 px-1.5 py-0.5 rounded-full chip-ring">{{ tz_abbr }} · trip time</span></p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <span class="block text-[12px] font-medium mb-1">Pickup</span>
+            <div class="grid grid-cols-[1fr_auto] gap-1.5">
+              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.pickup_date" @change="saveTimes()" value="{{ times.pickup_date }}" placeholder="Date" aria-label="Pickup date">
+              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.pickup_time" @change="saveTimes()" value="{{ times.pickup_time }}" placeholder="Time" aria-label="Pickup time">
+            </div>
+          </div>
+          <div>
+            <span class="block text-[12px] font-medium mb-1">Drop-off</span>
+            <div class="grid grid-cols-[1fr_auto] gap-1.5">
+              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.dropoff_date" @change="saveTimes()" value="{{ times.dropoff_date }}" placeholder="Date" aria-label="Drop-off date">
+              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.dropoff_time" @change="saveTimes()" value="{{ times.dropoff_time }}" placeholder="Time" aria-label="Drop-off time">
+            </div>
+          </div>
+        </div>
+        <p class="text-[11.5px] text-muted mt-2">Type what the affiliate or chauffeur reported. LimoAnywhere statuses fill these in when they arrive. A drop-off past midnight takes the next day's date.</p>
+      </div>
+      <div>
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Time on the job</p>
+        <div class="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden">
+          <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Billed</div><div class="num text-[16px] font-semibold" x-text="hm(state.billed_minutes)"></div></div>
+          <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Actual</div><div class="num text-[16px] font-semibold" x-text="state.actual_minutes === null ? '—' : hm(state.actual_minutes)"></div></div>
+          <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Over by</div><div class="num text-[16px] font-semibold text-goldd" x-text="state.over_minutes === null ? '—' : state.over_minutes + ' min'"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid md:grid-cols-2 border-t border-line">
+      <section class="px-6 py-4">
+        <div class="flex items-center gap-2 flex-wrap mb-3">
+          <h3 class="font-display text-[15px] font-semibold text-ink">Customer billing</h3>
+          <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">Operations decides · Accounting bills</span>
+        </div>
+        <div class="flex justify-between"><span class="text-muted">Suggested</span><span class="num font-medium" x-text="state.actual_minutes === null ? '—' : state.suggested_minutes + ' min'"></span></div>
+        <p class="text-[11.5px] text-muted mt-1"><span x-text="state.rule"></span> <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">placeholder rule</span></p>
+        <div class="grid grid-cols-2 gap-3 mt-3 items-end">
+          <label class="block"><span class="block text-[12px] font-medium mb-1">Billable minutes</span>
+            <input type="number" min="0" step="5" class="field num" x-model.number="billable" :disabled="waived" @change="saveDecision()"></label>
+          <label class="flex items-center gap-2 pb-2 cursor-pointer"><input type="checkbox" class="accent-gold" x-model="waived" @change="saveDecision()"> Waive overtime</label>
+        </div>
+        <label x-show="waived" x-cloak class="block mt-2"><span class="block text-[12px] font-medium mb-1">Why it's waived (required)</span>
+          <input type="text" class="field" x-model="waiveReason" @change="saveDecision()" placeholder="e.g. traffic delay outside the customer's control"></label>
+        <p x-show="!state.decided" class="text-[11.5px] text-muted mt-2">Starts at the suggestion. Change it or keep it; saving it records that you decided.</p>
+        <div class="flex justify-between mt-3"><span class="text-muted">Rate</span><span class="num">${{ f.customer_rate|floatformat:2|intcomma }}/hr · the trip's rate <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold font-sans">placeholder</span></span></div>
+        <div class="flex justify-between"><span class="text-muted">Gratuity on overtime</span><span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">client to confirm</span></div>
+        <div class="flex justify-between items-baseline border-t border-dashed border-line mt-3 pt-2.5">
+          <span class="text-[11px] font-semibold uppercase tracking-wide text-muted">Customer overtime</span>
+          <b class="num text-[18px]" x-text="'$' + state.customer_amount"></b>
+        </div>
+        <p class="text-[11.5px] text-muted">Goes onto the order's final bill. Nothing is charged from here.</p>
+      </section>
+
+      <section class="px-6 py-4 border-t md:border-t-0 md:border-l border-line">
+        <div class="flex items-center gap-2 flex-wrap mb-3">
+          <h3 class="font-display text-[15px] font-semibold text-ink">Driver pay</h3>
+          {% if coverage %}<span class="text-muted">· {{ coverage.provider_name }}</span>{% endif %}
+          <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{% if f.coverage == 'affiliate' %}Affiliate{% elif f.coverage == 'in_house' %}In-house{% else %}No coverage{% endif %}</span>
+        </div>
+        {% if f.coverage == 'affiliate' %}
+          <div class="flex justify-between"><span class="text-muted">Agreed payout</span><span class="num">${{ f.payout|floatformat:2|intcomma }}</span></div>
+          <div class="grid grid-cols-2 gap-3 mt-3">
+            <label class="block"><span class="block text-[12px] font-medium mb-1">Affiliate overtime minutes</span>
+              <input type="number" min="0" step="5" class="field num" x-model.number="driverMinutes" @change="saveDriver()">
+              <span class="block text-[11px] text-muted mt-1">Starts at the actual time over. Not tied to what the customer is billed.</span></label>
+            <label class="block"><span class="block text-[12px] font-medium mb-1">Affiliate rate / hr</span>
+              <input type="text" inputmode="decimal" class="field num" x-model="affiliateRate" @change="saveDriver()">
+              <span class="block text-[11px] text-muted mt-1">Payout ÷ billed hours <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">placeholder</span></span></label>
+          </div>
+          <div class="flex justify-between mt-3"><span class="text-muted">Overtime to pay</span><span class="num" x-text="'$' + (state.affiliate_overtime_amount || '0.00')"></span></div>
+          <div class="flex justify-between items-baseline border-t border-dashed border-line mt-3 pt-2.5">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-muted">Expected to pay</span>
+            <b class="num text-[18px]" x-text="'$' + state.expected_affiliate_amount"></b>
+          </div>
+          <div class="flex items-center gap-2.5 mt-3 flex-wrap">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-muted">Affiliate rating</span>
+            <div class="flex gap-0.5" role="radiogroup" aria-label="Affiliate rating">
+              <template x-for="n in [1, 2, 3, 4, 5]" :key="n">
+                <button type="button" class="text-[20px] leading-none px-0.5 focus-gold rounded" :class="(state.rating || 0) >= n ? 'text-gold' : 'text-line'" :aria-label="n + ' out of 5'" @click="rate(n)">★</button>
+              </template>
+            </div>
+          </div>
+        {% elif f.coverage == 'in_house' %}
+          <div class="flex justify-between"><span class="text-muted">Driver</span><span>{{ coverage.provider_name }}</span></div>
+          <div class="flex justify-between"><span class="text-muted">Hours on the job</span><span class="num" x-text="state.actual_minutes === null ? '—' : hm(state.actual_minutes)"></span></div>
+          <label class="block mt-3 max-w-[220px]"><span class="block text-[12px] font-medium mb-1">Overtime minutes for payroll</span>
+            <input type="number" min="0" step="5" class="field num" x-model.number="driverMinutes" @change="saveDriver()"></label>
+          <p class="text-[11.5px] text-muted mt-2">In-house drivers have no affiliate invoice. This records the time for payroll. <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">confirm what payroll needs</span></p>
+        {% else %}
+          <p class="text-muted">Nobody is on record as covering this trip, so there's no one to pay.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <section class="px-6 py-4 border-t border-line">
+      <div class="flex items-center gap-2 mb-2">
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-muted">Issues</p>
+        {% with open=review.issues.open.count %}
+        {% if open %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-danger">{{ open }} open</span>{% else %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ok">None open</span>{% endif %}
+        {% endwith %}
+        <button type="button" class="ml-auto text-[12px] font-semibold text-goldd hover:underline focus-gold" @click="logging = !logging">+ Log issue</button>
+      </div>
+      <div x-show="logging" x-cloak class="grid sm:grid-cols-[160px_130px_minmax(0,1fr)_auto] gap-2 mb-3 items-start">
+        {% include "components/searchable_select.html" with name="category" field_id="issue-category" options=categories search="off" %}
+        {% include "components/searchable_select.html" with name="severity" field_id="issue-severity" options=severities search="off" %}
+        <input type="text" class="field" x-model="issueNote" placeholder="What happened" @keydown.enter.prevent="addIssue()">
+        <button type="button" class="btn-gold text-[12.5px] font-semibold rounded-lg px-3 py-2 disabled:opacity-50" :disabled="busy || !issueNote.trim()" @click="addIssue()">Log issue</button>
+      </div>
+      {% for issue in issues %}
+      <div class="flex gap-3 py-2 {% if not forloop.first %}border-t border-line{% endif %}">
+        <span class="w-[3px] rounded shrink-0 {% if not issue.is_open %}bg-line{% elif issue.severity == 'high' %}bg-rose-500{% else %}bg-amber-500{% endif %}"></span>
+        <div class="flex-1 min-w-0 {% if not issue.is_open %}text-muted{% endif %}">
+          <div>{% if issue.is_open %}<b>{{ issue.get_category_display }}</b>{% else %}<s>{{ issue.get_category_display }}</s>{% endif %} · {{ issue.get_severity_display }}</div>
+          <div class="text-muted">{{ issue.note }}</div>
+        </div>
+        {% if issue.is_open %}<button type="button" class="self-start text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50" :disabled="busy" @click="resolveIssue('{% url 'trip_review_issue_resolve' issue.pk %}')">Resolve</button>{% endif %}
+      </div>
+      {% empty %}
+      <p class="text-muted">No issues logged. An open issue takes the trip's green-lit away.</p>
+      {% endfor %}
+    </section>
+  </div>
+
+  <div class="flex items-center gap-2.5 flex-wrap px-6 py-3.5 border-t border-line bg-surface2">
+    <span class="text-[11.5px] text-muted" x-text="saving ? 'Saving…' : (error || 'Saved as you go')" :class="error && 'text-rose-600'"></span>
+    <button type="button" class="ml-auto text-[13px] font-medium text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold" @click="$dispatch('trip-review-close')">Save &amp; close</button>
+    <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy || state.complete" @click="complete()" x-text="state.complete ? 'Reviewed' : 'Complete review'"></button>
+  </div>
+</div>
