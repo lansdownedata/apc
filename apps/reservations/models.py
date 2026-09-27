@@ -926,15 +926,18 @@ class TripReview(TimeStampedModel):
     )
     decided_at = models.DateTimeField(null=True, blank=True)
 
-    # Driver pay, decoupled from customer billing (Trip Review design): the same actual
-    # times, but its own minutes — billing the customer 45 never changes what the driver
-    # is owed, and waiving the customer's overtime doesn't waive the driver's. Null =
-    # nobody has set it, so it reads as the actual time over. For an in-house driver it's
-    # the minutes recorded for payroll; for an affiliate, what the payable pays.
-    driver_overtime_minutes = models.PositiveIntegerField(null=True, blank=True)
-    # The affiliate's overtime rate / hr. Null = the placeholder, payout ÷ billed hours,
-    # until the client says how affiliate overtime is priced.
-    affiliate_rate = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    # Driver pay (APC-61). An affiliate's overtime rises with the customer's billed
+    # overtime at the trip's affiliate share (`reviews.affiliate_share`); the override is
+    # for real exceptions — the customer's overtime was waived but the affiliate still
+    # worked the time — and always carries a note saying why.
+    affiliate_overtime_override = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    affiliate_overtime_note = models.CharField(max_length=255, blank=True)
+    # In-house pay, stamped when the review is completed so a later change to the driver's
+    # rate never rewrites what this trip paid. Null until then (and on farmed-out trips).
+    driver_hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    driver_pay_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     # Farmed-out trips only; feeds affiliate performance (Phase D).
     affiliate_rating = models.PositiveSmallIntegerField(null=True, blank=True)

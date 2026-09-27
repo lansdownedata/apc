@@ -108,3 +108,31 @@ def test_renewal_dates_use_the_app_datepicker_not_the_native_one():
         assert 'type="text"' in html
         assert "data-flatpickr" in html
         assert "data-fp-past" in html  # a renewal is usually issued before it's entered
+
+
+def test_driver_form_saves_the_hourly_rate():
+    """APC-61: in-house driver pay is total trip time × this rate."""
+    from decimal import Decimal
+
+    driver = DriverFactory()
+    form = DriverForm(
+        {"name": driver.name, "status": "active", "hourly_rate": "32.50"}, instance=driver
+    )
+    assert form.is_valid(), form.errors
+    form.save()
+
+    driver.refresh_from_db()
+    assert driver.hourly_rate == Decimal("32.50")
+
+
+def test_a_blank_hourly_rate_saves_as_not_set():
+    from decimal import Decimal
+
+    form = DriverForm({"name": "Marcus Bell", "status": "active", "hourly_rate": ""})
+    assert form.is_valid(), form.errors
+    assert form.save().hourly_rate == Decimal("0")
+
+
+def test_a_negative_hourly_rate_is_refused():
+    form = DriverForm({"name": "Marcus Bell", "status": "active", "hourly_rate": "-5"})
+    assert not form.is_valid()

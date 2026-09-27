@@ -15,4 +15,7 @@ urlpatterns = [
     path("<int:lead_id>/save-card/", views.order_save_card, name="order_save_card"),
     path("<int:lead_id>/charge-saved/", views.order_charge_saved, name="order_charge_saved"),
     path("<int:lead_id>/send-pay-link/", views.order_send_pay_link, name="order_send_pay_link"),
+    path("payables/<int:pk>/invoice/", views.payable_invoice, name="payable_invoice"),
+    path("payables/<int:pk>/approve/", views.payable_approve, name="payable_approve"),
+    path("payables/<int:pk>/paid/", views.payable_paid, name="payable_paid"),
 ]

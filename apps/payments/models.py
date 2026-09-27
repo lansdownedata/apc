@@ -172,6 +172,8 @@ class JournalEntry(TimeStampedModel):
         DEPOSIT_FORFEITED = "deposit_forfeited", "Deposit forfeited"
         REVERSAL = "reversal", "Reversal"
         ADJUSTMENT = "adjustment", "Adjustment"
+        PAYABLE_ACCRUED = "payable_accrued", "Affiliate payable accrued"
+        PAYABLE_PAID = "payable_paid", "Affiliate payable paid"
 
     class Source(models.TextChoices):
         STRIPE = "stripe", "Stripe"
@@ -229,3 +231,82 @@ class JournalLine(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.get_account_display()} D{self.debit}/C{self.credit}"
+
+
+class AffiliatePayable(TimeStampedModel):
+    """What we owe an affiliate for one farmed-out trip (APC-61). Record only — no money
+    moves from here, and paying it in LimoAnywhere stays manual.
+
+    One per confirmed farmed-out assignment, created when the order enters review
+    (`payables.ensure_payables`). `expected_amount` tracks the trip review until the
+    payable is approved, then stays as it was. Approving accrues the *invoice* amount;
+    marking it paid clears that accrual (see `payables`).
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        APPROVED = "approved", "Approved"
+        PAID = "paid", "Paid"
+
+    class Method(models.TextChoices):
+        CHECK = "check", "Check"
+        ACH = "ach", "ACH"
+        ZELLE = "zelle", "Zelle"
+        OTHER = "other", "Other"
+
+    STAGE_LABELS = {
+        "invoice_missing": "Invoice missing",
+        "awaiting_approval": "Awaiting approval",
+        "approved": "Approved",
+        "paid": "Paid",
+    }
+
+    assignment = models.OneToOneField(
+        "dispatch.Assignment", related_name="payable", on_delete=models.PROTECT
+    )
+    expected_amount = MoneyField()
+    invoice_number = models.CharField(max_length=64, blank=True)
+    invoice_file = models.FileField(upload_to="affiliate-invoices/", blank=True)
+    # Null = no invoice yet; a $0 invoice is still an invoice.
+    invoice_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    invoice_received_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    # Required when approving with a variance: says why we're paying something other than
+    # what we expected.
+    approval_note = models.CharField(max_length=255, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_method = models.CharField(max_length=20, choices=Method.choices, blank=True)
+    paid_reference = models.CharField(max_length=120, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        indexes = [models.Index(fields=["status"])]
+
+    def __str__(self) -> str:
+        return f"Payable · {self.assignment}"
+
+    @property
+    def variance(self) -> Decimal | None:
+        """Invoice − expected; None until an invoice amount is on file."""
+        if self.invoice_amount is None:
+            return None
+        return Decimal(self.invoice_amount) - Decimal(self.expected_amount)
+
+    @property
+    def stage(self) -> str:
+        if self.status == self.Status.PAID:
+            return "paid"
+        if self.status == self.Status.APPROVED:
+            return "approved"
+        return "awaiting_approval" if self.invoice_amount is not None else "invoice_missing"
+
+    @property
+    def stage_label(self) -> str:
+        return self.STAGE_LABELS[self.stage]

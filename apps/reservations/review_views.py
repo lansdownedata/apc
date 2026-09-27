@@ -20,6 +20,9 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.dispatch.models import Assignment
+from apps.payments import payables
+from apps.payments.forms import PayableInvoiceForm
+from apps.payments.models import AffiliatePayable
 from apps.tasks.models import Task, TaskConfig
 
 from . import review_queue, reviews
@@ -117,10 +120,17 @@ def _review_json(review, coverage) -> dict:
         "waived": review.overtime_waived,
         "decided": review.decided_at is not None,
         "customer_amount": _money(f.customer_amount),
-        "driver_minutes": f.driver_minutes,
-        "affiliate_rate": _money(f.affiliate_rate),
+        "affiliate_share_pct": None
+        if f.affiliate_share_pct is None
+        else str(f.affiliate_share_pct),
+        "affiliate_share_basis": f.affiliate_share_basis,
+        "affiliate_overtime_derived": _money(f.affiliate_overtime_derived),
         "affiliate_overtime_amount": _money(f.affiliate_overtime_amount),
+        "affiliate_overtime_overridden": f.affiliate_overtime_overridden,
+        "override_note": review.affiliate_overtime_note,
         "expected_affiliate_amount": _money(f.expected_affiliate_amount),
+        "driver_hourly_rate": _money(f.driver_hourly_rate),
+        "driver_pay_amount": _money(f.driver_pay_amount),
         "rating": review.affiliate_rating,
         "complete": review.is_complete,
     }
@@ -132,6 +142,12 @@ def trip_review_trip(request: HttpRequest, pk: int) -> HttpResponse:
     trip = _reviewable(pk)
     review = reviews.review_for(trip)
     coverage = _coverage(trip)
+    payable = None
+    if coverage is not None and not coverage.is_in_house:
+        # Normally made when the order entered review; this covers one that entered
+        # before payables existed.
+        payables.ensure_payables(trip.lead)
+        payable = AffiliatePayable.objects.filter(assignment=coverage).first()
     stops = list(Stop.objects.filter(reservation=trip).order_by("sequence"))
     pickup, dropoff = review.actual_pickup_local, review.actual_dropoff_local
     zone_now = trip.pickup_at
@@ -144,6 +160,11 @@ def trip_review_trip(request: HttpRequest, pk: int) -> HttpResponse:
             "coverage": coverage,
             "f": reviews.figures(review, coverage),
             "state": _review_json(review, coverage),
+            "payable": payable,
+            "payable_state": payables.payable_json(payable) if payable else None,
+            "invoice_form": PayableInvoiceForm(instance=payable) if payable else None,
+            "can_pay": request.user.has_payments_access,
+            "paid_methods": AffiliatePayable.Method.choices,
             "config": TaskConfig.load(),
             "stops": stops,
             "issues": list(
@@ -217,15 +238,17 @@ def trip_review_save(request: HttpRequest, pk: int) -> JsonResponse:
             )
             kwargs["overtime_waived"] = post.get("waived") == "1"
             kwargs["waive_reason"] = post.get("waive_reason", "")
-        if "driver_minutes" in post:
-            kwargs["driver_overtime_minutes"] = _int(post.get("driver_minutes"), "Driver minutes")
-        if "affiliate_rate" in post:
-            kwargs["affiliate_rate"] = _decimal(post.get("affiliate_rate"), "The affiliate rate")
+        if "override" in post:
+            kwargs["affiliate_overtime_override"] = _decimal(
+                post.get("override"), "The adjusted affiliate overtime"
+            )
+            kwargs["affiliate_overtime_note"] = post.get("override_note", "")
         if "rating" in post:
             kwargs["affiliate_rating"] = _int(post.get("rating"), "The rating")
         review = reviews.save_review(review, user=request.user, **kwargs)
     except (_Bad, reviews.ReviewError) as exc:
         return _bad(str(exc))
+    payables.refresh_for_trip(trip)
     return JsonResponse({"ok": True, "review": _review_json(review, _coverage(trip))})
 
 

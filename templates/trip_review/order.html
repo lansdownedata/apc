@@ -76,6 +76,23 @@
         <div class="flex justify-between gap-3 py-2 border-t border-line"><span>Overtime awaiting review{% if row.awaiting_trips %} ({{ row.awaiting_trips }} trip{{ row.awaiting_trips|pluralize }}){% endif %}</span><span class="text-muted">{% if row.awaiting_trips %}—{% else %}None{% endif %}</span></div>
         <div class="flex justify-between gap-3 py-2 border-t border-line font-semibold"><span>Remaining to collect</span><b class="num {% if row.remaining %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ row.remaining|floatformat:2|intcomma }}</b></div>
       </div>
+      {% with payables=row.payable_summary %}
+      {% if payables %}
+      <div class="px-5 py-3 border-t border-line text-[12.5px]">
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">Affiliate payables</p>
+        {% for p in payables %}
+        <div class="flex justify-between gap-3 py-1.5">
+          <span class="min-w-0 truncate">{{ p.name }}{% if p.in_house %} <span class="text-muted">· in-house</span>{% endif %}</span>
+          {% if p.in_house %}
+            <span class="text-muted">No payable</span>
+          {% else %}
+            <span class="text-right">{% for count, label in p.stage_counts %}{% if not forloop.first %} · {% endif %}{{ count }} {{ label }}{% endfor %}{% if p.total %}<span class="block num text-muted">${{ p.total|floatformat:2|intcomma }}</span>{% endif %}</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
     </div>
   </div>
 

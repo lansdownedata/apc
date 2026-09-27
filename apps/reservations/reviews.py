@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -122,8 +122,8 @@ def save_review(
     overtime_waived: bool | None = None,
     waive_reason: str = "",
     affiliate_rating=_UNSET,
-    driver_overtime_minutes=_UNSET,
-    affiliate_rate=_UNSET,
+    affiliate_overtime_override=_UNSET,
+    affiliate_overtime_note: str = "",
 ) -> TripReview:
     """Apply what the form sent. Fields left out keep their value.
 
@@ -154,14 +154,19 @@ def save_review(
                 raise ReviewError("Rate the affiliate from 1 to 5.")
         review.affiliate_rating = affiliate_rating
 
-    if driver_overtime_minutes is not _UNSET:
-        if driver_overtime_minutes is not None and int(driver_overtime_minutes) < 0:
-            raise ReviewError("Driver overtime can't be negative.")
-        review.driver_overtime_minutes = driver_overtime_minutes
-    if affiliate_rate is not _UNSET:
-        if affiliate_rate is not None and Decimal(affiliate_rate) < 0:
-            raise ReviewError("The affiliate rate can't be negative.")
-        review.affiliate_rate = affiliate_rate
+    if affiliate_overtime_override is not _UNSET:
+        if affiliate_overtime_override is None:
+            review.affiliate_overtime_override = None
+            review.affiliate_overtime_note = ""
+        else:
+            amount = Decimal(affiliate_overtime_override)
+            if amount < 0:
+                raise ReviewError("The affiliate overtime can't be negative.")
+            note = (affiliate_overtime_note or "").strip()
+            if not note:
+                raise ReviewError("Add a note saying why the affiliate overtime is adjusted.")
+            review.affiliate_overtime_override = amount.quantize(_CENTS, rounding=ROUND_HALF_UP)
+            review.affiliate_overtime_note = note[:255]
 
     _stamp_suggestion(review)
     deciding = billable_overtime_minutes is not None or overtime_waived is not None
@@ -199,7 +204,16 @@ def complete_review(review: TripReview, *, user) -> TripReview:
             raise ReviewError("Decide the overtime first: approve, change or waive it.")
         review.completed_at = timezone.now()
         review.completed_by = user
-        review.save(update_fields=["completed_at", "completed_by", "updated_at"])
+        _stamp_driver_pay(review)
+        review.save(
+            update_fields=[
+                "completed_at",
+                "completed_by",
+                "driver_hourly_rate",
+                "driver_pay_amount",
+                "updated_at",
+            ]
+        )
     task = Task.objects.filter(
         reservation_id=review.reservation_id, kind="ops_review", status__in=Task.UNRESOLVED
     ).first()
@@ -238,13 +252,50 @@ _CENTS = Decimal("0.01")
 
 
 def _money(minutes: int, rate: Decimal) -> Decimal:
-    return (Decimal(minutes) * Decimal(rate) / 60).quantize(_CENTS)
+    # Half-up here, not in the database: MySQL (dev/test) and Postgres (prod) round a
+    # third decimal differently (see `dispatch.views._payout`).
+    return (Decimal(minutes) * Decimal(rate) / 60).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
+def affiliate_share(trip: Reservation, coverage) -> tuple[Decimal, str]:
+    """The affiliate's share of the trip's base, and how it was found (APC-61).
+
+    "factor" when the payout is exactly what the trip's factor pays; otherwise "payout" —
+    a flat `affiliate_cost` or a payout agreed separately — as payout ÷ subtotal. The share
+    is of the base only: gratuity pays nobody a share (the `vendor_pay` rule)."""
+    payout = Decimal(coverage.payout or 0)
+    if trip.vendor_pay_mode == Reservation.VENDOR_PAY_FACTOR and payout == trip.vendor_pay:
+        return Decimal(trip.cost_ratio_pct or 0) / 100, "factor"
+    subtotal = trip.subtotal
+    if subtotal <= 0:
+        return Decimal("0"), "payout"
+    return payout / subtotal, "payout"
+
+
+def _stamp_driver_pay(review: TripReview) -> None:
+    """Freeze an in-house driver's pay on the review; farmed-out trips have none."""
+    from apps.dispatch.models import Assignment
+
+    coverage = (
+        Assignment.objects.active()
+        .filter(reservation_id=review.reservation_id)
+        .select_related("driver")
+        .first()
+    )
+    review.driver_hourly_rate = review.driver_pay_amount = None
+    if coverage is None or not coverage.is_in_house:
+        return
+    rate = Decimal(coverage.driver.hourly_rate or 0)
+    if rate > 0 and review.actual_minutes is not None:
+        review.driver_hourly_rate = rate
+        review.driver_pay_amount = _money(review.actual_minutes, rate)
 
 
 @dataclass(frozen=True)
 class Figures:
-    """Everything the two panes show, from one review. Customer billing and driver pay
-    share the actual times and nothing else."""
+    """Everything the two panes show, from one review. Customer billing is a person's
+    call; the affiliate's overtime follows what was billed (APC-61), and an in-house
+    driver is paid total time on the job at their hourly rate."""
 
     billed_minutes: int
     actual_minutes: int | None
@@ -259,10 +310,23 @@ class Figures:
     coverage: str
     provider: str
     payout: Decimal
-    driver_minutes: int
-    affiliate_rate: Decimal | None
-    affiliate_overtime_amount: Decimal | None
-    expected_affiliate_amount: Decimal | None
+    # affiliate
+    affiliate_share: Decimal | None = None
+    affiliate_share_basis: str = ""
+    affiliate_overtime_derived: Decimal | None = None
+    affiliate_overtime_amount: Decimal | None = None
+    affiliate_overtime_overridden: bool = False
+    expected_affiliate_amount: Decimal | None = None
+    # in-house
+    driver_id: int | None = None
+    driver_hourly_rate: Decimal | None = None
+    driver_pay_amount: Decimal | None = None
+
+    @property
+    def affiliate_share_pct(self) -> Decimal | None:
+        if self.affiliate_share is None:
+            return None
+        return (self.affiliate_share * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
 def _rule(over: int | None, *, grace: int, increment: int) -> str:
@@ -288,23 +352,41 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
     over = max(0, actual - billed) if actual is not None else None
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
     rate = Decimal(trip.rate or 0)
+    customer_amount = _money(billable, rate)
 
     kind, provider, payout = "none", "", Decimal("0")
     if coverage is not None:
         kind = "in_house" if coverage.is_in_house else "affiliate"
         provider = coverage.provider_name
         payout = Decimal(coverage.payout or 0)
-    driver = review.driver_overtime_minutes
-    if driver is None:
-        driver = over or 0
 
-    aff_rate = aff_ot = expected = None
+    driver_pay: dict = {}
     if kind == "affiliate":
-        aff_rate = review.affiliate_rate
-        if aff_rate is None and billed:
-            aff_rate = (payout / (Decimal(billed) / 60)).quantize(_CENTS)
-        aff_ot = _money(driver, aff_rate or 0)
-        expected = payout + aff_ot
+        share, basis = affiliate_share(trip, coverage)
+        derived = (customer_amount * share).quantize(_CENTS, rounding=ROUND_HALF_UP)
+        override = review.affiliate_overtime_override
+        amount = derived if override is None else Decimal(override)
+        driver_pay = {
+            "affiliate_share": share,
+            "affiliate_share_basis": basis,
+            "affiliate_overtime_derived": derived,
+            "affiliate_overtime_amount": amount,
+            "affiliate_overtime_overridden": override is not None,
+            "expected_affiliate_amount": payout + amount,
+        }
+    elif kind == "in_house":
+        # Stamped at completion. A review completed before the driver had a rate stamped
+        # nothing, so it reads live until someone sets one.
+        if review.is_complete and review.driver_pay_amount is not None:
+            hourly, pay = review.driver_hourly_rate, review.driver_pay_amount
+        else:
+            hourly = Decimal(coverage.driver.hourly_rate or 0) or None
+            pay = _money(actual, hourly) if hourly and actual is not None else None
+        driver_pay = {
+            "driver_id": coverage.driver_id,
+            "driver_hourly_rate": hourly,
+            "driver_pay_amount": pay,
+        }
 
     return Figures(
         billed_minutes=billed,
@@ -318,12 +400,9 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
         ),
         billable_minutes=billable,
         customer_rate=rate,
-        customer_amount=_money(billable, rate),
+        customer_amount=customer_amount,
         coverage=kind,
         provider=provider,
         payout=payout,
-        driver_minutes=driver,
-        affiliate_rate=aff_rate,
-        affiliate_overtime_amount=aff_ot,
-        expected_affiliate_amount=expected,
+        **driver_pay,
     )

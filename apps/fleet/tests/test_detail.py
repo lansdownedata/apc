@@ -125,3 +125,22 @@ def test_existing_address_endpoints_still_work_after_extraction(logged_in_client
     )
     contact.refresh_from_db()
     assert resp.json()["ok"] is True and contact.primary_address.locationiq_place_id == "abc"
+
+
+def test_the_driver_profile_shows_the_hourly_rate(client):
+    from decimal import Decimal
+
+    from django.urls import reverse
+
+    from apps.accounts.factories import UserFactory
+    from apps.fleet.factories import DriverFactory
+
+    client.force_login(UserFactory())
+    driver = DriverFactory(hourly_rate=Decimal("32.50"))
+    body = client.get(reverse("fleet:driver_detail", args=[driver.pk])).content.decode()
+    assert "$32.50/hr" in body
+
+    driver.hourly_rate = Decimal("0")
+    driver.save()
+    body = client.get(reverse("fleet:driver_detail", args=[driver.pk])).content.decode()
+    assert "No hourly rate set" in body

@@ -77,6 +77,22 @@
       {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">No drivers on the roster yet.</p>{% endfor %}
     </div>
 
+    {% comment %} Open payables (APC-61): invoice missing, awaiting approval, approved and
+       unpaid. Each opens the order's Trip Review, where the payable is worked. {% endcomment %}
+    <div class="card overflow-hidden sm:col-span-2">
+      <form method="get" class="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+        <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-receipt text-[16px]" style="color:rgb(var(--gold-deep));"></i>Payables <span class="text-[12px] font-medium text-muted">{{ payables|length }} open</span></h2>
+        <div class="w-[200px]">{% include "components/searchable_select.html" with name="payables" field_id="v-payables" options=payable_stages selected=payable_stage empty_label="All open" autosubmit=1 search="off" %}</div>
+      </form>
+      {% for p in payables %}
+      <a href="{% url 'trip_review_order' p.assignment.reservation.lead_id %}" class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
+        <span class="min-w-0 truncate"><span class="font-medium text-ink text-[13px] num">{{ p.assignment.reservation.lead.quote_no }}</span> <span class="text-[12px] text-muted">· {{ p.assignment.reservation.lead.contact.name }} · {{ p.assignment.reservation.pickup_date|date:"M j" }}</span></span>
+        <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if p.stage == 'invoice_missing' %}chip-warn{% elif p.stage == 'awaiting_approval' %}chip-gold{% else %}chip-ring{% endif %}">{{ p.stage_label }}</span>
+        <span class="num text-[13px] text-right w-[88px]">${% if p.invoice_amount is not None %}{{ p.invoice_amount|floatformat:2 }}{% else %}{{ p.expected_amount|floatformat:2 }}{% endif %}</span>
+      </a>
+      {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">Nothing owed to {{ vendor.name }} right now.</p>{% endfor %}
+    </div>
+
     {# documents #}
     <div class="card overflow-hidden sm:col-span-2">
       <div class="flex items-center justify-between px-4 pt-4 pb-3">

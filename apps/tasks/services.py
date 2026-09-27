@@ -174,6 +174,12 @@ def ensure_tasks(lead: Lead) -> list[Task]:
         if new is None:
             return created
         created += new
+        if facts.post_trip_ids:
+            # The order is in review, so each affiliate-covered trip gets its payable
+            # (APC-61). A new one is a draft, so the facts already loaded still hold.
+            from apps.payments import payables
+
+            payables.ensure_payables(lead)
         changed = _evaluate_many(Task.objects.filter(lead_id=lead.pk), {lead.pk: facts})
         if not any(t.kind in PREDECESSOR_KINDS and t.is_closed for t in changed):
             break

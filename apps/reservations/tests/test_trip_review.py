@@ -464,7 +464,7 @@ def test_open_issues_are_queryable_for_phase_d():
     assert list(TripIssue.objects.open().values_list("category", flat=True)) == ["complaint"]
 
 
-# --- figures for the review screen: customer billing and driver pay, decoupled -------
+# --- figures for the review screen: customer billing and driver pay (APC-61) ---------
 
 
 def _coverage(trip):
@@ -484,14 +484,15 @@ def test_figures_for_a_farmed_out_trip():
     assert f.customer_amount == Decimal("126.00")  # 45 min at $168/h
     assert f.coverage == "affiliate"
     assert f.payout == Decimal("420")
-    # Driver pay starts at the actual time over, at payout ÷ billed hours (placeholder).
-    assert f.driver_minutes == 40
-    assert f.affiliate_rate == Decimal("140.00")
-    assert f.affiliate_overtime_amount == Decimal("93.33")
-    assert f.expected_affiliate_amount == Decimal("513.33")
+    # $420 isn't what the trip's factor pays, so the share is payout ÷ subtotal ($504).
+    assert f.affiliate_share_basis == "payout"
+    assert f.affiliate_overtime_amount == Decimal("105.00")  # $126 × 420/504
+    assert f.expected_affiliate_amount == Decimal("525.00")
 
 
-def test_a_waived_review_bills_the_customer_nothing_but_still_pays_the_driver():
+def test_a_waived_review_bills_nothing_and_pays_the_affiliate_no_overtime():
+    """Affiliate overtime rises with what was billed (APC-61) — the override is how a
+    waived trip still pays the affiliate for time they worked."""
     trip = _finished_trip(hours="3", rate=Decimal("168"))
     Assignment.objects.filter(reservation=trip).update(payout=Decimal("420"))
     review = _decided(trip, billable=45, waived=True, reason="Our delay", minutes_over=40)
@@ -499,33 +500,8 @@ def test_a_waived_review_bills_the_customer_nothing_but_still_pays_the_driver():
     f = reviews.figures(review, _coverage(trip))
 
     assert f.customer_amount == Decimal("0.00")
-    assert f.driver_minutes == 40
-
-
-def test_driver_minutes_and_rate_are_set_apart_from_the_customer_side():
-    trip = _finished_trip(hours="3", rate=Decimal("168"))
-    Assignment.objects.filter(reservation=trip).update(payout=Decimal("420"))
-    review = _decided(trip, billable=45, minutes_over=40)
-
-    reviews.save_review(
-        review, user=UserFactory(), driver_overtime_minutes=30, affiliate_rate=Decimal("120")
-    )
-    reviews.save_review(review, user=UserFactory(), billable_overtime_minutes=60)
-
-    review.refresh_from_db()
-    f = reviews.figures(review, _coverage(trip))
-    assert (review.billable_overtime_minutes, review.driver_overtime_minutes) == (60, 30)
-    assert f.expected_affiliate_amount == Decimal("480.00")
-
-
-def test_negative_driver_minutes_or_rate_are_refused():
-    trip = _finished_trip()
-    review = reviews.review_for(trip)
-
-    with pytest.raises(reviews.ReviewError):
-        reviews.save_review(review, user=UserFactory(), driver_overtime_minutes=-5)
-    with pytest.raises(reviews.ReviewError):
-        reviews.save_review(review, user=UserFactory(), affiliate_rate=Decimal("-1"))
+    assert f.affiliate_overtime_amount == Decimal("0.00")
+    assert f.expected_affiliate_amount == Decimal("420.00")
 
 
 def test_figures_for_an_in_house_trip_have_no_payable():
@@ -535,8 +511,8 @@ def test_figures_for_an_in_house_trip_have_no_payable():
     f = reviews.figures(review, _coverage(trip))
 
     assert f.coverage == "in_house"
-    assert f.driver_minutes == 20
     assert f.expected_affiliate_amount is None
+    assert f.driver_pay_amount is None  # no hourly rate on the driver yet
 
 
 def test_figures_before_actual_times_are_entered():
@@ -545,5 +521,5 @@ def test_figures_before_actual_times_are_entered():
     f = reviews.figures(reviews.review_for(trip), _coverage(trip))
 
     assert f.actual_minutes is None and f.over_minutes is None
-    assert f.driver_minutes == 0
+    assert f.affiliate_overtime_amount == Decimal("0.00")
     assert "Enter the actual times" in f.rule

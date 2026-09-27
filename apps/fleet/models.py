@@ -10,6 +10,7 @@ from django.db.models import Prefetch, Q
 from django.db.models.functions import Lower
 from django.utils import timezone
 
+from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 from apps.core.phone import to_e164
 
@@ -33,6 +34,9 @@ class Driver(TimeStampedModel):
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     notes = models.TextField(blank=True)
+    # What payroll pays per hour on the job (APC-61). 0 = not set yet, and the trip review
+    # asks for one rather than showing $0.
+    hourly_rate = MoneyField()
 
     class Meta:
         ordering = ["name"]

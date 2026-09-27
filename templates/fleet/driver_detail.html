@@ -8,6 +8,7 @@
       <p class="num text-[12px] font-semibold text-goldd">Driver {{ driver.driver_number }}</p>
       <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ driver.name }}</h1>
       <p class="text-[12.5px] text-muted mt-1">{{ driver.phone|default:"" }}{% if driver.phone and driver.email %} · {% endif %}{{ driver.email|default:"" }}</p>
+      <p class="text-[12.5px] mt-0.5">{% if driver.hourly_rate %}<span class="num text-ink">${{ driver.hourly_rate|floatformat:2 }}/hr</span>{% else %}<a href="{% url 'fleet:driver_edit' driver.pk %}" class="text-amber-700 hover:underline">No hourly rate set</a>{% endif %}</p>
       <div class="mt-2 flex items-center gap-2 text-[11.5px]">{% include "vendors/_insurance_cell.html" with summary=summary %}{% if driver.status != 'active' %}<span class="text-[9.5px] font-bold uppercase tracking-wide text-muted ring-1 ring-line rounded px-1.5 py-0.5">Inactive</span>{% endif %}</div>
     </div>
     <a href="{% url 'fleet:driver_edit' driver.pk %}" class="btn-gold text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0"><i class="ti ti-pencil text-[14px]"></i> Edit</a>

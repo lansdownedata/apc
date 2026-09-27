@@ -17,6 +17,8 @@ from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.payments import payables
+from apps.payments.models import AffiliatePayable
 from apps.tasks import vendor_tasks
 
 from . import compliance
@@ -197,6 +199,7 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
     )
     vendor.summary = vendor.insurance_summary()
     vendor.banner = _insurance_banner(vendor.summary)
+    stage = request.GET.get("payables", "")
     return render(
         request,
         "vendors/vendor_detail.html",
@@ -206,6 +209,11 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "vendor": vendor,
             "addr_url": reverse("vendor_address_update", args=[vendor.pk]),
             "ac_url": reverse("integrations:geocode_autocomplete"),
+            "payables": payables.vendor_payables(vendor, stage),
+            "payable_stage": stage,
+            "payable_stages": [
+                (key, AffiliatePayable.STAGE_LABELS[key]) for key in payables.OPEN_STAGES
+            ],
         },
     )
 

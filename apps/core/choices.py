@@ -22,3 +22,7 @@ class Account(models.TextChoices):
     PROCESSING_FEES = "processing_fees", "Processing Fees"
     VENDOR_COST = "vendor_cost", "Vendor Cost"
     VENDOR_PAYABLE = "vendor_payable", "Vendor Payable"
+    # The other side of a paid affiliate payable (APC-61). Not CASH: an order's "Collected"
+    # is its Cash balance, so paying an affiliate there would read as the customer's money
+    # going back out.
+    AFFILIATE_DISBURSEMENTS = "affiliate_disbursements", "Affiliate disbursements"

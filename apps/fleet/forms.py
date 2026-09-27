@@ -1,6 +1,9 @@
 """Model forms for the fleet screens. Widgets mirror apps.vendors.forms."""
 
+from decimal import Decimal
+
 from django import forms
+from django.core.validators import MinValueValidator
 from django.db.models import Q
 
 from apps.leads.models import VehicleType
@@ -19,14 +22,31 @@ class DriverForm(forms.ModelForm):
 
     class Meta:
         model = Driver
-        fields = ["name", "phone", "email", "status", "notes"]
+        fields = ["name", "phone", "email", "status", "hourly_rate", "notes"]
         widgets = {
             "name": forms.TextInput(attrs=_TEXT),
             "phone": forms.TextInput(attrs=_TEXT),
             "email": forms.EmailInput(attrs=_TEXT),
             "status": forms.Select(attrs=_SELECT),
+            "hourly_rate": forms.NumberInput(
+                attrs={"class": "field w-full num", "min": 0, "step": "0.01", "placeholder": "0.00"}
+            ),
             "notes": forms.Textarea(attrs=_AREA),
         }
+        labels = {"hourly_rate": "Hourly rate ($)"}
+        help_texts = {
+            "hourly_rate": "Payroll pays total time on the job × this rate (trip review)."
+        }
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fields["hourly_rate"].required = False
+        self.fields["hourly_rate"].min_value = 0
+        self.fields["hourly_rate"].validators.append(MinValueValidator(0))
+
+    def clean_hourly_rate(self):
+        """Blank means not set, which the model stores as 0."""
+        return self.cleaned_data.get("hourly_rate") or Decimal("0")
 
 
 class VehicleForm(forms.ModelForm):

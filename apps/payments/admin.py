@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Charge, JournalEntry, JournalLine, PaymentPlan
+from .models import AffiliatePayable, Charge, JournalEntry, JournalLine, PaymentPlan
 
 
 class ChargeInline(admin.TabularInline):
@@ -65,3 +65,24 @@ class JournalEntryAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(AffiliatePayable)
+class AffiliatePayableAdmin(admin.ModelAdmin):
+    """Read-mostly: approving and paying post ledger entries, so they happen through the
+    trip review (`payables`), never by editing a status here."""
+
+    list_display = ("assignment", "status", "expected_amount", "invoice_amount", "paid_at")
+    list_filter = ("status", "paid_method")
+    search_fields = ("invoice_number", "assignment__vendor__name")
+    list_select_related = ("assignment__vendor", "assignment__reservation")
+    readonly_fields = (
+        "assignment",
+        "status",
+        "expected_amount",
+        "approved_by",
+        "approved_at",
+        "paid_at",
+        "paid_method",
+        "paid_reference",
+    )

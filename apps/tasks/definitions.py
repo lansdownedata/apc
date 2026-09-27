@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 
 from apps.accounts.models import Department
@@ -215,6 +216,25 @@ def _driver_released(task: Task, facts: LeadFacts) -> bool:
     return task.reservation_id in facts.released_trip_ids
 
 
+def _payable_status(task: Task, facts: LeadFacts) -> str:
+    """The trip's affiliate payable status (APC-61), or "" when it has none yet."""
+    a = facts.active_assignment(task.reservation_id)
+    if a is None:
+        return ""
+    try:
+        return a.payable.status
+    except ObjectDoesNotExist:
+        return ""
+
+
+def _payable_approved(task: Task, facts: LeadFacts) -> bool:
+    return _payable_status(task, facts) in ("approved", "paid")
+
+
+def _payable_paid(task: Task, facts: LeadFacts) -> bool:
+    return _payable_status(task, facts) == "paid"
+
+
 def _no_overtime_to_bill(task: Task, facts: LeadFacts) -> bool:
     """The completed review approved no billable minutes, or waived them (APC-59)."""
     review = facts.reviews.get(task.reservation_id)
@@ -355,13 +375,14 @@ REGISTRY: tuple[TaskKind, ...] = (
         opens_after=("ops_review",),
     ),
     TaskKind(
-        # Stage 2. Closed by approving the affiliate payable (APC-61).
+        # Stage 2. Closes itself when the affiliate payable is approved (APC-61).
         key="affiliate_payable_approved",
         label="Affiliate payable approved",
         department=_D.ACCOUNTING,
         level=Level.TRIP,
         due=AfterOpen(hours=72),  # PLACEHOLDER
         applies=_farmed_out,
+        auto_complete=_payable_approved,
         post_trip=True,
         opens_after=("ops_review",),
     ),
@@ -373,6 +394,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         level=Level.TRIP,
         due=AfterOpen(hours=24 * 14),  # PLACEHOLDER
         applies=_farmed_out,
+        auto_complete=_payable_paid,
         post_trip=True,
         opens_after=("affiliate_payable_approved",),
     ),

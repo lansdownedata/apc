@@ -83,7 +83,8 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
             by_trip[trip.pk] = f.lead.pk
 
     active = Assignment.objects.active().filter(reservation__lead_id__in=ids)
-    for a in active.select_related("vendor", "driver", "vehicle"):
+    # `payable` rides along so the payable predicates (APC-61) cost no query per trip.
+    for a in active.select_related("vendor", "driver", "vehicle", "payable"):
         facts[by_trip[a.reservation_id]].assignments[a.reservation_id] = a
 
     released: dict[int, set[int]] = defaultdict(set)

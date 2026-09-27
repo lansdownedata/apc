@@ -1,4 +1,4 @@
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import stripe
 from django.conf import settings
@@ -26,7 +26,8 @@ from apps.reservations import groups
 from apps.reservations.models import Reservation, Stop
 from apps.tasks import selectors as task_selectors
 
-from . import ledger, reports, services, webhooks
+from . import ledger, payables, reports, services, webhooks
+from .models import AffiliatePayable
 
 
 @csrf_exempt
@@ -380,3 +381,74 @@ def order_send_pay_link(request, lead_id):
         sender_name=request.user.get_full_name() or request.user.username,
     )
     return JsonResponse({"ok": True, "channel": channel})
+
+
+# --- affiliate payables (APC-61): record only, nothing moves money -------------------
+
+
+def _payable(pk: int) -> AffiliatePayable:
+    return get_object_or_404(
+        AffiliatePayable.objects.select_related("assignment__reservation", "assignment__vendor"),
+        pk=pk,
+    )
+
+
+def _payable_ok(payable: AffiliatePayable) -> JsonResponse:
+    payable.refresh_from_db()
+    return JsonResponse({"ok": True, "payable": payables.payable_json(payable)})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def payable_invoice(request, pk):
+    payable = _payable(pk)
+    raw = (request.POST.get("invoice_amount") or "").replace("$", "").replace(",", "").strip()
+    try:
+        amount = Decimal(raw) if raw else None
+    except InvalidOperation:
+        return _json_error("The invoice amount has to be an amount.")
+    if amount is not None and (not amount.is_finite() or amount >= Decimal("99999999.995")):
+        return _json_error("The invoice amount has to be an amount.")
+    if amount is not None:
+        amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    try:
+        payables.record_invoice(
+            payable,
+            user=request.user,
+            number=request.POST.get("invoice_number", ""),
+            amount=amount,
+            file=request.FILES.get("invoice_file"),
+        )
+    except payables.PayableError as exc:
+        return _json_error(str(exc))
+    return _payable_ok(payable)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def payable_approve(request, pk):
+    payable = _payable(pk)
+    try:
+        payables.approve(payable, user=request.user, note=request.POST.get("note", ""))
+    except payables.PayableError as exc:
+        return _json_error(str(exc))
+    return _payable_ok(payable)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def payable_paid(request, pk):
+    payable = _payable(pk)
+    try:
+        payables.mark_paid(
+            payable,
+            user=request.user,
+            method=request.POST.get("method", ""),
+            reference=request.POST.get("reference", ""),
+        )
+    except payables.PayableError as exc:
+        return _json_error(str(exc))
+    return _payable_ok(payable)

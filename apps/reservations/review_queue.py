@@ -29,7 +29,7 @@ from django.utils import timezone
 from apps.core.choices import Account
 from apps.dispatch.selectors import coverage_prefetch
 from apps.leads.models import Lead
-from apps.payments.models import JournalLine
+from apps.payments.models import AffiliatePayable, JournalLine
 from apps.tasks import post_trip
 from apps.tasks.models import Task, TaskConfig, format_local
 
@@ -80,6 +80,7 @@ class TripRow:
     pickup_stop: object | None
     dropoff_stop: object | None
     figures: reviews.Figures | None = None
+    payable: object | None = None
 
     @property
     def pickup_display(self) -> str:
@@ -127,6 +128,38 @@ class OrderRow:
     def order_balance(self) -> Decimal:
         """What the booked order itself still owes, before any overtime."""
         return max(self.order_total - self.collected, ZERO)
+
+    @property
+    def payable_summary(self) -> list[dict]:
+        """Final billing's payables, one row per affiliate: how many of its trips sit at
+        each stage. A covered trip whose payable isn't made yet reads as invoice missing.
+        In-house trips come last, as "No payable"."""
+        by_vendor: dict[int, dict] = {}
+        in_house = []
+        for t in self.live_trips:
+            if t.coverage is None:
+                continue
+            if t.coverage.is_in_house:
+                in_house.append({"name": t.coverage.provider_name, "in_house": True})
+                continue
+            row = by_vendor.setdefault(
+                t.coverage.vendor_id,
+                {"name": t.coverage.provider_name, "in_house": False, "stages": {}, "total": ZERO},
+            )
+            stage = t.payable.stage if t.payable else "invoice_missing"
+            row["stages"][stage] = row["stages"].get(stage, 0) + 1
+            if t.payable is not None:
+                amount = t.payable.invoice_amount
+                row["total"] += Decimal(amount if amount is not None else t.payable.expected_amount)
+        rows = []
+        for row in by_vendor.values():
+            row["stage_counts"] = [
+                (count, label.lower())
+                for key, label in AffiliatePayable.STAGE_LABELS.items()
+                if (count := row["stages"].get(key))
+            ]
+            rows.append(row)
+        return rows + in_house
 
     @property
     def stage(self) -> str:
@@ -189,13 +222,20 @@ def _load(leads_qs) -> list[OrderRow]:
         .annotate(d=Sum("debit"), c=Sum("credit"))
     )
     collected = {r["entry__lead_id"]: (r["d"] or ZERO) - (r["c"] or ZERO) for r in cash}
+    payables = {
+        p.assignment_id: p
+        for p in AffiliatePayable.objects.filter(assignment__reservation__lead__in=leads)
+    }
     config = TaskConfig.load()
     grace = timedelta(hours=config.post_trip_grace_hours)
     now = timezone.now()
-    return [_order_row(lead, collected.get(lead.pk, ZERO), config, grace, now) for lead in leads]
+    return [
+        _order_row(lead, collected.get(lead.pk, ZERO), payables, config, grace, now)
+        for lead in leads
+    ]
 
 
-def _order_row(lead, collected, config, grace, now) -> OrderRow:
+def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:
     tasks = defaultdict(list)
     for t in lead.review_tasks:
         tasks[(t.reservation_id, t.kind)].append(t)
@@ -239,6 +279,7 @@ def _order_row(lead, collected, config, grace, now) -> OrderRow:
                 pickup_stop=stops[0] if stops else None,
                 dropoff_stop=stops[-1] if len(stops) > 1 else None,
                 figures=figures,
+                payable=payables.get(coverage.pk) if coverage is not None else None,
             )
         )
     if row.finished_at is None:

@@ -168,18 +168,34 @@ def test_the_trip_review_shows_both_panes_in_the_trips_zone(staff):
     body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
 
     assert "Customer billing" in body and "Driver pay" in body
-    assert "Affiliate overtime minutes" in body
+    assert "Affiliate overtime" in body and "Expected to pay" in body
+    assert "Approve payable" not in body  # a plain agent can't approve
     assert "PDT" in body or "PST" in body
     assert "placeholder" in body
 
 
-def test_an_in_house_trip_shows_payroll_minutes_and_no_payable(staff):
+def test_an_in_house_trip_shows_driver_pay_and_no_payable(staff):
     _lead, trip = _order(farmed_out=False)
 
     body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
 
-    assert "Overtime minutes for payroll" in body
-    assert "Affiliate overtime minutes" not in body
+    assert "Total time on the job" in body
+    driver = trip.assignments.get().driver
+    assert f"Set an hourly rate on {driver.name}" in body
+    assert reverse("fleet:driver_edit", args=[driver.pk]) in body
+    assert "Affiliate overtime" not in body
+    assert "Payable" not in body
+
+
+def test_a_payments_user_can_work_the_payable_in_the_pane(client):
+    client.force_login(UserFactory(can_manage_payments=True))
+    _lead, trip = _order()
+
+    body = client.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "Invoice missing" in body or "invoice_missing" in body
+    assert "Approve payable" in body and "Mark paid" in body
+    assert "Save invoice" in body
 
 
 def test_a_cancelled_trip_has_nothing_to_review(staff):
@@ -216,7 +232,6 @@ def test_saving_times_entered_in_the_trips_zone(staff):
     assert (local.date(), local.hour, local.minute) == (day + timedelta(days=1), 1, 45)
     assert data["actual_minutes"] == 220
     assert data["suggested_minutes"] == 45
-    assert data["driver_minutes"] == 40
 
 
 def test_half_a_time_is_refused(staff):
@@ -241,14 +256,25 @@ def test_saving_the_customer_decision_and_driver_pay_separately(staff):
     )
 
     staff.post(url, {"billable_minutes": "30", "waived": "0"})
-    resp = staff.post(url, {"driver_minutes": "25", "affiliate_rate": "150"})
+    resp = staff.post(url, {"override": "60", "override_note": "Waited at the FBO"})
 
     data = resp.json()["review"]
     assert data["billable_minutes"] == 30
     assert data["customer_amount"] == "84.00"
-    assert data["driver_minutes"] == 25
-    assert data["expected_affiliate_amount"] == "482.50"
+    # 30 billed min × the payout share would be $70; the adjustment replaces it.
+    assert data["affiliate_overtime_derived"] == "70.00"
+    assert data["affiliate_overtime_overridden"] is True
+    assert data["expected_affiliate_amount"] == "480.00"
     assert data["decided"] is True
+
+
+def test_an_adjustment_without_a_note_is_refused(staff):
+    _lead, trip = _order()
+
+    resp = staff.post(_trip_url("trip_review_save", trip), {"override": "60"})
+
+    assert resp.status_code == 400
+    assert "note" in resp.json()["error"]
 
 
 def test_waiving_without_a_reason_is_refused(staff):

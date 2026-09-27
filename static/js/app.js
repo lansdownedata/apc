@@ -623,8 +623,14 @@ function tripReviewForm(opts) {
     billable: s.billable_minutes,
     waived: s.waived,
     waiveReason: opts.waiveReason || "",
-    driverMinutes: s.driver_minutes,
-    affiliateRate: s.affiliate_rate || "",
+    adjusting: false,
+    override: s.affiliate_overtime_overridden ? s.affiliate_overtime_amount : "",
+    overrideNote: s.override_note || "",
+    payable: opts.payable,
+    invoiceNumber: opts.payable ? opts.payable.invoice_number : "",
+    invoiceAmount: opts.payable ? opts.payable.invoice_amount || "" : "",
+    approvalNote: "",
+    paidReference: "",
     logging: false,
     issueNote: "",
     busy: false,
@@ -640,12 +646,11 @@ function tripReviewForm(opts) {
       try {
         const res = await postForm(opts.saveUrl, data);
         this.state = res.review;
-        // The server's figures win: billable tracks the suggestion until someone decides,
-        // and a cleared driver field falls back to the actual time over.
+        // The server's figures win: billable tracks the suggestion until someone decides.
         if (!this.state.decided) this.billable = this.state.billable_minutes;
-        this.driverMinutes = this.state.driver_minutes;
-        this.affiliateRate = this.state.affiliate_rate || "";
+        this._refreshPayable();
         this.$dispatch("trip-review-changed");
+        return true;
       } catch (e) {
         this.error = e.message || "That didn't save.";
       } finally {
@@ -670,8 +675,94 @@ function tripReviewForm(opts) {
         waive_reason: this.waiveReason,
       });
     },
-    saveDriver() {
-      this._save({ driver_minutes: this.driverMinutes ?? "", affiliate_rate: this.affiliateRate ?? "" });
+    async saveOverride() {
+      if (await this._save({ override: this.override ?? "", override_note: this.overrideNote })) {
+        this.adjusting = false;
+      }
+    },
+    async clearOverride() {
+      if (await this._save({ override: "", override_note: "" })) {
+        this.override = "";
+        this.overrideNote = "";
+      }
+    },
+    /* The payable's expected amount follows the review until approval; re-read it. */
+    _refreshPayable() {
+      const p = this.payable;
+      if (!p || !["invoice_missing", "awaiting_approval"].includes(p.stage)) return;
+      const expected = this.state.expected_affiliate_amount;
+      const variance = p.invoice_amount === null ? null : (Number(p.invoice_amount) - Number(expected)).toFixed(2);
+      this.payable = { ...p, expected, variance };
+    },
+    async _payableAction(url, body, done) {
+      this.saving = true;
+      this.error = "";
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok || json.ok === false) throw new Error(json.error || "That didn't save.");
+        this.payable = json.payable;
+        this.$dispatch("trip-review-changed");
+        if (done) Alpine.store("toast").push({ type: "success", title: done });
+      } catch (e) {
+        this.error = e.message || "That didn't save.";
+        Alpine.store("toast").push({ type: "danger", title: this.error });
+        throw e;
+      } finally {
+        this.saving = false;
+      }
+    },
+    saveInvoice(form) {
+      const body = new FormData(form);
+      body.set("invoice_number", this.invoiceNumber || "");
+      body.set("invoice_amount", this.invoiceAmount || "");
+      return this._payableAction(opts.payableUrls.invoice, body, "Invoice saved").catch(() => {});
+    },
+    approvePayable() {
+      const p = this.payable;
+      const off = p.variance && p.variance !== "0.00";
+      if (off && !this.approvalNote.trim()) {
+        this.error = "Add a note saying why before approving with a difference.";
+        return;
+      }
+      Alpine.store("modal").confirm({
+        title: "Approve this payable?",
+        message: `Approve $${p.invoice_amount} to the affiliate (invoice${p.invoice_number ? " #" + p.invoice_number : ""}). `
+          + (off ? `That's $${Math.abs(p.variance).toFixed(2)} ${p.variance > 0 ? "more" : "less"} than the $${p.expected} expected. ` : "")
+          + "It's recorded as owed; no money moves from here.",
+        variant: off ? "danger" : "gold",
+        confirmText: "Approve payable",
+        onConfirm: () => {
+          const body = new FormData();
+          body.set("note", this.approvalNote);
+          return this._payableAction(opts.payableUrls.approve, body, "Payable approved").catch(() => {});
+        },
+      });
+    },
+    markPaid() {
+      const method = this.$root.querySelector("#payable-method")?.value || "";
+      if (!method) {
+        this.error = "Pick how the affiliate was paid.";
+        return;
+      }
+      const label = this.$root.querySelector("#payable-method option:checked")?.textContent || method;
+      Alpine.store("modal").confirm({
+        title: "Mark this payable paid?",
+        message: `Record $${this.payable.invoice_amount} as paid by ${label}${this.paidReference ? " (" + this.paidReference + ")" : ""}. `
+          + "This records it; it doesn't send any money.",
+        variant: "gold",
+        confirmText: "Mark paid",
+        onConfirm: () => {
+          const body = new FormData();
+          body.set("method", method);
+          body.set("reference", this.paidReference);
+          return this._payableAction(opts.payableUrls.paid, body, "Marked paid").catch(() => {});
+        },
+      });
     },
     rate(n) {
       this._save({ rating: n });
