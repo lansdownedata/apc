@@ -51,7 +51,8 @@ class VendorForm(forms.ModelForm):
         return to_e164(raw) or raw
 
 
-_DATE = {"class": "field w-full", "type": "date"}
+# The app's flatpickr, never the native picker; these dates are usually in the past.
+_DATE = {"class": "field w-full", "data-flatpickr": "", "data-fp-past": ""}
 
 
 class VendorDriverForm(forms.ModelForm):

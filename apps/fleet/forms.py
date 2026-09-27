@@ -8,7 +8,8 @@ from apps.leads.models import VehicleType
 from .models import Driver, Renewal, RenewalType, Vehicle
 
 _TEXT = {"class": "field w-full"}
-_DATE = {"class": "field w-full", "type": "date"}
+# The app's flatpickr, never the native picker; these dates are usually in the past.
+_DATE = {"class": "field w-full", "data-flatpickr": "", "data-fp-past": ""}
 _SELECT = {"class": "field w-full", "data-tom": "", "data-search": "off"}
 _AREA = {"class": "field w-full", "rows": 3}
 
@@ -59,7 +60,7 @@ class VehicleForm(forms.ModelForm):
             "vehicle_type": (
                 "The rate-card class this unit runs as — drives vehicle fit in dispatch."
             ),
-            "name": 'How dispatch refers to it, e.g. "Unit 1 – Black Suburban".',
+            "name": 'How dispatch refers to it, e.g. "SUV-100".',
         }
 
     def __init__(self, *args, **kwargs):

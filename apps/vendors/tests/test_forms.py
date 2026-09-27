@@ -69,3 +69,14 @@ def test_invalid_email_is_rejected(client, django_user_model):
     )
     assert resp.status_code == 200  # re-rendered with errors, not redirected
     assert not Vendor.objects.filter(name="Bad Email Co").exists()
+
+
+def test_insurance_dates_use_the_app_datepicker_not_the_native_one():
+    from apps.vendors.forms import VendorInsuranceForm
+
+    form = VendorInsuranceForm()
+    for name in ("effective_date", "expiry_date"):
+        html = str(form[name])
+        assert 'type="text"' in html
+        assert "data-flatpickr" in html
+        assert "data-fp-past" in html  # policies usually started in the past

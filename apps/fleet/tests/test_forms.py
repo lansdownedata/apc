@@ -99,3 +99,12 @@ def test_renewal_type_form_explains_a_duplicate_name():
     )
     assert not form.is_valid()
     assert "already exists" in str(form.errors)
+
+
+def test_renewal_dates_use_the_app_datepicker_not_the_native_one():
+    form = RenewalForm(applies_to=RenewalType.AppliesTo.DRIVER)
+    for name in ("issued_on", "expires_on"):
+        html = str(form[name])
+        assert 'type="text"' in html
+        assert "data-flatpickr" in html
+        assert "data-fp-past" in html  # a renewal is usually issued before it's entered
