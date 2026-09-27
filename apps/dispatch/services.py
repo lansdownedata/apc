@@ -392,3 +392,31 @@ def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Ass
         except Exception:  # noqa: BLE001 - one bad row must not strand the rest of the batch
             logger.exception("Failed to release assignment %s", assignment.pk)
     return released
+
+
+def record_insurance_override(assignment: Assignment, user) -> bool:
+    """Stamp who offered or confirmed this trip to an affiliate not insured for it
+    (APC-72). Warn, don't block: the assignment stands either way. Returns whether it
+    stamped; a covered affiliate, or in-house coverage, leaves nothing to record."""
+    from apps.vendors.models import Vendor
+
+    from . import selectors
+
+    if assignment.is_in_house:
+        return False
+    vendor = Vendor.objects.prefetch_related("policies").get(pk=assignment.vendor_id)
+    status = selectors.insurance_for(vendor, assignment.reservation)["status"]
+    if status == "covered":
+        return False
+    assignment.insurance_override = status
+    assignment.insurance_override_by = user
+    assignment.insurance_override_at = timezone.now()
+    assignment.save(
+        update_fields=[
+            "insurance_override",
+            "insurance_override_by",
+            "insurance_override_at",
+            "updated_at",
+        ]
+    )
+    return True

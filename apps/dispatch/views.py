@@ -207,6 +207,10 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     vendors = selectors.vendor_options(trip, search=search, limit=None) if uncovered else []
     farmed_out = bool(assignment and not assignment.is_in_house)
     roster = selectors.vendor_driver_options(assignment.vendor) if farmed_out else []
+    insured = None
+    if farmed_out:
+        vendor = Vendor.objects.prefetch_related("policies").get(pk=assignment.vendor_id)
+        insured = selectors.insurance_for(vendor, trip)
     return {
         "trip": trip,
         "assignment": assignment,
@@ -220,6 +224,9 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
         # The affiliate's own roster, for the driver-and-vehicle form on confirmed
         # coverage. Empty for in-house, which carries its driver on the assignment.
         "vendor_driver_options": roster,
+        # APC-72: the covering affiliate's insurance on the trip's date — the Confirm
+        # warning and the line on the coverage card read it.
+        "assignment_insurance": insured,
         "vendor_driver_create_url": (
             reverse("dispatch_vendor_driver_create", args=[assignment.vendor_id])
             if farmed_out
@@ -350,6 +357,7 @@ def offer(request: HttpRequest, pk: int) -> JsonResponse:
         )
     except services.AssignmentError as exc:
         return _fail(exc)
+    services.record_insurance_override(assignment, request.user)
     return JsonResponse({"ok": True, "assignment": assignment.pk})
 
 
@@ -367,6 +375,7 @@ def assign(request: HttpRequest, pk: int) -> JsonResponse:
         )
     except services.AssignmentError as exc:
         return _fail(exc)
+    services.record_insurance_override(assignment, request.user)
     return JsonResponse({"ok": True, "assignment": assignment.pk})
 
 
@@ -532,6 +541,7 @@ def resolve(request: HttpRequest, pk: int) -> JsonResponse:
     try:
         if handler is services.confirm:
             handler(assignment)
+            services.record_insurance_override(assignment, request.user)
         else:
             handler(assignment, note=(request.POST.get("note") or "").strip())
     except services.AssignmentError as exc:

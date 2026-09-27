@@ -278,6 +278,8 @@ function coverageControls(opts = {}) {
      * email, so an affiliate with a grid id and no address is still offerable — they are
      * precisely who that channel exists for. */
     canOffer: false,
+    vendorAlert: "",
+    vendorName: "",
 
     /* One delegated listener rather than x-model on each picker: Tom Select fires a real
      * change event on the original <select>, and it bubbles. Binding x-model instead would
@@ -289,6 +291,8 @@ function coverageControls(opts = {}) {
         this.vendor = el.value;
         const data = this.optionData(el);
         this.canOffer = Boolean(data.email || data.gnet);
+        this.vendorAlert = data.alert || "";
+        this.vendorName = data.label || "";
       }
     },
 
@@ -302,11 +306,13 @@ function coverageControls(opts = {}) {
       }
     },
 
-    async send(url, extra) {
+    async send(url, extra, formEl) {
       this.busy = true;
       // $el/closest, not $root/querySelector: several forms share this component's scope,
       // and the button that was clicked is the only thing that knows which one it is in.
-      const form = new FormData(this.$el.closest("form") || undefined);
+      // A caller that goes through a confirm first passes the form it captured, because
+      // by the time the modal resolves $el is no longer the button.
+      const form = new FormData(formEl || this.$el.closest("form") || undefined);
       Object.entries(extra || {}).forEach(([k, v]) => form.set(k, v));
       let data;
       try {
@@ -330,6 +336,29 @@ function coverageControls(opts = {}) {
 
     resolve(url, action) {
       return this.send(url, { action });
+    },
+
+    /* APC-72 (D4): warn, don't block. An affiliate whose insurance doesn't cover the trip
+     * date gets a danger confirm before an offer, a direct assign or a confirm; going
+     * ahead is recorded server-side against whoever clicked. */
+    insuranceCheck(alert, who, go) {
+      if (!alert) return go();
+      Alpine.store("modal").confirm({
+        title: `${alert}: continue?`,
+        message: `${who || "This affiliate"} isn't insured for this trip's date (${alert.toLowerCase()}). You can go ahead; the override is recorded against you.`,
+        variant: "danger",
+        confirmText: "Continue anyway",
+        onConfirm: go,
+      });
+    },
+
+    offerTo(url) {
+      const form = this.$el.closest("form");
+      return this.insuranceCheck(this.vendorAlert, this.vendorName, () => this.send(url, {}, form));
+    },
+
+    confirmOffer(url, alert, who) {
+      return this.insuranceCheck(alert, who, () => this.send(url, { action: "confirm" }, null));
     },
 
     confirmReassign(url, copy = {}) {
@@ -2739,6 +2768,7 @@ function initTomSelects(root = document) {
        rides in `data-data`, which Tom Select parses into the option's own data. */
     if (el.dataset.rich !== undefined) {
       const row = (data, escape, compact) => {
+        const alert = data.alert ? ` <span class="ts-badge ts-badge-danger">${escape(data.alert)}</span>` : "";
         const badge = data.badge
           ? ` <span class="ts-badge">${escape(data.badge)}</span>`
           : "";
@@ -2746,7 +2776,7 @@ function initTomSelects(root = document) {
           data.sub && !compact
             ? `<span class="ts-sub${data.warn ? " ts-sub-warn" : ""}">${escape(data.sub)}</span>`
             : "";
-        return `<div><span class="ts-name">${escape(data.text || data.label || "")}</span>${badge}${sub}</div>`;
+        return `<div><span class="ts-name">${escape(data.text || data.label || "")}</span>${badge}${alert}${sub}</div>`;
       };
       options.render = {
         option: (data, escape) => row(data, escape, false),

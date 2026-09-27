@@ -424,7 +424,8 @@ def test_reassign_is_still_two_steps():
     from apps.dispatch import services
 
     assert not hasattr(services, "reassign")
-    block = APP_JS[APP_JS.index("function coverageControls") :][:4000]
+    start = APP_JS.index("function coverageControls")
+    block = APP_JS[start : APP_JS.index("window.coverageControls", start)]
     assert 'action: "withdraw"' in block
 
 
@@ -437,7 +438,8 @@ def test_the_record_of_a_withdrawal_keeps_its_own_name():
 def test_nothing_re_sends_the_customer_on_reassign():
     """Telling them their driver changed stays the agent's job (Moe, 2026-09-19) — a
     second automatic message about a driver who is no longer coming is worse than none."""
-    block = APP_JS[APP_JS.index("function coverageControls") :][:4000]
+    start = APP_JS.index("function coverageControls")
+    block = APP_JS[start : APP_JS.index("window.coverageControls", start)]
     assert "trigger_driver_released" not in block
     assert "driver_info" not in block
 

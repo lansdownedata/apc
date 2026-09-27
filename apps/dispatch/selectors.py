@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db.models import Count, Exists, F, OuterRef, Prefetch
+from django.utils import timezone
 
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
@@ -206,7 +209,9 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int | None = 8
         .prefetch_related(
             Prefetch(
                 "policies",
-                queryset=VendorInsurance.objects.only("id", "vendor_id", "expiry_date"),
+                queryset=VendorInsurance.objects.only(
+                    "id", "vendor_id", "effective_date", "expiry_date"
+                ),
             )
         )
     )
@@ -221,12 +226,14 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int | None = 8
     if limit is not None:
         qs = qs[:limit]
 
+    today = trip_today(trip)
     return [
         {
             "vendor": vendor,
             "used": vendor.used,
             "fits_vehicle": vendor.fits_vehicle,
             "insurance": vendor.insurance_summary(),
+            "trip_insurance": insurance_for(vendor, trip, today=today),
             # `gnet_grid_id` is a plain column on the Vendor row this queryset already
             # fetched, so `is_gnet_capable` (a property over it) costs nothing extra —
             # the 2-query bound above still holds.
@@ -234,6 +241,21 @@ def vendor_options(trip: Reservation, *, search: str = "", limit: int | None = 8
         }
         for vendor in qs
     ]
+
+
+def trip_today(trip: Reservation, *, now: datetime | None = None) -> date:
+    """Today's date where the trip happens — the trip's own zone, never the server's."""
+    zone = ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
+    return (now or timezone.now()).astimezone(zone).date()
+
+
+def insurance_for(vendor: Vendor, trip: Reservation, *, today=None, now=None) -> dict:
+    """The vendor's insurance standing for this trip (APC-72): `status` from
+    `Vendor.coverage_on`, and `alert`, the picker badge / warning copy ("" when covered)."""
+    today = today or trip_today(trip, now=now)
+    service_date = trip.pickup_date or today
+    status = vendor.coverage_on(service_date, today=today)
+    return {"status": status, "alert": Vendor.COVERAGE_ALERTS[status]}
 
 
 def in_house_options(trip: Reservation) -> dict:
@@ -349,6 +371,9 @@ def vendor_rich_options(options: list[dict]) -> list[dict]:
                 "sub": sub,
                 "badge": "GNET" if option["is_gnet"] else "",
                 "warn": insurance["status"] not in ("valid",),
+                # APC-72: on the trip's date, not today's standing — the badge and the
+                # offer/confirm warning both read it.
+                "alert": option["trip_insurance"]["alert"],
                 "email": vendor.email,
                 "gnet": bool(option["is_gnet"]),
             }

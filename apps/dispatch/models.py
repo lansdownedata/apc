@@ -1,6 +1,7 @@
 import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -80,6 +81,18 @@ class Assignment(TimeStampedModel):
     # When driver info was first complete (APC-57) — affiliate-performance history for
     # Phase D. Stamped once by `services`, never overwritten; rows before it stay null.
     driver_info_at = models.DateTimeField(null=True, blank=True)
+    # APC-72 (D4: warn, don't block). Set when someone offered or confirmed this trip to
+    # an affiliate whose insurance didn't cover the service date: the `coverage_on` status
+    # they went past ("expired", "expires_before_trip", "none"), who, and when.
+    insurance_override = models.CharField(max_length=32, blank=True)
+    insurance_override_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    insurance_override_at = models.DateTimeField(null=True, blank=True)
 
     objects = AssignmentQuerySet.as_manager()
 

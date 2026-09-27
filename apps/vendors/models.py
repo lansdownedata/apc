@@ -111,6 +111,32 @@ class Vendor(TimeStampedModel):
         """True when coverage is lapsed, expiring within 30 days, or missing."""
         return self.insurance_status in INSURANCE_ATTENTION
 
+    # APC-72: whether coverage holds on a trip's service date, as the dispatch picker and
+    # the offer/confirm warning read it. Warn, never block (D4).
+    COVERAGE_ALERTS = {
+        "covered": "",
+        "expires_before_trip": "Expires before trip",
+        "expired": "Insurance expired",
+        "none": "No insurance on file",
+    }
+
+    def coverage_on(self, service_date, *, today) -> str:
+        """covered · expires_before_trip · expired · none, from the best policy on file.
+
+        Covered = some policy runs from on-or-before the service date to on-or-after it.
+        Otherwise the one in force today says the trip outlives it, and with none in force
+        today a past policy means it lapsed. `today` is the trip's today, not the server's
+        (`dispatch.selectors.trip_today`). Reads `policies.all()`, so prefetch them.
+        """
+        policies = list(self.policies.all())
+        if any(p.effective_date <= service_date <= p.expiry_date for p in policies):
+            return "covered"
+        if any(p.effective_date <= today <= p.expiry_date for p in policies):
+            return "expires_before_trip"
+        if any(p.expiry_date < today for p in policies):
+            return "expired"
+        return "none"
+
     def insurance_summary(self) -> dict:
         """Status + human label for the governing (worst, then soonest) policy.
         Drives the directory insurance cell and the needs-attention strip."""

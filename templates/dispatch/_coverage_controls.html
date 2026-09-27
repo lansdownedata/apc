@@ -52,6 +52,12 @@
       {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
         {% include "dispatch/_ack_status_line.html" with confirmed_at=assignment.affiliate_confirmed_at who="the affiliate" %}
       {% endif %}
+      {% if assignment_insurance.alert %}
+        <p class="text-[11.5px] text-rose-700 mt-1"><i class="ti ti-shield-x text-[13px]"></i> {{ assignment_insurance.alert }} for this trip's date</p>
+      {% endif %}
+      {% if assignment.insurance_override %}
+        <p class="text-[11.5px] text-muted mt-0.5">Insurance warning overridden by {{ assignment.insurance_override_by.get_full_name|default:assignment.insurance_override_by|default:"someone" }} · {{ assignment.insurance_override_at|date:"M j, g:i A" }}</p>
+      {% endif %}
     </div>
 
     {% comment %} Driver + vehicle (APC-21) — farmed-out only; in-house already carries both
@@ -106,7 +112,7 @@
     {% if not assignment.is_in_house and assignment.status == 'offered' and assignment.channel != 'gnet' %}
     <div class="flex gap-2 mt-4">
       <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
-              :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'confirm')">Confirm</button>
+              :disabled="busy" @click="confirmOffer('{% url 'dispatch_resolve' assignment.pk %}', '{{ assignment_insurance.alert|escapejs }}', '{{ assignment.vendor.name|escapejs }}')">Confirm</button>
       <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
               :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
     </div>
@@ -180,11 +186,14 @@
         <div class="flex gap-2">
           <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
                   :disabled="busy || !vendor || !canOffer"
-                  @click="post('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
+                  @click="offerTo('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
           <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
                   :disabled="busy || !vendor"
-                  @click="post('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
+                  @click="offerTo('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
         </div>
+        <p class="text-[11.5px] text-rose-700" x-show="vendorAlert" x-cloak>
+          <i class="ti ti-shield-x text-[13px]"></i> <span x-text="vendorAlert"></span> for this trip's date. You can still go ahead.
+        </p>
         <p class="text-[11.5px] text-muted" x-show="vendor && !canOffer" x-cloak>
           Add an email on the vendor page to send offers.
         </p>
