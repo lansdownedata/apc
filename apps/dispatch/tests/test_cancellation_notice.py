@@ -200,7 +200,8 @@ def test_reassigning_keeps_the_drawer_open_on_the_same_trip():
     send = js[js.index("async send(url, extra)") :][:1600]
     assert "drawer-open" in send
     assert "stale: true" in send
-    drawer = js[js.index("function drawer()") :][:1000]
+    start = js.index("function drawer()")
+    drawer = js[start : js.index("window.drawer = drawer", start)]
     assert "this.stale" in drawer
     assert "window.location.reload()" in drawer
 

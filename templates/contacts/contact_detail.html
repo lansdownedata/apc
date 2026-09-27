@@ -99,6 +99,8 @@
   <!-- full-width rows, orders first: a short history never leaves a hole beside a rail -->
   <div class="mt-4 space-y-4">
 
+      {% include "billing/_billing_card.html" %}
+
       {% if leads %}
       <section class="card overflow-hidden" x-data="{ orderFilter: 'all' }">
         <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">

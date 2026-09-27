@@ -64,7 +64,7 @@ def test_billing_sits_above_order_history(client, agent):
     contact = ContactFactory()
     LeadFactory(contact=contact)  # the history card only renders when there is history
     body = _profile(client, contact)
-    assert body.index("Billing accounts") < body.index("Order history")
+    assert body.index("Billing accounts") < body.index("Orders &amp; quotes")
 
 
 def test_the_card_uses_the_shared_partial():
