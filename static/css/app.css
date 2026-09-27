@@ -565,7 +565,9 @@ header, aside, main, .wash-gold {
 .flatpickr-calendar:not(.hasTime) .flatpickr-months .flatpickr-next-month { right: var(--fp-pad-x); top: var(--fp-pad-y); }
 
 /* date grid */
-.flatpickr-months .flatpickr-month, .flatpickr-current-month input.cur-year, .flatpickr-monthDropdown-months, .flatpickr-weekday { color: rgb(var(--text)); fill: rgb(var(--text)); }
+.flatpickr-months .flatpickr-month, .flatpickr-current-month input.cur-year, .flatpickr-monthDropdown-months { color: rgb(var(--text)); fill: rgb(var(--text)); }
+/* `span.` matches flatpickr's own selector, whose hard-coded black otherwise wins in dark mode */
+span.flatpickr-weekday { color: rgb(var(--muted)); }
 .flatpickr-day { color: rgb(var(--text)); border-radius: 0.55rem; }
 .flatpickr-day.selected, .flatpickr-day.selected:hover { background: rgb(var(--gold)); border-color: rgb(var(--gold)); color: #fff; }
 .flatpickr-day.today { border-color: rgb(var(--gold)); }
