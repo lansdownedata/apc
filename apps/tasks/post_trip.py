@@ -1,12 +1,14 @@
 """When a trip enters the post-trip workflow (APC-58).
 
-A trip enters when LimoAnywhere (or dispatch) marks it Done, **or** when its scheduled
-end has passed by `TaskConfig.post_trip_grace_hours` with no status at all — we still run
-in parallel with LA, so a Done that never arrives must not strand the trip. Cancelled
-trips (every "Cancelled" phase, No Show included) never enter.
+A trip has *ended* when LimoAnywhere (or dispatch) marks it Done, **or** when its
+scheduled end has passed by `TaskConfig.post_trip_grace_hours` with no status at all — we
+still run in parallel with LA, so a Done that never arrives must not strand it.
 
-Entering creates the Stage 1 `ops_review` task; the later stages chain off it through
-`TaskKind.opens_after` (see `definitions.py`).
+Review is per **order** (Trip Review design, APC-59): an order enters once every live
+trip has ended — a wedding weekend is reviewed as a whole. Cancelled trips (every
+"Cancelled" phase, No Show included) count as finished and need no review. Entering
+creates a Stage 1 `ops_review` task on each live trip; the later stages chain off it
+through `TaskKind.opens_after` (see `definitions.py`).
 """
 
 from __future__ import annotations
@@ -50,9 +52,22 @@ def has_ended(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
     return end is not None and end + grace <= now
 
 
-def entered(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
-    """`has_ended`, and recently enough that its review is still owed (see LOOKBACK)."""
-    if not has_ended(trip, now=now, grace=grace):
-        return False
-    end = scheduled_end(trip)
-    return end is None or end >= now - LOOKBACK
+def order_finished_at(trips, *, now: datetime, grace: timedelta) -> datetime | None:
+    """When an order finished: every live trip has ended (cancelled trips count as done
+    and need nothing), so this is the latest of their ends. None while any live trip is
+    still to run, or when there's no live trip at all.
+
+    A trip marked Done before its scheduled end finished then, not at the schedule.
+    """
+    live = [t for t in trips if not t.is_cancelled]
+    if not live or not all(has_ended(t, now=now, grace=grace) for t in live):
+        return None
+    ends = [min(scheduled_end(t) or now, now) for t in live]
+    return max(ends)
+
+
+def order_entered(trips, *, now: datetime, grace: timedelta) -> bool:
+    """The order has finished, recently enough that its review is still owed (LOOKBACK
+    runs from its last trip)."""
+    finished = order_finished_at(trips, now=now, grace=grace)
+    return finished is not None and finished >= now - LOOKBACK

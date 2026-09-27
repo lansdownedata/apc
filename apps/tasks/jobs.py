@@ -84,18 +84,27 @@ def _evaluate(now) -> list[Task]:
 
 
 def _entering(config: TaskConfig, now) -> set[int]:
-    """Orders with a trip that has finished and has no `ops_review` yet. One query over
-    the trips near today; the end-time rule runs in Python (`post_trip.entered`)."""
+    """Orders that have just finished and have no `ops_review` yet. Two queries: the live
+    trips near today that lack one, then every trip on those orders; the finish rule runs
+    in Python (`post_trip.order_entered`)."""
     grace = timedelta(hours=config.post_trip_grace_hours)
     today = now.date()
     # ±1 day around the window: `pickup_date` is trip-local, `now` is UTC.
     window = (today - post_trip.LOOKBACK - timedelta(days=1), today + timedelta(days=1))
-    trips = (
+    candidates = set(
         Reservation.objects.filter(lead__status=Lead.Status.BOOKED, pickup_date__range=window)
         .exclude(trip_status__in=CANCELLED_STATUSES)
         .exclude(Exists(Task.objects.filter(reservation=OuterRef("pk"), kind="ops_review")))
+        .values_list("lead_id", flat=True)
     )
-    return {t.lead_id for t in trips if post_trip.entered(t, now=now, grace=grace)}
+    trips: dict[int, list] = {}
+    for trip in Reservation.objects.filter(lead_id__in=candidates):
+        trips.setdefault(trip.lead_id, []).append(trip)
+    return {
+        lead_id
+        for lead_id, rows in trips.items()
+        if post_trip.order_entered(rows, now=now, grace=grace)
+    }
 
 
 def _stalled(now) -> set[int]:

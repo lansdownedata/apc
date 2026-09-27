@@ -282,3 +282,74 @@ def test_post_trip_work_does_not_take_the_green_lit_away():
 
     assert _post_trip(trip) == {"ops_review": Task.Status.OPEN}
     assert green_lit(trip)
+
+
+# --- order-level entry (APC-59 design, 2026-09-26) -----------------------------------
+
+
+def _add_trip(lead, *, started_ago: timedelta, billed_hours="1", **extra):
+    start = (timezone.now() - started_ago).astimezone(NY).replace(second=0, microsecond=0)
+    trip = ReservationFactory(
+        lead=lead,
+        pickup_date=start.date(),
+        pickup_time=start.time(),
+        pickup_timezone="America/New_York",
+        hours=Decimal(billed_hours),
+        **extra,
+    )
+    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    return trip
+
+
+def test_an_order_enters_review_only_when_every_trip_has_finished():
+    first = _trip(started_ago=timedelta(hours=6))
+    later = _add_trip(first.lead, started_ago=-timedelta(hours=3))  # still ahead
+
+    run_tasks()
+
+    assert "ops_review" not in _kinds(first)
+    assert "ops_review" not in _kinds(later)
+
+
+def test_the_last_trip_finishing_opens_a_review_on_every_trip():
+    first = _trip(started_ago=timedelta(hours=6))
+    last = _add_trip(first.lead, started_ago=timedelta(hours=1))
+    run_tasks()
+    assert "ops_review" not in _kinds(first)
+
+    set_trip_status(last, Reservation.TripStatus.DONE)
+
+    assert _post_trip(first) == {"ops_review": Task.Status.OPEN}
+    assert _post_trip(last) == {"ops_review": Task.Status.OPEN}
+
+
+def test_a_cancelled_trip_counts_as_finished_and_needs_no_review():
+    done = _trip(started_ago=timedelta(hours=6))
+    cancelled = _add_trip(
+        done.lead,
+        started_ago=-timedelta(days=2),
+        trip_status=Reservation.TripStatus.CANCELLED,
+    )
+
+    run_tasks()
+
+    assert _post_trip(done) == {"ops_review": Task.Status.OPEN}
+    assert not Task.objects.filter(reservation=cancelled).exists()
+
+
+def test_an_order_with_every_trip_cancelled_never_enters():
+    trip = _trip(started_ago=timedelta(hours=6))
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.CANCELLED)
+
+    run_tasks()
+
+    assert not Task.objects.filter(kind="ops_review").exists()
+
+
+def test_the_lookback_runs_from_the_orders_last_trip():
+    old = _trip(started_ago=timedelta(days=20))
+    _add_trip(old.lead, started_ago=timedelta(hours=6))
+
+    run_tasks()
+
+    assert "ops_review" in _kinds(old)

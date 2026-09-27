@@ -98,11 +98,11 @@ def _trip_wants(kind: TaskKind, facts: LeadFacts, trip, statuses: dict) -> bool:
 
 def _post_trip_state(facts: LeadFacts, config: TaskConfig, now: datetime) -> None:
     grace = timedelta(hours=config.post_trip_grace_hours)
-    for trip in facts.live_trips:
-        if post_trip.has_ended(trip, now=now, grace=grace):
-            facts.ended_trip_ids.add(trip.pk)
-            if post_trip.entered(trip, now=now, grace=grace):
-                facts.post_trip_ids.add(trip.pk)
+    facts.ended_trip_ids = {
+        t.pk for t in facts.live_trips if post_trip.has_ended(t, now=now, grace=grace)
+    }
+    if post_trip.order_entered(facts.trips, now=now, grace=grace):
+        facts.post_trip_ids = {t.pk for t in facts.live_trips}
 
 
 def _create_missing(lead: Lead, config: TaskConfig, now: datetime):

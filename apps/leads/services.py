@@ -378,16 +378,14 @@ class FeedbackError(Exception):
 
 
 def order_finished(lead: Lead) -> bool:
-    """Every live trip on the order has run — Done, or past its end plus the post-trip
-    grace (APC-58's rule). An order with no live trips hasn't finished anything."""
-    from apps.dispatch.selectors import CANCELLED_STATUSES
+    """Every live trip on the order has run — APC-58's rule (Done, or past its end plus
+    the post-trip grace; cancelled trips count as finished)."""
     from apps.tasks import post_trip
     from apps.tasks.models import TaskConfig
 
-    trips = list(lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES))
     grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
-    now = timezone.now()
-    return bool(trips) and all(post_trip.has_ended(t, now=now, grace=grace) for t in trips)
+    trips = list(lead.reservations.all())
+    return post_trip.order_finished_at(trips, now=timezone.now(), grace=grace) is not None
 
 
 def record_feedback(lead: Lead, *, rating, comment: str = "") -> CustomerFeedback:
