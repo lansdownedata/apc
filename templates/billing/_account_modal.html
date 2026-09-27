@@ -1,0 +1,92 @@
+{% comment %}
+  billing/_account_modal.html — open a terms account, or edit the one that exists.
+
+  One modal for both: creating it also creates the first group (an account with nothing to
+  invoice against is not a state the office can reach — see apps/billing/services.py), so
+  that block is shown on create and hidden on edit. Both titles are written out in full
+  rather than interpolated, so the page still says what it does when Alpine has not run.
+
+  One x-show, on the OUTER container, and NO x-transition anywhere — a transition here left
+  the container at display:flex after closing, with an invisible backdrop swallowing the
+  next click on the page. The panel's entrance is the `.pop` animation instead. This is the
+  same rule, and the same reason, as templates/leads/_reservation_editor.html.
+
+  Driven by billingCard() in static/js/app.js. Requires `billing_account` (may be absent),
+  `contact`, and `billing_terms`.
+{% endcomment %}
+<div x-cloak x-show="modal === 'account'"
+     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+     @keydown.escape.window="close()">
+  <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="close()"></div>
+
+  <div class="pop relative w-full sm:max-w-[520px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
+      <span class="w-9 h-9 rounded-lg grid place-items-center bg-goldl text-goldd shrink-0">
+        <i class="ti ti-building-bank text-[17px]"></i>
+      </span>
+      <span class="min-w-0">
+        <span class="block font-display text-[17px] font-semibold text-ink" x-show="account.mode === 'create'">New billing account</span>
+        <span class="block font-display text-[17px] font-semibold text-ink" x-show="account.mode === 'edit'" x-cloak>Edit billing account</span>
+        <span class="block text-[12px] text-muted">Book on terms and invoice, instead of taking a card</span>
+      </span>
+      <button type="button" @click="close()" class="ml-auto text-muted hover:text-ink text-[18px] leading-none focus-gold rounded" aria-label="Close">&times;</button>
+    </div>
+
+    <form x-ref="accountForm" @submit.prevent="submitAccount()" class="contents">
+      <div class="overflow-y-auto px-6 py-5 space-y-5">
+        <div>
+          <label for="billing-account-name" class="mb-1.5 block text-[12px] font-medium text-muted">Account name</label>
+          <input id="billing-account-name" name="name" type="text" maxlength="200" x-ref="accountName"
+                 class="field" placeholder="{{ contact.company.name|default:contact.name }}">
+          <p class="mt-1.5 text-[11.5px] text-muted" x-show="!errors.name">Becomes the customer in QuickBooks, exactly as typed.</p>
+          <p class="mt-1.5 text-[11.5px] text-rose-600" x-show="errors.name" x-cloak x-text="errors.name"></p>
+        </div>
+
+        <div class="max-w-[14rem]">
+          <label for="billing-account-terms" class="mb-1.5 block text-[12px] font-medium text-muted">Payment terms</label>
+          {% include "components/searchable_select.html" with name="terms" field_id="billing-account-terms" options=billing_terms selected="net_30" search="off" %}
+          <p class="mt-1.5 text-[11.5px] text-muted">The terms set up in QuickBooks.</p>
+        </div>
+
+        {% comment %} Create only: the first group is part of opening the account. {% endcomment %}
+        <div class="pt-4 border-t border-line" x-show="account.mode === 'create'">
+          <div class="flex flex-wrap items-baseline gap-x-2 mb-3">
+            <span class="text-[12px] font-semibold uppercase tracking-wide text-muted">First account group</span>
+            <span class="text-[11.5px] text-muted">required &mdash; who invoices are made out to</span>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <label for="billing-account-group-name" class="mb-1.5 block text-[12px] font-medium text-muted">Group name</label>
+              <input id="billing-account-group-name" name="group_name" type="text" maxlength="200" class="field" placeholder="Accounts Payable">
+              <p class="mt-1.5 text-[11.5px] text-rose-600" x-show="errors.group_name" x-cloak x-text="errors.group_name"></p>
+            </div>
+            <div>
+              <label for="billing-account-invoice-email" class="mb-1.5 block text-[12px] font-medium text-muted">Send invoices to</label>
+              <input id="billing-account-invoice-email" name="invoice_email" type="email" class="field" placeholder="ap@example.com">
+              <p class="mt-1.5 text-[11.5px] text-rose-600" x-show="errors.invoice_email" x-cloak x-text="errors.invoice_email"></p>
+            </div>
+            <label class="flex items-start gap-2.5 text-[13px] text-ink cursor-pointer">
+              <input type="checkbox" name="po_required" class="mt-0.5">
+              <span>Require a PO number on orders billed here</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 px-6 py-4 border-t border-line bg-surface2">
+        {% comment %} Phase 2 makes this true; until QuickBooks is connected it would be a
+           promise the app does not keep. {% endcomment %}
+        {% if qbo_connected %}
+          <span class="text-[11.5px] text-muted"><i class="ti ti-refresh text-[13px] align-[-2px]"></i> Also created in QuickBooks</span>
+        {% endif %}
+        <span class="flex-1"></span>
+        <button type="button" @click="close()" class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2.5 rounded-lg ring-1 ring-line bg-surface">Cancel</button>
+        <button type="submit" :disabled="saving"
+                class="btn-gold whitespace-nowrap text-[13px] font-semibold rounded-lg px-5 py-2.5 disabled:opacity-60">
+          <span x-show="account.mode === 'create'">Create account</span>
+          <span x-show="account.mode === 'edit'" x-cloak>Save changes</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

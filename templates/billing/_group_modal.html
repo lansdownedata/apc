@@ -1,0 +1,70 @@
+{% comment %}
+  billing/_group_modal.html — add a group under this account, or edit one.
+
+  A group is who an invoice is made out to, and a sub-customer in QuickBooks. Its terms are
+  optional: blank means "whatever the account says", which is why the picker's empty option
+  names the account's own terms rather than reading "None".
+
+  Which group is the default is not edited here — that is a deliberate, separate choice on
+  the row itself, so a rename can never quietly move it.
+
+  One x-show on the OUTER container and no x-transition — see _account_modal.html for the
+  bug that rule exists for. Driven by billingCard() in static/js/app.js.
+  Requires `billing_account` and `billing_terms`.
+{% endcomment %}
+<div x-cloak x-show="modal === 'group'"
+     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+     @keydown.escape.window="close()">
+  <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="close()"></div>
+
+  <div class="pop relative w-full sm:max-w-[480px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
+      <span class="w-9 h-9 rounded-lg grid place-items-center bg-goldl text-goldd shrink-0">
+        <i class="ti ti-users-group text-[17px]"></i>
+      </span>
+      <span class="min-w-0">
+        <span class="block font-display text-[17px] font-semibold text-ink" x-show="group.mode === 'add'">Add account group</span>
+        <span class="block font-display text-[17px] font-semibold text-ink" x-show="group.mode === 'edit'" x-cloak>Edit account group</span>
+        <span class="block text-[12px] text-muted truncate">Under {{ billing_account.name }} &middot; a sub-customer in QuickBooks</span>
+      </span>
+      <button type="button" @click="close()" class="ml-auto text-muted hover:text-ink text-[18px] leading-none focus-gold rounded" aria-label="Close">&times;</button>
+    </div>
+
+    <form x-ref="groupForm" @submit.prevent="submitGroup()" class="contents">
+      <div class="overflow-y-auto px-6 py-5 space-y-3">
+        <div>
+          <label for="billing-group-name" class="mb-1.5 block text-[12px] font-medium text-muted">Group name</label>
+          <input id="billing-group-name" name="name" type="text" maxlength="200" x-ref="groupName"
+                 class="field" placeholder="e.g. Marketing — Events">
+          <p class="mt-1.5 text-[11.5px] text-rose-600" x-show="errors.name" x-cloak x-text="errors.name"></p>
+        </div>
+        <div>
+          <label for="billing-group-email" class="mb-1.5 block text-[12px] font-medium text-muted">Send invoices to</label>
+          <input id="billing-group-email" name="invoice_email" type="email" class="field" placeholder="billing@example.com">
+          <p class="mt-1.5 text-[11.5px] text-rose-600" x-show="errors.invoice_email" x-cloak x-text="errors.invoice_email"></p>
+        </div>
+        <div>
+          <label for="billing-group-terms" class="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-muted">
+            Payment terms
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-muted/70">Optional</span>
+          </label>
+          {% include "components/searchable_select.html" with name="terms" field_id="billing-group-terms" options=billing_terms selected="" empty_label="Same as the account — "|add:billing_account.get_terms_display search="off" %}
+        </div>
+        <label class="flex items-start gap-2.5 text-[13px] text-ink cursor-pointer pt-1">
+          <input type="checkbox" name="po_required" x-ref="groupPo" class="mt-0.5">
+          <span>Require a PO number on orders billed here</span>
+        </label>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 px-6 py-4 border-t border-line bg-surface2">
+        <span class="flex-1"></span>
+        <button type="button" @click="close()" class="btn-ghost text-[13px] font-medium text-muted hover:text-ink px-4 py-2.5 rounded-lg ring-1 ring-line bg-surface">Cancel</button>
+        <button type="submit" :disabled="saving"
+                class="btn-gold whitespace-nowrap text-[13px] font-semibold rounded-lg px-5 py-2.5 disabled:opacity-60">
+          <span x-show="group.mode === 'add'">Add group</span>
+          <span x-show="group.mode === 'edit'" x-cloak>Save changes</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

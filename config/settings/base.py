@@ -47,6 +47,7 @@ LOCAL_APPS = [
     "apps.reservations",
     "apps.dispatch",
     "apps.payments",
+    "apps.billing",
     "apps.messaging",
     "apps.integrations",
     "apps.notifications",
@@ -201,6 +202,11 @@ LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
 # with an 11 s gap between calls — treat the real limit as tighter than advertised.
 AVIATIONSTACK_API_KEY = env("AVIATIONSTACK_API_KEY", default="")
 AVIATIONSTACK_BASE_URL = env("AVIATIONSTACK_BASE_URL", default="https://api.aviationstack.com")
+
+# QuickBooks Online. Blank client id = not connected, and the whole feature stays dark —
+# the same gate AVIATIONSTACK_API_KEY applies to flight verification. Phase 2 (APC-41)
+# adds the secret, the environment and the redirect URI alongside it.
+QBO_CLIENT_ID = env("QBO_CLIENT_ID", default="")
 
 # GNet farm-out gateway (Lansdowne relay in front of the real GNet partner network —
 # docs/... GNET-CONNECTION-GUIDE.md §5). Preview mode (no sends) unless BOTH GNET_ACTIVE

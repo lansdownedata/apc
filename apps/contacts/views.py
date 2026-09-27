@@ -28,6 +28,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.core.templatetags.phone_filters import phone_display
 from apps.leads.models import Lead
@@ -246,6 +247,9 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "primary_addr_url": reverse("contact_address_update", args=[contact.pk, "primary"]),
             "billing_addr_url": reverse("contact_address_update", args=[contact.pk, "billing"]),
             "ac_url": reverse("integrations:geocode_autocomplete"),
+            # Cards and terms accounts — built in one selector so the profile and the
+            # billing screen (Phase 6) can never disagree about what a customer owes.
+            **billing_selectors.billing_context(contact),
         },
     )
 

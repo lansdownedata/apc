@@ -244,6 +244,20 @@ header, aside, main, .wash-gold {
 /* Right-aligned variant — keeps a right-hand dropdown inside its card. */
 .ts-drop-end .ts-dropdown { left: auto; right: 0; }
 
+/* Rich options (searchable_select.html's `rich_options`) — a name, an optional chip and a
+   second line. Choosing an affiliate means weighing their insurance standing and whether
+   they are on GNet, so those have to survive the move into a dropdown. These rows wrap,
+   unlike the single-line default above; the picked item stays on one line. */
+.ts-dropdown .option:has(.ts-sub) { white-space: normal; }
+.ts-name { font-weight: 600; }
+.ts-badge {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+  color: var(--muted); vertical-align: 1px;
+}
+.ts-sub { display: block; font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.ts-sub-warn { color: #e11d48; }
+
 /* route connector (multi-stop) */
 .route-line { background: repeating-linear-gradient(to bottom, rgb(var(--border)) 0 5px, transparent 5px 10px); }
 

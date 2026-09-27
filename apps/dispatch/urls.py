@@ -5,7 +5,7 @@ from . import views
 urlpatterns = [
     path("", views.dispatch_board, name="dispatch_board"),
     path("<int:pk>/panel/", views.assign_panel, name="dispatch_assign_panel"),
-    path("<int:pk>/assign-options/", views.assign_options, name="dispatch_assign_options"),
+    path("<int:pk>/coverage/", views.coverage_controls, name="dispatch_coverage_controls"),
     path("<int:pk>/offer/", views.offer, name="dispatch_offer"),
     path("<int:pk>/assign/", views.assign, name="dispatch_assign"),
     path("<int:pk>/assign-driver/", views.assign_driver, name="dispatch_assign_driver"),
@@ -14,6 +14,11 @@ urlpatterns = [
         "<int:pk>/confirm-customer/",
         views.confirm_customer,
         name="dispatch_confirm_customer",
+    ),
+    path(
+        "vendor/<int:pk>/drivers/",
+        views.vendor_driver_create,
+        name="dispatch_vendor_driver_create",
     ),
     path("assignment/<int:pk>/resolve/", views.resolve, name="dispatch_resolve"),
     path(

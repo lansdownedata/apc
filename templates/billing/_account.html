@@ -1,0 +1,59 @@
+{% load humanize json_filters %}
+{% comment %}
+  billing/_account.html — the terms account itself, above its groups.
+
+  Leads with the money before any list: what is owed, what has not been billed yet, and
+  how old the oldest unpaid is. Those three are what an owner chases; the group rows are
+  the detail behind them. Every figure is zero until invoices exist (Phase 4) — the card
+  reads the selector's real shape, so nothing here changes then.
+
+  Requires `billing_account`, `billing_groups`, `account_figures`, `qbo_connected`.
+{% endcomment %}
+<div class="px-5 pt-5 pb-4">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+    <span class="font-display text-[19px] font-semibold text-ink tracking-tight">{{ billing_account.name }}</span>
+    {% include "billing/_sync_chip.html" with record=billing_account synced_label="In QuickBooks" %}
+    {% if user.has_payments_access %}
+      <button type="button" @click="openAccount({ name: {{ billing_account.name|json_string }}, terms: '{{ billing_account.terms }}' })"
+              class="ml-auto text-[12px] font-medium text-muted hover:text-ink focus-gold rounded">
+        <i class="ti ti-pencil text-[13px] align-[-2px]"></i> Edit
+      </button>
+    {% endif %}
+  </div>
+  <p class="text-[12px] text-muted mt-1">{{ billing_account.get_terms_display }}</p>
+
+  {% if qbo_connected and billing_account.qbo_sync_state == 'error' and billing_account.qbo_sync_error %}
+    <p class="text-[11.5px] text-rose-600 mt-1">{{ billing_account.qbo_sync_error }}</p>
+  {% endif %}
+
+  <div class="mt-4 flex flex-wrap gap-x-10 gap-y-3">
+    <div>
+      <div class="text-[11px] text-muted">Open balance</div>
+      <div class="font-display text-[20px] font-semibold text-ink num leading-tight">${{ account_figures.open_balance|floatformat:2|intcomma }}</div>
+    </div>
+    <div>
+      <div class="text-[11px] text-muted">Not yet invoiced</div>
+      <div class="font-display text-[20px] font-semibold text-ink num leading-tight">
+        {{ account_figures.uninvoiced_orders }}
+        <span class="text-[12px] font-sans font-normal text-muted">order{{ account_figures.uninvoiced_orders|pluralize }} &middot; ${{ account_figures.uninvoiced_total|floatformat:2|intcomma }}</span>
+      </div>
+    </div>
+    <div>
+      <div class="text-[11px] text-muted">Oldest unpaid</div>
+      {% comment %} None, not 0 — zero days would read as "raised today". {% endcomment %}
+      <div class="font-display text-[20px] font-semibold num leading-tight {% if account_figures.oldest_days %}text-amber-600{% else %}text-ink{% endif %}">
+        {% if account_figures.oldest_days %}{{ account_figures.oldest_days }} <span class="text-[12px] font-sans font-normal text-muted">days</span>{% else %}&mdash;{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="px-5 pt-3 pb-2 flex items-baseline gap-2">
+  <span class="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted">Account groups</span>
+  <span class="text-[11.5px] text-muted">who the invoice is made out to</span>
+</div>
+<ul class="divide-y divide-line/70 border-t border-line">
+  {% for group in billing_groups %}
+    {% include "billing/_group_row.html" with group=group account=billing_account %}
+  {% endfor %}
+</ul>

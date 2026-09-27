@@ -1,3 +1,4 @@
+import html
 import re
 from datetime import date, time, timedelta
 from decimal import Decimal
@@ -251,7 +252,10 @@ def test_panel_shows_drivers_and_units_with_a_no_vehicle_default(logged_in_clien
     assert ">In-house<" in body
     assert "Marcus Bell" in body and "1000" in body
     assert "Unit 1" in body
-    assert 'name="vehicle" value="" checked' in body
+    # "No vehicle" is the picker's empty option, so a unit stays optional (APC-48 moved
+    # these from radio lists to the shared searchable selects)
+    assert "No vehicle" in body
+    assert 'name="vehicle"' in body
     assert reverse("dispatch_assign_driver", args=[trip.pk]) in body
 
 
@@ -259,9 +263,11 @@ def test_panel_warns_on_lapsing_paperwork(logged_in_client):
     d = DriverFactory(name="Marcus Bell")
     RenewalFactory(driver=d, expires_on=timezone.localdate() + timedelta(days=8))
     body = _panel(logged_in_client, _trip())
-    labels = re.findall(r"<label\b.*?</label>", body, re.DOTALL)
-    driver_label = next(label for label in labels if "Marcus Bell" in label)
-    assert "Expires in 8 days" in driver_label
+    # The warning rides on that driver's own option, in the rich row's `sub` line — it is
+    # not allowed to become a page-wide string that could have come from anywhere.
+    options = re.findall(r"<option\b.*?</option>", body, re.DOTALL)
+    driver_option = next(o for o in options if "Marcus Bell" in o)
+    assert "Expires in 8 days" in html.unescape(driver_option)
 
 
 def test_panel_shows_an_in_house_coverage_with_unassign_only(logged_in_client):
@@ -284,7 +290,9 @@ def test_panel_skips_the_in_house_lookup_when_the_trip_is_covered(logged_in_clie
     VehicleFactory()
     services.assign_in_house(trip, DriverFactory())
     resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
-    assert resp.context["in_house"] == {"drivers": [], "vehicles": []}
+    assert resp.context["driver_options"] == []
+    assert resp.context["vehicle_options"] == []
+    assert resp.context["has_roster"] is False
 
 
 def test_panel_still_shows_payout_for_a_vendor_coverage(logged_in_client):

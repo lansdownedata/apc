@@ -133,7 +133,21 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     with transaction.atomic():
         charge.stripe_payment_intent_id = intent.id
         charge.status = Charge.Status.SUCCEEDED
-        charge.save(update_fields=["stripe_payment_intent_id", "status", "updated_at"])
+        # This path confirms off-session and posts its own ledger entry, so it never
+        # reaches `record_payment` and the APC-40 snapshot there. It charges
+        # `plan.stripe_payment_method_id` by definition, so the card on the plan right now
+        # *is* the card that paid — no Stripe round-trip needed to learn it.
+        charge.card_brand = plan.card_brand
+        charge.card_last4 = plan.card_last4
+        charge.save(
+            update_fields=[
+                "stripe_payment_intent_id",
+                "status",
+                "card_brand",
+                "card_last4",
+                "updated_at",
+            ]
+        )
         plan.balance_status = PaymentPlan.BalanceStatus.PAID
         plan.save(update_fields=["balance_status", "updated_at"])
         ledger.post_capture(
@@ -269,7 +283,17 @@ def _parse_positive_amount(amount) -> Decimal:
     return value
 
 
-def _store_card(plan: PaymentPlan, payment_method) -> None:
+def _store_card(plan: PaymentPlan, payment_method, charge: Charge | None = None) -> None:
+    """Update the card on file, and snapshot it onto the charge that used it.
+
+    The two are not the same fact and must not be kept in one place. The plan holds the
+    card the *next* charge will use, and `save_payment_method` overwrites it the moment the
+    customer swaps cards. The charge holds what paid *it*, and must never move again.
+
+    The charge is only written when a card actually came back. A webhook re-delivery can
+    resolve no payment method at all, and a non-card method has no brand — neither is
+    evidence the card changed, and writing "" for them would lose a card already recorded.
+    """
     if payment_method is None:
         return
     plan.stripe_payment_method_id = payment_method.id
@@ -284,6 +308,10 @@ def _store_card(plan: PaymentPlan, payment_method) -> None:
             "updated_at",
         ]
     )
+    if charge is not None and (plan.card_brand or plan.card_last4):
+        charge.card_brand = plan.card_brand
+        charge.card_last4 = plan.card_last4
+        charge.save(update_fields=["card_brand", "card_last4", "updated_at"])
 
 
 def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
@@ -354,7 +382,7 @@ def record_payment(
             memo="Deposit captured" if is_deposit else "Card payment",
         )
 
-    _store_card(plan, getattr(intent, "payment_method", None))
+    _store_card(plan, getattr(intent, "payment_method", None), charge)
     sync_plan_from_collected(plan)
     plan.lead.refresh_from_db()
     # ENGAGED is here because capture is exactly the moment a confirmed order becomes a
@@ -409,7 +437,7 @@ def record_authorization(plan: PaymentPlan, payment_intent_id: str) -> Charge:
             ]
         )
 
-    _store_card(plan, getattr(intent, "payment_method", None))
+    _store_card(plan, getattr(intent, "payment_method", None), charge)
     if plan.deposit_status != PaymentPlan.DepositStatus.PAID:
         plan.deposit_status = PaymentPlan.DepositStatus.AUTHORIZED
         plan.save(update_fields=["deposit_status", "updated_at"])

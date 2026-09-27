@@ -1,0 +1,18 @@
+{% comment %}
+  billing/_sync_chip.html — one record's QuickBooks state.
+
+  Requires `record` (anything with the QboSyncedModel fields) and `synced_label`. Renders
+  NOTHING until QuickBooks is connected: before that every record is NOT_SYNCED, and a
+  chip on each row would be a wall of red telling the office something it can't act on.
+{% endcomment %}
+{% if qbo_connected %}
+  {% if record.qbo_sync_state == 'synced' %}
+    <span class="chip-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+      <i class="ti ti-check text-[12px]"></i> {{ synced_label|default:"Synced" }}
+    </span>
+  {% elif record.qbo_sync_state == 'error' %}
+    <span class="chip-danger inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+      <i class="ti ti-alert-triangle text-[12px]"></i> Not synced
+    </span>
+  {% endif %}
+{% endif %}
