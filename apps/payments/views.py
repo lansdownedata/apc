@@ -16,6 +16,7 @@ from apps.dispatch import selectors as dispatch_selectors
 from apps.dispatch import services as dispatch_services
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+from apps.leads import contact_roles
 from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.messaging import services as messaging_services
@@ -85,6 +86,8 @@ def order_detail(request, lead_id):
             "reservations": reservations,
             "order_tasks": task_selectors.checklist_for_order(lead),
             "is_booked": True,
+            **lead_services.feedback_context(lead),
+            **contact_roles.people_context(lead),
             # The same trip editor the quote workspace opens, fed identically.
             **reservation_editor.editor_context(request, lead, reservations),
             **reports.authorized_hold(lead),

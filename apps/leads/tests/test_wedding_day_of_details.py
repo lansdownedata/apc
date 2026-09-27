@@ -4,6 +4,7 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
+from apps.leads import contact_roles
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.services import is_wedding_trip
@@ -58,7 +59,9 @@ def test_workspace_hides_the_card_for_a_non_wedding_lead(client):
 
 def test_workspace_omits_the_not_yet_provided_flag_once_both_are_captured(client):
     wedding = ServiceTypeFactory(name="Wedding Transportation")
-    lead = LeadFactory(wedding_name="Boyne–Ellis Wedding", day_of_contact_name="Jamie Planner")
+    lead = LeadFactory(wedding_name="Boyne–Ellis Wedding")
+    # APC-64: the day-of contact is the order's day-of coordinator role.
+    contact_roles.set_day_of_contact(lead, name="Jamie Planner", phone="")
     ReservationFactory(lead=lead, service_type=wedding)
     client.force_login(UserFactory())
 

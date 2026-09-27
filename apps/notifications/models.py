@@ -26,7 +26,21 @@ class Notification(TimeStampedModel):
         AUTH_EXPIRED = "auth_expired", "Deposit hold released"
         TASK_OVERDUE = "task_overdue", "Task overdue"
 
-    lead = models.ForeignKey("leads.Lead", related_name="notifications", on_delete=models.CASCADE)
+    # Every notification is about an order, except a vendor task's escalation (APC-71).
+    lead = models.ForeignKey(
+        "leads.Lead",
+        related_name="notifications",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    vendor = models.ForeignKey(
+        "vendors.Vendor",
+        related_name="notifications",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="notifications",
@@ -44,6 +58,17 @@ class Notification(TimeStampedModel):
     @classmethod
     def notify(cls, lead, kind, *, title, detail="", user=None) -> "Notification":
         return cls.objects.create(lead=lead, kind=kind, title=title, detail=detail, user=user)
+
+    @property
+    def url(self) -> str:
+        """Where the tray and dashboard send you: the order, or the vendor."""
+        from django.urls import reverse
+
+        if self.lead_id:
+            return reverse("lead_detail", args=[self.lead_id])
+        if self.vendor_id:
+            return reverse("vendor_detail", args=[self.vendor_id])
+        return ""
 
     def mark_read(self) -> None:
         if not self.read:

@@ -6,7 +6,11 @@ CLIENT COPY PENDING (APC-27).
 {% endcomment %}
 {% block title %}Confirm your trip · All Pro Charter{% endblock %}
 {% block body %}
-  {% if cancelled %}
+  {% if all_finished %}
+    <h1>How was your trip?</h1>
+    <p class="sub">Thank you for riding with All Pro Charter. Tell us how it went.</p>
+    {% for sheet in sheets %}{% include "components/trip_sheet.html" %}{% endfor %}
+  {% elif cancelled %}
     <h1>Nothing to confirm</h1>
     <p class="cancelled">These trips have been cancelled. If that's a surprise, please call us.</p>
   {% elif confirmed %}
@@ -38,4 +42,28 @@ CLIENT COPY PENDING (APC-27).
       <button type="submit">{% if sheets|length > 1 %}Confirm these trips{% else %}Confirm trip{% endif %}</button>
     </form>
   {% endif %}
+
+  {% comment %} APC-63 · feedback, per finished order on this page (usually one).
+       CLIENT COPY PENDING (APC-27). {% endcomment %}
+  {% for order in feedback_orders %}
+  <form method="post" class="feedback" id="feedback-{{ order.lead.pk }}">
+    {% csrf_token %}
+    <input type="hidden" name="form" value="feedback">
+    <input type="hidden" name="lead" value="{{ order.lead.pk }}">
+    {% if not all_finished %}<h2>How was your trip?</h2>{% endif %}
+    {% if order.feedback %}<p class="thanks">Thanks for your feedback. You can change it below.</p>{% endif %}
+    {% if feedback_error %}<p class="err">{{ feedback_error }}</p>{% endif %}
+    <fieldset class="rating">
+      <legend>Your rating</legend>
+      {% for n in "54321" %}
+        <input type="radio" name="rating" value="{{ n }}" id="rate-{{ order.lead.pk }}-{{ n }}"{% if order.feedback.rating|stringformat:"s" == n %} checked{% endif %}>
+        <label for="rate-{{ order.lead.pk }}-{{ n }}" title="{{ n }} out of 5">★</label>
+      {% endfor %}
+    </fieldset>
+    <label class="fld" for="comment-{{ order.lead.pk }}"><span>Anything you'd like us to know? (optional)</span>
+      <textarea name="comment" id="comment-{{ order.lead.pk }}" rows="3">{{ order.feedback.comment }}</textarea>
+    </label>
+    <button type="submit">{% if order.feedback %}Update feedback{% else %}Send feedback{% endif %}</button>
+  </form>
+  {% endfor %}
 {% endblock %}

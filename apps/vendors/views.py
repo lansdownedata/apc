@@ -17,6 +17,7 @@ from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.tasks import vendor_tasks
 
 from . import compliance
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
@@ -245,6 +246,7 @@ def vendor_edit(request: HttpRequest, pk: int) -> HttpResponse:
     form = VendorForm(request.POST or None, instance=target)
     if request.method == "POST" and form.is_valid():
         form.save()
+        vendor_tasks.sync_vendor(target)  # deactivating retires its renewal tasks (APC-71)
         messages.success(request, "Vendor updated.")
         return redirect("vendor_detail", pk=target.pk)
     return render(
@@ -272,6 +274,8 @@ def _child_form_view(
             obj.uploaded_by = request.user
         obj.save()
         form.save_m2m()
+        if isinstance(obj, VendorInsurance):
+            vendor_tasks.sync_vendor(vendor)  # a later policy closes the renewal (APC-71)
         messages.success(request, f"{title} saved.")
         return redirect("vendor_detail", pk=vendor.pk)
     return render(

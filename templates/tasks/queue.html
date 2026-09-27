@@ -43,6 +43,11 @@
               <div class="text-[12px] text-muted mt-0.5">{{ r.department_label }}</div>
             </td>
             <td class="px-4 py-3 align-top">
+              {% if r.vendor_id %}
+              {% comment %} A vendor task (APC-71) names the affiliate where an order would be. {% endcomment %}
+              <a href="{% url 'vendor_detail' r.vendor_id %}" class="font-semibold text-ink hover:text-goldd hover:underline focus-gold">{{ r.vendor.name }}</a>
+              <div class="text-[12px] text-muted mt-0.5">Affiliate{% if r.insurance %} · {{ r.insurance }}, expires {{ r.insurance.expiry_date|date:"M j, Y" }}{% endif %}</div>
+              {% else %}
               {% if r.reservation_id %}
               <a href="{% url 'dispatch_board' %}?day={{ r.reservation.pickup_date|date:'Y-m-d' }}&amp;trip={{ r.reservation_id }}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
               {% else %}
@@ -50,6 +55,7 @@
               {% endif %}
               <span class="text-[12px] text-muted">· {{ r.lead.contact.name }}</span>
               <div class="text-[12px] text-muted mt-0.5">{% if r.reservation_id %}Trip{% else %}Order · first pickup{% endif %}{% if r.pickup_display %} {{ r.pickup_display }}{% endif %}</div>
+              {% endif %}
             </td>
             <td class="px-4 py-3 align-top whitespace-nowrap">
               {% if r.due_at %}

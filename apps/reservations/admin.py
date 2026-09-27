@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Flight, Reservation, Stop, TripStatusEvent
+from .models import Flight, Reservation, Stop, TripIssue, TripReview, TripStatusEvent
 
 
 class StopInline(admin.TabularInline):
@@ -30,3 +30,26 @@ class FlightAdmin(admin.ModelAdmin):
     search_fields = ("flight_number", "airline__iata", "airport__iata")
     list_select_related = ("airline", "airport")
     readonly_fields = ("raw",)
+
+
+class TripIssueInline(admin.TabularInline):
+    model = TripIssue
+    extra = 0
+    fields = ("category", "severity", "note", "created_by", "resolved_at", "resolved_by")
+    readonly_fields = ("created_by", "resolved_by")
+
+
+@admin.register(TripReview)
+class TripReviewAdmin(admin.ModelAdmin):
+    list_display = (
+        "reservation",
+        "suggested_overtime_minutes",
+        "billable_overtime_minutes",
+        "overtime_waived",
+        "affiliate_rating",
+        "completed_at",
+    )
+    list_filter = ("overtime_waived",)
+    readonly_fields = ("suggested_overtime_minutes", "decided_by", "decided_at", "completed_by")
+    inlines = [TripIssueInline]
+    list_select_related = ("reservation",)

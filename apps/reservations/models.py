@@ -898,6 +898,164 @@ class TripStatusEvent(TimeStampedModel):
         return f"{self.reservation_id} → {self.get_status_display()}"
 
 
+class TripReview(TimeStampedModel):
+    """The Operations review that opens once a trip has run (APC-59, Stage 1 of the
+    post-trip workflow). Completing it closes the trip's `ops_review` task.
+
+    Overtime is always a person's call (client answer A2): the system stores what it
+    *suggests* and a person sets what's *billable*, may waive it with a reason, and is
+    recorded as having decided. Nothing here charges anyone — that's APC-60.
+    """
+
+    reservation = models.OneToOneField(Reservation, related_name="review", on_delete=models.CASCADE)
+    # UTC like every timestamp; entered and shown in the trip's zone (`reviews.from_local`).
+    actual_pickup_at = models.DateTimeField(null=True, blank=True)
+    actual_dropoff_at = models.DateTimeField(null=True, blank=True)
+
+    suggested_overtime_minutes = models.PositiveIntegerField(default=0)
+    billable_overtime_minutes = models.PositiveIntegerField(default=0)
+    overtime_waived = models.BooleanField(default=False)
+    waive_reason = models.CharField(max_length=255, blank=True)
+    # Set when a person makes the overtime call — the suggestion alone isn't a decision.
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    # Driver pay, decoupled from customer billing (Trip Review design): the same actual
+    # times, but its own minutes — billing the customer 45 never changes what the driver
+    # is owed, and waiving the customer's overtime doesn't waive the driver's. Null =
+    # nobody has set it, so it reads as the actual time over. For an in-house driver it's
+    # the minutes recorded for payroll; for an affiliate, what the payable pays.
+    driver_overtime_minutes = models.PositiveIntegerField(null=True, blank=True)
+    # The affiliate's overtime rate / hr. Null = the placeholder, payout ÷ billed hours,
+    # until the client says how affiliate overtime is priced.
+    affiliate_rate = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+
+    # Farmed-out trips only; feeds affiliate performance (Phase D).
+    affiliate_rating = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta(TimeStampedModel.Meta):
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(affiliate_rating__isnull=True)
+                | models.Q(affiliate_rating__gte=1, affiliate_rating__lte=5),
+                name="trip_review_rating_1_to_5",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Review of {self.reservation.reference}"
+
+    @property
+    def zone(self) -> ZoneInfo:
+        return ZoneInfo(self.reservation.pickup_timezone or settings.TIME_ZONE)
+
+    @property
+    def actual_pickup_local(self) -> datetime | None:
+        return self.actual_pickup_at.astimezone(self.zone) if self.actual_pickup_at else None
+
+    @property
+    def actual_dropoff_local(self) -> datetime | None:
+        return self.actual_dropoff_at.astimezone(self.zone) if self.actual_dropoff_at else None
+
+    @property
+    def actual_pickup_display(self) -> str:
+        return _local_display(self.actual_pickup_local)
+
+    @property
+    def actual_dropoff_display(self) -> str:
+        return _local_display(self.actual_dropoff_local)
+
+    @property
+    def actual_minutes(self) -> int | None:
+        if not (self.actual_pickup_at and self.actual_dropoff_at):
+            return None
+        return int((self.actual_dropoff_at - self.actual_pickup_at).total_seconds() // 60)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.completed_at is not None
+
+    @property
+    def nothing_to_bill(self) -> bool:
+        """A completed review decided there's no overtime to invoice."""
+        return self.is_complete and (self.overtime_waived or not self.billable_overtime_minutes)
+
+
+def _local_display(moment: datetime | None) -> str:
+    """`Sep 26, 1:30 AM PDT` — the trip's zone with its abbreviation, always."""
+    if moment is None:
+        return ""
+    return f"{dateformat.format(moment, 'M j, g:i A')} {moment.tzname()}"
+
+
+class TripIssueQuerySet(models.QuerySet):
+    def open(self):
+        return self.filter(resolved_at__isnull=True)
+
+
+class TripIssue(TimeStampedModel):
+    """Something that went wrong on a trip (APC-59). An open issue keeps the trip from
+    being green-lit, and Phase D reads these for affiliate performance."""
+
+    class Category(models.TextChoices):
+        VEHICLE = "vehicle", "Vehicle"
+        DRIVER = "driver", "Driver"
+        SERVICE = "service", "Service"
+        COMPLAINT = "complaint", "Customer complaint"
+
+    class Severity(models.TextChoices):
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+
+    review = models.ForeignKey(TripReview, related_name="issues", on_delete=models.CASCADE)
+    category = models.CharField(max_length=20, choices=Category.choices)
+    severity = models.CharField(max_length=10, choices=Severity.choices)
+    note = models.TextField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    objects = TripIssueQuerySet.as_manager()
+
+    class Meta(TimeStampedModel.Meta):
+        indexes = [models.Index(fields=["resolved_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.get_category_display()} · {self.get_severity_display()}"
+
+    @property
+    def is_open(self) -> bool:
+        return self.resolved_at is None
+
+
 # Trip statuses that count as earned revenue (the vehicle was provided), per spec §5.1.
 EARNED_TERMINAL_STATUSES = (
     Reservation.TripStatus.DONE,

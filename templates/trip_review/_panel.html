@@ -1,0 +1,17 @@
+{% comment %}
+  The trip review pop-up's shell — the reservation editor's overlay (backdrop, .pop panel,
+  z-[58] so $store.modal confirms and toasts still sit above it), widened for two panes.
+  tripReviewPanel() fetches trip_review/_trip_review.html into it; Escape closes unless it
+  just dismissed a picker (fpJustClosed, as in the editor).
+{% endcomment %}
+<div x-cloak x-show="panelOpen" class="fixed inset-0 z-[58] flex items-end sm:items-center justify-center p-0 sm:p-4"
+     @keydown.escape.window="if (panelOpen && !fpJustClosed() && !$store.modal.open) close()"
+     @trip-review-close.window="close()" @trip-review-changed.window="changed = true"
+     @trip-review-open.window="open($event.detail.url)">
+  <div class="absolute inset-0 bg-charcoal/55 backdrop-blur-sm" @click="close()"></div>
+  <div class="pop relative w-full sm:max-w-[1000px] max-h-[94vh] bg-surface rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div x-show="loading" class="px-6 py-10 text-center text-[13px] text-muted">Loading the review…</div>
+    <div x-show="error" x-cloak class="px-6 py-10 text-center text-[13px] text-rose-600" x-text="error"></div>
+    <div x-show="!loading && !error" class="flex flex-col min-h-0 flex-1" x-html="html" x-ref="body"></div>
+  </div>
+</div>

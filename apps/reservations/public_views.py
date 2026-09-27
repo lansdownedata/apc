@@ -14,11 +14,40 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from apps.contacts.models import Contact
-from apps.core.phone import to_e164
 
 from . import acknowledgements as ack
 from .models import Reservation
 from .services import confirm_trip_day, trip_day_group, trip_sheet_context
+
+
+def _feedback_orders(trips) -> list[dict]:
+    """APC-63 — the orders on this page that have finished running, each with its feedback
+    so far. The form only shows for these."""
+    from apps.leads.models import CustomerFeedback
+    from apps.leads.services import order_finished
+
+    leads = {t.lead_id: t.lead for t in trips}
+    done = [lead for lead in leads.values() if order_finished(lead)]
+    given = {f.lead_id: f for f in CustomerFeedback.objects.filter(lead__in=done)}
+    return [{"lead": lead, "feedback": given.get(lead.pk)} for lead in done]
+
+
+def _submit_feedback(request: HttpRequest, token: str, ctx: dict) -> HttpResponse:
+    from apps.leads.services import FeedbackError, record_feedback
+
+    # Only an order this token's page is showing, and only once it has finished.
+    orders = {str(o["lead"].pk): o for o in ctx["feedback_orders"]}
+    order = orders.get(request.POST.get("lead", ""))
+    if order is None:
+        return redirect("trip_confirm", token=token)
+    try:
+        record_feedback(
+            order["lead"], rating=request.POST.get("rating"), comment=request.POST.get("comment")
+        )
+    except FeedbackError as exc:
+        ctx["feedback_error"] = str(exc)
+        return render(request, "public/trip_confirm.html", ctx)
+    return redirect("trip_confirm", token=token)
 
 
 @require_http_methods(["GET", "POST"])
@@ -41,7 +70,15 @@ def trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
         "cancelled": not trips,
         "confirmed": bool(trips) and all(t.customer_confirmed_at is not None for t in trips),
         "ack_error": False,
+        "feedback_orders": _feedback_orders(trips),
+        "feedback_error": "",
     }
+    # Once every order on the page has run, there's nothing left to confirm.
+    ctx["all_finished"] = bool(trips) and len(ctx["feedback_orders"]) == len(
+        {t.lead_id for t in trips}
+    )
+    if request.method == "POST" and request.POST.get("form") == "feedback":
+        return _submit_feedback(request, token, ctx)
     if request.method == "POST" and trips:
         if not request.POST.get("ack"):
             # `required` on the input is client-side only — refuse the bare POST.
@@ -87,28 +124,26 @@ def wedding_details(request: HttpRequest, token: str) -> HttpResponse:
     except (BadSignature, Reservation.DoesNotExist):
         raise Http404 from None
 
+    from apps.leads import contact_roles
+
     lead = reservation.lead
-    submitted = bool(lead.day_of_contact_name and lead.wedding_name)
+    # APC-64: the day-of contact is the order's day-of coordinator role.
+    contact_name, contact_phone = contact_roles.day_of_contact(lead)
     ctx = {
         "sheet": trip_sheet_context(reservation),
         "cancelled": reservation.is_cancelled,
-        "submitted": submitted,
+        "submitted": bool(contact_name and lead.wedding_name),
         "wedding_name": lead.wedding_name,
-        "contact_name": lead.day_of_contact_name,
-        "contact_phone": lead.day_of_contact_phone,
+        "contact_name": contact_name,
+        "contact_phone": contact_phone,
     }
     if request.method == "POST" and not ctx["cancelled"]:
         lead.wedding_name = (request.POST.get("wedding_name") or "").strip()[:200]
-        lead.day_of_contact_name = (request.POST.get("contact_name") or "").strip()[:200]
-        raw_phone = (request.POST.get("contact_phone") or "").strip()
-        lead.day_of_contact_phone = to_e164(raw_phone) or raw_phone[:32]
-        lead.save(
-            update_fields=[
-                "wedding_name",
-                "day_of_contact_name",
-                "day_of_contact_phone",
-                "updated_at",
-            ]
+        lead.save(update_fields=["wedding_name", "updated_at"])
+        contact_roles.set_day_of_contact(
+            lead,
+            name=request.POST.get("contact_name") or "",
+            phone=request.POST.get("contact_phone") or "",
         )
         return redirect("wedding_details", token=token)
     return render(request, "public/wedding_details.html", ctx)

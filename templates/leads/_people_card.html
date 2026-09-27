@@ -1,0 +1,35 @@
+{% load json_filters %}
+{% comment %}
+  The order's People (APC-64): the couple, planners, the day-of coordinator, … Shared by
+  the quote workspace and the order page; context from contact_roles.people_context.
+  Add and remove go through $store.modal (leadPeople() in app.js), never a native dialog.
+{% endcomment %}
+<div class="card overflow-hidden mb-4" x-data="leadPeople('{% url 'lead_people_add' lead.pk %}')">
+  {{ role_choices|json_script:"people-roles" }}
+  {{ people_contact_options|json_script:"people-contacts" }}
+  <div class="flex items-center px-5 py-3.5 border-b border-line">
+    <i class="ti ti-users text-[17px] text-gold mr-2"></i>
+    <span class="font-display text-[15px] font-semibold text-ink">People</span>
+    <button type="button" @click="add()" :disabled="busy"
+            class="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold text-goldd hover:underline focus-gold disabled:opacity-50">
+      <i class="ti ti-plus text-[13px]"></i> Add person
+    </button>
+  </div>
+  <div class="px-5 py-1">
+    {% for p in people %}
+    <div class="flex items-center gap-3 py-2.5 {% if not forloop.first %}border-t border-line/60{% endif %}">
+      <div class="min-w-0 flex-1">
+        <a href="{% url 'contact_detail' p.contact_id %}" class="text-[13px] font-medium text-ink hover:text-goldd hover:underline">{{ p.contact.name }}</a>
+        <div class="text-[11.5px] text-muted">{{ p.get_role_display }}{% if p.contact.phone %} · <span class="num">{{ p.contact.phone }}</span>{% endif %}</div>
+      </div>
+      <button type="button" :disabled="busy" title="Remove"
+              @click="remove('{% url 'lead_people_remove' lead.pk p.pk %}', {{ p.contact.name|json_string }}, {{ p.get_role_display|json_string }})"
+              class="w-7 h-7 grid place-items-center rounded-lg text-muted hover:text-rose-600 hover:bg-surface2 focus-gold disabled:opacity-50">
+        <i class="ti ti-x text-[14px]"></i>
+      </button>
+    </div>
+    {% empty %}
+    <p class="py-3 text-[12.5px] text-muted">No one yet. Add the couple, their planner and whoever to call on the day.</p>
+    {% endfor %}
+  </div>
+</div>

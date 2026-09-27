@@ -9,6 +9,24 @@ from apps.core.models import TimeStampedModel
 from apps.core.phone import to_e164
 
 
+def match_contact(contact_model, phone_model, *, phone: str = "", email: str = ""):
+    """`ContactManager.find_match`'s rule, over whichever model classes you pass — so a
+    data migration's historical models dedupe exactly the way live contact creation does.
+    """
+    phone, email = (phone or "").strip(), (email or "").strip()
+    if email:
+        return contact_model.objects.filter(email__iexact=email).first()
+    if not phone:
+        return None
+    # Match the canonical form *and* the raw input: rows that predate the
+    # backfill, and numbers to_e164 rejects, are only reachable as typed.
+    numbers = {phone, to_e164(phone) or phone}
+    lookup = Q(phone__in=numbers) | Q(
+        pk__in=phone_model.objects.filter(number__in=numbers).values("contact")
+    )
+    return contact_model.objects.filter(lookup).order_by("-created_at").first()
+
+
 class CompanyManager(models.Manager):
     def get_or_create_by_name(self, name: str) -> "Company | None":
         """Resolve a typed company name to a Company (case-insensitive), or None if blank."""
@@ -78,18 +96,7 @@ class ContactManager(models.Manager):
         (a Podium text, a phone-only entry) does the phone match, against every number
         on file rather than just the texting one.
         """
-        phone, email = (phone or "").strip(), (email or "").strip()
-        if email:
-            return self.filter(email__iexact=email).first()
-        if not phone:
-            return None
-        # Match the canonical form *and* the raw input: rows that predate the
-        # backfill, and numbers to_e164 rejects, are only reachable as typed.
-        numbers = {phone, to_e164(phone) or phone}
-        lookup = Q(phone__in=numbers) | Q(
-            pk__in=ContactPhone.objects.filter(number__in=numbers).values("contact")
-        )
-        return self.filter(lookup).order_by("-created_at").first()
+        return match_contact(self.model, ContactPhone, phone=phone, email=email)
 
     def match_or_create(
         self,

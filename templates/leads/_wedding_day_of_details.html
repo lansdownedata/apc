@@ -1,6 +1,6 @@
 {% comment %}
   leads/_wedding_day_of_details.html — the T-7d wedding message's captured POC + wedding
-  name (APC-18). Shown whenever this order is a wedding — it holds wedding details, or
+  name (APC-18). The day-of contact is read from the order's day-of coordinator role (APC-64). Shown whenever this order is a wedding — it holds wedding details, or
   at least one of its trips is a wedding trip (requires `is_wedding` from apps.leads.views).
   Sits inside quoteWorkspace()'s x-data — the inputs are extra keys on `header`, saved
   through the same saveHeader() as the rest of the header fields.
@@ -10,7 +10,7 @@
   <div class="flex items-center gap-2 mb-3">
     <i class="ti ti-heart text-[16px] text-gold"></i>
     <h2 class="font-display text-[13.5px] font-semibold text-ink">Day-of wedding details</h2>
-    {% if not lead.wedding_name or not lead.day_of_contact_name %}
+    {% if not lead.wedding_name or not day_of_name %}
     <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">not yet provided</span>
     {% endif %}
   </div>

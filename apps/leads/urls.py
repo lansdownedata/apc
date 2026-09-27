@@ -15,6 +15,12 @@ urlpatterns = [
     path("<int:pk>/send-quote/", views.lead_send_quote, name="lead_send_quote"),
     path("<int:pk>/reissue-quote/", views.lead_reissue_quote, name="lead_reissue_quote"),
     path("<int:pk>/resend-la/", views.lead_resend_la, name="lead_resend_la"),
+    path("<int:pk>/people/add/", views.lead_people_add, name="lead_people_add"),
+    path(
+        "<int:pk>/people/<int:row_pk>/remove/",
+        views.lead_people_remove,
+        name="lead_people_remove",
+    ),
     # The 3-D Secure return moved to /quote/<token>/done/ (2026-09-19) — it is a customer
     # URL and belongs with the others, not inside the staff portal. This path is in
     # inboxes already, so it keeps landing somewhere rather than 404ing.

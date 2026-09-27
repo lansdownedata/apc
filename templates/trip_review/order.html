@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block content %}
+{% comment %}
+  One order in review (APC-59, signed-off design). Header figures, the trips (each opens
+  its own review in the pop-up below), and Accounting's final-billing figures. The pop-up
+  is its own overlay, the same family as the reservation editor (tripReviewPanel in
+  app.js); confirmations inside it go through $store.modal.
+{% endcomment %}
+<div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6 grid gap-4" x-data="tripReviewPanel()">
+
+  <div class="card overflow-hidden">
+    <div class="flex items-start gap-4 flex-wrap px-5 py-4">
+      <div class="min-w-0">
+        <a href="{% url 'trip_review_list' %}" class="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><i class="ti ti-arrow-left text-[13px]"></i> Trip Review</a>
+        <h1 class="font-display text-[20px] font-semibold text-ink mt-0.5"><a href="{% url 'order_detail' row.lead.pk %}" class="num hover:text-goldd hover:underline">{{ row.lead.quote_no }}</a> · {{ row.lead.contact.name }}</h1>
+        <div class="text-[12.5px] text-muted">{{ row.service_summary }} · {{ row.live_trips|length }} trip{{ row.live_trips|length|pluralize }}{% if row.finished_display %} · all finished {{ row.finished_display }}{% endif %}</div>
+      </div>
+      <span class="ml-auto inline-flex text-[11px] font-semibold px-2 py-0.5 rounded-full {% if row.stage == 'needs_review' %}chip-warn{% elif row.stage == 'billing' %}chip-gold{% else %}chip-ok{% endif %}">{{ row.stage_label }}</span>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 border-t border-line">
+      <div class="px-5 py-3"><div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Collected</div><div class="num text-[17px] font-semibold mt-0.5">${{ row.collected|floatformat:2|intcomma }}</div></div>
+      <div class="px-5 py-3 border-l border-line"><div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Total due</div><div class="num text-[17px] font-semibold mt-0.5">${{ row.total_due|floatformat:2|intcomma }}</div><div class="text-[11px] text-muted">${{ row.order_total|floatformat:2|intcomma }} order + ${{ row.approved_overtime|floatformat:2|intcomma }} overtime</div></div>
+      <div class="px-5 py-3 md:border-l border-line"><div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Remaining</div><div class="num text-[17px] font-semibold mt-0.5 {% if row.remaining %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ row.remaining|floatformat:2|intcomma }}</div></div>
+      <div class="px-5 py-3 border-l border-line"><div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Trips reviewed</div><div class="num text-[17px] font-semibold mt-0.5">{{ row.reviewed }} / {{ row.live_trips|length }}</div></div>
+    </div>
+  </div>
+
+  <div class="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
+    <div class="card overflow-hidden">
+      <div class="flex items-center gap-2 px-5 py-3.5 border-b border-line">
+        <span class="font-display text-[15px] font-semibold text-ink">Trips</span>
+        <span class="text-[12px] text-muted">Open a trip to review it</span>
+      </div>
+      {% for t in row.trips %}
+      <div class="flex gap-3.5 px-5 py-4 {% if not forloop.first %}border-t border-line{% endif %} {% if t.state != 'cancelled' %}cursor-pointer hover:bg-surface2{% endif %}"
+           {% if t.state != 'cancelled' %}role="button" tabindex="0"
+           @click="open('{% url 'trip_review_trip' t.trip.pk %}')" @keydown.enter.prevent="open('{% url 'trip_review_trip' t.trip.pk %}')"{% endif %}>
+        <span class="w-9 h-9 rounded-lg grid place-items-center shrink-0 {% if t.trip.trip_type == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">
+          <i class="ti {% if t.trip.trip_type == 'hourly' %}ti-clock-hour-4{% else %}ti-arrow-narrow-right{% endif %} text-[18px]"></i>
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-ink text-[13.5px]">{{ t.trip.service_label }}</span>
+            <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{{ t.trip.get_trip_type_display }}</span>
+            <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if t.state == 'cancelled' %}chip-ring{% elif t.ended_by_schedule %}chip-ring{% else %}chip-ok{% endif %}">
+              {% if t.state == 'cancelled' %}{{ t.trip.get_trip_status_display }}{% elif t.ended_by_schedule %}No status · ended by schedule{% else %}{{ t.trip.get_trip_status_display }}{% endif %}
+            </span>
+          </div>
+          <div class="text-[12.5px] text-muted mt-0.5 truncate">
+            {{ t.pickup_display }}{% if t.pickup_stop %} · {{ t.pickup_stop.address }}{% endif %}{% if t.dropoff_stop %} → {{ t.dropoff_stop.address }}{% endif %}{% if t.coverage %} · {% if t.coverage.is_in_house %}In-house · {% endif %}{{ t.coverage.provider_name }}{% endif %}
+          </div>
+          <div class="flex flex-wrap gap-1.5 mt-2">
+            {% if t.state == 'cancelled' %}
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ring">Cancelled · nothing to review</span>
+            {% elif t.state == 'reviewed' %}
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed{% if t.review.overtime_waived %} · overtime waived{% elif t.figures.billable_minutes %} · {{ t.figures.billable_minutes }} min OT billed (${{ t.figures.customer_amount|floatformat:2|intcomma }}){% else %} · no overtime{% endif %}</span>
+            {% else %}
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-warn">Needs review{% if t.figures.suggested_minutes %} · {{ t.figures.suggested_minutes }} min over suggested{% endif %}</span>
+            {% endif %}
+            {% if t.open_issues %}<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-danger">{{ t.open_issues }} open issue{{ t.open_issues|pluralize }}</span>{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card overflow-hidden">
+      <div class="flex items-center gap-2 px-5 py-3.5 border-b border-line">
+        <span class="font-display text-[15px] font-semibold text-ink">Final billing</span>
+        <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">Accounting</span>
+      </div>
+      <div class="px-5 py-2 text-[12.5px]">
+        <div class="flex justify-between gap-3 py-2"><span>Order balance</span><b class="num font-medium">${{ row.order_balance|floatformat:2|intcomma }}</b></div>
+        <div class="flex justify-between gap-3 py-2 border-t border-line"><span>Overtime approved{% if row.approved_trips %} ({{ row.approved_trips }} trip{{ row.approved_trips|pluralize }}){% endif %}</span><b class="num font-medium">${{ row.approved_overtime|floatformat:2|intcomma }}</b></div>
+        <div class="flex justify-between gap-3 py-2 border-t border-line"><span>Overtime awaiting review{% if row.awaiting_trips %} ({{ row.awaiting_trips }} trip{{ row.awaiting_trips|pluralize }}){% endif %}</span><span class="text-muted">{% if row.awaiting_trips %}—{% else %}None{% endif %}</span></div>
+        <div class="flex justify-between gap-3 py-2 border-t border-line font-semibold"><span>Remaining to collect</span><b class="num {% if row.remaining %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ row.remaining|floatformat:2|intcomma }}</b></div>
+      </div>
+    </div>
+  </div>
+
+  {% include "trip_review/_panel.html" %}
+</div>
+{% endblock %}

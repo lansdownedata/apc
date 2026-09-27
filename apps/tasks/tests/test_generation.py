@@ -14,6 +14,7 @@ from apps.dispatch import services as dispatch
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.fleet.factories import DriverFactory
+from apps.leads import contact_roles
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.leads.services import book_lead
@@ -245,12 +246,14 @@ def test_wedding_answers_close_the_wedding_tasks():
     services.ensure_tasks(lead)
     assert _task(lead, "wedding_names").status == Task.Status.OPEN
 
-    Lead.objects.filter(pk=lead.pk).update(wedding_name="Smith / Jones", day_of_contact_name="Ana")
+    Lead.objects.filter(pk=lead.pk).update(wedding_name="Smith / Jones")
+    # APC-64: the day-of contact is the day-of coordinator role, not the old columns.
+    contact_roles.set_day_of_contact(lead, name="Ana", phone="")
     services.evaluate_lead(lead)
     assert _task(lead, "wedding_names").status == Task.Status.DONE
     assert _task(lead, "day_of_contact").status == Task.Status.OPEN  # no phone yet
 
-    Lead.objects.filter(pk=lead.pk).update(day_of_contact_phone="+15715551212")
+    contact_roles.set_day_of_contact(lead, name="Ana", phone="+15715551212")
     services.evaluate_lead(lead)
     assert _task(lead, "day_of_contact").status == Task.Status.DONE
 

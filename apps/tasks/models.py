@@ -2,6 +2,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import OuterRef, Subquery
 from django.utils import dateformat, timezone
@@ -49,6 +50,31 @@ class TaskConfig(models.Model):
         default=24,
         help_text="How long a task can sit overdue before it escalates to the department "
         "owner and admins.",
+    )
+    post_trip_grace_hours = models.PositiveIntegerField(
+        default=2,
+        help_text="How long after a trip's scheduled end, with no Done status, before its "
+        "post-trip review opens anyway.",
+    )
+    # ⚠ PLACEHOLDERS (APC-59): the client hasn't answered how overtime is counted
+    # (Confluence 46006273 §9 "Still open" #2). Both are settings so his answer is an
+    # edit on the Tasks settings screen, not a deploy. The suggestion only — a person
+    # always decides what's billable.
+    overtime_increment_minutes = models.PositiveIntegerField(
+        default=15,
+        validators=[MinValueValidator(1)],
+        help_text="Suggested overtime rounds up to this many minutes. Placeholder until the "
+        "client confirms.",
+    )
+    overtime_grace_minutes = models.PositiveIntegerField(
+        default=15,
+        help_text="Minutes over the billed hours before any overtime is suggested. "
+        "Placeholder until the client confirms.",
+    )
+    future_booking_offset_days = models.PositiveIntegerField(
+        default=330,
+        help_text="Days after an order's last trip that Sales follows up about booking again "
+        "(330 is about a wedding's first anniversary).",
     )
     digest_emails = models.TextField(
         blank=True,
@@ -125,9 +151,22 @@ class Task(TimeStampedModel):
     CLOSED = (Status.DONE, Status.SKIPPED, Status.NOT_APPLICABLE)
 
     kind = models.CharField(max_length=40)
-    # Always set today. Phase E adds vendor-anchored tasks, so nothing beyond this column
-    # should assume it.
-    lead = models.ForeignKey("leads.Lead", related_name="tasks", on_delete=models.CASCADE)
+    # An order task (lead set) or a vendor task (vendor set, APC-71) — never both, never
+    # neither (the `task_order_or_vendor` check).
+    lead = models.ForeignKey(
+        "leads.Lead", related_name="tasks", null=True, blank=True, on_delete=models.CASCADE
+    )
+    vendor = models.ForeignKey(
+        "vendors.Vendor", related_name="tasks", null=True, blank=True, on_delete=models.CASCADE
+    )
+    # The policy an `insurance_renewal` task chases (APC-71) — one task per policy.
+    insurance = models.ForeignKey(
+        "vendors.VendorInsurance",
+        related_name="tasks",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
     reservation = models.ForeignKey(
         "reservations.Reservation",
         related_name="tasks",
@@ -165,7 +204,13 @@ class Task(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["lead", "reservation", "kind"], name="one_task_per_kind"
-            )
+            ),
+            models.UniqueConstraint(fields=["insurance", "kind"], name="one_task_per_policy"),
+            models.CheckConstraint(
+                condition=models.Q(lead__isnull=False, vendor__isnull=True)
+                | models.Q(lead__isnull=True, vendor__isnull=False),
+                name="task_order_or_vendor",
+            ),
         ]
         indexes = [
             models.Index(fields=["status", "due_at"]),
