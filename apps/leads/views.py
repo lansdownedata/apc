@@ -47,9 +47,9 @@ from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
 from apps.tasks import selectors as task_selectors
 
-from . import services
+from . import contact_roles, services
 from .forms import NewLeadForm, PortalWeddingForm
-from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead
+from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, LeadContact
 
 ZERO = Decimal("0.00")
 
@@ -272,6 +272,7 @@ def lead_detail(request, pk):
         "order_tasks": task_selectors.checklist_for_order(lead),
         "is_booked": lead.status == Lead.Status.BOOKED,
         **services.feedback_context(lead),
+        **contact_roles.people_context(lead),
         # Everything the shared trip editor needs — the order page feeds it the same way.
         **reservation_editor.editor_context(
             request, lead, reservations, trip_defaults=_wedding_trip_defaults(wedding_state)
@@ -360,14 +361,43 @@ def lead_update(request, pk: int) -> JsonResponse:
     if "wedding_name" in request.POST:
         lead.wedding_name = request.POST.get("wedding_name", "").strip()[:200]
         lead_fields.append("wedding_name")
-    if "day_of_contact_name" in request.POST:
-        lead.day_of_contact_name = request.POST.get("day_of_contact_name", "").strip()[:200]
-        lead_fields.append("day_of_contact_name")
-    if normalized_day_of_phone is not None:
-        lead.day_of_contact_phone = normalized_day_of_phone
-        lead_fields.append("day_of_contact_phone")
     if lead_fields:
         lead.save(update_fields=lead_fields + ["updated_at"])
+    # APC-64: the day-of contact is a role now. A field left out of the POST keeps the
+    # role's current value; set_day_of_contact also keeps the old columns in step.
+    if "day_of_contact_name" in request.POST or normalized_day_of_phone is not None:
+        name, phone = contact_roles.day_of_contact(lead)
+        if "day_of_contact_name" in request.POST:
+            name = request.POST.get("day_of_contact_name", "")
+        if normalized_day_of_phone is not None:
+            phone = normalized_day_of_phone
+        contact_roles.set_day_of_contact(lead, name=name, phone=phone)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def lead_people_add(request, pk: int) -> JsonResponse:
+    """The People card's add (APC-64): a role for an existing contact, or for someone new
+    typed into the picker."""
+    lead = get_object_or_404(Lead, pk=pk)
+    try:
+        row = contact_roles.add_person(
+            lead,
+            role=request.POST.get("role", ""),
+            contact=request.POST.get("contact", ""),
+            phone=request.POST.get("phone", ""),
+        )
+    except contact_roles.RoleError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "id": row.pk})
+
+
+@login_required
+@require_POST
+def lead_people_remove(request, pk: int, row_pk: int) -> JsonResponse:
+    row = get_object_or_404(LeadContact.objects.select_related("lead"), pk=row_pk, lead_id=pk)
+    contact_roles.remove_person(row)
     return JsonResponse({"ok": True})
 
 

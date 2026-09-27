@@ -38,9 +38,11 @@ def _superseded(policies: list[VendorInsurance]) -> set[int]:
     return {p.pk for p in policies if p.expiry_date < latest[p.vendor_id]}
 
 
-def run(now: datetime | None = None, *, vendor_id: int | None = None) -> int:
+def run(
+    now: datetime | None = None, *, vendor_id: int | None = None, config: TaskConfig | None = None
+) -> int:
     """Create, close and retire renewal tasks. Idempotent; returns the rows changed."""
-    config = TaskConfig.load()
+    config = config or TaskConfig.load()
     if not config.enabled:
         return 0
     now = now or timezone.now()

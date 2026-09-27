@@ -257,3 +257,36 @@ class CustomerFeedback(TimeStampedModel):
     @property
     def is_low(self) -> bool:
         return self.rating <= self.LOW_RATING
+
+
+class LeadContact(TimeStampedModel):
+    """A person who matters on an order, in a role (APC-64) — a wedding has a couple, a
+    planner, a day-of coordinator, … not one customer plus a free-text day-of contact.
+
+    One row per (lead, contact, role); the same person can hold several roles. Writes go
+    through `apps.leads.contact_roles`, which keeps the day-of coordinator and the old
+    `Lead.day_of_contact_*` columns in step for the transition release.
+    """
+
+    class Role(models.TextChoices):
+        COUPLE = "couple", "Couple"
+        LEAD_PLANNER = "lead_planner", "Lead planner"
+        DAY_OF_COORDINATOR = "day_of_coordinator", "Day-of coordinator"
+        ASSISTANT_COORDINATOR = "assistant_coordinator", "Assistant coordinator"
+        EMERGENCY = "emergency", "Emergency contact"
+        TRANSPORTATION = "transportation", "Transportation contact"
+
+    lead = models.ForeignKey(Lead, related_name="people", on_delete=models.CASCADE)
+    contact = models.ForeignKey(Contact, related_name="order_roles", on_delete=models.CASCADE)
+    role = models.CharField(max_length=32, choices=Role.choices)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lead", "contact", "role"], name="one_role_per_lead_contact"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contact} · {self.get_role_display()}"

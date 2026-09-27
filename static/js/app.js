@@ -378,6 +378,75 @@ function taskQueue(opts = {}) {
 }
 window.taskQueue = taskQueue;
 
+/* The order's People card (leads/_people_card.html, APC-64). Add picks a role and a
+   person — an existing contact, or a name typed into the picker, which the server
+   resolves through the usual contact dedupe (a phone helps it find them). */
+function leadPeople(addUrl) {
+  const read = (id) => JSON.parse(document.getElementById(id)?.textContent || "[]");
+  return {
+    busy: false,
+    add() {
+      const roles = read("people-roles")
+        .map(([v, label]) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`)
+        .join("");
+      const people = read("people-contacts")
+        .map(([v, label]) => `<option value="${v}">${escapeHtml(label)}</option>`)
+        .join("");
+      Alpine.store("modal").show({
+        title: "Add a person",
+        message: "Pick someone on file, or type a new name.",
+        html: `<div class="mt-3 grid gap-3 text-left">
+            <label class="block"><span class="block text-[11px] font-medium text-muted mb-1">Role</span>
+              <select id="people-role" data-tom data-search="off" class="field">${roles}</select></label>
+            <label class="block"><span class="block text-[11px] font-medium text-muted mb-1">Person</span>
+              <select id="people-contact" data-tom data-create data-placeholder="Search or type a name" class="field"><option value=""></option>${people}</select></label>
+            <label class="block"><span class="block text-[11px] font-medium text-muted mb-1">Phone (new people only)</span>
+              <input id="people-phone" type="tel" class="field w-full" placeholder="(202) 555-0143"></label>
+          </div>`,
+        confirmText: "Add",
+        variant: "gold",
+        onConfirm: async () => {
+          const val = (id) => (document.getElementById(id) || {}).value || "";
+          this.busy = true;
+          try {
+            await postForm(addUrl, {
+              role: val("people-role"),
+              contact: val("people-contact"),
+              phone: val("people-phone"),
+            });
+            window.location.reload();
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Could not add them" });
+          } finally {
+            this.busy = false;
+          }
+        },
+      });
+      setTimeout(() => initTomSelects(document), 60);
+    },
+    remove(url, name, role) {
+      Alpine.store("modal").confirm({
+        title: "Remove from this order?",
+        message: `${name} will no longer be the ${role.toLowerCase()} here. Their contact record stays.`,
+        variant: "danger",
+        confirmText: "Remove",
+        onConfirm: async () => {
+          this.busy = true;
+          try {
+            await postForm(url);
+            window.location.reload();
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "Could not remove them" });
+          } finally {
+            this.busy = false;
+          }
+        },
+      });
+    },
+  };
+}
+window.leadPeople = leadPeople;
+
 /* One checklist (components/task_checklist.html). After any action it re-fetches its own
    fragment and swaps itself out, so the drawer, the trip modal and the order card always
    show what the server has. Skip is inline — this may already be inside $store.modal. */

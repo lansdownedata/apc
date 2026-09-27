@@ -180,8 +180,10 @@ def _wedding_names(task: Task, facts: LeadFacts) -> bool:
 
 
 def _day_of_contact(task: Task, facts: LeadFacts) -> bool:
-    lead = facts.lead
-    return bool(lead.day_of_contact_name.strip() and lead.day_of_contact_phone.strip())
+    """A day-of coordinator on the order with a number to call (APC-64: the role, no
+    longer `Lead.day_of_contact_*`)."""
+    person = facts.day_of_contact
+    return bool(person and person.name.strip() and person.phone.strip())
 
 
 def _affiliate_assigned(task: Task, facts: LeadFacts) -> bool:

@@ -147,6 +147,6 @@ def run_tasks() -> int:
     evaluated = _evaluate(now)
     processed += len(evaluated)
     processed += _post_trip(config, now, evaluated)
-    processed += vendor_tasks.run(now)
+    processed += vendor_tasks.run(now, config=config)
     processed += escalation.run(config, now)
     return processed

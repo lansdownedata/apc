@@ -22,8 +22,8 @@
          channel: '{{ lead.channel }}',
          agent: '{{ lead.assigned_agent_id|default_if_none:'' }}',
          wedding_name: {{ lead.wedding_name|json_string }},
-         day_of_contact_name: {{ lead.day_of_contact_name|json_string }},
-         day_of_contact_phone: {{ lead.day_of_contact_phone|json_string }}
+         day_of_contact_name: {{ day_of_name|json_string }},
+         day_of_contact_phone: {{ day_of_phone|json_string }}
        }
      })">
 
@@ -291,6 +291,7 @@
     </div>
   </div>
 
+  {% include "leads/_people_card.html" %}
   {% include "leads/_customer_feedback.html" %}
 
   {% if lead.notes %}

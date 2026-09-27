@@ -14,7 +14,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from apps.contacts.models import Contact
-from apps.core.phone import to_e164
 
 from . import acknowledgements as ack
 from .models import Reservation
@@ -125,28 +124,26 @@ def wedding_details(request: HttpRequest, token: str) -> HttpResponse:
     except (BadSignature, Reservation.DoesNotExist):
         raise Http404 from None
 
+    from apps.leads import contact_roles
+
     lead = reservation.lead
-    submitted = bool(lead.day_of_contact_name and lead.wedding_name)
+    # APC-64: the day-of contact is the order's day-of coordinator role.
+    contact_name, contact_phone = contact_roles.day_of_contact(lead)
     ctx = {
         "sheet": trip_sheet_context(reservation),
         "cancelled": reservation.is_cancelled,
-        "submitted": submitted,
+        "submitted": bool(contact_name and lead.wedding_name),
         "wedding_name": lead.wedding_name,
-        "contact_name": lead.day_of_contact_name,
-        "contact_phone": lead.day_of_contact_phone,
+        "contact_name": contact_name,
+        "contact_phone": contact_phone,
     }
     if request.method == "POST" and not ctx["cancelled"]:
         lead.wedding_name = (request.POST.get("wedding_name") or "").strip()[:200]
-        lead.day_of_contact_name = (request.POST.get("contact_name") or "").strip()[:200]
-        raw_phone = (request.POST.get("contact_phone") or "").strip()
-        lead.day_of_contact_phone = to_e164(raw_phone) or raw_phone[:32]
-        lead.save(
-            update_fields=[
-                "wedding_name",
-                "day_of_contact_name",
-                "day_of_contact_phone",
-                "updated_at",
-            ]
+        lead.save(update_fields=["wedding_name", "updated_at"])
+        contact_roles.set_day_of_contact(
+            lead,
+            name=request.POST.get("contact_name") or "",
+            phone=request.POST.get("contact_phone") or "",
         )
         return redirect("wedding_details", token=token)
     return render(request, "public/wedding_details.html", ctx)
