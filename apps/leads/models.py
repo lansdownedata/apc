@@ -228,3 +228,32 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 }
 # NEW/QUOTED -> BOOKED stays legal on purpose: the staff "Book now" path (direct bookings,
 # 2026-08-29) never involves a customer authorization and shouldn't grow a confirm step.
+
+
+class CustomerFeedback(TimeStampedModel):
+    """What the customer told us after the order ran (APC-63), from the rating form on the
+    public trip page. One per order; submitting again edits it. A rating of 2 or less opens
+    a Customer Service follow-up task."""
+
+    LOW_RATING = 2
+
+    lead = models.OneToOneField(Lead, related_name="feedback", on_delete=models.CASCADE)
+    rating = models.PositiveSmallIntegerField()
+    comment = models.TextField(blank=True)
+    submitted_at = models.DateTimeField()
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name_plural = "customer feedback"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(rating__gte=1, rating__lte=5),
+                name="customer_feedback_rating_1_to_5",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.lead.quote_no} · {self.rating}/5"
+
+    @property
+    def is_low(self) -> bool:
+        return self.rating <= self.LOW_RATING

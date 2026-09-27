@@ -60,6 +60,7 @@ def test_owner_admin_can_save(client):
             "post_trip_grace_hours": 3,
             "overtime_increment_minutes": 30,
             "overtime_grace_minutes": 10,
+            "future_booking_offset_days": 360,
             "digest_emails": "ops@allprocharter.com",
         },
     )
@@ -70,6 +71,7 @@ def test_owner_admin_can_save(client):
     assert cfg.overdue_grace_hours == 12
     assert cfg.post_trip_grace_hours == 3
     assert (cfg.overtime_increment_minutes, cfg.overtime_grace_minutes) == (30, 10)
+    assert cfg.future_booking_offset_days == 360
     assert cfg.sales_owner is None
     assert TaskConfig.objects.count() == 1
 

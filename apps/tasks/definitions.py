@@ -68,6 +68,24 @@ class AfterOpen:
         return opened_at + timedelta(hours=self.hours)
 
 
+@dataclass(frozen=True)
+class AfterLastPickup:
+    """Due `TaskConfig.future_booking_offset_days` after the order's last trip, at `hour`
+    on that local day in the last trip's own zone — an anniversary lands on the calendar
+    day the customer would recognise, never shifted by UTC."""
+
+    hour: int = 9
+
+    def resolve(self, last_pickup_at: datetime | None) -> datetime | None:
+        if last_pickup_at is None:
+            return None
+        from .models import TaskConfig
+
+        day = last_pickup_at.date() + timedelta(days=TaskConfig.load().future_booking_offset_days)
+        local = datetime.combine(day, time(self.hour, 0), tzinfo=last_pickup_at.tzinfo)
+        return local.astimezone(UTC)
+
+
 Predicate = Callable[["Task", "LeadFacts"], bool]
 Applies = Callable[["LeadFacts", object], bool]
 
@@ -84,6 +102,10 @@ def _entered_post_trip(facts: LeadFacts, reservation) -> bool:
     return reservation.pk in facts.post_trip_ids
 
 
+def _low_feedback(facts: LeadFacts, reservation: object) -> bool:
+    return facts.feedback is not None and facts.feedback.is_low
+
+
 def _farmed_out(facts: LeadFacts, reservation) -> bool:
     """An affiliate covered the trip, so there's an affiliate to pay. In-house coverage
     (our own driver) and a trip nobody covered have no payable."""
@@ -97,7 +119,7 @@ class TaskKind:
     label: str
     department: str
     level: str
-    due: BeforePickup | AfterOpen
+    due: BeforePickup | AfterOpen | AfterLastPickup
     # None = opens the moment the task is generated (the booking event).
     opens: BeforePickup | None = None
     applies: Applies = _always
@@ -112,7 +134,8 @@ class TaskKind:
     post_trip: bool = False
     # Stage chaining: this kind is created once every existing task of these kinds on the
     # same trip is closed (at least one must exist). A kind whose predecessors don't apply
-    # to a trip — the payables on an in-house trip — simply isn't waited on.
+    # to a trip — the payables on an in-house trip — simply isn't waited on. On an
+    # order-level kind, every live trip must have got that far.
     opens_after: tuple[str, ...] = ()
 
 
@@ -341,6 +364,25 @@ REGISTRY: tuple[TaskKind, ...] = (
         due=AfterOpen(hours=48),  # PLACEHOLDER
         post_trip=True,
         opens_after=("overtime_invoiced", "affiliate_payable_approved", "affiliate_paid"),
+    ),
+    TaskKind(
+        # APC-63. After every trip's Stage 3; a person records the outcome in the note.
+        key="future_booking_followup",
+        label="Future booking follow-up",
+        department=_D.SALES,
+        level=Level.ORDER,
+        due=AfterLastPickup(),
+        post_trip=True,
+        opens_after=("thank_you_sent",),
+    ),
+    TaskKind(
+        # APC-63. The customer rated the order 2 or less on the trip page.
+        key="feedback_followup",
+        label="Follow up on low feedback",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpen(hours=24),  # PLACEHOLDER
+        applies=_low_feedback,
     ),
 )
 

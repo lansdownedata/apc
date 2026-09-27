@@ -39,6 +39,17 @@
   .cancelled{text-align:center;color:rgb(var(--muted));font-size:14px}
   .err{background:rgba(190,60,60,.08);color:#8c2f2f;font-size:13px;border-radius:10px;
        padding:10px 12px;margin:0 0 14px}
+  .feedback{margin-top:26px;padding-top:22px;border-top:1px solid rgb(var(--border))}
+  .feedback:first-of-type{margin-top:0;padding-top:0;border-top:0}
+  .feedback h2{font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:600;margin:0 0 10px;text-align:center}
+  .thanks{text-align:center;color:rgb(var(--ok));font-weight:500;margin:0 0 12px}
+  .rating{border:0;padding:0;margin:0 0 16px;display:flex;flex-direction:row-reverse;justify-content:center;gap:6px}
+  .rating legend{width:100%;text-align:center;font-size:12px;font-weight:600;color:rgb(var(--muted));margin-bottom:6px}
+  .rating input{position:absolute;opacity:0;width:1px;height:1px}
+  .rating label{font-size:34px;line-height:1;color:rgb(var(--border));cursor:pointer;transition:color .12s}
+  .rating input:checked ~ label,.rating label:hover,.rating label:hover ~ label{color:rgb(var(--gold))}
+  .rating input:focus-visible + label{outline:2px solid rgb(var(--gold));outline-offset:2px;border-radius:4px}
+  textarea{width:100%;font:inherit;font-size:14px;padding:10px 12px;border:1px solid rgb(var(--border));border-radius:10px;margin-top:4px;resize:vertical}
   label.check .who{display:block;color:rgb(var(--text));font-weight:600;margin-bottom:2px}
 </style>
 </head>

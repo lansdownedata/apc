@@ -32,7 +32,7 @@ from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
 from . import escalation, post_trip
-from .definitions import POST_TRIP_KINDS, PREDECESSOR_KINDS, REGISTRY, _always
+from .definitions import POST_TRIP_KINDS, PREDECESSOR_KINDS, REGISTRY, Level, _always
 from .facts import load_facts
 from .models import Task, TaskConfig
 from .services import _evaluate_many, _predecessors_closed, sync
@@ -111,7 +111,11 @@ def _stalled(now) -> set[int]:
     statuses: dict[int, dict] = {}
     for lead_id, trip_id, kind, status in rows:
         statuses.setdefault(lead_id, {})[(trip_id, kind)] = status
-    followers = [k for k in REGISTRY if k.opens_after and k.applies is _always]
+    # Trip-level only: an order-level follower waits on every trip, and the hook on the
+    # last one to close is what opens it.
+    followers = [
+        k for k in REGISTRY if k.opens_after and k.applies is _always and k.level == Level.TRIP
+    ]
     stalled = set()
     for lead_id, by_key in statuses.items():
         trips = {trip_id for trip_id, _ in by_key}

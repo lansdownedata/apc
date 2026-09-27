@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from apps.dispatch.models import Assignment
-from apps.leads.models import Lead
+from apps.leads.models import CustomerFeedback, Lead
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
 from apps.reservations.models import Reservation, TripReview
@@ -28,6 +28,7 @@ class LeadFacts:
     released_trip_ids: set[int] = field(default_factory=set)
     # Completed post-trip reviews by trip id (APC-59).
     reviews: dict[int, TripReview] = field(default_factory=dict)
+    feedback: CustomerFeedback | None = None  # APC-63
     # APC-58. Set by `services.ensure_tasks`, which knows the clock and the grace; empty
     # elsewhere, where only predicates run and neither is read.
     ended_trip_ids: set[int] = field(default_factory=set)
@@ -43,6 +44,11 @@ class LeadFacts:
         return bool(self.lead.wedding_name) or any(is_wedding_trip(t) for t in self.trips)
 
     @property
+    def last_pickup_at(self):
+        times = [t.pickup_at for t in self.live_trips if t.pickup_at is not None]
+        return max(times) if times else None
+
+    @property
     def first_pickup_at(self):
         """The order's anchor for order-level due dates — its earliest live pickup."""
         times = [t.pickup_at for t in self.live_trips if t.pickup_at is not None]
@@ -53,7 +59,7 @@ class LeadFacts:
 
 
 def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
-    """Facts for every lead in `leads`, keyed by lead pk. Five queries, whatever the size.
+    """Facts for every lead in `leads`, keyed by lead pk. Six queries, whatever the size.
 
     Predicates read `lead` fields straight off these instances, so pass fresh rows.
     """
@@ -93,4 +99,7 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     done = TripReview.objects.filter(reservation__lead_id__in=ids, completed_at__isnull=False)
     for review in done:
         facts[by_trip[review.reservation_id]].reviews[review.reservation_id] = review
+
+    for fb in CustomerFeedback.objects.filter(lead_id__in=ids):
+        facts[fb.lead_id].feedback = fb
     return facts

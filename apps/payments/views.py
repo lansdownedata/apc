@@ -85,6 +85,7 @@ def order_detail(request, lead_id):
             "reservations": reservations,
             "order_tasks": task_selectors.checklist_for_order(lead),
             "is_booked": True,
+            **lead_services.feedback_context(lead),
             # The same trip editor the quote workspace opens, fed identically.
             **reservation_editor.editor_context(request, lead, reservations),
             **reports.authorized_hold(lead),

@@ -1,0 +1,14 @@
+{% comment %}
+  The customer's post-trip feedback (APC-63), from the rating form on the public trip page.
+  Shared by the quote workspace and the order page. Requires: feedback (CustomerFeedback or None).
+{% endcomment %}
+{% if feedback %}
+<div class="card p-5 mb-4">
+  <div class="flex items-center gap-2 mb-1.5">
+    <span class="font-display text-[14px] font-semibold text-ink">Customer feedback</span>
+    <span class="ml-auto text-[12px] font-semibold num px-2 py-0.5 rounded-full {% if feedback.is_low %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-700{% endif %}">{{ feedback.rating }} / 5</span>
+  </div>
+  {% if feedback.comment %}<p class="text-[13px] text-ink leading-relaxed whitespace-pre-line">{{ feedback.comment }}</p>{% endif %}
+  <p class="text-[11.5px] text-muted mt-1">Sent {{ feedback_sent_display }}</p>
+</div>
+{% endif %}

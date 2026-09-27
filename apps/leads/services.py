@@ -29,7 +29,7 @@ from apps.payments.models import PaymentPlan
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .models import Lead, VehicleType
+    from .models import CustomerFeedback, Lead, VehicleType
 
 _DEPOSIT_SALT = "quote-deposit"
 
@@ -368,3 +368,68 @@ def largest_group_capacity(fleet: list[VehicleType] | None = None) -> int | None
     smaller limit of its own. None when the catalog holds no group vehicle at all."""
     fleet = group_fleet() if fleet is None else fleet
     return fleet[-1].capacity if fleet else None
+
+
+# --- customer feedback (APC-63) ---------------------------------------------------------
+
+
+class FeedbackError(Exception):
+    """The feedback form can't accept what was sent; the message is shown to the customer."""
+
+
+def order_finished(lead: Lead) -> bool:
+    """Every live trip on the order has run — Done, or past its end plus the post-trip
+    grace (APC-58's rule). An order with no live trips hasn't finished anything."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.tasks import post_trip
+    from apps.tasks.models import TaskConfig
+
+    trips = list(lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES))
+    grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
+    now = timezone.now()
+    return bool(trips) and all(post_trip.has_ended(t, now=now, grace=grace) for t in trips)
+
+
+def record_feedback(lead: Lead, *, rating, comment: str = "") -> CustomerFeedback:
+    """Store (or edit) the order's feedback, then let the task engine react — a low rating
+    opens a Customer Service follow-up."""
+    from apps.tasks import services as tasks
+
+    from .models import CustomerFeedback
+
+    try:
+        value = int(rating)
+    except (TypeError, ValueError):
+        value = 0
+    if not 1 <= value <= 5:
+        raise FeedbackError("Pick a rating from 1 to 5.")
+    feedback, _ = CustomerFeedback.objects.update_or_create(
+        lead=lead,
+        defaults={
+            "rating": value,
+            "comment": (comment or "").strip()[:2000],
+            "submitted_at": timezone.now(),
+        },
+    )
+    tasks.sync(lead)
+    return feedback
+
+
+def feedback_context(lead: Lead) -> dict:
+    """What `leads/_customer_feedback.html` reads: the feedback, and when it was sent in
+    the order's first-trip zone with its abbreviation (never the viewer's). One query."""
+    from zoneinfo import ZoneInfo
+
+    from apps.tasks.models import format_local
+
+    from .models import CustomerFeedback
+
+    feedback = CustomerFeedback.objects.filter(lead=lead).first()
+    if feedback is None:
+        return {"feedback": None, "feedback_sent_display": ""}
+    first = lead.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+    zone = ZoneInfo((first and first.pickup_timezone) or settings.TIME_ZONE)
+    return {
+        "feedback": feedback,
+        "feedback_sent_display": format_local(feedback.submitted_at.astimezone(zone)),
+    }

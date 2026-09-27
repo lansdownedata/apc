@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Lead, VehicleType
+from .models import CustomerFeedback, Lead, VehicleType
 
 
 @admin.register(VehicleType)
@@ -24,3 +24,10 @@ class LeadAdmin(admin.ModelAdmin):
     search_fields = ("contact__name", "contact__company__name", "notes")
     autocomplete_fields = ("contact", "assigned_agent")
     list_select_related = ("contact", "assigned_agent")
+
+
+@admin.register(CustomerFeedback)
+class CustomerFeedbackAdmin(admin.ModelAdmin):
+    list_display = ("lead", "rating", "submitted_at")
+    list_filter = ("rating",)
+    list_select_related = ("lead",)

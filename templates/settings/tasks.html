@@ -35,6 +35,7 @@
         {% include "components/form_field.html" with field=form.overtime_increment_minutes %}
         {% include "components/form_field.html" with field=form.overtime_grace_minutes %}
       </div>
+      {% include "components/form_field.html" with field=form.future_booking_offset_days %}
       {% include "components/form_field.html" with field=form.digest_emails %}
 
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}

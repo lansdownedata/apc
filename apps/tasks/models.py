@@ -71,6 +71,11 @@ class TaskConfig(models.Model):
         help_text="Minutes over the billed hours before any overtime is suggested. "
         "Placeholder until the client confirms.",
     )
+    future_booking_offset_days = models.PositiveIntegerField(
+        default=330,
+        help_text="Days after an order's last trip that Sales follows up about booking again "
+        "(330 is about a wedding's first anniversary).",
+    )
     digest_emails = models.TextField(
         blank=True,
         help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "

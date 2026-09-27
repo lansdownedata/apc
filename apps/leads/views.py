@@ -271,6 +271,7 @@ def lead_detail(request, pk):
         "reservation_lines": reservation_lines,
         "order_tasks": task_selectors.checklist_for_order(lead),
         "is_booked": lead.status == Lead.Status.BOOKED,
+        **services.feedback_context(lead),
         # Everything the shared trip editor needs — the order page feeds it the same way.
         **reservation_editor.editor_context(
             request, lead, reservations, trip_defaults=_wedding_trip_defaults(wedding_state)

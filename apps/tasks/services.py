@@ -21,7 +21,15 @@ from django.utils import timezone
 from apps.leads.models import Lead
 
 from . import post_trip
-from .definitions import KINDS, PREDECESSOR_KINDS, REGISTRY, AfterOpen, Level, TaskKind
+from .definitions import (
+    KINDS,
+    PREDECESSOR_KINDS,
+    REGISTRY,
+    AfterLastPickup,
+    AfterOpen,
+    Level,
+    TaskKind,
+)
 from .facts import LeadFacts, load_facts
 from .models import Task, TaskConfig
 
@@ -33,6 +41,8 @@ class TaskError(Exception):
 
 
 def _anchor(kind: TaskKind, facts: LeadFacts, reservation) -> datetime | None:
+    if isinstance(kind.due, AfterLastPickup):
+        return facts.last_pickup_at
     if kind.level == Level.TRIP:
         return reservation.pickup_at if reservation is not None else None
     return facts.first_pickup_at
@@ -62,6 +72,15 @@ def _predecessors_closed(kind: TaskKind, trip_id, statuses: dict) -> bool:
     """Every existing task of `kind.opens_after` on this trip is closed, and one exists."""
     found = [statuses[(trip_id, k)] for k in kind.opens_after if (trip_id, k) in statuses]
     return bool(found) and all(s in Task.CLOSED for s in found)
+
+
+def _order_wants(kind: TaskKind, facts: LeadFacts, statuses: dict) -> bool:
+    if kind.opens_after and not (
+        facts.live_trips
+        and all(_predecessors_closed(kind, t.pk, statuses) for t in facts.live_trips)
+    ):
+        return False
+    return kind.applies(facts, None)
 
 
 def _trip_wants(kind: TaskKind, facts: LeadFacts, trip, statuses: dict) -> bool:
@@ -108,7 +127,7 @@ def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
         # that waits on it (thank-you on affiliate paid) correctly holds off.
         for kind in REGISTRY:
             if kind.level == Level.ORDER:
-                targets = [None] if kind.applies(facts, None) else []
+                targets = [None] if _order_wants(kind, facts, statuses) else []
             else:
                 targets = [t for t in facts.live_trips if _trip_wants(kind, facts, t, statuses)]
             for trip in targets:
