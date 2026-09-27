@@ -102,6 +102,9 @@ class TaskKind:
     opens: BeforePickup | None = None
     applies: Applies = _always
     auto_complete: Predicate | None = None
+    # Closes an unresolved task as not-applicable (by the system) when true — work the
+    # data says will never be needed, e.g. invoicing overtime nobody approved.
+    not_applicable: Predicate | None = None
     # A4: False for checkpoints the dispatch monitor already alerts on (decision D2).
     escalates: bool = True
     # APC-58 post-trip workflow. A post-trip kind with no `opens_after` is the stage-1 entry
@@ -166,6 +169,12 @@ def _driver_info_received(task: Task, facts: LeadFacts) -> bool:
 
 def _driver_released(task: Task, facts: LeadFacts) -> bool:
     return task.reservation_id in facts.released_trip_ids
+
+
+def _no_overtime_to_bill(task: Task, facts: LeadFacts) -> bool:
+    """The completed review approved no billable minutes, or waived them (APC-59)."""
+    review = facts.reviews.get(task.reservation_id)
+    return bool(review and review.nothing_to_bill)
 
 
 # --- the registry --------------------------------------------------------------------
@@ -290,12 +299,14 @@ REGISTRY: tuple[TaskKind, ...] = (
         post_trip=True,
     ),
     TaskKind(
-        # Stage 2. Closed by the overtime charge (APC-60).
+        # Stage 2. Closed by the overtime charge (APC-60); not applicable when the review
+        # approved nothing to bill.
         key="overtime_invoiced",
         label="Overtime invoiced",
         department=_D.ACCOUNTING,
         level=Level.TRIP,
         due=AfterOpen(hours=72),  # PLACEHOLDER
+        not_applicable=_no_overtime_to_bill,
         post_trip=True,
         opens_after=("ops_review",),
     ),

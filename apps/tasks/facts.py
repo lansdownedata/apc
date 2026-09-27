@@ -15,7 +15,7 @@ from apps.dispatch.models import Assignment
 from apps.leads.models import Lead
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, TripReview
 from apps.reservations.services import is_wedding_trip
 
 
@@ -26,6 +26,8 @@ class LeadFacts:
     trips: list[Reservation] = field(default_factory=list)
     assignments: dict[int, Assignment] = field(default_factory=dict)
     released_trip_ids: set[int] = field(default_factory=set)
+    # Completed post-trip reviews by trip id (APC-59).
+    reviews: dict[int, TripReview] = field(default_factory=dict)
     # APC-58. Set by `services.ensure_tasks`, which knows the clock and the grace; empty
     # elsewhere, where only predicates run and neither is read.
     ended_trip_ids: set[int] = field(default_factory=set)
@@ -51,7 +53,7 @@ class LeadFacts:
 
 
 def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
-    """Facts for every lead in `leads`, keyed by lead pk. Four queries, whatever the size.
+    """Facts for every lead in `leads`, keyed by lead pk. Five queries, whatever the size.
 
     Predicates read `lead` fields straight off these instances, so pass fresh rows.
     """
@@ -87,4 +89,8 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
         released[lead_id].add(reservation_id)
     for lead_id, trip_ids in released.items():
         facts[lead_id].released_trip_ids = trip_ids
+
+    done = TripReview.objects.filter(reservation__lead_id__in=ids, completed_at__isnull=False)
+    for review in done:
+        facts[by_trip[review.reservation_id]].reviews[review.reservation_id] = review
     return facts

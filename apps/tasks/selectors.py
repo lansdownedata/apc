@@ -7,7 +7,8 @@ A trip is green-lit when dispatch needs nothing more from anyone:
 - every trip-level task is closed (done, skipped or not applicable),
 - the order-level tasks in `ORDER_BLOCKERS` are closed — only the wedding answers; a
   non-wedding order simply has none,
-- and the trip has no unresolved `DispatchException`.
+- the trip has no unresolved `DispatchException`,
+- and no open `TripIssue` (APC-59).
 
 `_blocking_filters` is the single place to add a condition — Phase B adds "no open
 TripReview issue" there, and both the annotation and the per-trip check pick it up.
@@ -29,7 +30,7 @@ from django.db.models import (
 )
 
 from apps.dispatch.models import DispatchException
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, TripIssue
 
 from .definitions import POST_TRIP_KINDS, REGISTRY
 from .models import Task
@@ -57,7 +58,12 @@ def _blocking_filters() -> list[Exists]:
         Exists(
             DispatchException.objects.filter(reservation=OuterRef("pk"), resolved_at__isnull=True)
         ),
+        Exists(_open_issues(OuterRef("pk"))),
     ]
+
+
+def _open_issues(trip_ref):
+    return TripIssue.objects.open().filter(review__reservation=trip_ref)
 
 
 def with_green_lit(qs):
@@ -80,7 +86,15 @@ def green_lit(reservation: Reservation) -> bool:
 def task_prefetches() -> list[Prefetch]:
     """What `attach_green_lit` reads, for callers building their own queryset."""
     return [
-        Prefetch("tasks", queryset=Task.objects.all(), to_attr="task_rows"),
+        # Each task row carries whether its trip has an open TripIssue. A trip with no
+        # tasks is never green-lit anyway, so this costs the board and drawer no query.
+        Prefetch(
+            "tasks",
+            queryset=Task.objects.annotate(
+                trip_has_open_issue=Exists(_open_issues(OuterRef("reservation_id")))
+            ),
+            to_attr="task_rows",
+        ),
         Prefetch(
             "lead__tasks",
             queryset=Task.objects.filter(
@@ -120,6 +134,8 @@ def attach_green_lit(trips) -> list[Reservation]:
         order_rows = sorted(trip.lead.order_blocker_rows, key=lambda t: _ORDER.get(t.kind, 99))
         blockers = [t.label for t in open_rows] + [t.label for t in order_rows]
         blockers += [e.get_kind_display() for e in trip.open_exceptions]
+        if any(getattr(t, "trip_has_open_issue", False) for t in trip.task_rows):
+            blockers.append("Open trip issue")
         trip.task_blockers = blockers
         trip.green_lit = bool(trip.task_rows) and not blockers
     return trips

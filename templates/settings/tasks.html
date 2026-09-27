@@ -31,6 +31,10 @@
 
       {% include "components/form_field.html" with field=form.overdue_grace_hours %}
       {% include "components/form_field.html" with field=form.post_trip_grace_hours %}
+      <div class="grid sm:grid-cols-2 gap-3">
+        {% include "components/form_field.html" with field=form.overtime_increment_minutes %}
+        {% include "components/form_field.html" with field=form.overtime_grace_minutes %}
+      </div>
       {% include "components/form_field.html" with field=form.digest_emails %}
 
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}

@@ -2,6 +2,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import OuterRef, Subquery
 from django.utils import dateformat, timezone
@@ -54,6 +55,21 @@ class TaskConfig(models.Model):
         default=2,
         help_text="How long after a trip's scheduled end, with no Done status, before its "
         "post-trip review opens anyway.",
+    )
+    # ⚠ PLACEHOLDERS (APC-59): the client hasn't answered how overtime is counted
+    # (Confluence 46006273 §9 "Still open" #2). Both are settings so his answer is an
+    # edit on the Tasks settings screen, not a deploy. The suggestion only — a person
+    # always decides what's billable.
+    overtime_increment_minutes = models.PositiveIntegerField(
+        default=15,
+        validators=[MinValueValidator(1)],
+        help_text="Suggested overtime rounds up to this many minutes. Placeholder until the "
+        "client confirms.",
+    )
+    overtime_grace_minutes = models.PositiveIntegerField(
+        default=15,
+        help_text="Minutes over the billed hours before any overtime is suggested. "
+        "Placeholder until the client confirms.",
     )
     digest_emails = models.TextField(
         blank=True,

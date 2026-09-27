@@ -178,7 +178,19 @@ def _evaluate_many(tasks, facts_by_lead: dict[int, LeadFacts]) -> list[Task]:
     for task in tasks:
         kind = KINDS.get(task.kind)
         facts = facts_by_lead.get(task.lead_id)
-        if kind is None or kind.auto_complete is None or facts is None:
+        if kind is None or facts is None:
+            continue
+        if (
+            kind.not_applicable is not None
+            and task.status in Task.UNRESOLVED
+            and kind.not_applicable(task, facts)
+        ):
+            task.status = Task.Status.NOT_APPLICABLE
+            task.completed_at = now
+            task.completed_by = None
+            changed.append(task)
+            continue
+        if kind.auto_complete is None:
             continue
         if task.status in Task.UNRESOLVED:
             if kind.auto_complete(task, facts):

@@ -149,6 +149,8 @@ class TaskConfigForm(forms.ModelForm):
             "accounting_owner",
             "overdue_grace_hours",
             "post_trip_grace_hours",
+            "overtime_increment_minutes",
+            "overtime_grace_minutes",
             "digest_emails",
         ]
         widgets = {
@@ -159,6 +161,8 @@ class TaskConfigForm(forms.ModelForm):
             "accounting_owner": forms.Select(attrs=_OWNER),
             "overdue_grace_hours": forms.NumberInput(attrs=_NUM),
             "post_trip_grace_hours": forms.NumberInput(attrs=_NUM),
+            "overtime_increment_minutes": forms.NumberInput(attrs=_NUM),
+            "overtime_grace_minutes": forms.NumberInput(attrs=_NUM),
             "digest_emails": forms.Textarea(attrs=_AREA),
         }
 
