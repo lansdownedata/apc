@@ -50,6 +50,11 @@ class TaskConfig(models.Model):
         help_text="How long a task can sit overdue before it escalates to the department "
         "owner and admins.",
     )
+    post_trip_grace_hours = models.PositiveIntegerField(
+        default=2,
+        help_text="How long after a trip's scheduled end, with no Done status, before its "
+        "post-trip review opens anyway.",
+    )
     digest_emails = models.TextField(
         blank=True,
         help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "

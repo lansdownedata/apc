@@ -80,6 +80,17 @@ def _wedding_only(facts: LeadFacts, reservation: object) -> bool:
     return facts.is_wedding
 
 
+def _entered_post_trip(facts: LeadFacts, reservation) -> bool:
+    return reservation.pk in facts.post_trip_ids
+
+
+def _farmed_out(facts: LeadFacts, reservation) -> bool:
+    """An affiliate covered the trip, so there's an affiliate to pay. In-house coverage
+    (our own driver) and a trip nobody covered have no payable."""
+    a = facts.active_assignment(reservation.pk)
+    return a is not None and not a.is_in_house
+
+
 @dataclass(frozen=True)
 class TaskKind:
     key: str
@@ -93,6 +104,13 @@ class TaskKind:
     auto_complete: Predicate | None = None
     # A4: False for checkpoints the dispatch monitor already alerts on (decision D2).
     escalates: bool = True
+    # APC-58 post-trip workflow. A post-trip kind with no `opens_after` is the stage-1 entry
+    # (created when the trip enters post-trip); the rest chain through `opens_after`.
+    post_trip: bool = False
+    # Stage chaining: this kind is created once every existing task of these kinds on the
+    # same trip is closed (at least one must exist). A kind whose predecessors don't apply
+    # to a trip — the payables on an in-house trip — simply isn't waited on.
+    opens_after: tuple[str, ...] = ()
 
 
 # --- predicates ----------------------------------------------------------------------
@@ -260,8 +278,66 @@ REGISTRY: tuple[TaskKind, ...] = (
         due=BeforePickup(days=28, day_start=True),
         auto_complete=_balance_paid,
     ),
+    # --- post-trip (APC-58): ops review → accounting → customer service -------------
+    TaskKind(
+        # Stage 1. Closed by completing the trip review form (APC-59).
+        key="ops_review",
+        label="Operations review",
+        department=_D.OPERATIONS,
+        level=Level.TRIP,
+        due=AfterOpen(hours=24),  # PLACEHOLDER
+        applies=_entered_post_trip,
+        post_trip=True,
+    ),
+    TaskKind(
+        # Stage 2. Closed by the overtime charge (APC-60).
+        key="overtime_invoiced",
+        label="Overtime invoiced",
+        department=_D.ACCOUNTING,
+        level=Level.TRIP,
+        due=AfterOpen(hours=72),  # PLACEHOLDER
+        post_trip=True,
+        opens_after=("ops_review",),
+    ),
+    TaskKind(
+        # Stage 2. Closed by approving the affiliate payable (APC-61).
+        key="affiliate_payable_approved",
+        label="Affiliate payable approved",
+        department=_D.ACCOUNTING,
+        level=Level.TRIP,
+        due=AfterOpen(hours=72),  # PLACEHOLDER
+        applies=_farmed_out,
+        post_trip=True,
+        opens_after=("ops_review",),
+    ),
+    TaskKind(
+        # Stage 2, after the approval — paying an unapproved invoice isn't a step.
+        key="affiliate_paid",
+        label="Affiliate paid",
+        department=_D.ACCOUNTING,
+        level=Level.TRIP,
+        due=AfterOpen(hours=24 * 14),  # PLACEHOLDER
+        applies=_farmed_out,
+        post_trip=True,
+        opens_after=("affiliate_payable_approved",),
+    ),
+    TaskKind(
+        # Stage 3. Closed by the thank-you touch-point (APC-62).
+        key="thank_you_sent",
+        label="Thank-you sent",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.TRIP,
+        due=AfterOpen(hours=48),  # PLACEHOLDER
+        post_trip=True,
+        opens_after=("overtime_invoiced", "affiliate_payable_approved", "affiliate_paid"),
+    ),
 )
 
 KINDS: dict[str, TaskKind] = {k.key: k for k in REGISTRY}
 
 KIND_CHOICES = [(k.key, k.label) for k in REGISTRY]
+
+POST_TRIP_KINDS = frozenset(k.key for k in REGISTRY if k.post_trip)
+
+# Kinds something waits on — closing one of these may open the next stage.
+PREDECESSOR_KINDS = frozenset(p for k in REGISTRY for p in k.opens_after)

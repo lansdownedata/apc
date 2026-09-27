@@ -204,6 +204,11 @@ def set_trip_status(
     from apps.messaging.touchpoints import notify_status_change
 
     notify_status_change(reservation, status)
+    if status == Reservation.TripStatus.DONE:
+        # APC-58: a Done trip enters the post-trip workflow now, not on the next tick.
+        from apps.tasks.services import sync
+
+        sync(reservation.lead)
     return event
 
 

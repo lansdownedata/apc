@@ -11,6 +11,9 @@ A trip is green-lit when dispatch needs nothing more from anyone:
 
 `_blocking_filters` is the single place to add a condition — Phase B adds "no open
 TripReview issue" there, and both the annotation and the per-trip check pick it up.
+
+Post-trip tasks (APC-58) never block: green-lit is about the trip before it runs, and the
+review that follows it isn't something dispatch is waiting on.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from django.db.models import (
 from apps.dispatch.models import DispatchException
 from apps.reservations.models import Reservation
 
-from .definitions import REGISTRY
+from .definitions import POST_TRIP_KINDS, REGISTRY
 from .models import Task
 
 ORDER_BLOCKERS = ("wedding_names", "day_of_contact")
@@ -38,7 +41,11 @@ _ORDER = {k.key: i for i, k in enumerate(REGISTRY)}
 def _blocking_filters() -> list[Exists]:
     """Each is an Exists over the outer Reservation; any match means not green-lit."""
     return [
-        Exists(Task.objects.filter(reservation=OuterRef("pk"), status__in=Task.UNRESOLVED)),
+        Exists(
+            Task.objects.filter(reservation=OuterRef("pk"), status__in=Task.UNRESOLVED).exclude(
+                kind__in=POST_TRIP_KINDS
+            )
+        ),
         Exists(
             Task.objects.filter(
                 lead=OuterRef("lead_id"),
@@ -103,7 +110,11 @@ def attach_green_lit(trips) -> list[Reservation]:
         prefetch_related_objects(trips, *missing)
     for trip in trips:
         open_rows = sorted(
-            (t for t in trip.task_rows if t.status in Task.UNRESOLVED),
+            (
+                t
+                for t in trip.task_rows
+                if t.status in Task.UNRESOLVED and t.kind not in POST_TRIP_KINDS
+            ),
             key=lambda t: _ORDER.get(t.kind, 99),
         )
         order_rows = sorted(trip.lead.order_blocker_rows, key=lambda t: _ORDER.get(t.kind, 99))

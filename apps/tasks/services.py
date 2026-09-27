@@ -13,14 +13,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.leads.models import Lead
 
-from .definitions import KINDS, REGISTRY, AfterOpen, Level, TaskKind
+from . import post_trip
+from .definitions import KINDS, PREDECESSOR_KINDS, REGISTRY, AfterOpen, Level, TaskKind
 from .facts import LeadFacts, load_facts
 from .models import Task, TaskConfig
 
@@ -57,72 +58,121 @@ def schedule(kind: TaskKind, facts: LeadFacts, reservation, *, now: datetime, op
     return opens_at, due_at
 
 
-def _wanted(facts: LeadFacts) -> list[tuple[TaskKind, object]]:
-    out = []
-    for kind in REGISTRY:
-        if kind.level == Level.ORDER:
-            if kind.applies(facts, None):
-                out.append((kind, None))
-        else:
-            out.extend((kind, trip) for trip in facts.live_trips if kind.applies(facts, trip))
-    return out
+def _predecessors_closed(kind: TaskKind, trip_id, statuses: dict) -> bool:
+    """Every existing task of `kind.opens_after` on this trip is closed, and one exists."""
+    found = [statuses[(trip_id, k)] for k in kind.opens_after if (trip_id, k) in statuses]
+    return bool(found) and all(s in Task.CLOSED for s in found)
+
+
+def _trip_wants(kind: TaskKind, facts: LeadFacts, trip, statuses: dict) -> bool:
+    if kind.opens_after:
+        if not _predecessors_closed(kind, trip.pk, statuses):
+            return False
+    elif kind.post_trip:
+        if trip.pk not in facts.post_trip_ids:
+            return False
+    elif trip.pk in facts.ended_trip_ids:
+        # A finished trip has nothing left to dispatch; don't raise pre-trip work for it.
+        return False
+    return kind.applies(facts, trip)
+
+
+def _post_trip_state(facts: LeadFacts, config: TaskConfig, now: datetime) -> None:
+    grace = timedelta(hours=config.post_trip_grace_hours)
+    for trip in facts.live_trips:
+        if post_trip.has_ended(trip, now=now, grace=grace):
+            facts.ended_trip_ids.add(trip.pk)
+            if post_trip.entered(trip, now=now, grace=grace):
+                facts.post_trip_ids.add(trip.pk)
+
+
+def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
+    """One locked pass: create every task that's wanted and missing. Returns (rows, facts),
+    or (None, None) when the order isn't booked."""
+    with transaction.atomic():
+        # Locked AND re-read: the caller's instance may predate the change that brought
+        # us here (a queryset .update(), another request).
+        lead = Lead.objects.select_for_update().get(pk=lead.pk)
+        if lead.status != Lead.Status.BOOKED:
+            return None, None
+        facts = load_facts([lead])[lead.pk]
+        _post_trip_state(facts, config, now)
+        statuses = {
+            (res_id, kind): status
+            for res_id, kind, status in Task.objects.filter(lead=lead).values_list(
+                "reservation_id", "kind", "status"
+            )
+        }
+        new = []
+        # Registry order matters: a row created this pass is unresolved, so a later kind
+        # that waits on it (thank-you on affiliate paid) correctly holds off.
+        for kind in REGISTRY:
+            if kind.level == Level.ORDER:
+                targets = [None] if kind.applies(facts, None) else []
+            else:
+                targets = [t for t in facts.live_trips if _trip_wants(kind, facts, t, statuses)]
+            for trip in targets:
+                key = (getattr(trip, "pk", None), kind.key)
+                if key in statuses:
+                    continue
+                opens_at, due_at = schedule(kind, facts, trip, now=now)
+                status = Task.Status.SCHEDULED if opens_at > now else Task.Status.OPEN
+                statuses[key] = status
+                new.append(
+                    Task(
+                        kind=kind.key,
+                        lead=lead,
+                        reservation=trip,
+                        department=kind.department,
+                        assignee=config.owner_for(kind.department),
+                        status=status,
+                        opens_at=opens_at,
+                        due_at=due_at,
+                    )
+                )
+        Task.objects.bulk_create(new)
+    return new, facts
 
 
 def ensure_tasks(lead: Lead) -> list[Task]:
     """Create the missing tasks for a booked order, then evaluate its open ones.
 
     No-op for an unbooked order (tasks start at booking) or with tasks switched off.
+    Post-trip stages open here too: once a trip has entered post-trip its `ops_review`
+    is created, and each later stage once its `opens_after` predecessors are closed.
     Returns the rows it created.
     """
     config = TaskConfig.load()
     if not config.enabled:
         return []
     now = timezone.now()
-    with transaction.atomic():
-        # Locked AND re-read: the caller's instance may predate the change that brought
-        # us here (a queryset .update(), another request).
-        lead = Lead.objects.select_for_update().get(pk=lead.pk)
-        if lead.status != Lead.Status.BOOKED:
-            return []
-        facts = load_facts([lead])[lead.pk]
-        existing = {
-            (res_id, kind)
-            for res_id, kind in Task.objects.filter(lead=lead).values_list("reservation_id", "kind")
-        }
-        new = []
-        for kind, trip in _wanted(facts):
-            if (getattr(trip, "pk", None), kind.key) in existing:
-                continue
-            opens_at, due_at = schedule(kind, facts, trip, now=now)
-            new.append(
-                Task(
-                    kind=kind.key,
-                    lead=lead,
-                    reservation=trip,
-                    department=kind.department,
-                    assignee=config.owner_for(kind.department),
-                    status=Task.Status.SCHEDULED if opens_at > now else Task.Status.OPEN,
-                    opens_at=opens_at,
-                    due_at=due_at,
-                )
-            )
-        Task.objects.bulk_create(new)
-    _evaluate_many(Task.objects.filter(lead=lead), {lead.pk: facts})
-    return new
+    created: list[Task] = []
+    # Another pass only when evaluation just closed a stage something waits on.
+    for _ in range(len(REGISTRY)):
+        new, facts = _create_missing(lead, config, now)
+        if new is None:
+            return created
+        created += new
+        changed = _evaluate_many(Task.objects.filter(lead_id=lead.pk), {lead.pk: facts})
+        if not any(t.kind in PREDECESSOR_KINDS and t.is_closed for t in changed):
+            break
+    return created
 
 
-def sync(lead: Lead) -> None:
+def sync(lead: Lead) -> list[Task]:
     """The seam hook: ensure + evaluate. Used where a failure must never break the caller
     (money and booking paths) — `run-tasks` re-evaluates every open task, so a missed
     hook heals on the next tick rather than being lost."""
     try:
-        ensure_tasks(lead)
+        return ensure_tasks(lead)
     except Exception:  # noqa: BLE001 - a task problem must never fail a payment or booking
         logger.exception("Task sync failed for lead %s", lead.pk)
+        return []
 
 
-def _evaluate_many(tasks, facts_by_lead: dict[int, LeadFacts]) -> int:
-    """Apply predicates to `tasks` (open, scheduled, or system-closed). Returns changes."""
+def _evaluate_many(tasks, facts_by_lead: dict[int, LeadFacts]) -> list[Task]:
+    """Apply predicates to `tasks` (open, scheduled, or system-closed). Returns the rows
+    it changed."""
     now = timezone.now()
     changed = []
     for task in tasks:
@@ -144,12 +194,12 @@ def _evaluate_many(tasks, facts_by_lead: dict[int, LeadFacts]) -> int:
         task.updated_at = now
     if changed:
         Task.objects.bulk_update(changed, ["status", "completed_at", "completed_by", "updated_at"])
-    return len(changed)
+    return changed
 
 
 def evaluate_lead(lead: Lead) -> int:
     fresh = Lead.objects.get(pk=lead.pk)
-    return _evaluate_many(Task.objects.filter(lead=fresh), load_facts([fresh]))
+    return len(_evaluate_many(Task.objects.filter(lead=fresh), load_facts([fresh])))
 
 
 def evaluate(task: Task) -> Task:
@@ -229,7 +279,14 @@ def complete(task: Task, user=None, note: str = "") -> Task:
         task.note = note.strip()
         fields.append("note")
     task.save(update_fields=fields)
+    _advance(task)
     return task
+
+
+def _advance(task: Task) -> None:
+    """Closing a stage opens the next one now, not on the next tick."""
+    if task.kind in PREDECESSOR_KINDS:
+        sync(Lead(pk=task.lead_id))
 
 
 def skip(task: Task, user, note: str) -> Task:
@@ -242,6 +299,7 @@ def skip(task: Task, user, note: str) -> Task:
     task.completed_by = user
     task.note = note.strip()
     task.save(update_fields=["status", "completed_at", "completed_by", "note", "updated_at"])
+    _advance(task)
     return task
 
 

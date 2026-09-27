@@ -26,6 +26,10 @@ class LeadFacts:
     trips: list[Reservation] = field(default_factory=list)
     assignments: dict[int, Assignment] = field(default_factory=dict)
     released_trip_ids: set[int] = field(default_factory=set)
+    # APC-58. Set by `services.ensure_tasks`, which knows the clock and the grace; empty
+    # elsewhere, where only predicates run and neither is read.
+    ended_trip_ids: set[int] = field(default_factory=set)
+    post_trip_ids: set[int] = field(default_factory=set)
 
     @property
     def live_trips(self) -> list[Reservation]:
