@@ -3,8 +3,9 @@
 
 {% block content %}
 {% comment %}
-  The customer profile. Header (who, how to reach them, the numbers that matter), then a
-  rail — phone numbers, details, notes — beside the latest message and the orders table.
+  The customer profile. Header (who, how to reach them, the numbers that matter), then
+  full-width rows: orders & quotes, the latest message, contact details (phone numbers
+  beside email / company / channel / address), and notes.
   Everything edits in place: `contactProfile` autosaves the scalar fields to
   contact_update; `contactPhones` owns the numbers through the contact_phone_* endpoints.
 {% endcomment %}
@@ -95,24 +96,93 @@
     {% include "leads/_new_lead_modal.html" with preset=preset_contact %}
   </div>
 
-  <div class="mt-4 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+  <!-- full-width rows, orders first: a short history never leaves a hole beside a rail -->
+  <div class="mt-4 space-y-4">
 
-    <!-- rail -->
-    <div class="space-y-4">
+      {% if leads %}
+      <section class="card overflow-hidden" x-data="{ orderFilter: 'all' }">
+        <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <div class="flex items-baseline gap-2">
+            <h2 class="font-display text-[15px] font-semibold text-ink">Orders &amp; quotes</h2>
+            <span class="text-[11.5px] text-muted">{% if lead_total > leads|length %}{{ leads|length }} most recent of {{ lead_total }}{% else %}{{ lead_total }}{% endif %}</span>
+          </div>
+          <div class="inline-flex rounded-lg bg-surface2 p-0.5 text-[12px] font-semibold ring-1 ring-line" role="group" aria-label="Filter orders">
+            <template x-for="f in [['all', 'All'], ['open', 'Open'], ['booked', 'Booked']]" :key="f[0]">
+              <button type="button" @click="orderFilter = f[0]" x-text="f[1]" :aria-pressed="orderFilter === f[0]"
+                      class="rounded-md px-2.5 py-1 transition focus-gold"
+                      :class="orderFilter === f[0] ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'"></button>
+            </template>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[13px]">
+            <thead class="sticky top-0 bg-surface2 text-left text-[11px] uppercase tracking-wide text-muted">
+              <tr>
+                <th class="px-5 py-2 font-semibold">Quote</th>
+                <th class="py-2 font-semibold">Status</th>
+                <th class="py-2 font-semibold">Trips</th>
+                <th class="py-2 text-right font-semibold">Total</th>
+                <th class="px-5 py-2 text-right font-semibold">Created</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-line/70">
+              {% for lead in leads %}
+              <tr class="cursor-pointer transition-colors hover:bg-surface2"
+                  x-show="orderFilter === 'all' || orderFilter === '{% if lead.status == 'booked' %}booked{% elif lead.is_open %}open{% else %}other{% endif %}'"
+                  @click="window.location = '{% url 'lead_detail' lead.pk %}'">
+                <td class="px-5 py-3"><a href="{% url 'lead_detail' lead.pk %}" class="font-mono2 text-[12.5px] text-ink hover:text-goldd" @click.stop>{{ lead.quote_no }}</a></td>
+                <td class="py-3">{% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}</td>
+                <td class="py-3 text-muted">{{ lead.trip_count }} trip{{ lead.trip_count|pluralize }}</td>
+                <td class="py-3 text-right font-semibold text-ink num">${{ lead.quote_total|floatformat:2|intcomma }}</td>
+                <td class="px-5 py-3 text-right text-muted">{{ lead.created_at|date:"M j, Y" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% else %}
+      <section class="card px-5 py-8 text-center">
+        <p class="font-display text-[15px] font-semibold text-ink">No orders yet</p>
+        <p class="mt-1 text-[12.5px] text-muted">Quotes and bookings for {{ contact.name }} show up here.</p>
+      </section>
+      {% endif %}
 
-      <!-- phone numbers -->
-      <section class="card p-5"
-               x-data="contactPhones({
+      {% if latest_message %}
+      <section class="card flex items-start gap-4 p-5">
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
+          <i class="ti ti-message text-[19px]"></i>
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 class="font-display text-[15px] font-semibold text-ink">Latest message</h2>
+            <span class="shrink-0 text-[11.5px] text-muted">{{ latest_message.is_inbound|yesno:"From them,From us" }} &middot; {{ latest_message.created_at|naturaltime }}</span>
+          </div>
+          <p class="mt-1 line-clamp-2 text-[13px] text-muted">{{ latest_message.body|default:"(no text)" }}</p>
+          <a href="{% url 'inbox' %}?conversation={{ latest_message.conversation_id }}"
+             class="mt-2 inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-ink focus-gold">
+            Open in inbox <i class="ti ti-arrow-right text-[13px]"></i>
+          </a>
+        </div>
+      </section>
+      {% endif %}
+
+      <!-- contact details: how to reach them beside who they are -->
+      <section class="card p-5 sm:p-6">
+        <h2 class="font-display text-[15px] font-semibold text-ink">Contact details</h2>
+        <div class="mt-4 grid gap-x-10 gap-y-6 md:grid-cols-2">
+        <!-- phone numbers -->
+        <div x-data="contactPhones({
                  phones: {{ phones|json_attr }},
                  addUrl: '{% url 'contact_phone_add' contact.pk %}',
                  rowUrl: '{% url 'contact_phone_update' contact.pk 0 %}'
                })">
         <div class="flex items-center justify-between">
-          <h2 class="font-display text-[15px] font-semibold text-ink">Phone numbers</h2>
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted">Phone numbers</h3>
           <span class="text-[11.5px] text-muted" x-text="phones.length || ''">{{ phones|length|default:'' }}</span>
         </div>
 
-        <ul class="mt-3 space-y-1.5">
+        <ul class="mt-2 space-y-1.5">
           <template x-for="p in phones" :key="p.id">
             <li class="group flex items-center gap-2 rounded-xl px-3 py-2.5 transition-colors"
                 :class="p.texting ? 'bg-goldl/60 ring-1 ring-gold/30' : 'hover:bg-surface2'">
@@ -171,13 +241,13 @@
                 class="mt-2 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-semibold text-goldd transition hover:bg-goldl focus-gold">
           <i class="ti ti-plus text-[13px]"></i>Add a number
         </button>
-      </section>
+        </div>
 
-      <!-- details -->
-      <section class="card p-5 ts-compact"
+        <!-- details -->
+        <div class="ts-compact"
                x-data="{ edit: null, channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}} }">
-        <h2 class="font-display text-[15px] font-semibold text-ink">Details</h2>
-        <dl class="mt-2 divide-y divide-line/70 text-[13px]">
+        <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted">Details</h3>
+        <dl class="mt-1 divide-y divide-line/70 text-[13px]">
 
           <div class="group flex items-center gap-3 py-2.5">
             <dt class="w-20 shrink-0 text-muted">Email</dt>
@@ -255,6 +325,8 @@
             </div>
           </div>
         </dl>
+        </div>
+        </div>
       </section>
 
       <!-- notes -->
@@ -264,79 +336,6 @@
                   placeholder="Preferences, VIP details, billing quirks&hellip;"
                   class="mt-3 w-full resize-none rounded-lg border border-transparent bg-surface2 px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-muted/70 hover:border-line focus:border-gold focus:bg-surface focus:ring-2 focus:ring-gold/30"></textarea>
       </section>
-    </div>
-
-    <!-- main -->
-    <div class="space-y-4 lg:col-span-2">
-
-      {% if latest_message %}
-      <section class="card flex items-start gap-4 p-5">
-        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-goldl text-goldd">
-          <i class="ti ti-message text-[19px]"></i>
-        </span>
-        <div class="min-w-0 flex-1">
-          <div class="flex items-baseline justify-between gap-3">
-            <h2 class="font-display text-[15px] font-semibold text-ink">Latest message</h2>
-            <span class="shrink-0 text-[11.5px] text-muted">{{ latest_message.is_inbound|yesno:"From them,From us" }} &middot; {{ latest_message.created_at|naturaltime }}</span>
-          </div>
-          <p class="mt-1 line-clamp-2 text-[13px] text-muted">{{ latest_message.body|default:"(no text)" }}</p>
-          <a href="{% url 'inbox' %}?conversation={{ latest_message.conversation_id }}"
-             class="mt-2 inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-ink focus-gold">
-            Open in inbox <i class="ti ti-arrow-right text-[13px]"></i>
-          </a>
-        </div>
-      </section>
-      {% endif %}
-
-      {% if leads %}
-      <section class="card overflow-hidden" x-data="{ orderFilter: 'all' }">
-        <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <div class="flex items-baseline gap-2">
-            <h2 class="font-display text-[15px] font-semibold text-ink">Orders &amp; quotes</h2>
-            <span class="text-[11.5px] text-muted">{% if lead_total > leads|length %}{{ leads|length }} most recent of {{ lead_total }}{% else %}{{ lead_total }}{% endif %}</span>
-          </div>
-          <div class="inline-flex rounded-lg bg-surface2 p-0.5 text-[12px] font-semibold ring-1 ring-line" role="group" aria-label="Filter orders">
-            <template x-for="f in [['all', 'All'], ['open', 'Open'], ['booked', 'Booked']]" :key="f[0]">
-              <button type="button" @click="orderFilter = f[0]" x-text="f[1]" :aria-pressed="orderFilter === f[0]"
-                      class="rounded-md px-2.5 py-1 transition focus-gold"
-                      :class="orderFilter === f[0] ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'"></button>
-            </template>
-          </div>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-[13px]">
-            <thead class="sticky top-0 bg-surface2 text-left text-[11px] uppercase tracking-wide text-muted">
-              <tr>
-                <th class="px-5 py-2 font-semibold">Quote</th>
-                <th class="py-2 font-semibold">Status</th>
-                <th class="py-2 font-semibold">Trips</th>
-                <th class="py-2 text-right font-semibold">Total</th>
-                <th class="px-5 py-2 text-right font-semibold">Created</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-line/70">
-              {% for lead in leads %}
-              <tr class="cursor-pointer transition-colors hover:bg-surface2"
-                  x-show="orderFilter === 'all' || orderFilter === '{% if lead.status == 'booked' %}booked{% elif lead.is_open %}open{% else %}other{% endif %}'"
-                  @click="window.location = '{% url 'lead_detail' lead.pk %}'">
-                <td class="px-5 py-3"><a href="{% url 'lead_detail' lead.pk %}" class="font-mono2 text-[12.5px] text-ink hover:text-goldd" @click.stop>{{ lead.quote_no }}</a></td>
-                <td class="py-3">{% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}</td>
-                <td class="py-3 text-muted">{{ lead.trip_count }} trip{{ lead.trip_count|pluralize }}</td>
-                <td class="py-3 text-right font-semibold text-ink num">${{ lead.quote_total|floatformat:2|intcomma }}</td>
-                <td class="px-5 py-3 text-right text-muted">{{ lead.created_at|date:"M j, Y" }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {% else %}
-      <section class="card px-5 py-8 text-center">
-        <p class="font-display text-[15px] font-semibold text-ink">No orders yet</p>
-        <p class="mt-1 text-[12.5px] text-muted">Quotes and bookings for {{ contact.name }} show up here.</p>
-      </section>
-      {% endif %}
-    </div>
   </div>
 </div>
 {% endblock %}
