@@ -47,8 +47,9 @@ def suggest_overtime(
     increment_minutes: int,
     grace_minutes: int,
 ) -> int:
-    """Minutes over the billed hours, or 0 inside the grace. Past the grace the whole
-    overage counts, rounded up to the increment."""
+    """Minutes over the billed hours, or 0 inside the grace. Past the grace only the time
+    beyond it bills, rounded up to the increment — the grace itself is never billed
+    (client, 2026-09-27)."""
     if not (actual_pickup_at and actual_dropoff_at):
         return 0
     actual = (actual_dropoff_at - actual_pickup_at).total_seconds() / 60
@@ -56,7 +57,7 @@ def suggest_overtime(
     if over <= grace_minutes:
         return 0
     step = max(int(increment_minutes), 1)
-    return math.ceil(round(over, 6) / step) * step
+    return math.ceil(round(over - grace_minutes, 6) / step) * step
 
 
 def _prefilled_times(trip: Reservation) -> tuple[datetime | None, datetime | None]:
@@ -257,6 +258,16 @@ def _money(minutes: int, rate: Decimal) -> Decimal:
     return (Decimal(minutes) * Decimal(rate) / 60).quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
+def overtime_gratuity(trip: Reservation, base: Decimal) -> Decimal:
+    """The trip's gratuity percentage on the overtime base — only when the gratuity is a
+    percentage line. A flat gratuity (which wins over a percent) adds nothing. The
+    discount never touches overtime (an assumption the client is to confirm)."""
+    pct = Decimal(trip.gratuity_pct or 0)
+    if Decimal(trip.gratuity_flat or 0) > 0 or pct <= 0:
+        return Decimal("0.00")
+    return (base * pct / 100).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
 def affiliate_share(trip: Reservation, coverage) -> tuple[Decimal, str]:
     """The affiliate's share of the trip's base, and how it was found (APC-61).
 
@@ -305,7 +316,9 @@ class Figures:
     # customer billing
     billable_minutes: int
     customer_rate: Decimal
-    customer_amount: Decimal
+    customer_amount: Decimal  # the overtime base: billable minutes at the trip's rate
+    customer_overtime_gratuity: Decimal
+    customer_overtime_total: Decimal
     # driver pay: "affiliate" · "in_house" · "none"
     coverage: str
     provider: str
@@ -334,10 +347,12 @@ def _rule(over: int | None, *, grace: int, increment: int) -> str:
         return "Enter the actual times to see the suggestion."
     if over <= grace:
         return f"{over} min over, inside the {grace}-min grace, so nothing to suggest."
-    return (
-        f"{over} min over. Past the {grace}-min grace, so the whole overage rounds up to "
-        f"{increment}-min steps."
-    )
+    beyond = over - grace
+    step = max(int(increment), 1)
+    billed = math.ceil(beyond / step) * step
+    if not grace:
+        return f"{over} min over, so it rounds up to {billed}."
+    return f"{over} min over; the first {grace} are grace, so {beyond} min rounds up to {billed}."
 
 
 def figures(review: TripReview, coverage, *, config=None) -> Figures:
@@ -353,6 +368,7 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
     rate = Decimal(trip.rate or 0)
     customer_amount = _money(billable, rate)
+    ot_gratuity = overtime_gratuity(trip, customer_amount)
 
     kind, provider, payout = "none", "", Decimal("0")
     if coverage is not None:
@@ -401,8 +417,27 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
         billable_minutes=billable,
         customer_rate=rate,
         customer_amount=customer_amount,
+        customer_overtime_gratuity=ot_gratuity,
+        customer_overtime_total=customer_amount + ot_gratuity,
         coverage=kind,
         provider=provider,
         payout=payout,
         **driver_pay,
     )
+
+
+def approved_overtime(lead) -> tuple[Decimal, Decimal]:
+    """(base, gratuity) of the customer overtime approved on the order's completed
+    reviews — what Total due adds to the order total (APC-60)."""
+    base = gratuity = Decimal("0.00")
+    done = TripReview.objects.filter(
+        reservation__lead=lead, completed_at__isnull=False
+    ).select_related("reservation")
+    for review in done:
+        if review.overtime_waived or not review.billable_overtime_minutes:
+            continue
+        trip = review.reservation
+        amount = _money(review.billable_overtime_minutes, Decimal(trip.rate or 0))
+        base += amount
+        gratuity += overtime_gratuity(trip, amount)
+    return base, gratuity

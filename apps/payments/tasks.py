@@ -171,7 +171,7 @@ def reconcile_open_charges(now=None) -> int:
     open_charges = (
         Charge.objects.filter(
             status=Charge.Status.PENDING,
-            kind__in=(Charge.Kind.DEPOSIT, Charge.Kind.BALANCE),
+            kind__in=(Charge.Kind.DEPOSIT, Charge.Kind.BALANCE, Charge.Kind.FINAL),
             updated_at__lt=cutoff,
         )
         .exclude(stripe_payment_intent_id="")

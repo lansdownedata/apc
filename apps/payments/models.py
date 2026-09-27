@@ -91,14 +91,16 @@ class PaymentPlan(TimeStampedModel):
             and self.balance_status == self.BalanceStatus.PAID
         )
 
-    def record_charge(self, *, kind: str, amount: Decimal) -> "Charge":
-        """Create the next Charge attempt for this plan with a derived idempotency key."""
+    def record_charge(self, *, kind: str, amount: Decimal, **extra) -> "Charge":
+        """Create the next Charge attempt for this plan with a derived idempotency key.
+        `extra` carries kind-specific fields (a final bill's overtime split)."""
         attempt = self.charges.filter(kind=kind).count() + 1
         return self.charges.create(
             kind=kind,
             amount=amount,
             attempt_no=attempt,
             idempotency_key=f"plan{self.pk}-{kind}-{attempt}",
+            **extra,
         )
 
     def __str__(self) -> str:
@@ -112,6 +114,9 @@ class Charge(TimeStampedModel):
         DEPOSIT = "deposit", "Deposit"
         BALANCE = "balance", "Balance"
         REFUND = "refund", "Refund"
+        # The post-trip bill (APC-60): approved overtime + whatever is left of the order
+        # balance, one per order once every trip is reviewed.
+        FINAL = "final", "Final bill"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -134,6 +139,11 @@ class Charge(TimeStampedModel):
     # handed to is already authorised to pay this charge.
     stripe_client_secret = models.CharField(max_length=255, blank=True)
     stripe_refund_id = models.CharField(max_length=64, blank=True)
+    # A FINAL charge's overtime part (base + gratuity) and the gratuity within it, so the
+    # ledger can split it: amount − overtime posts as a balance payment, the rest as
+    # revenue (`services._post_final`). 0 on every other kind.
+    overtime_amount = MoneyField()
+    overtime_gratuity = MoneyField()
     # The card that actually paid *this* charge, snapshotted when the money moved or was
     # held. `PaymentPlan.card_brand` is only ever the card currently on file, and
     # `save_payment_method` overwrites it — so without this, a customer swapping cards
@@ -172,6 +182,7 @@ class JournalEntry(TimeStampedModel):
         DEPOSIT_FORFEITED = "deposit_forfeited", "Deposit forfeited"
         REVERSAL = "reversal", "Reversal"
         ADJUSTMENT = "adjustment", "Adjustment"
+        OVERTIME_CAPTURED = "overtime_captured", "Overtime captured"
         PAYABLE_ACCRUED = "payable_accrued", "Affiliate payable accrued"
         PAYABLE_PAID = "payable_paid", "Affiliate payable paid"
 

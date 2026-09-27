@@ -5,8 +5,11 @@
 - the trip review pop-up (a fragment) and its JSON actions: save as you go, complete,
   log and resolve issues.
 
-Money moves nowhere from here: the charge buttons (APC-60) and affiliate payables
-(APC-61) arrive with their own tickets.
+- the final bill (APC-60): charge the card on file, or send the pay link — both only once
+  every trip is reviewed, and only for payments staff.
+
+Affiliate payables (APC-61) are worked in the pop-up's Driver pay pane through the
+`payments` endpoints; they record, never move money.
 """
 
 from __future__ import annotations
@@ -14,13 +17,17 @@ from __future__ import annotations
 from datetime import date, time
 from decimal import Decimal, InvalidOperation
 
+import stripe
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.accounts.permissions import payment_access_required
 from apps.dispatch.models import Assignment
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.payments import payables
+from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
 from apps.tasks.models import Task, TaskConfig
@@ -77,10 +84,19 @@ def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
     row = review_queue.order_review(lead_id)
     if row is None:
         raise Http404
+    plan = getattr(row.lead, "payment", None)
     return render(
         request,
         "trip_review/order.html",
-        {"nav": "trip_review", "page_title": row.lead.quote_no, "row": row},
+        {
+            "nav": "trip_review",
+            "page_title": row.lead.quote_no,
+            "row": row,
+            "bill": payment_services.final_bill(row.lead, row),
+            "plan": plan,
+            "card_on_file": bool(plan and plan.stripe_payment_method_id),
+            "can_pay": request.user.has_payments_access,
+        },
     )
 
 
@@ -120,6 +136,8 @@ def _review_json(review, coverage) -> dict:
         "waived": review.overtime_waived,
         "decided": review.decided_at is not None,
         "customer_amount": _money(f.customer_amount),
+        "customer_overtime_gratuity": _money(f.customer_overtime_gratuity),
+        "customer_overtime_total": _money(f.customer_overtime_total),
         "affiliate_share_pct": None
         if f.affiliate_share_pct is None
         else str(f.affiliate_share_pct),
@@ -286,3 +304,56 @@ def trip_review_issue_resolve(request: HttpRequest, pk: int) -> JsonResponse:
     issue = get_object_or_404(TripIssue, pk=pk)
     reviews.resolve_issue(issue, user=request.user)
     return JsonResponse({"ok": True})
+
+
+# --- the final bill (APC-60) ---------------------------------------------------------
+
+
+def _order_in_review(lead_id: int):
+    from apps.leads.models import Lead
+
+    lead = get_object_or_404(Lead.objects.select_related("contact", "payment"), pk=lead_id)
+    if not Task.objects.filter(lead=lead, kind="ops_review").exists():
+        raise Http404
+    return lead
+
+
+@login_required
+@payment_access_required
+@require_POST
+def trip_review_charge(request: HttpRequest, lead_id: int) -> JsonResponse:
+    """Charge the final bill to the card on file. Refused until every trip is reviewed."""
+    lead = _order_in_review(lead_id)
+    try:
+        charge = payment_services.charge_final(lead)
+    except payment_services.PaymentError as exc:
+        return _bad(str(exc))
+    except stripe.error.StripeError as exc:
+        return JsonResponse(
+            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
+            status=502,
+        )
+    if charge.status == charge.Status.FAILED:
+        return _bad(f"The card was declined: {charge.failure_reason}")
+    return JsonResponse({"ok": True, "status": charge.status, "amount": f"{charge.amount:.2f}"})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def trip_review_send_link(request: HttpRequest, lead_id: int) -> JsonResponse:
+    """Text or email the customer their pay page, which asks for the final bill."""
+    lead = _order_in_review(lead_id)
+    if not payment_services.final_bill(lead).ready:
+        return _bad("Every trip has to be reviewed, with something to collect, first.")
+    try:
+        channel = payment_services.send_pay_link(
+            lead,
+            base_url=request.build_absolute_uri("/")[:-1],
+            sender_name=request.user.get_full_name() or request.user.username,
+        )
+    except payment_services.PaymentError as exc:
+        return _bad(str(exc))
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+    return JsonResponse({"ok": True, "channel": channel})

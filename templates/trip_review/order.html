@@ -54,7 +54,7 @@
             {% if t.state == 'cancelled' %}
               <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ring">Cancelled · nothing to review</span>
             {% elif t.state == 'reviewed' %}
-              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed{% if t.review.overtime_waived %} · overtime waived{% elif t.figures.billable_minutes %} · {{ t.figures.billable_minutes }} min OT billed (${{ t.figures.customer_amount|floatformat:2|intcomma }}){% else %} · no overtime{% endif %}</span>
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed{% if t.review.overtime_waived %} · overtime waived{% elif t.figures.billable_minutes %} · {{ t.figures.billable_minutes }} min OT billed (${{ t.figures.customer_overtime_total|floatformat:2|intcomma }}){% else %} · no overtime{% endif %}</span>
             {% else %}
               <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full chip-warn">Needs review{% if t.figures.suggested_minutes %} · {{ t.figures.suggested_minutes }} min over suggested{% endif %}</span>
             {% endif %}
@@ -75,6 +75,39 @@
         <div class="flex justify-between gap-3 py-2 border-t border-line"><span>Overtime approved{% if row.approved_trips %} ({{ row.approved_trips }} trip{{ row.approved_trips|pluralize }}){% endif %}</span><b class="num font-medium">${{ row.approved_overtime|floatformat:2|intcomma }}</b></div>
         <div class="flex justify-between gap-3 py-2 border-t border-line"><span>Overtime awaiting review{% if row.awaiting_trips %} ({{ row.awaiting_trips }} trip{{ row.awaiting_trips|pluralize }}){% endif %}</span><span class="text-muted">{% if row.awaiting_trips %}—{% else %}None{% endif %}</span></div>
         <div class="flex justify-between gap-3 py-2 border-t border-line font-semibold"><span>Remaining to collect</span><b class="num {% if row.remaining %}text-rose-600{% else %}text-emerald-700{% endif %}">${{ row.remaining|floatformat:2|intcomma }}</b></div>
+      </div>
+      {% comment %} APC-60: collect the final bill. Both ways stay disabled until every trip is
+         reviewed (the server refuses too) and confirm the amount through $store.modal. {% endcomment %}
+      <div class="px-5 py-3 border-t border-line text-[12.5px]"
+           x-data="finalBilling({
+             chargeUrl: '{% url 'trip_review_charge' row.lead.pk %}',
+             linkUrl: '{% url 'trip_review_send_link' row.lead.pk %}',
+             amount: '{{ bill.amount|floatformat:2 }}',
+             balance: '{{ bill.order_balance|floatformat:2 }}',
+             base: '{{ bill.overtime_base|floatformat:2 }}',
+             gratuity: '{{ bill.overtime_gratuity|floatformat:2 }}',
+             card: '{% if card_on_file %}{{ plan.card_brand|title }} ···· {{ plan.card_last4 }}{% endif %}'
+           })">
+        {% if bill.charged %}
+          <p class="text-emerald-700 font-medium"><i class="ti ti-circle-check text-[14px]"></i> Final bill of ${{ bill.charged.amount|floatformat:2|intcomma }} paid{% if bill.charged.card_last4 %} · {{ bill.charged.card_brand|title }} ···· {{ bill.charged.card_last4 }}{% endif %}</p>
+        {% else %}
+          <div class="flex justify-between gap-3"><span class="text-muted">Card on file</span><span class="num">{% if card_on_file %}{{ plan.card_brand|title }} ···· {{ plan.card_last4 }}{% else %}None{% endif %}</span></div>
+          {% if not bill.all_reviewed %}
+            <p class="text-muted mt-1.5">Review every trip to send the final bill.</p>
+          {% elif not bill.amount %}
+            <p class="text-muted mt-1.5">Nothing left to collect.</p>
+          {% endif %}
+          {% if can_pay %}
+          <div class="grid gap-2 mt-3">
+            {% if card_on_file %}
+            <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed" {% if not bill.ready %}disabled{% endif %} :disabled="busy{% if not bill.ready %} || true{% endif %}" @click="charge()">Charge card ${{ bill.amount|floatformat:2|intcomma }}</button>
+            {% endif %}
+            <button type="button" class="text-[13px] font-semibold px-4 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50 disabled:cursor-not-allowed" {% if not bill.ready %}disabled{% endif %} :disabled="busy{% if not bill.ready %} || true{% endif %}" @click="sendLink()">Send payment link</button>
+          </div>
+          {% else %}
+          <p class="text-muted mt-1.5">Charging needs payments access.</p>
+          {% endif %}
+        {% endif %}
       </div>
       {% with payables=row.payable_summary %}
       {% if payables %}

@@ -24,6 +24,7 @@
   .amt{margin:18px 0;padding:14px 0;border-top:1px solid rgb(var(--border));border-bottom:1px solid rgb(var(--border));
        display:flex;justify-content:space-between;font-size:15px;font-weight:600}
   .amt .n{font-variant-numeric:tabular-nums}
+  .bill-line{display:flex;justify-content:space-between;padding:3px 0;font-size:14px;color:rgb(var(--muted));font-variant-numeric:tabular-nums}
   /* Our own card form — see apcPay.cardFields for why the tabbed Payment Element is
      not used here either (Bank tab, Link sign-up, Country select). */
   #card-mount{margin:18px 0 8px;display:grid;gap:12px;text-align:left}
@@ -98,7 +99,7 @@
       <p>Reservation {{ quote_no }} is paid in full. Nothing further is due.</p>
 
     {% else %}
-      <h1>{% if pay_kind == 'deposit' %}Reservation deposit{% else %}Remaining balance{% endif %}</h1>
+      <h1>{% if pay_kind == 'deposit' %}Reservation deposit{% elif pay_kind == 'final' %}Final bill{% else %}Remaining balance{% endif %}</h1>
       <p>Quote {{ quote_no }}</p>
       {% comment %}
         APC-26 Exception 1 — they authorized once and their bank let the hold go before we
@@ -114,8 +115,13 @@
       </div>
       {% endif %}
       {# A deposit only ever *authorizes* (APC-26) — never call it "due" or "Pay". #}
+      {% if final_bill %}
+      {% if final_bill.order_balance %}<div class="bill-line"><span>Remaining balance</span><span>${{ final_bill.order_balance|floatformat:2|intcomma }}</span></div>{% endif %}
+      <div class="bill-line"><span>Overtime</span><span>${{ final_bill.overtime_base|floatformat:2|intcomma }}</span></div>
+      {% if final_bill.overtime_gratuity %}<div class="bill-line"><span>Gratuity on overtime</span><span>${{ final_bill.overtime_gratuity|floatformat:2|intcomma }}</span></div>{% endif %}
+      {% endif %}
       <div class="amt">
-        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% else %}Balance due{% endif %}</span>
+        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% elif pay_kind == 'final' %}Total due{% else %}Balance due{% endif %}</span>
         <span class="n">${{ amount|floatformat:2|intcomma }}</span>
       </div>
 

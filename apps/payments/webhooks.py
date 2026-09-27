@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 _SUCCESS_KINDS = {
     "deposit": Charge.Kind.DEPOSIT,
     "balance": Charge.Kind.BALANCE,
+    "final": Charge.Kind.FINAL,
 }
 
 
@@ -78,12 +79,19 @@ def _balance_failed(intent) -> None:
     plan = _plan_from_metadata(intent)
     if plan is None:
         return
-    reason = ((intent.get("last_payment_error") or {}).get("message")) or "Balance charge failed"
+    final = (intent.get("metadata") or {}).get("kind") == Charge.Kind.FINAL
+    default = "Final bill charge failed" if final else "Balance charge failed"
+    reason = ((intent.get("last_payment_error") or {}).get("message")) or default
     reason = reason[:255]
 
-    plan.balance_status = PaymentPlan.BalanceStatus.FAILED
     plan.fail_reason = reason
-    plan.save(update_fields=["balance_status", "fail_reason", "updated_at"])
+    fields = ["fail_reason", "updated_at"]
+    if not final:
+        # A final bill (APC-60) is overtime on top of a booked balance that may well be
+        # paid — its failure mustn't mark that balance failed.
+        plan.balance_status = PaymentPlan.BalanceStatus.FAILED
+        fields.append("balance_status")
+    plan.save(update_fields=fields)
 
     plan.lead.has_alert = True
     plan.lead.save(update_fields=["has_alert", "updated_at"])
@@ -93,6 +101,4 @@ def _balance_failed(intent) -> None:
         plan.charges.filter(stripe_payment_intent_id=pi_id).update(
             status=Charge.Status.FAILED, failure_reason=reason
         )
-    Notification.notify(
-        plan.lead, Notification.Kind.BALANCE_FAILED, title="Balance charge failed", detail=reason
-    )
+    Notification.notify(plan.lead, Notification.Kind.BALANCE_FAILED, title=default, detail=reason)

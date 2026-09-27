@@ -802,7 +802,7 @@ function tripReviewForm(opts) {
       const decision = st.waived
         ? "Overtime is waived."
         : st.billable_minutes
-          ? `Bill ${st.billable_minutes} min of overtime ($${st.customer_amount}) on the final bill.`
+          ? `Bill ${st.billable_minutes} min of overtime ($${st.customer_overtime_total}) on the final bill.`
           : "No overtime to bill.";
       Alpine.store("modal").confirm({
         title: "Complete this review?",
@@ -823,6 +823,60 @@ function tripReviewForm(opts) {
   };
 }
 window.tripReviewForm = tripReviewForm;
+
+/* finalBilling: the Final billing card's two ways to collect (APC-60). Each confirms the
+   amount and its breakdown through $store.modal; the server re-checks every gate. */
+function finalBilling(opts) {
+  const breakdown = () => {
+    const parts = [];
+    if (Number(opts.balance)) parts.push(`$${opts.balance} remaining balance`);
+    parts.push(`$${opts.base} overtime`);
+    if (Number(opts.gratuity)) parts.push(`$${opts.gratuity} gratuity on overtime`);
+    return parts.join(" + ");
+  };
+  return {
+    busy: false,
+    charge() {
+      Alpine.store("modal").confirm({
+        title: `Charge $${opts.amount}?`,
+        message: `${breakdown()}, charged now to ${opts.card}.`,
+        variant: "gold",
+        confirmText: `Charge $${opts.amount}`,
+        onConfirm: async () => {
+          this.busy = true;
+          try {
+            await postForm(opts.chargeUrl);
+            Alpine.store("toast").push({ type: "success", title: `Charged $${opts.amount}` });
+            window.location.reload();
+          } catch (e) {
+            this.busy = false;
+            Alpine.store("toast").push({ type: "danger", title: e.message || "The charge didn't go through" });
+          }
+        },
+      });
+    },
+    sendLink() {
+      Alpine.store("modal").confirm({
+        title: "Send the payment link?",
+        message: `The customer gets a link to pay $${opts.amount} (${breakdown()}).`,
+        variant: "gold",
+        confirmText: "Send link",
+        onConfirm: async () => {
+          this.busy = true;
+          try {
+            const res = await postForm(opts.linkUrl);
+            Alpine.store("toast").push({ type: "success", title: `Payment link sent by ${res.channel === "sms" ? "text" : "email"}` });
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "The link didn't send" });
+          } finally {
+            this.busy = false;
+          }
+        },
+      });
+    },
+  };
+}
+window.finalBilling = finalBilling;
 
 /* One checklist (components/task_checklist.html). After any action it re-fetches its own
    fragment and swaps itself out, so the drawer, the trip modal and the order card always

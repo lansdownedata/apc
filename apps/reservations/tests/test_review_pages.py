@@ -171,7 +171,7 @@ def test_the_trip_review_shows_both_panes_in_the_trips_zone(staff):
     assert "Affiliate overtime" in body and "Expected to pay" in body
     assert "Approve payable" not in body  # a plain agent can't approve
     assert "PDT" in body or "PST" in body
-    assert "placeholder" in body
+    assert "client to confirm" in body
 
 
 def test_an_in_house_trip_shows_driver_pay_and_no_payable(staff):
@@ -231,7 +231,7 @@ def test_saving_times_entered_in_the_trips_zone(staff):
     local = review.actual_dropoff_local
     assert (local.date(), local.hour, local.minute) == (day + timedelta(days=1), 1, 45)
     assert data["actual_minutes"] == 220
-    assert data["suggested_minutes"] == 45
+    assert data["suggested_minutes"] == 30
 
 
 def test_half_a_time_is_refused(staff):

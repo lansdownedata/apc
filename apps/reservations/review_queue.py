@@ -95,7 +95,9 @@ class OrderRow:
     finished_at: datetime | None = None
     collected: Decimal = ZERO
     order_total: Decimal = ZERO
-    approved_overtime: Decimal = ZERO
+    approved_overtime: Decimal = ZERO  # base + gratuity
+    approved_overtime_base: Decimal = ZERO
+    approved_overtime_gratuity: Decimal = ZERO
     approved_trips: int = 0
     awaiting_trips: int = 0
     accounting_open: bool = False
@@ -111,6 +113,11 @@ class OrderRow:
     @property
     def to_review(self) -> int:
         return sum(1 for t in self.live_trips if t.state == "needs_review")
+
+    @property
+    def all_reviewed(self) -> bool:
+        """Every live trip is reviewed — the final bill can go (APC-60)."""
+        return bool(self.live_trips) and not self.to_review
 
     @property
     def open_issues(self) -> int:
@@ -266,7 +273,9 @@ def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:
         if state == "needs_review":
             row.awaiting_trips += 1
         elif review is not None and review.is_complete and figures.customer_amount > ZERO:
-            row.approved_overtime += figures.customer_amount
+            row.approved_overtime += figures.customer_overtime_total
+            row.approved_overtime_base += figures.customer_amount
+            row.approved_overtime_gratuity += figures.customer_overtime_gratuity
             row.approved_trips += 1
         row.trips.append(
             TripRow(

@@ -632,6 +632,13 @@ def _owed(lead: Lead) -> tuple[str | None, Decimal]:
     collected = ledger.order_balances(lead)["collected"]
     if collected < plan.deposit_amount:
         return Charge.Kind.DEPOSIT, min(plan.deposit_amount - collected, owed)
+    bill = payment_services.final_bill(lead)
+    if bill.overtime_total > ZERO:
+        # Approved overtime is collected only as the final bill, once every trip is
+        # reviewed (APC-60); until then the page asks for the booked balance alone.
+        if bill.all_reviewed:
+            return Charge.Kind.FINAL, bill.amount
+        return (Charge.Kind.BALANCE, bill.order_balance) if bill.order_balance else (None, ZERO)
     return Charge.Kind.BALANCE, owed
 
 
@@ -686,6 +693,7 @@ def quote_pay(request, token: str) -> HttpResponse:
             # confirmed (APC-26) — the page has to say so before asking for another.
             "hold_released": _hold_was_released(lead),
             "needs_terms": kind == "deposit" and lead.accepted_terms_at is None,
+            "final_bill": payment_services.final_bill(lead) if kind == "final" else None,
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
                 reverse("quote_deposit_success", args=[token])
@@ -713,7 +721,10 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
             )
         services.accept_terms(lead)
     plan = payment_services.ensure_plan(lead)
-    _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
+    if kind == "final":
+        _, secret = payment_services.open_final_intent(plan)
+    else:
+        _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
     return JsonResponse({"ok": True, "client_secret": secret, "amount": str(amount)})
 
 

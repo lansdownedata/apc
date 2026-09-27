@@ -37,7 +37,7 @@ def _owner_client(client):
 def test_sends_over_sms_when_a_phone_exists(client):
     lead = _setup(phone="+15715551212", email="rider@example.com")
     _owner_client(client)
-    with patch("apps.payments.views.podium.send_message", return_value={"uid": "m1"}) as send:
+    with patch("apps.integrations.podium.send_message", return_value={"uid": "m1"}) as send:
         resp = client.post(reverse("order_send_pay_link", args=[lead.pk]))
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "channel": "sms"}
@@ -48,7 +48,7 @@ def test_sends_over_sms_when_a_phone_exists(client):
 def test_falls_back_to_email_when_there_is_no_phone(client):
     lead = _setup(phone="", email="rider@example.com")
     _owner_client(client)
-    with patch("apps.payments.views.podium.send_message", return_value={"uid": "m2"}) as send:
+    with patch("apps.integrations.podium.send_message", return_value={"uid": "m2"}) as send:
         resp = client.post(reverse("order_send_pay_link", args=[lead.pk]))
     assert resp.json() == {"ok": True, "channel": "email"}
     assert send.call_args.kwargs["channel_type"] == "email"
@@ -57,7 +57,7 @@ def test_falls_back_to_email_when_there_is_no_phone(client):
 def test_records_an_outbound_message_on_the_conversation(client):
     lead = _setup(phone="+15715551212", email="rider@example.com")
     _owner_client(client)
-    with patch("apps.payments.views.podium.send_message", return_value={"uid": "m3"}):
+    with patch("apps.integrations.podium.send_message", return_value={"uid": "m3"}):
         client.post(reverse("order_send_pay_link", args=[lead.pk]))
     convo = Conversation.objects.get(contact=lead.contact)
     msg = convo.messages.get()
@@ -69,7 +69,7 @@ def test_records_an_outbound_message_on_the_conversation(client):
 def test_refuses_when_the_contact_has_no_phone_or_email(client):
     lead = _setup(phone="", email="")
     _owner_client(client)
-    with patch("apps.payments.views.podium.send_message") as send:
+    with patch("apps.integrations.podium.send_message") as send:
         resp = client.post(reverse("order_send_pay_link", args=[lead.pk]))
     assert resp.status_code == 400
     assert "No phone or email" in resp.json()["error"]

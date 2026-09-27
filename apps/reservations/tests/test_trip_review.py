@@ -174,11 +174,14 @@ def test_times_round_trip_in_the_trip_zone_across_midnight():
         (0, 15, 15, 0),
         (10, 15, 15, 0),  # inside the grace
         (15, 15, 15, 0),  # exactly the grace still doesn't count
-        (16, 15, 15, 30),  # past it: the whole overage, rounded up to the increment
-        (30, 15, 15, 30),
+        # Past it, only the time beyond the grace bills, rounded up (client, 2026-09-27).
+        (16, 15, 15, 15),  # 1 min past → one increment
+        (30, 15, 15, 15),  # exactly one increment past
+        (45, 15, 15, 30),  # exactly two
+        (46, 15, 15, 45),
         (31, 30, 0, 60),
         (40, 60, 15, 60),
-        (61, 60, 15, 120),
+        (61, 60, 15, 60),
         (7, 1, 0, 7),
     ],
 )
@@ -222,8 +225,8 @@ def test_billable_minutes_default_to_the_suggestion_until_someone_decides():
         actual_dropoff_at=start + timedelta(hours=3, minutes=40),
     )
 
-    assert review.suggested_overtime_minutes == 45
-    assert review.billable_overtime_minutes == 45
+    assert review.suggested_overtime_minutes == 30  # 25 min past the grace
+    assert review.billable_overtime_minutes == 30
     assert review.decided_at is None
 
 
@@ -241,7 +244,7 @@ def test_billable_minutes_can_go_below_or_above_the_suggestion(billable):
         billable_overtime_minutes=billable,
     )
 
-    assert review.suggested_overtime_minutes == 45
+    assert review.suggested_overtime_minutes == 30
     assert review.billable_overtime_minutes == billable
     assert review.decided_by == user
     assert review.decided_at is not None
@@ -262,7 +265,7 @@ def test_a_waived_review_bills_nothing():
     assert review.overtime_waived
     assert review.waive_reason == "Traffic"
     assert review.billable_overtime_minutes == 0
-    assert review.suggested_overtime_minutes == 45
+    assert review.suggested_overtime_minutes == 30
 
 
 # --- affiliate rating ----------------------------------------------------------------
@@ -479,7 +482,7 @@ def test_figures_for_a_farmed_out_trip():
     f = reviews.figures(review, _coverage(trip))
 
     assert (f.billed_minutes, f.actual_minutes, f.over_minutes) == (180, 220, 40)
-    assert f.suggested_minutes == 45
+    assert f.suggested_minutes == 30  # 25 past the 15-min grace → 30
     assert f.customer_rate == Decimal("168")
     assert f.customer_amount == Decimal("126.00")  # 45 min at $168/h
     assert f.coverage == "affiliate"
@@ -523,3 +526,68 @@ def test_figures_before_actual_times_are_entered():
     assert f.actual_minutes is None and f.over_minutes is None
     assert f.affiliate_overtime_amount == Decimal("0.00")
     assert "Enter the actual times" in f.rule
+
+
+def test_the_rule_says_the_grace_is_never_billed():
+    trip = _finished_trip()
+    review = _decided(trip, minutes_over=20)
+
+    f = reviews.figures(review, Assignment.objects.active().filter(reservation=trip).first())
+
+    assert f.suggested_minutes == 15
+    assert f.rule == "20 min over; the first 15 are grace, so 5 min rounds up to 15."
+
+
+# --- the customer's overtime amount (APC-60) -----------------------------------------
+
+
+def _billed(trip, minutes):
+    return reviews.figures(
+        _decided(trip, billable=minutes, minutes_over=minutes),
+        Assignment.objects.active().filter(reservation=trip).first(),
+    )
+
+
+def test_overtime_is_billed_at_the_trips_rate_with_a_percentage_gratuity():
+    trip = _finished_trip(rate=Decimal("200"), gratuity_pct=Decimal("20"))
+
+    f = _billed(trip, 45)
+
+    assert f.customer_amount == Decimal("150.00")  # base
+    assert f.customer_overtime_gratuity == Decimal("30.00")
+    assert f.customer_overtime_total == Decimal("180.00")
+
+
+def test_a_flat_gratuity_adds_nothing_to_overtime():
+    trip = _finished_trip(
+        rate=Decimal("200"), gratuity_pct=Decimal("20"), gratuity_flat=Decimal("50")
+    )
+
+    f = _billed(trip, 45)
+
+    assert f.customer_overtime_gratuity == Decimal("0.00")
+    assert f.customer_overtime_total == Decimal("150.00")
+
+
+def test_the_discount_does_not_apply_to_overtime():
+    trip = _finished_trip(rate=Decimal("200"), discount_pct=Decimal("10"))
+
+    assert _billed(trip, 30).customer_overtime_total == Decimal("100.00")
+
+
+def test_overtime_rounds_half_up_to_the_cent():
+    trip = _finished_trip(rate=Decimal("100.10"), gratuity_pct=Decimal("15"))
+
+    f = _billed(trip, 15)  # $25.025 → $25.03; gratuity 15% of that = $3.7545 → $3.75
+
+    assert f.customer_amount == Decimal("25.03")
+    assert f.customer_overtime_gratuity == Decimal("3.75")
+
+
+def test_waived_overtime_totals_zero():
+    trip = _finished_trip(rate=Decimal("200"), gratuity_pct=Decimal("20"))
+    review = _decided(trip, billable=45, waived=True, reason="Traffic", minutes_over=45)
+
+    f = reviews.figures(review, Assignment.objects.active().filter(reservation=trip).first())
+
+    assert f.customer_overtime_total == Decimal("0.00")
