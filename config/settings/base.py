@@ -161,6 +161,19 @@ STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 STRIPE_DEPOSIT_PCT = env.int("STRIPE_DEPOSIT_PCT", default=50)
 BALANCE_CHARGE_DAYS_BEFORE = env.int("BALANCE_CHARGE_DAYS_BEFORE", default=30)
 
+# Affiliate performance scorecard (APC-70). The reliability score is a weighted average of
+# the six sub-scores; a metric an affiliate has no data for drops out and the rest are
+# re-weighted. No score shows until an affiliate has run this many trips in the window.
+AFFILIATE_SCORE_WEIGHTS = {
+    "confirmation": 15,
+    "driver_info": 15,
+    "cancellations": 25,
+    "issues": 20,
+    "rating": 15,
+    "pricing": 10,
+}
+AFFILIATE_SCORE_MIN_TRIPS = 5
+
 # Podium — messaging (OAuth 2.0 authorization-code; base host api.podium.com)
 PODIUM_API_BASE = env("PODIUM_API_BASE", default="https://api.podium.com")
 PODIUM_CLIENT_ID = env("PODIUM_CLIENT_ID", default="")
