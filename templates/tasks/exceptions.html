@@ -10,7 +10,7 @@
 
   <div class="mb-5">
     <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Exceptions</h1>
-    <p class="text-[13px] text-muted">What needs someone today. The trend is one point a day.</p>
+    <p class="text-[13px] text-muted">What needs someone today. Dispatch rows show every trip still waiting, with the ones close to pickup called out. The trend is one point a day.</p>
   </div>
 
   <div class="flex flex-wrap items-end gap-x-7 gap-y-4 mb-6">
@@ -40,7 +40,7 @@
     </div>
     {% for row in group.rows %}
     <a href="{{ row.url }}" class="grid grid-cols-[minmax(0,1fr)_3rem] sm:grid-cols-[minmax(0,1fr)_3rem_7.5rem_5rem] items-center gap-3 px-5 py-2.5 hover:bg-surface2 focus-gold transition-colors">
-      <span class="text-[13.5px] text-ink">{{ row.label }}</span>
+      <span class="flex items-center gap-2 min-w-0"><span class="text-[13.5px] text-ink truncate">{{ row.label }}</span>{% if row.flagged %}<span class="shrink-0 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-danger" title="Pickup is inside the alert window set in Settings → Dispatch alerts">{{ row.flagged }} close to pickup</span>{% endif %}</span>
       <span class="font-display text-[19px] font-semibold text-ink num text-right">{{ row.count }}</span>
       <svg viewBox="0 0 120 26" preserveAspectRatio="none" class="hidden sm:block w-[120px] h-[26px]" aria-hidden="true">
         {% if row.points %}<polyline points="{{ row.points }}" fill="none" class="stroke-gold" stroke-width="1.5" vector-effect="non-scaling-stroke"/>{% endif %}

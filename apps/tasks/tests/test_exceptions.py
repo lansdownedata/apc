@@ -202,7 +202,8 @@ def test_run_tasks_writes_one_snapshot_per_business_day():
 
     today = timezone.localdate()
     rows = ExceptionSnapshot.objects.filter(day=today)
-    assert rows.count() == len(exceptions.VIEWS)
+    # Every view, plus the three dispatch backlogs.
+    assert rows.count() == len(exceptions.VIEWS) + 3
     assert rows.get(key="unpaid_deposits").count == 1
     assert TaskConfig.load().exceptions_snapshot_on == today
 
@@ -310,7 +311,33 @@ def test_the_dashboard_leads_with_the_number_and_sorts_worst_first():
     assert "Day-of contact missing" in data["quiet"]
     assert "Overdue: Sales" in data["quiet"]
     dispatch = data["groups"][0]["rows"][0]
-    assert dispatch["delta"] == -2 and dispatch["points"]
+    assert (dispatch["label"], dispatch["flagged"]) == ("Not covered yet", 1)
+
+
+def test_a_dispatch_row_shows_the_whole_backlog_and_what_is_flagged(client):
+    client.force_login(UserFactory())
+    near, far, covered = _order(days=1), _order(days=20), _order(days=20)
+    for lead in (near, far, covered):
+        services.ensure_tasks(lead)
+    Task.objects.filter(lead=covered, kind="affiliate_assigned").update(status=Task.Status.DONE)
+    # Short-notice orders are born with an overdue balance task; not what this measures.
+    Task.objects.filter(kind="final_balance_paid").update(status=Task.Status.DONE)
+    DispatchException.objects.create(
+        reservation=near.reservations.get(), kind=DispatchException.Kind.UNASSIGNED
+    )
+    today = timezone.localdate()
+    ExceptionSnapshot.objects.create(day=today - timedelta(days=7), key="all_no_coverage", count=5)
+
+    data = exceptions.dashboard()
+    row = next(r for g in data["groups"] for r in g["rows"] if r["label"] == "Not covered yet")
+
+    # Two trips have nobody assigned; the monitor has flagged the one picking up tomorrow.
+    assert (row["count"], row["flagged"], row["delta"]) == (2, 1, -3)
+    assert len(client.get(row["url"]).context["rows"]) == 2
+    # The headline is the flagged one only, not the backlog.
+    assert data["total"] == 1
+    body = client.get(reverse("exceptions")).content.decode()
+    assert "1 close to pickup" in body
 
 
 def test_the_page_renders_rows_that_link_to_the_drill_down(client):

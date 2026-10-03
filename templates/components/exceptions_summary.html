@@ -16,6 +16,7 @@
     {% for row in group.rows %}
     <a href="{{ row.url }}" class="flex items-center gap-3 px-5 py-2 hover:bg-surface2 focus-gold transition-colors">
       <span class="flex-1 min-w-0 truncate text-[13px] text-ink">{{ row.label }}</span>
+      {% if row.flagged %}<span class="shrink-0 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-danger" title="Pickup is inside the alert window set in Settings → Dispatch alerts">{{ row.flagged }} close to pickup</span>{% endif %}
       <span class="text-[13px] font-semibold text-ink num">{{ row.count }}</span>
     </a>
     {% endfor %}

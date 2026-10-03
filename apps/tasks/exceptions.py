@@ -35,6 +35,14 @@ class View:
     # with its own query. The queue always opens on everyone's tasks, not just mine.
     filters: tuple[tuple[str, str], ...] = ()
     route: str = "task_queue"
+    # Dispatch views carry two numbers: every trip still waiting on this check (open tasks
+    # of `backlog_kind` — exactly the list the row drills into), and how many of those the
+    # dispatch monitor has flagged as close to pickup (the view's own count).
+    backlog_kind: str = ""
+
+    @property
+    def backlog_key(self) -> str:
+        return f"all_{self.key}"
 
     @property
     def url(self) -> str:
@@ -65,11 +73,27 @@ def _kind(kind: str, **more: str) -> tuple[tuple[str, str], ...]:
 OVERDUE_GROUP = "Overdue tasks"
 
 VIEWS: tuple[View, ...] = (
-    View("no_coverage", "No coverage", "Dispatch", _kind("affiliate_assigned")),
     View(
-        "affiliate_unconfirmed", "Affiliate not confirmed", "Dispatch", _kind("affiliate_confirmed")
+        "no_coverage",
+        "Not covered yet",
+        "Dispatch",
+        _kind("affiliate_assigned"),
+        backlog_kind="affiliate_assigned",
     ),
-    View("no_driver_info", "Driver info missing", "Dispatch", _kind("driver_info_received")),
+    View(
+        "affiliate_unconfirmed",
+        "Awaiting affiliate confirmation",
+        "Dispatch",
+        _kind("affiliate_confirmed"),
+        backlog_kind="affiliate_confirmed",
+    ),
+    View(
+        "no_driver_info",
+        "Driver info missing",
+        "Dispatch",
+        _kind("driver_info_received"),
+        backlog_kind="driver_info_received",
+    ),
     View(
         "missing_day_of_contact",
         "Day-of contact missing",
@@ -112,10 +136,18 @@ GROUPS = tuple(dict.fromkeys(view.group for view in VIEWS))
 _GROUP_URLS = {OVERDUE_GROUP: (("due", "overdue"), ("assignee", "anyone"))}
 
 
+_BACKLOG = {view.backlog_kind: view.backlog_key for view in VIEWS if view.backlog_kind}
+
+
 def counts(now=None) -> dict[str, int]:
     """Every view's open count. Five queries, whatever the volume."""
-    now = now or timezone.now()
+    return _measure(now or timezone.now())[0]
+
+
+def _measure(now) -> tuple[dict[str, int], dict[str, int]]:
+    """(each view's count, each dispatch view's backlog) from the same five queries."""
     out = {view.key: 0 for view in VIEWS}
+    backlog = dict.fromkeys(_BACKLOG.values(), 0)
 
     open_exceptions = (
         DispatchException.objects.filter(resolved_at__isnull=True, kind__in=_DISPATCH_KINDS)
@@ -135,6 +167,8 @@ def counts(now=None) -> dict[str, int]:
     for kind, department, n, overdue in open_tasks:
         if kind in _TASK_KINDS:
             out[_TASK_KINDS[kind]] += n
+        if kind in _BACKLOG:
+            backlog[_BACKLOG[kind]] += n
         if kind == "final_balance_paid":
             out["unpaid_balances"] += overdue
         if f"overdue_{department}" in out:
@@ -150,7 +184,7 @@ def counts(now=None) -> dict[str, int]:
     out["pending_payments"] = unpaid["pending"]
 
     out["open_issues"] = TripIssue.objects.open().count()
-    return out
+    return out, backlog
 
 
 def snapshot(config: TaskConfig, now) -> int:
@@ -158,7 +192,10 @@ def snapshot(config: TaskConfig, now) -> int:
     today = timezone.localdate(now)
     if config.exceptions_snapshot_on == today:
         return 0
-    rows = [ExceptionSnapshot(day=today, key=key, count=n) for key, n in counts(now).items()]
+    current, backlog = _measure(now)
+    rows = [
+        ExceptionSnapshot(day=today, key=key, count=n) for key, n in (current | backlog).items()
+    ]
     # A second worker racing the same tick loses quietly on the unique constraint.
     ExceptionSnapshot.objects.bulk_create(rows, ignore_conflicts=True)
     TaskConfig.objects.filter(pk=config.pk).update(exceptions_snapshot_on=today)
@@ -170,6 +207,7 @@ def trend(days: int = TREND_DAYS, today: date | None = None) -> dict[str, list[t
     """Each view's daily counts over the last `days`, oldest first. One query."""
     today = today or timezone.localdate()
     out: dict[str, list[tuple[date, int]]] = {view.key: [] for view in VIEWS}
+    out.update({key: [] for key in _BACKLOG.values()})
     rows = ExceptionSnapshot.objects.filter(day__gt=today - timedelta(days=days), day__lte=today)
     for day, key, n in rows.order_by("day").values_list("day", "key", "count"):
         if key in out:
@@ -200,11 +238,14 @@ def dashboard(now=None) -> dict:
     and its trend, each group's views worst first, and the views with nothing open.
 
     The headline leaves out the overdue-by-department views — those restate tasks the
-    other views already count. Six queries (`counts` + one for the trend).
+    other views already count — and, for the dispatch views, counts only what the monitor
+    has flagged as close to pickup: it is the "needs someone today" number, and one
+    uncovered trip three weeks out is open on three dispatch checks at once.
+    Six queries (five to measure, one for the trend).
     """
     now = now or timezone.now()
     today = timezone.localdate(now)
-    current = counts(now)
+    current, backlog = _measure(now)
     history = trend(today=today)
 
     headline = [v.key for v in VIEWS if v.group != OVERDUE_GROUP]
@@ -220,22 +261,27 @@ def dashboard(now=None) -> dict:
     for name in GROUPS:
         rows = []
         for view in (v for v in VIEWS if v.group == name):
-            n = current[view.key]
+            flagged = current[view.key]
+            # A dispatch row shows its whole backlog, with the flagged part called out.
+            key = view.backlog_key if view.backlog_kind else view.key
+            n = max(backlog[key], flagged) if view.backlog_kind else flagged
             if not n:
-                quiet.append(f"Overdue: {view.label}" if name == OVERDUE_GROUP else view.label)
+                label = f"Overdue: {view.label}" if name == OVERDUE_GROUP else view.label
+                quiet.append(label)
                 continue
-            series = [c for day, c in history[view.key] if day != today] + [n]
+            series = [c for day, c in history[key] if day != today] + [n]
             rows.append(
                 {
                     "label": view.label,
                     "count": n,
+                    "flagged": flagged if view.backlog_kind else 0,
                     "url": view.url,
                     "points": _points(series, 120, 26),
-                    "delta": _week_delta(history[view.key], n, today),
+                    "delta": _week_delta(history[key], n, today),
                 }
             )
         if rows:
-            rows.sort(key=lambda r: -r["count"])
+            rows.sort(key=lambda r: (-r["flagged"], -r["count"]))
             link = _GROUP_URLS.get(name)
             groups.append(
                 {
