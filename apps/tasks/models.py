@@ -84,6 +84,9 @@ class TaskConfig(models.Model):
     # The business-timezone date the overdue digest last went out (APC-52) — the
     # once-a-day guard, so a 15-minute cron can't send it 96 times.
     digest_sent_on = models.DateField(null=True, blank=True, editable=False)
+    # The business-timezone date the exception counts were last snapshotted (APC-69) —
+    # the same once-a-day guard, at no query per tick.
+    exceptions_snapshot_on = models.DateField(null=True, blank=True, editable=False)
 
     OWNER_FIELDS = {
         Department.SALES: "sales_owner",
@@ -295,3 +298,21 @@ class Task(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.label} · {self.get_status_display()}"
+
+
+class ExceptionSnapshot(models.Model):
+    """One exception view's open count on one business day (APC-69). Task history can't
+    reconstruct how many were open on a past day, so `run-tasks` records it daily and the
+    dashboard's 30-day trend reads these."""
+
+    day = models.DateField()
+    key = models.CharField(max_length=40)
+    count = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["day", "key"], name="one_exception_snapshot_per_day")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} · {self.key} · {self.count}"

@@ -177,7 +177,10 @@ def test_two_consecutive_runs_change_nothing_the_second_time():
 
 
 def test_query_count_is_bounded_for_fifty_orders():
-    TaskConfig.load()
+    # Today's exception snapshot (APC-69) is a once-a-day cost, not a per-order one.
+    TaskConfig.objects.filter(pk=TaskConfig.load().pk).update(
+        exceptions_snapshot_on=timezone.localdate()
+    )
     for _ in range(5):
         _order()
     with CaptureQueriesContext(connection) as few:

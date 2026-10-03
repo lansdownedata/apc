@@ -33,7 +33,7 @@ from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
-from . import escalation, post_trip, vendor_tasks
+from . import escalation, exceptions, post_trip, vendor_tasks
 from .definitions import POST_TRIP_KINDS, PREDECESSOR_KINDS, REGISTRY, Level, _always
 from .facts import load_facts
 from .models import Task, TaskConfig
@@ -158,4 +158,7 @@ def run_tasks() -> int:
     processed += _post_trip(config, now, evaluated)
     processed += vendor_tasks.run(now, config=config)
     processed += escalation.run(config, now)
+    # The dashboard's daily trend point (APC-69). Not counted as work done: a tick that
+    # only took the snapshot still reports processed: 0.
+    exceptions.snapshot(config, now)
     return processed
