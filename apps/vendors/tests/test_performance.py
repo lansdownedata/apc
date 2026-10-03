@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
@@ -237,3 +238,109 @@ def test_the_cost_is_the_same_for_thirty_affiliates():
         performance.scorecards(START, END)
 
     assert len(many) == len(few) <= 6
+
+
+# --- the pages -------------------------------------------------------------------------
+
+
+def _scored(name, rating, trips=2):
+    vendor = VendorFactory(name=name)
+    for _ in range(trips):
+        trip, _ = _trip(vendor)
+        review = reviews.review_for(trip)
+        TripReview.objects.filter(pk=review.pk).update(affiliate_rating=rating)
+    return vendor
+
+
+@pytest.fixture
+def staff(client, settings):
+    settings.AFFILIATE_SCORE_MIN_TRIPS = 2
+    user = UserFactory(role="owner_admin")
+    client.force_login(user)
+    return client
+
+
+def test_the_ranking_lists_the_worst_first_and_can_be_flipped(staff):
+    _scored("Good Coach", 5)
+    _scored("Bad Coach", 1)
+    _trip(VendorFactory(name="New Coach"))
+
+    worst = staff.get(reverse("vendor_performance")).context["cards"]
+    best = staff.get(reverse("vendor_performance"), {"order": "best"}).context["cards"]
+
+    assert [c.vendor.name for c in worst] == ["Bad Coach", "Good Coach", "New Coach"]
+    assert [c.vendor.name for c in best] == ["Good Coach", "Bad Coach", "New Coach"]
+
+
+def test_the_ranking_says_what_stands_out_and_when_there_is_no_score(staff):
+    bad = _scored("Bad Coach", 1)
+    _trip(VendorFactory(name="New Coach"))
+
+    body = staff.get(reverse("vendor_performance")).content.decode()
+
+    assert "Low rating" in body
+    assert "Not enough trips" in body and "Needs 2 trips for a score" in body
+    assert f"{reverse('vendor_detail', args=[bad.pk])}#performance" in body
+    assert reverse("affiliate_scoring") in body
+
+
+def test_the_window_filter_changes_which_trips_count(staff):
+    vendor = VendorFactory(name="Old Coach")
+    _trip(vendor, days_ago=60)
+
+    recent = staff.get(reverse("vendor_performance"), {"window": "30"}).context["cards"]
+    default = staff.get(reverse("vendor_performance"), {"window": "nope"}).context["cards"]
+
+    assert recent[0].trips == 0
+    assert default[0].trips == 1  # falls back to 90 days
+
+
+def test_the_vendor_page_carries_the_scorecard(staff):
+    vendor = _scored("Good Coach", 4)
+
+    body = staff.get(reverse("vendor_detail", args=[vendor.pk])).content.decode()
+
+    assert 'id="performance"' in body
+    assert "out of 100" in body
+    assert "4.0 average from 2 reviews" in body
+    assert "0 of 2 cancelled" in body
+
+
+def test_the_numbers_are_put_in_words():
+    vendor = VendorFactory()
+    trip, assignment = _trip(vendor, payout="100")
+    _trip(VendorFactory(), payout="100")
+    offered = assignment.offered_at
+    Assignment.objects.filter(pk=assignment.pk).update(
+        affiliate_confirmed_at=offered + timedelta(minutes=30),
+        driver_info_at=trip.pickup_at - timedelta(hours=30),
+    )
+
+    said = {row["label"]: row["said"] for row in _card(vendor).rows}
+
+    assert said["Confirms quickly"] == "30 min to confirm, median"
+    assert said["Sends driver info early"] == "30 h before pickup, median"
+    assert said["Trips without issues"] == "No issues on 1 trip"
+    assert said["Our rating"] == "Not rated yet"
+    assert said["Pricing"] == "At the median for its vehicle types"
+
+
+def test_settings_documents_the_rules_the_score_actually_uses(staff, settings):
+    settings.AFFILIATE_SCORE_WEIGHTS = {"cancellations": 3, "rating": 1}
+
+    body = staff.get(reverse("affiliate_scoring")).content.decode()
+
+    # Generated from the weights in force, not hard-coded copy.
+    assert "75%" in body and "25%" in body
+    for rule in performance.RULES:
+        assert rule.label.replace("'", "&#x27;") in body
+        assert rule.full_marks in body and rule.zero in body
+    assert "confirmed trips in the window" in body
+    assert reverse("affiliate_scoring") in staff.get(reverse("settings_index")).content.decode()
+
+
+def test_the_pages_need_a_login_and_settings_needs_an_admin(client):
+    assert client.get(reverse("vendor_performance")).status_code == 302
+    client.force_login(UserFactory())  # an agent
+    assert client.get(reverse("vendor_performance")).status_code == 200
+    assert client.get(reverse("affiliate_scoring")).status_code in (302, 403)

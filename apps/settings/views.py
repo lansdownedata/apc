@@ -292,6 +292,31 @@ def pricing(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @owner_admin_required
+def affiliate_scoring(request: HttpRequest) -> HttpResponse:
+    """How the affiliate reliability score is worked out (APC-70). Read-only: the weights
+    live in `settings.AFFILIATE_SCORE_WEIGHTS`, and this page is generated from the same
+    rules the score uses, so it can't describe something the code doesn't do."""
+    from django.conf import settings
+
+    from apps.vendors import performance
+
+    return render(
+        request,
+        "settings/affiliate_scoring.html",
+        {
+            "nav": "settings",
+            "page_title": "Affiliate scoring",
+            "rules": performance.describe(),
+            "min_trips": settings.AFFILIATE_SCORE_MIN_TRIPS,
+            "windows": [label for _, label in performance.WINDOWS],
+            "default_window": dict(performance.WINDOWS)[performance.DEFAULT_WINDOW],
+            "weak_below": performance.WEAK_BELOW,
+        },
+    )
+
+
+@login_required
+@owner_admin_required
 def dispatch_alerts(request: HttpRequest) -> HttpResponse:
     """The Dispatch-alerts config (APC-23) — one singleton form, plus a live open-count."""
     config = DispatchAlertConfig.load()

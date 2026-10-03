@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+{% comment %}
+  How the affiliate reliability score works (APC-70). Read-only, and generated from
+  apps/vendors/performance.py (RULES + the weights in settings), not written by hand.
+{% endcomment %}
+<div class="max-w-[760px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Affiliate scoring</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      Every active affiliate gets a reliability score out of 100 on
+      <a href="{% url 'vendor_performance' %}" class="font-semibold text-goldd hover:underline focus-gold">Vendors → Performance</a>
+      and on their own page. This is how it is worked out. These rules can't be edited here; ask your developer to change them.
+    </p>
+
+    <h2 class="font-display text-[15px] font-semibold text-ink mb-2">What goes into the score</h2>
+    <div class="overflow-x-auto -mx-5 sm:-mx-6">
+      <table class="w-full text-[12.5px] min-w-[620px]">
+        <thead>
+          <tr class="text-muted text-left border-b border-line">
+            <th class="font-medium px-5 sm:px-6 py-2 uppercase text-[10.5px] tracking-wide">Part</th>
+            <th class="font-medium px-3 py-2 uppercase text-[10.5px] tracking-wide">Full marks</th>
+            <th class="font-medium px-3 py-2 uppercase text-[10.5px] tracking-wide">Zero</th>
+            <th class="font-medium px-5 sm:px-6 py-2 uppercase text-[10.5px] tracking-wide text-right">Counts for</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rule in rules %}
+          <tr class="border-t border-line/70 first:border-0 align-top">
+            <td class="px-5 sm:px-6 py-3">
+              <div class="font-semibold text-ink">{{ rule.label }}</div>
+              <div class="text-muted mt-0.5">{{ rule.measures }}</div>
+            </td>
+            <td class="px-3 py-3 text-ink">{{ rule.full_marks }}</td>
+            <td class="px-3 py-3 text-ink">{{ rule.zero }}</td>
+            <td class="px-5 sm:px-6 py-3 text-right font-semibold text-ink num whitespace-nowrap">{{ rule.share }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="font-display text-[15px] font-semibold text-ink mt-6 mb-2">How the parts combine</h2>
+    <ul class="text-[12.5px] text-ink space-y-1.5 list-disc pl-5">
+      <li>Each part is scored from 0 to 100 on a straight line between its zero and its full marks. Halfway between the two is 50.</li>
+      <li>The score is the weighted average of the parts, using the percentages above.</li>
+      <li>A part with nothing to measure yet (no reviews, no driver-info times) is left out, and the others are re-weighted to fill the gap. It never counts as zero.</li>
+      <li>An affiliate needs <span class="font-semibold num">{{ min_trips }}</span> confirmed trips in the window before a score shows. Below that the page says "Not enough trips" and still shows the raw numbers.</li>
+      <li>On the ranking, a part scoring under <span class="font-semibold num">{{ weak_below }}</span> is called out as a weak spot. The two lowest are shown.</li>
+    </ul>
+
+    <h2 class="font-display text-[15px] font-semibold text-ink mt-6 mb-2">Which trips count</h2>
+    <ul class="text-[12.5px] text-ink space-y-1.5 list-disc pl-5">
+      <li>Trips are counted by pickup date, in the trip's own timezone. The windows are {{ windows|join:", " }}; an affiliate's own page uses {{ default_window|lower }}.</li>
+      <li>Only farmed-out trips the affiliate confirmed count. In-house trips and inactive affiliates are left out.</li>
+      <li>A cancellation counts against the affiliate who last held the trip when it was marked Cancelled by Affiliate.</li>
+      <li>Pricing compares each payout to the median payout across all affiliates for that vehicle type in the same window, so it moves as other affiliates' prices move.</li>
+      <li>Medians are used for the two timing parts, so one very slow trip doesn't sink the number.</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}

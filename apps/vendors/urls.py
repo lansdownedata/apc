@@ -6,6 +6,7 @@ urlpatterns = [
     path("", views.vendor_list, name="vendor_list"),
     path("new/", views.vendor_create, name="vendor_create"),
     path("compliance/", views.vendor_compliance, name="vendor_compliance"),
+    path("performance/", views.vendor_performance, name="vendor_performance"),
     path("<int:pk>/edit/", views.vendor_edit, name="vendor_edit"),
     path("<int:pk>/drivers/new/", views.driver_create, name="driver_create"),
     path("drivers/<int:pk>/", views.driver_edit, name="driver_edit"),

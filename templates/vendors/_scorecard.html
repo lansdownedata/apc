@@ -1,0 +1,27 @@
+{% comment %}
+  One affiliate's scorecard (APC-70): the score, then each part with its number in words and
+  its 0-100 bar. Requires: card (performance.Scorecard), min_trips optional.
+{% endcomment %}
+<div class="flex flex-wrap items-end gap-x-4 gap-y-1">
+  {% if card.score_display is not None %}
+  <span class="font-display text-[40px] leading-none font-semibold text-ink num">{{ card.score_display }}</span>
+  <span class="text-[12.5px] text-muted pb-0.5">out of 100 · {{ card.trips }} trip{{ card.trips|pluralize }}</span>
+  {% else %}
+  <span class="font-display text-[17px] font-semibold text-ink">Not enough trips for a score</span>
+  <span class="text-[12.5px] text-muted">{{ card.trips }} trip{{ card.trips|pluralize }} in the window</span>
+  {% endif %}
+</div>
+<div class="grid gap-2.5 mt-4">
+  {% for row in card.rows %}
+  <div class="grid grid-cols-[minmax(0,1fr)_2.5rem] sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_2.5rem] items-center gap-x-3 gap-y-1">
+    <div class="min-w-0">
+      <div class="text-[13px] font-semibold text-ink">{{ row.label }}</div>
+      <div class="text-[12px] text-muted">{{ row.said }}</div>
+    </div>
+    <div class="h-2 rounded-full bg-line overflow-hidden order-last sm:order-none col-span-2 sm:col-span-1">
+      {% if row.points is not None %}<div class="h-full rounded-full bg-gold" style="width: {{ row.points }}%"></div>{% endif %}
+    </div>
+    <div class="text-right text-[13px] font-semibold num {% if row.points is None %}text-muted{% else %}text-ink{% endif %}">{% if row.points is None %}—{% else %}{{ row.points }}{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>

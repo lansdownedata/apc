@@ -6,6 +6,7 @@ import csv
 import re
 
 from django import forms
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import models
@@ -21,7 +22,7 @@ from apps.payments import payables
 from apps.payments.models import AffiliatePayable
 from apps.tasks import vendor_tasks
 
-from . import compliance
+from . import compliance, performance
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
 from .models import (
     INSURANCE_SEVERITY,
@@ -106,6 +107,38 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
 
 
 _WINDOWS = [(str(n), f"Within {n} days") for n in (7, 14, 30, 60, 90)]
+
+
+def _scorecard_for(vendor: Vendor) -> performance.Scorecard | None:
+    """The affiliate's scorecard over the default window (APC-70). Pricing is relative to
+    every affiliate's payouts, so this reads the same numbers the ranking does."""
+    _, start, end = performance.window(None)
+    cards = performance.scorecards(start, end)
+    return next((c for c in cards if c.vendor.pk == vendor.pk), None)
+
+
+@login_required
+def vendor_performance(request: HttpRequest) -> HttpResponse:
+    """Affiliate performance ranking (APC-70): worst first by default, so the affiliates
+    that need a conversation are on top."""
+    raw = request.GET.get("window", "")
+    days, start, end = performance.window(int(raw) if raw.isdigit() else None)
+    order = "best" if request.GET.get("order") == "best" else "worst"
+    cards = performance.ranked(performance.scorecards(start, end), worst_first=order == "worst")
+    return render(
+        request,
+        "vendors/performance.html",
+        {
+            "nav": "vendors",
+            "page_title": "Affiliate performance",
+            "cards": cards,
+            "window": str(days),
+            "window_options": [(str(d), label) for d, label in performance.WINDOWS],
+            "order": order,
+            "order_options": [("worst", "Worst first"), ("best", "Best first")],
+            "min_trips": settings.AFFILIATE_SCORE_MIN_TRIPS,
+        },
+    )
 
 
 @login_required
@@ -209,6 +242,8 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "vendor": vendor,
             "addr_url": reverse("vendor_address_update", args=[vendor.pk]),
             "ac_url": reverse("integrations:geocode_autocomplete"),
+            "scorecard": _scorecard_for(vendor),
+            "scorecard_window": dict(performance.WINDOWS)[performance.DEFAULT_WINDOW],
             "payables": payables.vendor_payables(vendor, stage),
             "payable_stage": stage,
             "payable_stages": [

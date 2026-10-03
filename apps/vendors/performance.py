@@ -19,14 +19,90 @@ from apps.reservations.models import Reservation, TripIssue, TripReview, TripSta
 
 from .models import Vendor
 
-LABELS = {
-    "confirmation": "Confirms quickly",
-    "driver_info": "Sends driver info early",
-    "cancellations": "Doesn't cancel",
-    "issues": "Trips without issues",
-    "rating": "Our rating",
-    "pricing": "Pricing",
-}
+WINDOWS = ((30, "Last 30 days"), (90, "Last 90 days"), (365, "Last 12 months"))
+DEFAULT_WINDOW = 90
+# A sub-score under this is called out as a weak spot on the ranking.
+WEAK_BELOW = 60
+
+
+@dataclass(frozen=True)
+class Rule:
+    """How one metric becomes a 0-100 sub-score: a straight line from `worst` to `best`.
+    The wording here is what Settings → Affiliate scoring shows, so the documentation and
+    the maths can't drift apart."""
+
+    key: str
+    label: str
+    weak_label: str
+    measures: str
+    best: float
+    worst: float
+    full_marks: str
+    zero: str
+
+
+RULES: tuple[Rule, ...] = (
+    Rule(
+        "cancellations",
+        "Doesn't cancel",
+        "Cancellations",
+        "Trips the affiliate cancelled, out of the trips they held.",
+        0,
+        0.2,
+        "No cancellations",
+        "1 in 5 trips cancelled, or more",
+    ),
+    Rule(
+        "issues",
+        "Trips without issues",
+        "Issues",
+        "Issues logged in trip reviews (vehicle, driver, service, complaint), per trip.",
+        0,
+        1,
+        "No issues",
+        "One issue per trip, or more",
+    ),
+    Rule(
+        "confirmation",
+        "Confirms quickly",
+        "Slow to confirm",
+        "The usual (median) time from our offer to their acknowledgement.",
+        1,
+        24,
+        "Within 1 hour",
+        "24 hours or longer",
+    ),
+    Rule(
+        "driver_info",
+        "Sends driver info early",
+        "Late driver info",
+        "How long before pickup the driver's name, cell and vehicle usually (median) arrive.",
+        24,
+        0,
+        "24 hours before pickup, or earlier",
+        "At pickup time, or later",
+    ),
+    Rule(
+        "rating",
+        "Our rating",
+        "Low rating",
+        "The average of the 1-5 stars we give the affiliate in trip reviews.",
+        5,
+        1,
+        "5 stars",
+        "1 star",
+    ),
+    Rule(
+        "pricing",
+        "Pricing",
+        "Pricing",
+        "Each payout against the median payout for the same vehicle type in the window.",
+        0.9,
+        1.3,
+        "10% under the median, or cheaper",
+        "30% over the median, or dearer",
+    ),
+)
 
 
 def _scale(value: float, *, best: float, worst: float) -> float:
@@ -61,22 +137,129 @@ class Scorecard:
     def issues_per_trip(self) -> float | None:
         return self.issues / self.trips if self.trips else None
 
+    def value(self, key: str) -> float | None:
+        """The raw number behind one rule, or None when there's nothing to score."""
+        return {
+            "cancellations": self.cancellation_rate,
+            "issues": self.issues_per_trip,
+            "confirmation": self.confirm_hours,
+            "driver_info": self.driver_info_hours,
+            "rating": self.rating,
+            "pricing": self.price_ratio,
+        }[key]
+
+    def _said(self, key: str) -> str:
+        """The raw number in words — what the scorecard shows beside each bar."""
+        if key == "cancellations":
+            held = self.trips + self.cancellations
+            if not held:
+                return "No trips yet"
+            rate = f" ({self.cancellation_rate:.0%})" if self.cancellations else ""
+            return f"{self.cancellations} of {held} cancelled{rate}"
+        if key == "issues":
+            if not self.trips:
+                return "No trips yet"
+            if not self.issues:
+                return f"No issues on {self.trips} {_plural(self.trips, 'trip')}"
+            text = f"{self.issues} {_plural(self.issues, 'issue')} on {self.trips} "
+            text += _plural(self.trips, "trip")
+            if self.complaints:
+                text += f", {self.complaints} {_plural(self.complaints, 'complaint')}"
+            return text
+        if key == "confirmation":
+            if self.confirm_hours is None:
+                return "No confirmations recorded"
+            return f"{_hours(self.confirm_hours)} to confirm, median"
+        if key == "driver_info":
+            if self.driver_info_hours is None:
+                return "No driver-info times recorded"
+            if self.driver_info_hours < 0:
+                return f"{_hours(-self.driver_info_hours)} after pickup, median"
+            return f"{_hours(self.driver_info_hours)} before pickup, median"
+        if key == "rating":
+            if self.rating is None:
+                return "Not rated yet"
+            return (
+                f"{self.rating:.1f} average from {self.ratings} {_plural(self.ratings, 'review')}"
+            )
+        if self.price_ratio is None:
+            return "No payouts to compare"
+        pct = round((self.price_ratio - 1) * 100)
+        if pct == 0:
+            return "At the median for its vehicle types"
+        return f"{abs(pct)}% {'over' if pct > 0 else 'under'} the median for its vehicle types"
+
+    @property
+    def rows(self) -> list[dict]:
+        """One line per rule for the scorecard: label, the number in words, the sub-score."""
+        return [
+            {
+                "label": rule.label,
+                "said": self._said(rule.key),
+                "points": round(self.parts[rule.key]) if rule.key in self.parts else None,
+            }
+            for rule in RULES
+        ]
+
+    @property
+    def weak(self) -> list[tuple[str, int]]:
+        """The two lowest sub-scores under `WEAK_BELOW` — (label, points), worst first."""
+        low = sorted(
+            (points, rule.weak_label)
+            for rule in RULES
+            if (points := self.parts.get(rule.key)) is not None and points < WEAK_BELOW
+        )
+        return [(label, round(points)) for points, label in low[:2]]
+
+    @property
+    def score_display(self) -> int | None:
+        return None if self.score is None else round(self.score)
+
+
+def _plural(n: int, word: str) -> str:
+    return word if n == 1 else f"{word}s"
+
+
+def _hours(hours: float) -> str:
+    return f"{hours:.0f} h" if hours >= 1 else f"{hours * 60:.0f} min"
+
 
 def _sub_scores(card: Scorecard) -> dict[str, float]:
-    parts: dict[str, float] = {}
-    if card.confirm_hours is not None:
-        parts["confirmation"] = _scale(card.confirm_hours, best=1, worst=24)
-    if card.driver_info_hours is not None:
-        parts["driver_info"] = _scale(card.driver_info_hours, best=24, worst=0)
-    if card.cancellation_rate is not None:
-        parts["cancellations"] = _scale(card.cancellation_rate, best=0, worst=0.2)
-    if card.issues_per_trip is not None:
-        parts["issues"] = _scale(card.issues_per_trip, best=0, worst=1)
-    if card.rating is not None:
-        parts["rating"] = _scale(card.rating, best=5, worst=1)
-    if card.price_ratio is not None:
-        parts["pricing"] = _scale(card.price_ratio, best=0.9, worst=1.3)
-    return parts
+    return {
+        rule.key: _scale(value, best=rule.best, worst=rule.worst)
+        for rule in RULES
+        if (value := card.value(rule.key)) is not None
+    }
+
+
+def describe(weights: dict[str, float] | None = None) -> list[dict]:
+    """The scoring rules in words, heaviest first — Settings → Affiliate scoring."""
+    weights = weights if weights is not None else settings.AFFILIATE_SCORE_WEIGHTS
+    total = sum(weights.get(rule.key, 0) for rule in RULES) or 1
+    rows = [
+        {
+            "label": rule.label,
+            "measures": rule.measures,
+            "full_marks": rule.full_marks,
+            "zero": rule.zero,
+            "weight": weights.get(rule.key, 0),
+            "share": round(weights.get(rule.key, 0) / total * 100),
+        }
+        for rule in RULES
+    ]
+    return sorted(rows, key=lambda r: -r["weight"])
+
+
+def window(days: int | None, today: date | None = None) -> tuple[int, date, date]:
+    """(days, start, end) for a window choice; anything unknown falls back to the default.
+    The dates are business-timezone calendar days, compared to trips' local pickup dates."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    days = days if days in dict(WINDOWS) else DEFAULT_WINDOW
+    end = today or timezone.localdate()
+    return days, end - timedelta(days=days), end
 
 
 def composite(parts: dict[str, float], weights: dict[str, float]) -> float | None:

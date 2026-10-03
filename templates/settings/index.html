@@ -68,6 +68,16 @@
         {% if dispatch_monitor_on %}Monitor on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Monitor off</span>{% endif %}{% if open_dispatch_exceptions %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ open_dispatch_exceptions }} open</span>{% endif %}
       </p>
     </a>
+    <a href="{% url 'affiliate_scoring' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-chart-bar text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Affiliate scoring</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        How the affiliate reliability score is worked out: what is measured, what earns full marks, and how much each part counts.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">Read-only</p>
+    </a>
     <a href="{% url 'task_settings' %}" class="card p-4 hover:wash-gold transition-colors">
       <div class="flex items-center gap-2">
         <i class="ti ti-checklist text-[18px] text-gold"></i>

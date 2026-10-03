@@ -93,6 +93,17 @@
       {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">Nothing owed to {{ vendor.name }} right now.</p>{% endfor %}
     </div>
 
+    {% if scorecard %}
+    {% comment %} Performance (APC-70) — the same card the ranking links to. Inactive vendors have none. {% endcomment %}
+    <div class="card p-4 sm:col-span-2" id="performance">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <h2 class="font-display text-[15px] font-semibold text-ink flex items-center gap-2"><i class="ti ti-chart-bar text-[16px]" style="color:rgb(var(--gold-deep));"></i>Performance <span class="text-[12px] font-normal text-muted">{{ scorecard_window|lower }}</span></h2>
+        <a href="{% url 'affiliate_scoring' %}" class="text-[12px] font-semibold text-goldd hover:underline focus-gold">How the score works</a>
+      </div>
+      {% include "vendors/_scorecard.html" with card=scorecard %}
+    </div>
+    {% endif %}
+
     {# documents #}
     <div class="card overflow-hidden sm:col-span-2">
       <div class="flex items-center justify-between px-4 pt-4 pb-3">
