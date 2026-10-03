@@ -229,20 +229,27 @@
                class="absolute right-0 mt-2 w-[330px] bg-surface rounded-xl shadow-2xl ring-1 ring-line overflow-hidden z-50">
             <div class="flex items-center px-4 py-3 border-b border-line">
               <span class="font-display text-[14px] font-semibold text-ink">Notifications</span>
-              {% if unread_count %}<span class="ml-1.5 text-[10px] font-semibold text-white bg-rose-500 rounded-full px-1.5">{{ unread_count }}</span>{% endif %}
+              {% if unread_count %}<span class="ml-1.5 text-[10px] font-semibold text-white bg-rose-500 rounded-full px-1.5">{{ unread_count }}</span>
+              <form method="post" action="{% url 'notifications_read_all' %}" class="ml-auto">
+                {% csrf_token %}
+                <button type="submit" class="text-[11.5px] font-semibold text-muted hover:text-ink focus-visible:outline-none focus-visible:underline">Mark all read</button>
+              </form>{% endif %}
             </div>
             <div class="max-h-[340px] overflow-y-auto">
               {% for n in unread_notifications %}
-              <a href="{{ n.url }}" class="w-full text-left flex gap-3 px-4 py-3 border-b border-line/60 last:border-0 hover:bg-surface2 transition-colors bg-goldl/40">
+              <form method="post" action="{% url 'notification_read' n.pk %}" class="border-b border-line/60 last:border-0">
+              {% csrf_token %}
+              <button type="submit" class="w-full text-left flex gap-3 px-4 py-3 hover:bg-surface2 focus-visible:outline-none focus-visible:bg-surface2 transition-colors bg-goldl/40">
                 <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}bg-rose-50 text-rose-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
                   <i class="ti {% if n.kind == 'balance_failed' or n.kind == 'sync_failed' %}ti-alert-triangle{% else %}ti-circle-check{% endif %} text-[16px]"></i>
                 </span>
-                <div class="min-w-0 flex-1">
-                  <div class="text-[12.5px] font-semibold text-ink">{{ n.title }}</div>
-                  <div class="text-[11.5px] text-muted truncate">{{ n.detail }}</div>
-                  <div class="text-[10px] text-slate-400 mt-0.5">{{ n.created_at|timesince }} ago</div>
-                </div>
-              </a>
+                <span class="block min-w-0 flex-1">
+                  <span class="block text-[12.5px] font-semibold text-ink">{{ n.title }}</span>
+                  <span class="block text-[11.5px] text-muted truncate">{{ n.detail }}</span>
+                  <span class="block text-[10px] text-slate-400 mt-0.5">{{ n.created_at|timesince }} ago</span>
+                </span>
+              </button>
+              </form>
               {% empty %}
               <div class="px-4 py-10 text-center">
                 <i class="ti ti-bell-z text-[26px] text-slate-300"></i>

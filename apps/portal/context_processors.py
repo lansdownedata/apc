@@ -98,7 +98,8 @@ def chrome(request):
             "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
         }
 
-    unread = Notification.objects.unread().select_related("lead", "lead__contact")
+    # The tray is per person (APC-77): their own notifications plus the shared alerts.
+    unread = Notification.objects.unread_for(request.user).select_related("lead", "lead__contact")
     return {
         "nav_soon": NAV_SOON,
         "asset_version": _asset_version(),
