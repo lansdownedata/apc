@@ -11,7 +11,7 @@ from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 
 from .models import Review, TouchPoint
-from .touchpoint_templates import TEMPLATES, build_context, render
+from .touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING, build_context, render
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,18 @@ def schedule_review_request(lead) -> None:
     if TouchPoint.objects.filter(lead=lead, kind=kind).exists():
         return
     _create(lead, kind, timezone.now())
+
+
+def schedule_post_trip(lead) -> None:
+    """The order has finished: the thank-you (APC-62), then the review request a day
+    later. Idempotent, one row of each per lead. Called from both places that learn an
+    order is done — the LimoAnywhere webhook and the task engine's post-trip entry."""
+    kinds = (TouchPoint.Kind.THANK_YOU, TouchPoint.Kind.REVIEW_REQUEST)
+    have = set(TouchPoint.objects.filter(lead=lead, kind__in=kinds).values_list("kind", flat=True))
+    now = timezone.now()
+    for kind in kinds:
+        if kind not in have:
+            _create(lead, kind, now)
 
 
 def schedule_payment_reminder(lead) -> None:
@@ -306,7 +318,7 @@ def _config():
 def cancel_pending(lead, *, kinds=None) -> int:
     """Cancel SCHEDULED touch-points for a lead.
 
-    Defaults to every kind except review_request, payment_reminder, and the
+    Defaults to every kind except review_request, thank_you, payment_reminder, and the
     reservation-anchored service-date kinds (all fire on a booked lead by design); pass
     explicit ``kinds`` to override, e.g. cancelling everything on LOST.
     """
@@ -315,6 +327,7 @@ def cancel_pending(lead, *, kinds=None) -> int:
         qs = qs.exclude(
             kind__in=(
                 TouchPoint.Kind.REVIEW_REQUEST,
+                TouchPoint.Kind.THANK_YOU,
                 TouchPoint.Kind.PAYMENT_REMINDER,
                 *_RESERVATION_KINDS,
             )
@@ -358,6 +371,13 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
     ctx["quote_link"] = make_quote_page_url(tp.lead, base_url=base_url)
     ctx["pay_link"] = make_pay_page_url(tp.lead, base_url=base_url)
     res = tp.reservation
+    if tp.kind == TouchPoint.Kind.THANK_YOU:
+        # The trip page for the order's last day — once the order has finished that page
+        # is the rating form (APC-63).
+        days = [r.pickup_date for r in tp.lead.reservations.all() if r.pickup_date]
+        if days:
+            ctx["confirm_link"] = trip_day_ack_url(tp.lead.contact, max(days), base_url=base_url)
+        return
     if res is None:
         return
     if tp.kind == TouchPoint.Kind.WED_FINAL_DETAILS:
@@ -470,6 +490,29 @@ _LINK_KINDS = frozenset(
 )
 
 
+def _review_hold_reason(lead) -> str:
+    """Why this order's review request shouldn't go out (decision D3), or "". We don't ask
+    an unhappy customer for a public review — a person follows up instead."""
+    from apps.leads.models import CustomerFeedback
+    from apps.reservations.models import TripIssue
+
+    if TripIssue.objects.filter(
+        review__reservation__lead=lead, category=TripIssue.Category.COMPLAINT
+    ).exists():
+        return "complaint logged"
+    feedback = CustomerFeedback.objects.filter(lead=lead).first()
+    if feedback is not None and feedback.is_low:
+        return "low rating"
+    return ""
+
+
+def _thank_you_template(lead):
+    from apps.reservations.services import is_wedding_trip
+
+    wedding = bool(lead.wedding_name) or any(is_wedding_trip(r) for r in lead.reservations.all())
+    return THANK_YOU_WEDDING if wedding else TEMPLATES[TouchPoint.Kind.THANK_YOU]
+
+
 def _confirmed_assignment(reservation):
     """The trip's active coverage — the one shared lookup, see `dispatch.selectors`."""
     if reservation is None:
@@ -527,6 +570,15 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
         return False
 
     if kind == TouchPoint.Kind.REVIEW_REQUEST:
+        reason = _review_hold_reason(lead)
+        if reason:
+            _mark(tp, status=TouchPoint.Status.CANCELLED, error=f"Review request held: {reason}")
+            # The follow-up is a task (complaint_followup / feedback_followup); make sure
+            # it exists now rather than on the next run-tasks tick.
+            from apps.tasks import services as tasks
+
+            tasks.sync(lead)
+            return False
         return _send_review_invite(tp)
 
     if kind in _RESERVATION_KINDS:
@@ -578,6 +630,14 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
         # fall through to the shared template / channel / _send path
+    elif kind == TouchPoint.Kind.THANK_YOU:
+        if lead.status != lead.Status.BOOKED:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="lead not booked")
+            return False
+        if not settings.PUBLIC_BASE_URL:
+            logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
+            return False
+        # fall through
     elif kind in _ORDER_KINDS:
         # Lead-level outcome messages (APC-26). They deliberately sit outside the
         # status-based skips: `order_confirmed` fires on a lead that is now BOOKED, and
@@ -616,7 +676,7 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
 
-    template = TEMPLATES[kind]
+    template = _thank_you_template(lead) if kind == TouchPoint.Kind.THANK_YOU else TEMPLATES[kind]
     recipient = _recipient(tp, template)
     if recipient is None:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="no confirmed affiliate")

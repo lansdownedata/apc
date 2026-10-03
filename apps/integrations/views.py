@@ -244,7 +244,7 @@ def la_webhook(request, token: str):
         if new_status in EARNED_TERMINAL_STATUSES:
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
-                touchpoints.schedule_review_request(lead)
+                touchpoints.schedule_post_trip(lead)
     if event_name == "reservation.cancelled":
         # LimoAnywhere is the system of record, so a cancellation there ends the trip —
         # and an affiliate holding it has to be let go. Without this the assignment stays

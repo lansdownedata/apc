@@ -76,7 +76,7 @@ def test_last_trip_done_schedules_review_request(client):
     lead = LeadFactory(contact=lac.contact)
     res = ReservationFactory(lead=lead, la_reservation_id="1")
 
-    with patch("apps.integrations.views.touchpoints.schedule_review_request") as sched:
+    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
         _post(client, _url(lac), {"id": 1, "reservation_event": "reservation.completed"})
 
     res.refresh_from_db()
@@ -89,7 +89,7 @@ def test_non_terminal_status_does_not_schedule(client):
     lead = LeadFactory(contact=lac.contact)
     ReservationFactory(lead=lead, la_reservation_id="2")
 
-    with patch("apps.integrations.views.touchpoints.schedule_review_request") as sched:
+    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
         _post(client, _url(lac), {"id": 2, "reservation_event": "reservation.driver_was_assigned"})
 
     sched.assert_not_called()
@@ -103,7 +103,7 @@ def test_one_of_two_trips_done_does_not_schedule(client):
         lead=lead, la_reservation_id="4", trip_status=Reservation.TripStatus.UNASSIGNED
     )
 
-    with patch("apps.integrations.views.touchpoints.schedule_review_request") as sched:
+    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
         _post(client, _url(lac), {"id": 3, "reservation_event": "reservation.completed"})
 
     sched.assert_not_called()
@@ -117,7 +117,7 @@ def test_done_plus_cancelled_pair_schedules(client):
     )
     ReservationFactory(lead=lead, la_reservation_id="6")
 
-    with patch("apps.integrations.views.touchpoints.schedule_review_request") as sched:
+    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
         _post(client, _url(lac), {"id": 6, "reservation_event": "reservation.completed"})
 
     sched.assert_called_once_with(lead)

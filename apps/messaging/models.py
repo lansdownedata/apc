@@ -103,6 +103,7 @@ class TouchPoint(TimeStampedModel):
         TP7_EXPIRING = "tp7_expiring", "Quote expiring"
         TP8_EXPIRED = "tp8_expired", "Quote expired"
         REVIEW_REQUEST = "review_request", "Review request"
+        THANK_YOU = "thank_you", "Post-trip thank-you"
         PAYMENT_REMINDER = "payment_reminder", "Payment reminder"
         # Reservation-anchored service-date kinds (APC-18-22). These carry a `reservation`
         # FK and fire for a BOOKED lead — the inverse of the TP1-8 skip rules.

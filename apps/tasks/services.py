@@ -168,6 +168,7 @@ def ensure_tasks(lead: Lead) -> list[Task]:
         return []
     now = timezone.now()
     created: list[Task] = []
+    thanked = False
     # Another pass only when evaluation just closed a stage something waits on.
     for _ in range(len(REGISTRY)):
         new, facts = _create_missing(lead, config, now)
@@ -180,6 +181,12 @@ def ensure_tasks(lead: Lead) -> list[Task]:
             from apps.payments import payables
 
             payables.ensure_payables(lead)
+            if not thanked:
+                # The customer's side of post-trip: thank-you, then the review request.
+                from apps.messaging import touchpoints
+
+                touchpoints.schedule_post_trip(facts.lead)
+                thanked = True
         changed = _evaluate_many(Task.objects.filter(lead_id=lead.pk), {lead.pk: facts})
         if not any(t.kind in PREDECESSOR_KINDS and t.is_closed for t in changed):
             break

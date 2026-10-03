@@ -16,7 +16,7 @@ from apps.dispatch.models import Assignment
 from apps.leads.models import CustomerFeedback, Lead, LeadContact
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
-from apps.reservations.models import Reservation, TripReview
+from apps.reservations.models import Reservation, TripIssue, TripReview
 from apps.reservations.services import is_wedding_trip
 
 
@@ -30,6 +30,9 @@ class LeadFacts:
     # Completed post-trip reviews by trip id (APC-59).
     reviews: dict[int, TripReview] = field(default_factory=dict)
     feedback: CustomerFeedback | None = None  # APC-63
+    # APC-62: the thank-you touch-point has gone out; a complaint was logged on a trip.
+    thank_you_sent: bool = False
+    has_complaint: bool = False
     day_of_contact: Contact | None = None  # APC-64 — the day-of coordinator role
     # APC-58. Set by `services.ensure_tasks`, which knows the clock and the grace; empty
     # elsewhere, where only predicates run and neither is read.
@@ -61,7 +64,7 @@ class LeadFacts:
 
 
 def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
-    """Facts for every lead in `leads`, keyed by lead pk. Seven queries, whatever the size.
+    """Facts for every lead in `leads`, keyed by lead pk. Eight queries, whatever the size.
 
     Predicates read `lead` fields straight off these instances, so pass fresh rows.
     """
@@ -90,18 +93,26 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     released: dict[int, set[int]] = defaultdict(set)
     sent = TouchPoint.objects.filter(
         lead_id__in=ids,
-        kind=TouchPoint.Kind.DRIVER_RELEASED,
+        kind__in=(TouchPoint.Kind.DRIVER_RELEASED, TouchPoint.Kind.THANK_YOU),
         status=TouchPoint.Status.SENT,
-        reservation__isnull=False,
-    ).values_list("lead_id", "reservation_id")
-    for lead_id, reservation_id in sent:
-        released[lead_id].add(reservation_id)
+    ).values_list("lead_id", "reservation_id", "kind")
+    for lead_id, reservation_id, kind in sent:
+        if kind == TouchPoint.Kind.THANK_YOU:
+            facts[lead_id].thank_you_sent = True
+        elif reservation_id is not None:
+            released[lead_id].add(reservation_id)
     for lead_id, trip_ids in released.items():
         facts[lead_id].released_trip_ids = trip_ids
 
     done = TripReview.objects.filter(reservation__lead_id__in=ids, completed_at__isnull=False)
     for review in done:
         facts[by_trip[review.reservation_id]].reviews[review.reservation_id] = review
+
+    complaints = TripIssue.objects.filter(
+        review__reservation__lead_id__in=ids, category=TripIssue.Category.COMPLAINT
+    ).values_list("review__reservation__lead_id", flat=True)
+    for lead_id in complaints:
+        facts[lead_id].has_complaint = True
 
     for fb in CustomerFeedback.objects.filter(lead_id__in=ids):
         facts[fb.lead_id].feedback = fb

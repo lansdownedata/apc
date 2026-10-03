@@ -188,7 +188,7 @@ def test_query_count_is_bounded_for_fifty_orders():
         run_tasks()
 
     assert len(many) == len(few)
-    assert len(many) <= 20
+    assert len(many) <= 21  # +1 for the complaints fact (APC-62)
 
 
 def test_a_disabled_config_makes_the_job_a_no_op():

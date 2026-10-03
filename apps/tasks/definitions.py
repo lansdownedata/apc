@@ -126,6 +126,10 @@ def _low_feedback(facts: LeadFacts, reservation: object) -> bool:
     return facts.feedback is not None and facts.feedback.is_low
 
 
+def _has_complaint(facts: LeadFacts, reservation: object) -> bool:
+    return facts.has_complaint
+
+
 def _farmed_out(facts: LeadFacts, reservation) -> bool:
     """An affiliate covered the trip, so there's an affiliate to pay. In-house coverage
     (our own driver) and a trip nobody covered have no payable."""
@@ -233,6 +237,10 @@ def _payable_approved(task: Task, facts: LeadFacts) -> bool:
 
 def _payable_paid(task: Task, facts: LeadFacts) -> bool:
     return _payable_status(task, facts) == "paid"
+
+
+def _thank_you_sent(task: Task, facts: LeadFacts) -> bool:
+    return facts.thank_you_sent
 
 
 def _no_overtime_to_bill(task: Task, facts: LeadFacts) -> bool:
@@ -399,12 +407,15 @@ REGISTRY: tuple[TaskKind, ...] = (
         opens_after=("affiliate_payable_approved",),
     ),
     TaskKind(
-        # Stage 3. Closed by the thank-you touch-point (APC-62).
+        # Stage 3. The thank-you touch-point (APC-62) goes out two hours after the order
+        # finishes, so this is usually closed the moment it opens. It stays open for a
+        # person only when the message never went (no phone or email, messaging off).
         key="thank_you_sent",
         label="Thank-you sent",
         department=_D.CUSTOMER_SERVICE,
         level=Level.TRIP,
         due=AfterOpen(hours=48),  # PLACEHOLDER
+        auto_complete=_thank_you_sent,
         post_trip=True,
         opens_after=("overtime_invoiced", "affiliate_payable_approved", "affiliate_paid"),
     ),
@@ -426,6 +437,16 @@ REGISTRY: tuple[TaskKind, ...] = (
         level=Level.ORDER,
         due=AfterOpen(hours=24),  # PLACEHOLDER
         applies=_low_feedback,
+    ),
+    TaskKind(
+        # APC-62. A complaint was logged on a trip review; the review request is held
+        # (decision D3) and a person follows up instead.
+        key="complaint_followup",
+        label="Follow up on complaint",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpen(hours=24),  # PLACEHOLDER
+        applies=_has_complaint,
     ),
     TaskKind(
         # APC-71. One per affiliate policy; closes itself when a policy with a later expiry

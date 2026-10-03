@@ -26,6 +26,18 @@ class TouchPointTemplate:
     audience: str = "customer"
 
 
+_THANK_YOU_EMAIL_TAIL = (
+    "If something wasn't right, please tell us. Reply to this email or call "
+    "{company_phone} and you'll reach a person.\n\n"
+    "If you have a minute, you can rate the trip here: {confirm_link}\n\n"
+    "{company_name}\n"
+    "{company_phone}"
+)
+_THANK_YOU_SMS_TAIL = (
+    "If anything wasn't right, reply here and tell us. If you have a minute, you can rate "
+    "the trip: {confirm_link}"
+)
+
 TEMPLATES: dict[str, TouchPointTemplate] = {
     "tp1_welcome": TouchPointTemplate(
         kind="tp1_welcome",
@@ -163,12 +175,31 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
     "review_request": TouchPointTemplate(
         kind="review_request",
         anchor="trips_done",
-        offset=timedelta(hours=2),
+        # The day after the thank-you (APC-62), so a complaint or a low rating has had
+        # the chance to hold it.
+        offset=timedelta(days=1),
         channels=("sms",),
         sms_body=(
-            "Hi {first_name}, thank you for riding with {company_name}! We'd love to "
-            "hear how everything went — would you take a moment to leave us a review? "
-            "{review_link}"
+            "{first_name}, it's {company_name}. If the trip went well, would you leave us "
+            "a short review? It helps more than you'd think. {review_link}"
+        ),
+    ),
+    # APC-62. Our own wording, not client-verbatim (the touch-points PDF has no post-trip
+    # message). `{confirm_link}` is the trip page, which now shows the rating form.
+    "thank_you": TouchPointTemplate(
+        kind="thank_you",
+        anchor="trips_done",
+        offset=timedelta(hours=2),
+        channels=("sms", "email"),
+        subject="Thank you from {company_name}",
+        email_body=(
+            "{first_name},\n\n"
+            "Thank you for booking with us for {pickup_date}. We hope the trip went the way "
+            "you planned it.\n\n" + _THANK_YOU_EMAIL_TAIL
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Thank you for trusting us with your trip on "
+            "{pickup_date}. " + _THANK_YOU_SMS_TAIL
         ),
     ),
     # DRAFT COPY — awaiting client sign-off. Unlike TP1–TP8 this is NOT client-verbatim
@@ -436,6 +467,26 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         ),
     ),
 }
+
+
+# The thank-you a wedding order gets instead (APC-62). Not a kind of its own — the sender
+# swaps it in. Worded for whoever booked, who is often a parent or a planner, not the couple.
+THANK_YOU_WEDDING = TouchPointTemplate(
+    kind="thank_you",
+    anchor="trips_done",
+    offset=timedelta(hours=2),
+    channels=("sms", "email"),
+    subject="Thank you from {company_name}",
+    email_body=(
+        "{first_name},\n\n"
+        "Congratulations on the wedding, and thank you for letting us be part of the day. "
+        "We hope everything went the way you planned it.\n\n" + _THANK_YOU_EMAIL_TAIL
+    ),
+    sms_body=(
+        "{first_name}, it's {company_name}. Congratulations on the wedding, and thank you "
+        "for letting us be part of the day. " + _THANK_YOU_SMS_TAIL
+    ),
+)
 
 
 def _trip_context(reservation) -> dict[str, str]:
