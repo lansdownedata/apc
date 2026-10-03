@@ -1,5 +1,6 @@
-from datetime import UTC, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.urls import reverse
@@ -326,11 +327,13 @@ def test_board_shows_a_state_icon_and_a_compact_pill(logged_in_client):
     resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
     html = resp.content.decode()
     assert 'title="Flight verified"' in html
-    assert "UA 123 · 5:35 PM<" in html  # compact: no tz abbreviation on the board
+    # 21:35 UTC in the airport's zone — 5:35 PM in summer, 4:35 PM once DAY is past DST.
+    local = datetime.combine(DAY, time(21, 35), tzinfo=UTC).astimezone(ZoneInfo("America/New_York"))
+    assert f"UA 123 · {local:%-I:%M %p}<" in html  # compact: no tz abbreviation on the board
     # The pill's title tooltip legitimately carries the full "Arrives ... EDT" detail text —
     # only the *visible* label must drop the abbreviation, i.e. the full (non-compact) label
     # must never be what's rendered inside the pill's <span>.
-    assert "5:35 PM EDT<" not in html
+    assert f"{local:%-I:%M %p} {local.tzname()}<" not in html
 
 
 def test_board_tints_delayed_and_cancelled_rows(logged_in_client):
@@ -368,4 +371,5 @@ def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert
 def test_board_shows_pacific_abbrev_when_the_trip_is_not_eastern(logged_in_client):
     _trip(pickup_time=time(7, 30), pickup_timezone="America/Los_Angeles")
     body = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()}).content
-    assert b"7:30 AM PDT" in body
+    abbrev = datetime.combine(DAY, time(7, 30), tzinfo=ZoneInfo("America/Los_Angeles")).tzname()
+    assert f"7:30 AM {abbrev}".encode() in body  # PDT or PST, whichever DAY falls in

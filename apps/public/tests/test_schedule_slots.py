@@ -20,6 +20,10 @@ from apps.public.models import SlotHold
 pytestmark = pytest.mark.django_db
 
 URL = "/schedule/slots/"
+# A 31-day month that is always ahead of today — a pinned "2026-10" stopped being the
+# future once October arrived, and the view never asks Calendly about the past.
+YEAR = timezone.localdate().year + 1
+MONTH = f"{YEAR}-01"
 
 
 @pytest.fixture(autouse=True)
@@ -210,11 +214,11 @@ def test_the_window_starts_in_the_future():
 def test_a_month_is_fetched_and_echoed_back():
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
-            resp = Client().get(f"{URL}?month=2026-10")
+            resp = Client().get(f"{URL}?month={MONTH}")
     assert resp.status_code == 200
-    assert resp.json()["month"] == "2026-10"
+    assert resp.json()["month"] == MONTH
     assert times.called
-    # October is 31 days plus a day of padding either side, at 7 days a call.
+    # January is 31 days plus a day of padding either side, at 7 days a call.
     assert times.call_count == 5
 
 
@@ -224,11 +228,11 @@ def test_the_window_is_padded_past_the_month_edges():
     drop a day off one end or the other depending on who is looking."""
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
-            Client().get(f"{URL}?month=2026-10")
+            Client().get(f"{URL}?month={MONTH}")
     first_start = times.call_args_list[0].kwargs["start"]
     last_end = times.call_args_list[-1].kwargs["end"]
-    assert first_start < datetime(2026, 10, 1, tzinfo=UTC)
-    assert last_end > datetime(2026, 10, 31, tzinfo=UTC)
+    assert first_start < datetime(YEAR, 1, 1, tzinfo=UTC)
+    assert last_end > datetime(YEAR, 1, 31, tzinfo=UTC)
 
 
 def test_the_current_month_starts_from_now_not_the_first():
@@ -272,16 +276,16 @@ def test_a_malformed_month_falls_back_to_the_default_window():
 def test_two_requests_for_one_month_make_one_set_of_calls():
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
-            Client().get(f"{URL}?month=2026-10")
+            Client().get(f"{URL}?month={MONTH}")
             first = times.call_count
-            Client().get(f"{URL}?month=2026-10")
+            Client().get(f"{URL}?month={MONTH}")
     assert times.call_count == first
 
 
 def test_different_months_are_cached_separately():
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
-            Client().get(f"{URL}?month=2026-10")
+            Client().get(f"{URL}?month={MONTH}")
             first = times.call_count
             Client().get(f"{URL}?month=2026-11")
     assert times.call_count > first

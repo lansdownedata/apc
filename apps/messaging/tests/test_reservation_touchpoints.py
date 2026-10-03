@@ -509,7 +509,9 @@ def test_the_second_notice_lands_24h_after_the_first():
     first = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     second = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER_2)
     assert second.scheduled_for - first.scheduled_for == timedelta(hours=24)
-    assert res.pickup_at - second.scheduled_for == timedelta(hours=48)
+    # Wall-clock hours in the trip's zone: across a DST change 48 of those are 47 or 49 real.
+    local = second.scheduled_for.astimezone(res.pickup_at.tzinfo)
+    assert res.pickup_at.replace(tzinfo=None) - local.replace(tzinfo=None) == timedelta(hours=48)
 
 
 @override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
