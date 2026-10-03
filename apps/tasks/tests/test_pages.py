@@ -103,8 +103,10 @@ def test_trip_rows_open_the_drawer_and_order_rows_open_the_workspace(client, me)
 
     body = client.get(reverse("task_queue")).content.decode()
 
-    board = reverse("dispatch_board")
-    assert f"{board}?day={trip.pickup_date.isoformat()}&amp;trip={trip.pk}" in body
+    # The trip opens in the dispatch drawer, in place (2026-10-03) — the queue carries the
+    # drawer and the trip editor the board uses.
+    assert reverse("dispatch_assign_panel", args=[trip.pk]) in body
+    assert "data-drawer" in body
     assert reverse("lead_detail", args=[lead.pk]) in body
 
 

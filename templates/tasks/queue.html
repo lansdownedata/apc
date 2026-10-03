@@ -49,7 +49,9 @@
               <div class="text-[12px] text-muted mt-0.5">Affiliate{% if r.insurance %} · {{ r.insurance }}, expires {{ r.insurance.expiry_date|date:"M j, Y" }}{% endif %}</div>
               {% else %}
               {% if r.reservation_id %}
-              <a href="{% url 'dispatch_board' %}?day={{ r.reservation.pickup_date|date:'Y-m-d' }}&amp;trip={{ r.reservation_id }}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
+              {% comment %} A trip task opens the dispatch drawer here, without leaving the queue. {% endcomment %}
+              <button type="button" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold"
+                      @click="$dispatch('drawer-open', { url: '{% url 'dispatch_assign_panel' r.reservation_id %}', stale: true })">{{ r.lead.quote_no }}</button>
               {% else %}
               <a href="{% url 'lead_detail' r.lead_id %}" class="font-semibold text-ink num hover:text-goldd hover:underline focus-gold">{{ r.lead.quote_no }}</a>
               {% endif %}
@@ -93,5 +95,10 @@
       </table>
     </div>
   </div>
+
+  {% comment %} The same drawer and trip editor the dispatch board uses. The queue spans
+     every customer, so the editor is given no trips up front. {% endcomment %}
+  {% include "components/drawer.html" with drawer_title="Trip" %}
+  {% include "leads/_reservation_editor.html" %}
 </div>
 {% endblock %}

@@ -12,9 +12,10 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.models import Department, User
 from apps.leads.models import Lead
+from apps.reservations import editor as reservation_editor
 from apps.reservations.models import Reservation
 
-from . import selectors, services
+from . import exceptions, selectors, services
 from .definitions import KIND_CHOICES
 from .models import Task
 from .queue import QueueFilters, end_of_local_day, queue_for, row_json
@@ -53,7 +54,21 @@ def task_queue(request: HttpRequest) -> HttpResponse:
             "due_options": _DUE_WINDOWS,
             "kind_options": KIND_CHOICES,
             "team": team,
+            # A trip task opens the dispatch drawer in place; its Edit trip needs the editor.
+            **reservation_editor.editor_context(request, None, []),
         },
+    )
+
+
+@login_required
+@require_GET
+def exceptions_dashboard(request: HttpRequest) -> HttpResponse:
+    """What's wrong right now (APC-69): the number and its trend, then every view worst
+    first. Each row drills down into the filtered Tasks queue (or Trip Review)."""
+    return render(
+        request,
+        "tasks/exceptions.html",
+        {"nav": "exceptions", "page_title": "Exceptions", "exceptions": exceptions.dashboard()},
     )
 
 

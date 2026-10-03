@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from django.db.models import Count, Q
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import Department
@@ -29,6 +31,17 @@ class View:
     key: str
     label: str
     group: str
+    # Where a click drills down to: Tasks-queue filters (the default), or a named route
+    # with its own query. The queue always opens on everyone's tasks, not just mine.
+    filters: tuple[tuple[str, str], ...] = ()
+    route: str = "task_queue"
+
+    @property
+    def url(self) -> str:
+        query = dict(self.filters)
+        if self.route == "task_queue":
+            query.setdefault("assignee", "anyone")
+        return f"{reverse(self.route)}?{urlencode(query)}" if query else reverse(self.route)
 
 
 _DISPATCH_KINDS = {
@@ -44,20 +57,59 @@ _TASK_KINDS = {
     "overtime_invoiced": "overtime_awaiting",
 }
 
+
+def _kind(kind: str, **more: str) -> tuple[tuple[str, str], ...]:
+    return (("kind", kind), *more.items())
+
+
+OVERDUE_GROUP = "Overdue tasks"
+
 VIEWS: tuple[View, ...] = (
-    View("no_coverage", "No coverage", "Dispatch"),
-    View("affiliate_unconfirmed", "Affiliate not confirmed", "Dispatch"),
-    View("no_driver_info", "Driver info missing", "Dispatch"),
-    View("missing_day_of_contact", "Day-of contact missing", "Customer details"),
-    View("missing_wedding_names", "Wedding names missing", "Customer details"),
-    View("open_issues", "Open trip issues", "Customer details"),
-    View("unpaid_deposits", "Unpaid deposits", "Money"),
-    View("unpaid_balances", "Unpaid balances", "Money"),
-    View("overtime_awaiting", "Overtime awaiting decision", "Money"),
-    View("missing_invoices", "Affiliate invoices missing", "Money"),
-    View("pending_payments", "Affiliate payments pending", "Money"),
-    *(View(f"overdue_{value}", label, "Overdue tasks") for value, label in Department.choices),
+    View("no_coverage", "No coverage", "Dispatch", _kind("affiliate_assigned")),
+    View(
+        "affiliate_unconfirmed", "Affiliate not confirmed", "Dispatch", _kind("affiliate_confirmed")
+    ),
+    View("no_driver_info", "Driver info missing", "Dispatch", _kind("driver_info_received")),
+    View(
+        "missing_day_of_contact",
+        "Day-of contact missing",
+        "Customer details",
+        _kind("day_of_contact"),
+    ),
+    View(
+        "missing_wedding_names", "Wedding names missing", "Customer details", _kind("wedding_names")
+    ),
+    View(
+        "open_issues",
+        "Open trip issues",
+        "Customer details",
+        (("issues", "1"),),
+        "trip_review_list",
+    ),
+    View("unpaid_deposits", "Unpaid deposits", "Money", _kind("deposit_received")),
+    View("unpaid_balances", "Unpaid balances", "Money", _kind("final_balance_paid", due="overdue")),
+    View(
+        "overtime_awaiting",
+        "Overtime awaiting decision",
+        "Money",
+        (("stage", "needs_review"),),
+        "trip_review_list",
+    ),
+    View(
+        "missing_invoices",
+        "Affiliate invoices missing",
+        "Money",
+        _kind("affiliate_payable_approved"),
+    ),
+    View("pending_payments", "Affiliate payments pending", "Money", _kind("affiliate_paid")),
+    *(
+        View(f"overdue_{value}", label, OVERDUE_GROUP, (("department", value), ("due", "overdue")))
+        for value, label in Department.choices
+    ),
 )
+GROUPS = tuple(dict.fromkeys(view.group for view in VIEWS))
+# The group headings that have one obvious place to go.
+_GROUP_URLS = {OVERDUE_GROUP: (("due", "overdue"), ("assignee", "anyone"))}
 
 
 def counts(now=None) -> dict[str, int]:
@@ -123,3 +175,82 @@ def trend(days: int = TREND_DAYS, today: date | None = None) -> dict[str, list[t
         if key in out:
             out[key].append((day, n))
     return out
+
+
+def _points(series: list[int], width: int, height: int) -> str:
+    """An SVG polyline for `series`, oldest first, drawn to one scale inside the box."""
+    if len(series) < 2:
+        return ""
+    top, pad = max(max(series), 1), 3
+    step = width / (len(series) - 1)
+    return " ".join(
+        f"{i * step:.1f},{height - pad - (n / top) * (height - 2 * pad):.1f}"
+        for i, n in enumerate(series)
+    )
+
+
+def _week_delta(history: list[tuple[date, int]], current: int, today: date) -> int | None:
+    """Today against the snapshot a week ago; None until there is one."""
+    then = dict(history).get(today - timedelta(days=7))
+    return None if then is None else current - then
+
+
+def dashboard(now=None) -> dict:
+    """Everything the Exceptions page and the summary card render: the headline number
+    and its trend, each group's views worst first, and the views with nothing open.
+
+    The headline leaves out the overdue-by-department views — those restate tasks the
+    other views already count. Six queries (`counts` + one for the trend).
+    """
+    now = now or timezone.now()
+    today = timezone.localdate(now)
+    current = counts(now)
+    history = trend(today=today)
+
+    headline = [v.key for v in VIEWS if v.group != OVERDUE_GROUP]
+    by_day: dict[date, int] = {}
+    for key in headline:
+        for day, n in history[key]:
+            by_day[day] = by_day.get(day, 0) + n
+    total = sum(current[key] for key in headline)
+    by_day[today] = total  # the live number is today's point, snapshot or not
+    total_series = sorted(by_day.items())
+
+    groups, quiet = [], []
+    for name in GROUPS:
+        rows = []
+        for view in (v for v in VIEWS if v.group == name):
+            n = current[view.key]
+            if not n:
+                quiet.append(f"Overdue: {view.label}" if name == OVERDUE_GROUP else view.label)
+                continue
+            series = [c for day, c in history[view.key] if day != today] + [n]
+            rows.append(
+                {
+                    "label": view.label,
+                    "count": n,
+                    "url": view.url,
+                    "points": _points(series, 120, 26),
+                    "delta": _week_delta(history[view.key], n, today),
+                }
+            )
+        if rows:
+            rows.sort(key=lambda r: -r["count"])
+            link = _GROUP_URLS.get(name)
+            groups.append(
+                {
+                    "label": name,
+                    "total": sum(r["count"] for r in rows),
+                    "url": f"{reverse('task_queue')}?{urlencode(link)}" if link else "",
+                    "rows": rows,
+                }
+            )
+    return {
+        "total": total,
+        "delta": _week_delta(total_series, total, today),
+        "points": _points([n for _, n in total_series], 600, 72),
+        "first_day": total_series[0][0],
+        "has_trend": len(total_series) > 1,
+        "groups": groups,
+        "quiet": quiet,
+    }

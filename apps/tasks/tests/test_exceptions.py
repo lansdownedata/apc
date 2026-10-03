@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
@@ -236,3 +237,126 @@ def test_the_trend_is_the_last_thirty_days_oldest_first():
 
     assert [n for _, n in trend["unpaid_deposits"]] == [3, 5]
     assert trend["no_coverage"] == []
+
+
+# --- drill-down ------------------------------------------------------------------------
+
+
+def test_a_task_view_drills_into_the_queue_with_its_filters():
+    views = {v.key: v for v in exceptions.VIEWS}
+    queue = reverse("task_queue")
+
+    assert (
+        views["unpaid_balances"].url
+        == f"{queue}?kind=final_balance_paid&due=overdue&assignee=anyone"
+    )
+    assert (
+        views["overdue_accounting"].url
+        == f"{queue}?department=accounting&due=overdue&assignee=anyone"
+    )
+    assert views["open_issues"].url == f"{reverse('trip_review_list')}?issues=1"
+
+
+def test_the_queue_shows_exactly_what_an_exact_view_counted(client):
+    me = UserFactory()
+    client.force_login(me)
+    lead = _order()
+    _open(lead, "final_itinerary", overdue=True, department="customer_service")
+    _open(lead, "deposit_received", overdue=True, department="customer_service")
+    _open(lead, "contract_signed", department="customer_service")
+    view = next(v for v in exceptions.VIEWS if v.key == "overdue_customer_service")
+
+    rows = client.get(view.url).context["rows"]
+
+    assert len(rows) == exceptions.counts()["overdue_customer_service"] == 2
+
+
+# --- the page and the summary card -----------------------------------------------------
+
+
+def _seed():
+    lead = _order()
+    _open(lead, "final_balance_paid", overdue=True, department="accounting")
+    _open(lead, "wedding_names", department="customer_service")
+    DispatchException.objects.create(
+        reservation=lead.reservations.get(), kind=DispatchException.Kind.UNASSIGNED
+    )
+    today = timezone.localdate()
+    for back, n in ((7, 3), (1, 2)):
+        ExceptionSnapshot.objects.get_or_create(
+            day=today - timedelta(days=back), key="no_coverage", defaults={"count": n}
+        )
+    return lead
+
+
+def test_the_dashboard_leads_with_the_number_and_sorts_worst_first():
+    _seed()
+    lead = _order()
+    _open(lead, "wedding_names", department="customer_service")
+
+    data = exceptions.dashboard()
+
+    # No coverage 1 + wedding names 2 + unpaid balance 1; overdue-by-department restates.
+    assert data["total"] == 4
+    assert data["delta"] == 1  # a week ago the snapshots summed to 3
+    assert [g["label"] for g in data["groups"]] == [
+        "Dispatch",
+        "Customer details",
+        "Money",
+        "Overdue tasks",
+    ]
+    customer = data["groups"][1]
+    assert [(r["label"], r["count"]) for r in customer["rows"]] == [("Wedding names missing", 2)]
+    assert "Day-of contact missing" in data["quiet"]
+    assert "Overdue: Sales" in data["quiet"]
+    dispatch = data["groups"][0]["rows"][0]
+    assert dispatch["delta"] == -2 and dispatch["points"]
+
+
+def test_the_page_renders_rows_that_link_to_the_drill_down(client):
+    _seed()
+    client.force_login(UserFactory())
+
+    body = client.get(reverse("exceptions")).content.decode()
+
+    assert "Exceptions" in body and "Wedding names missing" in body
+    assert "kind=final_balance_paid&amp;due=overdue&amp;assignee=anyone" in body
+    assert "Nothing open:" in body and "Day-of contact missing" in body
+    assert "See all" in body  # the Overdue tasks heading
+
+
+def test_the_page_with_nothing_wrong(client):
+    client.force_login(UserFactory())
+
+    body = client.get(reverse("exceptions")).content.decode()
+
+    assert "Nothing needs attention." in body
+    assert "Nothing open:" not in body
+
+
+def test_the_page_needs_a_login(client):
+    assert client.get(reverse("exceptions")).status_code == 302
+
+
+def test_the_summary_card_is_on_the_dashboard(client):
+    _seed()
+    client.force_login(UserFactory())
+
+    body = client.get(reverse("dashboard")).content.decode()
+
+    assert "data-exceptions-summary" in body
+    assert "Wedding names missing" in body
+    assert reverse("exceptions") in body
+
+
+def test_the_page_costs_the_same_however_much_is_wrong(client):
+    client.force_login(UserFactory())
+    _seed()
+    with CaptureQueriesContext(connection) as few:
+        client.get(reverse("exceptions"))
+    for _ in range(10):
+        _seed()
+    with CaptureQueriesContext(connection) as many:
+        client.get(reverse("exceptions"))
+
+    assert len(many) == len(few)

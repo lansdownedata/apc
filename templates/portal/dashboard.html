@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load humanize %}
+{% load humanize exceptions %}
 
 {% block content %}
 <div class="max-w-[1180px] mx-auto px-4 sm:px-6 py-6">
@@ -90,6 +90,8 @@
       </div>
     </div>
 
+    <div class="grid gap-4 content-start">
+    {% exceptions_summary %}
     <!-- alerts -->
     <div class="card overflow-hidden">
       <div class="flex items-center px-5 py-3.5 border-b border-line">
@@ -114,6 +116,7 @@
         </div>
         {% endfor %}
       </div>
+    </div>
     </div>
   </div>
 </div>

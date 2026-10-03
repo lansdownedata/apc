@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+{% comment %}
+  The exceptions dashboard (APC-69), layout signed off 2026-10-03: the number and its trend,
+  then each view as a row, worst first; views with nothing open fold into one quiet line.
+  A row drills down into the filtered Tasks queue (or Trip Review). Numbers come from
+  apps/tasks/exceptions.py; the compact version is components/exceptions_summary.html.
+{% endcomment %}
+<div class="max-w-[980px] mx-auto px-4 sm:px-6 py-6">
+
+  <div class="mb-5">
+    <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Exceptions</h1>
+    <p class="text-[13px] text-muted">What needs someone today. The trend is one point a day.</p>
+  </div>
+
+  <div class="flex flex-wrap items-end gap-x-7 gap-y-4 mb-6">
+    <div>
+      <div class="font-display text-[52px] leading-none font-semibold text-ink num">{{ exceptions.total }}</div>
+      {% include "tasks/_exception_delta.html" with delta=exceptions.delta suffix=" this week" %}
+    </div>
+    {% if exceptions.has_trend %}
+    <div class="flex-1 min-w-[220px]">
+      <svg viewBox="0 0 600 72" preserveAspectRatio="none" class="block w-full h-[72px]" role="img" aria-label="Open exceptions per day">
+        <polyline points="{{ exceptions.points }}" fill="none" class="stroke-gold" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <div class="flex justify-between text-[11px] text-muted mt-0.5">
+        <span>{{ exceptions.first_day|date:"M j" }}</span><span>Open exceptions</span><span>Today</span>
+      </div>
+    </div>
+    {% else %}
+    <p class="flex-1 min-w-[220px] text-[12.5px] text-muted">The trend starts tomorrow, once there are two days to compare.</p>
+    {% endif %}
+  </div>
+
+  <div class="card overflow-hidden">
+    {% for group in exceptions.groups %}
+    <div class="flex items-baseline gap-2 px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted">
+      <span>{{ group.label }}</span><span class="num normal-case tracking-normal">{{ group.total }} open</span>
+      {% if group.url %}<a href="{{ group.url }}" class="ml-auto normal-case tracking-normal text-[12px] text-goldd hover:underline focus-gold">See all</a>{% endif %}
+    </div>
+    {% for row in group.rows %}
+    <a href="{{ row.url }}" class="grid grid-cols-[minmax(0,1fr)_3rem] sm:grid-cols-[minmax(0,1fr)_3rem_7.5rem_5rem] items-center gap-3 px-5 py-2.5 hover:bg-surface2 focus-gold transition-colors">
+      <span class="text-[13.5px] text-ink">{{ row.label }}</span>
+      <span class="font-display text-[19px] font-semibold text-ink num text-right">{{ row.count }}</span>
+      <svg viewBox="0 0 120 26" preserveAspectRatio="none" class="hidden sm:block w-[120px] h-[26px]" aria-hidden="true">
+        {% if row.points %}<polyline points="{{ row.points }}" fill="none" class="stroke-gold" stroke-width="1.5" vector-effect="non-scaling-stroke"/>{% endif %}
+      </svg>
+      <span class="hidden sm:block text-right">{% include "tasks/_exception_delta.html" with delta=row.delta suffix=" / wk" %}</span>
+    </a>
+    {% endfor %}
+    {% empty %}
+    <div class="px-5 py-14 text-center text-muted">
+      <div class="font-display text-[18px] font-semibold text-ink mb-1">Nothing needs attention.</div>
+      Every view is at zero.
+    </div>
+    {% endfor %}
+    {% if exceptions.groups and exceptions.quiet %}
+    <p class="px-5 pt-3 pb-4 text-[12.5px] text-muted">Nothing open: {{ exceptions.quiet|join:", " }}.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% comment %}
+  The compact exceptions card (APC-69) — the Exceptions page in one scrolling list. Drop it
+  on any portal page with `{% load exceptions %}{% exceptions_summary %}`; it brings its own
+  numbers (six queries). Requires: exceptions (apps.tasks.exceptions.dashboard()).
+{% endcomment %}
+<div class="card overflow-hidden" data-exceptions-summary>
+  <a href="{% url 'exceptions' %}" class="flex items-center gap-2 px-5 py-3.5 border-b border-line hover:bg-surface2 focus-gold transition-colors">
+    <span class="font-display text-[15px] font-semibold text-ink">Exceptions</span>
+    <span class="font-display text-[15px] font-semibold text-ink num">{{ exceptions.total }}</span>
+    {% include "tasks/_exception_delta.html" with delta=exceptions.delta suffix=" this week" %}
+    <i class="ti ti-chevron-right text-[15px] text-muted ml-auto"></i>
+  </a>
+  <div class="max-h-[260px] overflow-y-auto">
+    {% for group in exceptions.groups %}
+    <div class="px-5 pt-3 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted">{{ group.label }}</div>
+    {% for row in group.rows %}
+    <a href="{{ row.url }}" class="flex items-center gap-3 px-5 py-2 hover:bg-surface2 focus-gold transition-colors">
+      <span class="flex-1 min-w-0 truncate text-[13px] text-ink">{{ row.label }}</span>
+      <span class="text-[13px] font-semibold text-ink num">{{ row.count }}</span>
+    </a>
+    {% endfor %}
+    {% empty %}
+    <div class="px-5 py-10 text-center text-[13px] text-muted">
+      <i class="ti ti-checks text-[26px] text-emerald-400"></i>
+      <div class="mt-2">Nothing needs attention.</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>

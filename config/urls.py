@@ -32,6 +32,7 @@ from apps.reservations.public_views import (
     trip_confirm,
     wedding_details,
 )
+from apps.tasks import views as task_views
 
 
 def healthz(_request):
@@ -55,6 +56,7 @@ staff_patterns = [
     path("inbox/", include("apps.messaging.urls")),
     path("reviews/", review_list, name="review_list"),
     path("tasks/", include("apps.tasks.urls")),
+    path("exceptions/", task_views.exceptions_dashboard, name="exceptions"),
 ]
 
 urlpatterns = [
