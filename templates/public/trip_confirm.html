@@ -51,7 +51,7 @@ CLIENT COPY PENDING (APC-27).
     <input type="hidden" name="form" value="feedback">
     <input type="hidden" name="lead" value="{{ order.lead.pk }}">
     {% if not all_finished %}<h2>How was your trip?</h2>{% endif %}
-    {% if order.feedback.is_low %}<p class="thanks">Thank you for telling us. We'll be in touch about this.</p>{% elif order.feedback %}<p class="thanks">Thanks for your feedback. You can change it below.</p>{% endif %}
+    {% if order.feedback %}<p class="thanks">Thanks for your feedback. You can change it below.</p>{% endif %}
     {% if feedback_error %}<p class="err">{{ feedback_error }}</p>{% endif %}
     <fieldset class="rating">
       <legend>Your rating</legend>

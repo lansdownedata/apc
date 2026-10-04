@@ -60,6 +60,8 @@ def test_registry_contains_all_jobs():
         "reconcile-payments",
         "monitor-dispatch",
         "unconfirmed-trips-report",
+        "review-report",
+        "complaint-report",
         "run-tasks",
     }
 

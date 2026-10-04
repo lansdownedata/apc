@@ -1,0 +1,40 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Customer reviews: {{ orders }} order{{ orders|pluralize }} finished{% endblock %}
+{% block preheader %}{{ reviewed }} of {{ orders }} left a review. {{ low_rows|length }} low rating{{ low_rows|length|pluralize }}.{% endblock %}
+{% block content %}
+<p style="margin:0 0 6px;font-size:17px;color:#17191D;">Customer reviews, {{ since|date:"M j" }} to {{ until|date:"M j, Y" }}</p>
+<p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">
+  <strong style="color:#17191D;">{{ orders }}</strong> order{{ orders|pluralize }} finished.
+  <strong style="color:#17191D;">{{ asked }}</strong> asked for a review, {{ held }} held,
+  <strong style="color:#17191D;">{{ reviewed }}</strong> left a review.
+  {{ rated }} rated the trip on their trip page{% if average %}, averaging {{ average|floatformat:1 }} out of 5{% endif %}.
+</p>
+{% if low_rows %}
+<p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#b91c1c;">Low ratings (1 or 2 stars)</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;margin-bottom:22px;">
+  {% for r in low_rows %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;"><a href="{{ r.url }}" style="color:#8A6D1F;font-weight:600;">{{ r.quote_no }}</a><br><span style="color:#17191D;">{{ r.customer }}</span></td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;"><strong style="color:#b91c1c;">{{ r.rating }} of 5</strong>{% if r.comment %}<br><span style="color:#4b5563;">"{{ r.comment }}"</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+<p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#17191D;">Every order</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;">
+  <tr style="color:#6b7280;text-align:left;">
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Order</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Review request</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Review</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Trip page rating</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;"><a href="{{ r.url }}" style="color:#8A6D1F;font-weight:600;">{{ r.quote_no }}</a><br><span style="color:#17191D;">{{ r.customer }}</span><br><span style="color:#6b7280;">Finished {{ r.finished }} · {{ r.trips }} trip{{ r.trips|pluralize }}</span></td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">{{ r.asked }}</td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">{% if r.reviewed %}<strong style="color:#047857;">{{ r.review }}</strong>{% else %}<span style="color:#6b7280;">{{ r.review }}</span>{% endif %}</td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">{% if r.rating %}<span style="color:{% if r.low %}#b91c1c{% else %}#17191D{% endif %};font-weight:600;">{{ r.rating }} of 5</span>{% else %}<span style="color:#6b7280;">None</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

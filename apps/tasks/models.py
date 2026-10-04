@@ -81,6 +81,16 @@ class TaskConfig(models.Model):
         help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "
         "Blank falls back to the company email.",
     )
+    report_emails = models.TextField(
+        blank=True,
+        help_text="Who gets the customer review report and the daily complaint report. One "
+        "per line or comma-separated. Blank uses the digest recipients above.",
+    )
+    # When each post-trip report last ran. The complaint report covers what was logged
+    # since its stamp; the review report shows its stamp as the period start (which orders
+    # it has covered is tracked per order, in `ReportedOrder`).
+    review_report_through = models.DateTimeField(null=True, blank=True, editable=False)
+    complaint_report_through = models.DateTimeField(null=True, blank=True, editable=False)
     # The business-timezone date the overdue digest last went out (APC-52) — the
     # once-a-day guard, so a 15-minute cron can't send it 96 times.
     digest_sent_on = models.DateField(null=True, blank=True, editable=False)
@@ -114,6 +124,10 @@ class TaskConfig(models.Model):
     def digest_list(self) -> list[str]:
         chosen = _split_list(self.digest_emails)
         return chosen or ([settings.COMPANY_EMAIL] if settings.COMPANY_EMAIL else [])
+
+    @property
+    def report_list(self) -> list[str]:
+        return _split_list(self.report_emails) or self.digest_list
 
 
 class TaskQuerySet(models.QuerySet):
@@ -316,3 +330,17 @@ class ExceptionSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.day} · {self.key} · {self.count}"
+
+
+class ReportedOrder(models.Model):
+    """An order the customer review report has already listed. An order "finishes" at its
+    scheduled end, but we only learn that later (a Done status, or the grace running out),
+    so a time window alone would skip the ones that finished just before a report ran."""
+
+    lead = models.OneToOneField(
+        "leads.Lead", related_name="review_reported", on_delete=models.CASCADE
+    )
+    reported_at = models.DateTimeField()
+
+    def __str__(self) -> str:
+        return f"{self.lead_id} · {self.reported_at:%Y-%m-%d}"

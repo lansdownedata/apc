@@ -19,6 +19,7 @@ from apps.messaging import touchpoints
 from apps.payments import tasks
 from apps.reservations import tasks as reservation_tasks
 from apps.tasks import jobs as task_jobs
+from apps.tasks import reports as task_reports
 
 JOBS: dict[str, Callable[[], int]] = {
     "charge-due-balances": tasks.charge_due_balances,
@@ -29,6 +30,9 @@ JOBS: dict[str, Callable[[], int]] = {
     "reconcile-payments": tasks.reconcile_payments,
     "monitor-dispatch": monitoring.run_dispatch_monitor,
     "run-tasks": task_jobs.run_tasks,
+    # Post-trip reports (2026-10-04): monthly, and daily. Each covers "since the last one".
+    "review-report": task_reports.send_review_report,
+    "complaint-report": task_reports.send_complaint_report,
     "unconfirmed-trips-report": reservation_tasks.send_unconfirmed_trip_report,
 }
 

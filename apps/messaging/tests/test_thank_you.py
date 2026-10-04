@@ -305,14 +305,16 @@ def test_the_heading_is_plural_for_more_than_one_trip(client):
     assert "How was your trip?" in _page(client, _order(trips=1))
 
 
-def test_a_low_rating_is_answered_with_a_promise_we_keep(client):
+def test_a_low_rating_gets_the_same_plain_thanks(client):
+    # No "we'll be in touch": low ratings are read in the monthly report, not chased
+    # one by one, so the page doesn't promise a call.
     lead = _order()
     record_feedback(lead, rating=2, comment="")
 
     body = _page(client, lead)
 
-    assert "Thank you for telling us. We'll be in touch about this." in body
-    assert Task.objects.filter(lead=lead, kind="feedback_followup").exists()
+    assert "Thanks for your feedback." in body
+    assert "be in touch" not in body
 
 
 def test_a_good_rating_keeps_the_plain_thanks(client):

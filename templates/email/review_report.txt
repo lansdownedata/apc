@@ -1,0 +1,17 @@
+{% autoescape off %}Customer reviews, {{ since|date:"M j" }} to {{ until|date:"M j, Y" }}
+
+{{ orders }} order{{ orders|pluralize }} finished. {{ asked }} asked for a review, {{ held }} held, {{ reviewed }} left a review.
+{{ rated }} rated the trip on their trip page{% if average %}, averaging {{ average|floatformat:1 }} out of 5{% endif %}.
+{% if low_rows %}
+Low ratings (1 or 2 stars):
+{% for r in low_rows %}  {{ r.quote_no }} · {{ r.customer }} · {{ r.rating }} of 5{% if r.comment %}
+    "{{ r.comment }}"{% endif %}
+    {{ r.url }}
+{% endfor %}{% endif %}
+Every order:
+{% for r in rows %}  {{ r.quote_no }} · {{ r.customer }} · finished {{ r.finished }} · {{ r.trips }} trip{{ r.trips|pluralize }}
+    Review request: {{ r.asked }} · {{ r.review }} · Trip page rating: {% if r.rating %}{{ r.rating }} of 5{% else %}none{% endif %}
+{% endfor %}
+--
+{{ company_name }}
+{% endautoescape %}

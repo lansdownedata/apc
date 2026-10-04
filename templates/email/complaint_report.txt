@@ -1,0 +1,15 @@
+{% autoescape off %}{{ rows|length }} new customer complaint{{ rows|length|pluralize }} since {{ since|date:"D M j, g:i A" }}
+{% for r in rows %}
+  {{ r.quote_no }} · {{ r.customer }} · {{ r.severity }}{% if r.resolved %} · resolved{% endif %}
+    Trip {{ r.trip }} · {{ r.covered_by }}
+    "{{ r.note }}"{% if r.logged_by %}
+    Logged by {{ r.logged_by }}{% endif %}
+    {{ r.url }}
+{% endfor %}
+Incidents since the last report: {% for label, n in stats.new_by_kind %}{{ label }} {{ n }}{% if not forloop.last %}, {% endif %}{% endfor %}
+Open now: {{ stats.open_issues }} issue{{ stats.open_issues|pluralize }}, {{ stats.open_complaints }} of them complaint{{ stats.open_complaints|pluralize }}
+Complaints in the last 30 days: {{ stats.complaints_30d }}
+
+--
+{{ company_name }}
+{% endautoescape %}

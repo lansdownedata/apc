@@ -1,0 +1,27 @@
+{% extends "email/base_email.html" %}
+{% block subject %}{{ rows|length }} new customer complaint{{ rows|length|pluralize }}{% endblock %}
+{% block preheader %}Logged in trip reviews since {{ since|date:"D M j, g:i A" }}.{% endblock %}
+{% block content %}
+<p style="margin:0 0 6px;font-size:17px;color:#17191D;">{{ rows|length }} new customer complaint{{ rows|length|pluralize }}</p>
+<p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">Logged in trip reviews since {{ since|date:"D M j, g:i A" }}. Oldest first.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;margin-bottom:22px;">
+  <tr style="color:#6b7280;text-align:left;">
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Order</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">Trip</th>
+    <th style="padding:6px 8px;border-bottom:1px solid #E7E3DA;">What happened</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;"><a href="{{ r.url }}" style="color:#8A6D1F;font-weight:600;">{{ r.quote_no }}</a><br><span style="color:#17191D;">{{ r.customer }}</span></td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">{{ r.trip }}<br><span style="color:#6b7280;">{{ r.covered_by }}</span></td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;"><strong style="color:{% if r.severity == 'High' %}#b91c1c{% else %}#17191D{% endif %};">{{ r.severity }}</strong>{% if r.resolved %} <span style="color:#047857;">· resolved</span>{% endif %}<br><span style="color:#4b5563;">"{{ r.note }}"</span>{% if r.logged_by %}<br><span style="color:#6b7280;">Logged by {{ r.logged_by }}</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#17191D;">Incident numbers</p>
+<p style="margin:0;font-size:13px;color:#4b5563;line-height:1.7;">
+  Since the last report: {% for label, n in stats.new_by_kind %}{{ label }} <strong style="color:#17191D;">{{ n }}</strong>{% if not forloop.last %}, {% endif %}{% endfor %}<br>
+  Open now: <strong style="color:#17191D;">{{ stats.open_issues }}</strong> issue{{ stats.open_issues|pluralize }}, {{ stats.open_complaints }} of them complaint{{ stats.open_complaints|pluralize }}<br>
+  Complaints in the last 30 days: <strong style="color:#17191D;">{{ stats.complaints_30d }}</strong>
+</p>
+{% endblock %}

@@ -122,10 +122,6 @@ def _entered_post_trip(facts: LeadFacts, reservation) -> bool:
     return reservation.pk in facts.post_trip_ids
 
 
-def _low_feedback(facts: LeadFacts, reservation: object) -> bool:
-    return facts.feedback is not None and facts.feedback.is_low
-
-
 def _has_complaint(facts: LeadFacts, reservation: object) -> bool:
     return facts.has_complaint
 
@@ -428,15 +424,6 @@ REGISTRY: tuple[TaskKind, ...] = (
         due=AfterLastPickup(),
         post_trip=True,
         opens_after=("thank_you_sent",),
-    ),
-    TaskKind(
-        # APC-63. The customer rated the order 2 or less on the trip page.
-        key="feedback_followup",
-        label="Follow up on low feedback",
-        department=_D.CUSTOMER_SERVICE,
-        level=Level.ORDER,
-        due=AfterOpen(hours=24),  # PLACEHOLDER
-        applies=_low_feedback,
     ),
     TaskKind(
         # APC-62. A complaint was logged on a trip review; the review request is held

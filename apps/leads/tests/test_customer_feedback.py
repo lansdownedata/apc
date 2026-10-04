@@ -139,21 +139,16 @@ def test_a_rating_outside_one_to_five_is_refused(client, rating):
     assert not CustomerFeedback.objects.exists()
 
 
-# --- the follow-up task --------------------------------------------------------------
+# --- no follow-up task: low ratings are read in the customer review report ------------
 
 
-@pytest.mark.parametrize(("rating", "opens"), [(1, True), (2, True), (3, False), (5, False)])
-def test_a_low_rating_opens_a_customer_service_follow_up(client, rating, opens):
+@pytest.mark.parametrize("rating", [1, 2, 5])
+def test_a_rating_opens_no_task(client, rating):
     lead = _order(status=Reservation.TripStatus.DONE)
 
     _post(client, lead, rating)
 
-    task = Task.objects.filter(lead=lead, kind="feedback_followup").first()
-    assert (task is not None) is opens
-    if task:
-        assert task.department == "customer_service"
-        assert task.reservation is None
-        assert task.status == Task.Status.OPEN
+    assert not Task.objects.filter(lead=lead, kind="feedback_followup").exists()
 
 
 def test_the_workspace_and_order_page_show_the_feedback(client):

@@ -577,8 +577,9 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
         reason = _review_hold_reason(lead)
         if reason:
             _mark(tp, status=TouchPoint.Status.CANCELLED, error=f"Review request held: {reason}")
-            # The follow-up is a task (complaint_followup / feedback_followup); make sure
-            # it exists now rather than on the next run-tasks tick.
+            # A complaint's follow-up is a task (complaint_followup); make sure it exists
+            # now rather than on the next run-tasks tick. A low rating has no task — it is
+            # picked up by the customer review report.
             from apps.tasks import services as tasks
 
             tasks.sync(lead)

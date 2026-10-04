@@ -153,6 +153,7 @@ class TaskConfigForm(forms.ModelForm):
             "overtime_grace_minutes",
             "future_booking_offset_days",
             "digest_emails",
+            "report_emails",
         ]
         widgets = {
             "sales_owner": forms.Select(attrs=_OWNER),
@@ -166,6 +167,7 @@ class TaskConfigForm(forms.ModelForm):
             "overtime_grace_minutes": forms.NumberInput(attrs=_NUM),
             "future_booking_offset_days": forms.NumberInput(attrs=_NUM),
             "digest_emails": forms.Textarea(attrs=_AREA),
+            "report_emails": forms.Textarea(attrs=_AREA),
         }
 
     def __init__(self, *args, **kwargs):
