@@ -49,7 +49,10 @@ def _send(template: str, subject: str, context: dict, config: TaskConfig) -> Non
             "%s: nobody to send to — set report recipients in Settings → Tasks", template
         )
     for recipient in recipients:
-        if not send_html_email(to=recipient, subject=subject, template=template, context=context):
+        sent = send_html_email(
+            to=recipient, subject=subject, template=template, context=context, internal=True
+        )
+        if not sent:
             logger.warning("%s: delivery to %s failed", template, recipient)
 
 

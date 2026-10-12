@@ -249,3 +249,25 @@ def test_reports_fall_back_to_the_digest_recipients():
     reports.send_complaint_report()
 
     assert mail.outbox[0].to == ["ops@allprocharter.com"]
+
+
+# --- the go-live switch (APC-90) --------------------------------------------------------
+
+
+def test_the_review_report_still_reaches_the_office_before_go_live(settings):
+    settings.OUTBOUND_ENABLED = False
+    _order(name="Dana Reyes")
+
+    reports.send_review_report()
+
+    assert [m.to for m in mail.outbox] == [["owner@allprocharter.com"]]
+
+
+def test_the_complaint_report_still_reaches_the_office_before_go_live(settings):
+    settings.OUTBOUND_ENABLED = False
+    _, trip = _order(name="Dana Reyes")
+    _complain(trip)
+
+    reports.send_complaint_report()
+
+    assert [m.to for m in mail.outbox] == [["owner@allprocharter.com"]]
