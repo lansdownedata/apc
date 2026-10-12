@@ -13,7 +13,7 @@
         @click="$dispatch('drawer-open', { url: '{% url 'dispatch_assign_panel' res.pk %}' })"
         class="inline-flex items-center gap-1.5 rounded-full focus-gold transition-opacity hover:opacity-80"
         title="{% if res.active %}{{ res.active.provider_name }} — change coverage{% else %}Assign a driver or farm this trip out{% endif %}">
-  {% include "dispatch/_coverage_badge.html" with coverage=res.coverage %}
+  {% include "dispatch/_coverage_badge.html" with coverage=res.coverage_state %}
   {% if res.active %}
     <span class="inline-flex items-center gap-1 text-[11.5px] text-muted">
       {% comment %} Same two glyphs the board's DRIVER and AFFILIATE columns use. {% endcomment %}

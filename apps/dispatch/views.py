@@ -216,6 +216,7 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
         "trip": trip,
         "assignment": assignment,
         "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
+        "coverage_state": selectors.coverage_state(trip, assignment),
         "previewed": selectors.offer_was_previewed(assignment),
         # `_claim` refuses anything but a booked lead, so don't offer the controls at all.
         "can_assign": trip.lead.status == Lead.Status.BOOKED,

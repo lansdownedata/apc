@@ -381,3 +381,85 @@ def test_board_names_the_driver_with_a_house_icon(logged_in_client):
     assert "Marcus Bell" in body
     assert "ti-home" in body  # house glyph in the DRIVER column
     assert ">DRIVER<" in body
+
+
+# --- assigned, then dispatched (APC-88) ---
+# Our own driver is assigned the moment the dispatcher picks them, but nothing has gone to
+# the driver yet — "Confirmed" read as done. Dispatched is the step after, set by hand with
+# the drawer's Dispatched button (Reservation.trip_status).
+
+
+def _row(body, trip):
+    return re.search(rf'<tr data-trip="{trip.pk}".*?</tr>', body, re.DOTALL).group(0)
+
+
+def test_an_in_house_trip_is_assigned_until_it_is_dispatched():
+    from apps.reservations.models import Reservation
+
+    trip = _trip()
+    a = services.assign_in_house(trip, DriverFactory())
+    assert selectors.coverage_state(trip, a) == "assigned"
+    trip.trip_status = Reservation.TripStatus.DISPATCHED
+    assert selectors.coverage_state(trip, a) == "dispatched"
+    trip.trip_status = Reservation.TripStatus.ON_THE_WAY
+    assert selectors.coverage_state(trip, a) == "dispatched"
+
+
+def test_a_farmed_out_trip_keeps_offered_and_confirmed():
+    trip = _trip()
+    a = services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
+    assert selectors.coverage_state(trip, a) == "confirmed"
+    assert selectors.coverage_state(trip, None) == "uncovered"
+
+
+def test_the_board_shows_assigned_then_dispatched_for_our_own_driver(logged_in_client):
+    from apps.reservations.models import Reservation
+
+    day = timezone.localdate() + timedelta(days=30)
+    trip = _trip(pickup_date=day)
+    services.assign_in_house(trip, DriverFactory(name="Marcus Bell"))
+
+    def badge() -> str:
+        body = logged_in_client.get(reverse("dispatch_board"), {"day": day.isoformat()})
+        return re.sub(r"\s+", " ", _row(body.content.decode(), trip))
+
+    assert "Assigned </span>" in badge() and "Confirmed" not in badge()
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.DISPATCHED)
+    assert "Dispatched </span>" in badge() and "Confirmed" not in badge()
+
+
+def test_the_board_still_counts_an_assigned_trip_as_covered(logged_in_client):
+    """Assigned / Dispatched are what the pill says, never a new bucket: the board's
+    filters and counts keep grouping on uncovered / offered / confirmed."""
+    day = timezone.localdate() + timedelta(days=30)
+    trip = _trip(pickup_date=day)
+    services.assign_in_house(trip, DriverFactory())
+
+    body = logged_in_client.get(reverse("dispatch_board"), {"day": day.isoformat()})
+
+    assert 'data-coverage="confirmed"' in _row(body.content.decode(), trip)
+
+
+def test_the_drawer_says_assigned_for_our_own_driver(logged_in_client):
+    trip = _trip()
+    services.assign_in_house(trip, DriverFactory(name="Marcus Bell"))
+    body = _panel(logged_in_client, trip)
+    assert "Assigned · In-house" in body
+    assert "Confirmed" not in body
+
+
+def test_the_editor_draws_the_same_state_as_the_drawer(logged_in_client):
+    """One fragment feeds both, so the editor cannot say Confirmed while the drawer says
+    Assigned."""
+    trip = _trip()
+    services.assign_in_house(trip, DriverFactory())
+    body = logged_in_client.get(reverse("dispatch_coverage_controls", args=[trip.pk]))
+    assert "Assigned · In-house" in body.content.decode()
+
+
+def test_the_order_page_chip_says_assigned_for_our_own_driver(logged_in_client):
+    trip = _trip()
+    services.assign_in_house(trip, DriverFactory(name="Marcus Bell"))
+    body = logged_in_client.get(reverse("order_detail", args=[trip.lead_id])).content.decode()
+    assert re.search(r"Assigned\s*</span>", body)
+    assert not re.search(r"Confirmed\s*</span>", body)

@@ -11,7 +11,7 @@
     <span class="font-mono2 text-[12.5px] font-semibold text-goldd bg-goldl ring-1 ring-gold/25 px-2 py-0.5 rounded-lg num">
       #{{ trip.la_confirmation|default:trip.pk }}
     </span>
-    {% include "dispatch/_coverage_badge.html" with coverage=coverage %}
+    {% include "dispatch/_coverage_badge.html" with coverage=coverage_state %}
     {% include "components/green_lit_pill.html" %}
     {% comment %} The same editor the quote and the order page open — the board mounts it
        once and it fetches this trip's draft when asked (reservation_draft). {% endcomment %}

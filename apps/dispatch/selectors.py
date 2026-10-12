@@ -23,6 +23,18 @@ _TIER_RANK = {DispatchException.Tier.WARNING: 1, DispatchException.Tier.CRITICAL
 COVERAGE_UNCOVERED = "uncovered"
 COVERAGE_OFFERED = "offered"
 COVERAGE_CONFIRMED = "confirmed"
+# Display-only states for our own drivers (APC-88) — never buckets: the board's filters and
+# counts still group on uncovered / offered / confirmed.
+COVERAGE_ASSIGNED = "assigned"
+COVERAGE_DISPATCHED = "dispatched"
+_DISPATCHED_ONWARD = (
+    Reservation.TripStatus.DISPATCHED,
+    Reservation.TripStatus.ON_THE_WAY,
+    Reservation.TripStatus.CIRCLING,
+    Reservation.TripStatus.ARRIVED,
+    Reservation.TripStatus.CUSTOMER_IN_CAR,
+    Reservation.TripStatus.DONE,
+)
 
 # A cancelled trip needs no coverage, so it would otherwise sit in the "uncovered" count
 # forever. `Reservation.is_cancelled` is a property over TRIP_PHASE_BY_STATUS and can't be
@@ -49,6 +61,21 @@ def confirmed_assignment(reservation: Reservation) -> Assignment | None:
     return None
 
 
+def coverage_state(trip: Reservation, active: Assignment | None) -> str:
+    """What the coverage pill says for this trip.
+
+    An in-house driver is assigned the moment the dispatcher picks them, but nothing has
+    reached the driver yet — so the pill reads Assigned, then Dispatched once the trip's
+    status says so (the drawer's Dispatched button). Farm-outs keep Offered / Confirmed:
+    there, Confirmed is the affiliate's own answer.
+    """
+    if active is None:
+        return COVERAGE_UNCOVERED
+    if active.is_in_house and active.status == Assignment.Status.CONFIRMED:
+        return COVERAGE_DISPATCHED if trip.trip_status in _DISPATCHED_ONWARD else COVERAGE_ASSIGNED
+    return active.status
+
+
 def coverage_prefetch(lookup: str = "assignments") -> Prefetch:
     """The active-assignment prefetch that `attach_coverage` reads.
 
@@ -65,7 +92,7 @@ def coverage_prefetch(lookup: str = "assignments") -> Prefetch:
 
 
 def attach_coverage(reservations) -> list[Reservation]:
-    """Decorate prefetched trips with `.active` and `.coverage`.
+    """Decorate prefetched trips with `.active`, `.coverage` and `.coverage_state`.
 
     Coverage is derived from the active assignment rather than stored on the trip, so a
     declined offer puts the trip straight back in the uncovered bucket with no cleanup.
@@ -75,6 +102,7 @@ def attach_coverage(reservations) -> list[Reservation]:
     for trip in trips:
         trip.active = trip.active_list[0] if trip.active_list else None
         trip.coverage = trip.active.status if trip.active else COVERAGE_UNCOVERED
+        trip.coverage_state = coverage_state(trip, trip.active)
     return trips
 
 

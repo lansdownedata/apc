@@ -20,7 +20,7 @@
   Requires views.coverage_context(trip).
 {% endcomment %}
 {% if can_assign %}
-<div x-data="coverageControls({ mode: '{% if has_roster %}in_house{% else %}farm_out{% endif %}' })"
+<div data-cover-pick class="scroll-mt-20" x-data="coverageControls({ mode: '{% if has_roster %}in_house{% else %}farm_out{% endif %}' })"
      @change="onPick($event)">
   {% if assignment %}
     {% comment %} Reassign sits on the Coverage header, not down with the offer replies: it
@@ -39,7 +39,7 @@
         {% if assignment.is_in_house %}<span class="num">{{ assignment.driver.driver_number }}</span> · {{ assignment.driver.name }}{% if assignment.vehicle %} · {{ assignment.vehicle.name }}{% endif %}{% else %}{{ assignment.vendor.name }}{% endif %}
       </p>
       <p class="text-[12px] text-muted mt-0.5">
-        {{ assignment.get_status_display }} · {% if assignment.is_in_house %}In-house{% else %}{{ assignment.get_channel_display }}{% endif %}
+        {% if assignment.is_in_house %}{{ coverage_state|capfirst }} · In-house{% else %}{{ assignment.get_status_display }} · {{ assignment.get_channel_display }}{% endif %}
       </p>
       {% if previewed %}
         <p class="text-[11.5px] text-rose-600 mt-1">

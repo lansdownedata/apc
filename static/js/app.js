@@ -140,7 +140,7 @@ function drawer() {
     /* Set when an action inside changed what the page behind shows, but the drawer stayed
      * open to carry on (a reassign). Closing then re-reads the page instead. */
     stale: false,
-    async load(url, stale = false) {
+    async load(url, stale = false, scrollTo = "") {
       this.stale = this.stale || stale;
       this.body = '<p class="text-muted text-[13px]">Loading…</p>';
       this.open = true;
@@ -150,7 +150,12 @@ function drawer() {
         this.body = await resp.text();
         // The panel carries the shared coverage fragment, whose pickers are Tom Selects.
         // Injected markup missed initTomSelects on page load, so it has to run here.
-        this.$nextTick(() => initTomSelects(this.$root));
+        this.$nextTick(() => {
+          initTomSelects(this.$root);
+          // Land on the part of the fragment the caller asked for, not the top of it.
+          const el = scrollTo && this.$root.querySelector(scrollTo);
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
       } catch (e) {
         this.body = "";
         this.open = false;
@@ -195,7 +200,7 @@ function assignPanel(panelUrl = "") {
       } else if (extra && extra.action === "withdraw" && panelUrl) {
         // Reassign means "pick someone else", so stay on this trip: put its now-unassigned
         // panel back in the drawer. The page behind catches up when the drawer closes.
-        window.dispatchEvent(new CustomEvent("drawer-open", { detail: { url: panelUrl, stale: true } }));
+        window.dispatchEvent(new CustomEvent("drawer-open", { detail: { url: panelUrl, stale: true, scrollTo: "[data-cover-pick]" } }));
         Alpine.store("toast").push({ type: "success", title: "Unassigned — pick who covers it" });
       } else {
         window.location.reload();

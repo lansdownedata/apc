@@ -210,3 +210,19 @@ def test_the_panel_knows_its_own_url(client, agent):
     a = _assignment()
     body = client.get(reverse("dispatch_assign_panel", args=[a.reservation_id])).content.decode()
     assert f"assignPanel('{reverse('dispatch_assign_panel', args=[a.reservation_id])}')" in body
+
+
+def test_after_a_reassign_the_drawer_scrolls_to_choosing_who_covers_it(client, agent):
+    """The pick-someone-else controls sit below the trip sheet, off-screen on a laptop."""
+    from pathlib import Path as _P
+
+    js = (_P(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    send = js[js.index("async send(url, extra)") :][:1600]
+    assert 'scrollTo: "[data-cover-pick]"' in send
+    start = js.index("function drawer()")
+    drawer = js[start : js.index("window.drawer = drawer", start)]
+    assert "scrollIntoView" in drawer
+    trip = _assignment().reservation
+    trip.assignments.update(status=Assignment.Status.WITHDRAWN)
+    body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+    assert "data-cover-pick" in body
