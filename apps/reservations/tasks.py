@@ -40,7 +40,11 @@ def send_unconfirmed_trip_report(today=None) -> int:
         )
     for recipient in settings.TRIP_CONFIRM_REPORT_EMAILS:
         sent = send_html_email(
-            to=recipient, subject=subject, template="unconfirmed_trips", context=context
+            to=recipient,
+            subject=subject,
+            template="unconfirmed_trips",
+            context=context,
+            internal=True,
         )
         if not sent:
             logger.warning("unconfirmed-trips report: delivery to %s failed", recipient)

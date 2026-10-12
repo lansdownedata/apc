@@ -15,6 +15,8 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
+from apps.core import outbound
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,7 @@ def send_html_email(
     template: str,
     context: dict,
     inline_images: dict[str, str] | None = None,
+    internal: bool = False,
 ) -> bool:
     """Render `templates/email/{template}.txt` + `.html` and send both parts.
 
@@ -33,10 +36,15 @@ def send_html_email(
     message and referenced from the HTML as `cid:<key>`, so it renders without a remote
     fetch (email clients block remote images by default). Returns True when the message
     was handed to the backend; never raises — delivery is best-effort.
+
+    Nothing is sent while the go-live switch is off (APC-90) unless `internal` says the
+    recipient is one of our own staff.
     """
     recipient = (to or "").strip()
     if not recipient:
         logger.warning("email %r not sent: no recipient", template)
+        return False
+    if not outbound.allowed(kind=f"email {template!r}", recipient=recipient, internal=internal):
         return False
 
     try:

@@ -269,6 +269,12 @@
       </div>
     </header>
 
+    {% if not outbound_enabled %}
+    <div role="status" class="shrink-0 px-4 sm:px-6 py-1.5 text-[12.5px] font-medium" style="background:rgb(var(--warn-soft)); color:rgb(var(--warn));">
+      Outbound messaging is off. Customers and affiliates receive nothing; staff reports still send.
+    </div>
+    {% endif %}
+
     <!-- view container -->
     <main class="flex-1 relative overflow-y-auto">
       {% block content %}{% endblock %}

@@ -100,6 +100,7 @@ def _send_invite_email(user: User) -> bool:
             "company_email": settings.COMPANY_EMAIL,
             "company_phone": settings.COMPANY_PHONE,
         },
+        internal=True,
     )
 
 

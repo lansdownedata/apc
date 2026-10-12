@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.contacts.models import Contact
+from apps.core import outbound
 from apps.core.phone import to_e164
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
@@ -494,6 +495,8 @@ def vendor_driver_create(request: HttpRequest, pk: int) -> JsonResponse:
 def cancel_notice(request: HttpRequest, pk: int) -> JsonResponse:
     """Send the affiliate the "this trip is off" note, on the dispatcher's say-so."""
     assignment = get_object_or_404(Assignment.objects.select_related("vendor"), pk=pk)
+    if not outbound.enabled():
+        return JsonResponse({"ok": False, "error": outbound.OFF_MESSAGE}, status=409)
     if not services.send_cancellation(assignment):
         return JsonResponse(
             {"ok": False, "error": "No email on file for that affiliate — call them."},

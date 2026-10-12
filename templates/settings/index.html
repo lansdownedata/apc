@@ -102,6 +102,18 @@
         {% if notifications_on %}Messaging on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Messaging off</span>{% endif %}
       </p>
     </a>
+    <div class="card p-4">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-send text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Go-live switch</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        Whether anything reaches a customer or an affiliate. Staff reports and alerts send either way. Turned on once, at go-live, by your developer.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">
+        {% if outbound_enabled %}Live{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Not live</span>{% endif %}
+      </p>
+    </div>
   </div>
 </div>
 {% endblock %}

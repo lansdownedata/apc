@@ -25,6 +25,12 @@ whole pytest process, so the public site's per-IP throttle counters leak from on
 into the next — a test that POSTs a few bookings silently spends another file's budget,
 and the victim fails only when the suite runs in a particular order. Clearing between
 tests makes those counters mean what each test thinks they mean.
+
+Autouse: the go-live switch is ON for the suite (APC-90). `OUTBOUND_ENABLED` defaults to
+False everywhere else, and with it off every customer and affiliate send is refused — which
+is right for a portal that is not live, and wrong for a suite whose job is to prove what
+those sends say. The tests about the switch itself turn it back off via the `settings`
+fixture (see `apps/core/tests/test_outbound.py`).
 """
 
 import pytest
@@ -39,6 +45,11 @@ def _blank_aviationstack_key(settings):
 @pytest.fixture(autouse=True)
 def _blank_locationiq_key(settings):
     settings.LOCATIONIQ_API_KEY = ""
+
+
+@pytest.fixture(autouse=True)
+def _outbound_on(settings):
+    settings.OUTBOUND_ENABLED = True
 
 
 @pytest.fixture(autouse=True)

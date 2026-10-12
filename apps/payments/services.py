@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.core import outbound
 from apps.core.choices import Account
 from apps.messaging import touchpoints
 from apps.messaging.models import TouchPoint
@@ -859,6 +860,8 @@ def send_pay_link(lead, *, base_url: str, sender_name: str) -> str:
     from apps.messaging import services as messaging_services
     from apps.messaging.models import Message
 
+    if not outbound.enabled():
+        raise PaymentError(outbound.OFF_MESSAGE)
     contact = lead.contact
     if contact.phone:
         channel, identifier = "sms", contact.phone

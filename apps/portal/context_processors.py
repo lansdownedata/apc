@@ -5,6 +5,7 @@ from pathlib import Path
 from django.conf import settings
 from django.utils.functional import SimpleLazyObject
 
+from apps.core import outbound
 from apps.core.us_states import US_STATES
 from apps.messaging.models import Conversation, Message
 from apps.notifications.models import Notification
@@ -114,4 +115,6 @@ def chrome(request):
         "private_airline_id": SimpleLazyObject(_private_airline_id),
         "flight_verify_enabled": bool(settings.AVIATIONSTACK_API_KEY),
         "default_cost_ratio_pct": SimpleLazyObject(_default_cost_ratio_pct),
+        # The go-live switch (APC-90): off, the shell says so on every staff page.
+        "outbound_enabled": outbound.enabled(),
     }

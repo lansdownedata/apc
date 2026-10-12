@@ -6,6 +6,7 @@ from datetime import datetime, time
 from django.conf import settings
 from django.utils import timezone
 
+from apps.core import outbound
 from apps.integrations import podium
 from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Podium calls the SMS channel "phone" (apps/messaging/views.py does the same mapping).
 PODIUM_CHANNEL = {"sms": "phone", "email": "email"}
+
+# Why a due row was closed unsent while the go-live switch was off (APC-90).
+OUTBOUND_OFF = "outbound messaging off"
 
 _QUOTE_KINDS = (
     TouchPoint.Kind.TP3_QUOTE_SENT_SMS,
@@ -694,27 +698,38 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
 
 
 def run_touchpoints() -> int:
-    """Send every due SCHEDULED touch-point. Returns the count SENT."""
+    """Send every due SCHEDULED touch-point. Returns the count SENT.
+
+    With the engine on but the go-live switch off (APC-90), each due row is closed as
+    SKIPPED with the reason rather than left SCHEDULED: left alone they would pile up and
+    all send at once, weeks stale, the moment the switch flips. Rows not yet due are
+    untouched, so whatever falls due after go-live sends normally.
+    """
     if not settings.TOUCHPOINTS_ENABLED:
         return 0
 
-    due = (
-        TouchPoint.objects.filter(
-            status=TouchPoint.Status.SCHEDULED, scheduled_for__lte=timezone.now()
+    due = TouchPoint.objects.filter(
+        status=TouchPoint.Status.SCHEDULED, scheduled_for__lte=timezone.now()
+    )
+    if not outbound.enabled():
+        held = due.update(
+            status=TouchPoint.Status.SKIPPED, error=OUTBOUND_OFF, updated_at=timezone.now()
         )
-        .select_related(
-            "lead",
-            "lead__contact",
-            "reservation",
-            "reservation__vehicle",
-            "reservation__service_type",
-        )
-        .prefetch_related(
-            "reservation__stops",
-            "reservation__assignments__vendor",
-            "reservation__assignments__driver",
-            "reservation__assignments__vehicle",
-        )
+        if held:
+            logger.info("outbound off: %d due touch-point(s) skipped, not sent", held)
+        return 0
+
+    due = due.select_related(
+        "lead",
+        "lead__contact",
+        "reservation",
+        "reservation__vehicle",
+        "reservation__service_type",
+    ).prefetch_related(
+        "reservation__stops",
+        "reservation__assignments__vendor",
+        "reservation__assignments__driver",
+        "reservation__assignments__vehicle",
     )
 
     cfg = _config()

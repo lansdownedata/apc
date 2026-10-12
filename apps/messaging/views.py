@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.core import outbound
 from apps.core.choices import Channel
 from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
@@ -124,6 +125,8 @@ def inbox(request):
 def inbox_send(request, pk: int) -> JsonResponse:
     """Send an outbound SMS/email through Podium and record the Message row."""
     conversation = get_object_or_404(Conversation.objects.select_related("contact"), pk=pk)
+    if not outbound.enabled():
+        return JsonResponse({"ok": False, "error": outbound.OFF_MESSAGE}, status=409)
     try:
         payload = json.loads(request.body or b"{}")
     except (ValueError, TypeError):

@@ -17,6 +17,7 @@ from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.utils import timezone
 
+from apps.core import outbound
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead
 from apps.notifications.email import send_html_email
@@ -171,6 +172,12 @@ def send_offer(
     network hiccup, and should fail loudly rather than be swallowed.
     """
     channel = Assignment.Channel.GNET if vendor.is_gnet_capable else Assignment.Channel.MANUAL
+    if channel == Assignment.Channel.MANUAL and vendor.email and not outbound.enabled():
+        # An emailed offer the affiliate never receives is a trip that looks covered and
+        # is not. Refuse before the claim; coverage arranged by phone goes through Assign.
+        raise AssignmentError(
+            f"{outbound.OFF_MESSAGE} Use Assign to record coverage arranged by phone."
+        )
     assignment = _claim(
         reservation,
         vendor=vendor,

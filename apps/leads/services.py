@@ -21,6 +21,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.core import outbound
 from apps.integrations import podium
 from apps.messaging import touchpoints
 from apps.notifications.email import send_html_email
@@ -188,6 +189,8 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     selected = channels or {"email", "sms"}
 
     # 1. preconditions — nothing is written on failure
+    if not outbound.enabled():
+        return SendQuoteResult(ok=False, http_status=409, error=outbound.OFF_MESSAGE)
     if lead.status == lead.Status.LOST:
         return SendQuoteResult(
             ok=False,

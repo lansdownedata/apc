@@ -11,6 +11,8 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 
+from apps.core import outbound
+
 from . import services
 from .models import PodiumCredential
 
@@ -109,9 +111,20 @@ def user_name_map(*, refresh: bool = False) -> dict[str, str]:
 
 
 def send_message(
-    *, identifier: str, body: str, channel_type: str = "phone", location_uid: str | None = None
+    *,
+    identifier: str,
+    body: str,
+    channel_type: str = "phone",
+    location_uid: str | None = None,
+    internal: bool = False,
 ) -> dict:
-    """Send an SMS/email through Podium (requires the write_messages scope)."""
+    """Send an SMS/email through Podium (requires the write_messages scope).
+
+    Refused with `OutboundDisabled` while the go-live switch is off (APC-90), unless
+    `internal` says the recipient is one of our own staff.
+    """
+    if not outbound.allowed(kind=f"podium {channel_type}", recipient=identifier, internal=internal):
+        raise outbound.OutboundDisabled
     return _request(
         "POST",
         "/messages",
@@ -132,7 +145,11 @@ def create_review_invitation(
     documented best-guess (Podium's `review_invitecreate` reference page isn't
     machine-readable) — probe this against the connected test account before relying on
     it in prod and correct path/body/response keys if the guess is off.
+
+    Always a customer, so always behind the go-live switch (APC-90).
     """
+    if not outbound.allowed(kind="podium review invitation", recipient=phone):
+        raise outbound.OutboundDisabled
     return _request(
         "POST",
         "/review_invitations",

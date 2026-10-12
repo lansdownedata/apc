@@ -226,7 +226,11 @@ def send_unpaid_deposit_report(today=None) -> int:
         )
     for recipient in settings.DEPOSIT_REPORT_EMAILS:
         sent = send_html_email(
-            to=recipient, subject=subject, template="deposit_report", context=context
+            to=recipient,
+            subject=subject,
+            template="deposit_report",
+            context=context,
+            internal=True,
         )
         if not sent:
             logger.warning("deposit report: delivery to %s failed", recipient)

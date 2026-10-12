@@ -144,7 +144,13 @@ def _maybe_send_digest(config: TaskConfig, tasks: list[Task], now) -> bool:
     }
     subject = f"{n} overdue task{'s' if n != 1 else ''}"
     for recipient in config.digest_list:
-        send_html_email(to=recipient, subject=subject, template="task_digest", context=context)
+        send_html_email(
+            to=recipient,
+            subject=subject,
+            template="task_digest",
+            context=context,
+            internal=True,
+        )
     TaskConfig.objects.filter(pk=config.pk).update(digest_sent_on=today)
     config.digest_sent_on = today
     log.info("task digest: %d overdue task(s) sent for %s", n, today)

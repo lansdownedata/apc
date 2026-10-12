@@ -248,7 +248,11 @@ def _raise_alerts(cfg: DispatchAlertConfig, excs: list[DispatchException], now) 
     }
     for recipient in cfg.email_list:
         send_html_email(
-            to=recipient, subject=subject, template="dispatch_exceptions", context=context
+            to=recipient,
+            subject=subject,
+            template="dispatch_exceptions",
+            context=context,
+            internal=True,
         )
 
     # (c) SMS — critical tier only
@@ -271,6 +275,6 @@ def _text_critical(numbers: list[str], critical: list[DispatchException]) -> Non
         body += f"\n• #{exc.reservation_id} {exc.get_kind_display()} — {who}"
     for number in numbers:
         try:
-            podium.send_message(identifier=number, body=body, channel_type="phone")
+            podium.send_message(identifier=number, body=body, channel_type="phone", internal=True)
         except Exception:
             log.exception("dispatch monitor: SMS to %s failed", number)
