@@ -145,3 +145,14 @@ def test_an_agent_without_payments_access_can_still_copy_a_trip(client):
     body = client.get(reverse("order_detail", args=[order.pk])).content.decode()
 
     assert f"duplicateReservation({trip.pk})" in body
+
+
+def test_the_duplicate_picker_does_not_call_an_order_a_quote():
+    """The same picker opens from the quote and from a booked order (APC-87)."""
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function duplicateReservation")
+    picker = js[start : js.index("window.duplicateReservation", start)]
+    assert "Duplicate reservation" in picker
+    assert "to the quote" not in picker

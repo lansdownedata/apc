@@ -1539,7 +1539,7 @@ function duplicateReservation(pk) {
     title: "Duplicate reservation",
     confirmText: "Duplicate",
     html: `
-      <p class="text-[13px] leading-relaxed">Add copies of this trip to the quote — a wedding
+      <p class="text-[13px] leading-relaxed">Add copies of this trip — a wedding
       shuttle running several identical vehicles, say. Each copy stays independently editable.</p>
       <div class="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Number of copies">
         ${[1, 2, 3, 5].map(chip).join("\n            ")}
