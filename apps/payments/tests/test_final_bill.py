@@ -183,6 +183,22 @@ def test_an_unfinished_review_is_not_approved_overtime():
     assert services.remaining_balance(lead) == Decimal("0.00")
 
 
+def test_the_final_bill_overtime_uses_the_discounted_rate_like_the_review_screen():
+    """The review screen bills overtime at `discounted_rate` (client, 2026-10-18); the
+    final bill has to add the same number, or Total due disagrees with the pane."""
+    lead, _plan, (trip,) = _order()
+    trip.discount_pct = Decimal("10")
+    trip.save()
+    _review(trip, 60)  # $200/h less 10% = $180 for the hour; 20% gratuity = $36
+
+    bill = services.final_bill(lead)
+
+    assert bill.overtime_base == Decimal("180.00")
+    assert bill.overtime_gratuity == Decimal("36.00")
+    # Remaining reads `approved_overtime`, a second path to the same number.
+    assert services.remaining_balance(lead) == Decimal("216.00")
+
+
 # --- refused until ready -------------------------------------------------------------
 
 

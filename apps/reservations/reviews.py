@@ -566,7 +566,7 @@ def approved_overtime(lead) -> tuple[Decimal, Decimal]:
         if review.overtime_waived or not review.billable_overtime_minutes:
             continue
         trip = review.reservation
-        amount = _money(review.billable_overtime_minutes, Decimal(trip.rate or 0))
+        amount = _money(review.billable_overtime_minutes, trip.discounted_rate)
         base += amount
         gratuity += overtime_gratuity(trip, amount)
     return base, gratuity
