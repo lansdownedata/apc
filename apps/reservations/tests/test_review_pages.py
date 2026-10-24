@@ -172,7 +172,20 @@ def test_the_trip_review_shows_both_panes_in_the_trips_zone(staff):
     assert "Affiliate overtime" in body and "Expected to pay" in body
     assert "Approve payable" not in body  # a plain agent can't approve
     assert "PDT" in body or "PST" in body
-    assert "client to confirm" in body
+    # APC-91: the rule is the client's now; the chip states the grace, not a caveat.
+    assert "client to confirm" not in body
+    assert "15-min grace · full hours" in body
+    assert "Over by" in body
+
+
+def test_a_transfer_review_labels_the_wait_not_the_overrun(staff):
+    _lead, trip = _order()
+    Reservation.objects.filter(pk=trip.pk).update(trip_type=Reservation.TripType.TRANSFER)
+
+    body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "Waited" in body
+    assert "Over by" not in body
 
 
 def test_an_in_house_trip_shows_driver_pay_and_no_payable(staff):

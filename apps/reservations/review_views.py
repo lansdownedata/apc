@@ -30,7 +30,7 @@ from apps.payments import payables
 from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
-from apps.tasks.models import Task, TaskConfig
+from apps.tasks.models import Task
 
 from . import review_queue, reviews
 from .models import Reservation, Stop, TripIssue
@@ -185,7 +185,6 @@ def trip_review_trip(request: HttpRequest, pk: int) -> HttpResponse:
             "invoice_form": PayableInvoiceForm(instance=payable) if payable else None,
             "can_pay": request.user.has_payments_access,
             "paid_methods": AffiliatePayable.Method.choices,
-            "config": TaskConfig.load(),
             "stops": stops,
             "issues": list(
                 review.issues.select_related("created_by").order_by("resolved_at", "-created_at")

@@ -71,7 +71,7 @@
         <div class="grid grid-cols-3 gap-px bg-line rounded-xl overflow-hidden">
           <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Billed</div><div class="num text-[16px] font-semibold" x-text="hm(state.billed_minutes)"></div></div>
           <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Actual</div><div class="num text-[16px] font-semibold" x-text="state.actual_minutes === null ? '—' : hm(state.actual_minutes)"></div></div>
-          <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">Over by</div><div class="num text-[16px] font-semibold text-goldd" x-text="state.over_minutes === null ? '—' : state.over_minutes + ' min'"></div></div>
+          <div class="bg-surface2 px-3 py-2.5"><div class="text-[11px] text-muted">{% if f.basis == 'transfer_wait' %}Waited{% elif f.basis == 'airport_arrival' %}After arrival{% else %}Over by{% endif %}</div><div class="num text-[16px] font-semibold text-goldd" x-text="state.over_minutes === null ? '—' : state.over_minutes + ' min'"></div></div>
         </div>
       </div>
     </section>
@@ -83,7 +83,7 @@
           <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">Operations decides · Accounting bills</span>
         </div>
         <div class="flex justify-between"><span class="text-muted">Suggested</span><span class="num font-medium" x-text="state.actual_minutes === null ? '—' : state.suggested_minutes + ' min'"></span></div>
-        <p class="text-[11.5px] text-muted mt-1"><span x-text="state.rule"></span> <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">{{ config.overtime_grace_minutes }}-min grace · {{ config.overtime_increment_minutes }}-min steps · client to confirm</span></p>
+        <p class="text-[11.5px] text-muted mt-1"><span x-text="state.rule"></span> <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">{{ f.grace_minutes }}-min grace · full hours</span></p>
         <div class="grid grid-cols-2 gap-3 mt-3 items-end">
           <label class="block"><span class="block text-[12px] font-medium mb-1">Billable minutes</span>
             <input type="number" min="0" step="5" class="field num" x-model.number="billable" :disabled="waived" @change="saveDecision()"></label>
@@ -98,7 +98,6 @@
           <span class="text-[11px] font-semibold uppercase tracking-wide text-muted">Customer overtime</span>
           <b class="num text-[18px]" x-text="'$' + state.customer_overtime_total"></b>
         </div>
-        <p class="text-[11.5px] text-muted">No discount on overtime <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">client to confirm</span></p>
         <p class="text-[11.5px] text-muted">Goes onto the order's final bill. Nothing is charged from here.</p>
       </section>
 
