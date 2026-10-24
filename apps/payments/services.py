@@ -42,18 +42,18 @@ def _cents(amount) -> int:
 
 
 def get_or_create_customer(plan: PaymentPlan) -> str:
+    """The Stripe customer this order charges. An order that already has one keeps it (orders
+    from before the card vault each made their own, and Stripe can't move a card between
+    customers). A new order uses the contact's customer and starts with their default card
+    (APC-47)."""
+    from . import cards
+
     if plan.stripe_customer_id:
         return plan.stripe_customer_id
-    contact = plan.lead.contact
-    customer = _stripe().Customer.create(
-        name=contact.name,
-        email=contact.email or None,
-        phone=contact.phone or None,
-        metadata={"lead_id": plan.lead_id, "quote_no": plan.lead.quote_no},
-    )
-    plan.stripe_customer_id = customer.id
+    plan.stripe_customer_id = cards.contact_customer(plan.lead.contact)
     plan.save(update_fields=["stripe_customer_id", "updated_at"])
-    return customer.id
+    cards.adopt_default_card(plan)
+    return plan.stripe_customer_id
 
 
 def open_intent_for(plan: PaymentPlan, *, kind: str, amount, **extra) -> tuple[Charge, str]:
@@ -387,6 +387,9 @@ def _store_card(plan: PaymentPlan, payment_method, charge: Charge | None = None)
         charge.card_brand = plan.card_brand
         charge.card_last4 = plan.card_last4
         charge.save(update_fields=["card_brand", "card_last4", "updated_at"])
+    from . import cards
+
+    cards.remember_card(plan, payment_method)  # APC-47: a card paid with joins the vault
 
 
 def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
