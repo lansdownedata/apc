@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from apps.leads import services
 from apps.leads.factories import LeadFactory
+from apps.leads.models import Lead
 from apps.tasks.models import TaskConfig
 
 pytestmark = pytest.mark.django_db
@@ -55,3 +56,43 @@ def test_acknowledge_fees_stamps_once():
     assert services.acknowledge_fees(lead, ip="198.51.100.1") is False
     lead.refresh_from_db()
     assert (lead.fees_acknowledged_at, lead.fees_acknowledged_ip) == (first, "203.0.113.9")
+
+
+# --- where staff see it -------------------------------------------------------------------
+
+
+def _wedding_lead(**fields):
+    from apps.leads.factories import ServiceTypeFactory
+    from apps.reservations.factories import ReservationFactory
+
+    lead = LeadFactory(status=Lead.Status.BOOKED, **fields)
+    ReservationFactory(lead=lead, service_type=ServiceTypeFactory(name="Wedding Transportation"))
+    return lead
+
+
+def test_lead_is_wedding_reads_its_trips():
+    from apps.reservations.factories import ReservationFactory
+
+    assert _wedding_lead().is_wedding is True
+    plain = LeadFactory(status=Lead.Status.BOOKED)
+    ReservationFactory(lead=plain)
+    assert plain.is_wedding is False
+
+
+def test_the_money_card_shows_the_fee_acknowledgment_on_a_wedding(client):
+    from django.urls import reverse
+
+    from apps.accounts.factories import UserFactory
+
+    client.force_login(UserFactory())
+    pending = _wedding_lead()
+    done = _wedding_lead(fees_acknowledged_at=timezone.now(), fees_acknowledged_version="feed1234")
+    plain = LeadFactory(status=Lead.Status.BOOKED)
+
+    pending_html = client.get(reverse("lead_detail", args=[pending.pk])).content.decode()
+    done_html = client.get(reverse("lead_detail", args=[done.pk])).content.decode()
+    plain_html = client.get(reverse("lead_detail", args=[plain.pk])).content.decode()
+
+    assert "Cleaning fee and overtime not yet acknowledged" in pending_html
+    assert "Cleaning fee and overtime acknowledged" in done_html and "vfeed1234" in done_html
+    assert "Cleaning fee and overtime" not in plain_html

@@ -19,6 +19,13 @@
       {% elif lead.status == 'booked' %}
       <span class="ml-auto text-[12px] text-muted">Terms not accepted online</span>
       {% endif %}
+      {% if lead.is_wedding %}
+        {% if lead.fees_acknowledged_at %}
+        <span class="text-[12px] text-muted ml-3" title="The billing contact acknowledged the cleaning fee and the overtime rule on the 72-hour confirmation">· Cleaning fee and overtime acknowledged {{ lead.fees_acknowledged_on }} · v{{ lead.fees_acknowledged_version }}</span>
+        {% elif lead.status == 'booked' %}
+        <span class="text-[12px] text-muted ml-3">· Cleaning fee and overtime not yet acknowledged</span>
+        {% endif %}
+      {% endif %}
     </div>
 
     <!-- Money summary row -->

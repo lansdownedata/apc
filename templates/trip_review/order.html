@@ -16,7 +16,8 @@
         <h1 class="font-display text-[20px] font-semibold text-ink mt-0.5"><a href="{% url 'order_detail' row.lead.pk %}" class="num hover:text-goldd hover:underline">{{ row.lead.quote_no }}</a> · {{ row.lead.contact.name }}</h1>
         <div class="text-[12.5px] text-muted">{{ row.service_summary }} · {{ row.live_trips|length }} trip{{ row.live_trips|length|pluralize }}{% if row.finished_display %} · all finished {{ row.finished_display }}{% endif %}</div>
       </div>
-      <span class="ml-auto inline-flex text-[11px] font-semibold px-2 py-0.5 rounded-full {% if row.stage == 'needs_review' %}chip-warn{% elif row.stage == 'billing' %}chip-gold{% else %}chip-ok{% endif %}">{{ row.stage_label }}</span>
+      {% if row.lead.is_wedding %}<span class="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full chip-ring">{% if row.lead.fees_acknowledged_at %}Cleaning fee and overtime acknowledged {{ row.lead.fees_acknowledged_on }}{% else %}Cleaning fee and overtime not yet acknowledged{% endif %}</span>{% endif %}
+      <span class="{% if not row.lead.is_wedding %}ml-auto {% endif %}inline-flex text-[11px] font-semibold px-2 py-0.5 rounded-full {% if row.stage == 'needs_review' %}chip-warn{% elif row.stage == 'billing' %}chip-gold{% else %}chip-ok{% endif %}">{{ row.stage_label }}</span>
     </div>
     <div class="grid grid-cols-2 md:grid-cols-4 border-t border-line">
       <div class="px-5 py-3"><div class="text-[11px] font-semibold uppercase tracking-wide text-muted">Collected</div><div class="num text-[17px] font-semibold mt-0.5">${{ row.collected|floatformat:2|intcomma }}</div></div>

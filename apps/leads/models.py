@@ -208,6 +208,14 @@ class Lead(TimeStampedModel):
         return self._order_day(self.fees_acknowledged_at)
 
     @property
+    def is_wedding(self) -> bool:
+        """A wedding order: any trip the single wedding gate recognises (APC-94 reads this
+        to decide whether the fee acknowledgment applies)."""
+        from apps.reservations.services import is_wedding_trip
+
+        return any(is_wedding_trip(r) for r in self.reservations.all())
+
+    @property
     def effective_billing_contact(self) -> Contact:
         """Per-lead override, else company's billing contact, else the booking contact."""
         if self.billing_contact:

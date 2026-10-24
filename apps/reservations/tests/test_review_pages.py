@@ -222,6 +222,24 @@ def test_a_cancelled_trip_has_nothing_to_review(staff):
     assert staff.get(_trip_url("trip_review_trip", cancelled)).status_code == 404
 
 
+def test_the_order_page_shows_the_wedding_fee_acknowledgment(staff):
+    from apps.leads.factories import ServiceTypeFactory
+
+    lead, trip = _order()
+    Reservation.objects.filter(pk=trip.pk).update(
+        service_type=ServiceTypeFactory(name="Wedding Transportation")
+    )
+
+    before = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
+    Lead.objects.filter(pk=lead.pk).update(
+        fees_acknowledged_at=timezone.now(), fees_acknowledged_version="feed1234"
+    )
+    after = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
+
+    assert "Cleaning fee and overtime not yet acknowledged" in before
+    assert "Cleaning fee and overtime acknowledged" in after
+
+
 def test_a_trip_whose_order_isnt_in_review_404s(staff):
     trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
 
