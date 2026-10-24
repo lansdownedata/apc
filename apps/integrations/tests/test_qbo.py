@@ -282,3 +282,29 @@ def test_disconnect_still_clears_local_tokens_when_intuit_fails():
         qbo.disconnect()
 
     assert qbo.is_connected() is False
+
+
+# --- the smoke test -------------------------------------------------------------------------
+
+from io import StringIO  # noqa: E402
+
+from django.core.management import call_command  # noqa: E402
+
+
+@override_settings(**QBO)
+def test_the_smoke_test_prints_the_connected_company():
+    _connected()
+    out = StringIO()
+
+    with patch(HTTP, return_value=_resp(200, {"CompanyInfo": {"CompanyName": "Sandbox Co"}})):
+        call_command("qbo_smoke_test", stdout=out)
+
+    text = out.getvalue()
+    assert "Sandbox Co" in text and "9130" in text and "sandbox" in text
+    assert "at-1" not in text and "rt-1" not in text  # never a token
+
+
+@override_settings(**QBO)
+def test_the_smoke_test_says_what_to_do_when_not_connected():
+    with pytest.raises(SystemExit):
+        call_command("qbo_smoke_test", stdout=StringIO(), stderr=StringIO())
