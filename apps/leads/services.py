@@ -10,6 +10,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -305,6 +306,45 @@ def accept_terms(lead: Lead) -> bool:
     )
     if stamped:
         lead.refresh_from_db(fields=["accepted_terms_at", "accepted_terms_version"])
+    return bool(stamped)
+
+
+def fee_terms_context(config=None) -> dict:
+    """What `public/_fee_terms.html` renders from: the cleaning fee and the overtime rule
+    table (APC-91), both TaskConfig settings so the block never drifts from them."""
+    from apps.tasks.models import TaskConfig
+
+    config = config or TaskConfig.load()
+    return {"fee": Decimal(config.cleaning_fee or 0), "config": config}
+
+
+def fee_terms_html(config=None) -> str:
+    return render_to_string("public/_fee_terms.html", fee_terms_context(config))
+
+
+def fee_terms_version(config=None) -> str:
+    """Like `terms_version()` for the wedding fee block (APC-94): the first 8 hex chars of
+    the SHA-256 of the rendered text. Not cached — the fee and the grace numbers are
+    settings, so an edit on the Tasks screen is a new version."""
+    return hashlib.sha256(fee_terms_html(config).encode()).hexdigest()[:8]
+
+
+def acknowledge_fees(lead: Lead, *, ip: str) -> bool:
+    """Stamp the billing contact's acknowledgment of the cleaning fee and overtime rule the
+    first time; never overwrite it. Returns whether this call stamped."""
+    stamped = (
+        type(lead)
+        .objects.filter(pk=lead.pk, fees_acknowledged_at__isnull=True)
+        .update(
+            fees_acknowledged_at=timezone.now(),
+            fees_acknowledged_ip=ip or None,
+            fees_acknowledged_version=fee_terms_version(),
+        )
+    )
+    if stamped:
+        lead.refresh_from_db(
+            fields=["fees_acknowledged_at", "fees_acknowledged_ip", "fees_acknowledged_version"]
+        )
     return bool(stamped)
 
 

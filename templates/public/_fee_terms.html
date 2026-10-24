@@ -1,0 +1,18 @@
+{% comment %}
+  APC-94 · the wedding customer acknowledges the cleaning fee and the overtime rule on the
+  72-hour confirmation. Every number comes from TaskConfig (`config`) so this text and the
+  settings never drift; leads.services.fee_terms_version() hashes the rendered result.
+  CLIENT COPY PENDING (APC-27) — structure is final, wording is a draft.
+{% endcomment %}
+<h2>Before you confirm</h2>
+{% if fee %}
+<p><strong>Cleaning fee.</strong> A cleaning fee of <strong>${{ fee|floatformat:2 }}</strong>
+applies if a vehicle needs more than normal cleaning after your trip.</p>
+{% endif %}
+<p><strong>Overtime.</strong> Buses, vans and stretch limousines have a
+{{ config.grace_large_minutes }}-minute grace period; sedans and SUVs have
+{{ config.grace_standard_minutes }}-minute. Past the grace, each additional hour started is
+billed in full at the trip's hourly rate. On a transfer the clock is the wait at pickup from
+the scheduled time, with a {{ config.transfer_grace_minutes }}-minute grace for every vehicle.
+Airport pickups allow {{ config.airport_domestic_grace_minutes }} minutes after a domestic
+flight lands and {{ config.airport_international_grace_minutes }} after an international one.</p>

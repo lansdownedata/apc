@@ -160,6 +160,13 @@ class Lead(TimeStampedModel):
     # `services.terms_version()`: a hash of the rendered public/_terms.html.
     accepted_terms_at = models.DateTimeField(null=True, blank=True)
     accepted_terms_version = models.CharField(max_length=16, blank=True)
+    # APC-94: on a wedding the billing contact acknowledged the cleaning fee and the
+    # overtime rule on the 72-hour confirmation. Stamped once by `services.acknowledge_fees`;
+    # the version is `services.fee_terms_version()` (hash of the rendered block, which
+    # carries the fee and the grace numbers from TaskConfig).
+    fees_acknowledged_at = models.DateTimeField(null=True, blank=True)
+    fees_acknowledged_ip = models.GenericIPAddressField(null=True, blank=True)
+    fees_acknowledged_version = models.CharField(max_length=16, blank=True)
 
     objects = LeadQuerySet.as_manager()
 
@@ -183,14 +190,22 @@ class Lead(TimeStampedModel):
             return False
         return self.quote_expires_at is not None and self.quote_expires_at <= timezone.now()
 
-    @property
-    def terms_accepted_on(self) -> str:
-        """The acceptance date in the order's own zone (its first trip's), e.g. `Sep 4, 2026`."""
-        if not self.accepted_terms_at:
+    def _order_day(self, at) -> str:
+        """`at` as a date in the order's own zone (its first trip's), e.g. `Sep 4, 2026`."""
+        if not at:
             return ""
         first = self.reservations.order_by("pickup_date", "pickup_time", "pk").first()
         zone = (first.pickup_timezone if first else "") or settings.TIME_ZONE
-        return dateformat.format(self.accepted_terms_at.astimezone(ZoneInfo(zone)), "M j, Y")
+        return dateformat.format(at.astimezone(ZoneInfo(zone)), "M j, Y")
+
+    @property
+    def terms_accepted_on(self) -> str:
+        """The acceptance date in the order's own zone (its first trip's), e.g. `Sep 4, 2026`."""
+        return self._order_day(self.accepted_terms_at)
+
+    @property
+    def fees_acknowledged_on(self) -> str:
+        return self._order_day(self.fees_acknowledged_at)
 
     @property
     def effective_billing_contact(self) -> Contact:
