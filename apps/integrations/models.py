@@ -188,3 +188,65 @@ class LAEvent(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.event} · res {self.reservation_id or '—'}"
+
+
+class QboCredential(TimeStampedModel):
+    """The portal's one QuickBooks Online connection (APC-41). A singleton.
+
+    Tokens are Fernet-encrypted at rest (`apps.integrations.crypto`, keyed off SECRET_KEY —
+    rotating the secret key bricks them; the fix is a reconnect). Never log or render them.
+    Intuit rotates the refresh token: `set_tokens` is called with the newest one from every
+    token response. `broken_at` is set when a refresh is refused (`invalid_grant`) — only a
+    reconnect clears it.
+    """
+
+    singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    realm_id = models.CharField("QuickBooks company id", max_length=32, blank=True)
+    access_token_enc = models.TextField(blank=True)
+    refresh_token_enc = models.TextField(blank=True)
+    access_expires_at = models.DateTimeField(null=True, blank=True)
+    refresh_expires_at = models.DateTimeField(null=True, blank=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    connected_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    broken_at = models.DateTimeField(null=True, blank=True)
+    broken_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "QuickBooks connection"
+
+    def __str__(self) -> str:
+        return f"QuickBooks company {self.realm_id or '(not connected)'}"
+
+    @classmethod
+    def load(cls) -> "QboCredential":
+        obj, _ = cls.objects.get_or_create(singleton_id=1)
+        return obj
+
+    @staticmethod
+    def _decrypt(value: str) -> str:
+        from .crypto import decrypt
+
+        return decrypt(value) if value else ""
+
+    @property
+    def access_token(self) -> str:
+        return self._decrypt(self.access_token_enc)
+
+    @property
+    def refresh_token(self) -> str:
+        return self._decrypt(self.refresh_token_enc)
+
+    def set_tokens(self, *, access: str, refresh: str, access_expires_at, refresh_expires_at):
+        from .crypto import encrypt
+
+        self.access_token_enc = encrypt(access) if access else ""
+        self.refresh_token_enc = encrypt(refresh) if refresh else ""
+        self.access_expires_at = access_expires_at
+        self.refresh_expires_at = refresh_expires_at
+
+    @property
+    def is_live(self) -> bool:
+        return bool(self.realm_id and self.refresh_token_enc and self.broken_at is None)

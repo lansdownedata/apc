@@ -220,6 +220,9 @@ AVIATIONSTACK_BASE_URL = env("AVIATIONSTACK_BASE_URL", default="https://api.avia
 # the same gate AVIATIONSTACK_API_KEY applies to flight verification. Phase 2 (APC-41)
 # adds the secret, the environment and the redirect URI alongside it.
 QBO_CLIENT_ID = env("QBO_CLIENT_ID", default="")
+QBO_CLIENT_SECRET = env("QBO_CLIENT_SECRET", default="")
+QBO_ENVIRONMENT = env("QBO_ENVIRONMENT", default="sandbox")  # "sandbox" | "production"
+QBO_REDIRECT_URI = env("QBO_REDIRECT_URI", default="")
 
 # GNet farm-out gateway (Lansdowne relay in front of the real GNet partner network —
 # docs/... GNET-CONNECTION-GUIDE.md §5). Preview mode (no sends) unless BOTH GNET_ACTIVE
