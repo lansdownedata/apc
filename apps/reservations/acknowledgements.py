@@ -16,6 +16,7 @@ from django.urls import reverse
 _TRIP_DAY_ACK_SALT = "apc.trip-day-ack.v1"
 _AFFILIATE_ACK_SALT = "apc.affiliate-ack.v1"
 _WEDDING_DETAILS_SALT = "apc.wedding-details.v1"
+_WEDDING_DAY_ACK_SALT = "apc.wedding-day-ack.v1"
 
 
 # --- customer trip confirmation (APC-19) ------------------------------------------------
@@ -38,6 +39,28 @@ def read_trip_day_ack_token(token: str):
 def trip_day_ack_url(contact, day, *, base_url: str = "") -> str:
     token = make_trip_day_ack_token(contact, day)
     return f"{base_url}{reverse('trip_confirm', args=[token])}"
+
+
+# --- wedding trip confirmation + fee acknowledgment (APC-94) -----------------------------
+# Keyed on the order + the date, not the booking contact: the wedding's confirmation goes
+# to the billing contact and carries the cleaning-fee / overtime acknowledgment, so it must
+# never share a link with the booker's other orders that day (a planner holding the
+# booker's link would otherwise be able to acknowledge for the couple).
+def make_wedding_day_ack_token(lead, day) -> str:
+    return signing.dumps({"lead": lead.pk, "date": day.isoformat()}, salt=_WEDDING_DAY_ACK_SALT)
+
+
+def read_wedding_day_ack_token(token: str):
+    """Returns ``(lead, date)``. Raises BadSignature on a forged or foreign token."""
+    from apps.leads.models import Lead
+
+    data = signing.loads(token, salt=_WEDDING_DAY_ACK_SALT)
+    return Lead.objects.get(pk=data["lead"]), date.fromisoformat(data["date"])
+
+
+def wedding_day_ack_url(lead, day, *, base_url: str = "") -> str:
+    token = make_wedding_day_ack_token(lead, day)
+    return f"{base_url}{reverse('wedding_trip_confirm', args=[token])}"
 
 
 # --- affiliate trip confirmation (APC-20) -----------------------------------------------

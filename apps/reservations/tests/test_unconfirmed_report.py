@@ -70,6 +70,18 @@ def test_a_customer_with_several_trips_is_one_row():
 
 
 @override_settings(TRIP_CONFIRM_REPORT_EMAILS=["reservations@allprocharter.com"])
+def test_a_wedding_row_names_the_billing_contact_who_was_asked():
+    from apps.leads.factories import ServiceTypeFactory
+
+    payer = ContactFactory(name="Pat Payer", phone="+15715550002")
+    trip = _trip(service_type=ServiceTypeFactory(name="Wedding Transportation"))
+    Lead.objects.filter(pk=trip.lead_id).update(billing_contact=payer)
+
+    (row,) = reports.unconfirmed_trip_rows()
+
+    assert (row["customer"], row["phone"]) == ("Pat Payer", "+15715550002")
+
+
 def test_report_emails_the_office():
     _trip()
 

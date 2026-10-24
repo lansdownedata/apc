@@ -94,6 +94,22 @@ def flight_line(stop: Stop) -> str:
     return " · ".join(parts)
 
 
+def wedding_day_group(lead, day) -> list[Reservation]:
+    """A wedding order's live trips on one local pickup date, in running order (APC-94).
+    The wedding's confirmation covers only its own order; `trip_day_group` covers the rest
+    of the booker's day."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.leads.models import Lead
+
+    return list(
+        Reservation.objects.filter(lead=lead, lead__status=Lead.Status.BOOKED, pickup_date=day)
+        .exclude(trip_status__in=CANCELLED_STATUSES)
+        .select_related("lead", "lead__contact", "vehicle", "service_type")
+        .prefetch_related("stops")
+        .order_by(F("pickup_time").asc(nulls_first=True), "pk")
+    )
+
+
 def trip_day_group(contact, day) -> list[Reservation]:
     """Every live trip this customer has on one local pickup date, in running order.
 

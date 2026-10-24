@@ -30,14 +30,26 @@ def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
             customer_confirmed_at__isnull=True,
         )
         .exclude(trip_status__in=CANCELLED_STATUSES)
-        .select_related("lead", "lead__contact", "vehicle", "service_type")
+        .select_related(
+            "lead",
+            "lead__contact",
+            "lead__billing_contact",
+            "lead__contact__company__billing_contact",
+            "vehicle",
+            "service_type",
+        )
         .prefetch_related("stops")
         .order_by("lead__contact__name", "pickup_time", "pk")
     )
 
+    from .services import is_wedding_trip
+
     rows: dict[int, dict] = {}
     for trip in trips:
-        contact = trip.lead.contact
+        # A wedding's confirmation went to the billing contact (APC-94) — chase them.
+        contact = (
+            trip.lead.effective_billing_contact if is_wedding_trip(trip) else trip.lead.contact
+        )
         row = rows.get(contact.pk)
         if row is None:
             row = rows[contact.pk] = {

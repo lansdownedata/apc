@@ -352,6 +352,46 @@ def test_a_wedding_confirmation_goes_to_the_billing_contact():
         assert touchpoints._process(tp) is True
 
     assert send.call_args.kwargs["identifier"] == "+15715550002"
+    body = send.call_args.kwargs["body"]
+    assert "Pat" in body and "Casey" not in body  # greets who it is sent to
+    assert "https://apc.example.com/trip/w/" in body  # the wedding's own link
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_a_mixed_day_sends_both_the_plain_and_the_wedding_confirmation():
+    """Same booker, a plain order and a wedding the same day: neither notice may stand in
+    for the other — they go to different people and carry different links."""
+    booker = _contact("Casey Booker", "+15715550001")
+    payer = _contact("Pat Payer", "+15715550002")
+    wedding_tp = _wedding_confirm(_booked_lead(contact=booker, billing_contact=payer))
+    day = wedding_tp.reservation.pickup_date
+    plain_lead = _booked_lead(contact=booker)
+    plain = ReservationFactory(lead=plain_lead, pickup_date=day)
+    touchpoints.schedule_service_touchpoints(plain_lead)
+    plain_tp = TouchPoint.objects.get(reservation=plain, kind=K.TRIP_CONFIRM_CUSTOMER)
+    _due(plain_tp)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
+        assert touchpoints._process(plain_tp) is True
+        assert touchpoints._process(wedding_tp) is True
+
+    sent_to = [c.kwargs["identifier"] for c in send.call_args_list]
+    assert sent_to == ["+15715550001", "+15715550002"]
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_the_second_wedding_notice_still_goes_while_the_fees_are_pending():
+    booker = _contact("Casey Booker", "+15715550001")
+    lead = _booked_lead(contact=booker)
+    first = _wedding_confirm(lead)
+    from apps.reservations.models import Reservation
+
+    Reservation.objects.filter(pk=first.reservation_id).update(customer_confirmed_at=timezone.now())
+    second = TouchPoint.objects.get(reservation=first.reservation, kind=K.TRIP_CONFIRM_CUSTOMER_2)
+    _due(second)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
+        assert touchpoints._process(second) is True
 
 
 @override_settings(PUBLIC_BASE_URL="https://apc.example.com")

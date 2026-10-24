@@ -369,6 +369,7 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
     from apps.reservations.acknowledgements import (
         affiliate_ack_url,
         trip_day_ack_url,
+        wedding_day_ack_url,
         wedding_details_url,
     )
 
@@ -390,11 +391,15 @@ def _fill_links(tp: TouchPoint, ctx: dict, base_url: str) -> None:
         a = _confirmed_assignment(res)
         if a is not None:
             ctx["ack_link"] = affiliate_ack_url(a, base_url=base_url)
+    elif tp.kind in _CUSTOMER_CONFIRM_KINDS and _is_wedding(res):
+        ctx["confirm_link"] = wedding_day_ack_url(tp.lead, res.pickup_date, base_url=base_url)
     else:
         ctx["confirm_link"] = trip_day_ack_url(tp.lead.contact, res.pickup_date, base_url=base_url)
 
 
-def _send(tp: TouchPoint, template, available: dict[str, str], *, group=None) -> bool:
+def _send(
+    tp: TouchPoint, template, available: dict[str, str], *, group=None, recipient=None
+) -> bool:
     """Send over each available channel; SENT on any success, else FAILED.
 
     ``group`` is the customer's whole day (APC-19) — its trip sheets replace the anchor
@@ -402,6 +407,11 @@ def _send(tp: TouchPoint, template, available: dict[str, str], *, group=None) ->
     """
     base_url = settings.PUBLIC_BASE_URL or ""
     ctx = build_context(tp.lead, tp.reservation)
+    if recipient is not None and getattr(recipient, "pk", None) != tp.lead.contact_id:
+        # Addressed to someone other than the booker (a wedding's billing contact, APC-94):
+        # greet the person who receives it.
+        if template.audience != "affiliate":
+            ctx["first_name"] = (recipient.name or "").split(" ")[0] or "there"
     if group:
         from apps.reservations.services import trip_sheet_text
 
@@ -527,10 +537,16 @@ def _confirmed_assignment(reservation):
 
 
 def _customer_confirm_group(tp: TouchPoint):
-    """The trips one customer-confirmation covers: everything this customer has that day."""
-    from apps.reservations.services import trip_day_group
+    """The trips one customer-confirmation covers. A wedding's notice covers its own order
+    that day (it goes to the billing contact with the fee acknowledgment, APC-94); any
+    other notice covers the rest of the booker's day, wedding trips left out, so the two
+    never stand in for each other in `_already_covered`."""
+    from apps.reservations.services import trip_day_group, wedding_day_group
 
-    return trip_day_group(tp.lead.contact, tp.reservation.pickup_date)
+    day = tp.reservation.pickup_date
+    if _is_wedding(tp.reservation):
+        return wedding_day_group(tp.lead, day)
+    return [t for t in trip_day_group(tp.lead.contact, day) if not _is_wedding(t)]
 
 
 def _already_covered(tp: TouchPoint, group) -> bool:
@@ -621,7 +637,8 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             return False
         if kind in _CUSTOMER_CONFIRM_KINDS:
             group = _customer_confirm_group(tp)
-            if group and all(t.customer_confirmed_at is not None for t in group):
+            fees_owed = _is_wedding(tp.reservation) and lead.fees_acknowledged_at is None
+            if group and all(t.customer_confirmed_at is not None for t in group) and not fees_owed:
                 _mark(tp, status=TouchPoint.Status.SKIPPED, error="day already confirmed")
                 return False
             if _already_covered(tp, group):
@@ -707,7 +724,7 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="recipient has no usable channel")
         return False
 
-    return _send(tp, template, available, group=group)
+    return _send(tp, template, available, group=group, recipient=recipient)
 
 
 def run_touchpoints() -> int:

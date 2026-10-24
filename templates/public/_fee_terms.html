@@ -11,8 +11,9 @@ applies if a vehicle needs more than normal cleaning after your trip.</p>
 {% endif %}
 <p><strong>Overtime.</strong> Buses, vans and stretch limousines have a
 {{ config.grace_large_minutes }}-minute grace period; sedans and SUVs have
-{{ config.grace_standard_minutes }}-minute. Past the grace, each additional hour started is
-billed in full at the trip's hourly rate. On a transfer the clock is the wait at pickup from
+{{ config.grace_standard_minutes }}-minute. Past the grace, each additional
+{% if config.overtime_block_minutes == 60 %}hour{% else %}{{ config.overtime_block_minutes }} minutes{% endif %}
+started is billed in full at the trip's hourly rate. On a transfer the clock is the wait at pickup from
 the scheduled time, with a {{ config.transfer_grace_minutes }}-minute grace for every vehicle.
 Airport pickups allow {{ config.airport_domestic_grace_minutes }} minutes after a domestic
 flight lands and {{ config.airport_international_grace_minutes }} after an international one.</p>
