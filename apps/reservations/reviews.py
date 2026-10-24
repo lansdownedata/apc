@@ -54,18 +54,28 @@ DOMESTIC_COUNTRIES = frozenset({"US", "PR", "VI", "GU", "AS", "MP"})
 
 def _flight_time(flight: Flight | None) -> datetime | None:
     """The best arrival time the flight has: actual, else estimated, else scheduled."""
-    if flight is None:
-        return None
-    return flight.actual_at or flight.estimated_at or flight.scheduled_at
+    return None if flight is None else flight.best_at
 
 
-def basis_for(trip: Reservation) -> tuple[OvertimeBasis, Flight | None]:
+def _time_source(flight: Flight) -> str:
+    """Which of the flight's times `best_at` is — the copy says so, because a scheduled
+    time on a flight never refreshed day-of is a weak stand-in for when it landed."""
+    if flight.actual_at:
+        return "actual"
+    return "estimated" if flight.estimated_at else "scheduled"
+
+
+def basis_for(trip: Reservation, pickup=_UNSET) -> tuple[OvertimeBasis, Flight | None]:
     """An hourly trip measures time over the billed hours. A transfer measures the wait
     at pickup — from the flight's arrival when the pickup is a verified arriving flight
-    with a usable time, otherwise from the scheduled pickup."""
+    with a usable time, otherwise from the scheduled pickup.
+
+    `pickup` is the trip's first stop when the caller already has it (the review queue
+    prefetches stops; `trip.pickup` would bypass that with a query per trip)."""
     if trip.trip_type == Reservation.TripType.HOURLY:
         return OvertimeBasis.HOURLY, None
-    pickup = trip.pickup
+    if pickup is _UNSET:
+        pickup = trip.pickup
     if pickup is not None and pickup.airport_id and pickup.flight_id:
         flight = pickup.flight
         if flight.direction == FlightDirection.ARRIVAL and _flight_time(flight):
@@ -84,9 +94,10 @@ def _is_international(flight: Flight) -> bool:
 
 
 def grace_minutes_for(
-    trip: Reservation, basis: OvertimeBasis, flight: Flight | None, config
+    trip: Reservation, basis: OvertimeBasis, config, *, international: bool = False
 ) -> int:
-    """The grace for this trip under `basis`, from the TaskConfig rule table."""
+    """The grace for this trip under `basis`, from the TaskConfig rule table.
+    `international` only matters for an airport arrival."""
     from apps.leads.models import VehicleType
 
     if basis is OvertimeBasis.HOURLY:
@@ -95,7 +106,7 @@ def grace_minutes_for(
         return config.grace_large_minutes if large else config.grace_standard_minutes
     if basis is OvertimeBasis.TRANSFER_WAIT:
         return config.transfer_grace_minutes
-    if _is_international(flight):
+    if international:
         return config.airport_international_grace_minutes
     return config.airport_domestic_grace_minutes
 
@@ -135,6 +146,7 @@ class _Clock:
     block: int
     over: int | None
     international: bool
+    time_source: str  # "actual" · "estimated" · "scheduled" — which flight time the clock used
     # An airport pickup whose flight isn't verified: the wait rule applies, and we say so.
     fallback: bool
     vehicle_label: str
@@ -144,32 +156,43 @@ class _Clock:
         return suggest_overtime(self.over, grace_minutes=self.grace, block_minutes=self.block)
 
 
-def _clock(review: TripReview, config) -> _Clock:
+def _clock(review: TripReview, config, *, pickup=_UNSET) -> _Clock:
     trip = review.reservation
-    basis, flight = basis_for(trip)
-    pickup = trip.pickup if basis is OvertimeBasis.TRANSFER_WAIT else None
-    fallback = bool(
+    if pickup is _UNSET and trip.trip_type != Reservation.TripType.HOURLY:
+        pickup = trip.pickup  # one query, shared by the basis and the fallback check
+    basis, flight = basis_for(trip, pickup)
+    fallback = basis is OvertimeBasis.TRANSFER_WAIT and bool(
         pickup is not None and pickup.airport_id and (pickup.flight_id or pickup.flight_number)
     )
+    international = flight is not None and _is_international(flight)
     return _Clock(
         basis=basis,
         flight=flight,
-        grace=grace_minutes_for(trip, basis, flight, config),
+        grace=grace_minutes_for(trip, basis, config, international=international),
         block=config.overtime_block_minutes,
         over=_over_minutes(review, basis, flight),
-        international=flight is not None and _is_international(flight),
+        international=international,
+        time_source=_time_source(flight) if flight is not None else "",
         fallback=fallback,
         vehicle_label=trip.vehicle.name.lower() if trip.vehicle is not None else "vehicle",
     )
 
 
-def _prefilled_times(trip: Reservation) -> tuple[datetime | None, datetime | None]:
+def _prefilled_times(
+    trip: Reservation, basis: OvertimeBasis
+) -> tuple[datetime | None, datetime | None]:
+    """Pickup and drop-off from the status log. On an hourly trip the clock starts when the
+    car is on location (Arrived); on a transfer the wait runs until the passenger boards,
+    so Customer In Car is the pickup when it was logged."""
     events = list(
         TripStatusEvent.objects.filter(
             reservation=trip, status__in=(*_PICKUP_EVENTS, Reservation.TripStatus.DONE)
         ).values_list("status", "created_at")
     )
+    boarded = [at for status, at in events if status == Reservation.TripStatus.CUSTOMER_IN_CAR]
     pickups = [at for status, at in events if status in _PICKUP_EVENTS]
+    if basis is not OvertimeBasis.HOURLY and boarded:
+        pickups = boarded
     dones = [at for status, at in events if status == Reservation.TripStatus.DONE]
     return (min(pickups) if pickups else None, max(dones) if dones else None)
 
@@ -180,7 +203,7 @@ def review_for(trip: Reservation) -> TripReview:
     review, _ = TripReview.objects.get_or_create(reservation=trip)
     if review.is_complete or (review.actual_pickup_at and review.actual_dropoff_at):
         return review
-    pickup, dropoff = _prefilled_times(trip)
+    pickup, dropoff = _prefilled_times(trip, basis_for(trip)[0])
     fields = []
     if review.actual_pickup_at is None and pickup is not None:
         review.actual_pickup_at = pickup
@@ -472,7 +495,7 @@ def _rule(clock: _Clock) -> str:
         else:
             kind = "international" if clock.international else "domestic"
             what, grace, who = (
-                f"{over} min after the flight's arrival",
+                f"{over} min after the flight's {clock.time_source} arrival",
                 f"{clock.grace}-min {kind} grace",
                 "",
             )
@@ -485,16 +508,17 @@ def _rule(clock: _Clock) -> str:
     return text
 
 
-def figures(review: TripReview, coverage, *, config=None) -> Figures:
-    """`coverage` is the trip's active Assignment (or None), and `config` the TaskConfig —
-    both passed in so a page showing many trips loads them once."""
+def figures(review: TripReview, coverage, *, config=None, pickup=_UNSET) -> Figures:
+    """`coverage` is the trip's active Assignment (or None), `config` the TaskConfig and
+    `pickup` the trip's first stop — all passed in so a page showing many trips loads
+    them once instead of per row."""
     from apps.tasks.models import TaskConfig
 
     config = config or TaskConfig.load()
     trip = review.reservation
     billed = int(Decimal(trip.billed_hours) * 60)
     actual = review.actual_minutes
-    clock = _clock(review, config)
+    clock = _clock(review, config, pickup=pickup)
     over = clock.over
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
     rate = trip.discounted_rate  # the discount carries into overtime (client, 2026-10-18)

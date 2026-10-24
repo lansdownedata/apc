@@ -269,7 +269,11 @@ def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:
             state = "reviewed"
         else:
             state = "needs_review"
-        figures = reviews.figures(review, coverage, config=config) if review else None
+        figures = (
+            reviews.figures(review, coverage, config=config, pickup=stops[0] if stops else None)
+            if review
+            else None
+        )
         if state == "needs_review":
             row.awaiting_trips += 1
         elif review is not None and review.is_complete and figures.customer_amount > ZERO:

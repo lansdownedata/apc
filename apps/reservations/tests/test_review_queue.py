@@ -286,6 +286,29 @@ def test_the_list_costs_the_same_for_three_orders_or_twelve():
     assert len(many) == len(few)
 
 
+def _reviewed_transfer_order():
+    """Two reviewed transfers: the wait clock reads the pickup stop and the flight."""
+    lead = _order(trips=2)
+    for trip in lead.reservations.all():
+        Reservation.objects.filter(pk=trip.pk).update(trip_type=Reservation.TripType.TRANSFER)
+        _review(Reservation.objects.get(pk=trip.pk), over=20, billable=60)
+    return lead
+
+
+def test_the_list_costs_the_same_with_two_reviewed_transfer_orders_or_eight():
+    for _ in range(2):
+        _reviewed_transfer_order()
+    with CaptureQueriesContext(connection) as few:
+        review_queue.orders_in_review(review_queue.Filters())
+    for _ in range(6):
+        _reviewed_transfer_order()
+    with CaptureQueriesContext(connection) as many:
+        rows = review_queue.orders_in_review(review_queue.Filters())
+
+    assert len(rows) == 8
+    assert len(many) == len(few)
+
+
 def test_order_review_for_one_order():
     lead = _order(trips=2, collected="100")
 
