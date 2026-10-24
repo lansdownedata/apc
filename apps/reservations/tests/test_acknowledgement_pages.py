@@ -1,6 +1,7 @@
 """Public token-keyed acknowledgement pages (APC-18 / APC-19 / APC-20)."""
 
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from django.urls import reverse
@@ -9,10 +10,12 @@ from django.utils import timezone
 from apps.contacts.factories import ContactFactory
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
-from apps.leads.factories import LeadFactory
+from apps.leads import services as lead_services
+from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.reservations import acknowledgements as ack
 from apps.reservations.factories import ReservationFactory
+from apps.tasks.models import TaskConfig
 
 pytestmark = pytest.mark.django_db
 
@@ -132,6 +135,139 @@ def test_trip_confirm_shows_nothing_to_confirm_when_the_day_is_cancelled(client)
     client.post(url, {"ack": "on"})
     res.refresh_from_db()
     assert res.customer_confirmed_at is None
+
+
+# --- wedding: cleaning fee + overtime acknowledgment (APC-94) ----------------------------
+
+
+def _fee(amount):
+    cfg = TaskConfig.load()
+    cfg.cleaning_fee = Decimal(amount)
+    cfg.save()
+    return cfg
+
+
+def _wedding_res(**kw):
+    kw.setdefault("lead", LeadFactory(status=Lead.Status.BOOKED))
+    return ReservationFactory(
+        service_type=ServiceTypeFactory(name="Wedding Transportation"), pickup_date=_future(), **kw
+    )
+
+
+ALL_BOXES = {"ack": "on", "ack_cleaning": "on", "ack_overtime": "on"}
+
+
+def test_a_wedding_day_shows_the_fee_terms_and_both_boxes(client):
+    _fee("250")
+    res = _wedding_res()
+
+    body = client.get(_day_url(res)).content.decode()
+
+    assert "Before you confirm" in body
+    assert 'name="ack_cleaning"' in body and 'name="ack_overtime"' in body
+    assert "$250.00" in body
+
+
+def test_a_wedding_with_no_fee_shows_only_the_overtime_box(client):
+    _fee("0")
+    res = _wedding_res()
+
+    body = client.get(_day_url(res)).content.decode()
+
+    assert 'name="ack_overtime"' in body
+    assert 'name="ack_cleaning"' not in body
+
+
+def test_a_non_wedding_day_renders_unchanged(client):
+    _fee("250")
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), pickup_date=_future())
+
+    body = client.get(_day_url(res)).content.decode()
+
+    assert "Before you confirm" not in body
+    assert 'name="ack_overtime"' not in body
+
+
+def test_a_wedding_confirm_is_refused_until_both_boxes_are_ticked(client):
+    _fee("250")
+    res = _wedding_res()
+
+    resp = client.post(_day_url(res), {"ack": "on", "ack_overtime": "on"})
+
+    assert resp.status_code == 200
+    assert "acknowledge the cleaning fee and the overtime" in resp.content.decode()
+    res.refresh_from_db()
+    res.lead.refresh_from_db()
+    assert res.customer_confirmed_at is None
+    assert res.lead.fees_acknowledged_at is None
+
+
+def test_a_wedding_confirm_stamps_the_lead_with_ip_and_version(client):
+    _fee("250")
+    res = _wedding_res()
+
+    # client_ip() reads the peer unless TRUSTED_PROXY_COUNT says a proxy is in front.
+    resp = client.post(_day_url(res), ALL_BOXES, REMOTE_ADDR="203.0.113.9")
+
+    assert resp.status_code == 302
+    res.refresh_from_db()
+    lead = res.lead
+    lead.refresh_from_db()
+    assert res.customer_confirmed_at is not None
+    assert lead.fees_acknowledged_at is not None
+    assert lead.fees_acknowledged_ip == "203.0.113.9"
+    assert lead.fees_acknowledged_version == lead_services.fee_terms_version()
+
+
+def test_reopening_shows_acknowledged_and_never_restamps(client):
+    _fee("250")
+    res = _wedding_res()
+    url = _day_url(res)
+    client.post(url, ALL_BOXES)
+    res.lead.refresh_from_db()
+    first = res.lead.fees_acknowledged_at
+
+    body = client.get(url).content.decode()
+    client.post(url, {"ack": "on"})  # the plain confirm, no fee boxes, must still be fine
+    res.lead.refresh_from_db()
+
+    assert "Cleaning fee and overtime acknowledged on" in body
+    assert 'name="ack_overtime"' not in body
+    assert res.lead.fees_acknowledged_at == first
+
+
+def test_a_mixed_day_stamps_only_the_wedding_lead(client):
+    _fee("250")
+    contact = ContactFactory()
+    wedding = _wedding_res(lead=LeadFactory(contact=contact, status=Lead.Status.BOOKED))
+    plain = ReservationFactory(
+        lead=LeadFactory(contact=contact, status=Lead.Status.BOOKED),
+        pickup_date=wedding.pickup_date,
+    )
+
+    body = client.get(_day_url(wedding)).content.decode()
+    assert "Before you confirm" in body
+    client.post(_day_url(wedding), ALL_BOXES)
+
+    wedding.lead.refresh_from_db()
+    plain.lead.refresh_from_db()
+    plain.refresh_from_db()
+    assert wedding.lead.fees_acknowledged_at is not None
+    assert plain.lead.fees_acknowledged_at is None
+    assert plain.customer_confirmed_at is not None  # the day itself still confirmed
+
+
+def test_the_page_names_the_billing_contact_on_a_wedding(client):
+    _fee("250")
+    booker = ContactFactory(name="Casey Booker")
+    payer = ContactFactory(name="Pat Payer")
+    res = _wedding_res(
+        lead=LeadFactory(contact=booker, billing_contact=payer, status=Lead.Status.BOOKED)
+    )
+
+    body = client.get(_day_url(res)).content.decode()  # token still keys on the booker
+
+    assert "Pat Payer" in body
 
 
 # --- affiliate trip confirmation (APC-20) -------------------------------------------

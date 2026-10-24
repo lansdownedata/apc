@@ -14,10 +14,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from apps.contacts.models import Contact
+from apps.core.net import client_ip
 
 from . import acknowledgements as ack
 from .models import Reservation
-from .services import confirm_trip_day, trip_day_group, trip_sheet_context
+from .services import confirm_trip_day, is_wedding_trip, trip_day_group, trip_sheet_context
 
 
 def _feedback_orders(trips) -> list[dict]:
@@ -73,6 +74,24 @@ def trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
         "feedback_orders": _feedback_orders(trips),
         "feedback_error": "",
     }
+    # APC-94: a wedding day also carries the cleaning-fee / overtime acknowledgment, which
+    # the billing contact gives once per order. The token still keys on the booking
+    # contact (that is how the trips are found); only the name and the stamp change.
+    weddings = _wedding_leads(trips)
+    pending = [lead for lead in weddings if lead.fees_acknowledged_at is None]
+    ctx["wedding"] = bool(weddings)
+    if weddings:
+        from apps.leads import services as lead_services
+
+        terms = lead_services.fee_terms_context()
+        ctx.update(
+            contact_name=weddings[0].effective_billing_contact.name,
+            fee=terms["fee"],
+            fee_terms=lead_services.fee_terms_html(terms["config"]),
+            fees_pending=bool(pending),
+            fees_acknowledged_on=weddings[0].fees_acknowledged_on,
+            fee_ack_error=False,
+        )
     # Once every order on the page has run, there's nothing left to confirm.
     ctx["all_finished"] = bool(trips) and len(ctx["feedback_orders"]) == len(
         {t.lead_id for t in trips}
@@ -84,9 +103,28 @@ def trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
             # `required` on the input is client-side only — refuse the bare POST.
             ctx["ack_error"] = True
             return render(request, "public/trip_confirm.html", ctx)
+        if pending:
+            boxes = ["ack_overtime"] + (["ack_cleaning"] if ctx["fee"] else [])
+            if not all(request.POST.get(box) for box in boxes):
+                ctx["fee_ack_error"] = True
+                return render(request, "public/trip_confirm.html", ctx)
+            from apps.leads import services as lead_services
+
+            ip = client_ip(request)
+            for lead in pending:
+                lead_services.acknowledge_fees(lead, ip=ip)
         confirm_trip_day(trips)
         return redirect("trip_confirm", token=token)
     return render(request, "public/trip_confirm.html", ctx)
+
+
+def _wedding_leads(trips) -> list:
+    """The distinct wedding orders on the page, in trip order."""
+    seen: dict = {}
+    for trip in trips:
+        if trip.lead_id not in seen and is_wedding_trip(trip):
+            seen[trip.lead_id] = trip.lead
+    return list(seen.values())
 
 
 @require_http_methods(["GET", "POST"])

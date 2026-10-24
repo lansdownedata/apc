@@ -21,6 +21,9 @@ CLIENT COPY PENDING (APC-27).
         {% if sheets|length > 1 %}Your trips are confirmed.{% else %}Your trip is confirmed.{% endif %}
         We'll be in touch as the date approaches.
       </p>
+      {% if wedding and not fees_pending %}
+        <p class="sub">Cleaning fee and overtime acknowledged on {{ fees_acknowledged_on }}.</p>
+      {% endif %}
       {% for sheet in sheets %}{% include "components/trip_sheet.html" %}{% endfor %}
     </div>
   {% else %}
@@ -32,6 +35,9 @@ CLIENT COPY PENDING (APC-27).
       {% if ack_error %}
         <p class="err">Please tick the box below to confirm these details are accurate.</p>
       {% endif %}
+      {% if fee_ack_error %}
+        <p class="err">Please also acknowledge the cleaning fee and the overtime terms below.</p>
+      {% endif %}
       <label class="check">
         <input type="checkbox" name="ack" required>
         <span>
@@ -39,6 +45,23 @@ CLIENT COPY PENDING (APC-27).
           I have read and acknowledge the trip information above is accurate.
         </span>
       </label>
+      {% if wedding and fees_pending %}
+        {% comment %} APC-94 · wedding only; the billing contact signs off on the fee and the
+             overtime rule. The block's numbers come from Settings. CLIENT COPY PENDING (APC-27). {% endcomment %}
+        <div class="terms">{{ fee_terms }}</div>
+        {% if fee %}
+        <label class="check">
+          <input type="checkbox" name="ack_cleaning" required>
+          <span>I understand a cleaning fee of ${{ fee|floatformat:2 }} applies if a vehicle needs more than normal cleaning.</span>
+        </label>
+        {% endif %}
+        <label class="check">
+          <input type="checkbox" name="ack_overtime" required>
+          <span>I understand how overtime is billed, as described above.</span>
+        </label>
+      {% elif wedding %}
+        <p class="sub">Cleaning fee and overtime acknowledged on {{ fees_acknowledged_on }}.</p>
+      {% endif %}
       <button type="submit">{% if sheets|length > 1 %}Confirm these trips{% else %}Confirm trip{% endif %}</button>
     </form>
   {% endif %}
