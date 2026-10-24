@@ -143,7 +143,7 @@ def test_refresh_stores_the_new_rotated_refresh_token():
     _connected(refresh="rt-old")
 
     with patch(HTTP, return_value=_resp(200, _tokens(access="at-2", refresh="rt-new"))) as http:
-        cred = qbo.refresh()
+        cred = qbo.refresh(force=True)
 
     assert http.call_args.kwargs["data"] == {
         "grant_type": "refresh_token",
@@ -159,7 +159,7 @@ def test_an_invalid_grant_marks_the_connection_broken_and_notifies():
 
     with patch(HTTP, return_value=_resp(400, {"error": "invalid_grant"})):
         with pytest.raises(qbo.QboNotConnected):
-            qbo.refresh()
+            qbo.refresh(force=True)
 
     cred = QboCredential.load()
     assert cred.broken_at is not None and "reconnect" in cred.broken_reason.lower()
@@ -308,3 +308,167 @@ def test_the_smoke_test_prints_the_connected_company():
 def test_the_smoke_test_says_what_to_do_when_not_connected():
     with pytest.raises(SystemExit):
         call_command("qbo_smoke_test", stdout=StringIO(), stderr=StringIO())
+
+
+# --- review fixes (2026-10-24) ----------------------------------------------------------------
+
+from django.db import transaction  # noqa: E402
+
+
+@override_settings(**QBO)
+def test_a_refresh_inside_an_outer_transaction_is_refused():
+    """The rotated refresh token must commit on its own: inside a caller's transaction a
+    rollback would lose it after Intuit had already rotated, and kill the connection."""
+    _connected()
+
+    with patch(HTTP) as http, pytest.raises(RuntimeError), transaction.atomic():
+        qbo.refresh(force=True)
+
+    http.assert_not_called()
+
+
+@override_settings(**QBO)
+def test_a_refresh_never_spends_the_token_again_when_another_caller_just_refreshed():
+    _connected()  # the access token is fresh
+
+    with patch(HTTP) as http:
+        qbo.refresh()  # force=False: re-checks under the lock
+
+    http.assert_not_called()
+
+
+@override_settings(**QBO)
+def test_a_refused_refresh_notifies_once_and_never_spends_the_dead_token_again():
+    _connected()
+
+    with patch(HTTP, return_value=_resp(400, {"error": "invalid_grant"})) as http:
+        for _ in range(2):
+            with pytest.raises(qbo.QboNotConnected):
+                qbo.refresh(force=True)
+
+    assert http.call_count == 1
+    assert Notification.objects.filter(title__icontains="QuickBooks").count() == 1
+
+
+@override_settings(**QBO)
+def test_rejected_app_credentials_mark_the_connection_broken_and_notify():
+    _connected()
+
+    with patch(HTTP, return_value=_resp(401, {"error": "invalid_client"})):
+        with pytest.raises(qbo.QboNotConnected):
+            qbo.refresh(force=True)
+
+    cred = QboCredential.load()
+    assert cred.broken_at is not None and "credentials" in cred.broken_reason
+    assert Notification.objects.filter(title__icontains="QuickBooks").exists()
+
+
+@override_settings(**QBO)
+def test_an_intuit_outage_on_refresh_is_an_error_but_not_a_broken_connection():
+    _connected()
+
+    with patch(HTTP, return_value=_resp(503, {"fault": "down"})):
+        with pytest.raises(qbo.QboAPIError):
+            qbo.refresh(force=True)
+
+    assert qbo.is_connected() is True
+
+
+@override_settings(**QBO)
+def test_network_errors_come_back_as_qbo_errors_not_raw_requests_ones():
+    _connected()
+
+    with patch(HTTP, side_effect=qbo.requests.ConnectionError("down")):
+        with pytest.raises(qbo.QboAPIError) as err:
+            qbo.request("GET", "companyinfo/9130")
+
+    assert err.value.status == 0
+
+
+@override_settings(**QBO)
+def test_a_rate_limit_waits_once_and_retries():
+    _connected()
+    limited = _resp(429, {"fault": "throttled"})
+    limited.headers = {"Retry-After": "1"}
+
+    with (
+        patch(HTTP, side_effect=[limited, _resp(200, {"ok": True})]) as http,
+        patch.object(qbo.time, "sleep") as sleep,
+    ):
+        assert qbo.request("GET", "companyinfo/9130") == {"ok": True}
+
+    assert http.call_count == 2
+    sleep.assert_called_once_with(1)
+
+
+@override_settings(**QBO)
+def test_a_second_rate_limit_raises_rather_than_looping():
+    _connected()
+    limited = _resp(429, {})
+    limited.headers = {"Retry-After": "120"}
+
+    with (
+        patch(HTTP, side_effect=[limited, limited]) as http,
+        patch.object(qbo.time, "sleep") as sleep,
+    ):
+        with pytest.raises(qbo.QboRateLimited) as err:
+            qbo.request("GET", "companyinfo/9130")
+
+    assert http.call_count == 2
+    assert (
+        sleep.call_args.args[0] <= qbo.MAX_RATE_LIMIT_WAIT
+    )  # never sleeps two minutes in a request
+    assert err.value.retry_after == 120
+
+
+@override_settings(**QBO)
+def test_unreadable_tokens_after_a_secret_key_change_mark_the_connection_broken():
+    _connected()
+
+    with override_settings(SECRET_KEY="a-different-secret-key-entirely"):
+        with patch(HTTP) as http, pytest.raises(qbo.QboNotConnected):
+            qbo.request("GET", "companyinfo/9130")
+        http.assert_not_called()
+        cred = QboCredential.load()
+        assert cred.broken_at is not None and "secret key" in cred.broken_reason.lower()
+
+
+@override_settings(**QBO)
+def test_disconnect_still_works_when_the_tokens_cannot_be_read():
+    _connected()
+
+    with override_settings(SECRET_KEY="a-different-secret-key-entirely"), patch(HTTP) as http:
+        qbo.disconnect()
+
+    http.assert_not_called()  # nothing readable to revoke
+    assert qbo.is_connected() is False
+
+
+@override_settings(**QBO)
+def test_the_401_retry_uses_and_keeps_the_new_tokens():
+    _connected()
+    calls = [_resp(401, {}), _resp(200, _tokens(access="at-2", refresh="rt-2")), _resp(200, {})]
+
+    with patch(HTTP, side_effect=calls) as http:
+        qbo.request("GET", "companyinfo/9130")
+
+    assert http.call_args.kwargs["headers"]["Authorization"] == "Bearer at-2"
+    assert QboCredential.load().refresh_token == "rt-2"
+
+
+@override_settings(**QBO)
+def test_reconnecting_resets_the_last_successful_call():
+    cred = _connected()
+    cred.last_success_at = timezone.now()
+    cred.save()
+
+    with patch(HTTP, return_value=_resp(200, _tokens())):
+        qbo.exchange_code("c", realm_id="4620", user=UserFactory())
+
+    assert QboCredential.load().last_success_at is None
+
+
+@override_settings(**QBO)
+def test_refresh_with_no_connection_at_all_is_not_connected():
+    with pytest.raises(qbo.QboNotConnected):
+        qbo.refresh()

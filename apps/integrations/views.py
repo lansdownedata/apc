@@ -342,13 +342,16 @@ def quickbooks_callback(request):
     if error := request.GET.get("error"):
         messages.error(request, f"QuickBooks wasn't connected ({error}).")
         return redirect("quickbooks_settings")
-    code, realm_id = request.GET.get("code"), request.GET.get("realmId")
-    if not code or not realm_id:
-        return HttpResponseBadRequest("Missing authorization code or company id.")
+    code, realm_id = request.GET.get("code"), request.GET.get("realmId") or ""
+    if not code or not qbo.valid_realm_id(realm_id):
+        return HttpResponseBadRequest("Missing authorization code or a valid company id.")
     try:
         qbo.exchange_code(code, realm_id=realm_id, user=request.user)
     except qbo.QboAPIError as exc:
-        messages.error(request, f"QuickBooks refused the connection ({exc.status}). Try again.")
+        if exc.status == 0:
+            messages.error(request, "Couldn't reach QuickBooks. Try connecting again.")
+        else:
+            messages.error(request, f"QuickBooks refused the connection ({exc.status}). Try again.")
         return redirect("quickbooks_settings")
     messages.success(request, "QuickBooks connected.")
     return redirect("quickbooks_settings")

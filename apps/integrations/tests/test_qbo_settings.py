@@ -184,3 +184,52 @@ def test_the_chrome_flag_follows_the_real_connection(owner):
     assert bool(owner.get(reverse("dashboard")).context["qbo_connected"]) is False
     _live()
     assert bool(owner.get(reverse("dashboard")).context["qbo_connected"]) is True
+
+
+@pytest.mark.parametrize("realm", ["91x30", "1" * 33])
+@override_settings(**QBO)
+def test_the_callback_refuses_a_malformed_company_id(owner, realm):
+    owner.post(reverse("quickbooks_connect"))
+    state = owner.session["qbo_oauth_state"]
+
+    with patch.object(qbo, "exchange_code") as exchange:
+        resp = owner.get(
+            reverse("integrations:quickbooks_callback"),
+            {"code": "c", "state": state, "realmId": realm},
+        )
+
+    assert resp.status_code == 400
+    exchange.assert_not_called()
+
+
+@override_settings(**QBO)
+def test_a_network_drop_mid_connect_is_a_message_not_a_500(owner):
+    from django.contrib.messages import get_messages
+
+    owner.post(reverse("quickbooks_connect"))
+    state = owner.session["qbo_oauth_state"]
+
+    with patch.object(qbo.requests, "request", side_effect=qbo.requests.Timeout("slow")):
+        resp = owner.get(
+            reverse("integrations:quickbooks_callback"),
+            {"code": "c", "state": state, "realmId": "9130"},
+        )
+
+    assert resp.status_code == 302
+    assert any("refused" in str(m) or "reach" in str(m) for m in get_messages(resp.wsgi_request))
+    assert qbo.is_connected() is False
+
+
+@override_settings(**QBO)
+def test_a_state_works_only_once(owner):
+    owner.post(reverse("quickbooks_connect"))
+    state = owner.session["qbo_oauth_state"]
+    params = {"code": "c", "state": state, "realmId": "9130"}
+
+    with patch.object(qbo, "exchange_code") as exchange:
+        exchange.return_value = _live()
+        owner.get(reverse("integrations:quickbooks_callback"), params)
+        again = owner.get(reverse("integrations:quickbooks_callback"), params)
+
+    assert again.status_code == 400
+    assert exchange.call_count == 1
