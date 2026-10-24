@@ -1,5 +1,6 @@
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+import requests
 import stripe
 from django.conf import settings
 from django.contrib import messages
@@ -352,6 +353,10 @@ def order_send_pay_link(request, lead_id):
         return _json_error(str(exc))
     except (PodiumAPIError, PodiumNotConnected) as exc:
         return _json_error(str(exc), status=502)
+    except requests.RequestException:
+        # A timeout or refused connection never reaches PodiumAPIError (that wraps HTTP
+        # errors only); report it as the gateway failure it is, not a 500.
+        return _json_error("Could not reach Podium. Please try again.", status=502)
     return JsonResponse({"ok": True, "channel": channel})
 
 
@@ -371,6 +376,10 @@ def order_send_terms_link(request, lead_id):
         return _json_error(str(exc))
     except (PodiumAPIError, PodiumNotConnected) as exc:
         return _json_error(str(exc), status=502)
+    except requests.RequestException:
+        # A timeout or refused connection never reaches PodiumAPIError (that wraps HTTP
+        # errors only); report it as the gateway failure it is, not a 500.
+        return _json_error("Could not reach Podium. Please try again.", status=502)
     return JsonResponse({"ok": True, "channel": channel})
 
 

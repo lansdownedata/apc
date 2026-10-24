@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature
 from django.core.validators import validate_email
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import CharField, F, Prefetch, Q, Value
 from django.db.models.functions import Cast, Concat
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
@@ -675,35 +675,36 @@ def quote_terms(request, token: str) -> HttpResponse:
     from apps.tasks import services as task_services
 
     lead = _lead_from_token(token)
-    is_lost = lead.status == Lead.Status.LOST
-    if request.method == "POST" and not is_lost and lead.accepted_terms_at is None:
+    accepted = lead.accepted_terms_at is not None
+    # Only a booked order that never reached the pay page accepts here; a quote accepts on
+    # the pay page, and pre-accepting here would hide that page's checkbox.
+    can_accept = lead.status == Lead.Status.BOOKED and not accepted
+    error = False
+    if request.method == "POST" and can_accept:
         if request.POST.get("accept") == "on":
-            services.accept_terms(lead)
-            task_services.evaluate_lead(lead)
+            with transaction.atomic():
+                services.accept_terms(lead)
+                task_services.evaluate_lead(lead)
             return redirect("quote_terms", token=token)
         error = True
-    else:
-        error = False
-    trips = [
-        r
-        for r in lead.reservations.select_related("vehicle", "service_type")
-        .prefetch_related("stops")
-        .order_by("pickup_date", "pickup_time", "pk")
-        if not r.is_cancelled
-    ]
+    sheets = []
+    if can_accept:
+        trips = lead.reservations.select_related("vehicle", "service_type").order_by(
+            "pickup_date", "pickup_time", "pk"
+        )
+        sheets = [trip_sheet_context(r) for r in trips if not r.is_cancelled]
     return render(
         request,
         "public/terms_accept.html",
         {
             "quote_no": lead.quote_no,
             "contact_name": lead.contact.name,
-            "sheets": [trip_sheet_context(r) for r in trips],
-            "accepted": lead.accepted_terms_at is not None,
+            "sheets": sheets,
+            "accepted": accepted,
             "accepted_on": lead.terms_accepted_on,
-            "is_lost": is_lost,
+            "nothing_to_accept": not accepted and not can_accept,
             "error": error,
         },
-        status=200,
     )
 
 

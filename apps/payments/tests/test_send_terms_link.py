@@ -131,3 +131,17 @@ def test_the_button_shows_only_for_a_booked_order_without_acceptance(client):
     assert reverse("order_send_terms_link", args=[pending.pk]) in page(pending)
     assert reverse("order_send_terms_link", args=[accepted.pk]) not in page(accepted)
     assert reverse("order_send_terms_link", args=[quoted.pk]) not in page(quoted)
+
+
+@pytest.mark.parametrize("name", ["order_send_terms_link", "order_send_pay_link"])
+def test_a_podium_network_failure_is_a_502_not_a_500(client, name):
+    import requests
+
+    lead = _setup(phone="+15715551212")
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with patch(SEND, side_effect=requests.ConnectionError("unreachable")):
+        resp = client.post(reverse(name, args=[lead.pk]))
+
+    assert resp.status_code == 502
+    assert resp.json()["ok"] is False

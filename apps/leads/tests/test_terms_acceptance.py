@@ -240,3 +240,16 @@ def test_make_terms_page_url_round_trips():
     token = url.rstrip("/").split("/")[-2]
     assert url.startswith("https://apc.example.com/quote/") and url.endswith("/terms/")
     assert services.read_deposit_token(token) == lead
+
+
+def test_a_quoted_order_cannot_accept_by_link(client):
+    """The pay page is where a quote accepts; pre-accepting here would hide its checkbox."""
+    lead = _lead()  # QUOTED
+
+    html = client.get(_terms_url(lead)).content.decode()
+    client.post(_terms_url(lead), {"accept": "on"})
+
+    assert 'name="accept"' not in html
+    assert "nothing to accept" in html.lower()
+    lead.refresh_from_db()
+    assert lead.accepted_terms_at is None

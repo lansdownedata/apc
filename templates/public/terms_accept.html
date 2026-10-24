@@ -6,15 +6,15 @@ CLIENT COPY PENDING (APC-27).
 {% endcomment %}
 {% block title %}Accept the terms · All Pro Charter{% endblock %}
 {% block body %}
-  {% if is_lost %}
-    <h1>Nothing to accept</h1>
-    <p class="cancelled">This reservation is no longer active. If that's a surprise, please call us.</p>
-  {% elif accepted %}
+  {% if accepted %}
     <div class="done">
       <span class="mark">✓</span>
       <h1>Thank you</h1>
       <p class="sub">You accepted the terms on {{ accepted_on }} for reservation {{ quote_no }}.</p>
     </div>
+  {% elif nothing_to_accept %}
+    <h1>Nothing to accept</h1>
+    <p class="cancelled">There is nothing to accept on this reservation right now. If that's a surprise, please call us.</p>
   {% else %}
     <h1>Please accept the terms</h1>
     <p class="sub">Reservation {{ quote_no }}. Review your trips and the terms below, then accept.</p>
