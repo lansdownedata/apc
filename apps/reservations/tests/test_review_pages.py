@@ -49,6 +49,7 @@ def _order(*, farmed_out=True, status=Reservation.TripStatus.DONE, zone="America
         pickup_timezone=zone,
         rate=Decimal("168"),
         hours=Decimal("3"),
+        trip_type=Reservation.TripType.HOURLY,
         trip_status=status,
     )
     if farmed_out:
@@ -231,7 +232,8 @@ def test_saving_times_entered_in_the_trips_zone(staff):
     local = review.actual_dropoff_local
     assert (local.date(), local.hour, local.minute) == (day + timedelta(days=1), 1, 45)
     assert data["actual_minutes"] == 220
-    assert data["suggested_minutes"] == 30
+    assert data["suggested_minutes"] == 60  # 40 over, 15-min grace, a full hour
+    assert (data["basis"], data["grace_minutes"]) == ("hourly", 15)
 
 
 def test_half_a_time_is_refused(staff):

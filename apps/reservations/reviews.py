@@ -18,13 +18,14 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal
+from enum import StrEnum
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Reservation, TripIssue, TripReview, TripStatusEvent
+from .models import Flight, FlightDirection, Reservation, TripIssue, TripReview, TripStatusEvent
 
 _PICKUP_EVENTS = (Reservation.TripStatus.ARRIVED, Reservation.TripStatus.CUSTOMER_IN_CAR)
 _UNSET = object()
@@ -39,25 +40,127 @@ def from_local(trip: Reservation, day: date, clock: time) -> datetime:
     return datetime.combine(day, clock, tzinfo=ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE))
 
 
-def suggest_overtime(
-    billed_hours: Decimal,
-    actual_pickup_at: datetime | None,
-    actual_dropoff_at: datetime | None,
-    *,
-    increment_minutes: int,
-    grace_minutes: int,
+class OvertimeBasis(StrEnum):
+    """Which clock the overtime suggestion reads (client rule, 2026-10-19; APC-91)."""
+
+    HOURLY = "hourly"  # time on the job beyond the billed hours
+    TRANSFER_WAIT = "transfer_wait"  # waiting at the pickup, from the scheduled time
+    AIRPORT_ARRIVAL = "airport_arrival"  # waiting from the flight's actual arrival
+
+
+# Arrivals from US territories clear no customs, so they get the domestic grace.
+DOMESTIC_COUNTRIES = frozenset({"US", "PR", "VI", "GU", "AS", "MP"})
+
+
+def _flight_time(flight: Flight | None) -> datetime | None:
+    """The best arrival time the flight has: actual, else estimated, else scheduled."""
+    if flight is None:
+        return None
+    return flight.actual_at or flight.estimated_at or flight.scheduled_at
+
+
+def basis_for(trip: Reservation) -> tuple[OvertimeBasis, Flight | None]:
+    """An hourly trip measures time over the billed hours. A transfer measures the wait
+    at pickup — from the flight's arrival when the pickup is a verified arriving flight
+    with a usable time, otherwise from the scheduled pickup."""
+    if trip.trip_type == Reservation.TripType.HOURLY:
+        return OvertimeBasis.HOURLY, None
+    pickup = trip.pickup
+    if pickup is not None and pickup.airport_id and pickup.flight_id:
+        flight = pickup.flight
+        if flight.direction == FlightDirection.ARRIVAL and _flight_time(flight):
+            return OvertimeBasis.AIRPORT_ARRIVAL, flight
+    return OvertimeBasis.TRANSFER_WAIT, None
+
+
+def _is_international(flight: Flight) -> bool:
+    from apps.addresses.models import Airport
+
+    iata = (flight.other_airport_iata or "").upper()
+    if not iata:
+        return False
+    origin = Airport.objects.filter(iata=iata).only("country").first()
+    return origin is not None and origin.country not in DOMESTIC_COUNTRIES
+
+
+def grace_minutes_for(
+    trip: Reservation, basis: OvertimeBasis, flight: Flight | None, config
 ) -> int:
-    """Minutes over the billed hours, or 0 inside the grace. Past the grace only the time
-    beyond it bills, rounded up to the increment — the grace itself is never billed
-    (client, 2026-09-27)."""
-    if not (actual_pickup_at and actual_dropoff_at):
+    """The grace for this trip under `basis`, from the TaskConfig rule table."""
+    from apps.leads.models import VehicleType
+
+    if basis is OvertimeBasis.HOURLY:
+        vehicle = trip.vehicle
+        large = vehicle is not None and vehicle.overtime_class == VehicleType.OvertimeClass.LARGE
+        return config.grace_large_minutes if large else config.grace_standard_minutes
+    if basis is OvertimeBasis.TRANSFER_WAIT:
+        return config.transfer_grace_minutes
+    if _is_international(flight):
+        return config.airport_international_grace_minutes
+    return config.airport_domestic_grace_minutes
+
+
+def _over_minutes(review: TripReview, basis: OvertimeBasis, flight: Flight | None) -> int | None:
+    """Minutes on the basis clock, floored at zero; None until the times it needs exist."""
+    trip = review.reservation
+    if basis is OvertimeBasis.HOURLY:
+        actual = review.actual_minutes
+        if actual is None:
+            return None
+        return max(0, actual - int(Decimal(trip.billed_hours) * 60))
+    if review.actual_pickup_at is None:
+        return None
+    start = _flight_time(flight) if basis is OvertimeBasis.AIRPORT_ARRIVAL else trip.pickup_at
+    if start is None:
+        return None
+    return max(0, int((review.actual_pickup_at - start).total_seconds() // 60))
+
+
+def suggest_overtime(over_minutes: int | None, *, grace_minutes: int, block_minutes: int) -> int:
+    """0 inside the grace; past it, the minutes beyond the grace round up to whole blocks
+    (an hour, by default) — each hour started bills, the grace itself never does."""
+    if over_minutes is None or over_minutes <= grace_minutes:
         return 0
-    actual = (actual_dropoff_at - actual_pickup_at).total_seconds() / 60
-    over = actual - float(billed_hours) * 60
-    if over <= grace_minutes:
-        return 0
-    step = max(int(increment_minutes), 1)
-    return math.ceil(round(over - grace_minutes, 6) / step) * step
+    block = max(int(block_minutes), 1)
+    return math.ceil((over_minutes - grace_minutes) / block) * block
+
+
+@dataclass(frozen=True)
+class _Clock:
+    """Everything the suggestion and its explanation need, resolved once per review."""
+
+    basis: OvertimeBasis
+    flight: Flight | None
+    grace: int
+    block: int
+    over: int | None
+    international: bool
+    # An airport pickup whose flight isn't verified: the wait rule applies, and we say so.
+    fallback: bool
+    vehicle_label: str
+
+    @property
+    def suggested(self) -> int:
+        return suggest_overtime(self.over, grace_minutes=self.grace, block_minutes=self.block)
+
+
+def _clock(review: TripReview, config) -> _Clock:
+    trip = review.reservation
+    basis, flight = basis_for(trip)
+    pickup = trip.pickup if basis is OvertimeBasis.TRANSFER_WAIT else None
+    fallback = bool(
+        pickup is not None and pickup.airport_id and (pickup.flight_id or pickup.flight_number)
+    )
+    return _Clock(
+        basis=basis,
+        flight=flight,
+        grace=grace_minutes_for(trip, basis, flight, config),
+        block=config.overtime_block_minutes,
+        over=_over_minutes(review, basis, flight),
+        international=flight is not None and _is_international(flight),
+        fallback=fallback,
+        vehicle_label=trip.vehicle.name.lower() if trip.vehicle is not None else "vehicle",
+    )
 
 
 def _prefilled_times(trip: Reservation) -> tuple[datetime | None, datetime | None]:
@@ -103,14 +206,7 @@ def review_for(trip: Reservation) -> TripReview:
 def _stamp_suggestion(review: TripReview) -> None:
     from apps.tasks.models import TaskConfig
 
-    config = TaskConfig.load()
-    review.suggested_overtime_minutes = suggest_overtime(
-        review.reservation.billed_hours,
-        review.actual_pickup_at,
-        review.actual_dropoff_at,
-        increment_minutes=config.overtime_increment_minutes,
-        grace_minutes=config.overtime_grace_minutes,
-    )
+    review.suggested_overtime_minutes = _clock(review, TaskConfig.load()).suggested
 
 
 def save_review(
@@ -313,6 +409,8 @@ class Figures:
     over_minutes: int | None
     suggested_minutes: int
     rule: str
+    basis: str  # an OvertimeBasis value: which clock `over_minutes` is on
+    grace_minutes: int
     # customer billing
     billable_minutes: int
     customer_rate: Decimal
@@ -342,17 +440,49 @@ class Figures:
         return (self.affiliate_share * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
-def _rule(over: int | None, *, grace: int, increment: int) -> str:
+def _span(minutes: int) -> str:
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return "1 hour bills" if hours == 1 else f"{hours} hours bill"
+    return f"{minutes} min bills"
+
+
+def _rule(clock: _Clock) -> str:
+    """One sentence for the review screen: what was measured, the grace, the outcome."""
+    over = clock.over
     if over is None:
-        return "Enter the actual times to see the suggestion."
-    if over <= grace:
-        return f"{over} min over, inside the {grace}-min grace, so nothing to suggest."
-    beyond = over - grace
-    step = max(int(increment), 1)
-    billed = math.ceil(beyond / step) * step
-    if not grace:
-        return f"{over} min over, so it rounds up to {billed}."
-    return f"{over} min over; the first {grace} are grace, so {beyond} min rounds up to {billed}."
+        text = (
+            "Enter the actual times to see the suggestion."
+            if clock.basis is OvertimeBasis.HOURLY
+            else "Enter the actual pickup time to see the suggestion."
+        )
+    else:
+        if clock.basis is OvertimeBasis.HOURLY:
+            what, grace, who = (
+                f"{over} min over",
+                f"{clock.grace}-min grace",
+                f" for a {clock.vehicle_label}",
+            )
+        elif clock.basis is OvertimeBasis.TRANSFER_WAIT:
+            what, grace, who = (
+                f"{over} min waiting at pickup",
+                f"{clock.grace}-min transfer grace",
+                "",
+            )
+        else:
+            kind = "international" if clock.international else "domestic"
+            what, grace, who = (
+                f"{over} min after the flight's arrival",
+                f"{clock.grace}-min {kind} grace",
+                "",
+            )
+        if over <= clock.grace:
+            text = f"{what}, inside the {grace}, so nothing to suggest."
+        else:
+            text = f"{what}; {grace}{who}, so {_span(clock.suggested)}."
+    if clock.fallback:
+        text += " No verified arrival time for the flight, so the transfer wait rule applies."
+    return text
 
 
 def figures(review: TripReview, coverage, *, config=None) -> Figures:
@@ -364,7 +494,8 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
     trip = review.reservation
     billed = int(Decimal(trip.billed_hours) * 60)
     actual = review.actual_minutes
-    over = max(0, actual - billed) if actual is not None else None
+    clock = _clock(review, config)
+    over = clock.over
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
     rate = trip.discounted_rate  # the discount carries into overtime (client, 2026-10-18)
     customer_amount = _money(billable, rate)
@@ -409,11 +540,9 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
         actual_minutes=actual,
         over_minutes=over,
         suggested_minutes=review.suggested_overtime_minutes,
-        rule=_rule(
-            over,
-            grace=config.overtime_grace_minutes,
-            increment=config.overtime_increment_minutes,
-        ),
+        rule=_rule(clock),
+        basis=str(clock.basis),
+        grace_minutes=clock.grace,
         billable_minutes=billable,
         customer_rate=rate,
         customer_amount=customer_amount,

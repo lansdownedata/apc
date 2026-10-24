@@ -132,6 +132,8 @@ def _review_json(review, coverage) -> dict:
         "over_minutes": f.over_minutes,
         "suggested_minutes": f.suggested_minutes,
         "rule": f.rule,
+        "basis": f.basis,
+        "grace_minutes": f.grace_minutes,
         "billable_minutes": f.billable_minutes,
         "waived": review.overtime_waived,
         "decided": review.decided_at is not None,

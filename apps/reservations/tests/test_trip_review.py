@@ -10,13 +10,20 @@ import pytest
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
+from apps.addresses.factories import AirportFactory
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
-from apps.leads.factories import LeadFactory
-from apps.leads.models import Lead
+from apps.leads.factories import LeadFactory, VehicleTypeFactory
+from apps.leads.models import Lead, VehicleType
 from apps.reservations import reviews
-from apps.reservations.factories import ReservationFactory
-from apps.reservations.models import Reservation, TripIssue, TripReview, TripStatusEvent
+from apps.reservations.factories import FlightFactory, ReservationFactory
+from apps.reservations.models import (
+    FlightDirection,
+    Reservation,
+    TripIssue,
+    TripReview,
+    TripStatusEvent,
+)
 from apps.tasks import services as tasks
 from apps.tasks.jobs import run_tasks
 from apps.tasks.models import Task, TaskConfig
@@ -38,8 +45,10 @@ def _quiet():
 
 
 def _finished_trip(*, farmed_out=True, hours="3", zone="America/New_York", **extra):
-    """A booked trip that ran yesterday 6-9 PM local and has entered post-trip."""
+    """A booked hourly trip that ran yesterday 6-9 PM local and has entered post-trip.
+    Pass `trip_type=Reservation.TripType.TRANSFER` for a transfer."""
     lead = LeadFactory(status=Lead.Status.BOOKED)
+    extra.setdefault("trip_type", Reservation.TripType.HOURLY)
     trip = ReservationFactory(
         lead=lead,
         pickup_date=timezone.localdate() - timedelta(days=1),
@@ -168,44 +177,208 @@ def test_times_round_trip_in_the_trip_zone_across_midnight():
 
 
 @pytest.mark.parametrize(
-    ("minutes_over", "increment", "grace", "expected"),
+    "over, grace, expected",
     [
-        (-30, 15, 15, 0),  # finished early
-        (0, 15, 15, 0),
-        (10, 15, 15, 0),  # inside the grace
-        (15, 15, 15, 0),  # exactly the grace still doesn't count
-        # Past it, only the time beyond the grace bills, rounded up (client, 2026-09-27).
-        (16, 15, 15, 15),  # 1 min past → one increment
-        (30, 15, 15, 15),  # exactly one increment past
-        (45, 15, 15, 30),  # exactly two
-        (46, 15, 15, 45),
-        (31, 30, 0, 60),
-        (40, 60, 15, 60),
-        (61, 60, 15, 60),
-        (7, 1, 0, 7),
+        (5, 5, 0),  # inside the grace: nothing
+        (6, 5, 60),  # one minute past it: a full hour
+        (70, 5, 120),  # 1 h 10 over → two hours started
+        (15, 15, 0),
+        (16, 15, 60),
+        (None, 5, 0),  # no times yet
+        (0, 0, 0),
+        (1, 0, 60),
     ],
 )
-def test_the_suggestion_honours_the_increment_and_grace(minutes_over, increment, grace, expected):
-    start = datetime(2026, 9, 25, 22, 0, tzinfo=ZoneInfo("UTC"))
-    end = start + timedelta(hours=3, minutes=minutes_over)
+def test_the_suggestion_rounds_minutes_past_the_grace_up_to_whole_hours(over, grace, expected):
+    assert reviews.suggest_overtime(over, grace_minutes=grace, block_minutes=60) == expected
 
-    got = reviews.suggest_overtime(
-        Decimal("3"), start, end, increment_minutes=increment, grace_minutes=grace
-    )
 
-    assert got == expected
+def _bus():
+    return VehicleTypeFactory(name="Coach", overtime_class=VehicleType.OvertimeClass.LARGE)
+
+
+def _sedan():
+    return VehicleTypeFactory(name="Sedan", overtime_class=VehicleType.OvertimeClass.STANDARD)
+
+
+def test_a_large_vehicle_gets_the_five_minute_grace_on_hourly():
+    trip = _finished_trip(vehicle=_bus())
+
+    assert _decided(trip, minutes_over=5).suggested_overtime_minutes == 0
+    assert _decided(trip, minutes_over=6).suggested_overtime_minutes == 60
+
+
+def test_a_standard_vehicle_gets_the_fifteen_minute_grace_on_hourly():
+    trip = _finished_trip(vehicle=_sedan())
+
+    assert _decided(trip, minutes_over=15).suggested_overtime_minutes == 0
+    assert _decided(trip, minutes_over=16).suggested_overtime_minutes == 60
+
+
+def test_a_trip_with_no_vehicle_uses_the_standard_grace():
+    trip = _finished_trip(vehicle=None)
+
+    assert _decided(trip, minutes_over=15).suggested_overtime_minutes == 0
+    assert _decided(trip, minutes_over=16).suggested_overtime_minutes == 60
 
 
 def test_saving_stores_the_suggestion_from_the_configured_settings():
     cfg = TaskConfig.load()
-    cfg.overtime_increment_minutes = 30
-    cfg.overtime_grace_minutes = 0
+    cfg.grace_standard_minutes = 0
+    cfg.overtime_block_minutes = 30
     cfg.save()
-    trip = _finished_trip()
+    trip = _finished_trip(vehicle=_sedan())
 
     review = _decided(trip, billable=0, minutes_over=20)
 
     assert review.suggested_overtime_minutes == 30
+
+
+# --- transfers: the clock is the wait at pickup --------------------------------------
+
+
+def _transfer(**extra):
+    extra.setdefault("vehicle", _bus())
+    return _finished_trip(trip_type=Reservation.TripType.TRANSFER, hours="1", **extra)
+
+
+def _waited(trip, minutes, *, ride_hours=3):
+    """The driver picked up `minutes` after the scheduled time and the ride ran long."""
+    pickup = trip.pickup_at + timedelta(minutes=minutes)
+    return reviews.save_review(
+        reviews.review_for(trip),
+        user=UserFactory(),
+        actual_pickup_at=pickup,
+        actual_dropoff_at=pickup + timedelta(hours=ride_hours),
+    )
+
+
+def test_a_transfer_bills_the_wait_at_pickup_not_the_duration():
+    trip = _transfer()
+
+    review = _waited(trip, 20, ride_hours=3)  # a 3-hour ride on a 1-hour transfer
+
+    assert review.suggested_overtime_minutes == 60  # 20 - 15 grace → one hour started
+    assert reviews.basis_for(trip)[0] == reviews.OvertimeBasis.TRANSFER_WAIT
+
+
+def test_a_transfer_inside_the_transfer_grace_suggests_nothing():
+    assert _waited(_transfer(), 14).suggested_overtime_minutes == 0  # even on a bus
+
+
+def test_an_early_pickup_on_a_transfer_suggests_nothing():
+    trip = _transfer()
+
+    review = _waited(trip, -10)
+    f = reviews.figures(review, None)
+
+    assert review.suggested_overtime_minutes == 0
+    assert f.over_minutes == 0
+
+
+# --- airport arrivals: the clock is the flight's actual arrival --------------------------
+
+
+def _arrival(trip, *, origin_country="US", **flight_fields):
+    """Make the trip's pickup an arriving flight at an airport; `flight_fields` set the
+    flight's times (actual_at / estimated_at / scheduled_at)."""
+    airport = AirportFactory()
+    origin = AirportFactory(country=origin_country)
+    flight_fields.setdefault("scheduled_at", None)
+    flight = FlightFactory(
+        airport=airport,
+        direction=FlightDirection.ARRIVAL,
+        flight_date=trip.pickup_date,
+        other_airport_iata=origin.iata,
+        **flight_fields,
+    )
+    stop = trip.stops.order_by("sequence").first()
+    stop.airport = airport
+    stop.airline = flight.airline
+    stop.flight_number = flight.flight_number
+    stop.flight_direction = FlightDirection.ARRIVAL
+    stop.flight = flight
+    stop.save()
+    return flight
+
+
+def _picked_up(trip, at):
+    return reviews.save_review(
+        reviews.review_for(trip),
+        user=UserFactory(),
+        actual_pickup_at=at,
+        actual_dropoff_at=at + timedelta(hours=1),
+    )
+
+
+def test_a_domestic_arrival_gets_twenty_five_minutes():
+    trip = _transfer()
+    landed = trip.pickup_at - timedelta(minutes=5)
+    _arrival(trip, actual_at=landed)
+
+    assert _picked_up(trip, landed + timedelta(minutes=25)).suggested_overtime_minutes == 0
+    assert _picked_up(trip, landed + timedelta(minutes=30)).suggested_overtime_minutes == 60
+    assert reviews.basis_for(trip)[0] == reviews.OvertimeBasis.AIRPORT_ARRIVAL
+
+
+def test_an_international_arrival_gets_fifty_minutes():
+    trip = _transfer()
+    landed = trip.pickup_at
+    _arrival(trip, origin_country="GB", actual_at=landed)
+
+    assert _picked_up(trip, landed + timedelta(minutes=50)).suggested_overtime_minutes == 0
+    assert _picked_up(trip, landed + timedelta(minutes=51)).suggested_overtime_minutes == 60
+
+
+def test_a_puerto_rico_origin_is_domestic():
+    trip = _transfer()
+    landed = trip.pickup_at
+    _arrival(trip, origin_country="PR", actual_at=landed)
+
+    assert _picked_up(trip, landed + timedelta(minutes=30)).suggested_overtime_minutes == 60
+
+
+def test_the_arrival_clock_falls_back_to_estimated_then_scheduled():
+    trip = _transfer()
+    scheduled = trip.pickup_at - timedelta(minutes=40)
+    estimated = trip.pickup_at - timedelta(minutes=10)
+    _arrival(trip, scheduled_at=scheduled, estimated_at=estimated)
+
+    # 30 min after the estimate (70 after the schedule): the estimate wins → one hour
+    review = _picked_up(trip, estimated + timedelta(minutes=30))
+    assert review.suggested_overtime_minutes == 60
+    assert reviews.figures(review, None).over_minutes == 30
+
+    flight = trip.stops.order_by("sequence").first().flight
+    flight.estimated_at = None
+    flight.save()
+    review = _picked_up(trip, scheduled + timedelta(minutes=20))
+    assert review.suggested_overtime_minutes == 0  # 20 after the schedule, inside 25
+
+
+def test_an_airport_pickup_with_no_verified_flight_uses_the_wait_rule_and_says_so():
+    trip = _transfer()
+    stop = trip.stops.order_by("sequence").first()
+    stop.airport = AirportFactory()
+    stop.flight_number = "123"
+    stop.save()
+
+    review = _waited(trip, 20)
+    f = reviews.figures(review, None)
+
+    assert reviews.basis_for(trip)[0] == reviews.OvertimeBasis.TRANSFER_WAIT
+    assert review.suggested_overtime_minutes == 60
+    assert f.basis == "transfer_wait"
+    assert f.rule.endswith(
+        "No verified arrival time for the flight, so the transfer wait rule applies."
+    )
+
+
+def test_an_arrival_with_no_times_at_all_uses_the_wait_rule():
+    trip = _transfer()
+    _arrival(trip)  # scheduled_at=None, no estimate, no actual
+
+    assert reviews.basis_for(trip)[0] == reviews.OvertimeBasis.TRANSFER_WAIT
 
 
 def test_billable_minutes_default_to_the_suggestion_until_someone_decides():
@@ -219,8 +392,8 @@ def test_billable_minutes_default_to_the_suggestion_until_someone_decides():
         actual_dropoff_at=start + timedelta(hours=3, minutes=40),
     )
 
-    assert review.suggested_overtime_minutes == 30  # 25 min past the grace
-    assert review.billable_overtime_minutes == 30
+    assert review.suggested_overtime_minutes == 60  # 40 over, 15-min grace: an hour
+    assert review.billable_overtime_minutes == 60
     assert review.decided_at is None
 
 
@@ -238,7 +411,7 @@ def test_billable_minutes_can_go_below_or_above_the_suggestion(billable):
         billable_overtime_minutes=billable,
     )
 
-    assert review.suggested_overtime_minutes == 30
+    assert review.suggested_overtime_minutes == 60
     assert review.billable_overtime_minutes == billable
     assert review.decided_by == user
     assert review.decided_at is not None
@@ -259,7 +432,7 @@ def test_a_waived_review_bills_nothing():
     assert review.overtime_waived
     assert review.waive_reason == "Traffic"
     assert review.billable_overtime_minutes == 0
-    assert review.suggested_overtime_minutes == 30
+    assert review.suggested_overtime_minutes == 60
 
 
 # --- affiliate rating ----------------------------------------------------------------
@@ -476,7 +649,7 @@ def test_figures_for_a_farmed_out_trip():
     f = reviews.figures(review, _coverage(trip))
 
     assert (f.billed_minutes, f.actual_minutes, f.over_minutes) == (180, 220, 40)
-    assert f.suggested_minutes == 30  # 25 past the 15-min grace → 30
+    assert f.suggested_minutes == 60  # 40 over, 15-min grace: a full hour
     assert f.customer_rate == Decimal("168")
     assert f.customer_amount == Decimal("126.00")  # 45 min at $168/h
     assert f.coverage == "affiliate"
@@ -522,14 +695,38 @@ def test_figures_before_actual_times_are_entered():
     assert "Enter the actual times" in f.rule
 
 
-def test_the_rule_says_the_grace_is_never_billed():
-    trip = _finished_trip()
-    review = _decided(trip, minutes_over=20)
+def test_the_rule_copy_names_the_class_grace_and_the_hour():
+    trip = _finished_trip(vehicle=_bus())
+    review = _decided(trip, minutes_over=38)
 
     f = reviews.figures(review, Assignment.objects.active().filter(reservation=trip).first())
 
-    assert f.suggested_minutes == 15
-    assert f.rule == "20 min over; the first 15 are grace, so 5 min rounds up to 15."
+    assert (f.suggested_minutes, f.basis, f.grace_minutes) == (60, "hourly", 5)
+    assert f.rule == "38 min over; 5-min grace for a coach, so 1 hour bills."
+
+
+def test_the_rule_copy_inside_the_grace_and_for_two_hours():
+    trip = _finished_trip(vehicle=_sedan())
+
+    inside = reviews.figures(_decided(trip, minutes_over=12), None)
+    assert inside.rule == "12 min over, inside the 15-min grace, so nothing to suggest."
+
+    two = reviews.figures(_decided(trip, minutes_over=80), None)
+    assert two.rule == "80 min over; 15-min grace for a sedan, so 2 hours bill."
+
+
+def test_the_rule_copy_for_a_transfer_wait_and_an_arrival():
+    waited = reviews.figures(_waited(_transfer(), 20), None)
+    assert waited.rule == "20 min waiting at pickup; 15-min transfer grace, so 1 hour bills."
+
+    trip = _transfer()
+    landed = trip.pickup_at
+    _arrival(trip, actual_at=landed)
+    arrived = reviews.figures(_picked_up(trip, landed + timedelta(minutes=10)), None)
+    assert arrived.rule == (
+        "10 min after the flight's arrival, inside the 25-min domestic grace, "
+        "so nothing to suggest."
+    )
 
 
 # --- the customer's overtime amount (APC-60) -----------------------------------------
