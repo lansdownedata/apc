@@ -1,0 +1,33 @@
+{% extends "public/_trip_shell.html" %}
+{% comment %}
+APC-93 · a staff or phone booking accepts the terms by link. Same text and the same stamp
+as the pay page's checkbox (APC-55), so contract_signed closes either way.
+CLIENT COPY PENDING (APC-27).
+{% endcomment %}
+{% block title %}Accept the terms · All Pro Charter{% endblock %}
+{% block body %}
+  {% if is_lost %}
+    <h1>Nothing to accept</h1>
+    <p class="cancelled">This reservation is no longer active. If that's a surprise, please call us.</p>
+  {% elif accepted %}
+    <div class="done">
+      <span class="mark">✓</span>
+      <h1>Thank you</h1>
+      <p class="sub">You accepted the terms on {{ accepted_on }} for reservation {{ quote_no }}.</p>
+    </div>
+  {% else %}
+    <h1>Please accept the terms</h1>
+    <p class="sub">Reservation {{ quote_no }}. Review your trips and the terms below, then accept.</p>
+    {% for sheet in sheets %}{% include "components/trip_sheet.html" %}{% endfor %}
+    <div class="legal">{% include "public/_terms.html" %}</div>
+    <form method="post">
+      {% csrf_token %}
+      {% if error %}<p class="err">Please tick the box below to accept the terms.</p>{% endif %}
+      <label class="check">
+        <input type="checkbox" name="accept" required>
+        <span><strong class="who">{{ contact_name }}</strong> I agree to the terms and conditions above.</span>
+      </label>
+      <button type="submit">Accept the terms</button>
+    </form>
+  {% endif %}
+{% endblock %}

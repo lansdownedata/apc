@@ -120,6 +120,11 @@ def make_pay_page_url(lead: Lead, *, base_url: str) -> str:
     return f"{base_url}{reverse('quote_pay', args=[make_deposit_token(lead)])}"
 
 
+def make_terms_page_url(lead: Lead, *, base_url: str) -> str:
+    """The terms-acceptance page for an order that never reaches the pay page (APC-93)."""
+    return f"{base_url}{reverse('quote_terms', args=[make_deposit_token(lead)])}"
+
+
 @dataclass
 class SendQuoteResult:
     ok: bool

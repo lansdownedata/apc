@@ -17,7 +17,7 @@ from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.accounts.permissions import payment_access_required
 from apps.contacts import services as contact_services
@@ -664,6 +664,47 @@ def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
         # a customer who has already paid to place a second hold.
         return None, ZERO
     return _owed(lead)
+
+
+@require_http_methods(["GET", "POST"])
+def quote_terms(request, token: str) -> HttpResponse:
+    """APC-93 — the customer accepts the T&Cs by link (staff and phone bookings never see
+    the pay page). Stamps exactly what the pay page's checkbox stamps, then re-evaluates the
+    order's tasks so `contract_signed` closes at once rather than on the next cron tick."""
+    from apps.reservations.services import trip_sheet_context
+    from apps.tasks import services as task_services
+
+    lead = _lead_from_token(token)
+    is_lost = lead.status == Lead.Status.LOST
+    if request.method == "POST" and not is_lost and lead.accepted_terms_at is None:
+        if request.POST.get("accept") == "on":
+            services.accept_terms(lead)
+            task_services.evaluate_lead(lead)
+            return redirect("quote_terms", token=token)
+        error = True
+    else:
+        error = False
+    trips = [
+        r
+        for r in lead.reservations.select_related("vehicle", "service_type")
+        .prefetch_related("stops")
+        .order_by("pickup_date", "pickup_time", "pk")
+        if not r.is_cancelled
+    ]
+    return render(
+        request,
+        "public/terms_accept.html",
+        {
+            "quote_no": lead.quote_no,
+            "contact_name": lead.contact.name,
+            "sheets": [trip_sheet_context(r) for r in trips],
+            "accepted": lead.accepted_terms_at is not None,
+            "accepted_on": lead.terms_accepted_on,
+            "is_lost": is_lost,
+            "error": error,
+        },
+        status=200,
+    )
 
 
 @require_GET

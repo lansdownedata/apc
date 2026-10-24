@@ -163,3 +163,80 @@ def test_the_workspace_shows_the_acceptance(client):
 
     assert "Terms accepted" in html
     assert "vabcd1234" in html
+
+
+# --- the terms link for staff and phone bookings (APC-93) -----------------------------
+
+
+def _terms_url(lead):
+    return reverse("quote_terms", args=[services.make_deposit_token(lead)])
+
+
+def test_the_terms_link_shows_the_order_and_the_terms(client):
+    lead = _booked()
+
+    html = client.get(_terms_url(lead)).content.decode()
+
+    assert lead.quote_no in html
+    assert "I agree to the terms" in html
+    assert "Cancellation Policy" in html  # the same T&Cs the pay page shows
+    assert lead.reservations.get().vehicle.name in html  # the trip sheet renders
+
+
+def test_accepting_stamps_the_lead_and_closes_contract_signed(client):
+    lead = _booked()
+
+    resp = client.post(_terms_url(lead), {"accept": "on"})
+
+    assert resp.status_code == 302
+    lead.refresh_from_db()
+    assert lead.accepted_terms_at is not None
+    assert lead.accepted_terms_version == services.terms_version()
+    assert Task.objects.get(lead=lead, kind="contract_signed").status == Task.Status.DONE
+
+
+def test_an_accepted_order_shows_accepted_on_instead_of_the_form(client):
+    lead = _booked(accepted_terms_at=timezone.now(), accepted_terms_version="abcd1234")
+
+    html = client.get(_terms_url(lead)).content.decode()
+
+    assert "You accepted the terms on" in html
+    assert 'name="accept"' not in html
+
+
+def test_a_tampered_terms_token_404s(client):
+    assert client.get(reverse("quote_terms", args=["nope"])).status_code == 404
+
+
+def test_a_bare_terms_post_does_not_stamp(client):
+    lead = _booked()
+
+    resp = client.post(_terms_url(lead), {})
+
+    assert resp.status_code == 200
+    assert "Please tick the box" in resp.content.decode()
+    lead.refresh_from_db()
+    assert lead.accepted_terms_at is None
+
+
+def test_a_lost_order_has_nothing_to_accept(client):
+    lead = _booked()
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.LOST)
+
+    html = client.get(_terms_url(lead)).content.decode()
+    client.post(_terms_url(lead), {"accept": "on"})
+
+    assert "nothing to accept" in html.lower()
+    assert 'name="accept"' not in html
+    lead.refresh_from_db()
+    assert lead.accepted_terms_at is None
+
+
+def test_make_terms_page_url_round_trips():
+    lead = _booked()
+
+    url = services.make_terms_page_url(lead, base_url="https://apc.example.com")
+
+    token = url.rstrip("/").split("/")[-2]
+    assert url.startswith("https://apc.example.com/quote/") and url.endswith("/terms/")
+    assert services.read_deposit_token(token) == lead

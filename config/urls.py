@@ -23,6 +23,7 @@ from apps.leads.views import (
     quote_pay,
     quote_pay_complete,
     quote_pay_intent,
+    quote_terms,
 )
 from apps.messaging.views import review_list
 from apps.payments.views import stripe_webhook
@@ -70,6 +71,7 @@ urlpatterns = [
     path("invite/<str:uidb64>/<str:token>/", accept_invite, name="accept_invite"),
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
+    path("quote/<str:token>/terms/", quote_terms, name="quote_terms"),
     path("quote/<str:token>/intent/", quote_pay_intent, name="quote_pay_intent"),
     path("quote/<str:token>/complete/", quote_pay_complete, name="quote_pay_complete"),
     # Where Stripe sends the customer back after a 3-D Secure challenge.
