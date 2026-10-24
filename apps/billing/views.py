@@ -202,7 +202,12 @@ def card_default(request: HttpRequest, pk: int) -> JsonResponse:
     from apps.payments.models import SavedCard
 
     card = get_object_or_404(SavedCard, pk=pk)
-    return _card_action(lambda: (cards.make_default(card), JsonResponse({"ok": True}))[1])
+
+    def done():
+        cards.make_default(card)
+        return JsonResponse({"ok": True})
+
+    return _card_action(done)
 
 
 @login_required

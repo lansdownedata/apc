@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% load humanize json_filters phone_filters %}
 
+{% block head_extra %}
+{% if user.has_payments_access and stripe_pk %}
+<script src="https://js.stripe.com/v3/"></script>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 {% comment %}
   The customer profile. Header (who, how to reach them, the numbers that matter), then

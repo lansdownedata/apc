@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from .models import PaymentPlan, SavedCard
@@ -24,7 +25,17 @@ from .models import PaymentPlan, SavedCard
 logger = logging.getLogger(__name__)
 
 # A plan "still owes a balance" while it's scheduled or a charge failed and will be retried.
+# Only these are named in the Remove confirm; the card comes off every live plan regardless.
 _OWING = (PaymentPlan.BalanceStatus.SCHEDULED, PaymentPlan.BalanceStatus.FAILED)
+# Most recently used first, never-used last — on Postgres (prod) as on MySQL (local, test),
+# which put NULLs at opposite ends.
+_BY_RECENT_USE = (F("last_used_at").desc(nulls_last=True), "-created_at")
+
+
+def _lead_status():
+    from apps.leads.models import Lead
+
+    return Lead.Status
 
 
 class CardError(Exception):
@@ -38,18 +49,26 @@ def _stripe():
 
 
 def contact_customer(contact) -> str:
-    """The contact's Stripe customer, created the first time it's needed."""
+    """The contact's Stripe customer, created the first time it's needed. Locked and keyed
+    so a double-click or two first payments can't make two customers for one person."""
+    from apps.contacts.models import Contact
+
     if contact.stripe_customer_id:
         return contact.stripe_customer_id
-    customer = _stripe().Customer.create(
-        name=contact.name,
-        email=contact.email or None,
-        phone=contact.phone or None,
-        metadata={"contact_id": contact.pk},
-    )
-    contact.stripe_customer_id = customer.id
-    contact.save(update_fields=["stripe_customer_id", "updated_at"])
-    return customer.id
+    with transaction.atomic():
+        locked = Contact.objects.select_for_update().get(pk=contact.pk)
+        if not locked.stripe_customer_id:
+            customer = _stripe().Customer.create(
+                name=locked.name,
+                email=locked.email or None,
+                phone=locked.phone or None,
+                metadata={"contact_id": locked.pk},
+                idempotency_key=f"contact-customer-{locked.pk}",
+            )
+            locked.stripe_customer_id = customer.id
+            locked.save(update_fields=["stripe_customer_id", "updated_at"])
+    contact.stripe_customer_id = locked.stripe_customer_id
+    return contact.stripe_customer_id
 
 
 def start_add_card(contact) -> str:
@@ -70,9 +89,12 @@ def _record(contact, payment_method, *, used: bool) -> SavedCard:
     details = getattr(payment_method, "card", None)
     if details is None:
         raise CardError("That payment method isn't a card.")
+    from apps.contacts.models import Contact
+
     with transaction.atomic():
-        # Lock the contact's cards so two first cards can't both become the default.
-        list(SavedCard.objects.select_for_update().filter(contact=contact).values_list("pk"))
+        # Lock the contact itself: locking their cards locks nothing when they have none,
+        # and then two first cards could both become the default.
+        Contact.objects.select_for_update().filter(pk=contact.pk).first()
         card, created = SavedCard.objects.get_or_create(
             stripe_payment_method_id=payment_method.id,
             defaults={
@@ -83,6 +105,8 @@ def _record(contact, payment_method, *, used: bool) -> SavedCard:
                 "exp_year": details.exp_year,
             },
         )
+        if card.contact_id != contact.pk:
+            raise CardError("That card is saved for a different customer.")
         fields = []
         if created and not SavedCard.objects.filter(contact=contact, is_default=True).exists():
             card.is_default = True
@@ -108,38 +132,31 @@ def finish_add_card(contact, setup_intent_id: str) -> SavedCard:
 
 def remember_card(plan: PaymentPlan, payment_method) -> None:
     """A payment on `plan` saved a card. When the plan is on its contact's own Stripe
-    customer the card is the contact's — put it in the vault. A plan on its own legacy
-    customer is left alone: that card can't be charged on any other order."""
+    customer and the card is attached to it, the card is the contact's — put it in the vault.
+    Anything else is left alone: a legacy order's card, and a detached card coming back on a
+    late webhook or a held deposit's capture (it has no customer).
+
+    Bookkeeping only: the payment has already succeeded, so nothing here may break it."""
     contact = plan.lead.contact
     customer = getattr(payment_method, "customer", None)
     if not contact.stripe_customer_id or plan.stripe_customer_id != contact.stripe_customer_id:
         return
-    if customer and customer != contact.stripe_customer_id:
+    if customer != contact.stripe_customer_id:
         return
     try:
         _record(contact, payment_method, used=True)
-    except CardError:
-        pass
-
-
-def adopt_default_card(plan: PaymentPlan) -> None:
-    """A new order on the contact's customer starts with the contact's default card."""
-    contact = plan.lead.contact
-    if plan.stripe_payment_method_id or plan.stripe_customer_id != contact.stripe_customer_id:
-        return
-    card = SavedCard.objects.filter(contact=contact, is_default=True).first()
-    if card is None:
-        return
-    plan.stripe_payment_method_id = card.stripe_payment_method_id
-    plan.card_brand = card.brand
-    plan.card_last4 = card.last4
-    plan.save(update_fields=["stripe_payment_method_id", "card_brand", "card_last4", "updated_at"])
+    except Exception:
+        logger.exception("saving a paid card to the vault failed (plan %s)", plan.pk)
 
 
 def make_default(card: SavedCard) -> SavedCard:
-    """`card` becomes the contact's only default."""
+    """`card` becomes the contact's only default. A vault preference only: an order holds a
+    card once the customer pays on it, never because it is the default (Moe, 2026-10-24)."""
+    from apps.contacts.models import Contact
+
     with transaction.atomic():
-        rows = SavedCard.objects.select_for_update().filter(contact_id=card.contact_id)
+        Contact.objects.select_for_update().filter(pk=card.contact_id).first()
+        rows = SavedCard.objects.filter(contact_id=card.contact_id)
         rows.exclude(pk=card.pk).update(is_default=False)
         rows.filter(pk=card.pk).update(is_default=True)
     card.refresh_from_db()
@@ -152,7 +169,7 @@ def plans_holding(card: SavedCard) -> list[PaymentPlan]:
         PaymentPlan.objects.filter(
             stripe_payment_method_id=card.stripe_payment_method_id,
             balance_status__in=_OWING,
-            lead__status="booked",
+            lead__status=_lead_status().BOOKED,
         )
         .select_related("lead")
         .order_by("lead__pk")
@@ -160,13 +177,23 @@ def plans_holding(card: SavedCard) -> list[PaymentPlan]:
 
 
 def remove_card(card: SavedCard) -> list:
-    """Remove the card. Every order that still owes a balance on it loses the card in the
-    same transaction (so the balance cron skips it rather than charging a detached card);
-    then it is detached in Stripe. Past charges keep the card they were paid with. Returns
-    the leads whose card was cleared."""
+    """Remove the card. It comes off every live order that holds it, in the same
+    transaction as the vault row goes — not only the ones that still owe a balance: a paid
+    order can still charge its card for the final bill, and an engaged order's held deposit
+    would put it back on capture. So nothing can charge it after this (the balance cron
+    skips a card-less plan; the deposit report surfaces it). Then it is detached in Stripe.
+    Past charges keep the card they were paid with. Returns the leads that still owed a
+    balance on it — the ones the confirm named."""
+    from apps.contacts.models import Contact
+
     with transaction.atomic():
+        Contact.objects.select_for_update().filter(pk=card.contact_id).first()
+        card = SavedCard.objects.get(pk=card.pk)  # re-read under the lock
         holding = plans_holding(card)
-        PaymentPlan.objects.filter(pk__in=[p.pk for p in holding]).update(
+        live = PaymentPlan.objects.filter(
+            stripe_payment_method_id=card.stripe_payment_method_id
+        ).exclude(lead__status=_lead_status().LOST)
+        live.update(
             stripe_payment_method_id="", card_brand="", card_last4="", updated_at=timezone.now()
         )
         was_default = card.is_default
@@ -174,12 +201,7 @@ def remove_card(card: SavedCard) -> list:
         pm_id = card.stripe_payment_method_id
         card.delete()
         if was_default:
-            nxt = (
-                SavedCard.objects.select_for_update()
-                .filter(contact_id=contact_id)
-                .order_by("-last_used_at", "-created_at")
-                .first()
-            )
+            nxt = SavedCard.objects.filter(contact_id=contact_id).order_by(*_BY_RECENT_USE).first()
             if nxt is not None:
                 SavedCard.objects.filter(pk=nxt.pk).update(is_default=True)
     try:

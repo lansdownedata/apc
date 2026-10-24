@@ -261,7 +261,8 @@ def test_nothing_but_the_last_four_of_the_number_reaches_the_page(client, agent)
     plan = _plan(contact)
     _charge(plan)
     cards = selectors.cards_for(contact)
-    assert set(cards[0]) == {"brand", "last4", "lead", "used_at", "used"}
+    # `customer` is the order's Stripe customer id (APC-47), not card data.
+    assert set(cards[0]) == {"brand", "last4", "lead", "used_at", "used", "customer"}
     assert len(cards[0]["last4"]) <= 4
 
 

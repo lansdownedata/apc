@@ -1317,14 +1317,15 @@ function cardVault(opts) {
           Alpine.store("toast").push({ type: "error", title: "Could not change the default", message: e.message }),
         );
     },
-    remove(url, label, openOrders, used) {
-      let message = "This card is removed from the customer and from Stripe.";
+    remove(url, label, openOrders) {
+      let message = "This card is removed from the customer and from Stripe, and taken off any order that holds it.";
       if (openOrders) {
+        const many = openOrders.includes(",");
         message +=
-          " It is also taken off " + openOrders + ", which still owe a balance. Those balances" +
-          " won't be charged automatically until another card is added.";
+          " " + openOrders + (many ? " still owe a balance; those balances" : " still owes a balance; that balance") +
+          " won't be charged automatically until a card is saved on " + (many ? "each order." : "the order.");
       }
-      if (used) message += " Past charges and refunds are not affected.";
+      message += " Past charges and refunds are not affected.";
       Alpine.store("modal").confirm({
         title: "Remove " + label + "?",
         message,

@@ -197,13 +197,98 @@ def test_removing_a_card_clears_it_from_orders_with_a_balance_due_and_names_them
     with patch.object(STRIPE.PaymentMethod, "detach") as detach:
         cleared = cards.remove_card(card)
 
-    assert [lead.pk for lead in cleared] == [open_plan.lead_id]
+    assert [lead.pk for lead in cleared] == [open_plan.lead_id]  # only it is named
     detach.assert_called_once_with("pm_x")
     open_plan.refresh_from_db()
     paid_plan.refresh_from_db()
     assert (open_plan.stripe_payment_method_id, open_plan.card_last4) == ("", "")
-    assert paid_plan.stripe_payment_method_id == "pm_x"  # nothing more to charge it for
+    # Review 2026-10-24: a paid order could still charge it for the final bill — it goes too.
+    assert paid_plan.stripe_payment_method_id == ""
     assert not SavedCard.objects.filter(pk=card.pk).exists()
+
+
+def test_removal_clears_the_card_from_every_live_order_that_could_charge_it():
+    """Review 2026-10-24: a paid-balance order can still charge its card for the final bill,
+    and an engaged order's held deposit puts the card back on capture."""
+    contact = _contact_with_customer()
+    card = _card(contact, stripe_payment_method_id="pm_x")
+    paid = _booked_plan(contact, pm="pm_x", balance=PaymentPlan.BalanceStatus.PAID)
+    engaged = _booked_plan(contact, pm="pm_x", balance=PaymentPlan.BalanceStatus.NA)
+    Lead.objects.filter(pk=engaged.lead_id).update(status=Lead.Status.ENGAGED)
+    lost = _booked_plan(contact, pm="pm_x")
+    Lead.objects.filter(pk=lost.lead_id).update(status=Lead.Status.LOST)
+
+    with patch.object(STRIPE.PaymentMethod, "detach"):
+        cleared = cards.remove_card(card)
+
+    for plan in (paid, engaged):
+        plan.refresh_from_db()
+        assert plan.stripe_payment_method_id == ""
+    lost.refresh_from_db()
+    assert lost.stripe_payment_method_id == "pm_x"  # a dead order is left as it was
+    assert cleared == []  # none of them still owes a balance, so the confirm names none
+
+
+def test_a_detached_card_coming_back_on_a_payment_never_rejoins_the_vault():
+    contact = _contact_with_customer()
+    plan = _booked_plan(contact)
+
+    services._store_card(plan, _pm(pm_id="pm_gone", customer=None))  # detached: no customer
+
+    assert not SavedCard.objects.exists()
+
+
+def test_the_vault_failing_never_breaks_a_payment_that_already_succeeded():
+    from django.db import IntegrityError
+
+    contact = _contact_with_customer()
+    plan = _booked_plan(contact)
+
+    with patch.object(cards, "_record", side_effect=IntegrityError("race")):
+        services._store_card(plan, _pm(pm_id="pm_new"))  # must not raise
+
+    plan.refresh_from_db()
+    assert plan.stripe_payment_method_id == "pm_new"
+
+
+def test_one_failing_balance_charge_does_not_stop_the_cron():
+    import stripe
+
+    contact = _contact_with_customer()
+    first = _booked_plan(contact, pm="pm_a")
+    second = _booked_plan(contact, pm="pm_b")
+    calls = []
+
+    def charge(plan):
+        calls.append(plan.pk)
+        if plan.pk == first.pk:
+            raise stripe.error.InvalidRequestError("No such PaymentMethod", param="payment_method")
+
+    with (
+        patch.object(PaymentPlan, "balance_due_now", True),
+        patch.object(services, "charge_balance", side_effect=charge),
+    ):
+        tasks.charge_due_balances()
+
+    assert set(calls) == {first.pk, second.pk}
+
+
+def test_a_balance_charge_on_a_detached_card_is_recorded_as_failed():
+    import stripe
+
+    contact = _contact_with_customer()
+    plan = _booked_plan(contact, pm="pm_gone")
+
+    with patch.object(
+        STRIPE.PaymentIntent,
+        "create",
+        side_effect=stripe.error.InvalidRequestError("No such PaymentMethod", param="pm"),
+    ):
+        services.charge_balance(plan)
+
+    plan.refresh_from_db()
+    assert plan.balance_status == PaymentPlan.BalanceStatus.FAILED
+    assert not plan.charges.filter(status=Charge.Status.PENDING).exists()
 
 
 def test_after_removal_the_balance_cron_skips_instead_of_failing():
@@ -260,7 +345,8 @@ def test_removing_the_default_promotes_the_most_recently_used():
     assert (recent.is_default, old.is_default) == (True, False)
 
 
-def test_a_new_order_uses_the_contacts_customer_and_default_card():
+def test_a_new_order_uses_the_contacts_customer_but_never_picks_up_a_card_by_itself():
+    """Moe, 2026-10-24: an order only holds a card once the customer pays on it."""
     contact = _contact_with_customer()
     _card(contact, stripe_payment_method_id="pm_def", is_default=True, last4="1111")
     plan = PaymentPlanFactory(lead=LeadFactory(contact=contact))
@@ -270,11 +356,7 @@ def test_a_new_order_uses_the_contacts_customer_and_default_card():
 
     create.assert_not_called()
     plan.refresh_from_db()
-    assert (plan.stripe_customer_id, plan.stripe_payment_method_id, plan.card_last4) == (
-        "cus_contact",
-        "pm_def",
-        "1111",
-    )
+    assert (plan.stripe_customer_id, plan.stripe_payment_method_id) == ("cus_contact", "")
 
 
 def test_an_order_on_its_own_legacy_customer_never_adopts_the_default_card():
@@ -424,6 +506,33 @@ def test_the_remove_confirm_names_the_orders_it_will_clear(cashier):
     assert f'data-open-orders="{plan.lead.quote_no}"' in html  # carried into the confirm
 
 
+def test_the_contact_page_loads_stripe_for_the_add_card_form(cashier):
+    """Review 2026-10-24 (critical): without Stripe.js the form silently does nothing."""
+    html = _tab(cashier, _contact_with_customer())
+
+    assert "js.stripe.com/v3" in html
+
+
+def test_a_removed_card_does_not_reappear_as_an_earlier_card(cashier):
+    contact = _contact_with_customer()
+    card = _card(contact, stripe_payment_method_id="pm_x")
+    plan = _booked_plan(contact, pm="pm_x", balance=PaymentPlan.BalanceStatus.PAID)
+    plan.charges.create(
+        kind=Charge.Kind.DEPOSIT,
+        amount="100.00",
+        status=Charge.Status.SUCCEEDED,
+        card_brand="visa",
+        card_last4="4242",
+        idempotency_key="seed-dep-x",
+    )
+    with patch.object(STRIPE.PaymentMethod, "detach"):
+        cards.remove_card(card)
+
+    html = _tab(cashier, contact)
+
+    assert "From earlier orders" not in html
+
+
 def test_cards_from_old_orders_on_their_own_customer_are_listed_read_only(cashier):
     contact = _contact_with_customer()
     _booked_plan(contact, pm="pm_legacy", customer="cus_legacy")  # visa 4242, not in the vault
@@ -520,6 +629,20 @@ def test_a_card_stripe_no_longer_has_is_skipped_and_reported():
 
     assert not SavedCard.objects.exists()
     assert "skipped" in report
+
+
+def test_the_backfill_never_gives_two_contacts_one_stripe_customer():
+    taken = ContactFactory(stripe_customer_id="cus_shared")
+    other = ContactFactory()
+    _booked_plan(other, pm="pm_a", customer="cus_shared")
+
+    with patch.object(STRIPE.PaymentMethod, "retrieve") as retrieve:
+        report = _backfill("--apply")
+
+    retrieve.assert_not_called()
+    other.refresh_from_db()
+    assert other.stripe_customer_id == ""
+    assert f"already belongs to {taken}" in report
 
 
 def test_running_the_backfill_twice_changes_nothing_the_second_time():

@@ -139,7 +139,13 @@ def charge_due_balances() -> int:
     )
     for plan in scheduled:
         if plan.balance_due_now:
-            services.charge_balance(plan)
+            try:
+                services.charge_balance(plan)
+            except Exception:
+                # One order's failure (an error Stripe raised that charge_balance doesn't
+                # record) must never leave every order after it uncharged.
+                logger.exception("balance charge failed for plan %s", plan.pk)
+                continue
             count += 1
     return count
 

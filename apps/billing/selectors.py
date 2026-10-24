@@ -57,13 +57,20 @@ def cards_for(contact) -> list[dict]:
 
     found: dict[tuple[str, str], dict] = {}
 
-    def remember(brand: str, last4: str, lead, used_at, *, used: bool) -> None:
+    def remember(brand: str, last4: str, lead, used_at, *, used: bool, customer="") -> None:
         if not last4:
             return
         # First writer wins: charges are iterated first, newest first.
         found.setdefault(
             (brand, last4),
-            {"brand": brand, "last4": last4, "lead": lead, "used_at": used_at, "used": used},
+            {
+                "brand": brand,
+                "last4": last4,
+                "lead": lead,
+                "used_at": used_at,
+                "used": used,
+                "customer": customer,
+            },
         )
 
     charges = (
@@ -77,7 +84,12 @@ def cards_for(contact) -> list[dict]:
     )
     for charge in charges:
         remember(
-            charge.card_brand, charge.card_last4, charge.plan.lead, charge.created_at, used=True
+            charge.card_brand,
+            charge.card_last4,
+            charge.plan.lead,
+            charge.created_at,
+            used=True,
+            customer=charge.plan.stripe_customer_id,
         )
 
     plans = (
@@ -90,7 +102,14 @@ def cards_for(contact) -> list[dict]:
         # `used=False`: a card can be saved on a plan without anything ever being charged
         # to it, and the row must not claim otherwise. A card that *has* been charged was
         # already recorded above with its real date, so this never downgrades one.
-        remember(plan.card_brand, plan.card_last4, plan.lead, plan.updated_at, used=False)
+        remember(
+            plan.card_brand,
+            plan.card_last4,
+            plan.lead,
+            plan.updated_at,
+            used=False,
+            customer=plan.stripe_customer_id,
+        )
 
     return sorted(found.values(), key=lambda card: card["used_at"], reverse=True)
 
@@ -98,6 +117,7 @@ def cards_for(contact) -> list[dict]:
 def vault_cards(contact) -> list:
     """The contact's saved cards (APC-47), each with `open_orders` — the quote numbers that
     would lose the card on Remove because they still owe a balance on it. Two queries."""
+    from apps.leads.models import Lead
     from apps.payments.cards import _OWING
     from apps.payments.models import PaymentPlan, SavedCard
 
@@ -108,7 +128,7 @@ def vault_cards(contact) -> list:
     plans = PaymentPlan.objects.filter(
         stripe_payment_method_id__in=[c.stripe_payment_method_id for c in saved],
         balance_status__in=_OWING,
-        lead__status="booked",
+        lead__status=Lead.Status.BOOKED,
     ).select_related("lead")
     for plan in plans.order_by("lead__pk"):
         holding.setdefault(plan.stripe_payment_method_id, []).append(plan.lead.quote_no)
@@ -150,8 +170,10 @@ def _card_context(contact) -> dict:
     from django.conf import settings
 
     vault = vault_cards(contact)
-    known = {(c.brand, c.last4) for c in vault}
-    legacy = [c for c in cards_for(contact) if (c["brand"], c["last4"]) not in known]
+    # "From earlier orders" is only what an order paid on its own (legacy) Stripe customer —
+    # a card on the contact's own customer is a vault card, or one that was removed.
+    own = contact.stripe_customer_id
+    legacy = [c for c in cards_for(contact) if not own or c["customer"] != own]
     return {
         "billing_vault_cards": vault,
         "billing_cards": legacy,

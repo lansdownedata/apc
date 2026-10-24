@@ -68,7 +68,7 @@
             {% endif %}
             <button type="button" class="text-[12px] font-medium text-muted hover:text-rose-600 focus-gold rounded"
                     data-open-orders="{{ card.open_orders|join:', ' }}"
-                    @click="remove('{% url 'billing_card_remove' card.pk %}', '{{ card.brand|upper|default:'Card'|escapejs }} ····{{ card.last4 }}', $el.dataset.openOrders, {{ card.last_used_at|yesno:'true,false' }})">Remove</button>
+                    @click="remove('{% url 'billing_card_remove' card.pk %}', '{{ card.brand|upper|default:'Card'|escapejs }} ····{{ card.last4 }}', $el.dataset.openOrders)">Remove</button>
           {% endif %}
         </li>
       {% endfor %}

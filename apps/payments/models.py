@@ -345,7 +345,12 @@ class SavedCard(TimeStampedModel):
     last_used_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
-        ordering = ["-is_default", "-last_used_at", "-created_at"]
+        # Never-used cards last on Postgres as on MySQL, which sort NULLs at opposite ends.
+        ordering = [
+            "-is_default",
+            models.F("last_used_at").desc(nulls_last=True),
+            "-created_at",
+        ]
 
     def __str__(self) -> str:
         return f"{self.brand or 'card'} ····{self.last4}"

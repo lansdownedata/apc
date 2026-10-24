@@ -44,15 +44,15 @@ def _cents(amount) -> int:
 def get_or_create_customer(plan: PaymentPlan) -> str:
     """The Stripe customer this order charges. An order that already has one keeps it (orders
     from before the card vault each made their own, and Stripe can't move a card between
-    customers). A new order uses the contact's customer and starts with their default card
-    (APC-47)."""
+    customers). A new order uses the contact's customer, so the cards it is paid with land in
+    the customer's vault (APC-47). It never picks up a saved card by itself — an order holds
+    a card once the customer pays on it (Moe, 2026-10-24)."""
     from . import cards
 
     if plan.stripe_customer_id:
         return plan.stripe_customer_id
     plan.stripe_customer_id = cards.contact_customer(plan.lead.contact)
     plan.save(update_fields=["stripe_customer_id", "updated_at"])
-    cards.adopt_default_card(plan)
     return plan.stripe_customer_id
 
 
@@ -130,7 +130,9 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             },
             idempotency_key=charge.idempotency_key,
         )
-    except stripe.error.CardError as exc:
+    except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
+        # InvalidRequestError: the saved card is gone (detached) — a failed balance the
+        # office must see, not an unhandled error that leaves a PENDING row (APC-47).
         return _record_failure(plan, charge, exc)
 
     with transaction.atomic():
