@@ -417,6 +417,12 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
         else:
             company.billing_contact_id = None
         fields.append("billing_contact")
+    flag_changed = False
+    if "is_affiliate_account" in request.POST:
+        flag = request.POST.get("is_affiliate_account") in ("1", "true", "on")
+        flag_changed = flag != company.is_affiliate_account
+        company.is_affiliate_account = flag
+        fields.append("is_affiliate_account")
     if fields:
         try:
             company.save(update_fields=[*fields, "updated_at"])
@@ -425,6 +431,13 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
                 {"ok": False, "error": "A company with that name already exists."},
                 status=400,
             )
+    if flag_changed:
+        # APC-92: the company's booked orders move to (or off) the farm-in payment clock.
+        from apps.leads.models import Lead
+        from apps.tasks import services as task_services
+
+        for lead in Lead.objects.filter(contact__company=company, status=Lead.Status.BOOKED):
+            task_services.refresh_farm_in(lead)
     return JsonResponse({"ok": True})
 
 

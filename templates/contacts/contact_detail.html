@@ -38,6 +38,7 @@
           <p class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-muted">
             {% if contact.company %}
               <a href="{% url 'company_detail' contact.company.pk %}" class="text-ink hover:text-goldd hover:underline">{{ contact.company.name }}</a>
+              {% if contact.company.is_affiliate_account %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-gold">Affiliate account</span>{% endif %}
             {% else %}
               <span>No company</span>
             {% endif %}

@@ -8,6 +8,7 @@
        header: {
          name: {{ company.name|json_string }},
          billing_contact: '{{ company.billing_contact_id|default_if_none:'' }}',
+         is_affiliate_account: '{{ company.is_affiliate_account|yesno:"1,0" }}',
          notes: {{ company.notes|json_string }}
        }
      })">
@@ -66,6 +67,17 @@
           <div class="mt-1.5" @change="header.billing_contact = $event.target.value; saveHeader()">
             {% include "components/searchable_select.html" with name="billing_contact" field_id="co-billing" options=contacts_for_billing selected=company.billing_contact_id|default_if_none:'' empty_label="No billing contact" %}
           </div>
+        </div>
+        <div>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" name="is_affiliate_account" class="accent-gold mt-0.5"
+                   {% if company.is_affiliate_account %}checked{% endif %}
+                   @change="header.is_affiliate_account = $event.target.checked ? '1' : '0'; saveHeader()">
+            <span>
+              <span class="block text-[12.5px] font-medium text-ink">Affiliate account</span>
+              <span class="block text-[11.5px] text-muted">An operator that sends us trips. Its orders' deposit is due 3 days before the trip and the balance 24 hours after.</span>
+            </span>
+          </label>
         </div>
         <div>
           <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Notes</label>

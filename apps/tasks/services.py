@@ -29,6 +29,7 @@ from .definitions import (
     AfterOpen,
     Level,
     TaskKind,
+    effective_kind,
 )
 from .facts import LeadFacts, load_facts
 from .models import Task, TaskConfig
@@ -75,10 +76,15 @@ def _predecessors_closed(kind: TaskKind, trip_id, statuses: dict) -> bool:
 
 
 def _order_wants(kind: TaskKind, facts: LeadFacts, statuses: dict) -> bool:
-    if kind.opens_after and not (
-        facts.live_trips
-        and all(_predecessors_closed(kind, t.pk, statuses) for t in facts.live_trips)
-    ):
+    if kind.opens_after:
+        if not (
+            facts.live_trips
+            and all(_predecessors_closed(kind, t.pk, statuses) for t in facts.live_trips)
+        ):
+            return False
+    elif kind.post_trip and not facts.post_trip_ids:
+        # An order-level post-trip task (a farm-in's final balance, APC-92) waits for the
+        # whole order to finish, the same gate the trip-level post-trip kinds use.
         return False
     return kind.applies(facts, None)
 
@@ -125,9 +131,10 @@ def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
         new = []
         # Registry order matters: a row created this pass is unresolved, so a later kind
         # that waits on it (thank-you on affiliate paid) correctly holds off.
-        for kind in REGISTRY:
-            if kind.level == Level.VENDOR:
+        for registered in REGISTRY:
+            if registered.level == Level.VENDOR:
                 continue
+            kind = effective_kind(registered, facts)
             if kind.level == Level.ORDER:
                 targets = [None] if _order_wants(kind, facts, statuses) else []
             else:
@@ -266,6 +273,7 @@ def reschedule(lead: Lead) -> int:
         kind = KINDS.get(task.kind)
         if kind is None:
             continue
+        kind = effective_kind(kind, facts)
         opened = task.opens_at if task.status == Task.Status.OPEN else None
         opens_at, due_at = schedule(
             kind, facts, trips.get(task.reservation_id), now=now, opened_at=opened
@@ -277,6 +285,33 @@ def reschedule(lead: Lead) -> int:
             changed.append(task)
     Task.objects.bulk_update(changed, ["opens_at", "due_at", "status", "updated_at"])
     return len(changed)
+
+
+def refresh_farm_in(lead: Lead) -> None:
+    """The order's company was (un)flagged as an affiliate account (APC-92): put its open
+    tasks on the right clock. An unresolved task whose kind now waits for the trips to
+    finish (a farm-in's final balance) is removed until then — `ensure_tasks` creates it at
+    the right moment. Closed tasks are never touched or reopened."""
+    lead = Lead.objects.get(pk=lead.pk)
+    if lead.status != Lead.Status.BOOKED:
+        return
+    config = TaskConfig.load()
+    now = timezone.now()
+    facts = load_facts([lead])[lead.pk]
+    _post_trip_state(facts, config, now)
+    waiting = [
+        key
+        for key, kind in KINDS.items()
+        if (eff := effective_kind(kind, facts)).post_trip
+        and eff.level == Level.ORDER
+        and not eff.opens_after
+        and not facts.post_trip_ids
+    ]
+    Task.objects.filter(
+        lead=lead, kind__in=waiting, reservation__isnull=True, status__in=Task.UNRESOLVED
+    ).delete()
+    reschedule(lead)
+    ensure_tasks(lead)
 
 
 def _mark_not_applicable(tasks) -> int:

@@ -38,6 +38,8 @@ class LeadFacts:
     # elsewhere, where only predicates run and neither is read.
     ended_trip_ids: set[int] = field(default_factory=set)
     post_trip_ids: set[int] = field(default_factory=set)
+    # APC-92: the booking contact's company is an affiliate account (a farmed-in order).
+    is_farm_in: bool = False
 
     @property
     def live_trips(self) -> list[Reservation]:
@@ -75,6 +77,10 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
 
     for plan in PaymentPlan.objects.filter(lead_id__in=ids):
         facts[plan.lead_id].plan = plan
+
+    farm_in = Lead.objects.filter(pk__in=ids, contact__company__is_affiliate_account=True)
+    for lead_id in farm_in.values_list("pk", flat=True):
+        facts[lead_id].is_farm_in = True
 
     trips = Reservation.objects.filter(lead_id__in=ids).select_related("service_type")
     for trip in trips.order_by("pickup_date", "pickup_time", "pk"):

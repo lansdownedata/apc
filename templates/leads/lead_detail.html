@@ -63,6 +63,7 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2.5 flex-wrap">
           <span class="font-mono2 text-[13px] font-semibold text-goldd bg-goldl ring-1 ring-gold/25 px-2.5 py-1 rounded-lg shrink-0">{{ lead.quote_no }}</span>
+          {% if lead.is_farm_in %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-gold shrink-0" title="Farmed in by another operator: deposit due 3 days before the trip, balance 24 hours after">Affiliate account</span>{% endif %}
           <input type="text" x-model="header.name" @blur="saveHeader()"
                  class="inline-edit font-display text-[22px] font-semibold text-ink tracking-tight px-2 py-0.5 w-full max-w-xs"
                  placeholder="Customer name">

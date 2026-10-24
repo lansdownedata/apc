@@ -54,6 +54,13 @@ class Company(TimeStampedModel):
         help_text="The person billed for this company's bookings.",
     )
     notes = models.TextField(blank=True)
+    # APC-92: another operator that farms trips in to APC (the 2026-08-20 "delimiter on the
+    # customer profile"). Its orders keep the money tasks on their own clock: deposit due
+    # T-3d, final balance 24h after the trips are done.
+    is_affiliate_account = models.BooleanField(
+        default=False,
+        help_text="An operator that sends us trips. Its orders get the farm-in payment dates.",
+    )
 
     class Meta:
         constraints = [

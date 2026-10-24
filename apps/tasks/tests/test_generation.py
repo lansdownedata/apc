@@ -166,7 +166,7 @@ def test_ensure_tasks_query_count_does_not_grow_with_trips():
         services.ensure_tasks(big)
 
     assert len(ten) == len(one)
-    assert len(ten) <= 15
+    assert len(ten) <= 16  # +1 for the farm-in fact (APC-92), once per batch
 
 
 # --- due dates ----------------------------------------------------------------------

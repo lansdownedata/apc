@@ -4,10 +4,9 @@ The same split as the touch-point templates and the cron registry: what a kind *
 (department, level, when it opens and falls due, how it closes itself) lives here; the
 rows in `Task` are just instances of these.
 
-⚠ PLACEHOLDER OFFSETS. Every `opens` / `due` below is a working guess, not the client's
-number. He has said he'll define task-engine requirements in detail after APC-27; confirm
-each offset with him before merge (APC-50 open question 1). They're in one table on
-purpose so that confirmation is a one-file change.
+Offsets confirmed by the client as listed (2026-10-19, APC-50 open question 1). They stay
+in one table so a change is a one-file edit. Farmed-in orders (APC-92) override two of
+them — see `FARM_IN` at the bottom.
 
 Predicates read a `LeadFacts` snapshot (see `facts.py`) rather than the ORM, so evaluating
 every task on a 10-trip order — or every open task in the cron — costs a fixed number of
@@ -17,7 +16,7 @@ queries, not one per task.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
@@ -255,7 +254,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Deposit received",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=AfterOpen(hours=72),  # PLACEHOLDER
+        due=AfterOpen(hours=72),
         auto_complete=_deposit_paid,
     ),
     TaskKind(
@@ -266,7 +265,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Contract signed",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=AfterOpen(hours=72),  # PLACEHOLDER
+        due=AfterOpen(hours=72),
         auto_complete=_terms_accepted,
     ),
     TaskKind(
@@ -274,7 +273,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Wedding names collected",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=BeforePickup(days=7, day_start=True),  # PLACEHOLDER
+        due=BeforePickup(days=7, day_start=True),
         applies=_wedding_only,
         auto_complete=_wedding_names,
     ),
@@ -283,7 +282,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Day-of contact collected",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=BeforePickup(days=7, day_start=True),  # PLACEHOLDER
+        due=BeforePickup(days=7, day_start=True),
         applies=_wedding_only,
         auto_complete=_day_of_contact,
     ),
@@ -292,14 +291,14 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Final itinerary received",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=BeforePickup(days=7, day_start=True),  # PLACEHOLDER
+        due=BeforePickup(days=7, day_start=True),
     ),
     TaskKind(
         key="affiliate_assigned",
         label="Affiliate assigned",
         department=_D.AFFILIATE_MGMT,
         level=Level.TRIP,
-        due=BeforePickup(days=3),  # PLACEHOLDER
+        due=BeforePickup(days=3),
         auto_complete=_affiliate_assigned,
         escalates=False,
     ),
@@ -308,7 +307,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Affiliate confirmed",
         department=_D.AFFILIATE_MGMT,
         level=Level.TRIP,
-        due=BeforePickup(days=2),  # PLACEHOLDER
+        due=BeforePickup(days=2),
         auto_complete=_affiliate_confirmed,
         escalates=False,
     ),
@@ -317,7 +316,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Driver assigned",
         department=_D.AFFILIATE_MGMT,
         level=Level.TRIP,
-        due=BeforePickup(days=1),  # PLACEHOLDER
+        due=BeforePickup(days=1),
         auto_complete=_driver_assigned,
     ),
     TaskKind(
@@ -325,7 +324,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Driver info received",
         department=_D.AFFILIATE_MGMT,
         level=Level.TRIP,
-        due=BeforePickup(days=1),  # PLACEHOLDER
+        due=BeforePickup(days=1),
         auto_complete=_driver_info_received,
         escalates=False,
     ),
@@ -334,7 +333,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Driver info released to client",
         department=_D.CUSTOMER_SERVICE,
         level=Level.TRIP,
-        due=BeforePickup(hours=12),  # PLACEHOLDER
+        due=BeforePickup(hours=12),
         auto_complete=_driver_released,
     ),
     TaskKind(
@@ -344,14 +343,14 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Details finalized",
         department=_D.OPERATIONS,
         level=Level.TRIP,
-        due=BeforePickup(days=2),  # PLACEHOLDER
+        due=BeforePickup(days=2),
     ),
     TaskKind(
         key="final_balance_paid",
         label="Final balance paid",
         department=_D.ACCOUNTING,
         level=Level.ORDER,
-        # Opens when the balance cron would charge it (T-30d) — PLACEHOLDER due.
+        # Opens when the balance cron would charge it (T-30d).
         opens=BeforePickup(days=30, day_start=True),
         due=BeforePickup(days=28, day_start=True),
         auto_complete=_balance_paid,
@@ -363,7 +362,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Operations review",
         department=_D.OPERATIONS,
         level=Level.TRIP,
-        due=AfterOpen(hours=24),  # PLACEHOLDER
+        due=AfterOpen(hours=24),
         applies=_entered_post_trip,
         post_trip=True,
     ),
@@ -374,7 +373,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Overtime invoiced",
         department=_D.ACCOUNTING,
         level=Level.TRIP,
-        due=AfterOpen(hours=72),  # PLACEHOLDER
+        due=AfterOpen(hours=72),
         not_applicable=_no_overtime_to_bill,
         post_trip=True,
         opens_after=("ops_review",),
@@ -385,7 +384,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Affiliate payable approved",
         department=_D.ACCOUNTING,
         level=Level.TRIP,
-        due=AfterOpen(hours=72),  # PLACEHOLDER
+        due=AfterOpen(hours=72),
         applies=_farmed_out,
         auto_complete=_payable_approved,
         post_trip=True,
@@ -397,7 +396,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Affiliate paid",
         department=_D.ACCOUNTING,
         level=Level.TRIP,
-        due=AfterOpen(hours=24 * 14),  # PLACEHOLDER
+        due=AfterOpen(hours=24 * 14),
         applies=_farmed_out,
         auto_complete=_payable_paid,
         post_trip=True,
@@ -411,7 +410,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Thank-you sent",
         department=_D.CUSTOMER_SERVICE,
         level=Level.TRIP,
-        due=AfterOpen(hours=48),  # PLACEHOLDER
+        due=AfterOpen(hours=48),
         auto_complete=_thank_you_sent,
         post_trip=True,
         opens_after=("overtime_invoiced", "affiliate_payable_approved", "affiliate_paid"),
@@ -433,7 +432,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Follow up on complaint",
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
-        due=AfterOpen(hours=24),  # PLACEHOLDER
+        due=AfterOpen(hours=24),
         applies=_has_complaint,
     ),
     TaskKind(
@@ -457,3 +456,18 @@ POST_TRIP_KINDS = frozenset(k.key for k in REGISTRY if k.post_trip)
 
 # Kinds something waits on — closing one of these may open the next stage.
 PREDECESSOR_KINDS = frozenset(p for k in REGISTRY for p in k.opens_after)
+
+
+# --- farmed-in orders (APC-92) -----------------------------------------------------------
+# The sending operator pays, on its own clock (client, 2026-10-19): the deposit is due
+# 3 days before the trip, the final balance within 24 hours after the trips are done.
+FARM_IN: dict[str, dict] = {
+    "deposit_received": {"due": BeforePickup(days=3, day_start=True)},
+    "final_balance_paid": {"opens": None, "due": AfterOpen(hours=24), "post_trip": True},
+}
+
+
+def effective_kind(kind: TaskKind, facts: LeadFacts) -> TaskKind:
+    """`kind` as it applies to this order — the farm-in clock for a farmed-in order."""
+    overrides = FARM_IN.get(kind.key) if facts.is_farm_in else None
+    return replace(kind, **overrides) if overrides else kind

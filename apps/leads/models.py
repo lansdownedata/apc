@@ -208,6 +208,12 @@ class Lead(TimeStampedModel):
         return self._order_day(self.fees_acknowledged_at)
 
     @property
+    def is_farm_in(self) -> bool:
+        """The booking contact's company is an affiliate account (APC-92)."""
+        company = self.contact.company
+        return bool(company and company.is_affiliate_account)
+
+    @property
     def is_wedding(self) -> bool:
         """A wedding order: any trip the single wedding gate recognises (APC-94 reads this
         to decide whether the fee acknowledgment applies)."""
