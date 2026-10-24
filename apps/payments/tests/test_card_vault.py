@@ -442,3 +442,94 @@ def test_staff_without_payments_access_see_cards_but_no_actions(client):
 
     assert "Expires 08/28" in html
     assert "Add card" not in html and "Make default" not in html
+
+
+# --- Task 5: the backfill command -------------------------------------------------------
+
+from io import StringIO  # noqa: E402
+
+from django.core.management import call_command  # noqa: E402
+
+
+def _backfill(*args):
+    out = StringIO()
+    call_command("backfill_saved_cards", *args, stdout=out)
+    return out.getvalue()
+
+
+def test_the_backfill_is_a_dry_run_unless_told_to_apply():
+    contact = ContactFactory()
+    _booked_plan(contact, pm="pm_a", customer="cus_one")
+
+    with patch.object(STRIPE.PaymentMethod, "retrieve") as retrieve:
+        report = _backfill()
+        report_flagged = _backfill("--dry-run")
+
+    retrieve.assert_not_called()
+    contact.refresh_from_db()
+    assert contact.stripe_customer_id == ""
+    assert not SavedCard.objects.exists()
+    assert "would adopt cus_one" in report and "would adopt cus_one" in report_flagged
+
+
+def test_applying_adopts_a_single_customer_and_records_its_cards_with_expiry():
+    contact = ContactFactory()
+    _booked_plan(contact, pm="pm_a", customer="cus_one")
+    _booked_plan(contact, pm="pm_b", customer="cus_one")
+
+    def retrieve(pm_id):
+        return _pm(pm_id=pm_id, customer="cus_one", last4=pm_id[-1] * 4, month=3, year=2029)
+
+    with patch.object(STRIPE.PaymentMethod, "retrieve", side_effect=retrieve):
+        _backfill("--apply")
+
+    contact.refresh_from_db()
+    assert contact.stripe_customer_id == "cus_one"
+    saved = SavedCard.objects.filter(contact=contact)
+    assert {c.stripe_payment_method_id for c in saved} == {"pm_a", "pm_b"}
+    assert {c.exp_label for c in saved} == {"03/29"}
+    assert saved.filter(is_default=True).count() == 1
+
+
+def test_a_contact_whose_orders_disagree_is_reported_and_left_alone():
+    contact = ContactFactory()
+    _booked_plan(contact, pm="pm_a", customer="cus_one")
+    _booked_plan(contact, pm="pm_b", customer="cus_two")
+
+    with patch.object(STRIPE.PaymentMethod, "retrieve") as retrieve:
+        report = _backfill("--apply")
+
+    retrieve.assert_not_called()
+    contact.refresh_from_db()
+    assert contact.stripe_customer_id == ""
+    assert "left as they are" in report
+
+
+def test_a_card_stripe_no_longer_has_is_skipped_and_reported():
+    import stripe
+
+    contact = ContactFactory()
+    _booked_plan(contact, pm="pm_gone", customer="cus_one")
+
+    with patch.object(
+        STRIPE.PaymentMethod,
+        "retrieve",
+        side_effect=stripe.error.InvalidRequestError("No such PaymentMethod", param="id"),
+    ):
+        report = _backfill("--apply")
+
+    assert not SavedCard.objects.exists()
+    assert "skipped" in report
+
+
+def test_running_the_backfill_twice_changes_nothing_the_second_time():
+    contact = ContactFactory()
+    _booked_plan(contact, pm="pm_a", customer="cus_one")
+
+    with patch.object(
+        STRIPE.PaymentMethod, "retrieve", return_value=_pm(pm_id="pm_a", customer="cus_one")
+    ):
+        _backfill("--apply")
+        _backfill("--apply")
+
+    assert SavedCard.objects.filter(contact=contact).count() == 1
