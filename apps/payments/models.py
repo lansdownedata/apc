@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.choices import Account
 from apps.core.fields import MoneyField
@@ -321,3 +322,48 @@ class AffiliatePayable(TimeStampedModel):
     @property
     def stage_label(self) -> str:
         return self.STAGE_LABELS[self.stage]
+
+
+class SavedCard(TimeStampedModel):
+    """A card on the customer's own Stripe customer (APC-47).
+
+    Brand, last four and expiry — nothing else, ever. Stripe holds the card; the
+    PaymentMethod id is how we charge it. One per PaymentMethod. "Exactly one default per
+    contact" is enforced in `payments.cards` under a row lock, not by a constraint: MySQL
+    (local and test) has no partial unique index.
+    """
+
+    contact = models.ForeignKey(
+        "contacts.Contact", related_name="saved_cards", on_delete=models.CASCADE
+    )
+    stripe_payment_method_id = models.CharField(max_length=64, unique=True)
+    brand = models.CharField(max_length=20, blank=True)
+    last4 = models.CharField(max_length=4)
+    exp_month = models.PositiveSmallIntegerField()
+    exp_year = models.PositiveSmallIntegerField()
+    is_default = models.BooleanField(default=False)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["-is_default", "-last_used_at", "-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.brand or 'card'} ····{self.last4}"
+
+    @property
+    def exp_label(self) -> str:
+        return f"{self.exp_month:02d}/{self.exp_year % 100:02d}"
+
+    def _months_left(self) -> int:
+        today = timezone.localdate()
+        return (self.exp_year - today.year) * 12 + (self.exp_month - today.month)
+
+    @property
+    def expired(self) -> bool:
+        """A card is good through the last day of its expiry month."""
+        return self._months_left() < 0
+
+    @property
+    def expires_soon(self) -> bool:
+        """Expires this month or next — worth replacing before a balance charge needs it."""
+        return 0 <= self._months_left() <= 1

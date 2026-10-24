@@ -164,6 +164,10 @@ class Contact(TimeStampedModel):
     channel = models.CharField(max_length=20, choices=Channel.choices, default=Channel.WEBSITE)
     la_account_id = models.CharField("LimoAnywhere account", max_length=64, blank=True)
     podium_contact_uid = models.CharField("Podium contact UID", max_length=64, blank=True)
+    # APC-47: one Stripe customer per contact, created the first time a card is added or an
+    # order needs one. Orders created before the vault may each have their own (on the
+    # PaymentPlan); those are left as they are — Stripe can't move a card between customers.
+    stripe_customer_id = models.CharField(max_length=64, blank=True)
     notes = models.TextField(blank=True)
     primary_address = models.ForeignKey(
         "addresses.Address", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
