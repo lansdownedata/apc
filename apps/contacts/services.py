@@ -146,6 +146,10 @@ def apply_booking_edits(
         for field, value in fields.items():
             setattr(contact, field, value)
         contact.save(update_fields=[*fields, "updated_at"])
+        if "company" in fields:
+            from apps.tasks import services as task_services
+
+            task_services.refresh_farm_in_for_contact(contact)  # APC-92
 
     try:
         # Savepoint, not a bare try: a failed statement poisons the surrounding

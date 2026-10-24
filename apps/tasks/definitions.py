@@ -71,6 +71,21 @@ class AfterOpen:
 
 
 @dataclass(frozen=True)
+class AfterOrderEnd:
+    """An instant `hours` after the order's scheduled end (its last live trip's drop-off,
+    or pickup + billed hours). A farm-in's balance is due a day after the trips are done
+    (APC-92); anchoring on the schedule lets the task exist from booking and be re-dated
+    like any other, instead of appearing only once the order finishes."""
+
+    hours: int = 0
+
+    def resolve(self, end_at: datetime | None) -> datetime | None:
+        if end_at is None:
+            return None
+        return (end_at + timedelta(hours=self.hours)).astimezone(UTC)
+
+
+@dataclass(frozen=True)
 class AfterLastPickup:
     """Due `TaskConfig.future_booking_offset_days` after the order's last trip, at `hour`
     on that local day in the last trip's own zone — an anniversary lands on the calendar
@@ -138,9 +153,9 @@ class TaskKind:
     label: str
     department: str
     level: str
-    due: BeforePickup | AfterOpen | AfterLastPickup | BeforeExpiry
+    due: BeforePickup | AfterOpen | AfterLastPickup | BeforeExpiry | AfterOrderEnd
     # None = opens the moment the task is generated (the booking event).
-    opens: BeforePickup | BeforeExpiry | None = None
+    opens: BeforePickup | BeforeExpiry | AfterOrderEnd | None = None
     applies: Applies = _always
     auto_complete: Predicate | None = None
     # Closes an unresolved task as not-applicable (by the system) when true — work the
@@ -463,7 +478,7 @@ PREDECESSOR_KINDS = frozenset(p for k in REGISTRY for p in k.opens_after)
 # 3 days before the trip, the final balance within 24 hours after the trips are done.
 FARM_IN: dict[str, dict] = {
     "deposit_received": {"due": BeforePickup(days=3, day_start=True)},
-    "final_balance_paid": {"opens": None, "due": AfterOpen(hours=24), "post_trip": True},
+    "final_balance_paid": {"opens": AfterOrderEnd(), "due": AfterOrderEnd(hours=24)},
 }
 
 

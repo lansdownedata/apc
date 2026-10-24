@@ -46,6 +46,14 @@ class LeadFacts:
         return [t for t in self.trips if not t.is_cancelled]
 
     @property
+    def order_end_at(self):
+        """The latest scheduled end across the live trips (APC-92's farm-in balance)."""
+        from .post_trip import scheduled_end
+
+        ends = [e for t in self.live_trips if (e := scheduled_end(t)) is not None]
+        return max(ends) if ends else None
+
+    @property
     def is_wedding(self) -> bool:
         """The workspace's rule: wedding answers already on file, or any wedding trip."""
         return bool(self.lead.wedding_name) or any(is_wedding_trip(t) for t in self.trips)

@@ -340,6 +340,7 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
     if "channel" in request.POST and request.POST["channel"] in Channel.values:
         contact.channel = request.POST["channel"]
         fields.append("channel")
+    company_was = contact.company_id
     if "company" in request.POST:
         contact.company = Company.objects.get_or_create_by_name(request.POST.get("company", ""))
         fields.append("company")
@@ -354,6 +355,10 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
                 {"ok": False, "error": "That email is already used by another contact."},
                 status=400,
             )
+    if contact.company_id != company_was:
+        from apps.tasks import services as task_services
+
+        task_services.refresh_farm_in_for_contact(contact)  # APC-92
     return JsonResponse({"ok": True})
 
 
@@ -436,8 +441,9 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
         from apps.leads.models import Lead
         from apps.tasks import services as task_services
 
-        for lead in Lead.objects.filter(contact__company=company, status=Lead.Status.BOOKED):
-            task_services.refresh_farm_in(lead)
+        task_services.refresh_farm_in(
+            Lead.objects.filter(contact__company=company, status=Lead.Status.BOOKED)
+        )
     return JsonResponse({"ok": True})
 
 

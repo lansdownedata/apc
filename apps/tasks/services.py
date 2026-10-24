@@ -27,6 +27,7 @@ from .definitions import (
     REGISTRY,
     AfterLastPickup,
     AfterOpen,
+    AfterOrderEnd,
     Level,
     TaskKind,
     effective_kind,
@@ -44,6 +45,8 @@ class TaskError(Exception):
 def _anchor(kind: TaskKind, facts: LeadFacts, reservation) -> datetime | None:
     if isinstance(kind.due, AfterLastPickup):
         return facts.last_pickup_at
+    if isinstance(kind.due, AfterOrderEnd):
+        return facts.order_end_at
     if kind.level == Level.TRIP:
         return reservation.pickup_at if reservation is not None else None
     return facts.first_pickup_at
@@ -76,15 +79,10 @@ def _predecessors_closed(kind: TaskKind, trip_id, statuses: dict) -> bool:
 
 
 def _order_wants(kind: TaskKind, facts: LeadFacts, statuses: dict) -> bool:
-    if kind.opens_after:
-        if not (
-            facts.live_trips
-            and all(_predecessors_closed(kind, t.pk, statuses) for t in facts.live_trips)
-        ):
-            return False
-    elif kind.post_trip and not facts.post_trip_ids:
-        # An order-level post-trip task (a farm-in's final balance, APC-92) waits for the
-        # whole order to finish, the same gate the trip-level post-trip kinds use.
+    if kind.opens_after and not (
+        facts.live_trips
+        and all(_predecessors_closed(kind, t.pk, statuses) for t in facts.live_trips)
+    ):
         return False
     return kind.applies(facts, None)
 
@@ -287,31 +285,31 @@ def reschedule(lead: Lead) -> int:
     return len(changed)
 
 
-def refresh_farm_in(lead: Lead) -> None:
-    """The order's company was (un)flagged as an affiliate account (APC-92): put its open
-    tasks on the right clock. An unresolved task whose kind now waits for the trips to
-    finish (a farm-in's final balance) is removed until then — `ensure_tasks` creates it at
-    the right moment. Closed tasks are never touched or reopened."""
-    lead = Lead.objects.get(pk=lead.pk)
-    if lead.status != Lead.Status.BOOKED:
-        return
-    config = TaskConfig.load()
-    now = timezone.now()
-    facts = load_facts([lead])[lead.pk]
-    _post_trip_state(facts, config, now)
-    waiting = [
-        key
-        for key, kind in KINDS.items()
-        if (eff := effective_kind(kind, facts)).post_trip
-        and eff.level == Level.ORDER
-        and not eff.opens_after
-        and not facts.post_trip_ids
-    ]
-    Task.objects.filter(
-        lead=lead, kind__in=waiting, reservation__isnull=True, status__in=Task.UNRESOLVED
-    ).delete()
-    reschedule(lead)
-    ensure_tasks(lead)
+def refresh_farm_in(leads) -> int:
+    """Booked orders whose farm-in status may have changed (APC-92: a company was flagged
+    or unflagged, or a contact moved company). Only re-dates the tasks they already have:
+    nothing is created on an old order that never had tasks, nothing is deleted, and a
+    task a person closed is never touched. One order failing doesn't stop the rest.
+    Returns how many orders were re-dated."""
+    done = 0
+    rows = Lead.objects.filter(
+        pk__in=[lead.pk for lead in leads],
+        status=Lead.Status.BOOKED,
+        tasks__status__in=Task.UNRESOLVED,
+    ).distinct()
+    for lead in rows:
+        try:
+            with transaction.atomic():
+                reschedule(lead)
+            done += 1
+        except Exception:
+            logger.exception("farm-in re-date failed for lead %s", lead.pk)
+    return done
+
+
+def refresh_farm_in_for_contact(contact) -> int:
+    """`refresh_farm_in` for every booked order of `contact` (their company changed)."""
+    return refresh_farm_in(Lead.objects.filter(contact=contact, status=Lead.Status.BOOKED))
 
 
 def _mark_not_applicable(tasks) -> int:

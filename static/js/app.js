@@ -2155,6 +2155,12 @@ function contactProfile(opts = {}) {
     updateUrl: opts.updateUrl,
     header: opts.header || {},
     _saved: null,
+    // Seed what's on the page as already saved, so the first autosave posts only what the
+    // user changed. Posting every field from a stale tab would silently undo someone
+    // else's edit (e.g. a company's affiliate-account flag, APC-92).
+    init() {
+      this._saved = { ...this.header };
+    },
 
     onPhoneBlur(e) {
       const el = e.target;

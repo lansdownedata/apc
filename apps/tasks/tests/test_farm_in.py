@@ -63,6 +63,19 @@ def _local_midnight(day) -> datetime:
     return datetime.combine(day, time(0, 0), tzinfo=NY).astimezone(UTC)
 
 
+def _end(trip) -> datetime:
+    """The order's scheduled end: pickup + 1 billed hour, as UTC."""
+    trip.refresh_from_db()
+    return (trip.pickup_at + timedelta(hours=1)).astimezone(UTC)
+
+
+def _flag(client, company, on=True):
+    client.force_login(UserFactory())
+    return client.post(
+        reverse("company_update", args=[company.pk]), {"is_affiliate_account": "1" if on else "0"}
+    )
+
+
 def test_facts_know_a_farmed_in_order():
     farm, _ = _order(farm_in=True)
     plain, _ = _order(farm_in=False)
@@ -91,39 +104,88 @@ def test_a_regular_deposit_is_still_due_three_days_after_booking():
     assert task.due_at == task.opens_at + timedelta(hours=72)
 
 
-def test_a_farmed_in_balance_waits_for_the_trip_to_finish():
-    lead, _trip = _order(farm_in=True, days_out=10)
-
-    services.ensure_tasks(lead)
-
-    assert _task(lead, "final_balance_paid") is None
-
-
-def test_a_farmed_in_balance_is_due_a_day_after_the_order_finishes():
-    lead, _trip = _order(farm_in=True, started_ago=timedelta(hours=4))
+def test_a_farmed_in_balance_opens_at_the_scheduled_end_and_is_due_a_day_later():
+    lead, trip = _order(farm_in=True, days_out=10)
 
     services.ensure_tasks(lead)
 
     task = _task(lead, "final_balance_paid")
-    assert task is not None and task.status == Task.Status.OPEN
-    assert task.due_at == task.opens_at + timedelta(hours=24)
+    assert task.status == Task.Status.SCHEDULED
+    assert task.opens_at == _end(trip)
+    assert task.due_at == _end(trip) + timedelta(hours=24)
+
+
+def test_a_finished_farmed_in_order_has_its_balance_open_and_due_a_day_after_the_end():
+    lead, trip = _order(farm_in=True, started_ago=timedelta(hours=4))
+
+    services.ensure_tasks(lead)
+
+    task = _task(lead, "final_balance_paid")
+    assert task.status == Task.Status.OPEN
+    assert task.due_at == _end(trip) + timedelta(hours=24)
 
 
 def test_flagging_a_company_redates_its_booked_orders(client):
     lead, trip = _order(farm_in=False, days_out=40)
     services.ensure_tasks(lead)
-    assert _task(lead, "final_balance_paid") is not None  # scheduled for T-30d
-    company = lead.contact.company
-    client.force_login(UserFactory())
 
-    resp = client.post(reverse("company_update", args=[company.pk]), {"is_affiliate_account": "1"})
+    resp = _flag(client, lead.contact.company)
 
     assert resp.status_code == 200
-    company.refresh_from_db()
-    assert company.is_affiliate_account is True
+    lead.contact.company.refresh_from_db()
+    assert lead.contact.company.is_affiliate_account is True
     deposit = _task(lead, "deposit_received")
     assert deposit.due_at == _local_midnight(trip.pickup_date - timedelta(days=3))
-    assert _task(lead, "final_balance_paid") is None  # comes back once the trip is done
+    balance = _task(lead, "final_balance_paid")
+    assert (balance.opens_at, balance.due_at) == (_end(trip), _end(trip) + timedelta(hours=24))
+
+
+def test_flagging_keeps_the_balance_task_on_an_order_that_finished_long_ago(client):
+    """Review 2026-10-24 (critical): the flip must never lose an unpaid balance task."""
+    lead, trip = _order(farm_in=False, started_ago=timedelta(days=10))
+    services.ensure_tasks(lead)
+    assert _task(lead, "final_balance_paid") is not None
+
+    _flag(client, lead.contact.company)
+
+    balance = _task(lead, "final_balance_paid")
+    assert balance is not None
+    # Never born overdue by days: the due date is pulled up to when the task opened.
+    assert balance.due_at == max(_end(trip) + timedelta(hours=24), balance.opens_at)
+
+
+def test_flagging_a_recently_finished_order_dates_the_balance_from_its_end(client):
+    """The regular task opened at T-30d; the farm-in due date must not inherit that."""
+    lead, trip = _order(farm_in=False, started_ago=timedelta(days=2))
+    services.ensure_tasks(lead)
+    Task.objects.filter(lead=lead, kind="final_balance_paid").update(
+        status=Task.Status.OPEN, opens_at=timezone.now() - timedelta(days=32)
+    )
+
+    _flag(client, lead.contact.company)
+
+    assert _task(lead, "final_balance_paid").due_at == _end(trip) + timedelta(hours=24)
+
+
+def test_flagging_creates_no_tasks_on_old_orders_that_never_had_any(client):
+    lead, _trip = _order(farm_in=False, started_ago=timedelta(days=60))
+    assert not Task.objects.filter(lead=lead).exists()
+
+    _flag(client, lead.contact.company)
+
+    assert not Task.objects.filter(lead=lead).exists()
+
+
+def test_moving_a_contact_into_an_affiliate_company_redates_their_orders(client):
+    lead, trip = _order(farm_in=False, days_out=40)
+    services.ensure_tasks(lead)
+    operator = CompanyFactory(name="Operator Co", is_affiliate_account=True)
+    client.force_login(UserFactory())
+
+    client.post(reverse("contact_update", args=[lead.contact.pk]), {"company": operator.name})
+
+    deposit = _task(lead, "deposit_received")
+    assert deposit.due_at == _local_midnight(trip.pickup_date - timedelta(days=3))
 
 
 def test_flagging_never_reopens_a_task_a_person_closed(client):
@@ -141,17 +203,15 @@ def test_flagging_never_reopens_a_task_a_person_closed(client):
     assert deposit.status == Task.Status.DONE
 
 
-def test_unflagging_restores_the_regular_balance_task(client):
-    lead, _trip = _order(farm_in=True, days_out=40)
+def test_unflagging_restores_the_regular_balance_dates(client):
+    lead, trip = _order(farm_in=True, days_out=40)
     services.ensure_tasks(lead)
-    assert _task(lead, "final_balance_paid") is None
-    client.force_login(UserFactory())
 
-    client.post(
-        reverse("company_update", args=[lead.contact.company.pk]), {"is_affiliate_account": "0"}
-    )
+    _flag(client, lead.contact.company, on=False)
 
-    assert _task(lead, "final_balance_paid") is not None
+    balance = _task(lead, "final_balance_paid")
+    assert balance.opens_at == _local_midnight(trip.pickup_date - timedelta(days=30))
+    assert balance.due_at == _local_midnight(trip.pickup_date - timedelta(days=28))
 
 
 def test_the_flag_shows_on_the_company_contact_and_order(client):

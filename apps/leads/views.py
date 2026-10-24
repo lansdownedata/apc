@@ -332,6 +332,7 @@ def lead_update(request, pk: int) -> JsonResponse:
         if field in request.POST:
             setattr(contact, field, request.POST.get(field, "").strip())
             contact_fields.append(field)
+    company_was = contact.company_id
     if "company" in request.POST:
         from apps.contacts.models import Company
 
@@ -348,6 +349,10 @@ def lead_update(request, pk: int) -> JsonResponse:
                 {"ok": False, "error": "That email is already used by another contact."},
                 status=400,
             )
+        if contact.company_id != company_was:
+            from apps.tasks import services as task_services
+
+            task_services.refresh_farm_in_for_contact(contact)  # APC-92
 
     lead_fields = []
     channel = request.POST.get("channel")
