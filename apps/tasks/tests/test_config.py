@@ -1,5 +1,7 @@
 """APC-49 — the TaskConfig singleton and its settings screen."""
 
+from decimal import Decimal
+
 import pytest
 from django.test import override_settings
 from django.urls import reverse
@@ -64,6 +66,11 @@ def test_the_overtime_rule_defaults_to_the_clients_numbers():
     assert _rule(TaskConfig.load()) == (5, 15, 15, 25, 50, 60)
 
 
+def test_the_cleaning_fee_defaults_to_zero():
+    """APC-94: the client's number is entered in Settings when he sends it."""
+    assert TaskConfig.load().cleaning_fee == Decimal("0.00")
+
+
 def test_the_overtime_block_cannot_be_zero(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
 
@@ -104,6 +111,7 @@ def test_owner_admin_can_save(client):
             "airport_domestic_grace_minutes": 20,
             "airport_international_grace_minutes": 45,
             "overtime_block_minutes": 30,
+            "cleaning_fee": "250.00",
             "future_booking_offset_days": 360,
             "digest_emails": "ops@allprocharter.com",
         },
@@ -115,6 +123,7 @@ def test_owner_admin_can_save(client):
     assert cfg.overdue_grace_hours == 12
     assert cfg.post_trip_grace_hours == 3
     assert _rule(cfg) == (4, 10, 12, 20, 45, 30)
+    assert cfg.cleaning_fee == Decimal("250.00")
     assert cfg.future_booking_offset_days == 360
     assert cfg.sales_owner is None
     assert TaskConfig.objects.count() == 1

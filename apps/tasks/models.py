@@ -8,6 +8,7 @@ from django.db.models import OuterRef, Subquery
 from django.utils import dateformat, timezone
 
 from apps.accounts.models import Department
+from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 from apps.dispatch.models import _split_list
 
@@ -84,6 +85,12 @@ class TaskConfig(models.Model):
         default=60,
         validators=[MinValueValidator(1)],
         help_text="Past the grace, overtime bills in blocks this long, each one started.",
+    )
+    # APC-94: shown to wedding customers on the 72-hour confirmation, which they acknowledge.
+    # The client sets the number here; 0 hides the cleaning line.
+    cleaning_fee = MoneyField(
+        help_text="Charged when a vehicle needs more than normal cleaning after a trip. Shown "
+        "to wedding customers on the 72-hour confirmation; 0 hides it.",
     )
     future_booking_offset_days = models.PositiveIntegerField(
         default=330,
