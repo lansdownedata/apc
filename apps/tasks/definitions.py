@@ -259,8 +259,9 @@ REGISTRY: tuple[TaskKind, ...] = (
         auto_complete=_deposit_paid,
     ),
     TaskKind(
-        # APC-55. Staff-booked orders never see the pay page, so nobody accepts anything —
-        # staff check it off by hand until the client decides how those should close.
+        # APC-55 / APC-93. Online bookings accept on the pay page; staff and phone bookings
+        # get "Send terms link" on the order, and accepting there closes this the same way.
+        # The client asked that staff not tick it by hand (2026-10-19).
         key="contract_signed",
         label="Contract signed",
         department=_D.CUSTOMER_SERVICE,

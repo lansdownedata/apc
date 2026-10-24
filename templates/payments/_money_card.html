@@ -18,6 +18,9 @@
       <span class="ml-auto text-[12px] text-muted" title="The customer accepted the terms on the pay page">Terms accepted {{ lead.terms_accepted_on }} · v{{ lead.accepted_terms_version }}</span>
       {% elif lead.status == 'booked' %}
       <span class="ml-auto text-[12px] text-muted">Terms not accepted online</span>
+      <span x-data="sendPayLink('{% url 'order_send_terms_link' lead.pk %}', 'Terms link sent')" class="ml-2">
+        <button type="button" class="text-[12px] font-medium text-goldd hover:underline focus-visible:underline disabled:opacity-50" :disabled="busy" @click="send()" x-text="busy ? 'Sending…' : 'Send terms link'">Send terms link</button>
+      </span>
       {% endif %}
       {% if lead.is_wedding %}
         {% if lead.fees_acknowledged_at %}

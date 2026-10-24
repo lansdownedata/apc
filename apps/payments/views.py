@@ -355,6 +355,25 @@ def order_send_pay_link(request, lead_id):
     return JsonResponse({"ok": True, "channel": channel})
 
 
+@login_required
+@require_POST
+def order_send_terms_link(request, lead_id):
+    """APC-93 — send the customer the terms-acceptance link. Any staff member: it moves no
+    money, and Customer Service owns the contract_signed task it closes."""
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=lead_id)
+    try:
+        channel = services.send_terms_link(
+            lead,
+            base_url=request.build_absolute_uri("/")[:-1],
+            sender_name=request.user.get_full_name() or request.user.username,
+        )
+    except services.PaymentError as exc:
+        return _json_error(str(exc))
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        return _json_error(str(exc), status=502)
+    return JsonResponse({"ok": True, "channel": channel})
+
+
 # --- affiliate payables (APC-61): record only, nothing moves money -------------------
 
 

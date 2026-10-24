@@ -1224,7 +1224,7 @@ function adminCardPay(opts) {
 window.adminCardPay = adminCardPay;
 
 /* -------------------------------------------------- send the customer a pay-page link */
-function sendPayLink(url) {
+function sendPayLink(url, title) {
   return {
     busy: false,
     send() {
@@ -1234,7 +1234,7 @@ function sendPayLink(url) {
         .then((r) =>
           Alpine.store("toast").push({
             type: "success",
-            title: "Payment link sent",
+            title: title || "Payment link sent",
             message: "Sent by " + (r.channel === "sms" ? "text message" : "email") + ".",
           }),
         )
