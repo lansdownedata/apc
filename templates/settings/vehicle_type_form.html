@@ -25,6 +25,7 @@
         {% include "components/form_field.html" with field=form.hourly_min_hours %}
         {% include "components/form_field.html" with field=form.transfer_min_hours %}
       </div>
+      {% include "components/form_field.html" with field=form.overtime_class %}
 
       {% comment %}
       Styled photo uploader. The real file input stays in the DOM (sr-only, still

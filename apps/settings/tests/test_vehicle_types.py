@@ -46,6 +46,7 @@ def test_create_with_an_image(client, settings, tmp_path):
             "description": "Perfect for wedding parties.",
             "sort_order": 3,
             "active": "on",
+            "overtime_class": "standard",
             "image": SimpleUploadedFile("bus.gif", TINY_GIF, content_type="image/gif"),
         },
     )
@@ -59,7 +60,14 @@ def test_create_without_an_image_is_allowed(client):
     client.force_login(UserFactory(role="owner_admin"))
     client.post(
         reverse("vehicle_type_create"),
-        {"name": "Trolley", "capacity": 30, "description": "", "sort_order": 0, "active": "on"},
+        {
+            "name": "Trolley",
+            "capacity": 30,
+            "description": "",
+            "sort_order": 0,
+            "active": "on",
+            "overtime_class": "standard",
+        },
     )
     assert VehicleType.objects.filter(name="Trolley").exists()
 
@@ -218,6 +226,7 @@ def test_create_sets_rate_card(client):
             "transfer_min_hours": "2",
             "sort_order": 0,
             "active": "on",
+            "overtime_class": "standard",
         },
     )
     vt = VehicleType.objects.get(name="Priced Coach")
@@ -237,3 +246,42 @@ def test_list_thumbnails_show_the_whole_vehicle(client, settings, tmp_path):
     html = client.get(reverse("vehicle_type_list")).content.decode()
     assert "object-contain" in html
     assert "object-cover" not in html, "object-cover crops the vehicle out of frame"
+
+
+# --- overtime class (APC-91) -----------------------------------------------------------
+
+
+def test_vehicle_types_default_to_the_standard_overtime_class():
+    assert VehicleTypeFactory(name="Sedan").overtime_class == VehicleType.OvertimeClass.STANDARD
+
+
+def test_owner_admin_sets_the_overtime_class_on_the_form(client):
+    client.force_login(UserFactory(role="owner_admin"))
+    bus = VehicleTypeFactory(name="Coach")
+
+    response = client.post(
+        reverse("vehicle_type_edit", args=[bus.pk]),
+        {
+            "name": "Coach",
+            "capacity": 50,
+            "description": "",
+            "sort_order": 0,
+            "active": "on",
+            "overtime_class": "large",
+        },
+    )
+
+    assert response.status_code == 302
+    bus.refresh_from_db()
+    assert bus.overtime_class == VehicleType.OvertimeClass.LARGE
+
+
+def test_the_overtime_class_picker_is_a_searchable_select_not_native(client):
+    client.force_login(UserFactory(role="owner_admin"))
+    vt = VehicleTypeFactory(name="Stretch")
+
+    html = client.get(reverse("vehicle_type_edit", args=[vt.pk])).content.decode()
+
+    select = re.search(r"<select[^>]*name=\"overtime_class\"[^>]*>", html)
+    assert select is not None
+    assert "data-tom" in select.group(0)

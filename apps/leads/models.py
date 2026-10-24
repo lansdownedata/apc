@@ -44,6 +44,13 @@ class ServiceType(TimeStampedModel):
 class VehicleType(TimeStampedModel):
     """A bookable class of vehicle (the client assigns types, not individual units)."""
 
+    class OvertimeClass(models.TextChoices):
+        """Which overtime grace a trip in this vehicle gets (client, 2026-10-19): buses,
+        vans and stretches wait 5 minutes before an hour bills; sedans and SUVs 15."""
+
+        LARGE = "large", "Bus / van / stretch"
+        STANDARD = "standard", "Sedan / SUV"
+
     name = models.CharField(max_length=80, unique=True)
     capacity = models.PositiveIntegerField(default=1)
     active = models.BooleanField(default=True)
@@ -60,6 +67,13 @@ class VehicleType(TimeStampedModel):
     rate = MoneyField(blank=True)  # per-hour rate for this vehicle (both trip types)
     hourly_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0, blank=True)
     transfer_min_hours = models.DecimalField(max_digits=5, decimal_places=2, default=1, blank=True)
+    overtime_class = models.CharField(
+        max_length=10,
+        choices=OvertimeClass.choices,
+        default=OvertimeClass.STANDARD,
+        help_text="Which overtime grace applies: 5 minutes for buses, vans and stretches; "
+        "15 for sedans and SUVs.",
+    )
 
     class Meta:
         ordering = ["sort_order", "name"]

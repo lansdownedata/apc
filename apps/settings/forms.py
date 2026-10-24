@@ -20,6 +20,7 @@ class VehicleTypeForm(forms.ModelForm):
             "rate",
             "hourly_min_hours",
             "transfer_min_hours",
+            "overtime_class",
             "sort_order",
             "active",
             "group_transport",
@@ -34,6 +35,10 @@ class VehicleTypeForm(forms.ModelForm):
             ),
             "transfer_min_hours": forms.NumberInput(
                 attrs={"class": "field w-full", "min": 0, "step": "0.25"}
+            ),
+            # Tom Select, never a bare <select> (CLAUDE.md).
+            "overtime_class": forms.Select(
+                attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}
             ),
             "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
             # Plain FileInput, not the default ClearableFileInput: the template wraps
