@@ -550,10 +550,22 @@ def _already_covered(tp: TouchPoint, group) -> bool:
 
 
 def _recipient(tp: TouchPoint, template):
-    """The message's addressee — `lead.contact`, or the confirmed affiliate's vendor."""
+    """The message's addressee — `lead.contact`, or the confirmed affiliate's vendor.
+
+    APC-94: a wedding's trip confirmations go to the **billing contact** (per-order
+    override → company billing contact → booking contact), because that page carries the
+    cleaning-fee / overtime acknowledgment the client wants from whoever pays, and a
+    planner's tick must never count as the customer's.
+    """
     if template.audience == "affiliate":
         a = _confirmed_assignment(tp.reservation)
         return a.vendor if a is not None and a.vendor_id else None
+    if (
+        tp.kind in _CUSTOMER_CONFIRM_KINDS
+        and tp.reservation is not None
+        and _is_wedding(tp.reservation)
+    ):
+        return tp.lead.effective_billing_contact
     return tp.lead.contact
 
 

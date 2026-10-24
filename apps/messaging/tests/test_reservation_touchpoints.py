@@ -323,6 +323,78 @@ def test_customer_confirmation_sends_for_a_booked_lead():
     assert "https://apc.example.com/trip/" in body
 
 
+# --- APC-94: a wedding's confirmation goes to the billing contact ------------------------
+
+
+def _wedding_confirm(lead):
+    """A due 72h confirmation on a wedding trip of `lead`."""
+    wedding = ServiceTypeFactory(name="Wedding Transportation")
+    res = ReservationFactory(lead=lead, service_type=wedding, pickup_date=_future())
+    touchpoints.schedule_service_touchpoints(lead)
+    tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
+    _due(tp)
+    return tp
+
+
+def _contact(name, phone):
+    from apps.contacts.factories import ContactFactory
+
+    return ContactFactory(name=name, email="", phone=phone)
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_a_wedding_confirmation_goes_to_the_billing_contact():
+    booker = _contact("Casey Booker", "+15715550001")
+    payer = _contact("Pat Payer", "+15715550002")
+    tp = _wedding_confirm(_booked_lead(contact=booker, billing_contact=payer))
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
+        assert touchpoints._process(tp) is True
+
+    assert send.call_args.kwargs["identifier"] == "+15715550002"
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_a_wedding_confirmation_falls_back_to_the_booking_contact():
+    booker = _contact("Casey Booker", "+15715550001")
+    tp = _wedding_confirm(_booked_lead(contact=booker))
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
+        assert touchpoints._process(tp) is True
+
+    assert send.call_args.kwargs["identifier"] == "+15715550001"
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_a_non_wedding_confirmation_still_goes_to_the_booking_contact():
+    booker = _contact("Casey Booker", "+15715550001")
+    payer = _contact("Pat Payer", "+15715550002")
+    lead = _booked_lead(contact=booker, billing_contact=payer)
+    res = ReservationFactory(lead=lead, pickup_date=_future())
+    touchpoints.schedule_service_touchpoints(lead)
+    tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
+    _due(tp)
+
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
+        assert touchpoints._process(tp) is True
+
+    assert send.call_args.kwargs["identifier"] == "+15715550001"
+
+
+@override_settings(PUBLIC_BASE_URL="https://apc.example.com")
+def test_a_wedding_whose_billing_contact_has_no_channel_is_skipped_not_rerouted():
+    booker = _contact("Casey Booker", "+15715550001")
+    payer = _contact("Pat Payer", "")
+    tp = _wedding_confirm(_booked_lead(contact=booker, billing_contact=payer))
+
+    with patch("apps.messaging.touchpoints.podium.send_message") as send:
+        assert touchpoints._process(tp) is False
+
+    send.assert_not_called()
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, "recipient has no usable channel")
+
+
 def test_reservation_kind_skips_when_lead_not_booked():
     lead = LeadFactory(status=Lead.Status.QUOTED)
     res = ReservationFactory(lead=lead, pickup_date=_future())
