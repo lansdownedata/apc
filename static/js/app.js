@@ -1253,6 +1253,95 @@ function sendPayLink(url, title) {
 }
 window.sendPayLink = sendPayLink;
 
+/* -------------------------------------------------- card vault (APC-47) */
+// Add card: a SetupIntent minted by the server, confirmed here with our own card fields
+// (apcPay.cardFields — never the tabbed Payment Element), then read back by the server
+// from Stripe. Card data only ever lives in Stripe's iframes.
+function cardVault(opts) {
+  return {
+    adding: false,
+    busy: false,
+    error: "",
+    stripe: null,
+    card: null,
+    open() {
+      this.adding = true;
+      this.error = "";
+      this.$nextTick(() => {
+        if (!this.stripe) this.stripe = Stripe(opts.pk);
+        if (!this.card) {
+          this.card = apcPay.cardFields({
+            stripe: this.stripe,
+            root: this.$refs.fields,
+            appearanceMode: Alpine.store("theme").mode,
+            onError: (message) => {
+              this.error = message;
+            },
+          });
+        }
+      });
+    },
+    save() {
+      if (this.busy || !this.card) return;
+      let paymentMethod;
+      try {
+        paymentMethod = this.card.paymentMethod();
+      } catch (e) {
+        this.error = e.message;
+        return;
+      }
+      if (!this.card.isComplete()) {
+        this.error = "Enter the full card number, expiry and CVC.";
+        return;
+      }
+      this.busy = true;
+      this.error = "";
+      postForm(opts.setupUrl, {})
+        .then((r) => this.stripe.confirmCardSetup(r.client_secret, { payment_method: paymentMethod }))
+        .then((result) => {
+          if (result.error) throw new Error(result.error.message);
+          return postForm(opts.completeUrl, { setup_intent: result.setupIntent.id });
+        })
+        .then(() => window.location.reload())
+        .catch((e) => {
+          this.error = e.message || "The card could not be saved.";
+        })
+        .finally(() => {
+          this.busy = false;
+        });
+    },
+    makeDefault(url) {
+      postForm(url, {})
+        .then(() => window.location.reload())
+        .catch((e) =>
+          Alpine.store("toast").push({ type: "error", title: "Could not change the default", message: e.message }),
+        );
+    },
+    remove(url, label, openOrders, used) {
+      let message = "This card is removed from the customer and from Stripe.";
+      if (openOrders) {
+        message +=
+          " It is also taken off " + openOrders + ", which still owe a balance. Those balances" +
+          " won't be charged automatically until another card is added.";
+      }
+      if (used) message += " Past charges and refunds are not affected.";
+      Alpine.store("modal").confirm({
+        title: "Remove " + label + "?",
+        message,
+        variant: "danger",
+        confirmText: "Remove card",
+        onConfirm: () =>
+          postForm(url, {})
+            .then(() => window.location.reload())
+            .catch((e) =>
+              Alpine.store("toast").push({ type: "error", title: "Could not remove the card", message: e.message }),
+            ),
+      });
+    },
+  };
+}
+window.cardVault = cardVault;
+
 /* -------------------------------------------------- LA sync payload preview */
 // LA sync: show a recorded payload (json_script element) in the shared modal.
 window.showLaPayload = function (elementId, title) {

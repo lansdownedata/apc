@@ -1,49 +1,108 @@
+{% load json_filters %}
 {% comment %}
-  billing/_cards_tab.html — the cards this customer has paid with.
+  billing/_cards_tab.html — the customer's cards (APC-47).
 
-  Display-only by decision. There is no card store on a contact, so this list is derived
-  from their orders (see selectors.cards_for). Adding, removing and choosing a default all
-  need the customer-level vault (APC-47) — and Remove is unsafe until then: the
-  charge-due-balances cron charges the plan's saved card 30 days before pickup, so
-  detaching one in Stripe while a plan still points at it makes that charge fail.
+  The vault first: cards on the customer's own Stripe customer, with Default, expiry and
+  the actions. Below it, read-only, cards from orders that were paid before the vault
+  existed — each of those orders made its own Stripe customer and Stripe can't move a card
+  between customers, so they can only be listed.
 
-  No expiry, and no Default chip. The mockup shows both; we store neither, and inventing
-  them — or calling Stripe once per row to fetch them — would both be worse than leaving
-  them out. The vault ticket adds them for real.
+  Remove is the dangerous action. `data-open-orders` names the orders that still owe a
+  balance on the card; the confirm says they will lose it (the balance cron then skips them
+  instead of charging a detached card).
 
-  Requires `billing_cards` from apps/billing/selectors.py.
+  Brand, last four and expiry only. Card numbers never touch this page: Add card mounts
+  Stripe's own fields through apcPay.cardFields.
+
+  Requires billing_context(contact) from apps/billing/selectors.py.
 {% endcomment %}
-{% if billing_cards %}
-  <ul class="divide-y divide-line/70">
-    {% for card in billing_cards %}
-      <li class="flex items-center gap-3.5 px-5 py-3.5">
-        <span class="w-10 h-7 rounded-md ring-1 ring-line grid place-items-center text-[10px] font-bold tracking-wide text-ink bg-surface2 shrink-0">
-          {{ card.brand|upper|default:"CARD" }}
-        </span>
-        <div class="min-w-0 flex-1">
-          <div class="text-[13.5px] font-semibold text-ink num">&bull;&bull;&bull;&bull; {{ card.last4 }}</div>
-          <div class="text-[11.5px] text-muted mt-0.5 truncate">
-            {% comment %} A card can sit on an order without ever being charged. Saying it
-               was "used" would be a small lie on a money screen. {% endcomment %}
-            {% if card.used %}last used on{% else %}on file for{% endif %}
-            <a class="text-ink hover:text-goldd focus-gold rounded num"
-               href="{% if card.lead.status == 'booked' %}{% url 'order_detail' card.lead.pk %}{% else %}{% url 'lead_detail' card.lead.pk %}{% endif %}">{{ card.lead.quote_no }}</a>,
-            {{ card.used_at|date:"M j" }}
-          </div>
-        </div>
-      </li>
-    {% endfor %}
-  </ul>
-  <p class="px-5 py-3 text-[11.5px] text-muted border-t border-line bg-surface2">
-    <i class="ti ti-lock text-[13px] align-[-2px]"></i>
-    Card numbers are held by Stripe. We keep the brand and the last four &mdash; nothing else.
-  </p>
-{% else %}
-  <div class="px-5 py-12 text-center">
-    <i class="ti ti-credit-card-off text-[28px] text-muted/50"></i>
-    <p class="mt-2 text-[13.5px] font-semibold text-ink">No cards on file</p>
-    <p class="mt-1 text-[12.5px] text-muted max-w-sm mx-auto">
-      A card is saved the first time this customer pays a deposit.
-    </p>
+<div x-data="cardVault({
+       pk: {{ stripe_pk|json_string }},
+       setupUrl: '{% url 'billing_card_setup' contact.pk %}',
+       completeUrl: '{% url 'billing_card_complete' contact.pk %}'
+     })"
+     @card-add.window="open()">
+
+  {% if user.has_payments_access %}
+  <div x-show="adding" x-cloak class="px-5 py-4 border-b border-line bg-surface2/60">
+    <p class="text-[12px] font-semibold text-ink mb-3">Add a card for {{ contact.name }}</p>
+    <div x-ref="fields" class="grid gap-3 sm:grid-cols-2">
+      <label class="block sm:col-span-2"><span class="block text-[11.5px] font-medium text-muted mb-1">Name on card</span>
+        <input data-card-name type="text" autocomplete="cc-name" class="field" placeholder="As printed on the card"></label>
+      <div class="sm:col-span-2"><span class="block text-[11.5px] font-medium text-muted mb-1">Card number</span>
+        <div data-card-number class="card-slot"></div></div>
+      <div><span class="block text-[11.5px] font-medium text-muted mb-1">Expiry</span>
+        <div data-card-expiry class="card-slot"></div></div>
+      <div><span class="block text-[11.5px] font-medium text-muted mb-1">CVC</span>
+        <div data-card-cvc class="card-slot"></div></div>
+      <label class="block"><span class="block text-[11.5px] font-medium text-muted mb-1">ZIP</span>
+        <input data-card-zip type="text" inputmode="numeric" autocomplete="postal-code" class="field" placeholder="Billing ZIP"></label>
+    </div>
+    <p x-show="error" x-text="error" class="text-[11.5px] text-rose-600 mt-2"></p>
+    <div class="flex items-center justify-end gap-2.5 mt-3">
+      <button type="button" @click="adding = false" class="text-[12.5px] font-medium text-muted hover:text-ink px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface focus-gold">Cancel</button>
+      <button type="button" @click="save()" :disabled="busy" class="btn-gold text-[12.5px] font-semibold rounded-lg px-3.5 py-1.5 disabled:opacity-50 focus-gold" x-text="busy ? 'Saving…' : 'Save card'">Save card</button>
+    </div>
   </div>
-{% endif %}
+  {% endif %}
+
+  {% if billing_has_any_card %}
+    <ul class="divide-y divide-line/70">
+      {% for card in billing_vault_cards %}
+        <li class="flex items-center gap-3.5 px-5 py-3.5">
+          <span class="w-10 h-7 rounded-md ring-1 ring-line grid place-items-center text-[10px] font-bold tracking-wide text-ink bg-surface2 shrink-0">{{ card.brand|upper|default:"CARD" }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[13.5px] font-semibold text-ink num">&bull;&bull;&bull;&bull; {{ card.last4 }}</span>
+              {% if card.is_default %}<span class="chip-gold rounded-full px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide">Default</span>{% endif %}
+            </div>
+            <div class="text-[11.5px] num mt-0.5">
+              {% if card.expired %}<span class="chip-danger rounded px-1 py-px font-medium">Expired {{ card.exp_label }}</span>{% elif card.expires_soon %}<span class="chip-warn rounded px-1 py-px font-medium">Expires {{ card.exp_label }}</span>{% else %}<span class="text-muted">Expires {{ card.exp_label }}</span>{% endif %}
+              {% if card.last_used_at %}<span class="text-muted"> · last used {{ card.last_used_at|date:"M j" }}</span>{% endif %}
+            </div>
+          </div>
+          {% if user.has_payments_access %}
+            {% if not card.is_default %}
+            <button type="button" class="text-[12px] font-medium text-muted hover:text-ink focus-gold rounded"
+                    @click="makeDefault('{% url 'billing_card_default' card.pk %}')">Make default</button>
+            {% endif %}
+            <button type="button" class="text-[12px] font-medium text-muted hover:text-rose-600 focus-gold rounded"
+                    data-open-orders="{{ card.open_orders|join:', ' }}"
+                    @click="remove('{% url 'billing_card_remove' card.pk %}', '{{ card.brand|upper|default:'Card'|escapejs }} ····{{ card.last4 }}', $el.dataset.openOrders, {{ card.last_used_at|yesno:'true,false' }})">Remove</button>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    {% if billing_cards %}
+      <p class="px-5 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">From earlier orders</p>
+      <ul class="divide-y divide-line/70">
+        {% for card in billing_cards %}
+          <li class="flex items-center gap-3.5 px-5 py-3">
+            <span class="w-10 h-7 rounded-md ring-1 ring-line grid place-items-center text-[10px] font-bold tracking-wide text-muted bg-surface2 shrink-0">{{ card.brand|upper|default:"CARD" }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="text-[13px] font-medium text-ink num">&bull;&bull;&bull;&bull; {{ card.last4 }}</div>
+              <div class="text-[11.5px] text-muted mt-0.5 truncate">
+                {% if card.used %}last used on{% else %}on file for{% endif %}
+                <a class="text-ink hover:text-goldd focus-gold rounded num"
+                   href="{% if card.lead.status == 'booked' %}{% url 'order_detail' card.lead.pk %}{% else %}{% url 'lead_detail' card.lead.pk %}{% endif %}">{{ card.lead.quote_no }}</a>,
+                {{ card.used_at|date:"M j" }} · stays on that order
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    <p class="px-5 py-3 text-[11.5px] text-muted border-t border-line bg-surface2">
+      <i class="ti ti-lock text-[13px] align-[-2px]"></i>
+      Card numbers are held by Stripe. We keep the brand, the last four and the expiry &mdash; nothing else.
+    </p>
+  {% else %}
+    <div x-show="!adding" class="px-5 py-12 text-center">
+      <i class="ti ti-credit-card-off text-[28px] text-muted/50"></i>
+      <p class="mt-2 text-[13.5px] font-semibold text-ink">No cards on file</p>
+      <p class="mt-1 text-[12.5px] text-muted max-w-sm mx-auto">
+        A card is saved when this customer pays, or add one here.
+      </p>
+    </div>
+  {% endif %}
+</div>

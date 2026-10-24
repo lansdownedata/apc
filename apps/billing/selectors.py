@@ -95,6 +95,28 @@ def cards_for(contact) -> list[dict]:
     return sorted(found.values(), key=lambda card: card["used_at"], reverse=True)
 
 
+def vault_cards(contact) -> list:
+    """The contact's saved cards (APC-47), each with `open_orders` — the quote numbers that
+    would lose the card on Remove because they still owe a balance on it. Two queries."""
+    from apps.payments.cards import _OWING
+    from apps.payments.models import PaymentPlan, SavedCard
+
+    saved = list(SavedCard.objects.filter(contact=contact))
+    if not saved:
+        return []
+    holding: dict[str, list[str]] = {}
+    plans = PaymentPlan.objects.filter(
+        stripe_payment_method_id__in=[c.stripe_payment_method_id for c in saved],
+        balance_status__in=_OWING,
+        lead__status="booked",
+    ).select_related("lead")
+    for plan in plans.order_by("lead__pk"):
+        holding.setdefault(plan.stripe_payment_method_id, []).append(plan.lead.quote_no)
+    for card in saved:
+        card.open_orders = holding.get(card.stripe_payment_method_id, [])
+    return saved
+
+
 def billing_context(contact) -> dict:
     """The Billing card's whole context for one contact.
 
@@ -114,9 +136,26 @@ def billing_context(contact) -> dict:
         # so it wants the plain (value, label) pairs.
         "billing_terms": Terms.choices,
         "account_figures": account_figures(account) if account else None,
-        "billing_cards": cards_for(contact),
+        # APC-47: the vault, then — read-only — cards from orders that were paid on their
+        # own Stripe customer before the vault existed (they can't be moved over).
+        **_card_context(contact),
         # Blank client id = QuickBooks was never connected, so every record is NOT_SYNCED
         # and a sync chip on each row would be a wall of red saying nothing. Phase 2 turns
         # this on and the chips appear with no template change.
         "qbo_connected": bool(settings.QBO_CLIENT_ID),
+    }
+
+
+def _card_context(contact) -> dict:
+    from django.conf import settings
+
+    vault = vault_cards(contact)
+    known = {(c.brand, c.last4) for c in vault}
+    legacy = [c for c in cards_for(contact) if (c["brand"], c["last4"]) not in known]
+    return {
+        "billing_vault_cards": vault,
+        "billing_cards": legacy,
+        "billing_has_any_card": bool(vault or legacy),
+        "billing_card_count": len(vault) + len(legacy),
+        "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
     }

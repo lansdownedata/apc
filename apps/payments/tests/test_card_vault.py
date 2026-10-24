@@ -305,3 +305,140 @@ def test_paying_on_a_legacy_customer_does_not_touch_the_vault():
     services._store_card(plan, _pm(pm_id="pm_old", customer="cus_legacy"))
 
     assert not SavedCard.objects.exists()
+
+
+# --- Task 3 + 4: endpoints and the Cards tab --------------------------------------------
+
+from django.urls import reverse  # noqa: E402
+
+from apps.accounts.factories import UserFactory  # noqa: E402
+
+
+@pytest.fixture
+def cashier(client):
+    client.force_login(UserFactory(can_manage_payments=True))
+    return client
+
+
+def test_the_setup_endpoint_returns_a_client_secret(cashier):
+    contact = _contact_with_customer()
+
+    with patch.object(STRIPE.SetupIntent, "create", return_value=MagicMock(client_secret="s_1")):
+        resp = cashier.post(reverse("billing_card_setup", args=[contact.pk]))
+
+    assert resp.json() == {"ok": True, "client_secret": "s_1"}
+
+
+def test_card_actions_need_payments_access(client):
+    contact = _contact_with_customer()
+    card = _card(contact)
+    client.force_login(UserFactory())
+
+    for url in (
+        reverse("billing_card_setup", args=[contact.pk]),
+        reverse("billing_card_complete", args=[contact.pk]),
+        reverse("billing_card_default", args=[card.pk]),
+        reverse("billing_card_remove", args=[card.pk]),
+    ):
+        assert client.post(url).status_code in (302, 403)
+
+
+def test_the_complete_endpoint_records_the_card(cashier):
+    contact = _contact_with_customer()
+
+    with patch.object(STRIPE.SetupIntent, "retrieve", return_value=_setup_intent(_pm())):
+        resp = cashier.post(
+            reverse("billing_card_complete", args=[contact.pk]), {"setup_intent": "seti_1"}
+        )
+
+    assert resp.json()["ok"] is True
+    assert SavedCard.objects.filter(contact=contact, last4="4242").exists()
+
+
+def test_a_refused_card_is_a_400_with_the_reason(cashier):
+    contact = _contact_with_customer()
+
+    with patch.object(
+        STRIPE.SetupIntent, "retrieve", return_value=_setup_intent(_pm(), customer="cus_other")
+    ):
+        resp = cashier.post(
+            reverse("billing_card_complete", args=[contact.pk]), {"setup_intent": "seti_1"}
+        )
+
+    assert resp.status_code == 400
+    assert "different customer" in resp.json()["error"]
+
+
+def test_a_stripe_failure_is_a_502(cashier):
+    import stripe
+
+    contact = _contact_with_customer()
+
+    with patch.object(
+        STRIPE.SetupIntent, "create", side_effect=stripe.error.APIConnectionError("down")
+    ):
+        resp = cashier.post(reverse("billing_card_setup", args=[contact.pk]))
+
+    assert resp.status_code == 502
+
+
+def test_the_default_and_remove_endpoints(cashier):
+    contact = _contact_with_customer()
+    a = _card(contact, is_default=True, stripe_payment_method_id="pm_a")
+    b = _card(contact, stripe_payment_method_id="pm_b")
+    plan = _booked_plan(contact, pm="pm_a")
+
+    assert cashier.post(reverse("billing_card_default", args=[b.pk])).json()["ok"] is True
+    with patch.object(STRIPE.PaymentMethod, "detach"):
+        resp = cashier.post(reverse("billing_card_remove", args=[a.pk]))
+
+    assert resp.json() == {"ok": True, "cleared": [plan.lead.quote_no]}
+    b.refresh_from_db()
+    assert b.is_default is True
+
+
+def _tab(client, contact):
+    return client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+
+
+def test_the_cards_tab_shows_the_vault(cashier):
+    contact = _contact_with_customer()
+    _card(contact, is_default=True, exp_month=8, exp_year=2028, last4="4242")
+    with patch("apps.payments.models.timezone.localdate", return_value=date(2026, 10, 24)):
+        _card(contact, exp_month=11, exp_year=2026, last4="1881")
+        html = _tab(cashier, contact)
+
+    assert "Default" in html
+    assert "Expires 08/28" in html
+    assert "Expires 11/26" in html and "chip-warn" in html
+    assert "Add card" in html and "data-card-number" in html
+
+
+def test_the_remove_confirm_names_the_orders_it_will_clear(cashier):
+    contact = _contact_with_customer()
+    _card(contact, stripe_payment_method_id="pm_x", is_default=True)
+    plan = _booked_plan(contact, pm="pm_x")
+
+    html = _tab(cashier, contact)
+
+    assert f'data-open-orders="{plan.lead.quote_no}"' in html  # carried into the confirm
+
+
+def test_cards_from_old_orders_on_their_own_customer_are_listed_read_only(cashier):
+    contact = _contact_with_customer()
+    _booked_plan(contact, pm="pm_legacy", customer="cus_legacy")  # visa 4242, not in the vault
+
+    html = _tab(cashier, contact)
+
+    assert "From earlier orders" in html
+
+
+def test_staff_without_payments_access_see_cards_but_no_actions(client):
+    contact = _contact_with_customer()
+    _card(contact, is_default=True)
+    client.force_login(UserFactory())
+
+    html = _tab(client, contact)
+
+    assert "Expires 08/28" in html
+    assert "Add card" not in html and "Make default" not in html

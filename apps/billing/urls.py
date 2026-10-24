@@ -3,6 +3,15 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # APC-47 — the customer card vault
+    path("contacts/<int:contact_pk>/cards/setup/", views.card_setup, name="billing_card_setup"),
+    path(
+        "contacts/<int:contact_pk>/cards/complete/",
+        views.card_complete,
+        name="billing_card_complete",
+    ),
+    path("cards/<int:pk>/default/", views.card_default, name="billing_card_default"),
+    path("cards/<int:pk>/remove/", views.card_remove, name="billing_card_remove"),
     path(
         "contacts/<int:contact_pk>/account/",
         views.account_create,

@@ -206,13 +206,14 @@ def test_the_footer_says_what_we_keep(client, agent):
     contact = ContactFactory()
     _charge(_plan(contact))
     body = _profile(client, contact)
-    assert "Card numbers are held by Stripe. We keep the brand and the last four" in body
+    kept = "Card numbers are held by Stripe. We keep the brand, the last four and the expiry"
+    assert kept in body
 
 
 def test_a_contact_with_no_cards_still_gets_the_empty_state(client, agent):
     body = _profile(client, ContactFactory())
     assert "No cards on file" in body
-    assert "A card is saved the first time this customer pays a deposit." in body
+    assert "A card is saved when this customer pays, or add one here." in body
 
 
 def test_the_tab_counts_the_cards(client, agent):
@@ -225,9 +226,9 @@ def test_the_tab_counts_the_cards(client, agent):
 # --- what it must NOT render ----------------------------------------------------------
 
 
-def test_nothing_offers_to_add_remove_or_default_a_card():
-    """All three need the customer-level vault (APC-47), and Remove is unsafe before it:
-    the balance cron charges the plan's saved card 30 days out.
+def test_cards_from_earlier_orders_never_offer_remove_or_default():
+    """APC-47: a card paid on an order's own legacy Stripe customer can't be moved into the
+    vault, so it is listed read-only — even for someone with payments access.
 
     Rendered on its own rather than asserted against the whole profile: "Make default" is a
     legitimate control on the *accounts* tab, so a page-wide search would only pass by
@@ -237,8 +238,14 @@ def test_nothing_offers_to_add_remove_or_default_a_card():
 
     contact = ContactFactory()
     _charge(_plan(contact))
-    tab = render_to_string("billing/_cards_tab.html", selectors.billing_context(contact))
-    for control in ("Add card", "Remove", "Make default", "<button"):
+    context = {
+        **selectors.billing_context(contact),
+        "contact": contact,
+        "user": UserFactory(can_manage_payments=True),
+    }
+    tab = render_to_string("billing/_cards_tab.html", context)
+    assert "From earlier orders" in tab
+    for control in ("Remove", "Make default"):
         assert control not in tab, control
 
 

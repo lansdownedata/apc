@@ -141,3 +141,81 @@ def group_delete(request: HttpRequest, pk: int) -> JsonResponse:
     except services.BillingError as exc:
         return _refused(exc)
     return JsonResponse({"ok": True})
+
+
+# --- the card vault (APC-47) ----------------------------------------------------------------
+
+
+def _card_action(fn):
+    """Run a vault action: a refusal is a 400 with the reason, Stripe being unreachable or
+    declining is a 502 — never a 500 on a money screen."""
+    import stripe
+
+    from apps.payments import cards
+
+    try:
+        return fn()
+    except cards.CardError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    except stripe.error.StripeError as exc:
+        return JsonResponse(
+            {"ok": False, "error": f"Stripe: {exc.user_message or 'please try again.'}"},
+            status=502,
+        )
+
+
+@login_required
+@payment_access_required
+@require_POST
+def card_setup(request: HttpRequest, contact_pk: int) -> JsonResponse:
+    from apps.payments import cards
+
+    contact = get_object_or_404(Contact, pk=contact_pk)
+    return _card_action(
+        lambda: JsonResponse({"ok": True, "client_secret": cards.start_add_card(contact)})
+    )
+
+
+@login_required
+@payment_access_required
+@require_POST
+def card_complete(request: HttpRequest, contact_pk: int) -> JsonResponse:
+    from apps.payments import cards
+
+    contact = get_object_or_404(Contact, pk=contact_pk)
+    setup_intent = (request.POST.get("setup_intent") or "").strip()
+    if not setup_intent:
+        return JsonResponse({"ok": False, "error": "The card wasn't confirmed."}, status=400)
+
+    def done():
+        card = cards.finish_add_card(contact, setup_intent)
+        return JsonResponse({"ok": True, "card": card.pk})
+
+    return _card_action(done)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def card_default(request: HttpRequest, pk: int) -> JsonResponse:
+    from apps.payments import cards
+    from apps.payments.models import SavedCard
+
+    card = get_object_or_404(SavedCard, pk=pk)
+    return _card_action(lambda: (cards.make_default(card), JsonResponse({"ok": True}))[1])
+
+
+@login_required
+@payment_access_required
+@require_POST
+def card_remove(request: HttpRequest, pk: int) -> JsonResponse:
+    from apps.payments import cards
+    from apps.payments.models import SavedCard
+
+    card = get_object_or_404(SavedCard, pk=pk)
+
+    def done():
+        cleared = cards.remove_card(card)
+        return JsonResponse({"ok": True, "cleared": [lead.quote_no for lead in cleared]})
+
+    return _card_action(done)
