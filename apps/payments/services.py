@@ -207,9 +207,13 @@ def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decim
     `already` was refunded against it. Overtime first (Moe, 2026-10-24): the first dollars
     ever refunded on the charge come off the overtime gratuity, then the overtime base,
     then the balance part — so a second partial picks up exactly where the first stopped."""
-    gratuity = Decimal(src.overtime_gratuity or 0)
-    base = Decimal(src.overtime_amount or 0) - gratuity
-    balance = Decimal(src.amount) - gratuity - base
+    # Clamped so bad data (a gratuity above the overtime, overtime above the charge) can
+    # never split into pieces that add up to more cash than Stripe refunded.
+    total = Decimal(src.amount)
+    overtime = min(max(Decimal(src.overtime_amount or 0), Decimal("0.00")), total)
+    gratuity = min(max(Decimal(src.overtime_gratuity or 0), Decimal("0.00")), overtime)
+    base = overtime - gratuity
+    balance = total - overtime
     lo, hi = already, already + portion
     pieces, edge = [], Decimal("0.00")
     for size in (gratuity, base, balance):
@@ -244,6 +248,12 @@ def refund_payment(plan, amount):
         )
         try:
             with transaction.atomic():
+                gratuity = base = Decimal("0.00")
+                balance_part = portion
+                if src.kind == Charge.Kind.FINAL:
+                    gratuity, base, balance_part = _final_split(src, already, portion)
+                # The overtime part is kept on the refund row so what's owed can come down
+                # by it (Moe, 2026-10-24: a refund of overtime is no longer owed).
                 charge = plan.charges.create(
                     kind=Charge.Kind.REFUND,
                     amount=portion,
@@ -251,10 +261,10 @@ def refund_payment(plan, amount):
                     stripe_payment_intent_id=src.stripe_payment_intent_id,
                     stripe_refund_id=refund.id,
                     idempotency_key=f"refund-{refund.id}",
+                    overtime_amount=gratuity + base,
+                    overtime_gratuity=gratuity,
                 )
-                balance_part = portion
                 if src.kind == Charge.Kind.FINAL:
-                    gratuity, base, balance_part = _final_split(src, already, portion)
                     if gratuity + base > Decimal("0.00"):
                         ledger.post_overtime_refund(
                             lead=plan.lead,
@@ -272,11 +282,22 @@ def refund_payment(plan, amount):
                         memo="Refund",
                     )
         except IntegrityError:
-            # A concurrent request already recorded this exact Stripe refund — don't double-count.
-            continue
+            # A concurrent request sent Stripe the same key, got this same refund back, and
+            # recorded it first. It is done: count it and stop here, never go on to refund
+            # the next charge as well (a double-click must not refund twice).
+            pass
         total_refunded += portion
         remaining -= portion
     return total_refunded
+
+
+def overtime_refunded(lead) -> Decimal:
+    """The overtime given back on this order's refunds — no longer owed (APC-75)."""
+    from django.db.models import Sum
+
+    return Charge.objects.filter(plan__lead=lead, kind=Charge.Kind.REFUND).aggregate(
+        s=Sum("overtime_amount")
+    )["s"] or Decimal("0.00")
 
 
 def remaining_balance(lead) -> Decimal:
@@ -289,7 +310,7 @@ def remaining_balance(lead) -> Decimal:
 
     plan = getattr(lead, "payment", None)
     total = Decimal(plan.quote_total if plan is not None else lead.quote_total)
-    total += sum(approved_overtime(lead), ZERO)
+    total += sum(approved_overtime(lead), ZERO) - overtime_refunded(lead)
     leftover = total - ledger.order_balances(lead)["collected"]
     return leftover if leftover > ZERO else ZERO
 

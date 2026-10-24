@@ -162,7 +162,10 @@ def order_refund(request, lead_id):
         refundable = services.refundable_total(plan)
         try:
             amount = Decimal(request.POST.get("amount") or refundable)
+            valid = amount.is_finite() and amount > 0 and amount == amount.quantize(Decimal("0.01"))
         except (InvalidOperation, TypeError):
+            valid = False
+        if not valid:
             messages.error(request, "Enter a valid refund amount.")
             return redirect("lead_detail", pk=lead_id)
         if amount > refundable:
@@ -170,7 +173,11 @@ def order_refund(request, lead_id):
             # card can take back, which is worth knowing before anything moves (APC-75).
             messages.error(request, f"You can refund at most ${refundable:,.2f} to the card.")
             return redirect("lead_detail", pk=lead_id)
-        refunded = services.refund_payment(plan, amount)
+        try:
+            refunded = services.refund_payment(plan, amount)
+        except stripe.error.StripeError as exc:
+            messages.error(request, f"Stripe refused the refund: {exc.user_message or exc}")
+            return redirect("lead_detail", pk=lead_id)
         messages.success(request, f"Refunded ${refunded}.")
     return redirect("lead_detail", pk=lead_id)
 
@@ -185,7 +192,17 @@ def order_cancel_refund(request, lead_id):
         return redirect("lead_detail", pk=lead_id)
     if plan:
         # Everything still on the card, the post-trip final bill included (APC-75).
-        services.refund_payment(plan, services.refundable_total(plan))
+        try:
+            services.refund_payment(plan, services.refundable_total(plan))
+        except stripe.error.StripeError as exc:
+            # Stop before cancelling: an order is never marked lost with money still on it
+            # because Stripe said no. Whatever did refund is already on the books.
+            messages.error(
+                request,
+                f"Stripe refused the refund, so the order was not cancelled: "
+                f"{exc.user_message or exc}",
+            )
+            return redirect("lead_detail", pk=lead_id)
     lead.reservations.update(
         trip_status=Reservation.TripStatus.CANCELLED,
         revenue_status=Reservation.RevenueStatus.REVERSED,

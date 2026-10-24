@@ -96,6 +96,7 @@ class OrderRow:
     collected: Decimal = ZERO
     order_total: Decimal = ZERO
     approved_overtime: Decimal = ZERO  # base + gratuity
+    overtime_refunded: Decimal = ZERO  # given back on refunds — no longer owed (APC-75)
     approved_overtime_base: Decimal = ZERO
     approved_overtime_gratuity: Decimal = ZERO
     approved_trips: int = 0
@@ -125,7 +126,7 @@ class OrderRow:
 
     @property
     def total_due(self) -> Decimal:
-        return self.order_total + self.approved_overtime
+        return self.order_total + self.approved_overtime - self.overtime_refunded
 
     @property
     def remaining(self) -> Decimal:
@@ -229,6 +230,14 @@ def _load(leads_qs) -> list[OrderRow]:
         .annotate(d=Sum("debit"), c=Sum("credit"))
     )
     collected = {r["entry__lead_id"]: (r["d"] or ZERO) - (r["c"] or ZERO) for r in cash}
+    from apps.payments.models import Charge
+
+    refunded_ot = dict(
+        Charge.objects.filter(plan__lead__in=leads, kind=Charge.Kind.REFUND, overtime_amount__gt=0)
+        .values("plan__lead_id")
+        .annotate(s=Sum("overtime_amount"))
+        .values_list("plan__lead_id", "s")
+    )
     payables = {
         p.assignment_id: p
         for p in AffiliatePayable.objects.filter(assignment__reservation__lead__in=leads)
@@ -236,10 +245,13 @@ def _load(leads_qs) -> list[OrderRow]:
     config = TaskConfig.load()
     grace = timedelta(hours=config.post_trip_grace_hours)
     now = timezone.now()
-    return [
+    rows = [
         _order_row(lead, collected.get(lead.pk, ZERO), payables, config, grace, now)
         for lead in leads
     ]
+    for row in rows:
+        row.overtime_refunded = refunded_ot.get(row.lead.pk) or ZERO
+    return rows
 
 
 def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:

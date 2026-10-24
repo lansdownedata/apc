@@ -186,6 +186,10 @@ def _recognized(lead):
     return ledger.order_balances(lead)["recognized"]
 
 
+def _refunded(lead):
+    return ledger.order_balances(lead)["refunded"]
+
+
 def test_refundable_total_includes_the_final_bill():
     plan = _fully_paid_with_final()
 
@@ -213,22 +217,24 @@ def test_a_small_refund_comes_off_the_overtime_gratuity_first():
         services.refund_payment(plan, Decimal("30.00"))
 
     assert create.call_args.kwargs["payment_intent"] == "pi_fin"
-    # Overtime reverses its Recognized Revenue lines; deferred revenue is not touched.
-    assert _recognized(plan.lead) == before - Decimal("30.00")
+    # Overtime refunds book to Refunds like any refund of earned money (Moe, 2026-10-24):
+    # Recognized keeps what was earned, "total refunded" includes it, deferred untouched.
+    assert _recognized(plan.lead) == before
+    assert _refunded(plan.lead) == Decimal("30.00")
     assert ledger.order_balances(plan.lead)["deferred"] == Decimal("1100.00")
     assert _all_balanced(plan.lead)
 
 
 def test_a_second_partial_continues_where_the_first_stopped():
     plan = _fully_paid_with_final()
-    before = _recognized(plan.lead)
 
     with _stripe_refunds("re_1", "re_2"):
         services.refund_payment(plan, Decimal("30.00"))  # $30 of the $40 gratuity
         services.refund_payment(plan, Decimal("150.00"))  # $10 gratuity, $120 base, $20 balance
 
-    assert _recognized(plan.lead) == before - Decimal("160.00")  # all overtime reversed
+    assert _refunded(plan.lead) == Decimal("160.00")  # all the overtime
     assert ledger.order_balances(plan.lead)["deferred"] == Decimal("1080.00")  # $20 balance part
+    assert services.overtime_refunded(plan.lead) == Decimal("160.00")
     assert _all_balanced(plan.lead)
 
 
@@ -254,8 +260,74 @@ def test_a_final_bill_with_no_overtime_refunds_like_a_balance():
         services.refund_payment(plan, Decimal("100.00"))
 
     assert _recognized(plan.lead) == before
+    assert services.overtime_refunded(plan.lead) == Decimal("0.00")
     assert ledger.order_balances(plan.lead)["collected"] == Decimal("0.00")
     assert _all_balanced(plan.lead)
+
+
+def test_a_concurrent_duplicate_refund_is_counted_not_repeated_on_the_next_charge():
+    """Review 2026-10-24: two requests send Stripe the same key and get the same refund
+    back; the loser must count it as done, not move on and refund the next charge too."""
+    plan = _fully_paid_with_final()
+
+    def stripe_returns_the_winners_refund(**kwargs):
+        plan.charges.create(  # the winning request records it first
+            kind=Charge.Kind.REFUND,
+            amount=Decimal("30.00"),
+            status=Charge.Status.SUCCEEDED,
+            stripe_payment_intent_id="pi_fin",
+            stripe_refund_id="re_1",
+            idempotency_key="refund-re_1",
+        )
+        return MagicMock(id="re_1")
+
+    with patch.object(
+        services.stripe.Refund, "create", side_effect=stripe_returns_the_winners_refund
+    ) as create:
+        refunded = services.refund_payment(plan, Decimal("30.00"))
+
+    assert create.call_count == 1
+    assert refunded == Decimal("30.00")
+
+
+def test_bad_overtime_data_never_moves_more_cash_than_stripe_refunded():
+    plan = PaymentPlanFactory(quote_total=Decimal("100.00"))
+    _charge(
+        plan,
+        Charge.Kind.FINAL,
+        "100.00",
+        "pi_bad",
+        overtime_amount=Decimal("10.00"),
+        overtime_gratuity=Decimal("20.00"),  # gratuity larger than the overtime: bad data
+    )
+
+    with _stripe_refunds("re_1"):
+        services.refund_payment(plan, Decimal("100.00"))
+
+    cash_out = sum(
+        line.credit
+        for e in JournalEntry.objects.filter(lead=plan.lead, kind=JournalEntry.Kind.REFUND_ISSUED)
+        for line in e.lines.all()
+        if line.account == "cash"
+    )
+    assert cash_out == Decimal("100.00")
+
+
+def test_refunded_overtime_is_no_longer_owed():
+    """Moe, 2026-10-24: a refund of overtime lowers what's owed, so the order doesn't ask
+    for it again (money card, pay page, Trip Review)."""
+    from apps.reservations import review_queue
+
+    plan = _fully_paid_with_final()
+    with patch(
+        "apps.reservations.reviews.approved_overtime", return_value=(Decimal("120"), Decimal("40"))
+    ):
+        assert services.remaining_balance(plan.lead) == Decimal("0.00")
+        with _stripe_refunds("re_1"):
+            services.refund_payment(plan, Decimal("160.00"))  # the whole overtime
+        assert services.remaining_balance(plan.lead) == Decimal("0.00")
+    row = review_queue._load(Lead.objects.filter(pk=plan.lead_id))[0]
+    assert row.overtime_refunded == Decimal("160.00")
 
 
 def test_a_retried_final_refund_makes_one_stripe_call():
@@ -305,6 +377,57 @@ def test_an_over_refund_is_refused_with_a_message(client):
 
     create.assert_not_called()
     assert "at most $1,260.00" in resp.content.decode()
+
+
+@pytest.mark.parametrize("amount", ["NaN", "-5", "0", "12.345"])
+def test_a_malformed_refund_amount_is_refused_without_a_stripe_call(client, amount):
+    plan = _fully_paid_with_final()
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with patch.object(services.stripe.Refund, "create") as create:
+        resp = client.post(
+            reverse("order_refund", args=[plan.lead_id]), {"amount": amount}, follow=True
+        )
+
+    assert resp.status_code == 200
+    create.assert_not_called()
+    assert "Enter a valid refund amount" in resp.content.decode()
+
+
+def test_a_stripe_refusal_is_reported_not_a_500(client):
+    import stripe
+
+    plan = _fully_paid_with_final()
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with patch.object(
+        services.stripe.Refund,
+        "create",
+        side_effect=stripe.error.InvalidRequestError("charge disputed", param=None),
+    ):
+        resp = client.post(
+            reverse("order_refund", args=[plan.lead_id]), {"amount": "50"}, follow=True
+        )
+
+    assert resp.status_code == 200
+    assert "Stripe refused the refund" in resp.content.decode()
+
+
+def test_cancel_stops_and_keeps_the_order_when_stripe_refuses(client):
+    import stripe
+
+    plan = _fully_paid_with_final()
+    Lead.objects.filter(pk=plan.lead_id).update(status=Lead.Status.BOOKED)
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with patch.object(
+        services.stripe.Refund,
+        "create",
+        side_effect=stripe.error.InvalidRequestError("charge disputed", param=None),
+    ):
+        client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+
+    assert Lead.objects.get(pk=plan.lead_id).status == Lead.Status.BOOKED
 
 
 def test_cancel_and_refund_returns_the_final_bill_too(client):

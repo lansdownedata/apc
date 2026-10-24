@@ -142,15 +142,16 @@ def post_refund(*, lead, amount, idempotency_key, charge=None, created_by=None, 
 
 
 def post_overtime_refund(*, lead, base, gratuity, idempotency_key, charge=None, created_by=None):
-    """Cash out against a final bill's overtime (APC-75): reverses the Recognized Revenue
-    lines the overtime posted to (`services._post_final`), base and gratuity separately.
-    Deferred revenue is untouched — the overtime was never deferred."""
+    """Cash out against a final bill's overtime (APC-75). Books to Refunds, the contra
+    account every refund of earned money uses (Moe, 2026-10-24), base and gratuity as two
+    lines — so "total refunded" includes it and Recognized keeps what was earned. Deferred
+    revenue is untouched: the overtime was never deferred."""
     base, gratuity = Decimal(base), Decimal(gratuity)
     lines = [(Account.CASH, ZERO, base + gratuity)]
     if base > ZERO:
-        lines.append((Account.RECOGNIZED_REVENUE, base, ZERO))
+        lines.append((Account.REFUNDS, base, ZERO))
     if gratuity > ZERO:
-        lines.append((Account.RECOGNIZED_REVENUE, gratuity, ZERO))
+        lines.append((Account.REFUNDS, gratuity, ZERO))
     return post_entry(
         lead=lead,
         kind=JournalEntry.Kind.REFUND_ISSUED,
