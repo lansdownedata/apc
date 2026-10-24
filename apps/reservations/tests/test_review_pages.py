@@ -186,6 +186,9 @@ def test_a_transfer_review_labels_the_wait_not_the_overrun(staff):
 
     assert "Waited" in body
     assert "Over by" not in body
+    # A pickup alone yields a suggestion here, so "Suggested" keys off the clock, not duration.
+    assert "state.over_minutes === null ? '—' : state.suggested_minutes" in body
+    assert "state.actual_minutes === null ? '—' : state.suggested_minutes" not in body
 
 
 def test_an_in_house_trip_shows_driver_pay_and_no_payable(staff):

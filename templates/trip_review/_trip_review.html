@@ -82,7 +82,7 @@
           <h3 class="font-display text-[15px] font-semibold text-ink">Customer billing</h3>
           <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">Operations decides · Accounting bills</span>
         </div>
-        <div class="flex justify-between"><span class="text-muted">Suggested</span><span class="num font-medium" x-text="state.actual_minutes === null ? '—' : state.suggested_minutes + ' min'"></span></div>
+        <div class="flex justify-between"><span class="text-muted">Suggested</span><span class="num font-medium" x-text="state.over_minutes === null ? '—' : state.suggested_minutes + ' min'"></span></div>
         <p class="text-[11.5px] text-muted mt-1"><span x-text="state.rule"></span> <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">{{ f.grace_minutes }}-min grace · full hours</span></p>
         <div class="grid grid-cols-2 gap-3 mt-3 items-end">
           <label class="block"><span class="block text-[12px] font-medium mb-1">Billable minutes</span>

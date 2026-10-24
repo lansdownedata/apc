@@ -374,6 +374,33 @@ def test_an_airport_pickup_with_no_verified_flight_uses_the_wait_rule_and_says_s
     )
 
 
+def test_on_a_transfer_the_prefilled_pickup_is_the_boarding_not_the_drivers_arrival():
+    """The wait clock runs until the passenger boards; a driver who arrives early must not
+    zero the suggestion."""
+    trip = _transfer()
+    scheduled = trip.pickup_at
+    _event(trip, Reservation.TripStatus.ARRIVED, scheduled - timedelta(minutes=5))
+    _event(trip, Reservation.TripStatus.CUSTOMER_IN_CAR, scheduled + timedelta(minutes=45))
+    _event(trip, Reservation.TripStatus.DONE, scheduled + timedelta(hours=2))
+
+    review = reviews.review_for(trip)
+
+    assert review.actual_pickup_at == scheduled + timedelta(minutes=45)
+    assert review.suggested_overtime_minutes == 60
+
+
+def test_the_arrival_copy_names_which_flight_time_was_used():
+    trip = _transfer()
+    scheduled = trip.pickup_at
+    _arrival(trip, scheduled_at=scheduled)  # verified in advance, never refreshed day-of
+
+    f = reviews.figures(_picked_up(trip, scheduled + timedelta(minutes=40)), None)
+
+    assert f.rule == (
+        "40 min after the flight's scheduled arrival; 25-min domestic grace, so 1 hour bills."
+    )
+
+
 def test_an_arrival_with_no_times_at_all_uses_the_wait_rule():
     trip = _transfer()
     _arrival(trip)  # scheduled_at=None, no estimate, no actual
@@ -724,7 +751,7 @@ def test_the_rule_copy_for_a_transfer_wait_and_an_arrival():
     _arrival(trip, actual_at=landed)
     arrived = reviews.figures(_picked_up(trip, landed + timedelta(minutes=10)), None)
     assert arrived.rule == (
-        "10 min after the flight's arrival, inside the 25-min domestic grace, "
+        "10 min after the flight's actual arrival, inside the 25-min domestic grace, "
         "so nothing to suggest."
     )
 
