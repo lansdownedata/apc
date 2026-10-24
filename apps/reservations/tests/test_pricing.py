@@ -53,6 +53,22 @@ def test_gratuity_is_computed_on_the_discounted_base():
     assert r.line_total == Decimal("1080.00")
 
 
+def test_discounted_rate_is_the_hourly_rate_the_customer_actually_pays():
+    """Overtime bills at this rate, so the discount carries into it (client, 2026-10-18)."""
+    r = ReservationFactory(rate=Decimal("200"), hours=Decimal("4"), discount_pct=Decimal("10"))
+    assert r.discounted_rate == Decimal("180.00")
+    flat = ReservationFactory(rate=Decimal("200"), hours=Decimal("4"), discount_flat=Decimal("50"))
+    assert flat.discounted_rate == Decimal("187.50")  # $750 over 4 h
+    plain = ReservationFactory(rate=Decimal("200"), hours=Decimal("4"))
+    assert plain.discounted_rate == Decimal("200.00")
+
+
+def test_discounted_rate_is_zero_when_nothing_is_billed():
+    r = ReservationFactory(rate=Decimal("200"), hours=Decimal("0"))
+    r.min_hours = Decimal("0")
+    assert r.discounted_rate == Decimal("0.00")
+
+
 def test_a_discount_larger_than_the_base_clamps_to_zero():
     """A negative line total would post a negative ledger entry — money bug, not display."""
     r = ReservationFactory(rate=Decimal("1000"), hours=Decimal("1"), discount_flat=Decimal("2000"))

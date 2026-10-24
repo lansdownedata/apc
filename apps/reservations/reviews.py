@@ -260,8 +260,8 @@ def _money(minutes: int, rate: Decimal) -> Decimal:
 
 def overtime_gratuity(trip: Reservation, base: Decimal) -> Decimal:
     """The trip's gratuity percentage on the overtime base — only when the gratuity is a
-    percentage line. A flat gratuity (which wins over a percent) adds nothing. The
-    discount never touches overtime (an assumption the client is to confirm)."""
+    percentage line. A flat gratuity (which wins over a percent) adds nothing. The base
+    is already at the discounted rate, so the discount reaches the gratuity too."""
     pct = Decimal(trip.gratuity_pct or 0)
     if Decimal(trip.gratuity_flat or 0) > 0 or pct <= 0:
         return Decimal("0.00")
@@ -316,7 +316,7 @@ class Figures:
     # customer billing
     billable_minutes: int
     customer_rate: Decimal
-    customer_amount: Decimal  # the overtime base: billable minutes at the trip's rate
+    customer_amount: Decimal  # the overtime base: billable minutes at the discounted rate
     customer_overtime_gratuity: Decimal
     customer_overtime_total: Decimal
     # driver pay: "affiliate" · "in_house" · "none"
@@ -366,7 +366,7 @@ def figures(review: TripReview, coverage, *, config=None) -> Figures:
     actual = review.actual_minutes
     over = max(0, actual - billed) if actual is not None else None
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
-    rate = Decimal(trip.rate or 0)
+    rate = trip.discounted_rate  # the discount carries into overtime (client, 2026-10-18)
     customer_amount = _money(billable, rate)
     ot_gratuity = overtime_gratuity(trip, customer_amount)
 

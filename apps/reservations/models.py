@@ -277,6 +277,16 @@ class Reservation(TimeStampedModel):
         return max(self.subtotal - self.discount, Decimal("0.00")).quantize(self._CENTS)
 
     @property
+    def discounted_rate(self) -> Decimal:
+        """The hourly rate the customer actually pays: `discounted_base` spread over the
+        billed hours. Overtime bills at this rate, so a discount carries into it (client
+        decision 2026-10-18); a flat discount is spread evenly over the hours."""
+        hours = self.billed_hours
+        if hours <= 0:
+            return Decimal("0.00")
+        return (self.discounted_base / hours).quantize(self._CENTS)
+
+    @property
     def gratuity(self) -> Decimal:
         """Computed on the *discounted* base — you don't tip on money the customer
         didn't pay (spec 2026-09-05 §4.5)."""
