@@ -208,12 +208,6 @@ def test_saving_stores_the_suggestion_from_the_configured_settings():
     assert review.suggested_overtime_minutes == 30
 
 
-def test_the_placeholder_settings_default_to_fifteen_minutes():
-    cfg = TaskConfig.load()
-
-    assert (cfg.overtime_increment_minutes, cfg.overtime_grace_minutes) == (15, 15)
-
-
 def test_billable_minutes_default_to_the_suggestion_until_someone_decides():
     trip = _finished_trip()
     start = trip.pickup_at

@@ -56,20 +56,34 @@ class TaskConfig(models.Model):
         help_text="How long after a trip's scheduled end, with no Done status, before its "
         "post-trip review opens anyway.",
     )
-    # ⚠ PLACEHOLDERS (APC-59): the client hasn't answered how overtime is counted
-    # (Confluence 46006273 §9 "Still open" #2). Both are settings so his answer is an
-    # edit on the Tasks settings screen, not a deploy. The suggestion only — a person
-    # always decides what's billable.
-    overtime_increment_minutes = models.PositiveIntegerField(
-        default=15,
-        validators=[MinValueValidator(1)],
-        help_text="Suggested overtime rounds up to this many minutes. Placeholder until the "
-        "client confirms.",
+    # The overtime rule (client, 2026-10-19; APC-91). All settings so a change is an edit
+    # on the Tasks settings screen, not a deploy. Suggestion only — a person always decides
+    # what's billable. The grace itself is never billed; past it, each hour started bills.
+    grace_large_minutes = models.PositiveIntegerField(
+        default=5,
+        help_text="Minutes over before a bus, van or stretch bills an hour.",
     )
-    overtime_grace_minutes = models.PositiveIntegerField(
+    grace_standard_minutes = models.PositiveIntegerField(
         default=15,
-        help_text="Minutes over the billed hours before any overtime is suggested. "
-        "Placeholder until the client confirms.",
+        help_text="Minutes over before a sedan or SUV bills an hour.",
+    )
+    transfer_grace_minutes = models.PositiveIntegerField(
+        default=15,
+        help_text="On a transfer, minutes waiting at the pickup (from the scheduled time) "
+        "before an hour bills. Any vehicle.",
+    )
+    airport_domestic_grace_minutes = models.PositiveIntegerField(
+        default=25,
+        help_text="Minutes after a domestic flight's actual arrival before an hour bills.",
+    )
+    airport_international_grace_minutes = models.PositiveIntegerField(
+        default=50,
+        help_text="Minutes after an international flight's actual arrival before an hour bills.",
+    )
+    overtime_block_minutes = models.PositiveIntegerField(
+        default=60,
+        validators=[MinValueValidator(1)],
+        help_text="Past the grace, overtime bills in blocks this long, each one started.",
     )
     future_booking_offset_days = models.PositiveIntegerField(
         default=330,
