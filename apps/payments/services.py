@@ -170,40 +170,72 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     return charge
 
 
+# Newest money back first (Moe, 2026-10-24): the post-trip final bill, then the balance,
+# then the deposit.
+_REFUND_ORDER = (Charge.Kind.FINAL, Charge.Kind.BALANCE, Charge.Kind.DEPOSIT)
+
+
+def _refunded_on(plan, payment_intent_id: str) -> Decimal:
+    from django.db.models import Sum
+
+    return plan.charges.filter(
+        kind=Charge.Kind.REFUND, stripe_payment_intent_id=payment_intent_id
+    ).aggregate(s=Sum("amount"))["s"] or Decimal("0.00")
+
+
+def _refundable_sources(plan) -> list[tuple[Charge, Decimal]]:
+    """(charge, still refundable) for every succeeded Stripe charge, in refund order."""
+    rank = {kind: i for i, kind in enumerate(_REFUND_ORDER)}
+    charges = plan.charges.filter(kind__in=_REFUND_ORDER, status=Charge.Status.SUCCEEDED)
+    out = []
+    for src in sorted(charges, key=lambda c: (rank[c.kind], -c.pk)):
+        if not src.stripe_payment_intent_id:
+            continue
+        left = Decimal(src.amount) - _refunded_on(plan, src.stripe_payment_intent_id)
+        if left > Decimal("0.00"):
+            out.append((src, left))
+    return out
+
+
+def refundable_total(plan) -> Decimal:
+    """Everything still refundable to the card, the final bill included (APC-75)."""
+    return sum((left for _src, left in _refundable_sources(plan)), Decimal("0.00"))
+
+
+def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decimal, ...]:
+    """(gratuity, base, balance part) of `portion` refunded against a FINAL charge, after
+    `already` was refunded against it. Overtime first (Moe, 2026-10-24): the first dollars
+    ever refunded on the charge come off the overtime gratuity, then the overtime base,
+    then the balance part — so a second partial picks up exactly where the first stopped."""
+    gratuity = Decimal(src.overtime_gratuity or 0)
+    base = Decimal(src.overtime_amount or 0) - gratuity
+    balance = Decimal(src.amount) - gratuity - base
+    lo, hi = already, already + portion
+    pieces, edge = [], Decimal("0.00")
+    for size in (gratuity, base, balance):
+        top = edge + size
+        pieces.append(max(Decimal("0.00"), min(hi, top) - max(lo, edge)))
+        edge = top
+    return tuple(pieces)
+
+
 def refund_payment(plan, amount):
-    """Refund `amount` to the card — balance PI first, then deposit PI. Real Stripe refund.
+    """Refund `amount` to the card — the final bill first, then the balance, then the
+    deposit (APC-75). Real Stripe refunds.
 
     Caps each charge at its remaining refundable amount (captured − already refunded) so a
     repeated/duplicate call cannot over-refund, and records each Stripe refund + its ledger
-    entry atomically so the books never desync from a recorded refund.
+    entry atomically so the books never desync from a recorded refund. A refund against a
+    final bill reverses its overtime's Recognized Revenue first, then its balance part the
+    way a balance refund does.
     """
-    from decimal import Decimal
-
-    from django.db.models import Sum
-
     amount = Decimal(amount)
     remaining = amount
     total_refunded = Decimal("0.00")
-    succeeded = {
-        c.kind: c
-        for c in plan.charges.filter(
-            kind__in=[Charge.Kind.DEPOSIT, Charge.Kind.BALANCE],
-            status=Charge.Status.SUCCEEDED,
-        )
-    }
-    for kind in (Charge.Kind.BALANCE, Charge.Kind.DEPOSIT):
+    for src, refundable in _refundable_sources(plan):
         if remaining <= Decimal("0.00"):
             break
-        src = succeeded.get(kind)
-        if not src or not src.stripe_payment_intent_id:
-            continue
-        already = plan.charges.filter(
-            kind=Charge.Kind.REFUND,
-            stripe_payment_intent_id=src.stripe_payment_intent_id,
-        ).aggregate(s=Sum("amount"))["s"] or Decimal("0.00")
-        refundable = src.amount - already
-        if refundable <= Decimal("0.00"):
-            continue
+        already = Decimal(src.amount) - refundable
         portion = min(remaining, refundable)
         refund = _stripe().Refund.create(
             payment_intent=src.stripe_payment_intent_id,
@@ -220,13 +252,25 @@ def refund_payment(plan, amount):
                     stripe_refund_id=refund.id,
                     idempotency_key=f"refund-{refund.id}",
                 )
-                ledger.post_refund(
-                    lead=plan.lead,
-                    amount=portion,
-                    charge=charge,
-                    idempotency_key=f"refund-{refund.id}",
-                    memo="Refund",
-                )
+                balance_part = portion
+                if src.kind == Charge.Kind.FINAL:
+                    gratuity, base, balance_part = _final_split(src, already, portion)
+                    if gratuity + base > Decimal("0.00"):
+                        ledger.post_overtime_refund(
+                            lead=plan.lead,
+                            base=base,
+                            gratuity=gratuity,
+                            charge=charge,
+                            idempotency_key=f"refund-{refund.id}-overtime",
+                        )
+                if balance_part > Decimal("0.00"):
+                    ledger.post_refund(
+                        lead=plan.lead,
+                        amount=balance_part,
+                        charge=charge,
+                        idempotency_key=f"refund-{refund.id}",
+                        memo="Refund",
+                    )
         except IntegrityError:
             # A concurrent request already recorded this exact Stripe refund — don't double-count.
             continue

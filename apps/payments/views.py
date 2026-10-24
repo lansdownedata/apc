@@ -159,10 +159,16 @@ def _plan(lead_id):
 def order_refund(request, lead_id):
     lead, plan = _plan(lead_id)
     if plan:
+        refundable = services.refundable_total(plan)
         try:
-            amount = Decimal(request.POST.get("amount") or plan.quote_total)
+            amount = Decimal(request.POST.get("amount") or refundable)
         except (InvalidOperation, TypeError):
             messages.error(request, "Enter a valid refund amount.")
+            return redirect("lead_detail", pk=lead_id)
+        if amount > refundable:
+            # Refused outright rather than silently capped: staff asked for more than the
+            # card can take back, which is worth knowing before anything moves (APC-75).
+            messages.error(request, f"You can refund at most ${refundable:,.2f} to the card.")
             return redirect("lead_detail", pk=lead_id)
         refunded = services.refund_payment(plan, amount)
         messages.success(request, f"Refunded ${refunded}.")
@@ -178,7 +184,8 @@ def order_cancel_refund(request, lead_id):
         messages.error(request, "Only booked orders can be cancelled.")
         return redirect("lead_detail", pk=lead_id)
     if plan:
-        services.refund_payment(plan, plan.quote_total)
+        # Everything still on the card, the post-trip final bill included (APC-75).
+        services.refund_payment(plan, services.refundable_total(plan))
     lead.reservations.update(
         trip_status=Reservation.TripStatus.CANCELLED,
         revenue_status=Reservation.RevenueStatus.REVERSED,

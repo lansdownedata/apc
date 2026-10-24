@@ -141,6 +141,28 @@ def post_refund(*, lead, amount, idempotency_key, charge=None, created_by=None, 
     )
 
 
+def post_overtime_refund(*, lead, base, gratuity, idempotency_key, charge=None, created_by=None):
+    """Cash out against a final bill's overtime (APC-75): reverses the Recognized Revenue
+    lines the overtime posted to (`services._post_final`), base and gratuity separately.
+    Deferred revenue is untouched — the overtime was never deferred."""
+    base, gratuity = Decimal(base), Decimal(gratuity)
+    lines = [(Account.CASH, ZERO, base + gratuity)]
+    if base > ZERO:
+        lines.append((Account.RECOGNIZED_REVENUE, base, ZERO))
+    if gratuity > ZERO:
+        lines.append((Account.RECOGNIZED_REVENUE, gratuity, ZERO))
+    return post_entry(
+        lead=lead,
+        kind=JournalEntry.Kind.REFUND_ISSUED,
+        lines=lines,
+        idempotency_key=idempotency_key,
+        charge=charge,
+        created_by=created_by,
+        source=JournalEntry.Source.MANUAL,
+        memo="Refund (overtime)",
+    )
+
+
 def post_forfeit(*, lead, amount, idempotency_key, created_by=None, memo="Deposit forfeited"):
     """Cancellation: reclassify deferred cash to cancellation revenue. No cash moves."""
     amount = Decimal(amount)
