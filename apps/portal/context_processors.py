@@ -88,6 +88,12 @@ def _default_cost_ratio_pct() -> str:
     return format(PricingConfig.load().default_cost_ratio_pct, "f")
 
 
+def _qbo_connected() -> bool:
+    from apps.integrations import qbo
+
+    return qbo.is_connected()
+
+
 def chrome(request):
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return {
@@ -117,4 +123,6 @@ def chrome(request):
         "default_cost_ratio_pct": SimpleLazyObject(_default_cost_ratio_pct),
         # The go-live switch (APC-90): off, the shell says so on every staff page.
         "outbound_enabled": outbound.enabled(),
+        # A live QuickBooks connection (APC-41) — not merely keys in settings.
+        "qbo_connected": SimpleLazyObject(_qbo_connected),
     }

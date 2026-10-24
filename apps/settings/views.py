@@ -62,8 +62,18 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             "notifications_on": NotificationConfig.load().enabled,
             "tasks_on": TaskConfig.load().enabled,
             "default_cost_ratio_pct": PricingConfig.load().default_cost_ratio_pct,
+            **_qbo_tile(),
         },
     )
+
+
+def _qbo_tile() -> dict:
+    from apps.integrations import qbo
+
+    return {
+        "qbo_enabled": qbo.enabled(),
+        "qbo_tile_connected": qbo.enabled() and qbo.is_connected(),
+    }
 
 
 @login_required
@@ -419,3 +429,66 @@ def poi_delete(request: HttpRequest, pk: int) -> HttpResponse:
     target.save(update_fields=["is_active", "updated_at"])
     messages.success(request, f"{target.name} deactivated.")
     return redirect("poi_list")
+
+
+# --- QuickBooks Online (APC-41) ----------------------------------------------------------------
+
+QBO_STATE_KEY = "qbo_oauth_state"
+
+
+def _qbo_or_404():
+    from django.http import Http404
+
+    from apps.integrations import qbo
+
+    if not qbo.enabled():
+        raise Http404
+    return qbo
+
+
+@login_required
+@owner_admin_required
+def quickbooks_settings(request: HttpRequest) -> HttpResponse:
+    """Connect / reconnect / disconnect, which company, when, by whom, the last good call.
+    Tokens are never rendered. 404 while the client keys are blank — the feature is dark."""
+    from django.conf import settings as dj_settings
+
+    from apps.integrations.models import QboCredential
+
+    qbo = _qbo_or_404()
+    cred = QboCredential.objects.filter(singleton_id=1).select_related("connected_by").first()
+    return render(
+        request,
+        "settings/quickbooks.html",
+        {
+            "nav": "settings",
+            "page_title": "QuickBooks",
+            "cred": cred if cred and cred.realm_id else None,
+            "connected": qbo.is_connected(),
+            "environment": dj_settings.QBO_ENVIRONMENT,
+        },
+    )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_connect(request: HttpRequest) -> HttpResponse:
+    """Start Intuit's consent. The state lives in the session the callback reads, so start
+    this from the redirect URI's own domain (the ngrok host in dev), never localhost."""
+    import secrets
+
+    qbo = _qbo_or_404()
+    state = secrets.token_urlsafe(24)
+    request.session[QBO_STATE_KEY] = state
+    return redirect(qbo.authorize_url(state))
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_disconnect(request: HttpRequest) -> HttpResponse:
+    qbo = _qbo_or_404()
+    qbo.disconnect()
+    messages.success(request, "QuickBooks disconnected.")
+    return redirect("quickbooks_settings")

@@ -137,6 +137,12 @@ def vault_cards(contact) -> list:
     return saved
 
 
+def _qbo_connected() -> bool:
+    from apps.integrations import qbo
+
+    return qbo.is_connected()
+
+
 def billing_context(contact) -> dict:
     """The Billing card's whole context for one contact.
 
@@ -162,12 +168,13 @@ def billing_context(contact) -> dict:
         # Blank client id = QuickBooks was never connected, so every record is NOT_SYNCED
         # and a sync chip on each row would be a wall of red saying nothing. Phase 2 turns
         # this on and the chips appear with no template change.
-        "qbo_connected": bool(settings.QBO_CLIENT_ID),
+        # A live connection (APC-41), not just keys in settings — a developer with keys in
+        # .env and nothing connected must not see a wall of red chips.
+        "qbo_connected": _qbo_connected(),
     }
 
 
 def _card_context(contact) -> dict:
-    from django.conf import settings
 
     vault = vault_cards(contact)
     # "From earlier orders" is only what an order paid on its own (legacy) Stripe customer —

@@ -174,6 +174,17 @@ def test_no_sync_chip_while_quickbooks_is_not_connected(client, agent):
     assert "In QuickBooks" not in body
 
 
+def test_keys_alone_never_light_the_chips(client, agent, settings):
+    """APC-41: a developer with keys in .env but no connection must not see a wall of red."""
+    settings.QBO_CLIENT_ID = "client-id"
+    settings.QBO_CLIENT_SECRET = "client-secret"
+    account = _account()
+
+    body = _profile(client, account.contact)
+
+    assert "Not synced" not in body
+
+
 def test_the_chips_appear_once_quickbooks_is_connected(client, agent, settings):
     account = _account()
     account.qbo_sync_state = SyncState.SYNCED
@@ -183,7 +194,24 @@ def test_the_chips_appear_once_quickbooks_is_connected(client, agent, settings):
     group.qbo_sync_error = "QuickBooks already has a customer with this name."
     group.save(update_fields=["qbo_sync_state", "qbo_sync_error"])
 
-    settings.QBO_CLIENT_ID = "connected-for-this-test"
+    # Connected means a live credential, not just keys in settings (APC-41).
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.integrations.models import QboCredential
+
+    settings.QBO_CLIENT_ID = "client-id"
+    settings.QBO_CLIENT_SECRET = "client-secret"
+    cred = QboCredential.load()
+    cred.realm_id = "9130"
+    cred.set_tokens(
+        access="at",
+        refresh="rt",
+        access_expires_at=timezone.now() + timedelta(hours=1),
+        refresh_expires_at=None,
+    )
+    cred.save()
     body = _profile(client, account.contact)
     assert "In QuickBooks" in body
     assert "QuickBooks already has a customer with this name." in body

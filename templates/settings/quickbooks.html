@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% comment %}
+  APC-41 · the QuickBooks Online connection. Owner-admin only. Tokens are never rendered —
+  only the company id, who connected it and when, and the last successful call.
+{% endcomment %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="card p-5 sm:p-6">
+    <div class="flex items-center gap-2 mb-1">
+      <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight">QuickBooks</h1>
+      <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{% if environment == 'production' %}Production{% else %}Sandbox{% endif %}</span>
+    </div>
+    <p class="text-[12.5px] text-muted mb-5">
+      The portal pushes billing accounts, invoices and affiliate bills to this company. Nothing is
+      read back. Connecting needs a QuickBooks admin of the company.
+    </p>
+
+    {% if cred and cred.broken_at %}
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-4 chip-danger">{{ cred.broken_reason }}</p>
+    {% endif %}
+
+    {% if cred %}
+      <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[13px] mb-5">
+        <dt class="text-muted">Company id</dt><dd class="font-medium text-ink num">{{ cred.realm_id }}</dd>
+        <dt class="text-muted">Status</dt><dd class="font-medium {% if connected %}text-ink{% else %}text-rose-600{% endif %}">{% if connected %}Connected{% else %}Needs reconnecting{% endif %}</dd>
+        <dt class="text-muted">Connected</dt><dd class="text-ink">{{ cred.connected_at|date:"M j, Y g:i A" }}{% if cred.connected_by %} by {{ cred.connected_by.get_full_name|default:cred.connected_by.username }}{% endif %}</dd>
+        <dt class="text-muted">Last successful call</dt><dd class="text-ink">{% if cred.last_success_at %}{{ cred.last_success_at|date:"M j, Y g:i A" }}{% else %}None yet{% endif %}</dd>
+      </dl>
+      <div class="flex items-center gap-2.5">
+        <form method="post" action="{% url 'quickbooks_connect' %}">{% csrf_token %}
+          <button type="submit" class="btn-gold text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold">Reconnect</button>
+        </form>
+        <form method="post" action="{% url 'quickbooks_disconnect' %}" x-data>{% csrf_token %}
+          <button type="button" class="text-[13px] font-medium text-rose-600 px-4 py-2 rounded-lg ring-1 ring-rose-200 bg-surface hover:bg-rose-50 focus-gold"
+                  @click="$store.modal.confirm({
+                    title: 'Disconnect QuickBooks?',
+                    message: 'Syncing stops until someone reconnects. Nothing already in QuickBooks is changed.',
+                    variant: 'danger', confirmText: 'Disconnect',
+                    onConfirm: () => $el.closest('form').submit()
+                  })">Disconnect</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="text-[13px] text-ink mb-4">Not connected.</p>
+      <form method="post" action="{% url 'quickbooks_connect' %}">{% csrf_token %}
+        <button type="submit" class="btn-gold text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold">Connect QuickBooks</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

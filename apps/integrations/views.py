@@ -18,6 +18,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.accounts.permissions import owner_admin_required
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
 from apps.messaging import touchpoints
@@ -318,3 +319,36 @@ def geocode_autocomplete(request):
         lon=request.GET.get("lon"),
     )
     return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})
+
+
+@login_required
+@owner_admin_required
+def quickbooks_callback(request):
+    """Intuit's redirect after consent (APC-41): check the state, trade the code for tokens,
+    record the company (`realmId`). Owner-admin only, like the screen that starts it."""
+    from django.contrib import messages
+
+    from apps.integrations import qbo
+    from apps.settings.views import QBO_STATE_KEY
+
+    if not qbo.enabled():
+        raise Http404
+    expected = request.session.pop(QBO_STATE_KEY, None)
+    state = request.GET.get("state") or ""
+    if not state or state != expected:
+        return HttpResponseBadRequest(
+            "Invalid OAuth state. Start the connection again from Settings."
+        )
+    if error := request.GET.get("error"):
+        messages.error(request, f"QuickBooks wasn't connected ({error}).")
+        return redirect("quickbooks_settings")
+    code, realm_id = request.GET.get("code"), request.GET.get("realmId")
+    if not code or not realm_id:
+        return HttpResponseBadRequest("Missing authorization code or company id.")
+    try:
+        qbo.exchange_code(code, realm_id=realm_id, user=request.user)
+    except qbo.QboAPIError as exc:
+        messages.error(request, f"QuickBooks refused the connection ({exc.status}). Try again.")
+        return redirect("quickbooks_settings")
+    messages.success(request, "QuickBooks connected.")
+    return redirect("quickbooks_settings")

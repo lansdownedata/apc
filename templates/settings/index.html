@@ -78,6 +78,20 @@
       </p>
       <p class="text-[12.5px] text-muted mt-2">Read-only</p>
     </a>
+    {% if qbo_enabled %}
+    <a href="{% url 'quickbooks_settings' %}" class="card p-4 hover:wash-gold transition-colors">
+      <div class="flex items-center gap-2">
+        <i class="ti ti-building-bank text-[18px] text-gold"></i>
+        <h2 class="font-display text-[15px] font-semibold text-ink">QuickBooks</h2>
+      </div>
+      <p class="text-[12.5px] text-muted mt-1">
+        The QuickBooks Online company billing accounts and invoices sync to.
+      </p>
+      <p class="text-[12.5px] text-muted mt-2">
+        {% if qbo_tile_connected %}Connected{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Not connected</span>{% endif %}
+      </p>
+    </a>
+    {% endif %}
     <a href="{% url 'task_settings' %}" class="card p-4 hover:wash-gold transition-colors">
       <div class="flex items-center gap-2">
         <i class="ti ti-checklist text-[18px] text-gold"></i>
