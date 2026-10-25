@@ -21,4 +21,5 @@ urlpatterns = [
     path("payables/<int:pk>/invoice/", views.payable_invoice, name="payable_invoice"),
     path("payables/<int:pk>/approve/", views.payable_approve, name="payable_approve"),
     path("payables/<int:pk>/paid/", views.payable_paid, name="payable_paid"),
+    path("payables/<int:pk>/sync/", views.payable_sync, name="payable_sync"),
 ]

@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.core.choices import Account
 
-from . import ledger
+from . import ledger, qbo_bills
 from .models import AffiliatePayable, JournalEntry
 
 ZERO = Decimal("0.00")
@@ -257,4 +257,5 @@ def payable_json(payable: AffiliatePayable) -> dict:
         "approval_note": payable.approval_note,
         "paid_method": payable.get_paid_method_display() if payable.paid_method else "",
         "paid_reference": payable.paid_reference,
+        "qbo": qbo_bills.sync_state(payable),  # APC-74
     }

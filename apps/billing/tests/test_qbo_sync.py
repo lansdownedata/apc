@@ -317,7 +317,9 @@ def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending():
     _account()
     terms = {"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30", "Active": True}]}}
 
-    with patch(REQ, side_effect=[terms, _created("58"), _created("59")]) as req:
+    # APC-74: the job then reads the chart of accounts and pushes affiliate bills (none here).
+    accounts = {"QueryResponse": {"Account": []}}
+    with patch(REQ, side_effect=[terms, _created("58"), _created("59"), accounts]) as req:
         assert JOBS["retry-qbo-sync"]() == 2
 
     assert req.call_args_list[0].args == ("GET", "query")

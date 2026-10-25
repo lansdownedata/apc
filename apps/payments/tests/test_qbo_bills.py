@@ -821,3 +821,138 @@ def test_renaming_a_vendor_in_the_admin_queues_it(admin_client):
     vendor.refresh_from_db()
     assert vendor.name == "Capital Coach LLC"
     assert vendor.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+# --- the hourly job and Retry -----------------------------------------------------------------
+
+from django.urls import reverse  # noqa: E402
+
+from apps.accounts.factories import UserFactory  # noqa: E402
+from apps.core.cron import JOBS  # noqa: E402
+
+
+def test_the_hourly_job_does_customers_then_refreshes_accounts_then_pushes_bills():
+    from apps.billing.models import QboTerm
+
+    QboTerm.objects.create(qbo_id="3", name="Net 30", active=True)
+    billing.create_account(ContactFactory(), name="Ridgeline", group_name="AP")
+    _map()
+    _paid()
+    terms = {"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30", "Active": True}]}}
+    accounts = _accounts(
+        _acct("70", "Subcontracted transportation", "Cost of Goods Sold"),
+        _acct("35", "Checking", "Bank"),
+    )
+    customer = {"Customer": {"Id": "58", "SyncToken": "0"}}
+    group = {"Customer": {"Id": "59", "SyncToken": "0"}}
+    calls = [terms, customer, group, accounts, _vendor(), _bill(), _billpayment()]
+
+    with patch(REQ, side_effect=calls) as req:
+        assert JOBS["retry-qbo-sync"]() == 5
+
+    paths = [c.args[1] for c in req.call_args_list]
+    assert paths == ["query", "customer", "customer", "query", "vendor", "bill", "billpayment"]
+    assert "from Account" in req.call_args_list[3].kwargs["params"]["query"]
+
+
+def test_a_failed_accounts_refresh_still_pushes_with_the_cached_choice():
+    _map()
+    _payable(vendor=_linked_vendor())
+    terms = {"QueryResponse": {"Term": []}}
+
+    with patch(REQ, side_effect=[terms, qbo.QboAPIError(503, "down"), _bill()]):
+        assert JOBS["retry-qbo-sync"]() == 1
+
+
+def test_the_hourly_job_does_nothing_without_a_connection():
+    _map()
+    _payable(vendor=_linked_vendor())
+
+    with (
+        patch("apps.payments.qbo_bills.qbo.is_connected", return_value=False),
+        patch("apps.billing.qbo_sync.qbo.is_connected", return_value=False),
+        patch(REQ) as req,
+    ):
+        assert JOBS["retry-qbo-sync"]() == 0
+
+    req.assert_not_called()
+
+
+@pytest.fixture
+def cashier(client):
+    client.force_login(UserFactory(can_manage_payments=True))
+    return client
+
+
+def test_retry_on_a_payable_pushes_vendor_bill_and_payment_and_answers_with_the_payable(cashier):
+    _map()
+    payable = _paid()
+    AffiliatePayable.objects.filter(pk=payable.pk).update(
+        qbo_sync_state=SyncState.ERROR, qbo_sync_error="QuickBooks didn't accept this bill: x"
+    )
+
+    with patch(REQ, side_effect=[_vendor(), _bill(), _billpayment()]):
+        resp = cashier.post(reverse("payable_sync", args=[payable.pk]))
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["payable"]["qbo"] == {
+        "bill_state": "synced",
+        "bill_error": "",
+        "payment_state": "synced",
+        "payment_error": "",
+        "sync_url": reverse("payable_sync", args=[payable.pk]),
+    }
+
+
+def test_retry_on_a_payable_reports_a_refusal_in_words(cashier):
+    payable = _payable(vendor=_linked_vendor())  # no account mapping chosen
+
+    with patch(REQ):
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    assert body["payable"]["qbo"]["bill_state"] == "error"
+    assert "expense account" in body["payable"]["qbo"]["bill_error"]
+
+
+def test_retry_during_an_outage_says_to_try_again(cashier):
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ, side_effect=qbo.QboAPIError(0, "network: Timeout")):
+        resp = cashier.post(reverse("payable_sync", args=[payable.pk]))
+
+    assert resp.status_code == 502
+    assert "try again" in resp.json()["error"].lower()
+
+
+def test_retry_needs_payments_access_and_a_connection(client):
+    payable = _payable()
+    client.force_login(UserFactory())
+    assert client.post(reverse("payable_sync", args=[payable.pk])).status_code == 403
+    assert (
+        client.post(reverse("vendor_sync", args=[payable.assignment.vendor_id])).status_code == 403
+    )
+
+    client.force_login(UserFactory(can_manage_payments=True))
+    with patch("apps.payments.qbo_bills.qbo.is_connected", return_value=False):
+        assert client.post(reverse("payable_sync", args=[payable.pk])).status_code == 400
+
+
+def test_retry_on_a_vendor(cashier):
+    vendor = _payable().assignment.vendor
+    Vendor.objects.filter(pk=vendor.pk).update(qbo_sync_state=SyncState.ERROR)
+
+    with patch(REQ, return_value=_vendor()):
+        resp = cashier.post(reverse("vendor_sync", args=[vendor.pk]))
+
+    assert resp.json() == {"ok": True, "state": "synced", "error": ""}
+
+
+def test_a_payable_without_quickbooks_reports_no_sync_state():
+    payable = _payable()
+
+    with patch("apps.payments.qbo_bills.qbo.is_connected", return_value=False):
+        from apps.payments import payables
+
+        assert payables.payable_json(payable)["qbo"] is None

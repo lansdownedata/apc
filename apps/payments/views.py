@@ -476,3 +476,25 @@ def payable_paid(request, pk):
     except payables.PayableError as exc:
         return _json_error(str(exc))
     return _payable_ok(payable)
+
+
+@login_required
+@payment_access_required
+@require_POST
+def payable_sync(request, pk):
+    """Retry QuickBooks for one payable, now: its vendor if needed, its bill, its payment
+    (APC-74). A person asked, so this one call may wait on Intuit."""
+    from apps.integrations import qbo
+
+    from . import qbo_bills
+
+    payable = _payable(pk)
+    if not qbo.is_connected():
+        return _json_error("QuickBooks isn't connected.")
+    try:
+        qbo_bills.push_everything_for(payable)
+    except qbo.QboNotConnected as exc:
+        return _json_error(str(exc))
+    except qbo_bills.SyncPaused:
+        return _json_error("QuickBooks couldn't be reached. Try again in a minute.", status=502)
+    return _payable_ok(payable)

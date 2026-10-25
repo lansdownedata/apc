@@ -738,3 +738,33 @@ def push_everything_for(payable: AffiliatePayable) -> None:
     payable.refresh_from_db()
     if payable.status == AffiliatePayable.Status.PAID:
         push_payment(payable)
+
+
+def run_hourly() -> int:
+    """The `retry-qbo-sync` cron: customers first (APC-42: terms, accounts, groups), then the
+    chart of accounts, then vendors, bills and payments. A failed accounts refresh doesn't stop
+    the push: the cached choice still stands. Does nothing without a live connection."""
+    if not qbo.is_connected():
+        return 0
+    pushed = customers.run_hourly()
+    try:
+        refresh_accounts()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        logger.warning("QuickBooks accounts refresh failed; pushing with the cached choice")
+    return pushed + sync_pending()
+
+
+def sync_state(payable: AffiliatePayable) -> dict | None:
+    """What the payable pane shows: the bill's and the payment's state and sentence, and where
+    Retry posts. None while QuickBooks isn't connected (no wall of red chips)."""
+    from django.urls import reverse
+
+    if not qbo.is_connected():
+        return None
+    return {
+        "bill_state": payable.qbo_sync_state,
+        "bill_error": payable.qbo_sync_error,
+        "payment_state": payable.qbo_payment_sync_state,
+        "payment_error": payable.qbo_payment_sync_error,
+        "sync_url": reverse("payable_sync", args=[payable.pk]),
+    }

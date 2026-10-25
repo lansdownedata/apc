@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from apps.accounts.permissions import payment_access_required
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
 from apps.billing.models import SyncState
@@ -387,4 +388,30 @@ def document_create(request: HttpRequest, pk: int) -> HttpResponse:
         form_class=VendorDocumentForm,
         title="Upload document",
         uploader=True,
+    )
+
+
+@login_required
+@payment_access_required
+@require_POST
+def vendor_sync(request: HttpRequest, pk: int) -> JsonResponse:
+    """Retry QuickBooks for one vendor, now (APC-74)."""
+    from apps.integrations import qbo
+    from apps.payments import qbo_bills
+
+    vendor = get_object_or_404(Vendor, pk=pk)
+    if not qbo.is_connected():
+        return JsonResponse({"ok": False, "error": "QuickBooks isn't connected."}, status=400)
+    try:
+        qbo_bills.push_vendor(vendor)
+    except qbo.QboNotConnected as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    except qbo_bills.SyncPaused:
+        return JsonResponse(
+            {"ok": False, "error": "QuickBooks couldn't be reached. Try again in a minute."},
+            status=502,
+        )
+    vendor.refresh_from_db()
+    return JsonResponse(
+        {"ok": True, "state": vendor.qbo_sync_state, "error": vendor.qbo_sync_error}
     )
