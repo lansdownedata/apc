@@ -77,6 +77,11 @@ _PER_COPY_FIELDS = frozenset(
         "revenue_status",
         "recognized_at",
         "recognized_amount",
+        # Each copy runs its own clock and its own bill (spec 2026-10-25 §3): overtime,
+        # extras and the total frozen at booking are never shared across a set.
+        "overtime_hours",
+        "extras_total",
+        "booked_total",
     }
 )
 
@@ -163,6 +168,11 @@ def clone_reservation(
     clone.revenue_status = Reservation.RevenueStatus.DEFERRED
     clone.recognized_at = None
     clone.recognized_amount = 0
+    # A copy has not run yet: no overtime, no extras. Its booked total is 0 when the order
+    # is already booked (nothing prepaid covers it) and blank otherwise, frozen at booking.
+    clone.overtime_hours = 0
+    clone.extras_total = 0
+    clone.booked_total = Decimal("0.00") if source.lead.status == "booked" else None
     clone.sort_order = sort_order
     clone.save()
     _write_stops(clone, stops)

@@ -178,6 +178,10 @@ class Reservation(TimeStampedModel):
     # allocates the order's prepaid money to trips up to this figure (spec §4.4), so later
     # price edits change what is owed, never what was already covered. Null = never booked.
     booked_total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Σ of this trip's `TripExtra` rows, signed. Stored, not derived, so `line_total` stays
+    # row math and no list view pays a query per trip; `TripExtra.save/delete` and
+    # `pricing.replace_extras` keep it current.
+    extras_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     # Vendor pay (cost-based pricing, spec 2026-09-05; per-trip pay 2026-09-19). Internal
     # only — neither value may ever reach the customer or the affiliate.
     #
@@ -326,19 +330,23 @@ class Reservation(TimeStampedModel):
         # and a receipt or ledger split never disagrees with the total by a cent.
         return base + self.overtime_gratuity
 
-    @property
-    def extras_total(self) -> Decimal:
-        """Flat extras, signed (a credit subtracts). Reads `extras.all()` so a list view's
-        prefetch is honoured."""
-        return sum((e.signed_amount for e in self.extras.all()), Decimal("0.00")).quantize(
-            self._CENTS
-        )
+    def refresh_extras_total(self) -> Decimal:
+        """Recompute the stored `extras_total` from the rows and save it. Returns the total."""
+        total = sum((e.signed_amount for e in self.extras.all()), Decimal("0.00"))
+        self.extras_total = total.quantize(self._CENTS)
+        self.save(update_fields=["extras_total", "updated_at"])
+        return self.extras_total
 
     @property
     def line_total(self) -> Decimal:
         """What the customer pays for this trip. Floored at zero: a credit bigger than the
         trip must not post a negative ledger entry."""
-        total = self.discounted_base + self.overtime_amount + self.gratuity + self.extras_total
+        total = (
+            self.discounted_base
+            + self.overtime_amount
+            + self.gratuity
+            + Decimal(self.extras_total or 0)
+        )
         return max(total, Decimal("0.00")).quantize(self._CENTS)
 
     # --- what the customer sees (spec 2026-09-05 §4) ---
@@ -350,7 +358,7 @@ class Reservation(TimeStampedModel):
             self.discount > 0
             or self.gratuity > 0
             or Decimal(self.overtime_hours or 0) > 0
-            or any(True for _ in self.extras.all())
+            or Decimal(self.extras_total or 0) != 0
         )
 
     @property
@@ -759,6 +767,15 @@ class TripExtra(TimeStampedModel):
     def signed_amount(self) -> Decimal:
         amount = Decimal(self.amount or 0)
         return -amount if self.kind == self.Kind.CREDIT else amount
+
+    def save(self, *args, **kwargs) -> None:
+        super().save(*args, **kwargs)
+        self.reservation.refresh_extras_total()
+
+    def delete(self, *args, **kwargs):
+        result = super().delete(*args, **kwargs)
+        self.reservation.refresh_extras_total()
+        return result
 
 
 class Flight(TimeStampedModel):

@@ -67,6 +67,7 @@ def test_extras_add_and_a_credit_subtracts():
         reservation=r, kind=TripExtra.Kind.CREDIT, label="Courtesy", amount=Decimal("50")
     )
 
+    r.refresh_from_db()
     assert r.extras_total == Decimal("200.00")
     assert r.line_total == Decimal("1310.00")
 
@@ -75,6 +76,7 @@ def test_a_credit_larger_than_the_trip_floors_the_total_at_zero():
     r = _hourly()
     TripExtraFactory(reservation=r, kind=TripExtra.Kind.CREDIT, amount=Decimal("5000"))
 
+    r.refresh_from_db()
     assert r.line_total == Decimal("0.00")
 
 
@@ -82,7 +84,17 @@ def test_extras_do_not_earn_gratuity():
     r = _hourly(gratuity_pct=Decimal("20"))
     TripExtraFactory(reservation=r, kind=TripExtra.Kind.TOLLS, amount=Decimal("40"))
 
+    r.refresh_from_db()
     assert r.gratuity == Decimal("222.00")
+
+
+def test_deleting_an_extra_refreshes_the_stored_total():
+    r = _hourly()
+    extra = TripExtraFactory(reservation=r, amount=Decimal("40"))
+    extra.delete()
+
+    r.refresh_from_db()
+    assert r.extras_total == Decimal("0.00")
 
 
 def test_an_extra_gets_its_kind_label_when_none_is_given():
@@ -100,6 +112,7 @@ def test_the_lines_still_sum_to_the_line_total():
     )
     TripExtraFactory(reservation=r, kind=TripExtra.Kind.CREDIT, label="Credit", amount=Decimal("5"))
 
+    r.refresh_from_db()
     lines = r.price_lines()
 
     assert sum(line.amount for line in lines) == r.line_total
@@ -121,6 +134,7 @@ def test_overtime_or_an_extra_counts_as_extras_for_the_customer_copy():
     assert _hourly(overtime_hours=Decimal("1")).has_extras is True
     r = _hourly()
     TripExtraFactory(reservation=r)
+    r.refresh_from_db()
     assert r.has_extras is True
 
 
