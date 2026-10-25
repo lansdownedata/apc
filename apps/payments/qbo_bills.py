@@ -494,10 +494,17 @@ def _payable(payable: AffiliatePayable) -> AffiliatePayable:
     ).get(pk=payable.pk)
 
 
+def _is_bill(payable: AffiliatePayable) -> bool:
+    """Approved or paid, for more than nothing — the same rule as `_billable()`."""
+    return payable.status in _BILLED and Decimal(payable.invoice_amount or 0) > ZERO
+
+
 def push_bill(payable: AffiliatePayable) -> bool:
     """Create or update the payable's Bill, then attach the invoice file once. True when both
     are in step. Waits (False, no error) while its vendor isn't in QuickBooks."""
     payable = _payable(payable)
+    if not _is_bill(payable):
+        return False
     realm = customers.current_realm()
     vendor = payable.assignment.vendor
     if not vendor.qbo_id or (vendor.qbo_realm_id and vendor.qbo_realm_id != realm):
@@ -565,13 +572,15 @@ def _attach_invoice(payable: AffiliatePayable) -> None:
             content = handle.read()
     except OSError as exc:
         raise _Refused("The invoice file couldn't be read here. Re-upload it, then retry.") from exc
+    file_key = _digest({"f": name, "n": len(content)})
     attachable_id = upload_attachment(
         entity="Bill",
         entity_id=payable.qbo_id,
         name=name,
         content=content,
         ctype=ctype,
-        request_id=f"apc-b{payable.pk}-attach-{payable.qbo_id}",
+        # Keyed on the file too: a replaced file must not replay the old upload's answer.
+        request_id=f"apc-b{payable.pk}-att{payable.qbo_id}-{file_key}",
     )
     payable.qbo_attachable_id = attachable_id
     AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachable_id=attachable_id)
@@ -761,6 +770,8 @@ def push_everything_for(payable: AffiliatePayable) -> None:
     """A person's Retry on one payable: its vendor if needed, its bill, then its payment.
     Raises SyncPaused / QboNotConnected for the caller to word."""
     payable = _payable(payable)
+    if not _is_bill(payable):
+        return
     realm = customers.current_realm()
     vendor = payable.assignment.vendor
     if not _in_company(vendor, realm) or vendor.qbo_sync_state != SyncState.SYNCED:

@@ -1038,3 +1038,32 @@ def test_the_vendor_pages_payables_flag_a_bill_that_isnt_in_quickbooks(cashier):
 
     html = cashier.get(reverse("vendor_detail", args=[payable.assignment.vendor_id])).content
     assert "Not synced" in html.decode()
+
+
+def test_a_draft_payable_is_never_pushed_even_on_retry():
+    _map()
+    payable = _payable(status=AffiliatePayable.Status.DRAFT, vendor=_linked_vendor())
+
+    with patch(REQ) as req:
+        assert qbo_bills.push_bill(payable) is False
+        qbo_bills.push_everything_for(payable)
+
+    req.assert_not_called()
+
+
+def test_a_replaced_invoice_file_is_uploaded_under_a_new_request_id():
+    _map()
+    payable = _payable(vendor=_linked_vendor(), file=_pdf())
+    with patch(REQ, side_effect=[_bill(), _attached()]) as req:
+        qbo_bills.push_bill(payable)
+    first = req.call_args_list[1].kwargs["params"]["requestid"]
+    payable.refresh_from_db()
+    payable.invoice_file = SimpleUploadedFile("inv-77-corrected.pdf", b"%PDF-1.4 v2")
+    payable.qbo_attachable_id = ""
+    payable.qbo_sync_state = SyncState.NOT_SYNCED
+    payable.save()
+
+    with patch(REQ, side_effect=[_bill(token="1"), _attached("901")]) as req:
+        qbo_bills.push_bill(payable)
+
+    assert req.call_args_list[1].kwargs["params"]["requestid"] != first
