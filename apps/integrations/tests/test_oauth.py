@@ -52,19 +52,29 @@ def test_refresh_keeps_refresh_token_and_updates_access():
 
 
 # --- views -----------------------------------------------------------------
-def test_authorize_redirects_to_podium(client, settings):
+@pytest.fixture
+def owner(client):
+    from apps.accounts.factories import UserFactory
+    from apps.accounts.models import User
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    return client
+
+
+def test_authorize_redirects_to_podium(owner, settings):
     settings.PODIUM_CLIENT_ID = "cid"
-    resp = client.get("/integrations/podium/authorize/")
+    resp = owner.get("/integrations/podium/authorize/")
     assert resp.status_code == 302
     assert resp["Location"].startswith("https://api.podium.com/oauth/authorize")
 
 
-def test_callback_rejects_bad_state(client):
-    resp = client.get("/integrations/podium/callback/?code=x&state=wrong")
+def test_callback_rejects_bad_state(owner):
+    resp = owner.get("/integrations/podium/callback/?code=x&state=wrong")
     assert resp.status_code == 400
 
 
-def test_callback_happy_path_stores_token(client):
+def test_callback_happy_path_stores_token(owner):
+    client = owner
     session = client.session
     session["podium_oauth_state"] = "st8"
     session.save()
@@ -74,3 +84,37 @@ def test_callback_happy_path_stores_token(client):
         resp = client.get("/integrations/podium/callback/?code=c&state=st8")
     assert resp.status_code == 200
     assert PodiumCredential.current().access_token == "AT"
+
+
+# --- who may connect Podium (2026-10-25) -------------------------------------
+# Connecting replaces the one stored Podium credential every customer message is sent
+# with, so only an owner-admin may start or finish it — never an anonymous visitor.
+
+
+def test_an_anonymous_visitor_cannot_start_connecting_podium(client, settings):
+    settings.PODIUM_CLIENT_ID = "cid"
+    resp = client.get("/integrations/podium/authorize/")
+    assert resp.status_code == 302
+    assert "podium.com" not in resp["Location"]
+    assert "podium_oauth_state" not in client.session
+
+
+def test_an_anonymous_visitor_cannot_replace_the_podium_credential(client):
+    PodiumCredentialFactory(access_token="OURS")
+    session = client.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+    with patch.object(services.requests, "post") as post:
+        resp = client.get("/integrations/podium/callback/?code=c&state=st8")
+    assert resp.status_code == 302
+    post.assert_not_called()
+    assert PodiumCredential.current().access_token == "OURS"
+
+
+def test_staff_who_are_not_admins_cannot_connect_podium(client, settings):
+    from apps.accounts.factories import UserFactory
+
+    settings.PODIUM_CLIENT_ID = "cid"
+    client.force_login(UserFactory())
+    assert client.get("/integrations/podium/authorize/").status_code == 403
+    assert client.get("/integrations/podium/callback/?code=c&state=x").status_code == 403

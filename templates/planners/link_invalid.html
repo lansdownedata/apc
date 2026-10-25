@@ -1,0 +1,7 @@
+{% extends "planners/_auth.html" %}
+{% block title %}Link expired{% endblock %}
+{% block heading %}This link has expired{% endblock %}
+{% block subheading %}A link works once, for seven days, and stops when a newer one is sent. Ask your All Pro Charter coordinator for a new invite, or sign in if you already have an account.{% endblock %}
+{% block card %}
+<a href="{% url 'planners:login' %}" class="btn-gold mt-6 flex w-full items-center justify-center rounded-full px-6 py-3 text-[14px] font-semibold focus-gold">Go to sign in</a>
+{% endblock %}

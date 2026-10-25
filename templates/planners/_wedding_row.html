@@ -1,0 +1,19 @@
+<li>
+  <a href="{% url 'planners:wedding' w.pk %}"
+     class="flex items-center gap-4 rounded-2xl bg-surface px-5 py-4 shadow-sm ring-1 ring-line transition-colors hover:bg-surface2 focus-gold sm:px-6">
+    <span class="min-w-0 flex-1">
+      <span class="block font-display text-[17px] font-semibold leading-snug text-ink [overflow-wrap:anywhere]">{{ w.title }}</span>
+      <span class="mt-0.5 block text-[13px] text-muted">{{ w.date_label }}</span>
+      {% if w.roles %}<span class="mt-1 block text-[12px] text-muted">You're the {{ w.roles|join:" and "|lower }}</span>{% endif %}
+    </span>
+    {% if w.archived %}
+    <span class="shrink-0 rounded-full bg-surface2 px-2.5 py-1 text-[11.5px] font-semibold text-muted ring-1 ring-line">Archived</span>
+    {% elif w.days_to_go is not None and w.days_to_go >= 0 %}
+    <span class="shrink-0 text-right">
+      <span class="block font-display text-[1.4rem] font-semibold leading-none text-ink num">{{ w.days_to_go }}</span>
+      <span class="block text-[11px] text-muted">day{{ w.days_to_go|pluralize }} to go</span>
+    </span>
+    {% endif %}
+    {% icon "chevron-right" class="h-4 w-4 shrink-0 text-muted" %}
+  </a>
+</li>

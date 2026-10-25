@@ -41,6 +41,9 @@
             <td class="px-4 py-3 align-top border-l-2 {% if r.is_overdue %}border-rose-500{% else %}border-transparent{% endif %}">
               <div class="font-semibold text-ink">{{ r.label }}</div>
               <div class="text-[12px] text-muted mt-0.5">{{ r.department_label }}</div>
+              {% if r.planner_request.message %}
+              <a href="{% url 'inbox' %}?conversation={{ r.planner_request.message.conversation_id }}" class="inline-flex items-center gap-1 mt-1 text-[12px] font-semibold text-goldd hover:underline focus-gold">Read the request <i class="ti ti-arrow-right text-[12px]"></i></a>
+              {% endif %}
             </td>
             <td class="px-4 py-3 align-top">
               {% if r.vendor_id %}

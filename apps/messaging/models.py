@@ -55,6 +55,9 @@ class Message(TimeStampedModel):
         FACEBOOK = "facebook", "Facebook"
         WHATSAPP = "whatsapp", "WhatsApp"
         APPLE = "apple", "Apple"
+        # A planner's "Request a change" (APC-68). Arrives through our own page, not Podium,
+        # so there is nothing to reply to on this channel — staff answer by SMS or email.
+        PORTAL = "portal", "Planner portal"
 
     class DeliveryStatus(models.TextChoices):
         SENT = "sent", "Sent"

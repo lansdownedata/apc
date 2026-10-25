@@ -1,0 +1,35 @@
+{% extends "planners/_auth.html" %}
+{% block title %}Sign in{% endblock %}
+{% block heading %}Sign in{% endblock %}
+{% block subheading %}Your weddings with All Pro Charter: every pickup, vehicle and driver in one place.{% endblock %}
+{% block card %}
+{% if throttled %}
+<p role="alert" class="mt-5 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">
+  Too many attempts. Wait a few minutes and try again, or reset your password.
+</p>
+{% elif error %}
+<p role="alert" class="mt-5 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] leading-relaxed text-rose-700 ring-1 ring-inset ring-rose-600/15">
+  That email and password don't match. Try again, or reset your password.
+</p>
+{% endif %}
+<form method="post" action="{% url 'planners:login' %}" class="mt-5 space-y-4">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <label class="block">
+    <span class="text-[12px] font-medium text-muted">Email</span>
+    <input type="email" name="email" value="{{ email|default:'' }}" autocomplete="username" required autofocus
+           class="field mt-1.5" placeholder="you@example.com">
+  </label>
+  <label class="block">
+    <span class="text-[12px] font-medium text-muted">Password</span>
+    <input type="password" name="password" autocomplete="current-password" required class="field mt-1.5">
+  </label>
+  <button type="submit" class="btn-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold focus-gold disabled:cursor-not-allowed disabled:opacity-60">Sign in</button>
+</form>
+<p class="mt-4 text-center text-[12.5px]">
+  <a href="{% url 'planners:password_reset' %}" class="rounded font-semibold text-goldd focus-gold hover:underline">Forgot your password?</a>
+</p>
+<p class="mt-5 border-t border-line pt-4 text-[12px] leading-relaxed text-muted">
+  Access is by invitation from your All Pro Charter coordinator. If you haven't had an invite, ask them for one.
+</p>
+{% endblock %}

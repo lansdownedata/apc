@@ -162,8 +162,11 @@ def calendly_webhook(request):
     return HttpResponse(status=200)
 
 
+@login_required
+@owner_admin_required
 def podium_authorize(request):
-    """Kick off the Podium OAuth flow — redirect the user to grant access."""
+    """Kick off the Podium OAuth flow — redirect the user to grant access. Owner-admin only:
+    finishing it replaces the one Podium credential every customer message is sent with."""
     if not settings.PODIUM_CLIENT_ID:
         return HttpResponseBadRequest("Podium client is not configured.")
     state = secrets.token_urlsafe(24)
@@ -171,6 +174,8 @@ def podium_authorize(request):
     return redirect(services.build_authorize_url(state))
 
 
+@login_required
+@owner_admin_required
 def podium_callback(request):
     """Handle Podium's redirect: validate state, exchange the code for tokens."""
     if error := request.GET.get("error"):

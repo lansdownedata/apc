@@ -73,7 +73,14 @@ def queue_for(user, filters: QueueFilters):
     now = timezone.now()
     qs = (
         Task.objects.filter(status=Task.Status.OPEN)
-        .select_related("lead__contact", "reservation", "assignee", "vendor", "insurance")
+        .select_related(
+            "lead__contact",
+            "reservation",
+            "assignee",
+            "vendor",
+            "insurance",
+            "planner_request__message",
+        )
         .with_order_tz()
         .annotate(
             order_pickup_date=_first_trip("pickup_date"),

@@ -1,0 +1,25 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Your wedding transportation with {{ company_name }}{% endblock %}
+{% block preheader %}Create your account to see every pickup, vehicle and driver in one place.{% endblock %}
+{% block content %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ name|default:"there" }},</p>
+<p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">
+  {{ company_name }} has set up a page for the weddings you're planning with us: every pickup,
+  vehicle and, closer to the day, every driver, in one place.
+</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0;">
+  <tr><td align="center" style="background:#C7A24E;border-radius:8px;">
+    <a href="{{ register_url }}" style="display:inline-block;padding:15px 34px;color:#17191D;
+       font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:16px;font-weight:600;
+       letter-spacing:.3px;text-decoration:none;">Create your account</a>
+  </td></tr>
+</table>
+
+<p class="dm-muted" style="margin:26px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  This link works once and expires in 7 days. If it lapses, ask your coordinator to send a new one.
+</p>
+<p class="dm-muted" style="margin:12px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  If you weren't expecting this, you can ignore this email.
+</p>
+{% endblock %}

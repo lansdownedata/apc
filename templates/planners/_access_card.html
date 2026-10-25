@@ -1,0 +1,50 @@
+{% load json_filters %}
+{% comment %}
+  Planner access on the contact profile (APC-66). One line of state, then the actions that
+  apply. Nothing is sent when someone is added to an order's People card; an agent sends
+  the invite from here, because one planner covers many weddings.
+{% endcomment %}
+{% with pa=planner_access %}
+<section class="card flex flex-wrap items-center gap-x-4 gap-y-3 p-5" aria-label="Planner access">
+  <div class="min-w-0 flex-1">
+    <h2 class="font-display text-[15px] font-semibold text-ink">Planner access</h2>
+    <p class="mt-0.5 text-[12.5px] {% if pa.status == 'revoked' %}text-rose-700{% elif pa.status == 'invited' %}text-amber-700{% else %}text-muted{% endif %}">
+      {{ pa.line }}{% if pa.weddings %} &middot; Sees {{ pa.weddings }} wedding{{ pa.weddings|pluralize }}{% endif %}
+    </p>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    {% if pa.can_invite %}
+    <form method="post" action="{% url 'planner_invite' contact.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+        <i class="ti ti-mail text-[15px] text-goldd"></i>{% if pa.status == 'revoked' %}Invite again{% else %}Invite{% endif %}
+      </button>
+    </form>
+    {% elif not pa.has_email and not pa.can_resend and not pa.can_revoke %}
+    <span class="text-[12px] text-muted">Add an email to invite them</span>
+    {% endif %}
+    {% if pa.can_resend %}
+    <form method="post" action="{% url 'planner_resend' contact.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+        <i class="ti ti-send text-[15px] text-goldd"></i>Resend
+      </button>
+    </form>
+    {% endif %}
+    {% if pa.can_revoke %}
+    <form method="post" action="{% url 'planner_revoke' contact.pk %}" x-data x-ref="revokeForm">
+      {% csrf_token %}
+      <button type="button"
+              class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-rose-700 ring-1 ring-line transition-colors hover:bg-rose-50 focus-gold disabled:cursor-not-allowed disabled:opacity-50"
+              @click="$store.modal.confirm({
+                title: 'Revoke planner access',
+                message: {{ contact.name|json_string }} + ' is signed out everywhere and can no longer see any wedding. Their invite link stops working too. You can invite them again any time.',
+                variant: 'danger',
+                confirmText: 'Revoke access',
+                onConfirm: () => $refs.revokeForm.submit(),
+              })">Revoke access</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endwith %}
