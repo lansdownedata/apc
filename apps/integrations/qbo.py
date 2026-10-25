@@ -246,11 +246,17 @@ def _retry_after(resp) -> int:
 
 
 def request(
-    method: str, path: str, *, params: dict | None = None, json: dict | None = None
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    json: dict | None = None,
+    files: dict | None = None,
 ) -> dict:
     """An authenticated accounting API call: `{base}/v3/company/{realm}/{path}`. Refreshes a
     near-expired token first; on a 401 refreshes once and retries once; on a 429 waits once
-    (at most MAX_RATE_LIMIT_WAIT seconds) and retries once, then raises QboRateLimited."""
+    (at most MAX_RATE_LIMIT_WAIT seconds) and retries once, then raises QboRateLimited.
+    `files` sends multipart form-data instead of JSON (the Attachable `upload`, APC-74)."""
     cred = ensure_fresh()
     try:
         token = cred.access_token
@@ -266,6 +272,7 @@ def request(
             url,
             params=query,
             json=json,
+            files=files,
             headers={"Authorization": f"Bearer {bearer}", "Accept": "application/json"},
         )
 

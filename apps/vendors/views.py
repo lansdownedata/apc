@@ -18,6 +18,7 @@ from django.views.decorators.http import require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.billing.models import SyncState
 from apps.payments import payables
 from apps.payments.models import AffiliatePayable
 from apps.tasks import vendor_tasks
@@ -288,7 +289,11 @@ def vendor_edit(request: HttpRequest, pk: int) -> HttpResponse:
     target = get_object_or_404(Vendor, pk=pk)
     form = VendorForm(request.POST or None, instance=target)
     if request.method == "POST" and form.is_valid():
-        form.save()
+        vendor = form.save(commit=False)
+        if set(form.changed_data) & set(Vendor.QBO_FIELDS):
+            vendor.qbo_sync_state = SyncState.NOT_SYNCED  # its QuickBooks vendor needs it (APC-74)
+        vendor.save()
+        form.save_m2m()
         vendor_tasks.sync_vendor(target)  # deactivating retires its renewal tasks (APC-71)
         messages.success(request, "Vendor updated.")
         return redirect("vendor_detail", pk=target.pk)

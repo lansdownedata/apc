@@ -472,3 +472,18 @@ def test_reconnecting_resets_the_last_successful_call():
 def test_refresh_with_no_connection_at_all_is_not_connected():
     with pytest.raises(qbo.QboNotConnected):
         qbo.refresh()
+
+
+def test_an_upload_is_sent_as_multipart_files_not_json():
+    """APC-74's invoice Attachable: the same authenticated call, with `files` instead of JSON
+    (requests then builds the multipart body and its boundary header)."""
+    _connected()
+    parts = {"file_metadata_01": (None, "{}", "application/json")}
+
+    with patch(HTTP, return_value=_resp(200, {"AttachableResponse": []})) as http:
+        qbo.request("POST", "upload", params={"requestid": "r1"}, files=parts)
+
+    assert http.call_args.args[1].endswith("/v3/company/9130/upload")
+    assert http.call_args.kwargs["files"] is parts
+    assert http.call_args.kwargs["json"] is None
+    assert "Content-Type" not in http.call_args.kwargs["headers"]

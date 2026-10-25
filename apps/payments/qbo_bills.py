@@ -28,13 +28,45 @@ qbo-notes.md (the APC-74 section).
 
 from __future__ import annotations
 
+import json
 import logging
+import mimetypes
+import os
+from dataclasses import dataclass
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from django.conf import settings
+from django.db.models import Exists, OuterRef, Q
+from django.utils import timezone
 
 from apps.billing import qbo_sync as customers
-from apps.billing.models import QboAccount, QboAccountMapping
+from apps.billing.models import QboAccount, QboAccountMapping, SyncState
+from apps.billing.qbo_sync import (
+    DUPLICATE_NAME,
+    STALE_OBJECT,
+    SYNC_BATCH,
+    SyncPaused,
+    _digest,
+    _errors,
+    _fault_code,
+    _transient,
+)
 from apps.integrations import qbo
 
+from .models import AffiliatePayable
+
 logger = logging.getLogger(__name__)
+
+# Intuit: DocNumber is at most 21 characters in QuickBooks Online (Finance.xsd).
+DOC_NUMBER_MAX = 21
+ZERO = Decimal("0.00")
+_NO_EXPENSE_ACCOUNT = (
+    "Choose the expense account for affiliate bills in Settings → QuickBooks, then retry."
+)
+_NO_PAYMENT_ACCOUNT = (
+    "Choose the bank account bill payments come from in Settings → QuickBooks, then retry."
+)
 
 
 # --- the chart of accounts cache and the two choices ------------------------------------------
@@ -92,3 +124,617 @@ def expense_account_ref() -> dict | None:
 def payment_account_ref() -> dict | None:
     """The bank account bill payments come from, or None until one is chosen."""
     return _ref(QboAccountMapping.load().payment_account, QboAccount.PAYMENT_TYPES)
+
+
+# --- the shared push machinery -------------------------------------------------------------------
+
+
+class _Refused(Exception):
+    """A definite problem with this record (shown to staff); not a reason to stop the run.
+    `alert=False` when the cause is shared by every record (a missing account choice) and the
+    run alerts once instead."""
+
+    def __init__(self, message: str, *, alert: bool = True):
+        super().__init__(message)
+        self.alert = alert
+
+
+_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p"}
+
+
+@dataclass
+class _Link:
+    """One QuickBooks object a portal record carries: its fields share a prefix, so a payable
+    carries two (its Bill under `qbo_`, its BillPayment under `qbo_payment_`)."""
+
+    record: object
+    entity: str  # the API path: "vendor" · "bill" · "billpayment"
+    key: str  # the response key: "Vendor" · "Bill" · "BillPayment"
+    prefix: str = "qbo_"
+    sparse: bool = False  # Intuit documents sparse updates for Vendor; Bill/BillPayment go whole
+
+    def get(self, field: str):
+        return getattr(self.record, self.prefix + field)
+
+    def put(self, field: str, value) -> None:
+        setattr(self.record, self.prefix + field, value)
+
+    def field(self, name: str) -> str:
+        return self.prefix + name
+
+    @property
+    def tag(self) -> str:
+        """Which record, in a requestid: v12 (vendor), b12 (bill), p12 (payment)."""
+        return f"{_TAGS[self.entity]}{self.record.pk}"
+
+    def update(self, **fields) -> int:
+        model = type(self.record)
+        return model.objects.filter(pk=self.record.pk).update(
+            **{self.field(k): v for k, v in fields.items()}
+        )
+
+
+def _request_id(link: _Link, body: dict) -> str:
+    """Deterministic per record and change, as in APC-42: a retried create keeps its id (a
+    lost response replays the original), a create after a definite refusal takes a new one,
+    an update is keyed by the SyncToken it was made against."""
+    if not link.get("id"):
+        if link.get("sync_error"):
+            return f"apc-{_digest(body)}-{link.tag}-c"[:50]
+        return f"apc-{link.tag}-create"
+    return f"apc-{_digest(body)}-{link.tag}-u{link.get('sync_token')}"[:50]
+
+
+def _send(link: _Link, body: dict) -> dict:
+    if link.get("id"):
+        body = {**body, "Id": link.get("id"), "SyncToken": link.get("sync_token")}
+        if link.sparse:
+            body["sparse"] = True
+    return qbo.request(
+        "POST", link.entity, params={"requestid": _request_id(link, body)}, json=body
+    )[link.key]
+
+
+def _send_or_refresh_token(link: _Link, body: dict) -> dict:
+    try:
+        return _send(link, body)
+    except qbo.QboAPIError as exc:
+        if not (link.get("id") and _fault_code(exc) == STALE_OBJECT):
+            raise
+    # Changed in QuickBooks since our last push: take its current SyncToken, retry once.
+    current = qbo.request("GET", f"{link.entity}/{link.get('id')}")[link.key]
+    link.put("sync_token", str(current["SyncToken"]))
+    return _send(link, body)
+
+
+def _reason(exc: qbo.QboAPIError, what: str) -> str:
+    errors = _errors(exc)
+    reason = (errors[0].get("Detail") or errors[0].get("Message")) if errors else ""
+    if reason:
+        return f"QuickBooks didn't accept this {what}: {reason}"
+    return f"QuickBooks didn't accept this {what} ({exc.status}). Check it, then retry."
+
+
+def _alert(link: _Link, message: str) -> None:
+    from apps.notifications.models import Notification
+
+    record = link.record
+    if link.entity == "vendor":
+        Notification.objects.create(
+            vendor=record,
+            kind=Notification.Kind.SYNC_FAILED,
+            title=f"QuickBooks sync failed: {record.name}",
+            detail=message,
+        )
+        return
+    what = "bill" if link.entity == "bill" else "bill payment"
+    Notification.notify(
+        record.assignment.reservation.lead,
+        Notification.Kind.SYNC_FAILED,
+        title=f"QuickBooks {what} failed: {_who(record)}",
+        detail=message,
+    )
+
+
+def _who(payable: AffiliatePayable) -> str:
+    number = f" invoice {payable.invoice_number}" if payable.invoice_number else ""
+    return f"{payable.assignment.vendor.name}{number}"
+
+
+def _fail(link: _Link, message: str, *, alert: bool = True) -> bool:
+    """Mark the link ERROR with a sentence staff can act on. Alerts on the first failure only,
+    not on every hourly retry. Returns whether it was newly failed."""
+    first_failure = link.get("sync_state") != SyncState.ERROR
+    link.put("sync_state", SyncState.ERROR)
+    link.put("sync_error", message[:255])
+    link.update(sync_state=SyncState.ERROR, sync_error=link.get("sync_error"))
+    if first_failure and alert:
+        _alert(link, link.get("sync_error"))
+    return first_failure
+
+
+def _relink_if_other_company(link: _Link, realm: str) -> bool:
+    """A link to another QuickBooks company is pushed to this one as new."""
+    if link.get("id") and link.get("realm_id") and link.get("realm_id") != realm:
+        link.put("id", "")
+        link.put("sync_token", "")
+        return True
+    return False
+
+
+def _push(link: _Link, build, *, matches, after=None, what: str, on_refusal=None) -> bool:
+    """Create or update one QuickBooks object. True when it is now in step.
+
+    `build()` returns the body (or raises _Refused); `matches(obj, body)` says whether what came
+    back is what was sent; `after(obj)` runs once the object exists (the bill's attachment);
+    `on_refusal(exc, body)` may answer a refusal itself (the vendor's link-by-name).
+    Raises SyncPaused on an outage or rate limit and QboNotConnected without a connection.
+    """
+    realm = customers.current_realm()
+    _relink_if_other_company(link, realm)
+    snapshot = link.record.updated_at
+    try:
+        body = build()
+        try:
+            obj = _send_or_refresh_token(link, body)
+        except qbo.QboAPIError as exc:
+            if _transient(exc) or on_refusal is None:
+                raise
+            obj = on_refusal(exc, body)
+        link.update(
+            id=str(obj["Id"]),
+            sync_token=str(obj["SyncToken"]),
+            realm_id=realm,
+            synced_at=timezone.now(),
+        )
+        link.put("id", str(obj["Id"]))
+        link.put("sync_token", str(obj["SyncToken"]))
+        link.put("realm_id", realm)
+        if after is not None:
+            after(obj)
+    except _Refused as exc:
+        _fail(link, str(exc), alert=exc.alert)
+        return False
+    except qbo.QboAPIError as exc:
+        logger.warning("QuickBooks refused %s %s: %s", link.entity, link.record.pk, exc.body[:500])
+        if _transient(exc):
+            raise SyncPaused(str(exc)) from exc
+        _fail(link, _reason(exc, what))
+        return False
+    model = type(link.record)
+    # SYNCED only if nobody edited the record while the push was in flight and QuickBooks
+    # returned what we sent.
+    if matches(obj, body):
+        model.objects.filter(pk=link.record.pk, updated_at=snapshot).update(
+            **{link.field("sync_state"): SyncState.SYNCED, link.field("sync_error"): ""}
+        )
+    else:
+        link.update(sync_state=SyncState.NOT_SYNCED)
+    link.record.refresh_from_db()
+    return link.get("sync_state") == SyncState.SYNCED
+
+
+def _ref_value(obj: dict, key: str):
+    ref = obj.get(key)
+    return ref.get("value") if isinstance(ref, dict) else None
+
+
+# --- vendors ------------------------------------------------------------------------------------
+
+
+def vendor_payload(vendor) -> dict:
+    body = {"DisplayName": vendor.name, "CompanyName": vendor.name}
+    # On an update an empty value clears the old one; leaving the key out would keep a
+    # removed address or number in QuickBooks.
+    if vendor.email or vendor.qbo_id:
+        body["PrimaryEmailAddr"] = {"Address": vendor.email}
+    if vendor.phone or vendor.qbo_id:
+        body["PrimaryPhone"] = {"FreeFormNumber": vendor.phone}
+    return body
+
+
+def _quoted(value: str) -> str:
+    """A string literal for Intuit's query language: apostrophes backslash-escaped."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _link_existing_vendor(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict:
+    """QuickBooks already has this name. If it is a vendor, link it and send ours over it
+    ("created or linked on first sync"); if a customer or employee holds it, that's for a
+    person to sort out."""
+    if link.get("id") or _fault_code(exc) != DUPLICATE_NAME:
+        raise exc
+    vendor = link.record
+    query = f"select * from Vendor where DisplayName = {_quoted(vendor.name)}"
+    rows = qbo.request("GET", "query", params={"query": query})
+    found = rows.get("QueryResponse", {}).get("Vendor", [])
+    if len(found) != 1:
+        raise _Refused(
+            f"QuickBooks already has a customer or employee named “{vendor.name}”. Rename the"
+            " vendor here or there, then retry."
+        )
+    link.put("id", str(found[0]["Id"]))
+    link.put("sync_token", str(found[0]["SyncToken"]))
+    return _send(link, vendor_payload(vendor))  # now an update: ours replaces what's there
+
+
+def push_vendor(vendor) -> bool:
+    """Create, link or update the vendor in QuickBooks. True when it is now in step."""
+    link = _Link(vendor, "vendor", "Vendor", sparse=True)
+    return _push(
+        link,
+        lambda: vendor_payload(vendor),
+        matches=lambda obj, body: (
+            obj.get("DisplayName", body["DisplayName"]) == body["DisplayName"]
+        ),
+        what="vendor",
+        on_refusal=lambda exc, body: _link_existing_vendor(link, exc, body),
+    )
+
+
+def _in_company(record, realm: str, prefix: str = "qbo_") -> bool:
+    return bool(getattr(record, prefix + "id")) and getattr(record, prefix + "realm_id") in (
+        realm,
+        "",
+    )
+
+
+# --- bills ---------------------------------------------------------------------------------------
+
+
+def _trip_date(moment, trip):
+    """A date as the trip's own timezone has it (the manifest rule), never UTC's."""
+    zone = ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
+    return timezone.localtime(moment or timezone.now(), zone).date()
+
+
+def _customer_ref(lead, realm: str) -> dict | None:
+    """The order's customer for cost per job: the default group of its contact's billing
+    account, once that group is in QuickBooks. A card customer isn't in QuickBooks: none.
+    Orders don't pick a group yet (Phase 3), so the default group stands in."""
+    from apps.billing.models import AccountGroup
+
+    group = (
+        AccountGroup.objects.filter(account__contact_id=lead.contact_id, is_default=True)
+        .exclude(qbo_id="")
+        .first()
+    )
+    if group is None or (group.qbo_realm_id and group.qbo_realm_id != realm):
+        return None
+    return {"value": group.qbo_id}
+
+
+def bill_lines(payable: AffiliatePayable, account: dict, customer: dict | None) -> list[dict]:
+    """Base payout, then overtime: what the affiliate invoiced, split for cost reporting.
+
+    The two lines always add up to the invoice amount (what was approved and accrued) and are
+    never negative: an invoice under the agreed payout is one base line for the invoice.
+    Anything over the payout is the second line — the affiliate's overtime, or the override,
+    plus any difference approved with a note.
+    """
+    trip = payable.assignment.reservation
+    invoice = Decimal(payable.invoice_amount or 0)
+    base = min(Decimal(payable.assignment.payout or 0), invoice)
+    extra = invoice - base
+    detail = {"AccountRef": account}
+    if customer:
+        detail |= {"CustomerRef": customer, "BillableStatus": "NotBillable"}
+    lines = []
+    for amount, label in ((base, "base payout"), (extra, "affiliate overtime")):
+        if amount > ZERO:
+            description = f"{trip.reference} {label}"
+            if label != "base payout" and payable.variance and payable.approval_note:
+                description += f" (approved: {payable.approval_note})"
+            lines.append(
+                {
+                    "DetailType": "AccountBasedExpenseLineDetail",
+                    "Amount": float(amount),
+                    "Description": description,
+                    "AccountBasedExpenseLineDetail": dict(detail),
+                }
+            )
+    return lines
+
+
+def bill_payload(payable: AffiliatePayable, realm: str) -> dict:
+    account = expense_account_ref()
+    if account is None:
+        raise _Refused(_NO_EXPENSE_ACCOUNT, alert=False)
+    trip = payable.assignment.reservation
+    lead = trip.lead
+    number = payable.invoice_number
+    note = f"{trip.reference} · order {lead.quote_no}"
+    if number:
+        note += f" · affiliate invoice {number}"
+    body = {
+        "VendorRef": {"value": payable.assignment.vendor.qbo_id},
+        "TxnDate": _trip_date(payable.invoice_received_at or payable.approved_at, trip).isoformat(),
+        "PrivateNote": note,
+        "Line": bill_lines(payable, account, _customer_ref(lead, realm)),
+    }
+    if number:
+        body["DocNumber"] = number[:DOC_NUMBER_MAX]
+    return body
+
+
+def _bill_matches(obj: dict, body: dict) -> bool:
+    if "DocNumber" in body and obj.get("DocNumber", body["DocNumber"]) != body["DocNumber"]:
+        return False
+    vendor = _ref_value(obj, "VendorRef")
+    return vendor is None or vendor == body["VendorRef"]["value"]
+
+
+def _payable(payable: AffiliatePayable) -> AffiliatePayable:
+    return AffiliatePayable.objects.select_related(
+        "assignment__vendor", "assignment__reservation__lead"
+    ).get(pk=payable.pk)
+
+
+def push_bill(payable: AffiliatePayable) -> bool:
+    """Create or update the payable's Bill, then attach the invoice file once. True when both
+    are in step. Waits (False, no error) while its vendor isn't in QuickBooks."""
+    payable = _payable(payable)
+    realm = customers.current_realm()
+    vendor = payable.assignment.vendor
+    if not vendor.qbo_id or (vendor.qbo_realm_id and vendor.qbo_realm_id != realm):
+        return False
+    link = _Link(payable, "bill", "Bill")
+    if _relink_if_other_company(link, realm):
+        payable.qbo_attachable_id = ""
+        AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachable_id="")
+    return _push(
+        link,
+        lambda: bill_payload(payable, realm),
+        matches=_bill_matches,
+        after=lambda obj: _attach_invoice(payable),
+        what="bill",
+    )
+
+
+# --- the invoice file (Attachable) ---------------------------------------------------------------
+
+
+def upload_attachment(
+    *, entity: str, entity_id: str, name: str, content: bytes, ctype: str, request_id: str
+) -> str:
+    """Attach a file to a QuickBooks transaction: Intuit's multipart `upload` endpoint, one
+    `file_metadata_01` (the Attachable as JSON) and one `file_content_01` (the bytes). Returns
+    the Attachable's id. A refusal of the file comes back inside a 200, per item.
+
+    UNVERIFIED against the sandbox: the part names and JSON metadata follow Intuit's SDKs.
+    """
+    meta = {
+        "AttachableRef": [{"EntityRef": {"type": entity, "value": entity_id}}],
+        "FileName": name,
+        "ContentType": ctype,
+    }
+    result = qbo.request(
+        "POST",
+        "upload",
+        params={"requestid": request_id[:50]},
+        files={
+            "file_metadata_01": (None, json.dumps(meta), "application/json"),
+            "file_content_01": (name, content, ctype),
+        },
+    )
+    items = result.get("AttachableResponse") or [{}]
+    item = items[0] if isinstance(items, list) else items
+    if "Fault" in item:
+        errors = item["Fault"].get("Error") or [{}]
+        error = errors[0] if isinstance(errors, list) else errors
+        reason = error.get("Detail") or error.get("Message") or "no reason given"
+        raise _Refused(f"QuickBooks didn't accept the invoice file: {reason}")
+    try:
+        return str(item["Attachable"]["Id"])
+    except (KeyError, TypeError) as exc:
+        raise _Refused("QuickBooks didn't confirm the invoice file. Retry.") from exc
+
+
+def _attach_invoice(payable: AffiliatePayable) -> None:
+    """Upload the invoice file to the bill, once. Re-raises SyncPaused/_Refused to _push."""
+    if not payable.invoice_file or payable.qbo_attachable_id:
+        return
+    name = os.path.basename(payable.invoice_file.name)
+    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    try:
+        with payable.invoice_file.open("rb") as handle:
+            content = handle.read()
+    except OSError as exc:
+        raise _Refused("The invoice file couldn't be read here. Re-upload it, then retry.") from exc
+    attachable_id = upload_attachment(
+        entity="Bill",
+        entity_id=payable.qbo_id,
+        name=name,
+        content=content,
+        ctype=ctype,
+        request_id=f"apc-b{payable.pk}-attach-{payable.qbo_id}",
+    )
+    payable.qbo_attachable_id = attachable_id
+    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachable_id=attachable_id)
+
+
+# --- bill payments -----------------------------------------------------------------------------
+
+
+def payment_payload(payable: AffiliatePayable) -> dict:
+    """Check is the only pay type for money from a bank account (QuickBooks has Check and
+    CreditCard); ACH, Zelle and other bank transfers go as Check with the method in the memo."""
+    account = payment_account_ref()
+    if account is None:
+        raise _Refused(_NO_PAYMENT_ACCOUNT, alert=False)
+    trip = payable.assignment.reservation
+    amount = float(Decimal(payable.invoice_amount or 0))
+    note = f"Paid by {payable.get_paid_method_display() or 'other'}"
+    if payable.paid_reference:
+        note += f" · {payable.paid_reference}"
+    note += f" · {trip.reference}"
+    body = {
+        "VendorRef": {"value": payable.assignment.vendor.qbo_id},
+        "PayType": "Check",
+        "CheckPayment": {"BankAccountRef": account},
+        "TotalAmt": amount,
+        "TxnDate": _trip_date(payable.paid_at, trip).isoformat(),
+        "PrivateNote": note,
+        "Line": [{"Amount": amount, "LinkedTxn": [{"TxnId": payable.qbo_id, "TxnType": "Bill"}]}],
+    }
+    if payable.paid_reference:
+        body["DocNumber"] = payable.paid_reference[:DOC_NUMBER_MAX]
+    return body
+
+
+def _payment_matches(obj: dict, body: dict) -> bool:
+    vendor = _ref_value(obj, "VendorRef")
+    return vendor is None or vendor == body["VendorRef"]["value"]
+
+
+def _bill_in_step(payable: AffiliatePayable, realm: str) -> bool:
+    return (
+        bool(payable.qbo_id)
+        and payable.qbo_realm_id == realm
+        and payable.qbo_sync_state == SyncState.SYNCED
+    )
+
+
+def push_payment(payable: AffiliatePayable) -> bool:
+    """Create or update the BillPayment for a paid payable. Waits (False, no error) until its
+    Bill is in step in this company."""
+    payable = _payable(payable)
+    realm = customers.current_realm()
+    if payable.status != AffiliatePayable.Status.PAID or not _bill_in_step(payable, realm):
+        return False
+    link = _Link(payable, "billpayment", "BillPayment", prefix="qbo_payment_")
+    return _push(
+        link,
+        lambda: payment_payload(payable),
+        matches=_payment_matches,
+        what="bill payment",
+    )
+
+
+# --- the run -----------------------------------------------------------------------------------
+
+_BILLED = (AffiliatePayable.Status.APPROVED, AffiliatePayable.Status.PAID)
+
+
+def _stale(prefix: str, realm: str) -> Q:
+    """Not in step: never pushed, changed, refused — or linked to another company."""
+    stale = Q(**{f"{prefix}sync_state__in": (SyncState.NOT_SYNCED, SyncState.ERROR)})
+    other_company = ~Q(**{f"{prefix}id": ""}) & ~Q(**{f"{prefix}realm_id": realm})
+    return stale | other_company
+
+
+def _billable():
+    """Payables that are bills: approved or paid, for more than nothing."""
+    return AffiliatePayable.objects.filter(status__in=_BILLED, invoice_amount__gt=0)
+
+
+def pending_vendors(realm: str):
+    """Vendors that need pushing: only those with a bill to carry, or already linked here."""
+    from apps.vendors.models import Vendor
+
+    has_bill = Exists(_billable().filter(assignment__vendor=OuterRef("pk")))
+    linked_here = ~Q(qbo_id="") & Q(qbo_realm_id=realm)
+    return (
+        Vendor.objects.filter(_stale("qbo_", realm)).filter(has_bill | linked_here).order_by("pk")
+    )
+
+
+def pending_bills(realm: str):
+    return (
+        _billable()
+        .filter(_stale("qbo_", realm))
+        .select_related("assignment__vendor", "assignment__reservation__lead")
+        .order_by("pk")
+    )
+
+
+def pending_payments(realm: str):
+    return (
+        _billable()
+        .filter(status=AffiliatePayable.Status.PAID)
+        .filter(_stale("qbo_payment_", realm))
+        .select_related("assignment__vendor", "assignment__reservation__lead")
+        .order_by("pk")
+    )
+
+
+def _block_all(rows, prefix: str, message: str) -> None:
+    """Every pending record shares one missing choice: mark each (so the payable says why),
+    alert once for the run — not once per bill."""
+    from apps.notifications.models import Notification
+
+    rows = list(rows)
+    fresh = [
+        r
+        for r in rows
+        if getattr(r, prefix + "sync_state") != SyncState.ERROR
+        or getattr(r, prefix + "sync_error") != message
+    ]
+    if not fresh:
+        return
+    AffiliatePayable.objects.filter(pk__in=[r.pk for r in rows]).update(
+        **{prefix + "sync_state": SyncState.ERROR, prefix + "sync_error": message}
+    )
+    Notification.notify(
+        None,
+        Notification.Kind.SYNC_FAILED,
+        title="Affiliate bills can't go to QuickBooks yet",
+        detail=message,
+    )
+
+
+def sync_pending() -> int:
+    """Push up to SYNC_BATCH vendors, bills and bill payments that aren't in step, in that
+    order (each waits for the one before). Returns how many were pushed. Stops quietly on an
+    outage, a rate limit or a lost connection — nothing is marked, the next run carries on."""
+    if not qbo.is_connected():
+        return 0
+    realm = customers.current_realm()
+    pushed = attempted = 0
+    try:
+        for vendor in pending_vendors(realm):
+            if attempted >= SYNC_BATCH:
+                return pushed
+            attempted += 1
+            pushed += push_vendor(vendor)
+        bills = pending_bills(realm)
+        if expense_account_ref() is None:
+            _block_all(bills, "qbo_", _NO_EXPENSE_ACCOUNT)
+        else:
+            for payable in bills:
+                if not _in_company(payable.assignment.vendor, realm):
+                    continue  # waits for its vendor
+                if attempted >= SYNC_BATCH:
+                    return pushed
+                attempted += 1
+                pushed += push_bill(payable)
+        payments = [p for p in pending_payments(realm) if _bill_in_step(p, realm)]
+        if payments and payment_account_ref() is None:
+            _block_all(payments, "qbo_payment_", _NO_PAYMENT_ACCOUNT)
+        elif payments:
+            for payable in payments:
+                if attempted >= SYNC_BATCH:
+                    return pushed
+                attempted += 1
+                pushed += push_payment(payable)
+    except (SyncPaused, qbo.QboNotConnected) as exc:
+        logger.warning("QuickBooks bill sync paused: %s", exc)
+    return pushed
+
+
+def push_everything_for(payable: AffiliatePayable) -> None:
+    """A person's Retry on one payable: its vendor if needed, its bill, then its payment.
+    Raises SyncPaused / QboNotConnected for the caller to word."""
+    payable = _payable(payable)
+    realm = customers.current_realm()
+    vendor = payable.assignment.vendor
+    if not _in_company(vendor, realm) or vendor.qbo_sync_state != SyncState.SYNCED:
+        if not push_vendor(vendor):
+            return
+    payable.refresh_from_db()
+    if payable.qbo_sync_state != SyncState.SYNCED or not _bill_in_step(payable, realm):
+        if not push_bill(payable):
+            return
+    payable.refresh_from_db()
+    if payable.status == AffiliatePayable.Status.PAID:
+        push_payment(payable)

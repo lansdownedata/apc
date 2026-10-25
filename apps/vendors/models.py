@@ -58,6 +58,9 @@ class Vendor(QboSyncedModel, TimeStampedModel):
 
     objects = VendorManager()
 
+    # What its QuickBooks vendor carries: a change to any of these queues a re-push (APC-74).
+    QBO_FIELDS = ("name", "email", "phone")
+
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         INACTIVE = "inactive", "Inactive"
