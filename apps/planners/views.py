@@ -22,7 +22,7 @@ from apps.core.net import client_ip
 from . import selectors, services
 from .auth import planner_required, sign_in, sign_out
 from .models import PlannerAccount
-from .tokens import planner_token
+from .tokens import planner_reset_token, planner_token
 
 # Failed sign-ins per IP before the form stops answering for a while. Per-process cache
 # (LocMem), like the public site's other throttles — a brake on guessing, not a lock.
@@ -78,7 +78,7 @@ def logout(request: HttpRequest) -> HttpResponse:
     return redirect("planners:login")
 
 
-def _account_from_link(uidb64: str, token: str) -> PlannerAccount | None:
+def _account_from_link(uidb64: str, token: str, generator) -> PlannerAccount | None:
     try:
         pk = force_str(urlsafe_base64_decode(uidb64))
         account = PlannerAccount.objects.select_related("contact").get(pk=pk)
@@ -86,14 +86,17 @@ def _account_from_link(uidb64: str, token: str) -> PlannerAccount | None:
         return None
     if account.status == PlannerAccount.Status.REVOKED:
         return None
-    return account if planner_token.check_token(account, token) else None
+    return account if generator.check_token(account, token) else None
 
 
 def set_password(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
     """Registration (from the invite) and password reset share this page: both are a
     signed link that lets the holder choose a password. Unauthenticated by design — the
     token is the guard, and it dies the moment a password is set."""
-    account = _account_from_link(uidb64, token)
+    generator = (
+        planner_reset_token if request.resolver_match.url_name == "set_password" else planner_token
+    )
+    account = _account_from_link(uidb64, token, generator)
     if account is None:
         return _page(request, "planners/link_invalid.html", status=400)
     first_time = account.registered_at is None

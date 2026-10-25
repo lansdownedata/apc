@@ -8,13 +8,17 @@ every other agent send uses — rather than creating an account nobody was told 
 
 from __future__ import annotations
 
+import hashlib
+import logging
 from datetime import timedelta
 from urllib.parse import urljoin
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -26,7 +30,9 @@ from apps.leads.models import Lead
 from apps.notifications.email import send_html_email
 
 from .models import PlannerAccount
-from .tokens import planner_token
+from .tokens import planner_reset_token, planner_token
+
+logger = logging.getLogger(__name__)
 
 
 class PlannerError(Exception):
@@ -36,24 +42,27 @@ class PlannerError(Exception):
 # --- links + mail ---------------------------------------------------------------------
 
 
-def _link(name: str, account: PlannerAccount) -> str:
+def _link(name: str, account: PlannerAccount, generator=planner_token) -> str:
     path = reverse(
         name,
         kwargs={
             "uidb64": urlsafe_base64_encode(force_bytes(account.pk)),
-            "token": planner_token.make_token(account),
+            "token": generator.make_token(account),
         },
     )
     return urljoin(settings.PUBLIC_BASE_URL, path)
 
 
-def _mail_context(account: PlannerAccount) -> dict:
+def _mail_context_defaults() -> dict:
     return {
-        "name": account.contact.name,
         "company_name": settings.COMPANY_NAME,
         "company_email": settings.COMPANY_EMAIL,
         "company_phone": settings.COMPANY_PHONE,
     }
+
+
+def _mail_context(account: PlannerAccount) -> dict:
+    return {"name": account.contact.name, **_mail_context_defaults()}
 
 
 def _send_invite(account: PlannerAccount) -> bool:
@@ -180,18 +189,48 @@ def authenticate(email: str, password: str) -> PlannerAccount | None:
     return account
 
 
+RESET_PER_EMAIL = 3  # reset mails per address per hour, refused silently past it
+RESET_EMAIL_WINDOW = 60 * 60
+_RESET_SUBJECT = "Reset your {} planner password"
+
+
+def _reset_allowed(email: str) -> bool:
+    key = "planner-reset-email:" + hashlib.sha256(email.encode()).hexdigest()
+    count = cache.get(key, 0)
+    cache.set(key, count + 1, RESET_EMAIL_WINDOW)
+    return count < RESET_PER_EMAIL
+
+
 def send_password_reset(email: str) -> bool:
     """Email a set-password link to a planner who can sign in. Silent otherwise: the page
-    says the same thing either way, so it never confirms who has an account."""
+    says the same thing either way, so it never confirms who has an account. A pending
+    invite gets nothing (the page tells them to ask for their invitation again).
+
+    Timing: an address with no account still renders the same two email templates a real
+    reset renders, so the template work matches. What can't be matched cheaply is the mail
+    provider's own latency on a real send; the per-IP and per-address caps are what keep
+    that from being worth probing.
+    """
     email = (email or "").strip().lower()
+    if not email or not _reset_allowed(email):
+        return False
     account = PlannerAccount.objects.select_related("contact").filter(email=email).first()
     if account is None or not account.can_sign_in:
+        context = {"name": "", "reset_url": "", **_mail_context_defaults()}
+        render_to_string("email/planner_password_reset.txt", context)
+        render_to_string("email/planner_password_reset.html", context)
+        return False
+    if not settings.PUBLIC_BASE_URL:
+        logger.warning("planner reset for %s not sent: PUBLIC_BASE_URL is blank", email)
         return False
     return send_html_email(
         to=account.email,
-        subject=f"Reset your {settings.COMPANY_NAME} planner password",
+        subject=_RESET_SUBJECT.format(settings.COMPANY_NAME),
         template="planner_password_reset",
-        context={**_mail_context(account), "reset_url": _link("planners:set_password", account)},
+        context={
+            **_mail_context(account),
+            "reset_url": _link("planners:set_password", account, planner_reset_token),
+        },
     )
 
 
