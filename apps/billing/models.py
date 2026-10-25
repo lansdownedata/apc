@@ -42,7 +42,11 @@ class QboSyncedModel(models.Model):
     name" — not the API body, because it is rendered straight onto the profile.
     """
 
-    qbo_customer_id = models.CharField(max_length=64, blank=True)
+    # The QuickBooks record's Id (a Customer for accounts and groups; APC-74 reuses the mixin
+    # for vendors and bills, hence the neutral name) and its SyncToken, which every update
+    # must send. Both blank until the first successful push (APC-42).
+    qbo_id = models.CharField(max_length=64, blank=True)
+    qbo_sync_token = models.CharField(max_length=32, blank=True)
     qbo_sync_state = models.CharField(
         max_length=20, choices=SyncState.choices, default=SyncState.NOT_SYNCED
     )

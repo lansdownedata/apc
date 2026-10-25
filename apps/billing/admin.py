@@ -13,7 +13,7 @@ class AccountGroupInline(admin.TabularInline):
 class BillingAccountAdmin(admin.ModelAdmin):
     list_display = ("name", "contact", "terms", "qbo_sync_state", "created_at")
     list_filter = ("terms", "qbo_sync_state")
-    search_fields = ("name", "contact__name", "qbo_customer_id")
+    search_fields = ("name", "contact__name", "qbo_id")
     autocomplete_fields = ("contact",)
     inlines = [AccountGroupInline]
 

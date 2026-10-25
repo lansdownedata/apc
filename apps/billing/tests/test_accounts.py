@@ -168,7 +168,8 @@ def test_nothing_is_synced_yet():
     group = account.groups.get()
     for record in (account, group):
         assert record.qbo_sync_state == SyncState.NOT_SYNCED
-        assert record.qbo_customer_id == ""
+        assert record.qbo_id == ""
+        assert record.qbo_sync_token == ""
         assert record.qbo_synced_at is None
         assert record.qbo_sync_error == ""
 
@@ -206,3 +207,44 @@ def test_the_database_still_refuses_a_duplicate_group_name():
     account = _account()
     with pytest.raises(IntegrityError):
         AccountGroup.objects.create(account=account, name="Accounts Payable")
+
+
+# --- APC-42: a local change queues the record for QuickBooks ------------------------------
+
+
+def _synced(record):
+    record.qbo_id = "58"
+    record.qbo_sync_token = "3"
+    record.qbo_sync_state = SyncState.SYNCED
+    record.save()
+    return record
+
+
+def test_renaming_an_account_queues_it_for_quickbooks_again():
+    account = _synced(services.create_account(ContactFactory(), name="Ridgeline", group_name="AP"))
+
+    services.update_account(account, name="Ridgeline Partners", terms=account.terms)
+
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.NOT_SYNCED
+    assert account.qbo_id == "58"  # still the same QuickBooks customer: an update, not a new one
+
+
+def test_editing_a_group_queues_it_for_quickbooks_again():
+    account = services.create_account(ContactFactory(), name="Ridgeline", group_name="AP")
+    group = _synced(account.groups.get())
+
+    services.update_group(group, name="Accounts Payable", invoice_email="ap@ridgeline.test")
+
+    group.refresh_from_db()
+    assert group.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_choosing_the_default_group_changes_nothing_in_quickbooks():
+    account = services.create_account(ContactFactory(), name="Ridgeline", group_name="AP")
+    other = _synced(services.add_group(account, name="Events"))
+
+    services.set_default_group(other)
+
+    other.refresh_from_db()
+    assert other.qbo_sync_state == SyncState.SYNCED

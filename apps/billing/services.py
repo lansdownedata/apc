@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from .models import AccountGroup, BillingAccount, Terms
+from .models import AccountGroup, BillingAccount, SyncState, Terms
 
 
 class BillingError(ValueError):
@@ -92,7 +92,8 @@ def update_account(account: BillingAccount, *, name: str, terms: str) -> Billing
     """
     account.name = _required(name, "An account name")
     account.terms = terms
-    account.save(update_fields=["name", "terms", "updated_at"])
+    account.qbo_sync_state = SyncState.NOT_SYNCED  # the QuickBooks customer needs the change
+    account.save(update_fields=["name", "terms", "qbo_sync_state", "updated_at"])
     return account
 
 
@@ -114,7 +115,17 @@ def update_group(
     group.invoice_email = invoice_email.strip()
     group.terms = terms
     group.po_required = po_required
-    group.save(update_fields=["name", "invoice_email", "terms", "po_required", "updated_at"])
+    group.qbo_sync_state = SyncState.NOT_SYNCED  # the QuickBooks sub-customer needs the change
+    group.save(
+        update_fields=[
+            "name",
+            "invoice_email",
+            "terms",
+            "po_required",
+            "qbo_sync_state",
+            "updated_at",
+        ]
+    )
     return group
 
 
