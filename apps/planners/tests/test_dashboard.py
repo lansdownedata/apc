@@ -331,3 +331,69 @@ def test_query_count_does_not_grow_with_the_number_of_trips(client, planner):
     TaskConfig.load()  # the singleton's first-ever read is an insert; not the page's cost
     assert _queries(client, big) == _queries(client, small)
     assert _queries(client, big) <= 12
+
+
+# --- which orders a planner sees, and when the schedule shows (Moe, 2026-10-25) ----------
+
+
+def test_an_engaged_order_is_still_being_built_until_it_is_booked(client, planner):
+    lead, _ = _wedding(planner, status="")
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.ENGAGED)
+
+    html = _page(client, lead)
+
+    assert "building your day" in html
+    assert "Ceremony shuttle" not in html
+
+
+def test_a_booked_order_shows_its_schedule(client, planner):
+    lead, _ = _wedding(planner)
+
+    html = _page(client, lead)
+
+    assert "Ceremony shuttle" in html
+    assert "building your day" not in html
+
+
+def test_a_quote_stays_visible_until_its_first_trip_date(client, planner):
+    lead, _ = _wedding(planner, day=timezone.localdate())
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.QUOTED)
+
+    assert lead.pk in set(services.weddings_for(planner).values_list("pk", flat=True))
+    assert client.get(reverse("planners:wedding", args=[lead.pk])).status_code == 200
+
+
+def test_a_quote_whose_first_trip_date_has_passed_drops_off(client, planner):
+    lead, _ = _wedding(planner, day=timezone.localdate() - timedelta(days=1))
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.QUOTED)
+
+    assert lead.pk not in set(services.weddings_for(planner).values_list("pk", flat=True))
+    assert client.get(reverse("planners:wedding", args=[lead.pk])).status_code == 404
+    assert "Whitfield &amp; Okafor" not in client.get(reverse("planners:weddings")).content.decode()
+
+
+def test_a_booked_wedding_in_the_past_stays_as_an_archive(client, planner):
+    lead, _ = _wedding(planner, day=timezone.localdate() - timedelta(days=40))
+
+    assert client.get(reverse("planners:wedding", args=[lead.pk])).status_code == 200
+
+
+def test_the_first_trip_date_is_read_in_that_trips_own_timezone():
+    from apps.planners.services import first_trip_passed
+
+    now = datetime(2026, 10, 25, 3, 30, tzinfo=ZoneInfo("UTC"))  # Oct 24, 11:30 PM in New York
+    lead = LeadFactory(status=Lead.Status.QUOTED)
+    _trip(lead, day=datetime(2026, 10, 24).date(), zone=NY)
+
+    assert first_trip_passed(lead, now=now) is False
+    assert first_trip_passed(lead, now=now + timedelta(hours=1)) is True
+
+
+def test_the_staff_access_card_counts_what_the_planner_sees(client, planner):
+    from apps.planners.selectors import access_for
+
+    _wedding(planner)
+    stale, _ = _wedding(planner, day=timezone.localdate() - timedelta(days=3))
+    Lead.objects.filter(pk=stale.pk).update(status=Lead.Status.NEW)
+
+    assert access_for(planner.contact)["weddings"] == 1

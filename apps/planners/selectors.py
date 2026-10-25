@@ -128,7 +128,9 @@ PLANNER_ITEMS = {
 }
 
 # A schedule exists once the order is confirmed; a quote's trips are still a proposal.
-_SCHEDULED_STATUSES = (Lead.Status.BOOKED, Lead.Status.ENGAGED)
+# The schedule shows only once the order is Booked (Moe, 2026-10-25); an Engaged order is
+# still "being built": its deposit is authorized but staff haven't confirmed it.
+_SCHEDULED_STATUSES = (Lead.Status.BOOKED,)
 
 
 def _phone(number: str) -> dict | None:
@@ -335,12 +337,7 @@ def access_for(contact) -> dict:
     of Invite / Resend / Revoke apply. Two queries."""
     account = PlannerAccount.objects.filter(contact=contact).first()
     status = account.status if account else ""
-    weddings = (
-        Lead.objects.filter(people__contact=contact)
-        .exclude(status=Lead.Status.LOST)
-        .distinct()
-        .count()
-    )
+    weddings = services.visible_leads(contact.pk).count()
     zone = timezone.get_current_timezone()
 
     def when(moment) -> str:

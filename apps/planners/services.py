@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import timedelta
+from datetime import time, timedelta
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -244,18 +244,43 @@ def send_password_reset(email: str) -> bool:
 # --- what a planner sees ----------------------------------------------------------------
 
 
-def weddings_for(account: PlannerAccount) -> QuerySet[Lead]:
-    """Every order the planner's contact holds any `LeadContact` role on, except lost ones.
+def first_trip_passed(lead: Lead, *, now=None) -> bool:
+    """True once the order's first live trip's pickup date is behind us, read in that
+    trip's own pickup timezone (a trip at 11:30 PM ET is still "today" after UTC midnight).
+    An order with no dated trips never counts as passed."""
+    from zoneinfo import ZoneInfo
+
+    from django.conf import settings
+
+    dated = [t for t in lead.reservations.all() if not t.is_cancelled and t.pickup_date]
+    if not dated:
+        return False
+    first = min(dated, key=lambda t: (t.pickup_date, t.pickup_time or time.min, t.pk))
+    zone = ZoneInfo(first.pickup_timezone or settings.TIME_ZONE)
+    return first.pickup_date < (now or timezone.now()).astimezone(zone).date()
+
+
+def visible_leads(contact_id: int, *, now=None) -> QuerySet[Lead]:
+    """The orders a planner (by contact) sees (Moe, 2026-10-25): every order they hold any
+    `LeadContact` role on, except lost ones — and a not-yet-booked quote drops off once
+    its first trip's date has passed. Booked weddings stay, past ones as the archive.
 
     Derived from the roles on every call — adding a role adds the wedding, removing it
-    takes it away — never stored on the account.
+    takes it away — never stored on the account. The staff access card counts this too.
     """
-    return (
-        Lead.objects.filter(people__contact_id=account.contact_id)
+    base = (
+        Lead.objects.filter(people__contact_id=contact_id)
         .exclude(status=Lead.Status.LOST)
         .distinct()
-        .order_by("pk")
     )
+    quotes = base.exclude(status=Lead.Status.BOOKED).prefetch_related("reservations")
+    expired = [lead.pk for lead in quotes if first_trip_passed(lead, now=now)]
+    return base.exclude(pk__in=expired).order_by("pk")
+
+
+def weddings_for(account: PlannerAccount) -> QuerySet[Lead]:
+    """What this planner sees: `visible_leads` for their contact."""
+    return visible_leads(account.contact_id)
 
 
 def archive_grace() -> timedelta:
