@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.addresses.factories import AirlineFactory, AirportFactory
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 
-from .models import Flight, FlightDirection, Reservation, Stop
+from .models import Flight, FlightDirection, Reservation, Stop, TripExtra
 
 
 class ReservationFactory(factory.django.DjangoModelFactory):
@@ -66,3 +66,13 @@ class FlightFactory(factory.django.DjangoModelFactory):
     scheduled_at = factory.LazyFunction(lambda: timezone.now() + timedelta(hours=1))
     source = Flight.Source.FUTURE
     checked_at = factory.LazyFunction(timezone.now)
+
+
+class TripExtraFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = TripExtra
+
+    reservation = factory.SubFactory(ReservationFactory)
+    kind = TripExtra.Kind.TOLLS
+    label = "Tolls"
+    amount = 10

@@ -169,6 +169,15 @@ class Reservation(TimeStampedModel):
     # Comes off the base before gratuity; flat wins over percent (spec 2026-09-05 §4.5).
     discount_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     discount_flat = MoneyField()
+    # Billed overtime, in hours (APC-91: each started hour is a full hour). A line on the
+    # trip itself (spec 2026-10-25 §3) so the order page, the receipt and the invoice line
+    # all read one total. Kept in step with `TripReview.billable_overtime_minutes` by
+    # `reservations.pricing`. On a transfer this is the wait time.
+    overtime_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # `line_total` frozen when the order books (`pricing.freeze_booked_totals`). Processing
+    # allocates the order's prepaid money to trips up to this figure (spec §4.4), so later
+    # price edits change what is owed, never what was already covered. Null = never booked.
+    booked_total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     # Vendor pay (cost-based pricing, spec 2026-09-05; per-trip pay 2026-09-19). Internal
     # only — neither value may ever reach the customer or the affiliate.
     #
@@ -287,24 +296,68 @@ class Reservation(TimeStampedModel):
         return (self.discounted_base / hours).quantize(self._CENTS)
 
     @property
+    def overtime_amount(self) -> Decimal:
+        """Overtime hours at the discounted rate — the discount carries into overtime
+        (client decision 2026-10-18)."""
+        return (Decimal(self.overtime_hours or 0) * self.discounted_rate).quantize(self._CENTS)
+
+    @property
+    def _gratuity_pct_applies(self) -> bool:
+        return Decimal(self.gratuity_flat or 0) <= 0 < Decimal(self.gratuity_pct or 0)
+
+    @property
+    def overtime_gratuity(self) -> Decimal:
+        """The share of `gratuity` that the overtime earned: the trip's percentage on the
+        overtime amount. A flat gratuity wins over a percent and adds nothing (APC-60)."""
+        if not self._gratuity_pct_applies:
+            return Decimal("0.00")
+        return (self.overtime_amount * Decimal(self.gratuity_pct) / 100).quantize(self._CENTS)
+
+    @property
     def gratuity(self) -> Decimal:
-        """Computed on the *discounted* base — you don't tip on money the customer
-        didn't pay (spec 2026-09-05 §4.5)."""
+        """Computed on the *discounted* base plus overtime — you don't tip on money the
+        customer didn't pay (spec 2026-09-05 §4.5), and you do tip on the extra hour
+        (APC-60). Extras (tolls, cleaning, credits) earn no gratuity."""
         flat = Decimal(self.gratuity_flat or 0)
         if flat > 0:
             return flat.quantize(self._CENTS)
-        return (self.discounted_base * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+        tipped = self.discounted_base + self.overtime_amount
+        return (tipped * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+
+    @property
+    def extras_total(self) -> Decimal:
+        """Flat extras, signed (a credit subtracts). Reads `extras.all()` so a list view's
+        prefetch is honoured."""
+        return sum((e.signed_amount for e in self.extras.all()), Decimal("0.00")).quantize(
+            self._CENTS
+        )
 
     @property
     def line_total(self) -> Decimal:
-        return (self.discounted_base + self.gratuity).quantize(self._CENTS)
+        """What the customer pays for this trip. Floored at zero: a credit bigger than the
+        trip must not post a negative ledger entry."""
+        total = self.discounted_base + self.overtime_amount + self.gratuity + self.extras_total
+        return max(total, Decimal("0.00")).quantize(self._CENTS)
 
     # --- what the customer sees (spec 2026-09-05 §4) ---
     @property
     def has_extras(self) -> bool:
         """True when the price is more than a base fare — the client's rule for whether the
         customer copy itemises or shows a single total."""
-        return self.discount > 0 or self.gratuity > 0
+        return (
+            self.discount > 0
+            or self.gratuity > 0
+            or Decimal(self.overtime_hours or 0) > 0
+            or any(True for _ in self.extras.all())
+        )
+
+    @property
+    def overtime_label(self) -> str:
+        """"Overtime (2 hrs)" on an hourly trip, "Wait time (1 hr)" on a transfer."""
+        hours = Decimal(self.overtime_hours or 0)
+        what = "Wait time" if self.trip_type == self.TripType.TRANSFER else "Overtime"
+        unit = "hr" if hours == 1 else "hrs"
+        return f"{what} ({_trim_pct(hours)} {unit})"
 
     def price_lines(self) -> list["PriceLine"]:
         """The customer-facing composition, in reading order.
@@ -321,6 +374,8 @@ class Reservation(TimeStampedModel):
         lines = [PriceLine("Base fare", self.subtotal)]
         if self.discount > 0:
             lines.append(PriceLine("Discount", -self.discount))
+        if Decimal(self.overtime_hours or 0) > 0:
+            lines.append(PriceLine(self.overtime_label, self.overtime_amount))
         if self.gratuity > 0:
             pct = Decimal(self.gratuity_pct or 0)
             # Name the percentage so the customer can check it. A flat gratuity has no
@@ -328,6 +383,7 @@ class Reservation(TimeStampedModel):
             flat = Decimal(self.gratuity_flat or 0)
             label = "Gratuity" if flat > 0 or pct <= 0 else f"Gratuity ({_trim_pct(pct)}%)"
             lines.append(PriceLine(label, self.gratuity))
+        lines.extend(PriceLine(e.label, e.signed_amount) for e in self.extras.all())
         return lines
 
     # --- vendor pay and what we keep ---
@@ -660,6 +716,47 @@ _PILL_ICON = {
     "unavailable": "ti-plane",
 }
 DELAY_THRESHOLD_MINUTES = 10  # at or under this a live flight still reads "On time"
+
+
+class TripExtra(TimeStampedModel):
+    """A flat line on a trip's price (spec 2026-10-25 §3): a cleaning fee, tolls, parking,
+    a courtesy credit, or anything else the agent names. Stored positive; `signed_amount`
+    is what `Reservation.line_total` adds. Overtime is not an extra — it is
+    `Reservation.overtime_hours`, so there is one way to bill time, not two."""
+
+    class Kind(models.TextChoices):
+        CLEANING = "cleaning", "Cleaning fee"
+        TOLLS = "tolls", "Tolls"
+        PARKING = "parking", "Parking"
+        CREDIT = "credit", "Credit"
+        OTHER = "other", "Other"
+
+        @classmethod
+        def default_label(cls, kind: str) -> str:
+            return str(cls(kind).label)
+
+    reservation = models.ForeignKey(Reservation, related_name="extras", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.OTHER)
+    label = models.CharField(max_length=80)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta:
+        ordering = ("pk",)
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.signed_amount})"
+
+    @property
+    def signed_amount(self) -> Decimal:
+        amount = Decimal(self.amount or 0)
+        return -amount if self.kind == self.Kind.CREDIT else amount
 
 
 class Flight(TimeStampedModel):

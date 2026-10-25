@@ -1,10 +1,23 @@
 from django.contrib import admin
 
-from .models import Flight, Reservation, Stop, TripIssue, TripReview, TripStatusEvent
+from .models import (
+    Flight,
+    Reservation,
+    Stop,
+    TripExtra,
+    TripIssue,
+    TripReview,
+    TripStatusEvent,
+)
 
 
 class StopInline(admin.TabularInline):
     model = Stop
+    extra = 0
+
+
+class TripExtraInline(admin.TabularInline):
+    model = TripExtra
     extra = 0
 
 
@@ -13,7 +26,7 @@ class ReservationAdmin(admin.ModelAdmin):
     list_display = ("__str__", "lead", "trip_type", "trip_status", "pickup_date", "line_total")
     list_filter = ("trip_type", "trip_status")
     search_fields = ("service_type__name", "lead__contact__name")
-    inlines = [StopInline]
+    inlines = [StopInline, TripExtraInline]
     list_select_related = ("lead",)
 
 
