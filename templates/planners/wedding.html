@@ -7,7 +7,7 @@
 {% endcomment %}
 {% block title %}{{ w.title }}{% endblock %}
 {% block content %}
-<div class="mx-auto w-full max-w-2xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10 lg:max-w-5xl">
+<div class="mx-auto w-full max-w-2xl px-4 pt-6 sm:px-6 sm:pt-10 lg:max-w-5xl {% if w.archived %}pb-16{% else %}pb-28 lg:pb-16{% endif %}">
   <a href="{% url 'planners:weddings' %}" class="inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-muted transition-colors focus-gold hover:text-ink">
     {% icon "chevron-left" class="h-4 w-4" %} Your weddings
   </a>
@@ -109,6 +109,12 @@
           {% icon "phone" class="h-4 w-4 text-goldd" %}<span class="num">{{ dispatch.display }}</span>
         </a>
       </section>
+
+      {% if not w.archived %}
+      <a href="#request" class="hidden w-full items-center justify-center gap-2 rounded-full px-5 py-3 text-[13.5px] font-semibold text-ink ring-1 ring-line transition-colors focus-gold hover:bg-surface2 lg:flex">
+        {% icon "message-2" class="h-4 w-4 text-goldd" %} Request a change
+      </a>
+      {% endif %}
     </aside>
 
     <section class="lg:col-span-2 lg:col-start-1 lg:row-start-2" aria-label="Transportation schedule">
@@ -142,6 +148,10 @@
           <header class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-5 pb-3 pt-4 sm:px-6">
             <h4 class="font-display text-[17px] font-semibold text-ink">{{ run.name }}</h4>
             <span class="text-[12px] text-muted num">{{ run.vehicles }} vehicle{{ run.vehicles|pluralize }} &middot; {{ run.seats }} seats</span>
+            {% if not w.archived %}
+            <a href="?about={% if run.vehicles > 1 %}run:{{ run.key }}{% else %}trip:{{ run.trips.0.pk }}{% endif %}#request"
+               class="ml-auto rounded text-[12px] font-semibold text-goldd focus-gold hover:underline">Request a change</a>
+            {% endif %}
           </header>
           <ul class="divide-y divide-line/70 border-t border-line">
             {% for trip in run.trips %}
@@ -176,6 +186,18 @@
       {% endfor %}
       {% endif %}
     </section>
+
+    {% if not w.archived %}
+    {% include "planners/_request_change.html" %}
+    {% endif %}
   </div>
 </div>
+
+{% if not w.archived %}
+<div class="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur lg:hidden">
+  <a href="#request" class="btn-gold flex w-full items-center justify-center gap-2 rounded-full px-5 py-3 text-[14px] font-semibold focus-gold">
+    {% icon "message-2" class="h-4 w-4" %} Request a change
+  </a>
+</div>
+{% endif %}
 {% endblock %}

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.contrib import messages
 from django.core.cache import cache
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -137,11 +137,46 @@ def _wedding_or_404(request, pk: int):
     return lead
 
 
+CHANGE_STATES = ("form", "sent", "limited")
+
+
 @planner_required
 def wedding(request: HttpRequest, pk: int) -> HttpResponse:
     lead = _wedding_or_404(request, pk)
+    change = request.GET.get("change", "")
     return _page(
         request,
         "planners/wedding.html",
-        {"w": selectors.dashboard(lead), "planner": request.planner},
+        {
+            "w": selectors.dashboard(lead),
+            "planner": request.planner,
+            "change": change if change in CHANGE_STATES else "",
+            "about": request.GET.get("about", ""),
+            "request_limit_reached": services.over_limit(request.planner),
+        },
     )
+
+
+@planner_required
+@require_POST
+def request_change(request: HttpRequest, pk: int) -> HttpResponse:
+    """APC-68. POST + CSRF only; the planner must hold a role on the wedding (404 if not)
+    and the wedding must not be archived (403) — an archive is a record, not a channel."""
+    lead = _wedding_or_404(request, pk)
+    w = selectors.dashboard(lead)
+    if w["archived"]:
+        raise PermissionDenied
+    labels = dict(w["request_options"])
+    value = request.POST.get("about", "")
+    about = labels.get(value, "") if value else ""
+    base = reverse("planners:wedding", args=[lead.pk])
+    try:
+        services.request_change(
+            request.planner, lead, about=about, body=request.POST.get("body", "")
+        )
+    except services.RequestRefused as exc:
+        if exc.reason == "limited":
+            return redirect(f"{base}?change=limited#request")
+        messages.error(request, "Tell us what needs to change, then send it.")
+        return redirect(f"{base}?change=form#request")
+    return redirect(f"{base}?change=sent#request")

@@ -86,6 +86,28 @@ class AfterOrderEnd:
 
 
 @dataclass(frozen=True)
+class AfterOpenBusinessDays(AfterOpen):
+    """Due `days` business days (Monday to Friday) after the task opened, at the same
+    clock time in the business timezone. Opened on a weekend, the count starts Monday.
+    A subclass of `AfterOpen`, so `services.schedule` and `reschedule` already treat it
+    as open-anchored: moving a pickup never moves it. No holiday calendar."""
+
+    days: int = 1
+
+    def resolve_from(self, opened_at: datetime) -> datetime:
+        from django.utils import timezone
+
+        local = opened_at.astimezone(timezone.get_current_timezone())
+        day, left = local.date(), self.days
+        while left > 0:
+            day += timedelta(days=1)
+            if day.weekday() < 5:
+                left -= 1
+        due = datetime.combine(day, local.timetz().replace(tzinfo=None), tzinfo=local.tzinfo)
+        return due.astimezone(UTC)
+
+
+@dataclass(frozen=True)
 class AfterLastPickup:
     """Due `TaskConfig.future_booking_offset_days` after the order's last trip, at `hour`
     on that local day in the last trip's own zone — an anniversary lands on the calendar
@@ -134,6 +156,11 @@ def _wedding_only(facts: LeadFacts, reservation: object) -> bool:
 
 def _entered_post_trip(facts: LeadFacts, reservation) -> bool:
     return reservation.pk in facts.post_trip_ids
+
+
+def _never(facts: LeadFacts, reservation: object) -> bool:
+    """For kinds an event opens (`services.open_request_task`) — generation never does."""
+    return False
 
 
 def _has_complaint(facts: LeadFacts, reservation: object) -> bool:
@@ -449,6 +476,17 @@ REGISTRY: tuple[TaskKind, ...] = (
         level=Level.ORDER,
         due=AfterOpen(hours=24),
         applies=_has_complaint,
+    ),
+    TaskKind(
+        # APC-68. A planner used "Request a change" on their dashboard; the request is in
+        # the Inbox (the planner's conversation) and this is the work to answer it. One per
+        # request, so an order can hold several; opened only by `open_request_task`.
+        key="planner_change_request",
+        label="Planner change request",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpenBusinessDays(days=1),
+        applies=_never,
     ),
     TaskKind(
         # APC-71. One per affiliate policy; closes itself when a policy with a later expiry

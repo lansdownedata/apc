@@ -257,6 +257,23 @@ def _outstanding(lead: Lead, home: ZoneInfo) -> list[dict]:
     ]
 
 
+def request_options(days: list[dict]) -> list[tuple[str, str]]:
+    """What "Request a change" can be about (APC-68): the whole day, a run of several
+    vehicles, or one trip — values `""`, `run:<group key>`, `trip:<pk>`."""
+    options = [("", "The whole day, or not sure")]
+    for day in days:
+        when = f"{day['date']:%a, %b} {day['date'].day}"
+        for run in day["runs"]:
+            if len(run["trips"]) > 1:
+                options.append(
+                    (f"run:{run['key']}", f"{run['name']} · {when} · all {len(run['trips'])} trips")
+                )
+            for t in run["trips"]:
+                label = f"{run['name']} · {when} {t['time']} {t['abbr']} · from {t['from']}"
+                options.append((f"trip:{t['pk']}", label))
+    return options
+
+
 def _coordinator(lead: Lead) -> dict | None:
     agent = lead.assigned_agent
     if agent is None:
@@ -308,6 +325,7 @@ def dashboard(lead: Lead) -> dict:
             t["dispatched"] for d in schedule for r in d["runs"] for t in r["trips"]
         ),
         "outstanding": outstanding,
+        "request_options": request_options(schedule),
     }
 
 

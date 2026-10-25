@@ -1,0 +1,62 @@
+{% comment %}
+  Request a change (APC-68). An inline section rather than a dialog: it is reachable from
+  the bar pinned to the bottom of a phone, the rail on a laptop and each run's header
+  (which pre-selects that run through `?about=`). Posting returns here with `?change=`
+  sent / limited / form. Planners can't edit trips: this lands in the Inbox and opens a
+  Customer Service task.
+{% endcomment %}
+<section id="request" class="scroll-mt-20 lg:col-span-2 lg:col-start-1" aria-label="Request a change">
+  <div class="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+    <div class="flex items-center gap-3 border-b border-line px-5 py-4 sm:px-6">
+      <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-goldl text-goldd">{% icon "message-2" class="h-4 w-4" %}</span>
+      <span>
+        <span class="block font-display text-[17px] font-semibold text-ink">Request a change</span>
+        <span class="block text-[12px] text-muted">Goes straight to your coordinator</span>
+      </span>
+    </div>
+
+    {% if change == "sent" %}
+    <div class="px-6 py-10 text-center">
+      <span class="mx-auto grid h-12 w-12 place-items-center rounded-full chip-ok">{% icon "check" class="h-6 w-6" %}</span>
+      <h3 class="mt-4 font-display text-[1.5rem] font-semibold leading-tight text-ink">Thanks, we'll be in touch.</h3>
+      <p class="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-muted">{% if w.coordinator %}{{ w.coordinator.name }}{% else %}Your coordinator{% endif %} has your request and will reply within one business day. Your schedule stays as it is until then.</p>
+      <a href="{% url 'planners:wedding' w.pk %}#request" class="mt-6 inline-flex rounded-full px-6 py-2.5 text-[13.5px] font-semibold text-ink ring-1 ring-line transition-colors focus-gold hover:bg-surface2">Send another</a>
+    </div>
+    {% elif change == "limited" or request_limit_reached %}
+    <div class="px-6 py-10 text-center">
+      <span class="mx-auto grid h-12 w-12 place-items-center rounded-full chip-warn">{% icon "clock-pause" class="h-6 w-6" %}</span>
+      <h3 class="mt-4 font-display text-[1.5rem] font-semibold leading-tight text-ink">That's a lot of requests</h3>
+      <p class="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-muted">We have the ones you already sent. You can send another in about an hour, or call us now and we'll take it by phone.</p>
+      <a href="tel:{{ dispatch.tel }}" class="btn-gold mt-6 inline-flex items-center justify-center gap-2 rounded-full px-6 py-2.5 text-[13.5px] font-semibold focus-gold">
+        {% icon "phone" class="h-4 w-4" %} Call <span class="num">{{ dispatch.display }}</span>
+      </a>
+    </div>
+    {% else %}
+    <form method="post" action="{% url 'planners:request_change' w.pk %}" x-data="{ text: '', busy: false }" @submit="busy = true">
+      {% csrf_token %}
+      <div class="space-y-4 px-5 py-5 sm:px-6">
+        <div>
+          <label for="chg-about" class="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-muted">Which part of the day?
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-muted/70">Optional</span></label>
+          {% include "components/searchable_select.html" with name="about" field_id="chg-about" options=w.request_options selected=about %}
+        </div>
+        <div>
+          <label for="chg-text" class="mb-1.5 block text-[12px] font-medium text-muted">What needs to change?</label>
+          <textarea id="chg-text" name="body" rows="4" maxlength="2000" required x-model="text" class="field"
+                    placeholder="e.g. The ceremony now starts at 3:30, so the hotel pickups need to move up."></textarea>
+        </div>
+        <p class="text-[12px] leading-relaxed text-muted">
+          Nothing changes until your coordinator confirms it with you. For anything in the next 24 hours, call dispatch on
+          <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-ink focus-gold hover:text-goldd num">{{ dispatch.display }}</a>.
+        </p>
+      </div>
+      <div class="flex items-center justify-end gap-3 border-t border-line bg-surface2 px-5 py-4 sm:px-6">
+        <button type="submit" :disabled="busy || !text.trim()"
+                class="btn-gold rounded-full px-6 py-2.5 text-[13.5px] font-semibold focus-gold disabled:cursor-not-allowed disabled:opacity-60">
+          <span x-show="!busy">Send request</span><span x-show="busy" x-cloak>Sending&hellip;</span>
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</section>

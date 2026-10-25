@@ -192,3 +192,60 @@ def is_archived(trips, *, now=None) -> bool:
 
     grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
     return order_finished_at(list(trips), now=now or timezone.now(), grace=grace) is not None
+
+
+# --- request a change (APC-68) --------------------------------------------------------
+
+REQUEST_LIMIT = 10  # per planner account, per rolling hour
+REQUEST_WINDOW = timedelta(hours=1)
+MAX_REQUEST_LENGTH = 2000
+
+
+class RequestRefused(Exception):
+    """A change request that can't be taken; `reason` picks the page state."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def over_limit(account: PlannerAccount) -> bool:
+    since = timezone.now() - REQUEST_WINDOW
+    return account.requests.filter(created_at__gte=since).count() >= REQUEST_LIMIT
+
+
+def request_change(account: PlannerAccount, lead: Lead, *, about: str, body: str):
+    """Record a planner's request as an inbound message in their own conversation and open
+    a Customer Service task for it. The caller has already checked the planner holds a
+    role on `lead` and that the wedding isn't archived.
+
+    The message names the wedding and what it's about, so it reads on its own in the
+    Inbox. An archived conversation stays archived (archive never reopens) — the message
+    is still recorded and the task still opens, so the request can't be lost.
+    """
+    from apps.messaging import services as messaging
+    from apps.messaging.models import Message
+    from apps.tasks import services as tasks
+
+    from .models import PlannerRequest
+
+    text = (body or "").strip()[:MAX_REQUEST_LENGTH]
+    if not text:
+        raise RequestRefused("blank")
+    if over_limit(account):
+        raise RequestRefused("limited")
+    title = lead.wedding_name.strip() or lead.contact.name
+    about_line = about or "the whole day"
+    composed = f"Planner request · {title} ({lead.quote_no})\nAbout: {about_line}\n\n{text}"
+    with transaction.atomic():
+        conversation = messaging.conversation_for(account.contact)
+        message = messaging.record_inbound(
+            conversation,
+            channel=Message.Channel.PORTAL,
+            body=composed,
+            sender_name=account.contact.name,
+        )
+        task = tasks.open_request_task(lead, "planner_change_request")
+        return PlannerRequest.objects.create(
+            account=account, lead=lead, message=message, task=task, about=about[:255]
+        )

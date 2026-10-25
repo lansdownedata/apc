@@ -12,4 +12,5 @@ urlpatterns = [
     path("password/reset/", views.password_reset, name="password_reset"),
     path("password/<str:uidb64>/<str:token>/", views.set_password, name="set_password"),
     path("weddings/<int:pk>/", views.wedding, name="wedding"),
+    path("weddings/<int:pk>/request/", views.request_change, name="request_change"),
 ]

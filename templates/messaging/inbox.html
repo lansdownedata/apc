@@ -93,7 +93,14 @@
       <div id="thread-messages" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-2.5 bg-surface2/40">
         {% for message in thread_messages %}
         <div class="flex flex-col {% if message.is_inbound %}items-start{% else %}items-end{% endif %}">
-          <div class="max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.is_inbound %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% else %}bg-charcoal text-slate-100 rounded-br-sm{% endif %}">{{ message.body }}</div>
+          {% if message.channel == "portal" %}
+          {% comment %} APC-68: sent from the planner portal's Request a change, about one order. {% endcomment %}
+          <span class="mb-1 inline-flex items-center gap-1.5 px-1 text-[10.5px] font-semibold">
+            <span class="rounded-full px-1.5 py-0.5 chip-gold">Planner request</span>
+            {% if message.planner_request.lead %}<a href="{% url 'lead_detail' message.planner_request.lead.pk %}" class="num text-goldd hover:underline focus-gold">{{ message.planner_request.lead.quote_no }}{% if message.planner_request.lead.wedding_name %} · {{ message.planner_request.lead.wedding_name }}{% endif %}</a>{% endif %}
+          </span>
+          {% endif %}
+          <div class="{% if message.channel == "portal" %}whitespace-pre-line {% endif %}max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.is_inbound %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% else %}bg-charcoal text-slate-100 rounded-br-sm{% endif %}">{{ message.body }}</div>
           <span class="text-[10px] text-muted mt-1 px-1 num">
             {% if message.sender_name %}{{ message.sender_name }} ·
             {% elif message.is_inbound and message.conversation.contact.phone %}{{ message.conversation.contact.phone|phone_display }} ·

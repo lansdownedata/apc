@@ -1,4 +1,4 @@
-"""Wedding planner accounts (APC-66).
+"""Wedding planner accounts (APC-66) and their change requests (APC-68).
 
 A planner is NOT an `accounts.User`. Staff users and planners are kept apart at the model
 level: a planner signs in through `apps.planners.auth`, which keeps its own session keys and
@@ -82,3 +82,24 @@ class PlannerAccount(TimeStampedModel):
     @classmethod
     def get_email_field_name(cls) -> str:
         return "email"
+
+
+class PlannerRequest(TimeStampedModel):
+    """One "Request a change" a planner sent (APC-68): the inbound message it became in
+    the Inbox and the Customer Service task it opened. Also the rate limit's ledger."""
+
+    account = models.ForeignKey(PlannerAccount, related_name="requests", on_delete=models.CASCADE)
+    lead = models.ForeignKey(
+        "leads.Lead", related_name="planner_requests", on_delete=models.CASCADE
+    )
+    message = models.OneToOneField(
+        "messaging.Message", related_name="planner_request", null=True, on_delete=models.SET_NULL
+    )
+    task = models.OneToOneField(
+        "tasks.Task", related_name="planner_request", null=True, on_delete=models.SET_NULL
+    )
+    # What the planner picked, as shown to them: "" (the whole day), a run or a trip.
+    about = models.CharField(max_length=255, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.account} · {self.lead_id}"

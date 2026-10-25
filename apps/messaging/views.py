@@ -94,7 +94,8 @@ def inbox(request):
         Message.objects.filter(
             conversation=selected, direction=Message.Direction.IN, read_at__isnull=True
         ).update(read_at=timezone.now())
-        thread_messages = list(selected.messages.all())
+        # A planner's request (APC-68) carries its order, for the bubble's marker.
+        thread_messages = list(selected.messages.select_related("planner_request__lead"))
         # One conversation can spawn several quotes — the rail shows them all, so an
         # agent sees "2 quotes already" instead of creating a third by accident.
         leads = list(

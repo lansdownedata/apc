@@ -160,6 +160,24 @@ def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
     return new, facts
 
 
+def open_request_task(lead: Lead, key: str) -> Task:
+    """Open one task of an event-opened kind (APC-68's planner change request) on `lead`,
+    owned by its department's default owner. A new row every call — each request is its
+    own piece of work — so it bypasses generation's one-per-kind rule, and it is created
+    whatever the order's status or the generation switch: a person asked for something."""
+    kind = KINDS[key]
+    now = timezone.now()
+    return Task.objects.create(
+        kind=kind.key,
+        lead=lead,
+        department=kind.department,
+        assignee=TaskConfig.load().owner_for(kind.department),
+        status=Task.Status.OPEN,
+        opens_at=now,
+        due_at=kind.due.resolve_from(now),
+    )
+
+
 def ensure_tasks(lead: Lead) -> list[Task]:
     """Create the missing tasks for a booked order, then evaluate its open ones.
 
