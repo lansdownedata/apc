@@ -606,7 +606,7 @@ def test_the_invoice_file_is_attached_to_the_bill_once():
     payable = _payable(vendor=_linked_vendor(), file=_pdf())
 
     with patch(REQ, side_effect=[_bill(), _attached()]) as req:
-        assert qbo_bills.push_bill(payable) is True
+        assert qbo_bills.sync_pending() == 2
 
     upload = req.call_args_list[1]
     assert upload.args == ("POST", "upload")
@@ -617,31 +617,94 @@ def test_the_invoice_file_is_attached_to_the_bill_once():
     name, content, ctype = files["file_content_01"]
     assert name.endswith(".pdf") and content == b"%PDF-1.4 invoice" and ctype == "application/pdf"
     payable.refresh_from_db()
-    assert payable.qbo_attachment_id == "900"
+    assert (payable.qbo_attachment_id, payable.qbo_attachment_sync_state) == (
+        "900",
+        SyncState.SYNCED,
+    )
 
     AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_sync_state=SyncState.NOT_SYNCED)
-    payable.refresh_from_db()
     with patch(REQ, return_value=_bill(token="1")) as req:
-        qbo_bills.push_bill(payable)
+        qbo_bills.sync_pending()
     assert [c.args[1] for c in req.call_args_list] == ["bill"]  # not attached twice
 
 
-def test_an_attachment_quickbooks_refuses_leaves_the_bill_linked_and_in_error():
-    _map()
-    payable = _payable(vendor=_linked_vendor(), file=_pdf())
-    refused = {
+def _refused_file():
+    return {
         "AttachableResponse": [
             {"Fault": {"Error": [{"code": "6000", "Detail": "File type is not supported"}]}}
         ]
     }
 
-    with patch(REQ, side_effect=[_bill(), refused]):
-        assert qbo_bills.push_bill(payable) is False
+
+def test_a_refused_file_has_its_own_error_and_never_holds_up_the_bill_or_payment():
+    _map()
+    payable = _paid(vendor=_linked_vendor(), file=_pdf())
+
+    with patch(REQ, side_effect=[_bill(), _billpayment(), _refused_file()]) as req:
+        qbo_bills.sync_pending()
+
+    assert [c.args[1] for c in req.call_args_list] == ["bill", "billpayment", "upload"]
+    payable.refresh_from_db()
+    assert (payable.qbo_sync_state, payable.qbo_payment_sync_state) == (
+        SyncState.SYNCED,
+        SyncState.SYNCED,
+    )
+    assert payable.qbo_attachment_sync_state == SyncState.ERROR
+    assert payable.qbo_attachment_sync_error == (
+        "QuickBooks didn't accept the invoice file: File type is not supported"
+    )
+    state = qbo_bills.sync_state(payable)
+    assert state["attachment_state"] == "error"
+    assert "File type" in state["attachment_error"]
+
+
+def test_a_file_quickbooks_refused_is_retried_under_a_new_request_id():
+    _map()
+    payable = _bill_synced(_payable(vendor=_linked_vendor(), file=_pdf()))
+
+    with patch(REQ, side_effect=[_refused_file(), _attached()]) as req:
+        assert qbo_bills.push_attachment(payable) is False
+        assert qbo_bills.push_attachment(payable) is True
+
+    first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
+    assert first != second and len(second) <= 50
+
+
+def test_an_upload_error_status_is_worded_as_the_file_not_the_bill():
+    _map()
+    payable = _bill_synced(_payable(vendor=_linked_vendor(), file=_pdf()))
+
+    with patch(REQ, side_effect=_fault("6000", detail="Unsupported media")):
+        qbo_bills.push_attachment(payable)
 
     payable.refresh_from_db()
-    assert payable.qbo_id == "145"
-    assert payable.qbo_sync_state == SyncState.ERROR
-    assert "File type is not supported" in payable.qbo_sync_error
+    assert payable.qbo_attachment_sync_error == (
+        "QuickBooks didn't accept the invoice file: Unsupported media"
+    )
+    assert payable.qbo_sync_state == SyncState.SYNCED
+
+
+def test_a_file_over_20_mb_is_refused_here_without_a_call():
+    _map()
+    big = SimpleUploadedFile("big.pdf", b"0" * (20 * 1024 * 1024 + 1), "application/pdf")
+    payable = _bill_synced(_payable(vendor=_linked_vendor(), file=big))
+
+    with patch(REQ) as req:
+        assert qbo_bills.push_attachment(payable) is False
+
+    req.assert_not_called()
+    payable.refresh_from_db()
+    assert "20 MB" in payable.qbo_attachment_sync_error
+
+
+def test_the_file_waits_for_its_bill():
+    _map()
+    payable = _payable(vendor=_linked_vendor(), file=_pdf())
+
+    with patch(REQ) as req:
+        assert qbo_bills.push_attachment(payable) is False
+
+    req.assert_not_called()
 
 
 # --- bill payments ---------------------------------------------------------------------------
@@ -754,7 +817,7 @@ def test_bills_from_another_quickbooks_company_are_pushed_again_as_new():
     _map()
     payable = _bill_synced(_payable(vendor=_linked_vendor()))
     AffiliatePayable.objects.filter(pk=payable.pk).update(
-        qbo_realm_id="111", qbo_attachment_id="900"
+        qbo_realm_id="111", qbo_attachment_id="900", qbo_attachment_realm_id="111"
     )
     Vendor.objects.filter(pk=payable.assignment.vendor_id).update(qbo_realm_id="111")
 
@@ -945,6 +1008,8 @@ def test_retry_on_a_payable_pushes_vendor_bill_and_payment_and_answers_with_the_
         "bill_error": "",
         "payment_state": "synced",
         "payment_error": "",
+        "attachment_state": "",  # no invoice file on this one
+        "attachment_error": "",
         "sync_url": reverse("payable_sync", args=[payable.pk]),
     }
 
@@ -1064,20 +1129,19 @@ def test_a_draft_payable_is_never_pushed_even_on_retry():
 
 def test_a_replaced_invoice_file_is_uploaded_under_a_new_request_id():
     _map()
-    payable = _payable(vendor=_linked_vendor(), file=_pdf())
-    with patch(REQ, side_effect=[_bill(), _attached()]) as req:
-        qbo_bills.push_bill(payable)
-    first = req.call_args_list[1].kwargs["params"]["requestid"]
+    payable = _bill_synced(_payable(vendor=_linked_vendor(), file=_pdf()))
+    with patch(REQ, return_value=_attached()) as req:
+        qbo_bills.push_attachment(payable)
+    first = req.call_args.kwargs["params"]["requestid"]
     payable.refresh_from_db()
     payable.invoice_file = SimpleUploadedFile("inv-77-corrected.pdf", b"%PDF-1.4 v2")
     payable.qbo_attachment_id = ""
-    payable.qbo_sync_state = SyncState.NOT_SYNCED
     payable.save()
 
-    with patch(REQ, side_effect=[_bill(token="1"), _attached("901")]) as req:
-        qbo_bills.push_bill(payable)
+    with patch(REQ, return_value=_attached("901")) as req:
+        qbo_bills.push_attachment(payable)
 
-    assert req.call_args_list[1].kwargs["params"]["requestid"] != first
+    assert req.call_args.kwargs["params"]["requestid"] != first
 
 
 def test_the_accounts_cache_and_the_choice_are_in_the_admin(admin_client):

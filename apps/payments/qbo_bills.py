@@ -134,12 +134,14 @@ class _Refused(Exception):
     `alert=False` when the cause is shared by every record (a missing account choice) and the
     run alerts once instead."""
 
-    def __init__(self, message: str, *, alert: bool = True):
+    def __init__(self, message: str, *, alert: bool = True, by_quickbooks: bool = False):
         super().__init__(message)
         self.alert = alert
+        # QuickBooks itself said no (a refused file inside a 200): the next try is a new create.
+        self.by_quickbooks = by_quickbooks
 
 
-_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p"}
+_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p", "attachment": "f"}
 
 
 @dataclass
@@ -205,12 +207,12 @@ def _send_or_refresh_token(link: _Link, body: dict) -> dict:
     return _send(link, body)
 
 
-def _reason(exc: qbo.QboAPIError, what: str) -> str:
+def _reason(exc: qbo.QboAPIError, what: str, *, article: str = "this") -> str:
     errors = _errors(exc)
     reason = (errors[0].get("Detail") or errors[0].get("Message")) if errors else ""
     if reason:
-        return f"QuickBooks didn't accept this {what}: {reason}"
-    return f"QuickBooks didn't accept this {what} ({exc.status}). Check it, then retry."
+        return f"QuickBooks didn't accept {article} {what}: {reason}"
+    return f"QuickBooks didn't accept {article} {what} ({exc.status}). Check it, then retry."
 
 
 def _alert(link: _Link, message: str) -> None:
@@ -225,7 +227,9 @@ def _alert(link: _Link, message: str) -> None:
             detail=message,
         )
         return
-    what = "bill" if link.entity == "bill" else "bill payment"
+    what = {"bill": "bill", "billpayment": "bill payment", "attachment": "invoice file"}[
+        link.entity
+    ]
     Notification.notify(
         record.assignment.reservation.lead,
         Notification.Kind.SYNC_FAILED,
@@ -260,11 +264,11 @@ def _relink_if_other_company(link: _Link, realm: str) -> bool:
     return False
 
 
-def _push(link: _Link, build, *, matches, after=None, what: str, on_refusal=None) -> bool:
+def _push(link: _Link, build, *, matches, what: str, on_refusal=None) -> bool:
     """Create or update one QuickBooks object. True when it is now in step.
 
     `build()` returns the body (or raises _Refused); `matches(obj, body)` says whether what came
-    back is what was sent; `after(obj)` runs once the object exists (the bill's attachment);
+    back is what was sent;
     `on_refusal(exc, body)` may answer a refusal itself (the vendor's link-by-name).
     Raises SyncPaused on an outage or rate limit and QboNotConnected without a connection.
     """
@@ -288,8 +292,6 @@ def _push(link: _Link, build, *, matches, after=None, what: str, on_refusal=None
         link.put("id", str(obj["Id"]))
         link.put("sync_token", str(obj["SyncToken"]))
         link.put("realm_id", realm)
-        if after is not None:
-            after(obj)
     except _Refused as exc:
         _fail(link, str(exc), alert=exc.alert)
         return False
@@ -536,18 +538,23 @@ def push_bill(payable: AffiliatePayable) -> bool:
         return False
     link = _Link(payable, "bill", "Bill")
     if _relink_if_other_company(link, realm):
-        payable.qbo_attachment_id = ""
-        AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachment_id="")
+        # A new bill in this company: the file goes up to it afresh.
+        AffiliatePayable.objects.filter(pk=payable.pk).update(
+            qbo_attachment_id="", qbo_attachment_sync_state=SyncState.NOT_SYNCED
+        )
     return _push(
         link,
         lambda: bill_payload(payable, realm),
         matches=_bill_matches,
-        after=lambda obj: _attach_invoice(payable),
         what="bill",
     )
 
 
 # --- the invoice file (Attachable) ---------------------------------------------------------------
+
+# Intuit community posts put the per-attachment limit around 20 MB (unverified); refuse a
+# bigger file here with a sentence rather than send it and get a vague refusal back.
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 
 def upload_attachment(
@@ -579,36 +586,80 @@ def upload_attachment(
         errors = item["Fault"].get("Error") or [{}]
         error = errors[0] if isinstance(errors, list) else errors
         reason = error.get("Detail") or error.get("Message") or "no reason given"
-        raise _Refused(f"QuickBooks didn't accept the invoice file: {reason}")
+        raise _Refused(f"QuickBooks didn't accept the invoice file: {reason}", by_quickbooks=True)
     try:
         return str(item["Attachable"]["Id"])
     except (KeyError, TypeError) as exc:
         raise _Refused("QuickBooks didn't confirm the invoice file. Retry.") from exc
 
 
-def _attach_invoice(payable: AffiliatePayable) -> None:
-    """Upload the invoice file to the bill, once. Re-raises SyncPaused/_Refused to _push."""
-    if not payable.invoice_file or payable.qbo_attachment_id:
-        return
+def _file_content(payable: AffiliatePayable) -> tuple[str, bytes, str]:
     name = os.path.basename(payable.invoice_file.name)
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    try:
+        size = payable.invoice_file.size
+    except OSError as exc:
+        raise _Refused("The invoice file couldn't be read here. Re-upload it, then retry.") from exc
+    if size > MAX_ATTACHMENT_BYTES:
+        raise _Refused(
+            "The invoice file is over 20 MB, more than QuickBooks takes. Attach a smaller copy"
+            " in QuickBooks by hand, or ask the affiliate for a smaller file."
+        )
     try:
         with payable.invoice_file.open("rb") as handle:
             content = handle.read()
     except OSError as exc:
         raise _Refused("The invoice file couldn't be read here. Re-upload it, then retry.") from exc
-    file_key = _digest({"f": name, "n": len(content)})
-    attachable_id = upload_attachment(
-        entity="Bill",
-        entity_id=payable.qbo_id,
-        name=name,
-        content=content,
-        ctype=ctype,
-        # Keyed on the file too: a replaced file must not replay the old upload's answer.
-        request_id=f"apc-b{payable.pk}-att{payable.qbo_id}-{file_key}",
+    return name, content, ctype
+
+
+def push_attachment(payable: AffiliatePayable) -> bool:
+    """Upload the payable's invoice file to its Bill, once. Its own state and error: a file
+    QuickBooks refuses never holds up the bill or its payment. Waits (False, no error) for the
+    bill to be in QuickBooks in this company."""
+    payable = _payable(payable)
+    if not _is_bill(payable) or not payable.invoice_file:
+        return False
+    realm = customers.current_realm()
+    if not (payable.qbo_id and payable.qbo_realm_id == realm):
+        return False
+    link = _Link(payable, "attachment", "Attachable", prefix="qbo_attachment_")
+    _relink_if_other_company(link, realm)
+    if payable.qbo_attachment_id:
+        return payable.qbo_attachment_sync_state == SyncState.SYNCED
+    try:
+        name, content, ctype = _file_content(payable)
+        file_key = _digest({"f": name, "n": len(content)})
+        attempt = payable.qbo_attachment_create_attempt
+        attachment_id = upload_attachment(
+            entity="Bill",
+            entity_id=payable.qbo_id,
+            name=name,
+            content=content,
+            ctype=ctype,
+            # Keyed on the bill and the file: a replaced file never replays the old answer.
+            request_id=f"apc-b{payable.pk}-att{payable.qbo_id}-{file_key}{attempt or ''}",
+        )
+    except _Refused as exc:
+        if exc.by_quickbooks:
+            customers.refused_by_quickbooks(payable, link.prefix)
+        _fail(link, str(exc), alert=exc.alert)
+        return False
+    except qbo.QboAPIError as exc:
+        logger.warning("QuickBooks refused the file for payable %s: %s", payable.pk, exc.body[:500])
+        if _transient(exc):
+            raise SyncPaused(str(exc)) from exc
+        customers.refused_by_quickbooks(payable, link.prefix)
+        _fail(link, _reason(exc, "invoice file", article="the"))
+        return False
+    link.update(
+        id=attachment_id,
+        realm_id=realm,
+        synced_at=timezone.now(),
+        sync_state=SyncState.SYNCED,
+        sync_error="",
     )
-    payable.qbo_attachment_id = attachable_id
-    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachment_id=attachable_id)
+    return True
 
 
 # --- bill payments -----------------------------------------------------------------------------
@@ -729,6 +780,18 @@ def pending_payments(realm: str):
     )
 
 
+def pending_attachments(realm: str):
+    """Invoice files not yet on their bill, once the bill is in QuickBooks in this company."""
+    return (
+        _billable()
+        .exclude(invoice_file="")
+        .exclude(qbo_id="")
+        .filter(qbo_realm_id=realm)
+        .filter(_stale("qbo_attachment_", realm))
+        .order_by("pk")
+    )
+
+
 def _block_all(rows, prefix: str, message: str) -> None:
     """Every pending record shares one missing choice: mark each (so the payable says why),
     alert once for the run — not once per bill."""
@@ -755,9 +818,10 @@ def _block_all(rows, prefix: str, message: str) -> None:
 
 
 def sync_pending() -> int:
-    """Push up to SYNC_BATCH vendors, bills and bill payments that aren't in step, in that
-    order (each waits for the one before). Returns how many were pushed. Stops quietly on an
-    outage, a rate limit or a lost connection — nothing is marked, the next run carries on."""
+    """Push up to SYNC_BATCH vendors, bills, bill payments and invoice files that aren't in
+    step, in that order (each waits for the one it hangs off). Returns how many were pushed.
+    Stops quietly on an outage, a rate limit or a lost connection — nothing is marked, the
+    next run carries on."""
     if not qbo.is_connected():
         return 0
     realm = customers.current_realm()
@@ -788,6 +852,12 @@ def sync_pending() -> int:
                     return pushed
                 attempted += 1
                 pushed += push_payment(payable)
+        # Files last: a slow or refused upload never holds up a bill or a payment.
+        for payable in pending_attachments(realm):
+            if attempted >= SYNC_BATCH:
+                return pushed
+            attempted += 1
+            pushed += push_attachment(payable)
     except (SyncPaused, qbo.QboNotConnected) as exc:
         logger.warning("QuickBooks bill sync paused: %s", exc)
     return pushed
@@ -811,6 +881,7 @@ def push_everything_for(payable: AffiliatePayable) -> None:
     payable.refresh_from_db()
     if payable.status == AffiliatePayable.Status.PAID:
         push_payment(payable)
+    push_attachment(payable)
 
 
 def run_hourly() -> int:
@@ -839,5 +910,7 @@ def sync_state(payable: AffiliatePayable) -> dict | None:
         "bill_error": payable.qbo_sync_error,
         "payment_state": payable.qbo_payment_sync_state,
         "payment_error": payable.qbo_payment_sync_error,
+        "attachment_state": payable.qbo_attachment_sync_state if payable.invoice_file else "",
+        "attachment_error": payable.qbo_attachment_sync_error if payable.invoice_file else "",
         "sync_url": reverse("payable_sync", args=[payable.pk]),
     }
