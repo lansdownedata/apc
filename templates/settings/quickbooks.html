@@ -68,6 +68,34 @@
     {% endif %}
     <p class="text-[12px] text-muted">In QuickBooks: {% for term in qbo_terms %}{{ term.name }}{% if not forloop.last %} · {% endif %}{% empty %}none read yet{% endfor %}</p>
   </div>
+
+  <div class="card p-5 sm:p-6 mt-4">
+    <div class="flex items-center gap-2 mb-1">
+      <h2 class="font-display text-[16px] font-semibold text-ink">Affiliate bills</h2>
+      <form method="post" action="{% url 'quickbooks_refresh_accounts' %}" class="ml-auto">{% csrf_token %}
+        <button type="submit" class="text-[12.5px] font-medium text-goldd hover:text-gold focus-gold rounded">Refresh accounts</button>
+      </form>
+    </div>
+    <p class="text-[12.5px] text-muted mb-3">
+      An approved affiliate invoice goes to QuickBooks as a bill on this expense account; marking it
+      paid records the payment from this bank account. A change applies to bills sent from now on.
+    </p>
+    {% if accounts_unset %}
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Affiliate bills won't go to QuickBooks until both are chosen.</p>
+    {% endif %}
+    <form method="post" action="{% url 'quickbooks_accounts' %}" class="grid gap-3">{% csrf_token %}
+      <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Expense account for affiliate bills</span>
+        {% include "components/searchable_select.html" with name="expense_account" field_id="qbo-expense-account" options=expense_choices selected=expense_selected empty_label="Choose an account" %}</label>
+      <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Bank account payments come from</span>
+        {% include "components/searchable_select.html" with name="payment_account" field_id="qbo-payment-account" options=payment_choices selected=payment_selected empty_label="Choose an account" %}</label>
+      {% if not expense_choices or not payment_choices %}
+        <p class="text-[12px] text-muted">No accounts read yet. Refresh accounts to load them from QuickBooks.</p>
+      {% endif %}
+      <div class="flex justify-end">
+        <button type="submit" class="btn-gold text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold disabled:opacity-50">Save accounts</button>
+      </div>
+    </form>
+  </div>
   {% endif %}
 </div>
 {% endblock %}

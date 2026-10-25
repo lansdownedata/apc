@@ -471,8 +471,74 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
             # APC-42: the company's terms we match against, and ours that it lacks.
             "qbo_terms": list(QboTerm.objects.filter(active=True)),
             "unmatched_terms": qbo_sync.unmatched_terms(),
+            **_qbo_accounts_context(),
         },
     )
+
+
+def _qbo_accounts_context() -> dict:
+    """APC-74: the two account choices for affiliate bills, offered from the cached chart of
+    accounts. A choice that's no longer an active account of this company reads as unset."""
+    from apps.billing.models import QboAccountMapping
+    from apps.payments import qbo_bills
+
+    config = QboAccountMapping.load()
+    expense = config.expense_account_id if qbo_bills.expense_account_ref() else ""
+    payment = config.payment_account_id if qbo_bills.payment_account_ref() else ""
+    return {
+        "expense_choices": qbo_bills.expense_choices(),
+        "payment_choices": qbo_bills.payment_choices(),
+        "expense_selected": expense,
+        "payment_selected": payment,
+        "accounts_unset": not (expense and payment),
+    }
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_accounts(request: HttpRequest) -> HttpResponse:
+    """Save which accounts affiliate bills post to and pay from. Only an active account of the
+    right kind in the connected company is accepted; anything else is left unset."""
+    from apps.billing.models import QboAccount, QboAccountMapping
+    from apps.payments import qbo_bills
+
+    _qbo_or_404()
+
+    def pick(field: str, choices: list[tuple[int, str]]):
+        raw = request.POST.get(field, "")
+        allowed = {str(pk) for pk, _ in choices}
+        return QboAccount.objects.get(pk=raw) if raw in allowed else None
+
+    config = QboAccountMapping.load()
+    config.expense_account = pick("expense_account", qbo_bills.expense_choices())
+    config.payment_account = pick("payment_account", qbo_bills.payment_choices())
+    config.save()
+    if config.expense_account and config.payment_account:
+        messages.success(request, "Accounts saved. Waiting bills go out on the next sync.")
+    else:
+        messages.error(request, "Choose an expense account and a bank account.")
+    return redirect("quickbooks_settings")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_refresh_accounts(request: HttpRequest) -> HttpResponse:
+    """Re-read the company's expense and bank accounts now (the hourly sync does it too)."""
+    from apps.payments import qbo_bills
+
+    qbo = _qbo_or_404()
+    if not qbo.is_connected():
+        messages.error(request, "Connect QuickBooks first.")
+        return redirect("quickbooks_settings")
+    try:
+        count = qbo_bills.refresh_accounts()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        messages.error(request, "Couldn't read QuickBooks' accounts. Try again in a minute.")
+    else:
+        messages.success(request, f"{count} expense and bank accounts read from QuickBooks.")
+    return redirect("quickbooks_settings")
 
 
 @login_required

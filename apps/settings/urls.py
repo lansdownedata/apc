@@ -9,6 +9,12 @@ urlpatterns = [
     path("quickbooks/", views.quickbooks_settings, name="quickbooks_settings"),
     path("quickbooks/connect/", views.quickbooks_connect, name="quickbooks_connect"),
     path("quickbooks/disconnect/", views.quickbooks_disconnect, name="quickbooks_disconnect"),
+    path("quickbooks/accounts/", views.quickbooks_accounts, name="quickbooks_accounts"),
+    path(
+        "quickbooks/refresh-accounts/",
+        views.quickbooks_refresh_accounts,
+        name="quickbooks_refresh_accounts",
+    ),
     path(
         "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
     ),

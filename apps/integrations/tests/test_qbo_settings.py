@@ -233,3 +233,96 @@ def test_a_state_works_only_once(owner):
 
     assert again.status_code == 400
     assert exchange.call_count == 1
+
+
+# --- APC-74: which accounts affiliate bills post to and pay from ----------------------------
+
+
+def _cached_accounts(realm="9130"):
+    from apps.billing.models import QboAccount
+
+    expense = QboAccount.objects.create(
+        realm_id=realm,
+        qbo_id="70",
+        name="Subcontracted transportation",
+        account_type="Cost of Goods Sold",
+    )
+    bank = QboAccount.objects.create(
+        realm_id=realm, qbo_id="35", name="Business checking", account_type="Bank"
+    )
+    return expense, bank
+
+
+@override_settings(**QBO)
+def test_the_screen_asks_for_both_accounts_until_they_are_chosen(owner):
+    _live()
+    _cached_accounts()
+
+    html = owner.get(reverse("quickbooks_settings")).content.decode()
+
+    assert "Affiliate bills" in html
+    assert 'name="expense_account"' in html and 'name="payment_account"' in html
+    assert "data-tom" in html  # the searchable select, never a bare <select>
+    assert "Subcontracted transportation" in html and "Business checking" in html
+    assert "won't go to QuickBooks until" in html
+
+
+@override_settings(**QBO)
+def test_saving_the_account_choice(owner):
+    from apps.billing.models import QboAccountMapping
+
+    _live()
+    expense, bank = _cached_accounts()
+
+    resp = owner.post(
+        reverse("quickbooks_accounts"),
+        {"expense_account": expense.pk, "payment_account": bank.pk},
+    )
+
+    assert resp.status_code == 302
+    config = QboAccountMapping.load()
+    assert (config.expense_account, config.payment_account) == (expense, bank)
+    html = owner.get(reverse("quickbooks_settings")).content.decode()
+    assert "won't go to QuickBooks until" not in html
+
+
+@override_settings(**QBO)
+def test_an_account_of_the_wrong_kind_or_company_is_refused(owner):
+    from apps.billing.models import QboAccountMapping
+
+    _live()
+    expense, bank = _cached_accounts()
+    _, theirs = _cached_accounts(realm="other")
+
+    owner.post(
+        reverse("quickbooks_accounts"),
+        {"expense_account": bank.pk, "payment_account": theirs.pk},
+    )
+
+    config = QboAccountMapping.load()
+    assert (config.expense_account, config.payment_account) == (None, None)
+
+
+@override_settings(**QBO)
+def test_refreshing_accounts_reads_the_chart_of_accounts(owner):
+    _live()
+    rows = {
+        "QueryResponse": {
+            "Account": [{"Id": "70", "Name": "Subs", "AccountType": "Expense", "Active": True}]
+        }
+    }
+
+    with patch("apps.payments.qbo_bills.qbo.request", return_value=rows):
+        resp = owner.post(reverse("quickbooks_refresh_accounts"))
+
+    assert resp.status_code == 302
+    from apps.billing.models import QboAccount
+
+    assert QboAccount.objects.filter(realm_id="9130", name="Subs", active=True).exists()
+
+
+@override_settings(**QBO)
+def test_the_account_choice_is_owner_admin_only(client):
+    client.force_login(UserFactory(role=User.Role.AGENT))
+
+    assert client.post(reverse("quickbooks_accounts"), {}).status_code in (302, 403)
