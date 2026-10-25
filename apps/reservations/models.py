@@ -321,8 +321,10 @@ class Reservation(TimeStampedModel):
         flat = Decimal(self.gratuity_flat or 0)
         if flat > 0:
             return flat.quantize(self._CENTS)
-        tipped = self.discounted_base + self.overtime_amount
-        return (tipped * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+        base = (self.discounted_base * Decimal(self.gratuity_pct or 0) / 100).quantize(self._CENTS)
+        # Two cent-rounded parts, so `gratuity` always equals base + `overtime_gratuity`
+        # and a receipt or ledger split never disagrees with the total by a cent.
+        return base + self.overtime_gratuity
 
     @property
     def extras_total(self) -> Decimal:
@@ -353,7 +355,7 @@ class Reservation(TimeStampedModel):
 
     @property
     def overtime_label(self) -> str:
-        """"Overtime (2 hrs)" on an hourly trip, "Wait time (1 hr)" on a transfer."""
+        """ "Overtime (2 hrs)" on an hourly trip, "Wait time (1 hr)" on a transfer."""
         hours = Decimal(self.overtime_hours or 0)
         what = "Wait time" if self.trip_type == self.TripType.TRANSFER else "Overtime"
         unit = "hr" if hours == 1 else "hrs"
