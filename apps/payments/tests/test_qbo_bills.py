@@ -294,10 +294,8 @@ def test_a_vendor_name_held_by_a_customer_is_a_readable_error_and_one_alert():
 
     vendor.refresh_from_db()
     assert vendor.qbo_sync_state == SyncState.ERROR
-    assert vendor.qbo_sync_error == (
-        "QuickBooks already has a customer or employee named “Capital Coach”. Rename the"
-        " vendor here or there, then retry."
-    )
+    assert vendor.qbo_sync_error.startswith("QuickBooks already has a name like “Capital Coach”")
+    assert vendor.qbo_sync_error.endswith("Rename the vendor here or there, then retry.")
     alert = Notification.objects.get()
     assert alert.vendor_id == vendor.pk and "Capital Coach" in alert.title
 
@@ -1130,3 +1128,33 @@ def test_quickbooks_refusing_a_bill_create_moves_it_to_a_new_request_id():
     first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
 
     assert first != second and len(second) <= 50
+
+
+def test_linking_an_existing_vendor_never_blanks_what_the_bookkeeper_entered():
+    vendor = VendorFactory(name="Capital Coach", email="", phone="")
+    _payable(vendor=vendor)
+    existing = {
+        "QueryResponse": {
+            "Vendor": [{"Id": "31", "SyncToken": "4", "DisplayName": "Capital Coach"}]
+        }
+    }
+
+    with patch(REQ, side_effect=[_fault("6240"), existing, _vendor("31", "5")]) as req:
+        assert qbo_bills.push_vendor(vendor) is True
+
+    update = req.call_args_list[2].kwargs["json"]
+    assert update["DisplayName"] == "Capital Coach"
+    for kept in ("PrimaryEmailAddr", "PrimaryPhone", "CompanyName"):
+        assert kept not in update
+
+
+def test_a_name_quickbooks_has_but_not_as_this_vendor_is_worded_carefully():
+    vendor = _payable().assignment.vendor
+
+    with patch(REQ, side_effect=[_fault("6240"), {"QueryResponse": {}}]):
+        qbo_bills.push_vendor(vendor)
+
+    vendor.refresh_from_db()
+    assert vendor.qbo_sync_error.startswith(
+        "QuickBooks already has a name like “Capital Coach” (it may differ in case or spacing)"
+    )

@@ -337,10 +337,21 @@ def _quoted(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
+def _link_payload(vendor) -> dict:
+    """Taking over a vendor the bookkeeper already made: send the name and only what we
+    actually have — never a blank over their email or phone, never our name over their
+    company name."""
+    body = {"DisplayName": vendor.name}
+    if vendor.email:
+        body["PrimaryEmailAddr"] = {"Address": vendor.email}
+    if vendor.phone:
+        body["PrimaryPhone"] = {"FreeFormNumber": vendor.phone}
+    return body
+
+
 def _link_existing_vendor(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict:
-    """QuickBooks already has this name. If it is a vendor, link it and send ours over it
-    ("created or linked on first sync"); if a customer or employee holds it, that's for a
-    person to sort out."""
+    """QuickBooks already has this name. If it is exactly one vendor, link it and send ours
+    over it ("created or linked on first sync"); otherwise it's for a person to sort out."""
     if link.get("id") or _fault_code(exc) != DUPLICATE_NAME:
         raise exc
     vendor = link.record
@@ -349,12 +360,12 @@ def _link_existing_vendor(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict
     found = rows.get("QueryResponse", {}).get("Vendor", [])
     if len(found) != 1:
         raise _Refused(
-            f"QuickBooks already has a customer or employee named “{vendor.name}”. Rename the"
-            " vendor here or there, then retry."
+            f"QuickBooks already has a name like “{vendor.name}” (it may differ in case or"
+            " spacing). Rename the vendor here or there, then retry."
         )
     link.put("id", str(found[0]["Id"]))
     link.put("sync_token", str(found[0]["SyncToken"]))
-    return _send(link, vendor_payload(vendor))  # now an update: ours replaces what's there
+    return _send(link, _link_payload(vendor))
 
 
 def push_vendor(vendor) -> bool:
