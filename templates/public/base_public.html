@@ -52,13 +52,13 @@
 <body class="bg-paper text-ink antialiased">
   {% block header %}{% include "public/_header.html" %}{% endblock %}
   <main>{% block content %}{% endblock %}</main>
-  {% include "public/_footer.html" %}
+  {% block footer %}{% include "public/_footer.html" %}{% endblock %}
   {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
   {% include "components/modal.html" %}
   {% include "components/flash_messages.html" %}
   {% include "components/toasts.html" %}
-  {% if calendly_url %}{% include "public/_calendly.html" %}
-                       {% include "public/_schedule_form.html" %}{% endif %}
+  {% block marketing_embeds %}{% if calendly_url %}{% include "public/_calendly.html" %}
+                       {% include "public/_schedule_form.html" %}{% endif %}{% endblock %}
   {% block body_extra %}{% endblock %}
 </body>
 </html>

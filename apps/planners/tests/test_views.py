@@ -18,6 +18,7 @@ from apps.planners import services
 from apps.planners.auth import SESSION_KEY
 from apps.planners.models import PlannerAccount
 from apps.planners.tokens import planner_token
+from apps.planners.views import TOKEN_PLACEHOLDER
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
 
@@ -75,11 +76,15 @@ def _wedding(contact, *, status=Lead.Status.BOOKED, days=30, name="Whitfield & O
 
 def test_an_invited_planner_registers_and_lands_signed_in(client, account):
     url = _register_url(account)
-    page = client.get(url)
+    hop = client.get(url)
+    # like Django's reset view: the token moves into the session and out of the address bar
+    assert hop.status_code == 302
+    assert TOKEN_PLACEHOLDER in hop.url and planner_token.make_token(account) not in hop.url
+    page = client.get(hop.url)
     assert page.status_code == 200
     assert "dana@example.com" in page.content.decode()
 
-    response = client.post(url, {"new_password1": PASSWORD, "new_password2": PASSWORD})
+    response = client.post(hop.url, {"new_password1": PASSWORD, "new_password2": PASSWORD})
     assert response.status_code == 302
     assert response.url == reverse("planners:weddings")
     account.refresh_from_db()
@@ -87,12 +92,30 @@ def test_an_invited_planner_registers_and_lands_signed_in(client, account):
     assert client.get(reverse("planners:weddings")).status_code == 200
 
 
+def test_the_token_less_address_needs_the_session_token(client, account):
+    hop = client.get(_register_url(account)).url
+    from django.test import Client
+
+    assert Client().get(hop).status_code == 400
+
+
 def test_a_bad_or_used_registration_link_is_refused(client, account):
     url = _register_url(account)
-    client.post(url, {"new_password1": PASSWORD, "new_password2": PASSWORD})
+    hop = client.get(url).url
+    client.post(hop, {"new_password1": PASSWORD, "new_password2": PASSWORD})
     assert client.get(url).status_code == 400
     bogus = reverse("planners:register", kwargs={"uidb64": "MTIz", "token": "nope"})
     assert client.get(bogus).status_code == 400
+
+
+def test_planner_pages_carry_no_marketing_embeds_or_footer(client, settings):
+    settings.CALENDLY_URL = "https://calendly.com/allprocharter/chat"
+    html = client.get(reverse("planners:login")).content.decode()
+    assert "calendly" not in html.lower()
+    assert "openScheduler" not in html
+    assert "Service Area" not in html  # the marketing footer
+    home = client.get("/").content.decode()
+    assert "calendly" in home.lower()  # the public site is unchanged
 
 
 def test_an_uninvited_contact_has_no_way_in(client):

@@ -89,20 +89,34 @@ def _account_from_link(uidb64: str, token: str, generator) -> PlannerAccount | N
     return account if generator.check_token(account, token) else None
 
 
+# Like Django's PasswordResetConfirmView: the token is moved into the session and the
+# address bar shows this placeholder instead, so it never sits in history or a Referer.
+TOKEN_PLACEHOLDER = "set"
+LINK_SESSION_KEY = "_planner_link_token"
+
+
 def set_password(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
     """Registration (from the invite) and password reset share this page: both are a
     signed link that lets the holder choose a password. Unauthenticated by design — the
     token is the guard, and it dies the moment a password is set."""
-    generator = (
-        planner_reset_token if request.resolver_match.url_name == "set_password" else planner_token
-    )
-    account = _account_from_link(uidb64, token, generator)
+    name = request.resolver_match.url_name
+    generator = planner_reset_token if name == "set_password" else planner_token
+    if token != TOKEN_PLACEHOLDER:
+        account = _account_from_link(uidb64, token, generator)
+        if account is None:
+            return _page(request, "planners/link_invalid.html", status=400)
+        request.session[LINK_SESSION_KEY] = token
+        return redirect(
+            reverse(f"planners:{name}", kwargs={"uidb64": uidb64, "token": TOKEN_PLACEHOLDER})
+        )
+    account = _account_from_link(uidb64, request.session.get(LINK_SESSION_KEY, ""), generator)
     if account is None:
         return _page(request, "planners/link_invalid.html", status=400)
     first_time = account.registered_at is None
     form = AcceptInviteForm(account, request.POST or None)
     if request.method == "POST" and form.is_valid():
         services.register(account, form.cleaned_data["new_password1"])
+        request.session.pop(LINK_SESSION_KEY, None)
         sign_in(request, account)
         messages.success(request, "You're all set." if first_time else "Password updated.")
         return redirect("planners:weddings")
