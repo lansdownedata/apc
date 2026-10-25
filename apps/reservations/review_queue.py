@@ -126,7 +126,9 @@ class OrderRow:
 
     @property
     def total_due(self) -> Decimal:
-        return self.order_total + self.approved_overtime - self.overtime_refunded
+        """`order_total` is the live sum of the trips' `line_total`, which already carries
+        the approved overtime (spec 2026-10-25 §3) — it is not added a second time."""
+        return self.order_total - self.overtime_refunded
 
     @property
     def remaining(self) -> Decimal:
@@ -135,7 +137,7 @@ class OrderRow:
     @property
     def order_balance(self) -> Decimal:
         """What the booked order itself still owes, before any overtime."""
-        return max(self.order_total - self.collected, ZERO)
+        return max(self.order_total - self.approved_overtime - self.collected, ZERO)
 
     @property
     def payable_summary(self) -> list[dict]:
@@ -258,12 +260,12 @@ def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:
     tasks = defaultdict(list)
     for t in lead.review_tasks:
         tasks[(t.reservation_id, t.kind)].append(t)
-    plan = getattr(lead, "payment", None)
     trips = sorted(lead.reservations.all(), key=lambda r: (r.pickup_date, r.pickup_time, r.pk))
     row = OrderRow(
         lead=lead,
         collected=collected,
-        order_total=Decimal(plan.quote_total if plan is not None else lead.quote_total),
+        # Live, from the trips already loaded: overtime and extras live on the trip now.
+        order_total=sum((trip.line_total for trip in trips), ZERO),
         finished_at=post_trip.order_finished_at(trips, now=now, grace=grace),
         accounting_open=any(
             t.status in Task.UNRESOLVED for t in lead.review_tasks if t.kind in ACCOUNTING_KINDS

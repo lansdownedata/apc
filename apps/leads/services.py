@@ -378,6 +378,11 @@ def book_lead(lead: Lead) -> Lead:
         lead.save(update_fields=["status", "updated_at"])
         touchpoints.cancel_pending(lead)
         touchpoints.schedule_service_touchpoints(lead)
+    # Freeze each trip's total as booked (spec 2026-10-25 §4.4). Blanks only, so the
+    # balance payment re-entering here never re-freezes an edited trip.
+    from apps.reservations import pricing
+
+    pricing.freeze_booked_totals(lead)
 
     plan, created = PaymentPlan.objects.get_or_create(lead=lead)
     if created or plan.quote_total == 0:

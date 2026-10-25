@@ -53,7 +53,8 @@ def accountant(client):
 
 def _order(*, trips=1, paid=True, card=True):
     """A booked order whose trips ran yesterday (3h at $200/h, 20% gratuity → $720 each),
-    in review. `paid` = the whole order total already collected; else only the deposit."""
+    in review. 45 min of overtime bills the full hour (APC-91): $200 base + $40 gratuity.
+    `paid` = the whole order total already collected; else only the deposit."""
     lead = LeadFactory(status=Lead.Status.BOOKED)
     made = []
     for _ in range(trips):
@@ -106,7 +107,7 @@ def _review(trip, minutes=45, *, complete=True):
     return review
 
 
-def _intent(pi_id="pi_final", *, amount=18000, status="succeeded"):
+def _intent(pi_id="pi_final", *, amount=24000, status="succeeded"):
     return MagicMock(
         id=pi_id,
         status=status,
@@ -142,14 +143,14 @@ def _lines(kind):
 
 def test_the_bill_is_approved_overtime_plus_the_remaining_balance():
     lead, plan, (trip,) = _order(paid=False)
-    _review(trip, 45)  # $150 base + $30 gratuity
+    _review(trip, 45)  # $200 base + $40 gratuity (full hour)
 
     bill = services.final_bill(lead)
 
-    assert bill.overtime_base == Decimal("150.00")
-    assert bill.overtime_gratuity == Decimal("30.00")
+    assert bill.overtime_base == Decimal("200.00")
+    assert bill.overtime_gratuity == Decimal("40.00")
     assert bill.order_balance == plan.balance_amount
-    assert bill.amount == plan.balance_amount + Decimal("180.00")
+    assert bill.amount == plan.balance_amount + Decimal("240.00")
     assert bill.ready
 
 
@@ -159,28 +160,32 @@ def test_a_paid_order_bills_only_the_overtime():
 
     bill = services.final_bill(lead)
 
-    assert (bill.order_balance, bill.amount) == (Decimal("0.00"), Decimal("180.00"))
+    assert (bill.order_balance, bill.amount) == (Decimal("0.00"), Decimal("240.00"))
 
 
 def test_totals_and_remaining_include_approved_overtime_everywhere(accountant):
     lead, plan, (trip,) = _order()
     _review(trip, 45)
 
-    assert services.remaining_balance(lead) == Decimal("180.00")
+    assert services.remaining_balance(lead) == Decimal("240.00")
     row = review_queue.order_review(lead.pk)
-    assert row.total_due == plan.quote_total + Decimal("180.00")
-    assert row.remaining == Decimal("180.00")
+    assert row.total_due == plan.quote_total + Decimal("240.00")
+    assert row.remaining == Decimal("240.00")
     order_page = accountant.get(reverse("order_detail", args=[lead.pk])).content.decode()
-    assert "$180.00" in order_page
+    assert "$240.00" in order_page
     listing = accountant.get(reverse("trip_review_list") + "?stage=billing").content.decode()
-    assert "$180.00" in listing
+    assert "$240.00" in listing
 
 
-def test_an_unfinished_review_is_not_approved_overtime():
+def test_a_decided_review_is_owed_before_it_is_completed():
+    """A decision is money (spec 2026-10-25 §3.2): the trip's Overtime line carries it the
+    moment a person decides, completion only locks it. The final bill still waits for
+    every review (`_ready_bill`)."""
     lead, _plan, (trip,) = _order()
     _review(trip, 45, complete=False)
 
-    assert services.remaining_balance(lead) == Decimal("0.00")
+    assert services.remaining_balance(lead) == Decimal("240.00")
+    assert not services.final_bill(lead).all_reviewed
 
 
 def test_the_final_bill_overtime_uses_the_discounted_rate_like_the_review_screen():
@@ -195,8 +200,9 @@ def test_the_final_bill_overtime_uses_the_discounted_rate_like_the_review_screen
 
     assert bill.overtime_base == Decimal("180.00")
     assert bill.overtime_gratuity == Decimal("36.00")
-    # Remaining reads `approved_overtime`, a second path to the same number.
-    assert services.remaining_balance(lead) == Decimal("216.00")
+    # Remaining reads the live trip total: the 10% discount applied after the $720 was
+    # collected takes $72 off what is owed, so $216 of overtime leaves $144.
+    assert services.remaining_balance(lead) == Decimal("144.00")
 
 
 # --- refused until ready -------------------------------------------------------------
@@ -269,21 +275,21 @@ def test_charging_takes_the_bill_off_the_card_and_splits_the_ledger():
     charge, create = _charge(lead)
 
     kwargs = create.call_args.kwargs
-    assert kwargs["amount"] == 18000
+    assert kwargs["amount"] == 24000
     assert kwargs["off_session"] is True and kwargs["confirm"] is True
     assert kwargs["metadata"]["kind"] == "final"
     charge.refresh_from_db()
     assert (charge.kind, charge.status) == (Charge.Kind.FINAL, Charge.Status.SUCCEEDED)
     assert (charge.overtime_amount, charge.overtime_gratuity) == (
-        Decimal("180.00"),
-        Decimal("30.00"),
+        Decimal("240.00"),
+        Decimal("40.00"),
     )
     assert (charge.card_brand, charge.card_last4) == ("visa", "4242")
     assert _lines(JournalEntry.Kind.OVERTIME_CAPTURED) == sorted(
         [
-            (Account.CASH, Decimal("180.00"), Decimal("0.00")),
-            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("150.00")),
-            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("30.00")),
+            (Account.CASH, Decimal("240.00"), Decimal("0.00")),
+            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("200.00")),
+            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("40.00")),
         ]
     )
     assert not JournalEntry.objects.filter(
@@ -297,14 +303,14 @@ def test_a_card_on_file_order_with_a_balance_posts_both_parts():
     _review(trip, 45)
     balance = plan.balance_amount
 
-    charge, _ = _charge(lead, _intent(amount=int((balance + Decimal("180")) * 100)))
+    charge, _ = _charge(lead, _intent(amount=int((balance + Decimal("240")) * 100)))
 
     balance_entry = JournalEntry.objects.get(kind=JournalEntry.Kind.BALANCE_CAPTURED, charge=charge)
     assert balance_entry.is_balanced
     cash = sum(line.debit for line in balance_entry.lines.all() if line.account == Account.CASH)
     assert cash == balance
     assert JournalEntry.objects.get(kind=JournalEntry.Kind.OVERTIME_CAPTURED).is_balanced
-    assert ledger.order_balances(lead)["collected"] == plan.quote_total + Decimal("180.00")
+    assert ledger.order_balances(lead)["collected"] == plan.quote_total + Decimal("240.00")
     plan.refresh_from_db()
     assert plan.balance_status == PaymentPlan.BalanceStatus.PAID
 
@@ -349,7 +355,7 @@ def test_a_decline_leaves_tasks_open_and_raises_the_alert():
     assert Notification.objects.filter(lead=lead, kind=Notification.Kind.BALANCE_FAILED).exists()
     plan.refresh_from_db()
     assert plan.balance_status == PaymentPlan.BalanceStatus.PAID  # the booked balance was paid
-    assert services.remaining_balance(lead) == Decimal("180.00")
+    assert services.remaining_balance(lead) == Decimal("240.00")
 
 
 def test_after_a_decline_a_new_attempt_is_made():
@@ -377,7 +383,7 @@ def test_the_pay_page_asks_for_the_final_bill_once_every_trip_is_reviewed(client
 
     body = client.get(reverse("quote_pay", args=[token])).content.decode()
 
-    assert "Final bill" in body and "$180.00" in body
+    assert "Final bill" in body and "$240.00" in body
 
 
 def test_the_pay_page_holds_overtime_back_until_every_trip_is_reviewed(client):
@@ -419,7 +425,7 @@ def test_paying_the_link_splits_the_ledger_the_same_way(client):
 
     charge = Charge.objects.get(kind=Charge.Kind.FINAL)
     assert charge.status == Charge.Status.SUCCEEDED
-    assert charge.overtime_amount == Decimal("180.00")
+    assert charge.overtime_amount == Decimal("240.00")
     assert _lines(JournalEntry.Kind.OVERTIME_CAPTURED)[0][0] == Account.CASH
     assert Task.objects.get(reservation=trip, kind="overtime_invoiced").status == "done"
 
@@ -495,7 +501,7 @@ def test_the_card_offers_charge_and_link_once_reviewed(accountant):
 
     body = accountant.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
 
-    assert "Charge card $180.00" in body
+    assert "Charge card $240.00" in body
     assert "Send payment link" in body
     assert "visa" in body.lower() and "4242" in body
 

@@ -7,6 +7,7 @@ skips. Unpaid deposits are the office's job (the deposit report + Send payment l
 """
 
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -33,9 +34,16 @@ def _plan(**kwargs):
     kwargs.setdefault("card_last4", "4242")
     kwargs.setdefault("balance_status", PaymentPlan.BalanceStatus.SCHEDULED)
     lead = kwargs.pop("lead", None) or LeadFactory(status=Lead.Status.BOOKED)
-    plan = PaymentPlanFactory(lead=lead, **kwargs)
-    ReservationFactory(lead=lead, pickup_date=PICKUP)
-    return plan
+    # The one trip is worth the whole quote total: what is owed reads the live trip
+    # totals, not the plan's snapshot (spec 2026-10-25 §3).
+    ReservationFactory(
+        lead=lead,
+        pickup_date=PICKUP,
+        rate=Decimal(str(kwargs["quote_total"])),
+        hours=1,
+        min_hours=0,
+    )
+    return PaymentPlanFactory(lead=lead, **kwargs)
 
 
 def _reminder(lead):

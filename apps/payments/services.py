@@ -305,14 +305,13 @@ def overtime_refunded(lead) -> Decimal:
 def remaining_balance(lead) -> Decimal:
     """Total due minus collected cash. Never negative.
 
-    Total due is the quote total plus the customer overtime approved on completed trip
-    reviews (APC-60), so every Remaining — the money card, the pay page, Trip Review —
-    includes the overtime still to collect."""
-    from apps.reservations.reviews import approved_overtime
-
-    plan = getattr(lead, "payment", None)
-    total = Decimal(plan.quote_total if plan is not None else lead.quote_total)
-    total += sum(approved_overtime(lead), ZERO) - overtime_refunded(lead)
+    Total due is the *live* order total — the sum of the trips' `line_total`, which carries
+    overtime and extras on the trip itself (spec 2026-10-25 §3) — so a price edit on a
+    booked order changes what is owed. The plan's `quote_total` snapshot stays the deposit
+    basis only. `overtime_refunded` is still taken off for historical REFUND rows that
+    returned overtime while the trip kept its hours; story 2 replaces that with a credit
+    line per refund."""
+    total = Decimal(lead.quote_total) - overtime_refunded(lead)
     leftover = total - ledger.order_balances(lead)["collected"]
     return leftover if leftover > ZERO else ZERO
 
