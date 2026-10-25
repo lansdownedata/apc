@@ -34,6 +34,7 @@ from apps.core.templatetags.phone_filters import phone_display
 from apps.leads.models import Lead
 from apps.messaging.models import Message
 from apps.payments.models import PaymentPlan
+from apps.planners import selectors as planner_selectors
 
 from . import services
 from .models import Company, Contact, ContactPhone
@@ -250,6 +251,7 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             # Cards and terms accounts — built in one selector so the profile and the
             # billing screen (Phase 6) can never disagree about what a customer owes.
             **billing_selectors.billing_context(contact),
+            "planner_access": planner_selectors.access_for(contact),
         },
     )
 

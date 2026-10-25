@@ -1,0 +1,36 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+{% comment %}
+  The planner area's shell (APC-66): the public site's, with a slim header in place of the
+  marketing nav — logo, the dispatch number a planner needs on the day, and Sign out when
+  signed in. Nothing to sell on a page someone is working from.
+{% endcomment %}
+{% block meta %}
+<title>{% block title %}Your weddings{% endblock %} · All Pro Charter</title>
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block header %}
+<header class="sticky top-0 z-50 border-b border-line bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+  <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:px-6">
+    <a href="{% if planner %}{% url 'planners:weddings' %}{% else %}{% url 'planners:login' %}{% endif %}"
+       class="flex shrink-0 items-center gap-2.5 rounded-lg focus-gold" aria-label="All Pro Charter — your weddings">
+      <img src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter" class="h-8 w-auto">
+      <span class="hidden font-display text-[14.5px] font-semibold leading-none tracking-tight text-ink sm:block">All Pro Charter</span>
+    </a>
+    <a href="tel:{{ dispatch.tel }}" class="ml-auto inline-flex items-center gap-1.5 rounded text-[13px] font-semibold text-ink focus-gold hover:text-goldd">
+      {% icon "phone" class="h-4 w-4 text-goldd" %}<span class="num">{{ dispatch.display }}</span>
+    </a>
+    {% if planner %}
+    <form method="post" action="{% url 'planners:logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-muted ring-1 ring-line transition-colors hover:bg-surface2 hover:text-ink focus-gold">
+        {% icon "logout" class="h-4 w-4" %}<span class="hidden sm:inline">Sign out</span>
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+{% endblock %}
+
+{% block schema %}{% endblock %}

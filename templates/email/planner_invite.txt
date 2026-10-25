@@ -1,0 +1,17 @@
+{% autoescape off %}Hi {{ name|default:"there" }},
+
+{{ company_name }} has set up a page for the weddings you're planning with us: every
+pickup, vehicle and, closer to the day, every driver, in one place.
+
+Create your account here:
+{{ register_url }}
+
+This link works once and expires in 7 days. If it lapses, ask your coordinator to send a
+new one.
+
+If you weren't expecting this, you can ignore this email.
+
+--
+{{ company_name }}
+{% if company_email %}{{ company_email }}{% endif %}{% if company_email and company_phone %} · {% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
+{% endautoescape %}

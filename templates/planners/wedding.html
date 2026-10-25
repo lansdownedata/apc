@@ -1,0 +1,15 @@
+{% extends "planners/base.html" %}
+{% block title %}{{ w.title }}{% endblock %}
+{% block content %}
+<div class="mx-auto w-full max-w-2xl px-4 pb-16 pt-8 sm:px-6 sm:pt-12">
+  <a href="{% url 'planners:weddings' %}" class="inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-muted focus-gold hover:text-ink">Your weddings</a>
+  {% if w.archived %}
+  <p class="mt-4 flex items-center gap-2 rounded-xl bg-surface2 px-3.5 py-3 text-[13px] text-muted">
+    {% icon "archive" class="h-4 w-4" %} Archived: this wedding is complete. The page stays here for your records.
+  </p>
+  {% endif %}
+  <span class="mt-4 block font-mono2 text-[10.5px] uppercase tracking-[0.14em] text-goldd">Wedding transportation &middot; {{ w.reference }}</span>
+  <h1 class="mt-2.5 font-display text-[clamp(1.65rem,5vw,2.3rem)] font-semibold leading-tight tracking-tight text-ink">{{ w.title }}</h1>
+  <p class="mt-1.5 text-[14px] text-muted">{{ w.date_label }}</p>
+</div>
+{% endblock %}

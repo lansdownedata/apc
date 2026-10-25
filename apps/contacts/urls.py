@@ -1,5 +1,7 @@
 from django.urls import path
 
+from apps.planners import staff_views as planner_views
+
 from . import views
 
 urlpatterns = [
@@ -29,6 +31,10 @@ urlpatterns = [
         views.contact_address_update,
         name="contact_address_update",
     ),
+    # planner portal access (APC-66) — invite / resend / revoke from the profile
+    path("<int:pk>/planner/invite/", planner_views.invite, name="planner_invite"),
+    path("<int:pk>/planner/resend/", planner_views.resend, name="planner_resend"),
+    path("<int:pk>/planner/revoke/", planner_views.revoke, name="planner_revoke"),
     path("companies/<int:pk>/", views.company_detail, name="company_detail"),
     path("companies/<int:pk>/update/", views.company_update, name="company_update"),
 ]
