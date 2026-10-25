@@ -1419,3 +1419,78 @@ def test_a_bill_approved_before_the_start_date_never_goes_and_isnt_marked():
     req.assert_not_called()
     payable.refresh_from_db()
     assert (payable.qbo_sync_state, payable.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
+
+
+# --- Retry says why ---------------------------------------------------------------------------
+
+
+def test_retry_when_the_vendor_is_refused_says_so_instead_of_sent(cashier):
+    _map()
+    payable = _paid()
+
+    with patch(REQ, side_effect=[_fault("6240"), {"QueryResponse": {}}]):
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    assert body["ok"] is True
+    assert body["reason"].startswith("The vendor isn't in QuickBooks: QuickBooks already has")
+    assert body["payable"]["qbo"]["bill_state"] == "not_synced"
+
+
+def test_retry_that_gets_everything_there_has_no_reason(cashier):
+    _map()
+    payable = _paid()
+
+    with patch(REQ, side_effect=[_vendor(), _bill(), _billpayment()]):
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    assert body["reason"] == ""
+
+
+def test_retry_on_a_bill_from_before_the_start_date_says_it_isnt_sent(cashier):
+    _map(bills_from=date(2026, 10, 25))
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ) as req:
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    req.assert_not_called()
+    assert "before Oct 25, 2026" in body["reason"]
+
+
+def test_retry_while_the_cron_is_sending_it_says_so(cashier):
+    from django.utils import timezone
+
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_push_started_at=timezone.now())
+
+    with patch(REQ) as req:
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    req.assert_not_called()
+    assert "being sent to QuickBooks right now" in body["reason"]
+
+
+def test_a_refused_file_is_the_reason_even_though_the_bill_and_payment_went(cashier):
+    _map()
+    payable = _paid(vendor=_linked_vendor(), file=_pdf())
+
+    with patch(REQ, side_effect=[_bill(), _billpayment(), _refused_file()]):
+        body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
+
+    assert body["reason"] == "QuickBooks didn't accept the invoice file: File type is not supported"
+
+
+def test_the_pane_reads_the_connection_once_for_many_payables():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.payments import payables
+
+    rows = [_payable() for _ in range(3)]
+    with patch("apps.payments.qbo_bills.qbo.is_connected", return_value=True) as connected:
+        with CaptureQueriesContext(connection):
+            states = [payables.payable_json(p, qbo_connected=True) for p in rows]
+
+    connected.assert_not_called()
+    assert all(s["qbo"] for s in states)

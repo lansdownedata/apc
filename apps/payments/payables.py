@@ -241,7 +241,7 @@ def vendor_payables(vendor, stage: str = "") -> list[AffiliatePayable]:
     return [p for p in rows if p.stage in wanted]
 
 
-def payable_json(payable: AffiliatePayable) -> dict:
+def payable_json(payable: AffiliatePayable, *, qbo_connected: bool | None = None) -> dict:
     def money(value):
         return None if value is None else f"{Decimal(value):.2f}"
 
@@ -257,5 +257,5 @@ def payable_json(payable: AffiliatePayable) -> dict:
         "approval_note": payable.approval_note,
         "paid_method": payable.get_paid_method_display() if payable.paid_method else "",
         "paid_reference": payable.paid_reference,
-        "qbo": qbo_bills.sync_state(payable),  # APC-74
+        "qbo": qbo_bills.sync_state(payable, connected=qbo_connected),  # APC-74
     }

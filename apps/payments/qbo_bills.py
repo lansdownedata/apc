@@ -946,25 +946,58 @@ def sync_pending() -> int:
     return pushed
 
 
-def push_everything_for(payable: AffiliatePayable) -> None:
-    """A person's Retry on one payable: its vendor if needed, its bill, then its payment.
+_BEING_SENT = "It's being sent to QuickBooks right now. Check again in a minute."
+
+
+def _why_not(record, prefix: str, waiting: str) -> str:
+    """Why a push left this record out of step: its own sentence, a push in flight, or what
+    it waits for."""
+    record.refresh_from_db()
+    if being_sent(record, prefix + "push_started_at"):
+        return _BEING_SENT
+    return getattr(record, prefix + "sync_error") or waiting
+
+
+def _in_step(record, realm: str, prefix: str = "qbo_") -> bool:
+    return (
+        bool(getattr(record, prefix + "id"))
+        and getattr(record, prefix + "realm_id") == realm
+        and getattr(record, prefix + "sync_state") == SyncState.SYNCED
+    )
+
+
+def push_everything_for(payable: AffiliatePayable) -> str:
+    """A person's Retry on one payable: its vendor if needed, its bill, its payment, its file.
+    Returns "" when all of it is in QuickBooks, otherwise the sentence saying why not.
     Raises SyncPaused / QboNotConnected for the caller to word."""
     payable = _payable(payable)
     if not _is_bill(payable):
-        return
+        return "Only an approved payable goes to QuickBooks."
+    start = bills_from()
+    if start is not None and not in_window(payable, start):
+        return (
+            f"Approved before {start:%b} {start.day}, {start.year}, when affiliate bills started"
+            " going to QuickBooks, so it isn't sent."
+        )
     realm = customers.current_realm()
     vendor = payable.assignment.vendor
-    if not _in_company(vendor, realm) or vendor.qbo_sync_state != SyncState.SYNCED:
+    if start is not None and not _in_step(vendor, realm):
         if not push_vendor(vendor):
-            return
-    payable.refresh_from_db()
-    if payable.qbo_sync_state != SyncState.SYNCED or not _bill_in_step(payable, realm):
-        if not push_bill(payable):
-            return
-    payable.refresh_from_db()
+            reason = _why_not(vendor, "qbo_", "Waiting for the vendor to reach QuickBooks.")
+            return reason if reason == _BEING_SENT else f"The vendor isn't in QuickBooks: {reason}"
+    if not _in_step(payable, realm) and not push_bill(payable):
+        return _why_not(payable, "qbo_", "Waiting for the bill to reach QuickBooks.")
     if payable.status == AffiliatePayable.Status.PAID:
-        push_payment(payable)
-    push_attachment(payable)
+        payable.refresh_from_db()
+        if not _in_step(payable, realm, "qbo_payment_") and not push_payment(payable):
+            return _why_not(payable, "qbo_payment_", "Waiting for the payment to reach QuickBooks.")
+    if payable.invoice_file:
+        payable.refresh_from_db()
+        if not _in_step(payable, realm, "qbo_attachment_") and not push_attachment(payable):
+            return _why_not(
+                payable, "qbo_attachment_", "Waiting for the invoice file to reach QuickBooks."
+            )
+    return ""
 
 
 def push_vendor(vendor) -> bool:
@@ -1008,12 +1041,15 @@ def run_hourly() -> int:
     return pushed + sync_pending()
 
 
-def sync_state(payable: AffiliatePayable) -> dict | None:
-    """What the payable pane shows: the bill's and the payment's state and sentence, and where
-    Retry posts. None while QuickBooks isn't connected (no wall of red chips)."""
+def sync_state(payable: AffiliatePayable, *, connected: bool | None = None) -> dict | None:
+    """What the payable pane shows: the bill's, payment's and file's state and sentence, and
+    where Retry posts. None while QuickBooks isn't connected (no wall of red chips). Pass
+    `connected` when building many, so the connection is read once."""
     from django.urls import reverse
 
-    if not qbo.is_connected():
+    if connected is None:
+        connected = qbo.is_connected()
+    if not connected:
         return None
     return {
         "bill_state": payable.qbo_sync_state,

@@ -760,6 +760,7 @@ function tripReviewForm(opts) {
         this.payable = json.payable;
         this.$dispatch("trip-review-changed");
         if (done) Alpine.store("toast").push({ type: "success", title: done });
+        return json;
       } catch (e) {
         this.error = e.message || "That didn't save.";
         Alpine.store("toast").push({ type: "danger", title: this.error });
@@ -772,11 +773,11 @@ function tripReviewForm(opts) {
     retryPayableSync() {
       const url = this.payable && this.payable.qbo && this.payable.qbo.sync_url;
       if (!url) return;
+      /* "Sent" only when the server says everything is there; otherwise its reason (the
+         vendor's refusal, a missing setting, a push already in flight). */
       return this._payableAction(url, new FormData(), null)
-        .then(() => {
-          const q = this.payable.qbo || {};
-          const error = q.bill_state === "error" ? q.bill_error : q.payment_state === "error" ? q.payment_error : "";
-          if (error) Alpine.store("toast").push({ type: "error", title: "Still not in QuickBooks", message: error });
+        .then((json) => {
+          if (json && json.reason) Alpine.store("toast").push({ type: "error", title: "Still not in QuickBooks", message: json.reason });
           else Alpine.store("toast").push({ type: "success", title: "Sent to QuickBooks" });
         })
         .catch(() => {});

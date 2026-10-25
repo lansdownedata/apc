@@ -492,9 +492,10 @@ def payable_sync(request, pk):
     if not qbo.is_connected():
         return _json_error("QuickBooks isn't connected.")
     try:
-        qbo_bills.push_everything_for(payable)
+        reason = qbo_bills.push_everything_for(payable)
     except qbo.QboNotConnected as exc:
         return _json_error(str(exc))
     except qbo_bills.SyncPaused:
         return _json_error("QuickBooks couldn't be reached. Try again in a minute.", status=502)
-    return _payable_ok(payable)
+    payable.refresh_from_db()
+    return JsonResponse({"ok": True, "payable": payables.payable_json(payable), "reason": reason})
