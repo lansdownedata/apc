@@ -194,6 +194,10 @@ def request_change(request: HttpRequest, pk: int) -> HttpResponse:
     except services.RequestRefused as exc:
         if exc.reason == "limited":
             return redirect(f"{base}?change=limited#request")
-        messages.error(request, "Tell us what needs to change, then send it.")
+        if exc.reason == "too_long":
+            limit = f"{services.MAX_REQUEST_LENGTH:,}"
+            messages.error(request, f"Please keep it under {limit} characters.")
+        else:
+            messages.error(request, "Tell us what needs to change, then send it.")
         return redirect(f"{base}?change=form#request")
     return redirect(f"{base}?change=sent#request")

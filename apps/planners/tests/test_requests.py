@@ -217,3 +217,33 @@ def test_an_archived_wedding_has_no_form(client, planner):
     html = _page(client, lead)
     assert 'id="request"' not in html
     assert _url(lead) not in html
+
+
+def test_a_request_over_the_limit_is_refused_not_cut(client, planner):
+    lead, _ = _wedding(planner)
+    response = client.post(
+        _url(lead), {"about": "", "body": "x" * (services.MAX_REQUEST_LENGTH + 1)}, follow=True
+    )
+    assert "Please keep it under 2,000 characters." in response.content.decode()
+    assert not Message.objects.exists() and not Task.objects.exists()
+
+
+def test_a_double_submit_is_one_request(client, planner):
+    lead, _ = _wedding(planner)
+    data = {"about": "", "body": "Add a late shuttle at midnight."}
+    first = client.post(_url(lead), data)
+    second = client.post(_url(lead), data)
+    assert first.url == second.url and second.url.endswith("?change=sent#request")
+    assert Message.objects.count() == 1 and Task.objects.count() == 1
+    assert PlannerRequest.objects.count() == 1
+
+
+def test_the_same_words_later_or_elsewhere_are_a_new_request(client, planner):
+    lead, _ = _wedding(planner)
+    other, _ = _wedding(planner)
+    data = {"about": "", "body": "Add a late shuttle at midnight."}
+    client.post(_url(lead), data)
+    client.post(_url(other), data)
+    PlannerRequest.objects.update(created_at=timezone.now() - timedelta(seconds=31))
+    client.post(_url(lead), data)
+    assert PlannerRequest.objects.count() == 3

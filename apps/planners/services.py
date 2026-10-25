@@ -281,6 +281,9 @@ def is_archived(trips, *, now=None, grace: timedelta | None = None) -> bool:
 REQUEST_LIMIT = 10  # per planner account, per rolling hour
 REQUEST_WINDOW = timedelta(hours=1)
 MAX_REQUEST_LENGTH = 2000
+# The same words from the same planner about the same wedding inside this window are a
+# double tap on Send, not a second request.
+DUPLICATE_WINDOW = timedelta(seconds=30)
 
 
 class RequestRefused(Exception):
@@ -311,15 +314,31 @@ def request_change(account: PlannerAccount, lead: Lead, *, about: str, body: str
 
     from .models import PlannerRequest
 
-    text = (body or "").strip()[:MAX_REQUEST_LENGTH]
+    text = (body or "").strip()
     if not text:
         raise RequestRefused("blank")
-    if over_limit(account):
-        raise RequestRefused("limited")
+    if len(text) > MAX_REQUEST_LENGTH:
+        raise RequestRefused("too_long")
     title = lead.wedding_name.strip() or lead.contact.name
     about_line = about or "the whole day"
     composed = f"Planner request · {title} ({lead.quote_no})\nAbout: {about_line}\n\n{text}"
     with transaction.atomic():
+        # Serialise one planner's submissions, so a double tap can't slip two rows past
+        # the duplicate check or the limit.
+        PlannerAccount.objects.select_for_update().filter(pk=account.pk).first()
+        duplicate = (
+            account.requests.filter(
+                lead=lead,
+                message__body=composed,
+                created_at__gte=timezone.now() - DUPLICATE_WINDOW,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if duplicate is not None:
+            return duplicate
+        if over_limit(account):
+            raise RequestRefused("limited")
         conversation = messaging.conversation_for(account.contact)
         message = messaging.record_inbound(
             conversation,
