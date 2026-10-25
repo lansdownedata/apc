@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AccountGroup, BillingAccount, QboTerm, SyncState
+from .models import AccountGroup, BillingAccount, QboAccount, QboAccountMapping, QboTerm, SyncState
 
 # Fields QuickBooks holds a copy of (APC-42): changing one here queues the record again, the
 # same as an edit on the contact page does.
@@ -60,6 +60,28 @@ class QboTermAdmin(admin.ModelAdmin):
     list_display = ("name", "qbo_id", "active", "updated_at")
     list_filter = ("active",)
     readonly_fields = ("qbo_id", "name", "active")
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(QboAccount)
+class QboAccountAdmin(admin.ModelAdmin):
+    """Read from QuickBooks by the hourly sync and Settings → QuickBooks → Refresh accounts."""
+
+    list_display = ("name", "account_type", "qbo_id", "realm_id", "active", "updated_at")
+    list_filter = ("active", "account_type")
+    readonly_fields = ("realm_id", "qbo_id", "name", "account_type", "active")
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(QboAccountMapping)
+class QboAccountMappingAdmin(admin.ModelAdmin):
+    """Chosen on Settings → QuickBooks; shown here for support."""
+
+    list_display = ("__str__", "expense_account", "payment_account")
 
     def has_add_permission(self, request):
         return False

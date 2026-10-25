@@ -1067,3 +1067,9 @@ def test_a_replaced_invoice_file_is_uploaded_under_a_new_request_id():
         qbo_bills.push_bill(payable)
 
     assert req.call_args_list[1].kwargs["params"]["requestid"] != first
+
+
+def test_the_accounts_cache_and_the_choice_are_in_the_admin(admin_client):
+    QboAccountMapping.load()
+    for name in ("qboaccount", "qboaccountmapping"):
+        assert admin_client.get(reverse(f"admin:billing_{name}_changelist")).status_code == 200
