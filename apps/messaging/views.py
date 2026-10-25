@@ -68,6 +68,15 @@ def _conversations(q: str = "", conversation_filter: str = "open") -> QuerySet[C
     return qs
 
 
+def _is_planner_thread(conversation: Conversation, thread: list[Message]) -> bool:
+    """The contact signs in to the planner portal, or the latest message came from it."""
+    from apps.planners.models import PlannerAccount
+
+    if thread and thread[-1].channel == Message.Channel.PORTAL:
+        return True
+    return PlannerAccount.objects.filter(contact_id=conversation.contact_id).exists()
+
+
 @login_required
 def inbox(request):
     """Conversation list + (optionally) the selected thread, marking it read."""
@@ -77,6 +86,7 @@ def inbox(request):
         conversation_filter = "open"
 
     selected = None
+    planner_thread = False
     thread_messages: list[Message] = []
     leads: list[Lead] = []
     conversation_pk = request.GET.get("conversation")
@@ -98,10 +108,16 @@ def inbox(request):
         thread_messages = list(selected.messages.select_related("planner_request__lead"))
         # One conversation can spawn several quotes — the rail shows them all, so an
         # agent sees "2 quotes already" instead of creating a third by accident.
+        # A planner's thread (APC-68) isn't a lead to qualify: the rail shows the weddings
+        # they hold a role on, and Create lead is hidden.
+        planner_thread = _is_planner_thread(selected, thread_messages)
+        rail = (
+            Lead.objects.filter(people__contact=selected.contact).distinct()
+            if planner_thread
+            else selected.contact.leads.all()
+        )
         leads = list(
-            selected.contact.leads.select_related("payment")
-            .prefetch_related("reservations")
-            .order_by("-id")
+            rail.select_related("payment").prefetch_related("reservations").order_by("-id")
         )
 
     return render(
@@ -114,6 +130,7 @@ def inbox(request):
             "selected": selected,
             "thread_messages": thread_messages,
             "leads": leads,
+            "planner_thread": planner_thread,
             "conversation_filter": conversation_filter,
             "filter_tabs": FILTER_TABS,
             "q": q,

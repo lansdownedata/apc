@@ -63,12 +63,16 @@
         </div>
 
         <div class="ml-auto flex items-center gap-2 shrink-0">
+          {% if planner_thread %}
+          <span class="rounded-full px-2 py-1 text-[11px] font-semibold chip-gold">Wedding planner</span>
+          {% else %}
           <form method="post" action="{% url 'conversation_create_lead' selected.pk %}">
             {% csrf_token %}
             <button type="submit" class="btn-gold flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold">
               <i class="ti ti-plus text-[14px]"></i> Create lead
             </button>
           </form>
+          {% endif %}
           {% if selected.is_archived %}
           <form method="post" action="{% url 'conversation_unarchive' selected.pk %}">
             {% csrf_token %}
@@ -126,7 +130,7 @@
           <span class="num text-muted">${{ lead.quote_total|floatformat:2|intcomma }}</span>
         </a>
         {% empty %}
-        <span class="text-[11.5px] text-muted">Not qualified yet — no leads from this conversation.</span>
+        <span class="text-[11.5px] text-muted">{% if planner_thread %}No weddings on file for this planner.{% else %}Not qualified yet — no leads from this conversation.{% endif %}</span>
         {% endfor %}
       </div>
 
