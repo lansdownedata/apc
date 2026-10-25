@@ -404,10 +404,23 @@ def _customer_ref(lead, realm: str) -> dict | None:
     return {"value": group.qbo_id}
 
 
-def bill_lines(payable: AffiliatePayable, account: dict, customer: dict | None) -> list[dict]:
-    """Base payout, then overtime: what the affiliate invoiced, split for cost reporting.
+def bill_members(payable: AffiliatePayable) -> list[AffiliatePayable]:
+    """The payables one QuickBooks Bill carries — the only place that decides it.
 
-    The two lines always add up to the invoice amount (what was approved and accrued) and are
+    One today: a Bill per approved payable (one trip), its link (`qbo_*`, the attachment) on
+    that payable. The likely change is one Bill per *vendor invoice* — an affiliate sends one
+    invoice number and file covering several trips — and then this returns that invoice's
+    payables and the link moves to whatever record owns the invoice. Every payload, total and
+    "is it in step" check below reads the members from here, never assumes one.
+    """
+    return [payable]
+
+
+def _member_lines(payable: AffiliatePayable, account: dict, realm: str) -> list[dict]:
+    """One trip's lines: base payout, then overtime — what the affiliate invoiced for it,
+    split for cost reporting, each carrying the trip's customer for cost per job.
+
+    They always add up to the trip's invoice amount (what was approved and accrued) and are
     never negative: an invoice under the agreed payout is one base line for the invoice.
     Anything over the payout is the second line — the affiliate's overtime, or the override,
     plus any difference approved with a note.
@@ -417,6 +430,7 @@ def bill_lines(payable: AffiliatePayable, account: dict, customer: dict | None) 
     base = min(Decimal(payable.assignment.payout or 0), invoice)
     extra = invoice - base
     detail = {"AccountRef": account}
+    customer = _customer_ref(trip.lead, realm)
     if customer:
         detail |= {"CustomerRef": customer, "BillableStatus": "NotBillable"}
     lines = []
@@ -436,21 +450,31 @@ def bill_lines(payable: AffiliatePayable, account: dict, customer: dict | None) 
     return lines
 
 
+def bill_total(payable: AffiliatePayable) -> Decimal:
+    return sum((Decimal(m.invoice_amount or 0) for m in bill_members(payable)), ZERO)
+
+
 def bill_payload(payable: AffiliatePayable, realm: str) -> dict:
+    """The whole Bill. Updates send it whole too (with Id and SyncToken): Intuit documents a
+    full update for Bill, and every field here is the portal's, so nothing is lost."""
     account = expense_account_ref()
     if account is None:
         raise _Refused(_NO_EXPENSE_ACCOUNT, alert=False)
-    trip = payable.assignment.reservation
-    lead = trip.lead
+    members = bill_members(payable)
     number = payable.invoice_number
-    note = f"{trip.reference} · order {lead.quote_no}"
+    trips = ", ".join(m.assignment.reservation.reference for m in members)
+    orders = ", ".join(dict.fromkeys(m.assignment.reservation.lead.quote_no for m in members))
+    note = f"{trips} · order {orders}"
     if number:
         note += f" · affiliate invoice {number}"
+    first_trip = members[0].assignment.reservation
     body = {
         "VendorRef": {"value": payable.assignment.vendor.qbo_id},
-        "TxnDate": _trip_date(payable.invoice_received_at or payable.approved_at, trip).isoformat(),
+        "TxnDate": _trip_date(
+            payable.invoice_received_at or payable.approved_at, first_trip
+        ).isoformat(),
         "PrivateNote": note,
-        "Line": bill_lines(payable, account, _customer_ref(lead, realm)),
+        "Line": [line for m in members for line in _member_lines(m, account, realm)],
     }
     if number:
         body["DocNumber"] = number[:DOC_NUMBER_MAX]
@@ -556,6 +580,17 @@ def _attach_invoice(payable: AffiliatePayable) -> None:
 # --- bill payments -----------------------------------------------------------------------------
 
 
+PAID_BILL_LOCKED = (
+    "This bill is already paid in QuickBooks, so its amount can't change here. Raise the"
+    " difference with the affiliate as a new invoice."
+)
+
+
+def amount_locked(payable: AffiliatePayable) -> bool:
+    """A Bill with a BillPayment against it is never edited: its amount is frozen here."""
+    return bool(payable.qbo_payment_id)
+
+
 def payment_payload(payable: AffiliatePayable) -> dict:
     """Check is the only pay type for money from a bank account (QuickBooks has Check and
     CreditCard); ACH, Zelle and other bank transfers go as Check with the method in the memo."""
@@ -563,7 +598,7 @@ def payment_payload(payable: AffiliatePayable) -> dict:
     if account is None:
         raise _Refused(_NO_PAYMENT_ACCOUNT, alert=False)
     trip = payable.assignment.reservation
-    amount = float(Decimal(payable.invoice_amount or 0))
+    amount = float(bill_total(payable))
     note = f"Paid by {payable.get_paid_method_display() or 'other'}"
     if payable.paid_reference:
         note += f" · {payable.paid_reference}"

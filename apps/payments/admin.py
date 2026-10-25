@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 
 from apps.billing.models import SyncState
@@ -69,11 +70,32 @@ class JournalEntryAdmin(admin.ModelAdmin):
         return False
 
 
+class AffiliatePayableAdminForm(forms.ModelForm):
+    class Meta:
+        model = AffiliatePayable
+        fields = (
+            "invoice_number",
+            "invoice_file",
+            "invoice_amount",
+            "invoice_received_at",
+            "approval_note",
+        )
+
+    def clean(self):
+        from . import qbo_bills
+
+        data = super().clean()
+        if "invoice_amount" in self.changed_data and qbo_bills.amount_locked(self.instance):
+            self.add_error("invoice_amount", qbo_bills.PAID_BILL_LOCKED)
+        return data
+
+
 @admin.register(AffiliatePayable)
 class AffiliatePayableAdmin(admin.ModelAdmin):
     """Read-mostly: approving and paying post ledger entries, so they happen through the
     trip review (`payables`), never by editing a status here."""
 
+    form = AffiliatePayableAdminForm
     list_display = ("assignment", "status", "expected_amount", "invoice_amount", "paid_at")
     list_filter = ("status", "paid_method")
     search_fields = ("invoice_number", "assignment__vendor__name")

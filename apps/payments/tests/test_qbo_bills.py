@@ -779,26 +779,59 @@ def test_approving_queues_the_bill_and_marking_paid_queues_the_payment():
     assert not qbo_bills.pending_bills(REALM).filter(pk=payable.pk).exists()
 
 
-def test_correcting_a_synced_bill_in_the_admin_queues_an_update_of_bill_and_payment(admin_client):
+def _admin_correct(admin_client, payable, amount):
     from django.urls import reverse
 
-    payable = _bill_synced(_paid(vendor=_linked_vendor()))
-    AffiliatePayable.objects.filter(pk=payable.pk).update(
-        qbo_payment_id="190",
-        qbo_payment_realm_id=REALM,
-        qbo_payment_sync_state=SyncState.SYNCED,
+    return admin_client.post(
+        reverse("admin:payments_affiliatepayable_change", args=[payable.pk]),
+        {"invoice_number": "INV-77", "invoice_amount": amount, "approval_note": "Toll added"},
     )
 
-    admin_client.post(
-        reverse("admin:payments_affiliatepayable_change", args=[payable.pk]),
-        {"invoice_number": "INV-77", "invoice_amount": "480.00", "approval_note": "Toll added"},
-    )
+
+def test_correcting_an_unpaid_synced_bill_in_the_admin_queues_an_update(admin_client):
+    payable = _bill_synced(_payable(vendor=_linked_vendor()))
+
+    _admin_correct(admin_client, payable, "480.00")
 
     payable.refresh_from_db()
     assert payable.invoice_amount == Decimal("480.00")
     assert payable.qbo_id == "145"  # still the same bill: the re-push is an update
     assert payable.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_a_paid_payable_not_yet_in_quickbooks_can_still_be_corrected(admin_client):
+    payable = _bill_synced(_paid(vendor=_linked_vendor()))
+
+    _admin_correct(admin_client, payable, "480.00")
+
+    payable.refresh_from_db()
+    assert payable.invoice_amount == Decimal("480.00")
+    assert payable.qbo_sync_state == SyncState.NOT_SYNCED
     assert payable.qbo_payment_sync_state == SyncState.NOT_SYNCED
+
+
+def test_the_amount_of_a_bill_paid_in_quickbooks_cant_be_changed(admin_client):
+    """Never edit a paid Bill: once its BillPayment exists, correcting the amount is refused
+    here with a sentence saying why (coordinator, 2026-10-25)."""
+    payable = _bill_synced(_paid(vendor=_linked_vendor()))
+    AffiliatePayable.objects.filter(pk=payable.pk).update(
+        qbo_payment_id="190", qbo_payment_realm_id=REALM, qbo_payment_sync_state=SyncState.SYNCED
+    )
+
+    resp = _admin_correct(admin_client, payable, "480.00")
+
+    assert "already paid in QuickBooks" in resp.content.decode()
+    payable.refresh_from_db()
+    assert payable.invoice_amount == Decimal("470.00")
+    assert payable.qbo_sync_state == SyncState.SYNCED
+
+
+def test_one_bill_is_one_approved_payable_today():
+    """Which payables make up a QuickBooks Bill lives in one place (`bill_members`): one trip
+    per bill now; one vendor invoice covering several trips is the likely next step."""
+    payable = _payable()
+
+    assert qbo_bills.bill_members(payable) == [payable]
 
 
 def test_renaming_a_vendor_in_the_admin_queues_it(admin_client):
