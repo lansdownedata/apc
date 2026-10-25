@@ -28,10 +28,10 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
     contact = ContactFactory()
 
     booked1 = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
-    PaymentPlanFactory(lead=booked1, quote_total=Decimal("1000.00"))
     ReservationFactory(lead=booked1)
     ReservationFactory(lead=booked1)
     ReservationFactory(lead=booked1)
+    PaymentPlanFactory(lead=booked1, quote_total=Decimal("1000.00"))  # after the trips
     # Messages on the same lead: the reservations x messages cartesian must not
     # inflate the LTV Sum or the trips Count.
     convo1 = ConversationFactory(contact=booked1.contact)
@@ -39,12 +39,12 @@ def test_ltv_sums_only_booked_plans_without_join_multiplication(logged_in_client
     MessageFactory(conversation=convo1)
 
     booked2 = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
+    ReservationFactory(lead=booked2)
+    ReservationFactory(lead=booked2)
     PaymentPlanFactory(lead=booked2, quote_total=Decimal("500.00"))
-    ReservationFactory(lead=booked2)
-    ReservationFactory(lead=booked2)
 
     lost = LeadFactory(contact=contact, status=Lead.Status.LOST)
-    PaymentPlanFactory(lead=lost, quote_total=Decimal("9999.00"))
+    PaymentPlanFactory(lead=lost, quote_total=Decimal("9999.00"), trips=False)
 
     resp = logged_in_client.get(reverse("contact_list"))
     row = _row_for(resp.context["contacts"], contact)

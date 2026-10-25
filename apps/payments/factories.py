@@ -22,8 +22,8 @@ class PaymentPlanFactory(factory.django.DjangoModelFactory):
         a bare `quote_total` and no trips would owe nothing. Give it one flat trip worth
         the snapshot unless the lead already has trips."""
         total = Decimal(str(self.quote_total or 0))
-        if not create or total <= 0 or self.lead.reservations.exists():
-            return
+        if extracted is False or not create or total <= 0 or self.lead.reservations.exists():
+            return  # `trips=False` opts out for a lead that must stay trip-less
         from apps.reservations.factories import ReservationFactory
 
         ReservationFactory(lead=self.lead, rate=total, hours=1, min_hours=0)

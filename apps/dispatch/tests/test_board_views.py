@@ -160,7 +160,8 @@ def test_week_query_count_stays_flat(logged_in_client, django_assert_max_num_que
 
     # +2 for the green-lit task prefetches (APC-56), +1 for the nav task badge (APC-53) —
     # constant, not per trip.
-    with django_assert_max_num_queries(19):
+    # +1 (APC-100): the editor's cleaning-fee default reads TaskConfig once. Constant.
+    with django_assert_max_num_queries(20):
         logged_in_client.get(reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat()})
 
 
