@@ -94,8 +94,8 @@ def update_account(account: BillingAccount, *, name: str, terms: str) -> Billing
     account.terms = terms
     account.qbo_sync_state = SyncState.NOT_SYNCED  # the QuickBooks customer needs the change
     account.save(update_fields=["name", "terms", "qbo_sync_state", "updated_at"])
-    # Every group's QuickBooks name carries the account's name, and groups may inherit its
-    # terms — so they go out again too.
+    # Groups may inherit the account's terms, so they go out again too (a harmless sparse
+    # update when nothing of theirs changed).
     account.groups.update(qbo_sync_state=SyncState.NOT_SYNCED)
     return account
 

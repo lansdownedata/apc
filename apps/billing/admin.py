@@ -31,7 +31,7 @@ class BillingAccountAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         requeue = change and _requeue_if_changed(obj, set(form.changed_data))
         super().save_model(request, obj, form, change)
-        if requeue:  # every group's QuickBooks name carries the account's, and may inherit terms
+        if requeue:  # groups may inherit the account's terms
             obj.groups.update(qbo_sync_state=SyncState.NOT_SYNCED)
 
     def save_formset(self, request, form, formset, change):

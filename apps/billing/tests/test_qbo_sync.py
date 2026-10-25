@@ -77,9 +77,9 @@ def test_a_group_is_a_sub_customer_of_its_account_with_its_own_email():
         qbo_sync.push(group)
 
     body = req.call_args.kwargs["json"]
-    # DisplayName is unique across every customer, so two accounts' "Accounts Payable" groups
-    # can't both be called that — the account's name goes in front.
-    assert body["DisplayName"] == "Ridgeline Partners - Accounts Payable"
+    # Plain group name: QuickBooks lets sub-customers of different accounts share a name
+    # (Moe, 2026-10-25), and the indent under the account already shows whose it is.
+    assert body["DisplayName"] == "Accounts Payable"
     assert body["ParentRef"] == {"value": "58"}
     assert body["Job"] is True
     assert body["BillWithParent"] is False
@@ -607,3 +607,31 @@ def test_an_edit_in_the_admin_queues_the_record_and_its_groups(admin_client):
 
 def test_the_quickbooks_terms_cache_is_in_the_admin(admin_client):
     assert admin_client.get(reverse("admin:billing_qboterm_changelist")).status_code == 200
+
+
+def test_two_accounts_can_each_have_an_accounts_payable_group():
+    for n, name in enumerate(("Ridgeline Partners", "Harbor Events")):
+        account = _account(name=name)
+        account.qbo_id = str(58 + n)
+        account.qbo_sync_state = SyncState.SYNCED
+        account.save()
+
+    with patch(REQ, side_effect=[_created("70"), _created("71")]) as req:
+        qbo_sync.sync_pending()
+
+    sent = [c.kwargs["json"] for c in req.call_args_list]
+    assert [b["DisplayName"] for b in sent] == ["Accounts Payable", "Accounts Payable"]
+    assert [b["ParentRef"]["value"] for b in sent] == ["58", "59"]
+
+
+def test_a_failed_groups_alert_still_names_its_account():
+    account = _account()
+    account.qbo_id = "58"
+    account.save()
+
+    with patch(REQ, side_effect=_fault("6240")):
+        qbo_sync.push(account.groups.get())
+
+    assert Notification.objects.filter(
+        title="QuickBooks sync failed: Ridgeline Partners - Accounts Payable"
+    ).exists()

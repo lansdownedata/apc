@@ -1,6 +1,7 @@
 """Push billing accounts and groups to QuickBooks Online (APC-42) — outbound only.
 
-* An account is a Customer; each group is a sub-customer (`ParentRef` + `Job: true`) with
+* An account is a Customer; each group is a sub-customer (`ParentRef` + `Job: true`, plain
+  group name) with
   `BillWithParent: false`, so invoices bill on the group itself (Moe's decision).
 * Nothing here is called from a request that saves a record: saving marks it NOT_SYNCED, and
   the hourly `retry-qbo-sync` cron (or a person's "Retry sync") pushes it. QuickBooks is
@@ -65,8 +66,14 @@ def current_realm() -> str:
 
 
 def display_name(record) -> str:
-    """QuickBooks needs DisplayName unique across every customer, vendor and employee, so a
-    group carries its account's name in front ("Ridgeline Partners - Accounts Payable")."""
+    """The name QuickBooks shows. A group is its plain name ("Accounts Payable"): QuickBooks
+    lets sub-customers of different accounts share one (Moe, 2026-10-25), and it shows each
+    under its account."""
+    return record.name
+
+
+def _who(record) -> str:
+    """Which record, for staff alerts: a group's name alone doesn't say whose it is."""
     if isinstance(record, AccountGroup):
         return f"{record.account.name} - {record.name}"
     return record.name
@@ -178,7 +185,7 @@ def _fail(record, message: str) -> None:
         Notification.notify(
             None,
             Notification.Kind.SYNC_FAILED,
-            title=f"QuickBooks sync failed: {display_name(record)}",
+            title=f"QuickBooks sync failed: {_who(record)}",
             detail=record.qbo_sync_error,
         )
 
