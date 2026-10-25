@@ -120,15 +120,15 @@ def test_an_order_still_running_isnt_listed():
 def test_approved_overtime_adds_to_total_due_and_waived_doesnt():
     lead = _order(trips=2, collected="800")
     first, second = lead.reservations.order_by("pk")
-    _review(first, over=30, billable=30)  # $200/h → $100
+    _review(first, over=30, billable=30)  # $200/h, 30 min bills the hour → $200
     _review(second, over=30, billable=30, waived=True)
 
     row = _row(lead)
 
-    assert row.approved_overtime == Decimal("100.00")
+    assert row.approved_overtime == Decimal("200.00")
     assert row.approved_trips == 1
-    assert row.total_due == Decimal("900.00")
-    assert row.remaining == Decimal("100.00")
+    assert row.total_due == Decimal("1000.00")
+    assert row.remaining == Decimal("200.00")
     assert row.stage == review_queue.Stage.BILLING
 
 

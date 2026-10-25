@@ -83,12 +83,12 @@ def test_a_factor_trip_shares_overtime_at_its_factor():
     trip = _trip()  # payout = 70% of $600 = $420
     f = _figures(trip, _review(trip, billable=45, minutes_over=40))
 
-    assert f.customer_amount == Decimal("150.00")  # 45 min at $200/h
+    assert f.customer_amount == Decimal("200.00")  # 45 min bills a full hour at $200/h
     assert f.affiliate_share == Decimal("0.70")
     assert f.affiliate_share_basis == "factor"
-    assert f.affiliate_overtime_derived == Decimal("105.00")
-    assert f.affiliate_overtime_amount == Decimal("105.00")
-    assert f.expected_affiliate_amount == Decimal("525.00")  # $420 + $105
+    assert f.affiliate_overtime_derived == Decimal("140.00")
+    assert f.affiliate_overtime_amount == Decimal("140.00")
+    assert f.expected_affiliate_amount == Decimal("560.00")  # $420 + $140
 
 
 def test_a_flat_trip_shares_overtime_at_payout_over_subtotal():
@@ -97,8 +97,8 @@ def test_a_flat_trip_shares_overtime_at_payout_over_subtotal():
 
     assert f.affiliate_share_basis == "payout"
     assert f.affiliate_share == Decimal("0.75")
-    assert f.affiliate_overtime_amount == Decimal("75.00")  # $100 billed × 75%
-    assert f.expected_affiliate_amount == Decimal("525.00")
+    assert f.affiliate_overtime_amount == Decimal("150.00")  # $200 billed (full hour) × 75%
+    assert f.expected_affiliate_amount == Decimal("600.00")
 
 
 def test_a_separately_agreed_payout_uses_the_effective_share():
@@ -133,7 +133,7 @@ def test_gratuity_is_never_shared():
     trip = _trip(gratuity_pct=Decimal("20"))
     f = _figures(trip, _review(trip, billable=45, minutes_over=40))
 
-    assert f.affiliate_overtime_amount == Decimal("105.00")  # 70% of $150, not of $180
+    assert f.affiliate_overtime_amount == Decimal("140.00")  # 70% of $200, not of $240
 
 
 def test_the_override_replaces_the_derived_amount_and_needs_a_note():
@@ -171,7 +171,7 @@ def test_clearing_the_override_goes_back_to_the_derived_amount():
     f = _figures(trip, review)
 
     assert f.affiliate_overtime_overridden is False
-    assert f.affiliate_overtime_amount == Decimal("105.00")
+    assert f.affiliate_overtime_amount == Decimal("140.00")
     assert review.affiliate_overtime_note == ""
 
 

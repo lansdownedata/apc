@@ -268,3 +268,157 @@ def test_backfill_leaves_an_inexact_fifty_minute_split_alone(caplog):
     trip.refresh_from_db()
     assert trip.overtime_hours == Decimal("0.00")
     assert "left at 0 hours" in caplog.text
+
+
+# --- the review's decision and the trip's line stay in step -----------------
+from apps.accounts.factories import UserFactory  # noqa: E402
+from apps.reservations import pricing, reviews  # noqa: E402
+from apps.reservations.models import TripReview  # noqa: E402
+
+
+@pytest.fixture
+def staff():
+    return UserFactory()
+
+
+def test_ninety_billable_minutes_is_two_full_hours():
+    assert pricing.overtime_hours_from_minutes(90) == Decimal("2.00")
+    assert pricing.overtime_hours_from_minutes(60) == Decimal("1.00")
+    assert pricing.overtime_hours_from_minutes(0) == Decimal("0.00")
+
+
+def test_deciding_overtime_writes_the_trip_line(staff):
+    trip = _hourly()
+    review = reviews.review_for(trip)
+
+    reviews.save_review(review, user=staff, billable_overtime_minutes=120)
+
+    trip.refresh_from_db()
+    assert trip.overtime_hours == Decimal("2.00")
+    assert trip.line_total == Decimal("1480.00")
+
+
+def test_waiving_zeroes_the_trip_line(staff):
+    trip = _hourly()
+    review = reviews.review_for(trip)
+    reviews.save_review(review, user=staff, billable_overtime_minutes=60)
+
+    reviews.save_review(review, user=staff, overtime_waived=True, waive_reason="courtesy")
+
+    trip.refresh_from_db()
+    assert trip.overtime_hours == Decimal("0.00")
+
+
+def test_a_times_only_save_never_moves_money(staff):
+    """The suggestion is not a decision (review finding 1): entering actual times that run
+    71 minutes over leaves the trip's Overtime line alone until someone decides."""
+    from datetime import date, time
+
+    trip = _hourly(pickup_timezone="America/New_York")
+    review = reviews.review_for(trip)
+
+    reviews.save_review(
+        review,
+        user=staff,
+        actual_pickup_at=reviews.from_local(trip, date(2026, 10, 17), time(15, 30)),
+        actual_dropoff_at=reviews.from_local(trip, date(2026, 10, 17), time(22, 41)),
+    )
+
+    review.refresh_from_db()
+    trip.refresh_from_db()
+    assert review.suggested_overtime_minutes > 0
+    assert review.decided_at is None
+    assert trip.overtime_hours == Decimal("0.00")
+
+
+def test_editing_the_trip_line_is_a_decision_and_clears_the_waiver(staff):
+    trip = _hourly()
+    review = reviews.review_for(trip)
+    reviews.save_review(review, user=staff, overtime_waived=True, waive_reason="courtesy")
+
+    trip.overtime_hours = Decimal("1")
+    trip.save(update_fields=["overtime_hours"])
+    pricing.apply_trip_overtime(trip, user=staff)
+
+    review.refresh_from_db()
+    assert review.billable_overtime_minutes == 60
+    assert review.overtime_waived is False and review.waive_reason == ""
+    assert review.decided_by == staff and review.decided_at is not None
+
+
+def test_a_later_times_save_does_not_undo_an_editor_decision(staff):
+    """Review finding 2: the editor's hour must survive the next times-only save."""
+    from datetime import date, time
+
+    trip = _hourly(pickup_timezone="America/New_York")
+    review = reviews.review_for(trip)
+    trip.overtime_hours = Decimal("1")
+    trip.save(update_fields=["overtime_hours"])
+    pricing.apply_trip_overtime(trip, user=staff)
+
+    review = reviews.review_for(trip)  # a later request reloads the review, as the view does
+    reviews.save_review(
+        review,
+        user=staff,
+        actual_pickup_at=reviews.from_local(trip, date(2026, 10, 17), time(15, 30)),
+        actual_dropoff_at=reviews.from_local(trip, date(2026, 10, 17), time(23, 41)),
+    )
+
+    review.refresh_from_db()
+    trip.refresh_from_db()
+    assert review.billable_overtime_minutes == 60
+    assert trip.overtime_hours == Decimal("1.00")
+
+
+def test_editing_a_trip_with_no_review_creates_none(staff):
+    trip = _hourly(overtime_hours=Decimal("1"))
+
+    pricing.apply_trip_overtime(trip, user=staff)
+
+    assert not TripReview.objects.filter(reservation=trip).exists()
+
+
+def test_figures_read_the_trip_not_the_minutes(staff):
+    trip = _hourly(gratuity_pct=Decimal("20"))
+    review = reviews.review_for(trip)
+    reviews.save_review(review, user=staff, billable_overtime_minutes=120)
+    review.refresh_from_db()
+
+    f = reviews.figures(review, None)
+
+    assert f.customer_amount == Decimal("370.00")
+    assert f.customer_overtime_gratuity == Decimal("74.00")
+    assert f.customer_overtime_total == Decimal("444.00")
+
+
+def test_freeze_booked_totals_only_fills_blanks():
+    trip = _hourly(booked_total=Decimal("999"))
+    other = ReservationFactory(lead=trip.lead, rate=Decimal("185"), hours=Decimal("1"))
+
+    assert pricing.freeze_booked_totals(trip.lead) == 1
+
+    trip.refresh_from_db()
+    other.refresh_from_db()
+    assert trip.booked_total == Decimal("999.00")
+    assert other.booked_total == Decimal("185.00")
+
+
+def test_replace_extras_rewrites_the_rows_and_the_stored_total(staff):
+    trip = _hourly()
+    TripExtraFactory(reservation=trip, amount=Decimal("40"))
+
+    pricing.replace_extras(
+        trip,
+        [
+            {"kind": "cleaning", "label": "Cleaning fee", "amount": Decimal("250")},
+            {"kind": "credit", "label": "Credit", "amount": Decimal("50")},
+        ],
+        user=staff,
+    )
+
+    trip.refresh_from_db()
+    assert [(e.kind, e.created_by) for e in trip.extras.all()] == [
+        ("cleaning", staff),
+        ("credit", staff),
+    ]
+    assert trip.extras_total == Decimal("200.00")

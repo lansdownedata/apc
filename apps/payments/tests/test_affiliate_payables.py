@@ -143,14 +143,14 @@ def test_no_payable_before_the_order_enters_review():
 
 def test_expected_follows_the_billed_overtime_until_approval(accountant):
     (trip,) = _entered(_trip())
-    _bill(trip, 30)  # $100 billed × 70% = $70
-    assert _payable(trip).expected_amount == Decimal("490.00")
+    _bill(trip, 30)  # 30 min bills the hour: $200 × 70% = $140
+    assert _payable(trip).expected_amount == Decimal("560.00")
 
-    _invoiced(trip, "490.00")
+    _invoiced(trip, "560.00")
     payables.approve(_payable(trip), user=accountant)
-    _bill(trip, 60)
+    _bill(trip, 120)
 
-    assert _payable(trip).expected_amount == Decimal("490.00")
+    assert _payable(trip).expected_amount == Decimal("560.00")
 
 
 def test_variance_is_invoice_minus_expected():

@@ -304,6 +304,11 @@ def save_review(
     elif review.decided_at is None:
         review.billable_overtime_minutes = review.suggested_overtime_minutes
     review.save()
+    if deciding:
+        # A decision is money (spec 2026-10-25 §3.2); a suggestion never is.
+        from . import pricing
+
+        pricing.apply_review_overtime(review)
     return review
 
 
@@ -334,6 +339,9 @@ def complete_review(review: TripReview, *, user) -> TripReview:
                 "updated_at",
             ]
         )
+        from . import pricing
+
+        pricing.apply_review_overtime(review)
     task = Task.objects.filter(
         reservation_id=review.reservation_id, kind="ops_review", status__in=Task.UNRESOLVED
     ).first()
@@ -522,8 +530,10 @@ def figures(review: TripReview, coverage, *, config=None, pickup=_UNSET) -> Figu
     over = clock.over
     billable = 0 if review.overtime_waived else review.billable_overtime_minutes
     rate = trip.discounted_rate  # the discount carries into overtime (client, 2026-10-18)
-    customer_amount = _money(billable, rate)
-    ot_gratuity = overtime_gratuity(trip, customer_amount)
+    # The money is the trip's Overtime line (spec 2026-10-25 §3), not a re-derivation from
+    # the minutes: one total for the review screen, the order page and the receipt.
+    customer_amount = trip.overtime_amount
+    ot_gratuity = trip.overtime_gratuity
 
     kind, provider, payout = "none", "", Decimal("0")
     if coverage is not None:
@@ -590,7 +600,6 @@ def approved_overtime(lead) -> tuple[Decimal, Decimal]:
         if review.overtime_waived or not review.billable_overtime_minutes:
             continue
         trip = review.reservation
-        amount = _money(review.billable_overtime_minutes, trip.discounted_rate)
-        base += amount
-        gratuity += overtime_gratuity(trip, amount)
+        base += trip.overtime_amount
+        gratuity += trip.overtime_gratuity
     return base, gratuity

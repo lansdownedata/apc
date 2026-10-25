@@ -151,7 +151,7 @@ def test_a_reviewed_trip_shows_its_billed_overtime(staff):
 
     body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
 
-    assert "Reviewed · 30 min OT billed ($84.00)" in body
+    assert "Reviewed · 30 min OT billed ($168.00)" in body  # 30 min bills the hour
 
 
 def test_an_order_not_in_review_404s(staff):
@@ -296,9 +296,9 @@ def test_saving_the_customer_decision_and_driver_pay_separately(staff):
 
     data = resp.json()["review"]
     assert data["billable_minutes"] == 30
-    assert data["customer_amount"] == "84.00"
-    # 30 billed min × the payout share would be $70; the adjustment replaces it.
-    assert data["affiliate_overtime_derived"] == "70.00"
+    assert data["customer_amount"] == "168.00"  # 30 min bills the full hour
+    # 30 billed min bill the hour: $200 × the 70% share would be $140; the adjustment replaces it.
+    assert data["affiliate_overtime_derived"] == "140.00"
     assert data["affiliate_overtime_overridden"] is True
     assert data["expected_affiliate_amount"] == "480.00"
     assert data["decided"] is True

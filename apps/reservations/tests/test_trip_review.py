@@ -678,13 +678,13 @@ def test_figures_for_a_farmed_out_trip():
     assert (f.billed_minutes, f.actual_minutes, f.over_minutes) == (180, 220, 40)
     assert f.suggested_minutes == 60  # 40 over, 15-min grace: a full hour
     assert f.customer_rate == Decimal("168")
-    assert f.customer_amount == Decimal("126.00")  # 45 min at $168/h
+    assert f.customer_amount == Decimal("168.00")  # 45 min bills the full hour at $168/h
     assert f.coverage == "affiliate"
     assert f.payout == Decimal("420")
     # $420 isn't what the trip's factor pays, so the share is payout ÷ subtotal ($504).
     assert f.affiliate_share_basis == "payout"
-    assert f.affiliate_overtime_amount == Decimal("105.00")  # $126 × 420/504
-    assert f.expected_affiliate_amount == Decimal("525.00")
+    assert f.affiliate_overtime_amount == Decimal("140.00")  # $168 × 420/504
+    assert f.expected_affiliate_amount == Decimal("560.00")
 
 
 def test_a_waived_review_bills_nothing_and_pays_the_affiliate_no_overtime():
@@ -769,11 +769,11 @@ def _billed(trip, minutes):
 def test_overtime_is_billed_at_the_trips_rate_with_a_percentage_gratuity():
     trip = _finished_trip(rate=Decimal("200"), gratuity_pct=Decimal("20"))
 
-    f = _billed(trip, 45)
+    f = _billed(trip, 45)  # 45 min bills a full hour (APC-91): $200
 
-    assert f.customer_amount == Decimal("150.00")  # base
-    assert f.customer_overtime_gratuity == Decimal("30.00")
-    assert f.customer_overtime_total == Decimal("180.00")
+    assert f.customer_amount == Decimal("200.00")  # base
+    assert f.customer_overtime_gratuity == Decimal("40.00")
+    assert f.customer_overtime_total == Decimal("240.00")
 
 
 def test_a_flat_gratuity_adds_nothing_to_overtime():
@@ -784,7 +784,7 @@ def test_a_flat_gratuity_adds_nothing_to_overtime():
     f = _billed(trip, 45)
 
     assert f.customer_overtime_gratuity == Decimal("0.00")
-    assert f.customer_overtime_total == Decimal("150.00")
+    assert f.customer_overtime_total == Decimal("200.00")
 
 
 def test_a_percentage_discount_applies_to_the_overtime_rate():
@@ -792,22 +792,22 @@ def test_a_percentage_discount_applies_to_the_overtime_rate():
         rate=Decimal("200"), discount_pct=Decimal("10"), gratuity_pct=Decimal("20")
     )
 
-    f = _billed(trip, 30)  # $200/h less 10% = $180/h; 30 min = $90; 20% gratuity = $18
+    f = _billed(trip, 30)  # $200/h less 10% = $180/h; 30 min bills the hour = $180; 20% = $36
 
     assert f.customer_rate == Decimal("180.00")
-    assert f.customer_amount == Decimal("90.00")
-    assert f.customer_overtime_gratuity == Decimal("18.00")
-    assert f.customer_overtime_total == Decimal("108.00")
+    assert f.customer_amount == Decimal("180.00")
+    assert f.customer_overtime_gratuity == Decimal("36.00")
+    assert f.customer_overtime_total == Decimal("216.00")
 
 
 def test_a_flat_discount_is_spread_over_the_billed_hours_for_overtime():
-    # 3 h at $200 = $600, less $60 flat = $540 → $180/h; 30 min of overtime bills $90.
+    # 3 h at $200 = $600, less $60 flat = $540 → $180/h; 30 min of overtime bills the hour.
     trip = _finished_trip(hours="3", rate=Decimal("200"), discount_flat=Decimal("60"))
 
     f = _billed(trip, 30)
 
     assert f.customer_rate == Decimal("180.00")
-    assert f.customer_amount == Decimal("90.00")
+    assert f.customer_amount == Decimal("180.00")
 
 
 def test_the_affiliates_overtime_follows_the_discounted_customer_amount():
@@ -816,19 +816,19 @@ def test_the_affiliates_overtime_follows_the_discounted_customer_amount():
     )
     Assignment.objects.active().filter(reservation=trip).update(payout=Decimal("270"))
 
-    f = _billed(trip, 30)  # $90 billed × (270 ÷ 600 subtotal) = $40.50
+    f = _billed(trip, 30)  # $180 billed (a full hour) × (270 ÷ 600 subtotal) = $81.00
 
-    assert f.customer_amount == Decimal("90.00")
-    assert f.affiliate_overtime_amount == Decimal("40.50")
+    assert f.customer_amount == Decimal("180.00")
+    assert f.affiliate_overtime_amount == Decimal("81.00")
 
 
-def test_overtime_rounds_half_up_to_the_cent():
+def test_overtime_is_whole_hours_and_the_gratuity_rounds_to_the_cent():
     trip = _finished_trip(rate=Decimal("100.10"), gratuity_pct=Decimal("15"))
 
-    f = _billed(trip, 15)  # $25.025 → $25.03; gratuity 15% of that = $3.7545 → $3.75
+    f = _billed(trip, 15)  # 15 min bills the hour: $100.10; 15% of that = $15.015 → $15.02
 
-    assert f.customer_amount == Decimal("25.03")
-    assert f.customer_overtime_gratuity == Decimal("3.75")
+    assert f.customer_amount == Decimal("100.10")
+    assert f.customer_overtime_gratuity == Decimal("15.02")
 
 
 def test_waived_overtime_totals_zero():
