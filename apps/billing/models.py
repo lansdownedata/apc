@@ -47,6 +47,9 @@ class QboSyncedModel(models.Model):
     # must send. Both blank until the first successful push (APC-42).
     qbo_id = models.CharField(max_length=64, blank=True)
     qbo_sync_token = models.CharField(max_length=32, blank=True)
+    # Which QuickBooks company `qbo_id` belongs to: connect a different company (sandbox, then
+    # the client's live one) and the record is pushed to it as new.
+    qbo_realm_id = models.CharField(max_length=32, blank=True)
     qbo_sync_state = models.CharField(
         max_length=20, choices=SyncState.choices, default=SyncState.NOT_SYNCED
     )

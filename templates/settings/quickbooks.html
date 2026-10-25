@@ -50,6 +50,7 @@
     {% endif %}
   </div>
 
+  {% if connected %}
   <div class="card p-5 sm:p-6 mt-4">
     <div class="flex items-center gap-2 mb-1">
       <h2 class="font-display text-[16px] font-semibold text-ink">Payment terms</h2>
@@ -62,10 +63,11 @@
       the customer, never guessed.
     </p>
     {% if unmatched_terms %}
-      <p class="text-[12.5px] text-ink mb-1">Not in QuickBooks yet — add them there, then refresh:</p>
-      <ul class="text-[12.5px] text-rose-600 mb-3 list-disc pl-5">{% for name in unmatched_terms %}<li>{{ name }}</li>{% endfor %}</ul>
+      <p class="text-[12.5px] text-ink mb-1">In use here but not in QuickBooks yet — add them there, then refresh. Those accounts won't sync until then:</p>
+      <ul class="text-[12.5px] text-ink font-medium mb-3 list-disc pl-5">{% for name in unmatched_terms %}<li>{{ name }}</li>{% endfor %}</ul>
     {% endif %}
     <p class="text-[12px] text-muted">In QuickBooks: {% for term in qbo_terms %}{{ term.name }}{% if not forloop.last %} · {% endif %}{% empty %}none read yet{% endfor %}</p>
   </div>
+  {% endif %}
 </div>
 {% endblock %}

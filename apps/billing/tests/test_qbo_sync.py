@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from apps.billing import qbo_sync, services
-from apps.billing.models import QboTerm, SyncState, Terms
+from apps.billing.models import BillingAccount, QboTerm, SyncState, Terms
 from apps.contacts.factories import ContactFactory
 from apps.integrations import qbo
 from apps.notifications.models import Notification
@@ -26,6 +26,7 @@ def connected():
 
 
 def _account(name="Ridgeline Partners", group="Accounts Payable", **kw):
+    QboTerm.objects.get_or_create(qbo_id="3", defaults={"name": "Net 30", "active": True})
     return services.create_account(ContactFactory(), name=name, group_name=group, **kw)
 
 
@@ -41,7 +42,7 @@ def _fault(code, message="", status=400):
 
 
 def _net30():
-    return QboTerm.objects.create(qbo_id="3", name="Net 30", active=True)
+    return QboTerm.objects.get_or_create(qbo_id="3", defaults={"name": "Net 30", "active": True})[0]
 
 
 # --- the payloads -------------------------------------------------------------------------
@@ -85,14 +86,19 @@ def test_a_group_is_a_sub_customer_of_its_account_with_its_own_email():
     assert body["PrimaryEmailAddr"] == {"Address": "ap@ridgeline.test"}
 
 
-def test_a_term_quickbooks_doesnt_have_is_left_off_never_guessed():
+def test_a_term_quickbooks_doesnt_have_stops_the_push_with_a_clear_error():
+    """Never silently change a customer's terms (ticket): a missing term is an error to fix
+    in QuickBooks, not a customer pushed with no terms."""
     QboTerm.objects.create(qbo_id="9", name="Net 60", active=True)
     account = _account(terms=Terms.NET_45)
 
-    with patch(REQ, return_value=_created("58")) as req:
-        qbo_sync.push(account)
+    with patch(REQ) as req:
+        assert qbo_sync.push(account) is False
 
-    assert "SalesTermRef" not in req.call_args.kwargs["json"]
+    req.assert_not_called()
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.ERROR
+    assert "Net 45" in account.qbo_sync_error
     assert "Net 45" in qbo_sync.unmatched_terms()
 
 
@@ -118,7 +124,8 @@ def test_a_retried_create_sends_the_same_request_id_so_quickbooks_returns_the_or
     account = _account()
 
     with patch(REQ, side_effect=[qbo.QboAPIError(0, "network: Timeout"), _created("58")]) as req:
-        qbo_sync.push(account)
+        with pytest.raises(qbo_sync.SyncPaused):
+            qbo_sync.push(account)
         qbo_sync.push(account)
 
     first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
@@ -220,15 +227,26 @@ def test_a_failure_alerts_once_not_every_hour():
     assert Notification.objects.filter(title__icontains="Ridgeline").count() == 1
 
 
-def test_an_outage_is_a_retryable_error_in_plain_words():
+def test_an_outage_pauses_the_push_and_marks_nothing():
     account = _account()
 
     with patch(REQ, side_effect=qbo.QboAPIError(503, "down")):
-        qbo_sync.push(account)
+        with pytest.raises(qbo_sync.SyncPaused):
+            qbo_sync.push(account)
 
     account.refresh_from_db()
-    assert account.qbo_sync_state == SyncState.ERROR
-    assert "try again" in account.qbo_sync_error.lower()
+    assert (account.qbo_sync_state, account.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
+    assert not Notification.objects.exists()
+
+
+def test_retry_sync_during_an_outage_says_to_try_again(cashier):
+    account = _account()
+
+    with patch(REQ, side_effect=qbo.QboAPIError(0, "network: Timeout")):
+        resp = cashier.post(reverse("billing_account_sync", args=[account.pk]))
+
+    assert resp.status_code == 502
+    assert "try again" in resp.json()["error"].lower()
 
 
 def test_nothing_is_sent_or_changed_while_quickbooks_is_not_connected():
@@ -280,9 +298,9 @@ def test_refreshing_terms_caches_quickbooks_terms_and_retires_missing_ones():
 
 
 def test_terms_match_by_name_ignoring_case():
-    QboTerm.objects.create(qbo_id="3", name="NET 30", active=True)
+    QboTerm.objects.create(qbo_id="7", name="NET 30", active=True)
 
-    assert qbo_sync.term_ref(Terms.NET_30) == {"value": "3"}
+    assert qbo_sync.term_ref(Terms.NET_30) == {"value": "7"}
     assert qbo_sync.term_ref(Terms.NET_15) is None
 
 
@@ -348,7 +366,7 @@ def test_retry_sync_on_a_group_reports_the_failure_in_words(cashier):
 def test_retry_sync_needs_payments_access_and_a_connection(client):
     account = _account()
     client.force_login(UserFactory())
-    assert client.post(reverse("billing_account_sync", args=[account.pk])).status_code in (302, 403)
+    assert client.post(reverse("billing_account_sync", args=[account.pk])).status_code == 403
 
     client.force_login(UserFactory(can_manage_payments=True))
     with patch("apps.billing.qbo_sync.qbo.is_connected", return_value=False):
@@ -375,9 +393,14 @@ def test_settings_lists_terms_quickbooks_lacks_and_can_refresh_them(client):
     from django.test import override_settings
 
     QboTerm.objects.create(qbo_id="3", name="Net 30", active=True)
+    services.create_account(ContactFactory(), name="A", group_name="G", terms=Terms.NET_15)
+    services.create_account(ContactFactory(), name="B", group_name="G", terms=Terms.NET_45)
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
 
-    with override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"):
+    with (
+        override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
         html = client.get(reverse("quickbooks_settings")).content.decode()
         with (
             patch(REQ, return_value={"QueryResponse": {"Term": []}}),
@@ -387,7 +410,10 @@ def test_settings_lists_terms_quickbooks_lacks_and_can_refresh_them(client):
             with patch.object(qbo, "is_connected", return_value=True):
                 resp = client.post(reverse("quickbooks_refresh_terms"))
 
-    assert "Net 15" in html and "Net 45" in html  # ours, missing from QuickBooks
+    assert "Net 15" in html and "Net 45" in html  # in use, missing from QuickBooks
+    assert (
+        "Due on receipt" not in html.split("Not in QuickBooks yet")[-1].split("In QuickBooks:")[0]
+    )
     assert "Refresh terms" in html
     assert resp.status_code == 302
 
@@ -403,3 +429,181 @@ def test_disconnecting_quickbooks_leaves_every_local_record_intact():
 
     account.refresh_from_db()
     assert (account.qbo_id, account.qbo_sync_state) == ("58", SyncState.SYNCED)
+
+
+# --- review fixes (2026-10-24) ----------------------------------------------------------------
+
+
+def test_an_outage_mid_run_stops_the_run_and_marks_nothing():
+    for n in range(3):
+        _account(name=f"Co {n}", group=f"G{n}")
+
+    with patch(REQ, side_effect=qbo.QboRateLimited("throttled", 30)) as req:
+        assert qbo_sync.sync_pending() == 0
+
+    assert req.call_count == 1
+    assert not BillingAccount.objects.exclude(qbo_sync_state=SyncState.NOT_SYNCED).exists()
+    assert not Notification.objects.exists()
+
+
+def test_a_run_is_capped_so_a_big_first_sync_spreads_over_runs():
+    for n in range(qbo_sync.SYNC_BATCH + 3):
+        _account(name=f"Co {n}", group=f"G{n}")
+
+    with patch(REQ, side_effect=lambda *a, **k: _created(str(100 + next(_ids)))):
+        assert qbo_sync.sync_pending() == qbo_sync.SYNC_BATCH
+
+
+import itertools  # noqa: E402
+
+_ids = itertools.count()
+
+
+def test_renaming_an_account_queues_its_groups_too():
+    account = _account()
+    with patch(REQ, side_effect=[_created("58"), _created("59")]):
+        qbo_sync.sync_pending()
+
+    services.update_account(account, name="Ridgeline Partners LLC", terms=account.terms)
+
+    assert account.groups.get().qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_an_edit_saved_during_a_push_is_not_marked_synced():
+    account = _account()
+
+    def edited_meanwhile(*args, **kwargs):
+        services.update_account(
+            BillingAccount.objects.get(pk=account.pk),
+            name="Renamed mid-flight",
+            terms=account.terms,
+        )
+        return _created("58")
+
+    with patch(REQ, side_effect=edited_meanwhile):
+        qbo_sync.push(account)
+
+    account.refresh_from_db()
+    assert account.qbo_id == "58"  # the link is kept
+    assert account.qbo_sync_state == SyncState.NOT_SYNCED  # the rename still goes out
+
+
+def test_a_create_answered_with_an_older_version_stays_queued_for_an_update():
+    """A replay of an earlier create (same requestid, edited since) returns the old record."""
+    account = _account()
+
+    with patch(
+        REQ, return_value={"Customer": {"Id": "58", "SyncToken": "0", "DisplayName": "Old name"}}
+    ):
+        qbo_sync.push(account)
+
+    account.refresh_from_db()
+    assert account.qbo_id == "58"
+    assert account.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_after_a_definite_refusal_a_corrected_create_gets_a_new_request_id():
+    account = _account()
+    with patch(REQ, side_effect=_fault("6240")) as req:
+        qbo_sync.push(account)
+    first = req.call_args.kwargs["params"]["requestid"]
+    services.update_account(account, name="Ridgeline Partners Two", terms=account.terms)
+
+    with patch(REQ, return_value=_created("58")) as req:
+        qbo_sync.push(account)
+
+    assert req.call_args.kwargs["params"]["requestid"] != first
+
+
+def test_clearing_a_groups_email_clears_it_in_quickbooks():
+    account = _account()
+    group = account.groups.get()
+    group.invoice_email = "ap@ridgeline.test"
+    group.save()
+    with patch(REQ, side_effect=[_created("58"), _created("59")]):
+        qbo_sync.sync_pending()
+    services.update_group(group, name=group.name, invoice_email="")
+
+    with patch(REQ, return_value=_created("59", "1")) as req:
+        qbo_sync.push(account.groups.get())
+
+    assert req.call_args.kwargs["json"]["PrimaryEmailAddr"] == {"Address": ""}
+
+
+def test_records_from_another_quickbooks_company_are_pushed_again_as_new():
+    account = _account()
+    with (
+        patch("apps.billing.qbo_sync.current_realm", return_value="111"),
+        patch(REQ, side_effect=[_created("58"), _created("59")]),
+    ):
+        qbo_sync.sync_pending()
+
+    with (
+        patch("apps.billing.qbo_sync.current_realm", return_value="222"),
+        patch(REQ, side_effect=[_created("7"), _created("8")]) as req,
+    ):
+        assert qbo_sync.sync_pending() == 2
+
+    assert "Id" not in req.call_args_list[0].kwargs["json"]  # a create in the new company
+    account.refresh_from_db()
+    assert (account.qbo_id, account.qbo_realm_id) == ("7", "222")
+
+
+def test_an_odd_fault_shape_is_still_an_error_not_a_crash():
+    account = _account()
+    odd = qbo.QboAPIError(400, json.dumps({"Fault": {"Error": {"code": "6000"}}}))
+
+    with patch(REQ, side_effect=odd):
+        assert qbo_sync.push(account) is False
+
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.ERROR
+
+
+def test_a_refusal_shows_intuits_reason():
+    account = _account()
+    with patch(REQ, side_effect=_fault("6000", "Invalid DisplayName: contains a colon")):
+        qbo_sync.push(account)
+
+    account.refresh_from_db()
+    assert "contains a colon" in account.qbo_sync_error
+
+
+def test_retry_sync_on_a_group_still_waiting_says_why(cashier):
+    group = _account().groups.get()
+
+    resp = cashier.post(reverse("billing_group_sync", args=[group.pk]))
+
+    assert "account" in resp.json()["error"].lower()
+
+
+def test_an_edit_in_the_admin_queues_the_record_and_its_groups(admin_client):
+    account = _account()
+    BillingAccount.objects.filter(pk=account.pk).update(
+        qbo_id="58", qbo_sync_state=SyncState.SYNCED
+    )
+    account.groups.update(qbo_id="59", qbo_sync_state=SyncState.SYNCED)
+    group = account.groups.get()
+
+    admin_client.post(
+        reverse("admin:billing_accountgroup_change", args=[group.pk]),
+        {
+            "account": account.pk,
+            "name": "Renamed in admin",
+            "invoice_email": "",
+            "terms": "",
+            "qbo_id": "59",
+            "qbo_sync_token": "",
+            "qbo_realm_id": "",
+            "qbo_sync_state": SyncState.SYNCED,
+            "qbo_sync_error": "",
+        },
+    )
+
+    group.refresh_from_db()
+    assert group.name == "Renamed in admin"
+    assert group.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_the_quickbooks_terms_cache_is_in_the_admin(admin_client):
+    assert admin_client.get(reverse("admin:billing_qboterm_changelist")).status_code == 200

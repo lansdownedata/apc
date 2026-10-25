@@ -502,8 +502,8 @@ def quickbooks_refresh_terms(request: HttpRequest) -> HttpResponse:
         return redirect("quickbooks_settings")
     try:
         count = qbo_sync.refresh_terms()
-    except (qbo.QboAPIError, qbo.QboNotConnected) as exc:
-        messages.error(request, f"Couldn't read QuickBooks' terms: {exc}")
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        messages.error(request, "Couldn't read QuickBooks' terms. Try again in a minute.")
     else:
         messages.success(request, f"{count} payment terms read from QuickBooks.")
     return redirect("quickbooks_settings")

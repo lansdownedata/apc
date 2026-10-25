@@ -980,7 +980,11 @@ function billingCard(opts = {}) {
       postForm(url, {})
         .then((r) => {
           if (r.state === "synced") return window.location.reload();
-          Alpine.store("toast").push({ type: "error", title: "Still not in QuickBooks", message: r.error });
+          Alpine.store("toast").push({
+            type: "error",
+            title: "Still not in QuickBooks",
+            message: r.error || "It will go out on the next sync.",
+          });
         })
         .catch((e) =>
           Alpine.store("toast").push({ type: "error", title: "Could not sync", message: e.message }),

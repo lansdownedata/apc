@@ -237,10 +237,24 @@ def _sync_now(record) -> JsonResponse:
 
     if not qbo.is_connected():
         return JsonResponse({"ok": False, "error": "QuickBooks isn't connected."}, status=400)
+    if isinstance(record, AccountGroup) and not record.account.qbo_id:
+        return JsonResponse(
+            {
+                "ok": True,
+                "state": record.qbo_sync_state,
+                "error": "This group goes to QuickBooks once its account is there. Sync the"
+                " account first.",
+            }
+        )
     try:
         qbo_sync.push(record)
     except qbo.QboNotConnected as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    except qbo_sync.SyncPaused:
+        return JsonResponse(
+            {"ok": False, "error": "QuickBooks couldn't be reached. Try again in a minute."},
+            status=502,
+        )
     record.refresh_from_db()
     return JsonResponse(
         {"ok": True, "state": record.qbo_sync_state, "error": record.qbo_sync_error}
