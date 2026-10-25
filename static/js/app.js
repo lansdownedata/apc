@@ -432,6 +432,24 @@ function escapeHtml(s) {
 }
 window.escapeHtml = escapeHtml;
 
+/* "Retry sync" on a record that didn't reach QuickBooks (APC-42 accounts and groups, APC-74
+   vendors): push it now, reload once it's there, otherwise say why in a toast. */
+function retryQboSync(url) {
+  return postForm(url, {})
+    .then((r) => {
+      if (r.state === "synced") return window.location.reload();
+      Alpine.store("toast").push({
+        type: "error",
+        title: "Still not in QuickBooks",
+        message: r.error || "It will go out on the next sync.",
+      });
+    })
+    .catch((e) =>
+      Alpine.store("toast").push({ type: "error", title: "Could not sync", message: e.message }),
+    );
+}
+window.retryQboSync = retryQboSync;
+
 async function postForm(url, data = {}) {
   const resp = await fetch(url, {
     method: "POST",
@@ -750,6 +768,19 @@ function tripReviewForm(opts) {
         this.saving = false;
       }
     },
+    /* APC-74: push this payable's vendor, bill and payment to QuickBooks now. */
+    retryPayableSync() {
+      const url = this.payable && this.payable.qbo && this.payable.qbo.sync_url;
+      if (!url) return;
+      return this._payableAction(url, new FormData(), null)
+        .then(() => {
+          const q = this.payable.qbo || {};
+          const error = q.bill_state === "error" ? q.bill_error : q.payment_state === "error" ? q.payment_error : "";
+          if (error) Alpine.store("toast").push({ type: "error", title: "Still not in QuickBooks", message: error });
+          else Alpine.store("toast").push({ type: "success", title: "Sent to QuickBooks" });
+        })
+        .catch(() => {});
+    },
     saveInvoice(form) {
       const body = new FormData(form);
       body.set("invoice_number", this.invoiceNumber || "");
@@ -977,18 +1008,7 @@ function billingCard(opts = {}) {
     // APC-42: push one record to QuickBooks now. Synced → reload to show it; still failing →
     // say why (the server's sentence), the row keeps its error.
     retrySync(url) {
-      postForm(url, {})
-        .then((r) => {
-          if (r.state === "synced") return window.location.reload();
-          Alpine.store("toast").push({
-            type: "error",
-            title: "Still not in QuickBooks",
-            message: r.error || "It will go out on the next sync.",
-          });
-        })
-        .catch((e) =>
-          Alpine.store("toast").push({ type: "error", title: "Could not sync", message: e.message }),
-        );
+      retryQboSync(url);
     },
     tab: opts.initialTab === "accounts" ? "accounts" : "cards",
     modal: null,

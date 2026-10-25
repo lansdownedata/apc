@@ -8,10 +8,19 @@
 
   <div class="flex items-start justify-between gap-4 mb-4">
     <div>
-      <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ vendor.name }}</h1>
+      <div class="flex items-center gap-2.5">
+        <h1 class="font-display text-[24px] font-semibold text-ink tracking-tight">{{ vendor.name }}</h1>
+        {% include "billing/_sync_chip.html" with record=vendor synced_label="In QuickBooks" %}
+      </div>
       <p class="text-[12.5px] text-muted mt-1">
         {{ vendor.contact_name|default:"" }}{% if vendor.phone %} · {{ vendor.phone }}{% endif %}{% if vendor.email %} · {{ vendor.email }}{% endif %}
       </p>
+      {% if qbo_connected and vendor.qbo_sync_state == 'error' %}
+        <p class="text-[12px] text-rose-600 mt-1.5 flex items-center gap-3 flex-wrap" x-data>
+          <span>{{ vendor.qbo_sync_error|default:"Not in QuickBooks yet." }}</span>
+          {% if user.has_payments_access %}<button type="button" class="font-semibold text-goldd hover:text-gold focus-gold rounded" @click="retryQboSync('{% url 'vendor_sync' vendor.pk %}')">Retry sync</button>{% endif %}
+        </p>
+      {% endif %}
       <div class="mt-2.5 flex items-center gap-2 flex-wrap text-[11.5px] text-muted">
         {% if vendor.service_area %}<span><i class="ti ti-map-pin text-[13px]"></i> {{ vendor.service_area }}</span>{% endif %}
         {% if vendor.usdot_number %}<span class="text-line">·</span><span class="font-mono2">USDOT {{ vendor.usdot_number }}</span>{% endif %}
@@ -87,7 +96,7 @@
       {% for p in payables %}
       <a href="{% url 'trip_review_order' p.assignment.reservation.lead_id %}" class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
         <span class="min-w-0 truncate"><span class="font-medium text-ink text-[13px] num">{{ p.assignment.reservation.lead.quote_no }}</span> <span class="text-[12px] text-muted">· {{ p.assignment.reservation.lead.contact.name }} · {{ p.assignment.reservation.pickup_date|date:"M j" }}</span></span>
-        <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if p.stage == 'invoice_missing' %}chip-warn{% elif p.stage == 'awaiting_approval' %}chip-gold{% else %}chip-ring{% endif %}">{{ p.stage_label }}</span>
+        <span class="inline-flex items-center gap-1.5">{% if p.qbo_sync_state == 'error' %}{% include "billing/_sync_chip.html" with record=p %}{% endif %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if p.stage == 'invoice_missing' %}chip-warn{% elif p.stage == 'awaiting_approval' %}chip-gold{% else %}chip-ring{% endif %}">{{ p.stage_label }}</span></span>
         <span class="num text-[13px] text-right w-[88px]">${% if p.invoice_amount is not None %}{{ p.invoice_amount|floatformat:2 }}{% else %}{{ p.expected_amount|floatformat:2 }}{% endif %}</span>
       </a>
       {% empty %}<p class="px-4 py-3 border-t border-line/60 text-[12px] text-muted">Nothing owed to {{ vendor.name }} right now.</p>{% endfor %}

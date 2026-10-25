@@ -989,3 +989,52 @@ def test_a_payable_without_quickbooks_reports_no_sync_state():
         from apps.payments import payables
 
         assert payables.payable_json(payable)["qbo"] is None
+
+
+# --- where staff see it -----------------------------------------------------------------------
+
+
+def test_the_trip_review_pane_shows_the_quickbooks_state_and_retry(cashier):
+    payable = _payable(vendor=_linked_vendor())
+    AffiliatePayable.objects.filter(pk=payable.pk).update(
+        qbo_sync_state=SyncState.ERROR, qbo_sync_error="QuickBooks didn't accept this bill: x"
+    )
+
+    from apps.tasks.models import Task
+
+    trip = payable.assignment.reservation
+    Task.objects.create(
+        lead=trip.lead, reservation=trip, kind="ops_review", opens_at=trip.created_at
+    )  # the order is in review
+
+    html = cashier.get(
+        reverse("trip_review_trip", args=[payable.assignment.reservation_id])
+    ).content.decode()
+
+    assert "retryPayableSync()" in html
+    assert "payable.qbo.bill_error" in html
+    assert reverse("payable_sync", args=[payable.pk]) in html  # via payable_state's sync_url
+
+
+def test_the_vendor_page_shows_its_sync_error_and_retry_only_when_connected(cashier):
+    vendor = _payable().assignment.vendor
+    Vendor.objects.filter(pk=vendor.pk).update(
+        qbo_sync_state=SyncState.ERROR, qbo_sync_error="QuickBooks already has a customer named x"
+    )
+    url = reverse("vendor_detail", args=[vendor.pk])
+
+    html = cashier.get(url).content.decode()
+    assert "QuickBooks already has a customer named x" in html
+    assert reverse("vendor_sync", args=[vendor.pk]) in html
+
+    with patch("apps.payments.qbo_bills.qbo.is_connected", return_value=False):
+        html = cashier.get(url).content.decode()
+    assert reverse("vendor_sync", args=[vendor.pk]) not in html
+
+
+def test_the_vendor_pages_payables_flag_a_bill_that_isnt_in_quickbooks(cashier):
+    payable = _payable()
+    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_sync_state=SyncState.ERROR)
+
+    html = cashier.get(reverse("vendor_detail", args=[payable.assignment.vendor_id])).content
+    assert "Not synced" in html.decode()

@@ -218,6 +218,12 @@ def _insurance_banner(summary: dict) -> dict | None:
     return {"tone": tone, "message": message}
 
 
+def _qbo_connected() -> bool:
+    from apps.integrations import qbo
+
+    return qbo.is_connected()
+
+
 @login_required
 def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
     vendor = get_object_or_404(
@@ -247,6 +253,7 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "scorecard": _scorecard_for(vendor),
             "scorecard_window": dict(performance.WINDOWS)[performance.DEFAULT_WINDOW],
             "payables": payables.vendor_payables(vendor, stage),
+            "qbo_connected": _qbo_connected(),  # APC-74: sync chips and Retry
             "payable_stage": stage,
             "payable_stages": [
                 (key, AffiliatePayable.STAGE_LABELS[key]) for key in payables.OPEN_STAGES

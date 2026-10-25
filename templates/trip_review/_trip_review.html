@@ -145,7 +145,16 @@
               <span class="ml-auto text-[10.5px] font-semibold px-2 py-0.5 rounded-full"
                     :class="{ 'chip-warn': payable.stage === 'invoice_missing', 'chip-gold': payable.stage === 'awaiting_approval', 'chip-ring': payable.stage === 'approved', 'chip-ok': payable.stage === 'paid' }"
                     x-text="payable.stage_label"></span>
+              <span x-show="payable.qbo && payable.qbo.bill_state === 'synced' && (payable.stage !== 'paid' || payable.qbo.payment_state === 'synced')" x-cloak
+                    class="chip-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"><i class="ti ti-check text-[12px]"></i> In QuickBooks</span>
             </div>
+            <template x-if="payable.qbo && (payable.qbo.bill_state === 'error' || payable.qbo.payment_state === 'error')">
+              <div class="flex items-start gap-2 mb-2 text-[12px] text-rose-600">
+                <i class="ti ti-alert-triangle text-[14px] mt-0.5"></i>
+                <span class="flex-1" x-text="payable.qbo.bill_state === 'error' ? payable.qbo.bill_error : payable.qbo.payment_error"></span>
+                {% if can_pay %}<button type="button" class="font-semibold text-goldd hover:text-gold focus-gold rounded disabled:opacity-50" :disabled="saving" @click="retryPayableSync()">Retry sync</button>{% endif %}
+              </div>
+            </template>
             <template x-if="payable.stage === 'invoice_missing' || payable.stage === 'awaiting_approval'">
               <form @submit.prevent="saveInvoice($el)" enctype="multipart/form-data" class="grid grid-cols-2 gap-2">
                 <label class="block"><span class="block text-[12px] font-medium mb-1">Invoice #</span>
