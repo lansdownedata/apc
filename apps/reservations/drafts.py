@@ -26,6 +26,35 @@ def _money(value) -> Decimal:
     return amount
 
 
+def _whole_hours(value) -> Decimal:
+    """Overtime is billed in whole hours (APC-91); the editor's box only steps by 1, but a
+    hand-built POST must not land a fraction on the trip."""
+    hours = _money(value)
+    if hours != hours.to_integral_value():
+        raise DraftError("overtime is billed in whole hours")
+    return hours
+
+
+def _extras(raw) -> list[dict]:
+    """The editor posts the full list of a trip's extras; each row is a kind, a label and a
+    positive amount. Garbled input raises, never coerces."""
+    from .models import TripExtra
+
+    rows = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            raise DraftError("invalid extra")
+        kind = str(item.get("kind") or "")
+        if kind not in TripExtra.Kind.values:
+            raise DraftError("unknown extra kind")
+        amount = _money(item.get("amount"))
+        if amount <= 0:
+            raise DraftError("extra amounts must be above zero")
+        label = (item.get("label") or "").strip()[:80] or TripExtra.Kind.default_label(kind)
+        rows.append({"kind": kind, "label": label, "amount": amount})
+    return rows
+
+
 def _cost_ratio(value) -> Decimal:
     """The vendor's share of the sell price, 1-100. Blank or 0 means "the Settings
     standard", which `Reservation.save` fills in. The range used to live only on the
@@ -212,6 +241,8 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
         "gratuity_flat": _money(payload.get("gratuityFlat")),
         "discount_pct": _money(payload.get("discountPct")),
         "discount_flat": _money(payload.get("discountFlat")),
+        "overtime_hours": _whole_hours(payload.get("overtimeHours")),
+        "extras": _extras(payload.get("extras")),
         # Cost-based pricing inputs (spec 2026-09-05). Stored as the audit trail behind the
         # rate — "paid 1,000, targeted 65%, sold 1,538.50" — so a price stays explainable
         # long after the calculator ran. A flat `affiliateCost` is what the vendor is paid;
@@ -336,9 +367,12 @@ def _derive_transfer_dropoff(data: dict) -> None:
 
 @transaction.atomic
 def save_reservation_from_draft(
-    lead, payload: dict, instance: Reservation | None = None
+    lead, payload: dict, instance: Reservation | None = None, *, user=None
 ) -> Reservation:
-    """Create or update one reservation (+ its ordered stops) from a draft."""
+    """Create or update one reservation (+ its ordered stops and extras) from a draft.
+    `user` is stamped on the extras and on an overtime decision made here."""
+    from . import pricing
+
     kept = (
         frozenset(instance.stops.exclude(airline_id=None).values_list("airline_id", flat=True))
         if instance is not None
@@ -346,16 +380,25 @@ def save_reservation_from_draft(
     )
     data = parse_draft(payload, grandfathered_airline_ids=kept)
     stops = data.pop("stops")
+    extras = data.pop("extras")
     link_flights(stops, data.get("pickup_date"))
     is_new = instance is None
     prev_pickup = None if is_new else (instance.pickup_date, instance.pickup_time)
+    prev_overtime = None if is_new else Decimal(instance.overtime_hours or 0)
     if instance is None:
         instance = Reservation(lead=lead)
         last = lead.reservations.order_by("-sort_order").first()
         instance.sort_order = (last.sort_order + 1) if last else 0
+        # A trip added to a booked order has no prepaid money behind it: its booked
+        # total is 0, so processing charges its whole price (spec 2026-10-25 §4.4).
+        if lead.status == lead.Status.BOOKED:
+            instance.booked_total = Decimal("0.00")
     for field, value in data.items():
         setattr(instance, field, value)
     instance.save()
+    pricing.replace_extras(instance, extras, user=user)
+    if prev_overtime != Decimal(instance.overtime_hours or 0):
+        pricing.apply_trip_overtime(instance, user=user)
     instance.stops.all().delete()
     Stop.objects.bulk_create(
         [

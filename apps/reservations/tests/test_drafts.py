@@ -865,3 +865,88 @@ def test_an_hourly_end_is_an_estimate_too():
     """Derived from billed hours, not typed — same standing as a transfer's."""
     data = drafts.parse_draft(_payload(tripType="hourly", hours=5, minHours=4))
     assert data["dropoff_estimated"] is True
+
+
+# --- overtime hours and extras on the draft (spec 2026-10-25 §3, APC-100) --------------
+
+
+def test_a_draft_round_trips_overtime_and_extras():
+    from apps.reservations.factories import ReservationFactory, TripExtraFactory
+
+    r = ReservationFactory(overtime_hours=Decimal("1"))
+    TripExtraFactory(reservation=r, kind="tolls", label="Tolls", amount=Decimal("12.50"))
+
+    d = reservation_draft(r)
+    assert d["overtimeHours"] == 1.0
+    assert d["extras"] == [
+        {"id": r.extras.get().pk, "kind": "tolls", "label": "Tolls", "amount": 12.5}
+    ]
+
+    d["extras"].append({"kind": "credit", "label": "", "amount": 5})
+    saved = save_reservation_from_draft(r.lead, d, r)
+
+    assert [(e.kind, e.label, e.amount) for e in saved.extras.all()] == [
+        ("tolls", "Tolls", Decimal("12.50")),
+        ("credit", "Credit", Decimal("5.00")),
+    ]
+    assert saved.extras_total == Decimal("7.50")
+
+
+def test_an_unknown_extra_kind_is_refused():
+    with pytest.raises(DraftError, match="unknown extra kind"):
+        drafts.parse_draft(_payload(extras=[{"kind": "fuel", "label": "Fuel", "amount": 10}]))
+
+
+def test_a_zero_extra_is_refused():
+    with pytest.raises(DraftError, match="above zero"):
+        drafts.parse_draft(_payload(extras=[{"kind": "tolls", "label": "Tolls", "amount": 0}]))
+
+
+def test_fractional_overtime_is_refused():
+    with pytest.raises(DraftError, match="whole hours"):
+        drafts.parse_draft(_payload(overtimeHours=1.5))
+
+
+def test_saving_overtime_from_the_editor_is_a_decision_on_the_review():
+    from apps.accounts.factories import UserFactory
+    from apps.reservations import reviews
+    from apps.reservations.factories import ReservationFactory
+
+    r = ReservationFactory()
+    staff = UserFactory()
+    review = reviews.review_for(r)
+    reviews.save_review(review, user=staff, overtime_waived=True, waive_reason="courtesy")
+
+    save_reservation_from_draft(r.lead, {**reservation_draft(r), "overtimeHours": 1}, r, user=staff)
+
+    review.refresh_from_db()
+    assert review.billable_overtime_minutes == 60
+    assert review.overtime_waived is False
+    assert review.decided_by == staff
+
+
+def test_saving_overtime_on_a_trip_without_a_review_creates_none():
+    from apps.reservations.factories import ReservationFactory
+    from apps.reservations.models import TripReview
+
+    r = ReservationFactory()
+
+    save_reservation_from_draft(r.lead, {**reservation_draft(r), "overtimeHours": 1}, r)
+
+    assert not TripReview.objects.filter(reservation=r).exists()
+
+
+def test_a_trip_added_to_a_booked_order_freezes_at_zero():
+    from apps.leads.models import Lead
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+
+    saved = save_reservation_from_draft(lead, _payload())
+
+    assert saved.booked_total == Decimal("0.00")
+
+
+def test_a_trip_added_to_a_quote_has_no_booked_total():
+    saved = save_reservation_from_draft(LeadFactory(), _payload())
+
+    assert saved.booked_total is None

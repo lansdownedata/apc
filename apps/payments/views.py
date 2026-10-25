@@ -56,6 +56,7 @@ def order_detail(request, lead_id):
         Lead.objects.select_related("contact", "payment").prefetch_related(
             "reservations__vehicle",
             "reservations__service_type",
+            "reservations__extras",  # the editor's drafts list them; one query, not one per trip
             Prefetch(
                 "reservations__stops",
                 queryset=Stop.objects.select_related(

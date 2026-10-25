@@ -194,6 +194,7 @@ def lead_detail(request, pk):
         Lead.objects.select_related("contact", "assigned_agent").prefetch_related(
             "reservations__vehicle",
             "reservations__service_type",
+            "reservations__extras",  # the editor's drafts list them; one query, not one per trip
             Prefetch(
                 "reservations__stops",
                 queryset=Stop.objects.select_related(
@@ -558,14 +559,17 @@ def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
         "token": token,
         "quote_no": lead.quote_no,
         "reservations": lead.reservations.select_related("vehicle").prefetch_related(
-            Prefetch("stops", queryset=Stop.objects.select_related("airline").order_by("sequence"))
+            Prefetch("stops", queryset=Stop.objects.select_related("airline").order_by("sequence")),
+            "extras",
         ),
         "billing_contact": lead.effective_billing_contact,
         "passenger_names": lead.passenger_names,
         "plan": plan,
         "deposit_pct": plan.deposit_pct if plan else None,
         "deposit_amount": plan.deposit_amount if plan else None,
-        "quote_total": plan.quote_total if plan else lead.quote_total,
+        # Live, so the per-trip lines on the page always sum to it (spec 2026-10-25 §3); the
+        # plan's snapshot stays the deposit basis (`deposit_amount` above).
+        "quote_total": lead.quote_total,
         "is_active": is_active,
         "is_expired": is_expired,
         "is_booked": lead.status == Lead.Status.BOOKED and not deposit_unpaid,

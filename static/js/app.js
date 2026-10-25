@@ -1719,6 +1719,12 @@ function reservationEditor(opts = {}) {
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
     defaultCostRatio: opts.defaultCostRatio ?? 65,
+    /* "+ Cleaning fee" pre-fills the Settings amount (spec 2026-10-25 §3.1). */
+    cleaningFee: Number(opts.cleaningFee) || 0,
+    /* Mirrors TripExtra.Kind and its labels (apps/reservations/models.py). Five kinds, no
+     * "Wait time": on a transfer the Overtime line already is the wait. */
+    extraKinds: ["cleaning", "tolls", "parking", "credit", "other"],
+    extraLabels: { cleaning: "Cleaning fee", tolls: "Tolls", parking: "Parking", credit: "Credit", other: "Other" },
     tripDefaults: opts.tripDefaults || {},
     reservations: opts.reservations || [],
     vehicles: opts.vehicles || [],
@@ -1742,6 +1748,7 @@ function reservationEditor(opts = {}) {
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         discountPct: 0, discountFlat: 0, discountMode: "flat",
+        overtimeHours: 0, extras: [],
         affiliateCost: 0, costRatioPct: this.defaultCostRatio, vendorPayMode: "factor",
         stops: [
           { address: "", note: "", name: "", time: "", lat: "", lng: "", airport: "", airportCode: "", hasScheduledService: false, airline: "", flight: "", direction: "", verify: null, verifying: false },
@@ -1820,6 +1827,8 @@ function reservationEditor(opts = {}) {
         delete s.pill;
       });
       this.draftIsNew = false;
+      if (!Array.isArray(this.draft.extras)) this.draft.extras = [];
+      if (!(Number(this.draft.overtimeHours) > 0)) this.draft.overtimeHours = 0;
       // The $/% toggle has no column of its own — infer it from which field carries a
       // value, the same precedence the model applies (flat wins).
       this.draft.discountMode = Number(this.draft.discountPct) > 0 ? "pct" : "flat";
@@ -2062,10 +2071,12 @@ function reservationEditor(opts = {}) {
     },
     minApplied(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) > 0; },
     noMinimum(r) { return (Number(r.hours) || 0) <= 0 && (Number(r.minHours) || 0) <= 0; },
-    /* These four mirror `Reservation.subtotal/discount/discounted_base/gratuity/line_total`
-     * in apps/reservations/models.py, which is the source of truth. They drive the editor's
-     * live Subtotal and Line total — if they drift from the Python, the agent is quoted one
-     * number and the customer is charged another. Change both or neither. */
+    /* These mirror `Reservation.subtotal/discount/discounted_base/discounted_rate/
+     * overtime_amount/gratuity/extras_total/line_total` in apps/reservations/models.py,
+     * which is the source of truth. They drive the editor's live Subtotal and Line total —
+     * if they drift from the Python, the agent is quoted one number and the customer is
+     * charged another. Change both or neither. */
+    cents(n) { return Math.round((Number(n) || 0) * 100) / 100; },
     resSubtotal(r) { return (Number(r.rate) || 0) * this.billedHours(r); },
     resDiscount(r) {
       const flat = Number(r.discountFlat) || 0;               // flat wins over percent
@@ -2074,12 +2085,34 @@ function reservationEditor(opts = {}) {
     },
     /* Floored at 0 — a discount over the base must never make the total negative. */
     resDiscountedBase(r) { return Math.max(this.resSubtotal(r) - this.resDiscount(r), 0); },
+    /* The hourly rate the customer actually pays, rounded to the cent BEFORE it is
+     * multiplied — Python quantizes `discounted_rate` first, so 1100/6 × 2 is 366.66. */
+    resDiscountedRate(r) {
+      const hours = this.billedHours(r);
+      return hours > 0 ? this.cents(this.resDiscountedBase(r) / hours) : 0;
+    },
+    resOvertime(r) { return this.cents((Number(r.overtimeHours) || 0) * this.resDiscountedRate(r)); },
+    /* Two cent-rounded parts, like Python: the base's share plus the overtime's share. */
     resGratuity(r) {
       const flat = Number(r.gratuityFlat) || 0;
       if (flat > 0) return flat;
-      return this.resDiscountedBase(r) * (Number(r.gratuityPct) || 0) / 100;
+      const pct = (Number(r.gratuityPct) || 0) / 100;
+      return this.cents(this.resDiscountedBase(r) * pct) + this.cents(this.resOvertime(r) * pct);
     },
-    resTotal(r) { return this.resDiscountedBase(r) + this.resGratuity(r); },
+    resExtras(r) {
+      return (r.extras || []).reduce((sum, x) => {
+        const amount = Number(x.amount) || 0;
+        return sum + (x.kind === "credit" ? -amount : amount);
+      }, 0);
+    },
+    resTotal(r) {
+      return Math.max(this.resDiscountedBase(r) + this.resOvertime(r) + this.resGratuity(r) + this.resExtras(r), 0);
+    },
+    addExtra(kind) {
+      const amount = kind === "cleaning" ? this.cleaningFee : 0;
+      this.draft.extras.push({ kind, label: this.extraLabels[kind] || "", amount });
+    },
+    removeExtra(i) { this.draft.extras.splice(i, 1); },
 
     /* --- price from vendor cost (APC-26 step 3) ---------------------------------
      * `costRatioPct` is the vendor's share of the SELL price, not a margin:

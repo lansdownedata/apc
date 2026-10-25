@@ -32,6 +32,11 @@ def reservation_draft(r, *, quantity: int = 1) -> dict:
         "gratuityFlat": float(r.gratuity_flat),
         "discountPct": float(r.discount_pct),
         "discountFlat": float(r.discount_flat),
+        "overtimeHours": float(r.overtime_hours),
+        "extras": [
+            {"id": e.pk, "kind": e.kind, "label": e.label, "amount": float(e.amount)}
+            for e in r.extras.all()
+        ],
         "affiliateCost": float(r.affiliate_cost),
         "costRatioPct": float(r.cost_ratio_pct),
         "dropoffDate": r.dropoff_date.isoformat() if r.dropoff_date else "",
@@ -83,6 +88,7 @@ def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=No
     editor nothing up front and lets it fetch the trip being opened.
     """
     from apps.leads import services as lead_services
+    from apps.tasks.models import TaskConfig
 
     vehicles = list(
         VehicleType.objects.filter(active=True).values(
@@ -110,4 +116,6 @@ def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=No
         ],
         "vehicle_options": [(v["id"], v["name"]) for v in vehicles],
         "service_type_options": lead_services.service_type_options(lead),
+        # "+ Cleaning fee" pre-fills the Settings amount (spec 2026-10-25 §3.1).
+        "cleaning_fee": float(TaskConfig.load().cleaning_fee or 0),
     }

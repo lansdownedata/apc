@@ -29,6 +29,7 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
        acUrl: '{% url 'integrations:geocode_autocomplete' %}',
        privateAirlineId: {{ private_airline_id|default_if_none:'null' }},
        defaultCostRatio: {{ default_cost_ratio_pct }},
+       cleaningFee: {{ cleaning_fee|default:0 }},
        openEditorId: {{ open_editor_id|default_if_none:'null' }},
        {% comment %} Coverage is the shared fragment, fetched per trip — it brings its own
           endpoints, so the rules (one active assignment, a booked lead, an active driver)
@@ -432,6 +433,46 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
             </div>
           </div>
 
+          {% comment %}
+            Overtime and extras live on the trip (spec 2026-10-25 §3), so this editor, the
+            processing grid, the receipt and the invoice line all read one total. Overtime is
+            whole hours at the discounted rate (APC-91); on a transfer it is the wait time.
+            Extras are flat lines, a credit subtracts, none of them earns gratuity.
+          {% endcomment %}
+          <div class="mt-3 pt-3 border-t border-line grid grid-cols-2 gap-3">
+            <div>
+              <div class="text-[12px] text-muted mb-1" x-text="draft.tripType === 'transfer' ? 'Wait time hours' : 'Overtime hours'"></div>
+              <input x-model.number="draft.overtimeHours" type="number" min="0" step="1" placeholder="0"
+                data-overtime-hours class="field text-[13px] num">
+            </div>
+            <div x-show="Number(draft.overtimeHours) > 0" x-cloak class="self-end pb-2.5 text-[12px] text-muted">
+              at <span class="font-medium text-ink num" x-text="money2(resDiscountedRate(draft))"></span>/hr
+            </div>
+          </div>
+          <div class="mt-3">
+            <div class="text-[12px] font-semibold text-muted uppercase tracking-wide">Extras</div>
+            <template x-for="(x, i) in draft.extras" :key="i">
+              <div class="mt-2 flex items-center gap-2">
+                <input x-model="x.label" type="text" maxlength="80" aria-label="Extra description"
+                  class="field text-[13px] min-w-0 flex-1">
+                <div class="flex w-28 items-center ring-1 ring-line rounded-xl bg-surface px-3 focus-within:ring-2 focus-within:ring-gold">
+                  <span class="text-muted text-[13px]" x-text="x.kind === 'credit' ? '-$' : '$'"></span>
+                  <input x-model.number="x.amount" type="number" min="0" step="0.01" aria-label="Extra amount"
+                    class="w-full text-[13px] px-2 py-2.5 outline-none num bg-transparent text-ink">
+                </div>
+                <button type="button" @click="removeExtra(i)" aria-label="Remove extra"
+                  class="rounded-lg p-1.5 text-muted transition-colors hover:text-rose-600 focus-gold"><i class="ti ti-x text-[15px]"></i></button>
+              </div>
+            </template>
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              <template x-for="kind in extraKinds" :key="kind">
+                <button type="button" @click="addExtra(kind)"
+                  class="rounded-full ring-1 ring-line px-2.5 py-1 text-[11.5px] font-semibold text-muted transition-colors hover:text-ink hover:ring-gold focus-gold"
+                  x-text="'+ ' + extraLabels[kind]"></button>
+              </template>
+            </div>
+          </div>
+
           <div class="mt-3 pt-3 border-t border-line flex items-center justify-between">
             <span class="text-[12px] text-muted">Subtotal</span>
             <span class="text-[13px] font-medium text-ink num" x-text="money(resSubtotal(draft))"></span>
@@ -439,6 +480,18 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
           <div x-show="resDiscount(draft) > 0" class="mt-1 flex items-center justify-between">
             <span class="text-[12px] text-muted">Discount</span>
             <span class="text-[13px] font-medium text-ink num" x-text="'-' + money(resDiscount(draft))"></span>
+          </div>
+          <div x-show="resOvertime(draft) > 0" class="mt-1 flex items-center justify-between">
+            <span class="text-[12px] text-muted" x-text="draft.tripType === 'transfer' ? 'Wait time' : 'Overtime'"></span>
+            <span class="text-[13px] font-medium text-ink num" x-text="money2(resOvertime(draft))"></span>
+          </div>
+          <div x-show="resGratuity(draft) > 0" class="mt-1 flex items-center justify-between">
+            <span class="text-[12px] text-muted">Gratuity</span>
+            <span class="text-[13px] font-medium text-ink num" x-text="money2(resGratuity(draft))"></span>
+          </div>
+          <div x-show="resExtras(draft) !== 0" class="mt-1 flex items-center justify-between">
+            <span class="text-[12px] text-muted">Extras</span>
+            <span class="text-[13px] font-medium text-ink num" x-text="money2(resExtras(draft))"></span>
           </div>
           <div class="mt-1 flex items-center justify-between">
             <span class="text-[12.5px] text-muted">Line total</span>

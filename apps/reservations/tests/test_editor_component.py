@@ -152,3 +152,30 @@ def test_a_trip_saved_from_the_order_page_is_still_saved(client, agent):
     trip.refresh_from_db()
     assert trip.passengers == 9
     assert trip.rate == Decimal("725")
+
+
+# --- overtime hours and extras (spec 2026-10-25 §3, APC-100) ----------------------------
+
+
+def test_the_editor_offers_the_five_extra_buttons_and_an_overtime_box(agent, client):
+    body = client.get(reverse("lead_detail", args=[_order().pk])).content.decode()
+
+    assert "data-overtime-hours" in body
+    assert "addExtra(kind)" in body
+    for label in ("Cleaning fee", "Tolls", "Parking", "Credit", "Other"):
+        assert label in APP_JS, label
+    assert "cleaningFee" in body
+
+
+def test_the_extras_block_uses_no_native_select():
+    start = EDITOR.index("Extras")
+    block = EDITOR[start : EDITOR.index("Subtotal", start)]
+    assert "<select" not in block
+
+
+def test_the_js_mirrors_round_the_rate_to_cents_like_python():
+    """1100 / 6 = 183.333…; Python quantizes the rate first, so 2 h of overtime is 366.66,
+    not 366.67. The mirror must do the same (review finding 7)."""
+    body = APP_JS[APP_JS.index("resDiscountedRate(r) {") :][:300]
+    assert "this.cents(" in body
+    assert "Math.round((Number(n) || 0) * 100) / 100" in APP_JS

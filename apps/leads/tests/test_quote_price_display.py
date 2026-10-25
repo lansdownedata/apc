@@ -66,3 +66,28 @@ def test_the_customer_never_sees_our_cost_or_ratio(client):
 
     assert "1,000.00" not in body
     assert "65%" not in body
+
+
+def test_overtime_and_extras_are_lines_and_the_page_total_follows(client):
+    """A trip edited after the quote was sent: the lines sum to the total shown, which is
+    the live trip total, not the plan's snapshot (spec 2026-10-25 §3)."""
+    from apps.payments.factories import PaymentPlanFactory
+    from apps.reservations.factories import TripExtraFactory
+
+    lead = LeadFactory(status=Lead.Status.QUOTED)
+    trip = ReservationFactory(
+        lead=lead, trip_type="hourly", rate=Decimal("200"), hours=Decimal("3"), min_hours=0
+    )
+    PaymentPlanFactory(lead=lead, quote_total=Decimal("600.00"), deposit_pct=50)
+    trip.overtime_hours = Decimal("1")
+    trip.save(update_fields=["overtime_hours"])
+    TripExtraFactory(reservation=trip, kind="tolls", label="Tolls", amount=Decimal("12.50"))
+
+    body = client.get(
+        reverse("quote_page", args=[services.make_deposit_token(lead)])
+    ).content.decode()
+
+    assert "Overtime (1 hr)" in body and "200.00" in body
+    assert "Tolls" in body and "12.50" in body
+    assert "812.50" in body  # 600 + 200 + 12.50, live
+    assert "300.00" in body  # the deposit still reads the snapshot: 50% of 600

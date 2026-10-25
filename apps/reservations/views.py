@@ -107,7 +107,7 @@ def reservation_save(request) -> HttpResponse:
         instance = lead.reservations.filter(pk=rid).first()
     editing_existing = instance is not None
     try:
-        saved = save_reservation_from_draft(lead, payload, instance=instance)
+        saved = save_reservation_from_draft(lead, payload, instance=instance, user=request.user)
     except DraftError as exc:
         return HttpResponseBadRequest(str(exc))
     if editing_existing:
