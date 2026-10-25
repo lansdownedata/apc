@@ -75,14 +75,38 @@ _NO_PAYMENT_ACCOUNT = (
 # --- the chart of accounts cache and the two choices ------------------------------------------
 
 
+# Intuit's query pages: 1-based STARTPOSITION, at most 1000 rows a page.
+ACCOUNT_PAGE = 1000
+
+
+def _account_rows() -> list[dict]:
+    """Every usable account in the company, page by page until a short page."""
+    kinds = ", ".join(
+        f"'{kind}'" for kind in (*QboAccount.EXPENSE_TYPES, *QboAccount.PAYMENT_TYPES)
+    )
+    rows: list[dict] = []
+    position = 1
+    while True:
+        query = (
+            f"select * from Account where AccountType in ({kinds})"
+            f" startposition {position} maxresults {ACCOUNT_PAGE}"
+        )
+        page = qbo.request("GET", "query", params={"query": query})
+        found = page.get("QueryResponse", {}).get("Account", [])
+        rows.extend(found)
+        if len(found) < ACCOUNT_PAGE:
+            return rows
+        position += ACCOUNT_PAGE
+
+
 def refresh_accounts() -> int:
     """Cache the company's expense and bank accounts; one no longer there is retired, not
-    deleted (a mapping that pointed at it then reads as unset). Returns how many are active."""
+    deleted (a mapping that pointed at it then reads as unset). Every page is read before
+    anything is retired, so a failure part-way retires nothing. Returns how many are active."""
     realm = customers.current_realm()
     kinds = (*QboAccount.EXPENSE_TYPES, *QboAccount.PAYMENT_TYPES)
-    rows = qbo.request("GET", "query", params={"query": "select * from Account maxresults 1000"})
     seen = []
-    for row in rows.get("QueryResponse", {}).get("Account", []):
+    for row in _account_rows():
         if row.get("AccountType") not in kinds:
             continue
         QboAccount.objects.update_or_create(

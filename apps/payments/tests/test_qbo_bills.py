@@ -1494,3 +1494,33 @@ def test_the_pane_reads_the_connection_once_for_many_payables():
 
     connected.assert_not_called()
     assert all(s["qbo"] for s in states)
+
+
+def test_refreshing_accounts_asks_only_for_the_usable_types_and_reads_every_page():
+    """A big chart of accounts must not be cut at one page and the rest retired."""
+    pages = [
+        _accounts(_acct("1", "A", "Expense"), _acct("2", "B", "Bank")),
+        _accounts(_acct("3", "C", "Other Expense")),
+    ]
+
+    with patch.object(qbo_bills, "ACCOUNT_PAGE", 2), patch(REQ, side_effect=pages) as req:
+        assert qbo_bills.refresh_accounts() == 3
+
+    first, second = (c.kwargs["params"]["query"] for c in req.call_args_list)
+    assert "AccountType in ('Expense', 'Cost of Goods Sold', 'Other Expense', 'Bank')" in first
+    assert "startposition 1 maxresults 2" in first.lower()
+    assert "startposition 3 maxresults 2" in second.lower()
+
+
+def test_a_failed_page_retires_nothing():
+    QboAccount.objects.create(realm_id=REALM, qbo_id="9", name="Kept", account_type="Bank")
+    pages = [
+        _accounts(_acct("1", "A", "Expense"), _acct("2", "B", "Bank")),
+        qbo.QboAPIError(503, "down"),
+    ]
+
+    with patch.object(qbo_bills, "ACCOUNT_PAGE", 2), patch(REQ, side_effect=pages):
+        with pytest.raises(qbo.QboAPIError):
+            qbo_bills.refresh_accounts()
+
+    assert QboAccount.objects.get(qbo_id="9").active is True
