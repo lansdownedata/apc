@@ -91,6 +91,9 @@ class Vendor(QboSyncedModel, TimeStampedModel):
             "The affiliate's GNet id. Set this and trips farm out over GNet instead of email."
         ),
     )
+    # Set while a push to QuickBooks is in flight, so the cron and a Retry never send the same
+    # vendor at once; a lease older than `qbo_bills.LEASE` is treated as abandoned.
+    qbo_push_started_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     class Meta:
         ordering = ["name"]

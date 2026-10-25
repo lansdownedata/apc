@@ -128,19 +128,31 @@ def _digest(body: dict) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:12]
 
 
+def create_request_id(tag: str, attempt: int) -> str:
+    """A create keeps one id across outages and refusals made here (a lost response then
+    replays the record that was made) and moves to a new one only after QuickBooks itself
+    refused it (`qbo_create_attempt`), so the corrected record isn't answered with the old
+    refusal. Attempt 0 keeps the id APC-42 shipped with."""
+    return f"apc-{tag}-create{attempt or ''}"
+
+
 def _request_id(record, body: dict) -> str:
     """Deterministic per record and change: the same retry gets the same id, so QuickBooks
-    returns the original result. A create keeps one id across outages (a lost response then
-    replays the customer that was made) but takes a new one after QuickBooks definitely
-    refused it, so the corrected record isn't answered with the old refusal."""
+    returns the original result."""
     kind = f"{_kind(record)[0]}{record.pk}"
     if not record.qbo_id:
-        # qbo_sync_error is only ever set by a definite refusal (outages mark nothing) and
-        # survives a local edit, unlike the state.
-        if record.qbo_sync_error:
-            return f"apc-{_digest(body)}-{kind}-c"[:50]
-        return f"apc-{kind}-create"
+        return create_request_id(kind, record.qbo_create_attempt)
     return f"apc-{_digest(body)}-{kind}-u{record.qbo_sync_token}"[:50]
+
+
+def refused_by_quickbooks(record, prefix: str = "qbo_") -> None:
+    """QuickBooks definitely refused a create: the next one goes under a new requestid.
+    Never called for a refusal made here — nothing reached QuickBooks then."""
+    if getattr(record, prefix + "id"):
+        return
+    field = prefix + "create_attempt"
+    setattr(record, field, getattr(record, field) + 1)
+    type(record).objects.filter(pk=record.pk).update(**{field: getattr(record, field)})
 
 
 def _errors(exc: qbo.QboAPIError) -> list[dict]:
@@ -240,6 +252,7 @@ def push(record) -> bool:
         logger.warning("QuickBooks refused %s %s: %s", _kind(record), record.pk, exc.body[:500])
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
+        refused_by_quickbooks(record)
         _fail(record, _refusal_message(exc))
         return False
     customer = result["Customer"]

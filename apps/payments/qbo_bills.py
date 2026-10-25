@@ -175,13 +175,11 @@ class _Link:
 
 
 def _request_id(link: _Link, body: dict) -> str:
-    """Deterministic per record and change, as in APC-42: a retried create keeps its id (a
-    lost response replays the original), a create after a definite refusal takes a new one,
-    an update is keyed by the SyncToken it was made against."""
+    """Deterministic per record and change, as in APC-42: a create keeps its id until
+    QuickBooks itself refuses one (`create_attempt`), an update is keyed by its body and the
+    SyncToken it was made against."""
     if not link.get("id"):
-        if link.get("sync_error"):
-            return f"apc-{_digest(body)}-{link.tag}-c"[:50]
-        return f"apc-{link.tag}-create"
+        return customers.create_request_id(link.tag, link.get("create_attempt"))
     return f"apc-{_digest(body)}-{link.tag}-u{link.get('sync_token')}"[:50]
 
 
@@ -299,6 +297,7 @@ def _push(link: _Link, build, *, matches, after=None, what: str, on_refusal=None
         logger.warning("QuickBooks refused %s %s: %s", link.entity, link.record.pk, exc.body[:500])
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
+        customers.refused_by_quickbooks(link.record, link.prefix)
         _fail(link, _reason(exc, what))
         return False
     model = type(link.record)
@@ -511,8 +510,8 @@ def push_bill(payable: AffiliatePayable) -> bool:
         return False
     link = _Link(payable, "bill", "Bill")
     if _relink_if_other_company(link, realm):
-        payable.qbo_attachable_id = ""
-        AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachable_id="")
+        payable.qbo_attachment_id = ""
+        AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachment_id="")
     return _push(
         link,
         lambda: bill_payload(payable, realm),
@@ -563,7 +562,7 @@ def upload_attachment(
 
 def _attach_invoice(payable: AffiliatePayable) -> None:
     """Upload the invoice file to the bill, once. Re-raises SyncPaused/_Refused to _push."""
-    if not payable.invoice_file or payable.qbo_attachable_id:
+    if not payable.invoice_file or payable.qbo_attachment_id:
         return
     name = os.path.basename(payable.invoice_file.name)
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -582,8 +581,8 @@ def _attach_invoice(payable: AffiliatePayable) -> None:
         # Keyed on the file too: a replaced file must not replay the old upload's answer.
         request_id=f"apc-b{payable.pk}-att{payable.qbo_id}-{file_key}",
     )
-    payable.qbo_attachable_id = attachable_id
-    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachable_id=attachable_id)
+    payable.qbo_attachment_id = attachable_id
+    AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_attachment_id=attachable_id)
 
 
 # --- bill payments -----------------------------------------------------------------------------

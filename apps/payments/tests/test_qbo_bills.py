@@ -606,7 +606,7 @@ def test_the_invoice_file_is_attached_to_the_bill_once():
     name, content, ctype = files["file_content_01"]
     assert name.endswith(".pdf") and content == b"%PDF-1.4 invoice" and ctype == "application/pdf"
     payable.refresh_from_db()
-    assert payable.qbo_attachable_id == "900"
+    assert payable.qbo_attachment_id == "900"
 
     AffiliatePayable.objects.filter(pk=payable.pk).update(qbo_sync_state=SyncState.NOT_SYNCED)
     payable.refresh_from_db()
@@ -743,7 +743,7 @@ def test_bills_from_another_quickbooks_company_are_pushed_again_as_new():
     _map()
     payable = _bill_synced(_payable(vendor=_linked_vendor()))
     AffiliatePayable.objects.filter(pk=payable.pk).update(
-        qbo_realm_id="111", qbo_attachable_id="900"
+        qbo_realm_id="111", qbo_attachment_id="900"
     )
     Vendor.objects.filter(pk=payable.assignment.vendor_id).update(qbo_realm_id="111")
 
@@ -753,7 +753,7 @@ def test_bills_from_another_quickbooks_company_are_pushed_again_as_new():
     assert "Id" not in req.call_args_list[0].kwargs["json"]
     assert "Id" not in req.call_args_list[1].kwargs["json"]
     payable.refresh_from_db()
-    assert (payable.qbo_id, payable.qbo_realm_id, payable.qbo_attachable_id) == ("9", REALM, "")
+    assert (payable.qbo_id, payable.qbo_realm_id, payable.qbo_attachment_id) == ("9", REALM, "")
 
 
 # --- what queues a push ---------------------------------------------------------------------------
@@ -1059,7 +1059,7 @@ def test_a_replaced_invoice_file_is_uploaded_under_a_new_request_id():
     first = req.call_args_list[1].kwargs["params"]["requestid"]
     payable.refresh_from_db()
     payable.invoice_file = SimpleUploadedFile("inv-77-corrected.pdf", b"%PDF-1.4 v2")
-    payable.qbo_attachable_id = ""
+    payable.qbo_attachment_id = ""
     payable.qbo_sync_state = SyncState.NOT_SYNCED
     payable.save()
 
@@ -1073,3 +1073,60 @@ def test_the_accounts_cache_and_the_choice_are_in_the_admin(admin_client):
     QboAccountMapping.load()
     for name in ("qboaccount", "qboaccountmapping"):
         assert admin_client.get(reverse(f"admin:billing_{name}_changelist")).status_code == 200
+
+
+# --- review fixes (2026-10-25) ------------------------------------------------------------------
+
+
+def test_a_lost_payment_create_then_an_unset_bank_account_keeps_the_request_id():
+    """Lost response, then the bank choice unset for a run (refused here, nothing sent), then
+    chosen again: the retry must replay the first create, not make a second payment."""
+    _map()
+    _bill_synced(_paid(vendor=_linked_vendor()))
+    with patch(REQ, side_effect=qbo.QboAPIError(0, "network: Timeout")) as req:
+        qbo_bills.sync_pending()
+    first = req.call_args.kwargs["params"]["requestid"]
+    config = QboAccountMapping.load()
+    keep, config.payment_account = config.payment_account, None
+    config.save()
+    with patch(REQ) as req:
+        qbo_bills.sync_pending()
+    req.assert_not_called()
+    config.payment_account = keep
+    config.save()
+
+    with patch(REQ, return_value=_billpayment()) as req:
+        qbo_bills.sync_pending()
+
+    assert req.call_args.kwargs["params"]["requestid"] == first
+
+
+def test_a_lost_bill_create_then_an_unset_expense_account_keeps_the_request_id():
+    _map()
+    _payable(vendor=_linked_vendor())
+    with patch(REQ, side_effect=qbo.QboAPIError(0, "network: Timeout")) as req:
+        qbo_bills.sync_pending()
+    first = req.call_args.kwargs["params"]["requestid"]
+    config = QboAccountMapping.load()
+    keep, config.expense_account = config.expense_account, None
+    config.save()
+    with patch(REQ):
+        qbo_bills.sync_pending()
+    config.expense_account = keep
+    config.save()
+
+    with patch(REQ, return_value=_bill()) as req:
+        qbo_bills.sync_pending()
+
+    assert req.call_args.kwargs["params"]["requestid"] == first
+
+
+def test_quickbooks_refusing_a_bill_create_moves_it_to_a_new_request_id():
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+    with patch(REQ, side_effect=_fault("6000", detail="x")) as req:
+        qbo_bills.push_bill(payable)
+        qbo_bills.push_bill(payable)
+    first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
+
+    assert first != second and len(second) <= 50

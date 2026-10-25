@@ -637,3 +637,39 @@ def test_a_failed_groups_alert_still_names_its_account():
     assert Notification.objects.filter(
         title="QuickBooks sync failed: Ridgeline Partners - Accounts Payable"
     ).exists()
+
+
+# --- APC-74 review: only QuickBooks' own refusal may change a create's requestid ----------------
+
+
+def test_a_local_refusal_after_a_lost_create_keeps_the_create_request_id():
+    """A create whose response was lost, then a run refused here (a term QuickBooks lacks),
+    then fixed: the retry must reuse the first requestid, or QuickBooks makes a second
+    customer. Only a refusal from QuickBooks itself starts a new create id."""
+    account = _account()
+    with patch(REQ, side_effect=qbo.QboAPIError(0, "network: Timeout")) as req:
+        with pytest.raises(qbo_sync.SyncPaused):
+            qbo_sync.push(account)
+    first = req.call_args.kwargs["params"]["requestid"]
+
+    QboTerm.objects.filter(qbo_id="3").update(active=False)  # term gone for a run: refused here
+    with patch(REQ) as req:
+        assert qbo_sync.push(account) is False
+    req.assert_not_called()
+    QboTerm.objects.filter(qbo_id="3").update(active=True)
+
+    with patch(REQ, return_value=_created("58")) as req:
+        qbo_sync.push(BillingAccount.objects.get(pk=account.pk))
+
+    assert req.call_args.kwargs["params"]["requestid"] == first
+
+
+def test_a_refusal_from_quickbooks_moves_the_create_to_a_new_request_id_once():
+    account = _account()
+    with patch(REQ, side_effect=_fault("6240")) as req:
+        qbo_sync.push(account)
+        qbo_sync.push(BillingAccount.objects.get(pk=account.pk))
+    first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
+
+    assert first != second
+    assert BillingAccount.objects.get(pk=account.pk).qbo_create_attempt == 2

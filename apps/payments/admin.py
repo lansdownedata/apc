@@ -116,7 +116,7 @@ class AffiliatePayableAdmin(admin.ModelAdmin):
         "qbo_sync_state",
         "qbo_sync_error",
         "qbo_synced_at",
-        "qbo_attachable_id",
+        "qbo_attachment_id",
         "qbo_payment_id",
         "qbo_payment_sync_token",
         "qbo_payment_realm_id",
@@ -133,7 +133,7 @@ class AffiliatePayableAdmin(admin.ModelAdmin):
         if change and billed and self.BILL_FIELDS & set(form.changed_data):
             obj.qbo_sync_state = SyncState.NOT_SYNCED
             if "invoice_file" in form.changed_data:
-                obj.qbo_attachable_id = ""  # the new file goes up to the same bill
+                obj.qbo_attachment_id = ""  # the new file goes up to the same bill
             if obj.status == AffiliatePayable.Status.PAID:
                 obj.qbo_payment_sync_state = SyncState.NOT_SYNCED
         super().save_model(request, obj, form, change)

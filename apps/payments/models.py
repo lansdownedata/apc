@@ -300,8 +300,10 @@ class AffiliatePayable(QboSyncedModel, TimeStampedModel):
     paid_reference = models.CharField(max_length=120, blank=True)
 
     # APC-74: the mixin's `qbo_*` fields are the QuickBooks **Bill** (pushed once approved);
-    # these are its **BillPayment** (pushed once marked paid), the same shape under a prefix.
-    # `qbo_attachable_id` is the invoice file attached to the Bill — uploaded once.
+    # `qbo_payment_*` its **BillPayment** (pushed once marked paid) and `qbo_attachment_*` the
+    # invoice file attached to it — each the same shape under its own prefix, so a refused
+    # file never holds up the payment. `*_push_started_at` is each one's in-flight lease.
+    qbo_push_started_at = models.DateTimeField(null=True, blank=True, editable=False)
     qbo_payment_id = models.CharField(max_length=64, blank=True)
     qbo_payment_sync_token = models.CharField(max_length=32, blank=True)
     qbo_payment_realm_id = models.CharField(max_length=32, blank=True)
@@ -310,7 +312,17 @@ class AffiliatePayable(QboSyncedModel, TimeStampedModel):
     )
     qbo_payment_sync_error = models.CharField(max_length=255, blank=True)
     qbo_payment_synced_at = models.DateTimeField(null=True, blank=True)
-    qbo_attachable_id = models.CharField(max_length=64, blank=True)
+    qbo_payment_create_attempt = models.PositiveSmallIntegerField(default=0, editable=False)
+    qbo_payment_push_started_at = models.DateTimeField(null=True, blank=True, editable=False)
+    qbo_attachment_id = models.CharField(max_length=64, blank=True)
+    qbo_attachment_realm_id = models.CharField(max_length=32, blank=True)
+    qbo_attachment_sync_state = models.CharField(
+        max_length=20, choices=SyncState.choices, default=SyncState.NOT_SYNCED
+    )
+    qbo_attachment_sync_error = models.CharField(max_length=255, blank=True)
+    qbo_attachment_synced_at = models.DateTimeField(null=True, blank=True)
+    qbo_attachment_create_attempt = models.PositiveSmallIntegerField(default=0, editable=False)
+    qbo_attachment_push_started_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     class Meta(TimeStampedModel.Meta):
         indexes = [models.Index(fields=["status"])]

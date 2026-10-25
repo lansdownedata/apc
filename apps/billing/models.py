@@ -55,6 +55,11 @@ class QboSyncedModel(models.Model):
     )
     qbo_sync_error = models.CharField(max_length=255, blank=True)
     qbo_synced_at = models.DateTimeField(null=True, blank=True)
+    # Which create this is, for Intuit's requestid: bumped ONLY when QuickBooks itself refuses
+    # a create. A refusal made here (a missing term or account choice) sends nothing, so it
+    # must not change the id — a lost-response create retried later has to replay, not
+    # duplicate (APC-74 review).
+    qbo_create_attempt = models.PositiveSmallIntegerField(default=0, editable=False)
 
     class Meta:
         abstract = True
@@ -189,6 +194,10 @@ class QboAccountMapping(models.Model):
     payment_account = models.ForeignKey(
         QboAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # Payables approved on or after this date (trip-local) go to QuickBooks; earlier ones
+    # never do, so the first sync doesn't back-date every past affiliate bill into the books.
+    # Blank = no bills or payments go at all.
+    bills_from = models.DateField("push affiliate bills from", null=True, blank=True)
 
     class Meta:
         verbose_name = "QuickBooks account mapping"
