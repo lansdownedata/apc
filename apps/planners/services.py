@@ -75,8 +75,15 @@ def _send_invite(account: PlannerAccount) -> bool:
 
 
 def _assert_outbound() -> None:
+    """Refuse a planner send before anything changes: while the go-live switch is off, or
+    while PUBLIC_BASE_URL is blank (the link in the mail would be relative, and dead)."""
     if not outbound.enabled():
         raise PlannerError(outbound.OFF_MESSAGE)
+    if not settings.PUBLIC_BASE_URL:
+        raise PlannerError(
+            "PUBLIC_BASE_URL isn't set, so the invite link wouldn't work. "
+            "Set it in the app's config, then send the invite."
+        )
 
 
 # --- staff actions ---------------------------------------------------------------------

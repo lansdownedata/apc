@@ -165,3 +165,16 @@ def test_a_lost_order_is_not_a_wedding_the_planner_sees(planner, agent):
     lead = LeadFactory(status=Lead.Status.LOST)
     LeadContact.objects.create(lead=lead, contact=planner, role=LeadContact.Role.LEAD_PLANNER)
     assert list(services.weddings_for(account)) == []
+
+
+def test_invite_and_resend_are_refused_without_a_public_base_url(planner, agent, settings):
+    account, _, _ = _invite(planner, agent)
+    other = ContactFactory(email="second@example.com")
+    settings.PUBLIC_BASE_URL = ""
+    with patch(SEND) as send:
+        with pytest.raises(services.PlannerError, match="PUBLIC_BASE_URL"):
+            services.invite(other, actor=agent)
+        with pytest.raises(services.PlannerError, match="PUBLIC_BASE_URL"):
+            services.resend(account)
+    send.assert_not_called()
+    assert not PlannerAccount.objects.filter(contact=other).exists()
