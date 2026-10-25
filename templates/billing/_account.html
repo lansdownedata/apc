@@ -24,6 +24,10 @@
 
   {% if qbo_connected and billing_account.qbo_sync_state == 'error' and billing_account.qbo_sync_error %}
     <p class="text-[11.5px] text-rose-600 mt-1">{{ billing_account.qbo_sync_error }}</p>
+    {% if user.has_payments_access %}
+    <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded mt-1"
+            @click="retrySync('{% url 'billing_account_sync' billing_account.pk %}')">Retry sync</button>
+    {% endif %}
   {% endif %}
 
   <div class="mt-4 flex flex-wrap gap-x-10 gap-y-3">

@@ -974,6 +974,18 @@ window.openTripChecklist = openTripChecklist;
    already does. */
 function billingCard(opts = {}) {
   return {
+    // APC-42: push one record to QuickBooks now. Synced → reload to show it; still failing →
+    // say why (the server's sentence), the row keeps its error.
+    retrySync(url) {
+      postForm(url, {})
+        .then((r) => {
+          if (r.state === "synced") return window.location.reload();
+          Alpine.store("toast").push({ type: "error", title: "Still not in QuickBooks", message: r.error });
+        })
+        .catch((e) =>
+          Alpine.store("toast").push({ type: "error", title: "Could not sync", message: e.message }),
+        );
+    },
     tab: opts.initialTab === "accounts" ? "accounts" : "cards",
     modal: null,
     saving: false,

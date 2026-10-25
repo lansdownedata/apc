@@ -453,6 +453,8 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
     Tokens are never rendered. 404 while the client keys are blank — the feature is dark."""
     from django.conf import settings as dj_settings
 
+    from apps.billing import qbo_sync
+    from apps.billing.models import QboTerm
     from apps.integrations.models import QboCredential
 
     qbo = _qbo_or_404()
@@ -466,6 +468,9 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
             "cred": cred if cred and cred.realm_id else None,
             "connected": qbo.is_connected(),
             "environment": dj_settings.QBO_ENVIRONMENT,
+            # APC-42: the company's terms we match against, and ours that it lacks.
+            "qbo_terms": list(QboTerm.objects.filter(active=True)),
+            "unmatched_terms": qbo_sync.unmatched_terms(),
         },
     )
 
@@ -482,6 +487,26 @@ def quickbooks_connect(request: HttpRequest) -> HttpResponse:
     state = secrets.token_urlsafe(24)
     request.session[QBO_STATE_KEY] = state
     return redirect(qbo.authorize_url(state))
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_refresh_terms(request: HttpRequest) -> HttpResponse:
+    """Re-read the company's payment terms now (the hourly sync does it too)."""
+    from apps.billing import qbo_sync
+
+    qbo = _qbo_or_404()
+    if not qbo.is_connected():
+        messages.error(request, "Connect QuickBooks first.")
+        return redirect("quickbooks_settings")
+    try:
+        count = qbo_sync.refresh_terms()
+    except (qbo.QboAPIError, qbo.QboNotConnected) as exc:
+        messages.error(request, f"Couldn't read QuickBooks' terms: {exc}")
+    else:
+        messages.success(request, f"{count} payment terms read from QuickBooks.")
+    return redirect("quickbooks_settings")
 
 
 @login_required

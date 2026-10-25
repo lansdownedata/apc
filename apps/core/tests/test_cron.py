@@ -54,6 +54,7 @@ def test_registry_contains_all_jobs():
     assert set(cron.JOBS) == {
         "charge-due-balances",
         "recognize-due-revenue",
+        "retry-qbo-sync",
         "retry-la-sync",
         "run-touchpoints",
         "deposit-report",

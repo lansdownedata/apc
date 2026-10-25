@@ -28,8 +28,9 @@
 
   {% include "billing/_sync_chip.html" with record=group synced_label="Synced" %}
 
-  {% if qbo_connected and group.qbo_sync_state == 'error' %}
-    <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded">Retry sync</button>
+  {% if qbo_connected and group.qbo_sync_state == 'error' and user.has_payments_access %}
+    <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded"
+            @click="retrySync('{% url 'billing_group_sync' group.pk %}')">Retry sync</button>
   {% endif %}
 
   {% if user.has_payments_access %}

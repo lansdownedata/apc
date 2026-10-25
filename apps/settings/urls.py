@@ -9,6 +9,9 @@ urlpatterns = [
     path("quickbooks/", views.quickbooks_settings, name="quickbooks_settings"),
     path("quickbooks/connect/", views.quickbooks_connect, name="quickbooks_connect"),
     path("quickbooks/disconnect/", views.quickbooks_disconnect, name="quickbooks_disconnect"),
+    path(
+        "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
+    ),
     path("notifications/", views.notifications, name="notifications"),
     path("pricing/", views.pricing, name="pricing"),
     path("affiliate-scoring/", views.affiliate_scoring, name="affiliate_scoring"),

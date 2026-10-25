@@ -224,3 +224,38 @@ def card_remove(request: HttpRequest, pk: int) -> JsonResponse:
         return JsonResponse({"ok": True, "cleared": [lead.quote_no for lead in cleared]})
 
     return _card_action(done)
+
+
+# --- QuickBooks sync (APC-42) ----------------------------------------------------------------
+
+
+def _sync_now(record) -> JsonResponse:
+    """Retry sync on one record, now — a person asked, so this one call may wait on Intuit."""
+    from apps.integrations import qbo
+
+    from . import qbo_sync
+
+    if not qbo.is_connected():
+        return JsonResponse({"ok": False, "error": "QuickBooks isn't connected."}, status=400)
+    try:
+        qbo_sync.push(record)
+    except qbo.QboNotConnected as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    record.refresh_from_db()
+    return JsonResponse(
+        {"ok": True, "state": record.qbo_sync_state, "error": record.qbo_sync_error}
+    )
+
+
+@login_required
+@payment_access_required
+@require_POST
+def account_sync(request: HttpRequest, pk: int) -> JsonResponse:
+    return _sync_now(get_object_or_404(BillingAccount, pk=pk))
+
+
+@login_required
+@payment_access_required
+@require_POST
+def group_sync(request: HttpRequest, pk: int) -> JsonResponse:
+    return _sync_now(get_object_or_404(AccountGroup.objects.select_related("account"), pk=pk))

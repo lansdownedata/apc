@@ -284,3 +284,122 @@ def test_terms_match_by_name_ignoring_case():
 
     assert qbo_sync.term_ref(Terms.NET_30) == {"value": "3"}
     assert qbo_sync.term_ref(Terms.NET_15) is None
+
+
+# --- Task 3: the cron, Retry sync, Settings --------------------------------------------------
+
+from django.urls import reverse  # noqa: E402
+
+from apps.accounts.factories import UserFactory  # noqa: E402
+from apps.accounts.models import User  # noqa: E402
+from apps.core.cron import JOBS  # noqa: E402
+
+
+def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending():
+    _account()
+    terms = {"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30", "Active": True}]}}
+
+    with patch(REQ, side_effect=[terms, _created("58"), _created("59")]) as req:
+        assert JOBS["retry-qbo-sync"]() == 2
+
+    assert req.call_args_list[0].args == ("GET", "query")
+
+
+def test_the_hourly_job_does_nothing_without_a_connection():
+    _account()
+
+    with patch("apps.billing.qbo_sync.qbo.is_connected", return_value=False), patch(REQ) as req:
+        assert JOBS["retry-qbo-sync"]() == 0
+
+    req.assert_not_called()
+
+
+@pytest.fixture
+def cashier(client):
+    client.force_login(UserFactory(can_manage_payments=True))
+    return client
+
+
+def test_retry_sync_pushes_an_account_now_and_answers_with_its_state(cashier):
+    account = _account()
+    account.qbo_sync_state = SyncState.ERROR
+    account.save()
+
+    with patch(REQ, return_value=_created("58")):
+        resp = cashier.post(reverse("billing_account_sync", args=[account.pk]))
+
+    assert resp.json() == {"ok": True, "state": "synced", "error": ""}
+
+
+def test_retry_sync_on_a_group_reports_the_failure_in_words(cashier):
+    account = _account()
+    account.qbo_id = "58"
+    account.save()
+    group = account.groups.get()
+
+    with patch(REQ, side_effect=_fault("6240")):
+        resp = cashier.post(reverse("billing_group_sync", args=[group.pk]))
+
+    body = resp.json()
+    assert (body["ok"], body["state"]) == (True, "error")
+    assert "already has a customer with this name" in body["error"]
+
+
+def test_retry_sync_needs_payments_access_and_a_connection(client):
+    account = _account()
+    client.force_login(UserFactory())
+    assert client.post(reverse("billing_account_sync", args=[account.pk])).status_code in (302, 403)
+
+    client.force_login(UserFactory(can_manage_payments=True))
+    with patch("apps.billing.qbo_sync.qbo.is_connected", return_value=False):
+        resp = client.post(reverse("billing_account_sync", args=[account.pk]))
+    assert resp.status_code == 400
+
+
+def test_the_retry_button_is_wired_to_the_sync_endpoint(cashier, settings):
+    account = _account()
+    group = account.groups.get()
+    for record in (account, group):
+        record.qbo_sync_state = SyncState.ERROR
+        record.qbo_sync_error = "QuickBooks couldn't be reached. It will try again within the hour."
+        record.save()
+
+    with patch("apps.billing.selectors._qbo_connected", return_value=True):
+        html = cashier.get(reverse("contact_detail", args=[account.contact.pk])).content.decode()
+
+    assert reverse("billing_account_sync", args=[account.pk]) in html
+    assert reverse("billing_group_sync", args=[group.pk]) in html
+
+
+def test_settings_lists_terms_quickbooks_lacks_and_can_refresh_them(client):
+    from django.test import override_settings
+
+    QboTerm.objects.create(qbo_id="3", name="Net 30", active=True)
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"):
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+        with (
+            patch(REQ, return_value={"QueryResponse": {"Term": []}}),
+            patch("apps.settings.views._qbo_or_404") as gate,
+        ):
+            gate.return_value = qbo
+            with patch.object(qbo, "is_connected", return_value=True):
+                resp = client.post(reverse("quickbooks_refresh_terms"))
+
+    assert "Net 15" in html and "Net 45" in html  # ours, missing from QuickBooks
+    assert "Refresh terms" in html
+    assert resp.status_code == 302
+
+
+def test_disconnecting_quickbooks_leaves_every_local_record_intact():
+    account = _account()
+    account.qbo_id = "58"
+    account.qbo_sync_state = SyncState.SYNCED
+    account.save()
+
+    with patch.object(qbo.requests, "request"):
+        qbo.disconnect()
+
+    account.refresh_from_db()
+    assert (account.qbo_id, account.qbo_sync_state) == ("58", SyncState.SYNCED)

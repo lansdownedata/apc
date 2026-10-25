@@ -195,3 +195,15 @@ def refresh_terms() -> int:
         seen.append(str(term["Id"]))
     QboTerm.objects.exclude(qbo_id__in=seen).update(active=False)
     return QboTerm.objects.filter(active=True).count()
+
+
+def run_hourly() -> int:
+    """The `retry-qbo-sync` cron: refresh the terms cache, then push everything pending.
+    Does nothing without a live connection. A failed terms refresh doesn't stop the push."""
+    if not qbo.is_connected():
+        return 0
+    try:
+        refresh_terms()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        logger.warning("QuickBooks terms refresh failed; pushing with the cached terms")
+    return sync_pending()
