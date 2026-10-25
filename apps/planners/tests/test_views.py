@@ -274,10 +274,9 @@ def _routes(resolver: URLResolver, prefix: str = ""):
                 yield prefix + _sample(entry)
 
 
-# The Podium OAuth start/finish answer anyone, staff session or not (they are guarded by
-# the OAuth state, not by login) — not staff data, and not something a planner session
-# changes. Every other /integrations/ route is staff-only and is walked below.
-INTEGRATIONS_OPEN_TO_ALL = {"integrations/podium/authorize/", "integrations/podium/callback/"}
+# Every /integrations/ route is staff-only (the Podium connect routes became owner-admin
+# only on 2026-10-25) and is walked below.
+INTEGRATIONS_OPEN_TO_ALL: set[str] = set()
 
 
 def _staff_paths() -> list[str]:
