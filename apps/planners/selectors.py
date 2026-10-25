@@ -63,7 +63,7 @@ def _home_zone(trips) -> str:
     return (first.pickup_timezone if first else "") or ""
 
 
-def _summary(lead: Lead, *, now) -> dict:
+def _summary(lead: Lead, *, now, grace) -> dict:
     trips = _live(lead.reservations.all())
     day = _wedding_date(lead, trips)
     return {
@@ -73,14 +73,15 @@ def _summary(lead: Lead, *, now) -> dict:
         "date": day,
         "date_label": format_long_date(day) if day else "Date to be confirmed",
         "roles": sorted({r.get_role_display() for r in lead.planner_roles}),
-        "archived": services.is_archived(lead.reservations.all(), now=now),
+        "archived": services.is_archived(lead.reservations.all(), now=now, grace=grace),
         "days_to_go": (day - today_at(_home_zone(trips))).days if day else None,
     }
 
 
 def wedding_list(account: PlannerAccount) -> tuple[list[dict], list[dict]]:
-    """(current, past). Current soonest first; past most recent first. Three queries."""
-    now = timezone.now()
+    """(current, past). Current soonest first; past most recent first. Four queries
+    (leads, their trips, the planner's roles, the archive grace) however many weddings."""
+    now, grace = timezone.now(), services.archive_grace()
     leads = (
         services.weddings_for(account)
         .select_related("contact")
@@ -93,7 +94,7 @@ def wedding_list(account: PlannerAccount) -> tuple[list[dict], list[dict]]:
             ),
         )
     )
-    rows = [_summary(lead, now=now) for lead in leads]
+    rows = [_summary(lead, now=now, grace=grace) for lead in leads]
     far = date.max
     current = sorted((r for r in rows if not r["archived"]), key=lambda r: r["date"] or far)
     past = sorted(
@@ -303,7 +304,7 @@ def dashboard(lead: Lead) -> dict:
         .get(pk=lead.pk)
     )
     lead.planner_roles = []
-    summary = _summary(lead, now=timezone.now())
+    summary = _summary(lead, now=timezone.now(), grace=services.archive_grace())
     trips = _live(lead.reservations.all())
     scheduled = lead.status in _SCHEDULED_STATUSES and bool(trips)
     shown = trips if scheduled else []

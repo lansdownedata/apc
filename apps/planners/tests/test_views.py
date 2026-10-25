@@ -302,3 +302,23 @@ def test_a_staff_session_does_not_open_the_planner_area(client):
     response = client.get(reverse("planners:weddings"))
     assert response.status_code == 302
     assert response.url.startswith(reverse("planners:login"))
+
+
+def test_the_wedding_list_costs_the_same_for_one_wedding_or_ten(planner_client, registered):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.tasks.models import TaskConfig
+
+    TaskConfig.load()
+
+    def count():
+        with CaptureQueriesContext(connection) as ctx:
+            assert planner_client.get(reverse("planners:weddings")).status_code == 200
+        return len(ctx.captured_queries)
+
+    _wedding(registered.contact)
+    one = count()
+    for _ in range(9):
+        _wedding(registered.contact)
+    assert count() == one

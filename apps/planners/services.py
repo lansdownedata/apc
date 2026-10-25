@@ -251,14 +251,21 @@ def weddings_for(account: PlannerAccount) -> QuerySet[Lead]:
     )
 
 
-def is_archived(trips, *, now=None) -> bool:
+def archive_grace() -> timedelta:
+    """How long past a trip's scheduled end before it counts as done with no status."""
+    from apps.tasks.models import TaskConfig
+
+    return timedelta(hours=TaskConfig.load().post_trip_grace_hours)
+
+
+def is_archived(trips, *, now=None, grace: timedelta | None = None) -> bool:
     """A wedding is archived once its last live trip is done: marked Done, or its scheduled
     end is past by the post-trip grace (statuses can be missing while LA runs in parallel).
-    An order with no live trips yet is not archived — it is still being planned."""
-    from apps.tasks.models import TaskConfig
+    An order with no live trips yet is not archived — it is still being planned. Pass
+    `grace` (from `archive_grace`) when checking many weddings, so it's read once."""
     from apps.tasks.post_trip import order_finished_at
 
-    grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
+    grace = archive_grace() if grace is None else grace
     return order_finished_at(list(trips), now=now or timezone.now(), grace=grace) is not None
 
 
