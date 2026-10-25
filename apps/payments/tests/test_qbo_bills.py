@@ -5,6 +5,7 @@ The QuickBooks client is mocked at its `request()` boundary, as in APC-42's test
 here calls Intuit.
 """
 
+import html
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -862,42 +863,45 @@ def _admin_correct(admin_client, payable, amount):
     )
 
 
-def test_correcting_an_unpaid_synced_bill_in_the_admin_queues_an_update(admin_client):
-    payable = _bill_synced(_payable(vendor=_linked_vendor()))
-
-    _admin_correct(admin_client, payable, "480.00")
-
-    payable.refresh_from_db()
-    assert payable.invoice_amount == Decimal("480.00")
-    assert payable.qbo_id == "145"  # still the same bill: the re-push is an update
-    assert payable.qbo_sync_state == SyncState.NOT_SYNCED
+LOCKED = "Approved payables can't change amount here; corrections come with Trip Processing."
 
 
-def test_a_paid_payable_not_yet_in_quickbooks_can_still_be_corrected(admin_client):
-    payable = _bill_synced(_paid(vendor=_linked_vendor()))
-
-    _admin_correct(admin_client, payable, "480.00")
-
-    payable.refresh_from_db()
-    assert payable.invoice_amount == Decimal("480.00")
-    assert payable.qbo_sync_state == SyncState.NOT_SYNCED
-    assert payable.qbo_payment_sync_state == SyncState.NOT_SYNCED
-
-
-def test_the_amount_of_a_bill_paid_in_quickbooks_cant_be_changed(admin_client):
-    """Never edit a paid Bill: once its BillPayment exists, correcting the amount is refused
-    here with a sentence saying why (coordinator, 2026-10-25)."""
-    payable = _bill_synced(_paid(vendor=_linked_vendor()))
-    AffiliatePayable.objects.filter(pk=payable.pk).update(
-        qbo_payment_id="190", qbo_payment_realm_id=REALM, qbo_payment_sync_state=SyncState.SYNCED
-    )
+@pytest.mark.parametrize("status", [AffiliatePayable.Status.APPROVED, AffiliatePayable.Status.PAID])
+def test_an_approved_or_paid_payables_amount_cant_change_in_the_admin(admin_client, status):
+    """The ledger accrued (and paid) the approved amount, and QuickBooks has it as a bill:
+    an admin edit would drift both away from the portal (Moe's default, 2026-10-25)."""
+    payable = _bill_synced(_payable(status=status, vendor=_linked_vendor()))
 
     resp = _admin_correct(admin_client, payable, "480.00")
 
-    assert "already paid in QuickBooks" in resp.content.decode()
+    assert LOCKED in html.unescape(resp.content.decode())
     payable.refresh_from_db()
     assert payable.invoice_amount == Decimal("470.00")
     assert payable.qbo_sync_state == SyncState.SYNCED
+
+
+def test_an_approved_payables_invoice_number_cant_change_in_the_admin_either(admin_client):
+    from django.urls import reverse
+
+    payable = _payable(vendor=_linked_vendor())
+
+    resp = admin_client.post(
+        reverse("admin:payments_affiliatepayable_change", args=[payable.pk]),
+        {"invoice_number": "INV-78", "invoice_amount": "470.00"},
+    )
+
+    assert LOCKED in html.unescape(resp.content.decode())
+    payable.refresh_from_db()
+    assert payable.invoice_number == "INV-77"
+
+
+def test_a_draft_payable_can_still_be_corrected_in_the_admin(admin_client):
+    payable = _payable(status=AffiliatePayable.Status.DRAFT)
+
+    _admin_correct(admin_client, payable, "480.00")
+
+    payable.refresh_from_db()
+    assert payable.invoice_amount == Decimal("480.00")
 
 
 def test_one_bill_is_one_approved_payable_today():

@@ -1,8 +1,6 @@
 from django import forms
 from django.contrib import admin
 
-from apps.billing.models import SyncState
-
 from .models import AffiliatePayable, Charge, JournalEntry, JournalLine, PaymentPlan
 
 
@@ -70,7 +68,16 @@ class JournalEntryAdmin(admin.ModelAdmin):
         return False
 
 
+APPROVED_LOCKED = (
+    "Approved payables can't change amount here; corrections come with Trip Processing."
+)
+
+
 class AffiliatePayableAdminForm(forms.ModelForm):
+    """Only a draft's invoice can be corrected here. Once approved, the ledger has accrued
+    (and maybe paid) that amount and QuickBooks holds it as a bill; an edit here would drift
+    both away from the portal (Moe's default, APC-74 review)."""
+
     class Meta:
         model = AffiliatePayable
         fields = (
@@ -82,11 +89,14 @@ class AffiliatePayableAdminForm(forms.ModelForm):
         )
 
     def clean(self):
-        from . import qbo_bills
-
         data = super().clean()
-        if "invoice_amount" in self.changed_data and qbo_bills.amount_locked(self.instance):
-            self.add_error("invoice_amount", qbo_bills.PAID_BILL_LOCKED)
+        billed = self.instance.status in (
+            AffiliatePayable.Status.APPROVED,
+            AffiliatePayable.Status.PAID,
+        )
+        if billed:
+            for field in self.changed_data:
+                self.add_error(field, APPROVED_LOCKED)
         return data
 
 
@@ -117,6 +127,8 @@ class AffiliatePayableAdmin(admin.ModelAdmin):
         "qbo_sync_error",
         "qbo_synced_at",
         "qbo_attachment_id",
+        "qbo_attachment_sync_state",
+        "qbo_attachment_sync_error",
         "qbo_payment_id",
         "qbo_payment_sync_token",
         "qbo_payment_realm_id",
@@ -124,16 +136,3 @@ class AffiliatePayableAdmin(admin.ModelAdmin):
         "qbo_payment_sync_error",
         "qbo_payment_synced_at",
     )
-    # What the QuickBooks bill carries: correcting one here updates that bill (never a second
-    # one) on the next sync, and its payment with it.
-    BILL_FIELDS = {"invoice_number", "invoice_amount", "invoice_file", "invoice_received_at"}
-
-    def save_model(self, request, obj, form, change):
-        billed = obj.status in (AffiliatePayable.Status.APPROVED, AffiliatePayable.Status.PAID)
-        if change and billed and self.BILL_FIELDS & set(form.changed_data):
-            obj.qbo_sync_state = SyncState.NOT_SYNCED
-            if "invoice_file" in form.changed_data:
-                obj.qbo_attachment_id = ""  # the new file goes up to the same bill
-            if obj.status == AffiliatePayable.Status.PAID:
-                obj.qbo_payment_sync_state = SyncState.NOT_SYNCED
-        super().save_model(request, obj, form, change)

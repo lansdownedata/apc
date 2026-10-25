@@ -693,17 +693,6 @@ def _push_attachment(payable: AffiliatePayable) -> bool:
 # --- bill payments -----------------------------------------------------------------------------
 
 
-PAID_BILL_LOCKED = (
-    "This bill is already paid in QuickBooks, so its amount can't change here. Raise the"
-    " difference with the affiliate as a new invoice."
-)
-
-
-def amount_locked(payable: AffiliatePayable) -> bool:
-    """A Bill with a BillPayment against it is never edited: its amount is frozen here."""
-    return bool(payable.qbo_payment_id)
-
-
 def payment_payload(payable: AffiliatePayable) -> dict:
     """Check is the only pay type for money from a bank account (QuickBooks has Check and
     CreditCard); ACH, Zelle and other bank transfers go as Check with the method in the memo."""
