@@ -78,21 +78,25 @@
     </div>
     <p class="text-[12.5px] text-muted mb-3">
       An approved affiliate invoice goes to QuickBooks as a bill on this expense account; marking it
-      paid records the payment from this bank account. A change applies to bills sent from now on.
+      paid records the payment from this bank account. Only payables approved on or after the start
+      date go, so past bills aren't back-dated into the books. A change applies to bills sent from now on.
     </p>
     {% if accounts_unset %}
-      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Affiliate bills won't go to QuickBooks until both are chosen.</p>
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Affiliate bills won't go to QuickBooks until both accounts and a start date are chosen.</p>
     {% endif %}
     <form method="post" action="{% url 'quickbooks_accounts' %}" class="grid gap-3">{% csrf_token %}
       <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Expense account for affiliate bills</span>
         {% include "components/searchable_select.html" with name="expense_account" field_id="qbo-expense-account" options=expense_choices selected=expense_selected empty_label="Choose an account" %}</label>
       <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Bank account payments come from</span>
         {% include "components/searchable_select.html" with name="payment_account" field_id="qbo-payment-account" options=payment_choices selected=payment_selected empty_label="Choose an account" %}</label>
+      <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Push affiliate bills approved from</span>
+        <input type="text" name="bills_from" id="qbo-bills-from" class="field" data-flatpickr data-fp-past
+               placeholder="Choose a date" value="{{ bills_from|date:'Y-m-d' }}"></label>
       {% if not expense_choices or not payment_choices %}
         <p class="text-[12px] text-muted">No accounts read yet. Refresh accounts to load them from QuickBooks.</p>
       {% endif %}
       <div class="flex justify-end">
-        <button type="submit" class="btn-gold text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold disabled:opacity-50">Save accounts</button>
+        <button type="submit" class="btn-gold text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold disabled:opacity-50">Save</button>
       </div>
     </form>
   </div>

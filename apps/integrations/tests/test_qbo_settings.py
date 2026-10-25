@@ -276,7 +276,7 @@ def test_saving_the_account_choice(owner):
 
     resp = owner.post(
         reverse("quickbooks_accounts"),
-        {"expense_account": expense.pk, "payment_account": bank.pk},
+        {"expense_account": expense.pk, "payment_account": bank.pk, "bills_from": "2026-11-01"},
     )
 
     assert resp.status_code == 302
@@ -326,3 +326,36 @@ def test_the_account_choice_is_owner_admin_only(client):
     client.force_login(UserFactory(role=User.Role.AGENT))
 
     assert client.post(reverse("quickbooks_accounts"), {}).status_code in (302, 403)
+
+
+@override_settings(**QBO)
+def test_saving_the_start_date_for_affiliate_bills(owner):
+    from datetime import date
+
+    from apps.billing.models import QboAccountMapping
+
+    _live()
+    expense, bank = _cached_accounts()
+
+    owner.post(
+        reverse("quickbooks_accounts"),
+        {"expense_account": expense.pk, "payment_account": bank.pk, "bills_from": "2026-11-01"},
+    )
+
+    assert QboAccountMapping.load().bills_from == date(2026, 11, 1)
+    html = owner.get(reverse("quickbooks_settings")).content.decode()
+    assert 'name="bills_from"' in html and "data-flatpickr" in html
+    assert 'value="2026-11-01"' in html
+
+
+@override_settings(**QBO)
+def test_without_a_start_date_the_screen_says_nothing_goes(owner):
+    _live()
+    expense, bank = _cached_accounts()
+    owner.post(
+        reverse("quickbooks_accounts"),
+        {"expense_account": expense.pk, "payment_account": bank.pk, "bills_from": ""},
+    )
+
+    html = owner.get(reverse("quickbooks_settings")).content.decode()
+    assert "won't go to QuickBooks until" in html

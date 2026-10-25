@@ -490,7 +490,8 @@ def _qbo_accounts_context() -> dict:
         "payment_choices": qbo_bills.payment_choices(),
         "expense_selected": expense,
         "payment_selected": payment,
-        "accounts_unset": not (expense and payment),
+        "bills_from": config.bills_from,
+        "accounts_unset": not (expense and payment and config.bills_from),
     }
 
 
@@ -498,8 +499,11 @@ def _qbo_accounts_context() -> dict:
 @owner_admin_required
 @require_POST
 def quickbooks_accounts(request: HttpRequest) -> HttpResponse:
-    """Save which accounts affiliate bills post to and pay from. Only an active account of the
-    right kind in the connected company is accepted; anything else is left unset."""
+    """Save which accounts affiliate bills post to and pay from, and the approval date they
+    start from. Only an active account of the right kind in the connected company is accepted;
+    anything else (or a date that doesn't parse) is left unset."""
+    from django.utils.dateparse import parse_date
+
     from apps.billing.models import QboAccount, QboAccountMapping
     from apps.payments import qbo_bills
 
@@ -513,11 +517,14 @@ def quickbooks_accounts(request: HttpRequest) -> HttpResponse:
     config = QboAccountMapping.load()
     config.expense_account = pick("expense_account", qbo_bills.expense_choices())
     config.payment_account = pick("payment_account", qbo_bills.payment_choices())
+    config.bills_from = parse_date(request.POST.get("bills_from", "").strip() or "") or None
     config.save()
-    if config.expense_account and config.payment_account:
-        messages.success(request, "Accounts saved. Waiting bills go out on the next sync.")
+    if config.expense_account and config.payment_account and config.bills_from:
+        messages.success(request, "Saved. Waiting bills go out on the next sync.")
     else:
-        messages.error(request, "Choose an expense account and a bank account.")
+        messages.error(
+            request, "Choose an expense account, a bank account and the date bills start from."
+        )
     return redirect("quickbooks_settings")
 
 

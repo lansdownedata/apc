@@ -34,7 +34,7 @@ import mimetypes
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -66,6 +66,7 @@ ZERO = Decimal("0.00")
 _NO_EXPENSE_ACCOUNT = (
     "Choose the expense account for affiliate bills in Settings → QuickBooks, then retry."
 )
+_NO_START_DATE = "Waiting: choose the start date for affiliate bills in Settings → QuickBooks."
 _NO_PAYMENT_ACCOUNT = (
     "Choose the bank account bill payments come from in Settings → QuickBooks, then retry."
 )
@@ -419,6 +420,29 @@ def _in_company(record, realm: str, prefix: str = "qbo_") -> bool:
     )
 
 
+# --- which payables go at all: the start date -----------------------------------------------
+
+
+def bills_from() -> date | None:
+    """Payables approved on or after this date go to QuickBooks; None = none go yet. Keeps the
+    first sync from back-dating every past affiliate bill into the client's books."""
+    return QboAccountMapping.load().bills_from
+
+
+def in_window(payable: AffiliatePayable, start: date | None) -> bool:
+    """Approved on or after `start`, by the trip's own calendar (the manifest rule)."""
+    if start is None:
+        return False
+    approved = payable.approved_at or payable.created_at
+    return _trip_date(approved, payable.assignment.reservation) >= start
+
+
+def _window(start: date) -> Q:
+    """A coarse SQL cut for `in_window`: no timezone is more than a day from UTC, so nothing
+    approved on `start` anywhere is before midnight UTC the day before. `in_window` decides."""
+    return Q(approved_at__gte=datetime.combine(start - timedelta(days=1), time.min, tzinfo=UTC))
+
+
 # --- bills ---------------------------------------------------------------------------------------
 
 
@@ -555,16 +579,22 @@ def _is_bill(payable: AffiliatePayable) -> bool:
 
 
 def _push_bill(payable: AffiliatePayable) -> bool:
-    """Create or update the payable's Bill, then attach the invoice file once. True when both
-    are in step. Waits (False, no error) while its vendor isn't in QuickBooks."""
+    """Create or update the payable's Bill. True when it is in step. Waits (False, no error)
+    while its vendor isn't in QuickBooks; never sends one approved before the start date."""
     payable = _payable(payable)
     if not _is_bill(payable):
         return False
+    link = _Link(payable, "bill", "Bill")
+    start = bills_from()
+    if start is None:
+        _fail(link, _NO_START_DATE, alert=False)
+        return False
+    if not in_window(payable, start):
+        return False  # from before bills went to QuickBooks: never sent, nothing to fix
     realm = customers.current_realm()
     vendor = payable.assignment.vendor
     if not vendor.qbo_id or (vendor.qbo_realm_id and vendor.qbo_realm_id != realm):
         return False
-    link = _Link(payable, "bill", "Bill")
     if _relink_if_other_company(link, realm):
         # A new bill in this company: the file goes up to it afresh.
         AffiliatePayable.objects.filter(pk=payable.pk).update(
@@ -647,6 +677,8 @@ def _push_attachment(payable: AffiliatePayable) -> bool:
     bill to be in QuickBooks in this company."""
     payable = _payable(payable)
     if not _is_bill(payable) or not payable.invoice_file:
+        return False
+    if not in_window(payable, bills_from()):
         return False
     realm = customers.current_realm()
     if not (payable.qbo_id and payable.qbo_realm_id == realm):
@@ -742,6 +774,12 @@ def _push_payment(payable: AffiliatePayable) -> bool:
     if payable.status != AffiliatePayable.Status.PAID or not _bill_in_step(payable, realm):
         return False
     link = _Link(payable, "billpayment", "BillPayment", prefix="qbo_payment_")
+    start = bills_from()
+    if start is None:
+        _fail(link, _NO_START_DATE, alert=False)
+        return False
+    if not in_window(payable, start):
+        return False
     return _push(
         link,
         lambda: payment_payload(payable),
@@ -767,12 +805,17 @@ def _billable():
     return AffiliatePayable.objects.filter(status__in=_BILLED, invoice_amount__gt=0)
 
 
-def pending_vendors(realm: str):
-    """Vendors that need pushing: only those with a bill to carry, or already linked here."""
+def pending_vendors(realm: str, start: date | None = None):
+    """Vendors that need pushing: only those with a bill to carry (approved since the start
+    date), or already linked here."""
     from apps.vendors.models import Vendor
 
-    has_bill = Exists(_billable().filter(assignment__vendor=OuterRef("pk")))
     linked_here = ~Q(qbo_id="") & Q(qbo_realm_id=realm)
+    if start is None:
+        has_bill = Q(pk__in=[])
+    else:
+        bills = _billable().filter(_window(start), assignment__vendor=OuterRef("pk"))
+        has_bill = Q(Exists(bills))
     return (
         Vendor.objects.filter(_stale("qbo_", realm)).filter(has_bill | linked_here).order_by("pk")
     )
@@ -809,11 +852,9 @@ def pending_attachments(realm: str):
     )
 
 
-def _block_all(rows, prefix: str, message: str) -> None:
-    """Every pending record shares one missing choice: mark each (so the payable says why),
-    alert once for the run — not once per bill."""
-    from apps.notifications.models import Notification
-
+def _block_all(rows, prefix: str, message: str) -> bool:
+    """Every pending record shares one missing setting: mark each (so the payable says why).
+    True when any of them is newly marked — the run then alerts once (`_alert_blocked`)."""
     rows = list(rows)
     fresh = [
         r
@@ -821,11 +862,16 @@ def _block_all(rows, prefix: str, message: str) -> None:
         if getattr(r, prefix + "sync_state") != SyncState.ERROR
         or getattr(r, prefix + "sync_error") != message
     ]
-    if not fresh:
-        return
-    AffiliatePayable.objects.filter(pk__in=[r.pk for r in rows]).update(
-        **{prefix + "sync_state": SyncState.ERROR, prefix + "sync_error": message}
-    )
+    if fresh:
+        AffiliatePayable.objects.filter(pk__in=[r.pk for r in rows]).update(
+            **{prefix + "sync_state": SyncState.ERROR, prefix + "sync_error": message}
+        )
+    return bool(fresh)
+
+
+def _alert_blocked(message: str) -> None:
+    from apps.notifications.models import Notification
+
     Notification.notify(
         None,
         Notification.Kind.SYNC_FAILED,
@@ -842,16 +888,27 @@ def sync_pending() -> int:
     if not qbo.is_connected():
         return 0
     realm = customers.current_realm()
+    start = bills_from()
     pushed = attempted = 0
+    blocked: list[str] = []  # newly blocked by a missing setting: alert once for the run
     try:
-        for vendor in pending_vendors(realm):
+        for vendor in pending_vendors(realm, start):
             if attempted >= SYNC_BATCH:
                 return pushed
             attempted += 1
             pushed += push_vendor(vendor)
-        bills = pending_bills(realm)
-        if expense_account_ref() is None:
-            _block_all(bills, "qbo_", _NO_EXPENSE_ACCOUNT)
+        bills = list(pending_bills(realm))
+        payments = [p for p in pending_payments(realm) if _bill_in_step(p, realm)]
+        if start is None:
+            for rows, prefix in ((bills, "qbo_"), (payments, "qbo_payment_")):
+                if _block_all(rows, prefix, _NO_START_DATE):
+                    blocked.append(_NO_START_DATE)
+            return pushed
+        bills = [b for b in bills if in_window(b, start)]
+        payments = [p for p in payments if in_window(p, start)]
+        if bills and expense_account_ref() is None:
+            if _block_all(bills, "qbo_", _NO_EXPENSE_ACCOUNT):
+                blocked.append(_NO_EXPENSE_ACCOUNT)
         else:
             for payable in bills:
                 if not _in_company(payable.assignment.vendor, realm):
@@ -860,10 +917,14 @@ def sync_pending() -> int:
                     return pushed
                 attempted += 1
                 pushed += push_bill(payable)
-        payments = [p for p in pending_payments(realm) if _bill_in_step(p, realm)]
+        # Re-read: a bill pushed just now makes its payment ready in the same run.
+        payments = [
+            p for p in pending_payments(realm) if _bill_in_step(p, realm) and in_window(p, start)
+        ]
         if payments and payment_account_ref() is None:
-            _block_all(payments, "qbo_payment_", _NO_PAYMENT_ACCOUNT)
-        elif payments:
+            if _block_all(payments, "qbo_payment_", _NO_PAYMENT_ACCOUNT):
+                blocked.append(_NO_PAYMENT_ACCOUNT)
+        else:
             for payable in payments:
                 if attempted >= SYNC_BATCH:
                     return pushed
@@ -871,12 +932,17 @@ def sync_pending() -> int:
                 pushed += push_payment(payable)
         # Files last: a slow or refused upload never holds up a bill or a payment.
         for payable in pending_attachments(realm):
+            if not in_window(payable, start):
+                continue
             if attempted >= SYNC_BATCH:
                 return pushed
             attempted += 1
             pushed += push_attachment(payable)
     except (SyncPaused, qbo.QboNotConnected) as exc:
         logger.warning("QuickBooks bill sync paused: %s", exc)
+    finally:
+        if blocked:
+            _alert_blocked(" ".join(dict.fromkeys(blocked)))
     return pushed
 
 

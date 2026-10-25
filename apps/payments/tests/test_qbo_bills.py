@@ -7,7 +7,7 @@ here calls Intuit.
 
 import html
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -129,8 +129,9 @@ def _quiet():
         yield
 
 
-def _map(expense=True, payment=True):
+def _map(expense=True, payment=True, bills_from=date(2026, 10, 1)):
     config = QboAccountMapping.load()
+    config.bills_from = bills_from
     if expense:
         config.expense_account = QboAccount.objects.get_or_create(
             realm_id=REALM,
@@ -1019,7 +1020,8 @@ def test_retry_on_a_payable_pushes_vendor_bill_and_payment_and_answers_with_the_
 
 
 def test_retry_on_a_payable_reports_a_refusal_in_words(cashier):
-    payable = _payable(vendor=_linked_vendor())  # no account mapping chosen
+    _map(expense=False)
+    payable = _payable(vendor=_linked_vendor())
 
     with patch(REQ):
         body = cashier.post(reverse("payable_sync", args=[payable.pk])).json()
@@ -1357,3 +1359,63 @@ def test_the_lease_is_released_when_quickbooks_is_down():
 
     payable.refresh_from_db()
     assert payable.qbo_push_started_at is None
+
+
+# --- which bills go: the "push affiliate bills from" date ---------------------------------------
+
+
+def test_with_no_start_date_no_bill_or_payment_goes_and_the_run_alerts_once():
+    _map(bills_from=None)
+    vendor = _linked_vendor()
+    for n in range(2):
+        _payable(vendor=vendor, number=f"INV-{n}")
+    _bill_synced(_paid(vendor=vendor, number="INV-9"))
+
+    with patch(REQ) as req:
+        qbo_bills.sync_pending()
+        qbo_bills.sync_pending()
+
+    req.assert_not_called()
+    waiting = AffiliatePayable.objects.filter(qbo_sync_state=SyncState.ERROR)
+    assert waiting.count() == 2
+    assert waiting.first().qbo_sync_error == (
+        "Waiting: choose the start date for affiliate bills in Settings → QuickBooks."
+    )
+    assert AffiliatePayable.objects.get(invoice_number="INV-9").qbo_payment_sync_error.startswith(
+        "Waiting: choose the start date"
+    )
+    assert Notification.objects.count() == 1
+
+
+def test_with_no_start_date_a_vendor_with_only_bills_is_not_pushed():
+    _map(bills_from=None)
+    _payable()
+
+    with patch(REQ) as req:
+        qbo_bills.sync_pending()
+
+    req.assert_not_called()
+
+
+def test_a_bill_approved_on_the_start_date_in_the_trips_timezone_goes():
+    """Approved 11:30 PM ET on Oct 20 — already Oct 21 in UTC. It belongs to Oct 20."""
+    _map(bills_from=date(2026, 10, 20))
+    _payable(vendor=_linked_vendor())
+
+    with patch(REQ, return_value=_bill()) as req:
+        assert qbo_bills.sync_pending() == 1
+
+    assert req.call_args.args == ("POST", "bill")
+
+
+def test_a_bill_approved_before_the_start_date_never_goes_and_isnt_marked():
+    _map(bills_from=date(2026, 10, 21))  # UTC's date of the approval, not the trip's
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ) as req:
+        assert qbo_bills.sync_pending() == 0
+        assert qbo_bills.push_bill(payable) is False
+
+    req.assert_not_called()
+    payable.refresh_from_db()
+    assert (payable.qbo_sync_state, payable.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
