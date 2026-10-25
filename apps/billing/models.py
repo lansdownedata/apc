@@ -126,3 +126,22 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     @property
     def effective_terms(self) -> str:
         return self.terms or self.account.terms
+
+
+class QboTerm(TimeStampedModel):
+    """A payment term as it exists in the connected QuickBooks company (APC-42) — a cache,
+    refreshed by the `retry-qbo-sync` cron and the Settings action, never fetched per page.
+
+    Our own `Terms` are matched to these by name when a customer is pushed; a term QuickBooks
+    doesn't have is left off the customer and listed on Settings, never guessed.
+    """
+
+    qbo_id = models.CharField(max_length=32, unique=True)
+    name = models.CharField(max_length=100)
+    active = models.BooleanField(default=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name

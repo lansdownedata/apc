@@ -1,0 +1,286 @@
+"""APC-42 — billing accounts and groups pushed to QuickBooks as customers / sub-customers.
+
+Outbound only; the QuickBooks client (`integrations.qbo`, tested at the HTTP level in APC-41)
+is mocked at its `request()` boundary. Nothing here calls Intuit.
+"""
+
+import json
+from unittest.mock import patch
+
+import pytest
+
+from apps.billing import qbo_sync, services
+from apps.billing.models import QboTerm, SyncState, Terms
+from apps.contacts.factories import ContactFactory
+from apps.integrations import qbo
+from apps.notifications.models import Notification
+
+pytestmark = pytest.mark.django_db
+REQ = "apps.billing.qbo_sync.qbo.request"
+
+
+@pytest.fixture(autouse=True)
+def connected():
+    with patch("apps.billing.qbo_sync.qbo.is_connected", return_value=True):
+        yield
+
+
+def _account(name="Ridgeline Partners", group="Accounts Payable", **kw):
+    return services.create_account(ContactFactory(), name=name, group_name=group, **kw)
+
+
+def _created(qbo_id, token="0"):
+    return {"Customer": {"Id": qbo_id, "SyncToken": token}}
+
+
+def _fault(code, message="", status=400):
+    body = json.dumps(
+        {"Fault": {"Error": [{"code": code, "Message": message}], "type": "ValidationFault"}}
+    )
+    return qbo.QboAPIError(status, body)
+
+
+def _net30():
+    return QboTerm.objects.create(qbo_id="3", name="Net 30", active=True)
+
+
+# --- the payloads -------------------------------------------------------------------------
+
+
+def test_an_account_is_a_customer_that_bills_on_its_own_with_its_terms():
+    _net30()
+    account = _account(terms=Terms.NET_30)
+
+    with patch(REQ, return_value=_created("58")) as req:
+        qbo_sync.push(account)
+
+    method, path = req.call_args.args
+    body = req.call_args.kwargs["json"]
+    assert (method, path) == ("POST", "customer")
+    assert body["DisplayName"] == "Ridgeline Partners"
+    assert body["BillWithParent"] is False
+    assert body["SalesTermRef"] == {"value": "3"}
+    assert "Id" not in body and "sparse" not in body
+
+
+def test_a_group_is_a_sub_customer_of_its_account_with_its_own_email():
+    account = _account()
+    account.qbo_id = "58"
+    account.qbo_sync_state = SyncState.SYNCED
+    account.save()
+    group = account.groups.get()
+    group.invoice_email = "ap@ridgeline.test"
+    group.save()
+
+    with patch(REQ, return_value=_created("59")) as req:
+        qbo_sync.push(group)
+
+    body = req.call_args.kwargs["json"]
+    # DisplayName is unique across every customer, so two accounts' "Accounts Payable" groups
+    # can't both be called that — the account's name goes in front.
+    assert body["DisplayName"] == "Ridgeline Partners - Accounts Payable"
+    assert body["ParentRef"] == {"value": "58"}
+    assert body["Job"] is True
+    assert body["BillWithParent"] is False
+    assert body["PrimaryEmailAddr"] == {"Address": "ap@ridgeline.test"}
+
+
+def test_a_term_quickbooks_doesnt_have_is_left_off_never_guessed():
+    QboTerm.objects.create(qbo_id="9", name="Net 60", active=True)
+    account = _account(terms=Terms.NET_45)
+
+    with patch(REQ, return_value=_created("58")) as req:
+        qbo_sync.push(account)
+
+    assert "SalesTermRef" not in req.call_args.kwargs["json"]
+    assert "Net 45" in qbo_sync.unmatched_terms()
+
+
+# --- create, update, idempotency ----------------------------------------------------------
+
+
+def test_a_first_push_records_the_id_and_sync_token():
+    account = _account()
+
+    with patch(REQ, return_value=_created("58", "0")):
+        assert qbo_sync.push(account) is True
+
+    account.refresh_from_db()
+    assert (account.qbo_id, account.qbo_sync_token, account.qbo_sync_state) == (
+        "58",
+        "0",
+        SyncState.SYNCED,
+    )
+    assert account.qbo_synced_at is not None and account.qbo_sync_error == ""
+
+
+def test_a_retried_create_sends_the_same_request_id_so_quickbooks_returns_the_original():
+    account = _account()
+
+    with patch(REQ, side_effect=[qbo.QboAPIError(0, "network: Timeout"), _created("58")]) as req:
+        qbo_sync.push(account)
+        qbo_sync.push(account)
+
+    first, second = (c.kwargs["params"]["requestid"] for c in req.call_args_list)
+    assert first == second and len(first) <= 50
+
+
+def test_a_rename_is_a_sparse_update_with_the_stored_sync_token():
+    account = _account()
+    with patch(REQ, return_value=_created("58", "0")):
+        qbo_sync.push(account)
+    services.update_account(account, name="Ridgeline Partners LLC", terms=account.terms)
+
+    with patch(REQ, return_value=_created("58", "1")) as req:
+        qbo_sync.push(account)
+
+    body = req.call_args.kwargs["json"]
+    assert (body["Id"], body["SyncToken"], body["sparse"]) == ("58", "0", True)
+    assert body["DisplayName"] == "Ridgeline Partners LLC"
+    account.refresh_from_db()
+    assert account.qbo_sync_token == "1"
+
+
+def test_a_stale_sync_token_is_re_read_once_and_retried():
+    account = _account()
+    with patch(REQ, return_value=_created("58", "0")):
+        qbo_sync.push(account)
+    services.update_account(account, name="Renamed", terms=account.terms)
+    calls = [
+        _fault("5010", "Stale Object Error"),
+        {"Customer": {"Id": "58", "SyncToken": "4"}},
+        _created("58", "5"),
+    ]
+
+    with patch(REQ, side_effect=calls) as req:
+        assert qbo_sync.push(account) is True
+
+    assert req.call_args_list[1].args == ("GET", "customer/58")
+    assert req.call_args_list[2].kwargs["json"]["SyncToken"] == "4"
+
+
+def test_running_the_sync_twice_sends_nothing_the_second_time():
+    _account()
+
+    with patch(REQ, side_effect=[_created("58"), _created("59")]) as req:
+        qbo_sync.sync_pending()
+        qbo_sync.sync_pending()
+
+    assert req.call_count == 2  # the account, then its group — once each
+
+
+# --- order and waiting ------------------------------------------------------------------------
+
+
+def test_accounts_go_before_their_groups():
+    _account()
+
+    with patch(REQ, side_effect=[_created("58"), _created("59")]) as req:
+        qbo_sync.sync_pending()
+
+    first, second = (c.kwargs["json"] for c in req.call_args_list)
+    assert "ParentRef" not in first and second["ParentRef"] == {"value": "58"}
+
+
+def test_a_group_whose_account_failed_waits_and_never_errors_on_its_own():
+    account = _account()
+
+    with patch(REQ, side_effect=_fault("6240", "Duplicate Name Exists Error")) as req:
+        qbo_sync.sync_pending()
+
+    group = account.groups.get()
+    assert req.call_count == 1  # the group was never sent
+    assert (group.qbo_sync_state, group.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
+
+
+# --- failures --------------------------------------------------------------------------------
+
+
+def test_a_duplicate_name_is_the_readable_message_and_a_notification():
+    account = _account()
+
+    with patch(REQ, side_effect=_fault("6240", "Duplicate Name Exists Error")):
+        assert qbo_sync.push(account) is False
+
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.ERROR
+    assert account.qbo_sync_error == (
+        "QuickBooks already has a customer with this name. Rename it here or there, then retry."
+    )
+    assert Notification.objects.filter(title__icontains="Ridgeline Partners").exists()
+
+
+def test_a_failure_alerts_once_not_every_hour():
+    account = _account()
+
+    with patch(REQ, side_effect=_fault("6240")):
+        qbo_sync.push(account)
+        qbo_sync.push(account)
+
+    assert Notification.objects.filter(title__icontains="Ridgeline").count() == 1
+
+
+def test_an_outage_is_a_retryable_error_in_plain_words():
+    account = _account()
+
+    with patch(REQ, side_effect=qbo.QboAPIError(503, "down")):
+        qbo_sync.push(account)
+
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.ERROR
+    assert "try again" in account.qbo_sync_error.lower()
+
+
+def test_nothing_is_sent_or_changed_while_quickbooks_is_not_connected():
+    account = _account()
+
+    with patch("apps.billing.qbo_sync.qbo.is_connected", return_value=False), patch(REQ) as req:
+        assert qbo_sync.sync_pending() == 0
+
+    req.assert_not_called()
+    account.refresh_from_db()
+    assert account.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_a_connection_lost_mid_run_stops_the_run_and_marks_nothing():
+    _account()
+    _account(name="Second Co", group="Ops")
+
+    with patch(REQ, side_effect=qbo.QboNotConnected("broken")) as req:
+        qbo_sync.sync_pending()
+
+    assert req.call_count == 1
+    assert not Notification.objects.filter(title__icontains="sync failed").exists()
+
+
+# --- terms ----------------------------------------------------------------------------------
+
+
+def test_refreshing_terms_caches_quickbooks_terms_and_retires_missing_ones():
+    QboTerm.objects.create(qbo_id="99", name="Old term", active=True)
+    response = {
+        "QueryResponse": {
+            "Term": [
+                {"Id": "1", "Name": "Due on receipt", "Active": True},
+                {"Id": "3", "Name": "Net 30", "Active": True},
+            ]
+        }
+    }
+
+    with patch(REQ, return_value=response) as req:
+        assert qbo_sync.refresh_terms() == 2
+
+    assert req.call_args.args == ("GET", "query")
+    assert "from Term" in req.call_args.kwargs["params"]["query"]
+    assert set(QboTerm.objects.filter(active=True).values_list("name", flat=True)) == {
+        "Due on receipt",
+        "Net 30",
+    }
+    assert QboTerm.objects.get(qbo_id="99").active is False
+
+
+def test_terms_match_by_name_ignoring_case():
+    QboTerm.objects.create(qbo_id="3", name="NET 30", active=True)
+
+    assert qbo_sync.term_ref(Terms.NET_30) == {"value": "3"}
+    assert qbo_sync.term_ref(Terms.NET_15) is None
