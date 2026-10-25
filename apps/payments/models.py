@@ -5,6 +5,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from apps.billing.models import QboSyncedModel, SyncState
 from apps.core.choices import Account
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
@@ -245,7 +246,7 @@ class JournalLine(TimeStampedModel):
         return f"{self.get_account_display()} D{self.debit}/C{self.credit}"
 
 
-class AffiliatePayable(TimeStampedModel):
+class AffiliatePayable(QboSyncedModel, TimeStampedModel):
     """What we owe an affiliate for one farmed-out trip (APC-61). Record only — no money
     moves from here, and paying it in LimoAnywhere stays manual.
 
@@ -297,6 +298,19 @@ class AffiliatePayable(TimeStampedModel):
     paid_at = models.DateTimeField(null=True, blank=True)
     paid_method = models.CharField(max_length=20, choices=Method.choices, blank=True)
     paid_reference = models.CharField(max_length=120, blank=True)
+
+    # APC-74: the mixin's `qbo_*` fields are the QuickBooks **Bill** (pushed once approved);
+    # these are its **BillPayment** (pushed once marked paid), the same shape under a prefix.
+    # `qbo_attachable_id` is the invoice file attached to the Bill — uploaded once.
+    qbo_payment_id = models.CharField(max_length=64, blank=True)
+    qbo_payment_sync_token = models.CharField(max_length=32, blank=True)
+    qbo_payment_realm_id = models.CharField(max_length=32, blank=True)
+    qbo_payment_sync_state = models.CharField(
+        max_length=20, choices=SyncState.choices, default=SyncState.NOT_SYNCED
+    )
+    qbo_payment_sync_error = models.CharField(max_length=255, blank=True)
+    qbo_payment_synced_at = models.DateTimeField(null=True, blank=True)
+    qbo_attachable_id = models.CharField(max_length=64, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         indexes = [models.Index(fields=["status"])]

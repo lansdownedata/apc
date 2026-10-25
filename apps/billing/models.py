@@ -148,3 +148,54 @@ class QboTerm(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class QboAccount(TimeStampedModel):
+    """An account from the connected company's chart of accounts (APC-74) — a cache, like
+    `QboTerm`, refreshed by the hourly sync and the Settings action.
+
+    Only the two kinds the portal can use are kept: expense accounts (where an affiliate bill
+    posts) and bank accounts (where a bill payment comes from). Keyed by company as well as
+    id, because QuickBooks numbers each company's accounts from 1.
+    """
+
+    EXPENSE_TYPES = ("Expense", "Cost of Goods Sold", "Other Expense")
+    PAYMENT_TYPES = ("Bank",)
+
+    realm_id = models.CharField(max_length=32)
+    qbo_id = models.CharField(max_length=32)
+    name = models.CharField(max_length=255)
+    account_type = models.CharField(max_length=40)
+    active = models.BooleanField(default=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["realm_id", "qbo_id"], name="uniq_qbo_account"),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class QboAccountMapping(models.Model):
+    """Which QuickBooks accounts affiliate bills post to and pay from (APC-74). A singleton,
+    chosen on Settings → QuickBooks. Until a choice is made the matching push refuses with a
+    sentence saying so; it never guesses an account."""
+
+    expense_account = models.ForeignKey(
+        QboAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    payment_account = models.ForeignKey(
+        QboAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        verbose_name = "QuickBooks account mapping"
+
+    def __str__(self) -> str:
+        return "QuickBooks account mapping"
+
+    @classmethod
+    def load(cls) -> "QboAccountMapping":
+        return cls.objects.get_or_create(pk=1)[0]

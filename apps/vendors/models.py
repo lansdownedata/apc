@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.billing.models import QboSyncedModel
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 from apps.core.phone import to_e164
@@ -50,8 +51,10 @@ INSURANCE_SEVERITY = ("expired", "critical", "urgent", "expiring", "valid")
 INSURANCE_ATTENTION = frozenset({"expired", "critical", "urgent", "expiring", "none"})
 
 
-class Vendor(TimeStampedModel):
-    """A farm-out affiliate company. Standalone — no LimoAnywhere link (see spec)."""
+class Vendor(QboSyncedModel, TimeStampedModel):
+    """A farm-out affiliate company. Standalone — no LimoAnywhere link (see spec).
+
+    A Vendor in QuickBooks once it has a bill to carry (APC-74, `payments.qbo_bills`)."""
 
     objects = VendorManager()
 
