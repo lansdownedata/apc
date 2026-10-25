@@ -1268,3 +1268,88 @@ def test_cents_add_up_on_an_awkward_split():
 
     with patch(REQ, return_value=_bill(total=100.1)):
         assert qbo_bills.push_bill(payable) is True
+
+
+# --- one push at a time (the lease) -----------------------------------------------------------
+
+
+def _reentrant(push, record, response):
+    """QuickBooks 'answers' only after a second caller (the cron, a double-click) has tried
+    the same record. Returns the requestids that were actually POSTed."""
+    posts = []
+
+    def fake(method, path, **kw):
+        posts.append(kw.get("params", {}).get("requestid"))
+        if len(posts) == 1:
+            assert push(record) is False  # the second caller skips: already being sent
+        return response
+
+    with patch(REQ, side_effect=fake):
+        push(record)
+    return posts
+
+
+def test_a_payment_already_being_sent_is_skipped_without_a_call():
+    _map()
+    payable = _bill_synced(_paid(vendor=_linked_vendor()))
+    stale_copy = qbo_bills._payable(payable)
+
+    assert (
+        len(_reentrant(lambda p: qbo_bills.push_payment(stale_copy), payable, _billpayment())) == 1
+    )
+    payable.refresh_from_db()
+    assert payable.qbo_payment_push_started_at is None  # released
+    assert payable.qbo_payment_sync_state == SyncState.SYNCED
+
+
+def test_a_bill_already_being_sent_is_skipped_without_a_call():
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+
+    assert len(_reentrant(qbo_bills.push_bill, payable, _bill())) == 1
+
+
+def test_a_vendor_already_being_sent_is_skipped_without_a_call():
+    vendor = _payable().assignment.vendor
+
+    assert len(_reentrant(qbo_bills.push_vendor, vendor, _vendor())) == 1
+
+
+def test_a_file_already_being_sent_is_skipped_without_a_call():
+    _map()
+    payable = _bill_synced(_payable(vendor=_linked_vendor(), file=_pdf()))
+
+    assert len(_reentrant(qbo_bills.push_attachment, payable, _attached())) == 1
+
+
+def test_a_lease_left_by_a_crashed_push_is_taken_over_after_ten_minutes():
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+    AffiliatePayable.objects.filter(pk=payable.pk).update(
+        qbo_push_started_at=timezone.now() - timedelta(minutes=9)
+    )
+    with patch(REQ) as req:
+        assert qbo_bills.push_bill(payable) is False
+    req.assert_not_called()
+
+    AffiliatePayable.objects.filter(pk=payable.pk).update(
+        qbo_push_started_at=timezone.now() - timedelta(minutes=11)
+    )
+    with patch(REQ, return_value=_bill()):
+        assert qbo_bills.push_bill(payable) is True
+
+
+def test_the_lease_is_released_when_quickbooks_is_down():
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ, side_effect=qbo.QboAPIError(503, "down")):
+        with pytest.raises(qbo_bills.SyncPaused):
+            qbo_bills.push_bill(payable)
+
+    payable.refresh_from_db()
+    assert payable.qbo_push_started_at is None

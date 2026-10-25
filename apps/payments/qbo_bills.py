@@ -32,7 +32,9 @@ import json
 import logging
 import mimetypes
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -174,6 +176,32 @@ class _Link:
         return model.objects.filter(pk=self.record.pk).update(
             **{self.field(k): v for k, v in fields.items()}
         )
+
+
+# A push holds its record's lease while it talks to Intuit, so the cron and a Retry (or a
+# double-click) never send the same vendor, bill, file or payment at once. Taken by a
+# conditional UPDATE, never a transaction around the HTTP call; a lease older than this is a
+# push that died and is taken over.
+LEASE = timedelta(minutes=10)
+
+
+@contextmanager
+def _leased(model, pk: int, field: str):
+    """Yields True when this caller holds `field`'s lease on the row, False when another push
+    has it. Released on the way out (only our own lease, by its timestamp)."""
+    now = timezone.now()
+    free = Q(**{f"{field}__isnull": True}) | Q(**{f"{field}__lt": now - LEASE})
+    mine = bool(model.objects.filter(pk=pk).filter(free).update(**{field: now}))
+    try:
+        yield mine
+    finally:
+        if mine:
+            model.objects.filter(pk=pk, **{field: now}).update(**{field: None})
+
+
+def being_sent(record, field: str) -> bool:
+    started = getattr(record, field)
+    return bool(started and started >= timezone.now() - LEASE)
 
 
 def _request_id(link: _Link, body: dict) -> str:
@@ -370,7 +398,7 @@ def _link_existing_vendor(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict
     return _send(link, _link_payload(vendor))
 
 
-def push_vendor(vendor) -> bool:
+def _push_vendor(vendor) -> bool:
     """Create, link or update the vendor in QuickBooks. True when it is now in step."""
     link = _Link(vendor, "vendor", "Vendor", sparse=True)
     return _push(
@@ -526,7 +554,7 @@ def _is_bill(payable: AffiliatePayable) -> bool:
     return payable.status in _BILLED and Decimal(payable.invoice_amount or 0) > ZERO
 
 
-def push_bill(payable: AffiliatePayable) -> bool:
+def _push_bill(payable: AffiliatePayable) -> bool:
     """Create or update the payable's Bill, then attach the invoice file once. True when both
     are in step. Waits (False, no error) while its vendor isn't in QuickBooks."""
     payable = _payable(payable)
@@ -613,7 +641,7 @@ def _file_content(payable: AffiliatePayable) -> tuple[str, bytes, str]:
     return name, content, ctype
 
 
-def push_attachment(payable: AffiliatePayable) -> bool:
+def _push_attachment(payable: AffiliatePayable) -> bool:
     """Upload the payable's invoice file to its Bill, once. Its own state and error: a file
     QuickBooks refuses never holds up the bill or its payment. Waits (False, no error) for the
     bill to be in QuickBooks in this company."""
@@ -717,7 +745,7 @@ def _bill_in_step(payable: AffiliatePayable, realm: str) -> bool:
     )
 
 
-def push_payment(payable: AffiliatePayable) -> bool:
+def _push_payment(payable: AffiliatePayable) -> bool:
     """Create or update the BillPayment for a paid payable. Waits (False, no error) until its
     Bill is in step in this company."""
     payable = _payable(payable)
@@ -882,6 +910,33 @@ def push_everything_for(payable: AffiliatePayable) -> None:
     if payable.status == AffiliatePayable.Status.PAID:
         push_payment(payable)
     push_attachment(payable)
+
+
+def push_vendor(vendor) -> bool:
+    """Create, link or update the vendor in QuickBooks, holding its lease. True when it is now
+    in step; False (no call) while another push has it."""
+    from apps.vendors.models import Vendor
+
+    with _leased(Vendor, vendor.pk, "qbo_push_started_at") as mine:
+        if not mine:
+            return False
+        vendor.refresh_from_db()
+        return _push_vendor(vendor)
+
+
+def push_bill(payable: AffiliatePayable) -> bool:
+    with _leased(AffiliatePayable, payable.pk, "qbo_push_started_at") as mine:
+        return mine and _push_bill(payable)
+
+
+def push_payment(payable: AffiliatePayable) -> bool:
+    with _leased(AffiliatePayable, payable.pk, "qbo_payment_push_started_at") as mine:
+        return mine and _push_payment(payable)
+
+
+def push_attachment(payable: AffiliatePayable) -> bool:
+    with _leased(AffiliatePayable, payable.pk, "qbo_attachment_push_started_at") as mine:
+        return mine and _push_attachment(payable)
 
 
 def run_hourly() -> int:
