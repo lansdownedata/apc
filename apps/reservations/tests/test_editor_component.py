@@ -179,3 +179,8 @@ def test_the_js_mirrors_round_the_rate_to_cents_like_python():
     body = APP_JS[APP_JS.index("resDiscountedRate(r) {") :][:300]
     assert "this.cents(" in body
     assert "Math.round((Number(n) || 0) * 100) / 100" in APP_JS
+
+
+def test_a_blank_extra_row_is_dropped_before_the_save_posts():
+    body = APP_JS[APP_JS.index("postReservation() {") :][:900]
+    assert "d.extras = (d.extras || []).filter((x) => Number(x.amount) > 0);" in body

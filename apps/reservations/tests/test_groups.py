@@ -603,3 +603,26 @@ def test_apply_to_group_reschedules_a_sibling_whose_pickup_date_moved():
         status=TouchPoint.Status.SCHEDULED,
     )
     assert fresh.scheduled_for == sibling.pickup_at - timedelta(hours=72)
+
+
+def test_a_copy_on_a_booked_order_starts_with_no_overtime_no_extras_and_a_zero_booked_total():
+    """Spec 2026-10-25 §4.4: each copy runs its own clock and bill, and a trip added to a
+    booked order has no prepaid money behind it."""
+    from decimal import Decimal
+
+    from apps.reservations.factories import TripExtraFactory
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    source = TransferReservationFactory(
+        lead=lead, overtime_hours=Decimal("2"), booked_total=Decimal("500")
+    )
+    TripExtraFactory(reservation=source, amount=Decimal("40"))
+    source.refresh_from_db()
+
+    groups.set_group_size(source, 2)
+
+    copy = [m for m in _group_of(source) if m.pk != source.pk][0]
+    assert copy.overtime_hours == 0 and copy.extras_total == 0 and not copy.extras.exists()
+    assert copy.booked_total == Decimal("0.00")
+    source.refresh_from_db()
+    assert source.booked_total == Decimal("500.00") and source.extras_total == Decimal("40.00")

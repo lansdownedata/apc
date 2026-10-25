@@ -201,7 +201,8 @@ def test_backfill_moves_a_charged_final_overtime_onto_the_trips(caplog):
         kind=Charge.Kind.FINAL,
         status=Charge.Status.SUCCEEDED,
         amount=Decimal("444.00"),
-        overtime_amount=Decimal("370.00"),
+        overtime_amount=Decimal("444.00"),
+        overtime_gratuity=Decimal("74.00"),
     )
 
     module = _backfill_module()
@@ -422,3 +423,96 @@ def test_replace_extras_rewrites_the_rows_and_the_stored_total(staff):
         ("credit", staff),
     ]
     assert trip.extras_total == Decimal("200.00")
+
+
+def test_backfill_moves_overtime_charged_the_way_charge_final_stores_it(caplog):
+    """`charge_final` stores overtime_amount = base + gratuity (444) and overtime_gratuity
+    = the gratuity part (74). The split compares like with like."""
+    from django.utils import timezone
+
+    from apps.leads.models import Lead
+    from apps.payments.factories import ChargeFactory, PaymentPlanFactory
+    from apps.payments.models import Charge
+    from apps.reservations.models import Reservation, TripReview
+
+    trip = _hourly(gratuity_pct=Decimal("20"))
+    trip.lead.status = Lead.Status.BOOKED
+    trip.lead.save(update_fields=["status"])
+    TripReview.objects.create(
+        reservation=trip, billable_overtime_minutes=120, completed_at=timezone.now()
+    )
+    ChargeFactory(
+        plan=PaymentPlanFactory(lead=trip.lead),
+        kind=Charge.Kind.FINAL,
+        status=Charge.Status.SUCCEEDED,
+        amount=Decimal("444.00"),
+        overtime_amount=Decimal("444.00"),
+        overtime_gratuity=Decimal("74.00"),
+    )
+
+    moved = _backfill_module().move_final_overtime_onto_trips(Reservation, Charge, TripReview)
+
+    trip.refresh_from_db()
+    assert moved == 1 and trip.overtime_hours == Decimal("2.00")
+    assert "left at 0 hours" not in caplog.text
+
+
+def test_an_undecided_review_shows_the_suggestions_money_but_puts_none_on_the_trip(staff):
+    from datetime import date, time
+
+    trip = _hourly(gratuity_pct=Decimal("20"), pickup_timezone="America/New_York")
+    review = reviews.review_for(trip)
+    reviews.save_review(
+        review,
+        user=staff,
+        actual_pickup_at=reviews.from_local(trip, date(2026, 10, 17), time(15, 30)),
+        actual_dropoff_at=reviews.from_local(trip, date(2026, 10, 17), time(22, 41)),
+    )
+    review.refresh_from_db()
+
+    f = reviews.figures(review, None)
+
+    assert review.decided_at is None and f.billable_minutes > 0
+    assert f.customer_amount == Decimal("185.00")  # 71 min over, 15 grace: one hour, proposed
+    assert f.customer_overtime_gratuity == Decimal("37.00")
+    trip.refresh_from_db()
+    assert trip.overtime_hours == Decimal("0.00")
+
+
+def test_replace_extras_keeps_who_first_added_a_row(staff):
+    other = UserFactory()
+    trip = _hourly()
+    first = pricing.replace_extras(
+        trip, [{"kind": "tolls", "label": "Tolls", "amount": Decimal("10")}], user=other
+    )[0]
+
+    pricing.replace_extras(
+        trip,
+        [
+            {"id": first.pk, "kind": "tolls", "label": "Tolls, both ways", "amount": Decimal("20")},
+            {"kind": "parking", "label": "Parking", "amount": Decimal("15")},
+        ],
+        user=staff,
+    )
+
+    trip.refresh_from_db()
+    rows = list(trip.extras.all())
+    assert [(e.pk == first.pk, e.label, e.amount, e.created_by) for e in rows] == [
+        (True, "Tolls, both ways", Decimal("20.00"), other),
+        (False, "Parking", Decimal("15.00"), staff),
+    ]
+    assert trip.extras_total == Decimal("35.00")
+
+
+def test_a_credit_bigger_than_the_trip_still_sums_to_the_floored_total():
+    r = _hourly()
+    TripExtraFactory(
+        reservation=r, kind=TripExtra.Kind.CREDIT, label="Credit", amount=Decimal("5000")
+    )
+    r.refresh_from_db()
+
+    lines = r.price_lines()
+
+    assert r.line_total == Decimal("0.00")
+    assert sum(line.amount for line in lines) == Decimal("0.00")
+    assert [line for line in lines if line.label == "Credit"][0].amount == Decimal("-1110.00")

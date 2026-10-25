@@ -538,3 +538,59 @@ def test_the_charge_endpoint_reports_a_decline(accountant):
 
     assert resp.status_code == 400
     assert "declined" in resp.json()["error"]
+
+
+# --- the trip carries the overtime: nothing is booked or collected twice (APC-100) -------
+
+
+def test_recognising_then_charging_the_final_bill_books_the_overtime_once():
+    """Decide → mark Done → the 2am recognition → the final charge. Revenue must be $960,
+    not $1,200: recognition leaves the overtime to the FINAL charge until story 2."""
+    from apps.reservations.models import Reservation
+
+    lead, _plan, (trip,) = _order()
+    _review(trip, 45)
+    trip.trip_status = Reservation.TripStatus.DONE
+    trip.save(update_fields=["trip_status"])
+    ledger.recognize_reservation(trip)
+
+    _charge(lead)
+
+    balances = ledger.order_balances(lead)
+    assert balances["recognized"] == Decimal("960.00")  # 720 + 240
+    assert balances["ar"] == Decimal("0.00")
+    trip.refresh_from_db()
+    assert trip.recognized_amount == Decimal("720.00")
+
+
+def test_the_pay_page_does_not_ask_for_decided_but_uncompleted_overtime(client):
+    from apps.leads.views import _owed
+
+    lead, _plan, (trip,) = _order()
+    _review(trip, 45, complete=False)
+
+    assert _owed(lead) == (None, Decimal("0.00"))
+
+
+def test_charging_the_final_bill_after_a_balance_payment_never_collects_overtime_twice():
+    """Card-less until the balance: the balance part is paid first, then the review is
+    completed and the final bill charged. The overtime is collected exactly once."""
+    from apps.leads.views import _owed
+
+    lead, plan, (trip,) = _order(paid=False)
+    _review(trip, 45, complete=False)
+    kind, amount = _owed(lead)
+    assert (kind, amount) == (Charge.Kind.BALANCE, plan.balance_amount)
+    ledger.post_capture(
+        lead=lead,
+        amount=amount,
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="balance-paid",
+    )
+    reviews.complete_review(trip.review, user=UserFactory())
+
+    bill = services.final_bill(lead)
+
+    assert bill.amount == Decimal("240.00")
+    assert services.remaining_balance(lead) == Decimal("240.00")
+    assert ledger.order_balances(lead)["collected"] == plan.quote_total

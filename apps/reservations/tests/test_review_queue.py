@@ -132,13 +132,17 @@ def test_approved_overtime_adds_to_total_due_and_waived_doesnt():
     assert row.stage == review_queue.Stage.BILLING
 
 
-def test_overtime_on_a_review_not_yet_completed_is_awaiting_not_approved():
+def test_decided_overtime_counts_before_the_review_is_completed():
+    """A decision is money (spec 2026-10-25 §3.2): the row's approved overtime, its order
+    balance and `remaining_balance` all read the same decided figure, so nothing is asked
+    for as a balance and then again as the final bill. Completion only locks the trip."""
     lead = _order(trips=1, collected="400")
     _review(lead.reservations.get(), over=30, billable=30, complete=False)
 
     row = _row(lead)
 
-    assert row.approved_overtime == Decimal("0.00")
+    assert row.approved_overtime == Decimal("200.00")
+    assert row.order_balance == Decimal("0.00")  # 400 + 200 − 200 − 400
     assert row.awaiting_trips == 1
 
 

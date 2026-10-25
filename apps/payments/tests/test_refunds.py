@@ -318,14 +318,11 @@ def test_refunded_overtime_is_no_longer_owed():
     for it again (money card, pay page, Trip Review)."""
     from apps.reservations import review_queue
 
-    plan = _fully_paid_with_final()
-    with patch(
-        "apps.reservations.reviews.approved_overtime", return_value=(Decimal("120"), Decimal("40"))
-    ):
-        assert services.remaining_balance(plan.lead) == Decimal("0.00")
-        with _stripe_refunds("re_1"):
-            services.refund_payment(plan, Decimal("160.00"))  # the whole overtime
-        assert services.remaining_balance(plan.lead) == Decimal("0.00")
+    plan = _fully_paid_with_final()  # a historical FINAL: its overtime is not on the trip
+    assert services.remaining_balance(plan.lead) == Decimal("0.00")
+    with _stripe_refunds("re_1"):
+        services.refund_payment(plan, Decimal("160.00"))  # the whole overtime
+    assert services.remaining_balance(plan.lead) == Decimal("0.00")
     row = review_queue._load(Lead.objects.filter(pk=plan.lead_id))[0]
     assert row.overtime_refunded == Decimal("160.00")
 

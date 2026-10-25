@@ -4,6 +4,7 @@ from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import dateformat
 from django.utils import timezone as dj_timezone
@@ -394,6 +395,14 @@ class Reservation(TimeStampedModel):
             label = "Gratuity" if flat > 0 or pct <= 0 else f"Gratuity ({_trim_pct(pct)}%)"
             lines.append(PriceLine(label, self.gratuity))
         lines.extend(PriceLine(e.label, e.signed_amount) for e in self.extras.all())
+        # `line_total` floors at zero; a credit bigger than the trip is shown clipped so the
+        # lines still sum to the total the customer is actually asked for.
+        overshoot = sum((line.amount for line in lines), Decimal("0.00")) - self.line_total
+        if overshoot < 0:
+            for i in range(len(lines) - 1, -1, -1):
+                if lines[i].amount < 0:
+                    lines[i] = PriceLine(lines[i].label, lines[i].amount - overshoot)
+                    break
         return lines
 
     # --- vendor pay and what we keep ---
@@ -748,7 +757,10 @@ class TripExtra(TimeStampedModel):
     reservation = models.ForeignKey(Reservation, related_name="extras", on_delete=models.CASCADE)
     kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.OTHER)
     label = models.CharField(max_length=80)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    # Positive by construction: a credit is a CREDIT row, never a negative amount.
+    amount = models.DecimalField(
+        max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))]
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="+",
@@ -768,9 +780,12 @@ class TripExtra(TimeStampedModel):
         amount = Decimal(self.amount or 0)
         return -amount if self.kind == self.Kind.CREDIT else amount
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args, skip_refresh: bool = False, **kwargs) -> None:
+        """Keeps `Reservation.extras_total` current. `skip_refresh` is for a writer that
+        saves several rows and refreshes once (`pricing.replace_extras`)."""
         super().save(*args, **kwargs)
-        self.reservation.refresh_extras_total()
+        if not skip_refresh:
+            self.reservation.refresh_extras_total()
 
     def delete(self, *args, **kwargs):
         result = super().delete(*args, **kwargs)

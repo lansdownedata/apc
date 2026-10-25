@@ -91,3 +91,26 @@ def test_overtime_and_extras_are_lines_and_the_page_total_follows(client):
     assert "Tolls" in body and "12.50" in body
     assert "812.50" in body  # 600 + 200 + 12.50, live
     assert "300.00" in body  # the deposit still reads the snapshot: 50% of 600
+
+
+def test_the_leads_list_costs_the_same_with_twenty_priced_trips(client):
+    """`extras_total` is stored on the trip, so `quote_total` over many trips with extras
+    is still the one prefetch the list already did (review finding 4)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.accounts.factories import UserFactory
+    from apps.reservations.factories import TripExtraFactory
+
+    client.force_login(UserFactory())
+    lead = LeadFactory(status=Lead.Status.QUOTED)
+    TripExtraFactory(reservation=ReservationFactory(lead=lead))
+    client.get(reverse("lead_list"))
+    with CaptureQueriesContext(connection) as few:
+        client.get(reverse("lead_list"))
+    for _ in range(19):
+        TripExtraFactory(reservation=ReservationFactory(lead=lead, overtime_hours=Decimal("1")))
+    with CaptureQueriesContext(connection) as lots:
+        client.get(reverse("lead_list"))
+
+    assert len(lots) == len(few)

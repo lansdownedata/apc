@@ -95,7 +95,7 @@ class OrderRow:
     finished_at: datetime | None = None
     collected: Decimal = ZERO
     order_total: Decimal = ZERO
-    approved_overtime: Decimal = ZERO  # base + gratuity
+    approved_overtime: Decimal = ZERO  # base + gratuity, on *decided* reviews
     overtime_refunded: Decimal = ZERO  # given back on refunds — no longer owed (APC-75)
     approved_overtime_base: Decimal = ZERO
     approved_overtime_gratuity: Decimal = ZERO
@@ -290,7 +290,16 @@ def _order_row(lead, collected, payables, config, grace, now) -> OrderRow:
         )
         if state == "needs_review":
             row.awaiting_trips += 1
-        elif review is not None and review.is_complete and figures.customer_amount > ZERO:
+        if (
+            state != "cancelled"
+            and review is not None
+            and review.decided_at is not None
+            and not review.overtime_waived
+            and figures.customer_amount > ZERO
+        ):
+            # Decided, not necessarily completed: the decision already sits in the trip's
+            # Overtime line (spec 2026-10-25 §3.2), so `order_total` carries it and the
+            # order balance has to take the same figure back out. Completion only locks.
             row.approved_overtime += figures.customer_overtime_total
             row.approved_overtime_base += figures.customer_amount
             row.approved_overtime_gratuity += figures.customer_overtime_gratuity

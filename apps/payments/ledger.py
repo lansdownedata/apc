@@ -187,7 +187,11 @@ def recognize_reservation(reservation):
     from apps.reservations.models import Reservation
 
     lead = reservation.lead
-    amount = reservation.line_total
+    # Overtime is left out on purpose: the FINAL charge still credits it to revenue at
+    # capture (`services._post_final`), so recognising it here too would book it twice
+    # whenever a review is decided before the trip is marked Done. Story 2 (APC-101)
+    # retires the FINAL charge and recognises the whole `line_total` with a true-up.
+    amount = reservation.line_total - reservation.overtime_amount - reservation.overtime_gratuity
     if amount <= ZERO:
         return None  # nothing to recognize (e.g. a comped $0 trip) — post no entry
     deferred = order_balances(lead)["deferred"]

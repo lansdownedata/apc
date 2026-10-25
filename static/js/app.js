@@ -2081,10 +2081,10 @@ function reservationEditor(opts = {}) {
     resDiscount(r) {
       const flat = Number(r.discountFlat) || 0;               // flat wins over percent
       if (flat > 0) return flat;
-      return this.resSubtotal(r) * (Number(r.discountPct) || 0) / 100;
+      return this.cents(this.resSubtotal(r) * (Number(r.discountPct) || 0) / 100);
     },
     /* Floored at 0 — a discount over the base must never make the total negative. */
-    resDiscountedBase(r) { return Math.max(this.resSubtotal(r) - this.resDiscount(r), 0); },
+    resDiscountedBase(r) { return this.cents(Math.max(this.resSubtotal(r) - this.resDiscount(r), 0)); },
     /* The hourly rate the customer actually pays, rounded to the cent BEFORE it is
      * multiplied — Python quantizes `discounted_rate` first, so 1100/6 × 2 is 366.66. */
     resDiscountedRate(r) {
@@ -2202,6 +2202,8 @@ function reservationEditor(opts = {}) {
     postReservation() {
       const d = JSON.parse(JSON.stringify(this.draft));
       d.stops.forEach((s) => { delete s.verify; delete s.verifying; delete s.pill; });  // client-only
+      // A "+ Tolls" row left blank is not an extra; the server refuses a zero amount.
+      d.extras = (d.extras || []).filter((x) => Number(x.amount) > 0);
       d.lead_id = this.draftLeadId ?? this.leadId;
       d.quantity = Math.max(1, Math.floor(Number(this.draft.quantity)) || 1);
       d.applyToGroup = this.groupSizeAtOpen > 1 && this.applyToGroup;

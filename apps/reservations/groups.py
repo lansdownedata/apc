@@ -172,7 +172,9 @@ def clone_reservation(
     # is already booked (nothing prepaid covers it) and blank otherwise, frozen at booking.
     clone.overtime_hours = 0
     clone.extras_total = 0
-    clone.booked_total = Decimal("0.00") if source.lead.status == "booked" else None
+    clone.booked_total = (
+        Decimal("0.00") if source.lead.status == source.lead.Status.BOOKED else None
+    )
     clone.sort_order = sort_order
     clone.save()
     _write_stops(clone, stops)

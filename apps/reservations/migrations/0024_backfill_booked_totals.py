@@ -56,6 +56,13 @@ def _discounted_rate(trip) -> Decimal:
     return (base / billed).quantize(CENTS)
 
 
+def _overtime_gratuity(trip, base: Decimal) -> Decimal:
+    """The trip's percentage on the overtime, when the gratuity is a percentage (APC-60)."""
+    if Decimal(trip.gratuity_flat or 0) > 0 or Decimal(trip.gratuity_pct or 0) <= 0:
+        return Decimal("0.00")
+    return (base * Decimal(trip.gratuity_pct) / 100).quantize(CENTS)
+
+
 def freeze_booked_totals(Reservation) -> int:
     """Step 1. Returns how many trips were frozen."""
     frozen = 0
@@ -95,7 +102,10 @@ def move_final_overtime_onto_trips(Reservation, Charge, TripReview) -> int:
                 CENTS, rounding=ROUND_HALF_UP
             )
             split.append((trip, hours))
-            total += (hours * _discounted_rate(trip)).quantize(CENTS)
+            base = (hours * _discounted_rate(trip)).quantize(CENTS)
+            total += base + _overtime_gratuity(trip, base)
+        # `charge_final` stored the overtime *with* its gratuity (`overtime_amount` =
+        # base + gratuity, `overtime_gratuity` = the gratuity part), so compare like with like.
         charged = Decimal(charge.overtime_amount or 0).quantize(CENTS)
         if total != charged:
             logger.warning(

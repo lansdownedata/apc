@@ -50,8 +50,8 @@ def _extras(raw) -> list[dict]:
         amount = _money(item.get("amount"))
         if amount <= 0:
             raise DraftError("extra amounts must be above zero")
-        label = (item.get("label") or "").strip()[:80] or TripExtra.Kind.default_label(kind)
-        rows.append({"kind": kind, "label": label, "amount": amount})
+        label = str(item.get("label") or "").strip()[:80] or TripExtra.Kind.default_label(kind)
+        rows.append({"id": _pk(item.get("id")), "kind": kind, "label": label, "amount": amount})
     return rows
 
 

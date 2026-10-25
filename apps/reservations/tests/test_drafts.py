@@ -950,3 +950,21 @@ def test_a_trip_added_to_a_quote_has_no_booked_total():
     saved = save_reservation_from_draft(LeadFactory(), _payload())
 
     assert saved.booked_total is None
+
+
+def test_editing_a_booked_trip_keeps_its_booked_total():
+    from apps.reservations.factories import ReservationFactory
+
+    r = ReservationFactory(booked_total=Decimal("999.00"))
+    r.lead.status = "booked"
+    r.lead.save(update_fields=["status"])
+
+    saved = save_reservation_from_draft(r.lead, {**reservation_draft(r), "rate": 500}, r)
+
+    assert saved.booked_total == Decimal("999.00")
+
+
+def test_a_numeric_label_is_stored_as_text():
+    data = drafts.parse_draft(_payload(extras=[{"kind": "other", "label": 123, "amount": 5}]))
+
+    assert data["extras"][0]["label"] == "123"

@@ -95,21 +95,21 @@ def freeze_booked_totals(lead) -> int:
 
 @transaction.atomic
 def replace_extras(trip: Reservation, rows: list[dict], *, user=None) -> list[TripExtra]:
-    """Make `rows` the trip's extras. Each row: `kind`, `label`, `amount` (positive
-    Decimal). Replaces wholesale — the editor posts the full list — and refreshes the
-    stored `extras_total` once."""
-    TripExtra.objects.filter(reservation=trip).delete()
-    extras = TripExtra.objects.bulk_create(
-        [
-            TripExtra(
-                reservation=trip,
-                kind=row["kind"],
-                label=row["label"],
-                amount=row["amount"],
-                created_by=user,
-            )
-            for row in rows
-        ]
-    )
+    """Make `rows` the trip's extras. Each row: optional `id`, `kind`, `label`, `amount`
+    (positive Decimal). The editor posts the full list: a row with the id of an existing
+    extra updates it (so `created_by` / `created_at` keep saying who first added it), a row
+    without one is new, and an existing extra left out is removed. Refreshes the stored
+    `extras_total` once."""
+    existing = {e.pk: e for e in TripExtra.objects.filter(reservation=trip)}
+    kept: list[TripExtra] = []
+    for row in rows:
+        extra = existing.pop(row.get("id"), None) if row.get("id") is not None else None
+        if extra is None:
+            extra = TripExtra(reservation=trip, created_by=user)
+        extra.kind, extra.label, extra.amount = row["kind"], row["label"], row["amount"]
+        extra.save(skip_refresh=True)
+        kept.append(extra)
+    if existing:
+        TripExtra.objects.filter(pk__in=existing).delete()
     trip.refresh_extras_total()
-    return extras
+    return kept
