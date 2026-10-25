@@ -116,9 +116,12 @@ class Charge(TimeStampedModel):
         DEPOSIT = "deposit", "Deposit"
         BALANCE = "balance", "Balance"
         REFUND = "refund", "Refund"
-        # The post-trip bill (APC-60): approved overtime + whatever is left of the order
-        # balance, one per order once every trip is reviewed.
+        # Historical (APC-60): one post-trip bill per order. Nothing creates it since
+        # APC-101; rows that exist still reconcile, refund and show.
         FINAL = "final", "Final bill"
+        # A processed trip's difference against what the order prepaid for it (APC-101,
+        # spec 2026-10-25 §4.4). Always carries `reservation`.
+        TRIP = "trip", "Trip charge"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -132,8 +135,19 @@ class Charge(TimeStampedModel):
         FAILED = "failed", "Failed"
 
     plan = models.ForeignKey(PaymentPlan, related_name="charges", on_delete=models.CASCADE)
+    # The trip this money is about (APC-101): set on every TRIP charge and on a REFUND made
+    # for a trip; null on the order-level deposit, balance and historical final bill.
+    reservation = models.ForeignKey(
+        "reservations.Reservation",
+        related_name="charges",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
     kind = models.CharField(max_length=20, choices=Kind.choices)
     amount = MoneyField()
+    # Why: the reason behind a refund or an added charge, printed on the receipt.
+    note = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     stripe_payment_intent_id = models.CharField(max_length=64, blank=True)
     # Stored so reusing an open intent stays a local lookup — see services.open_intent_for.
