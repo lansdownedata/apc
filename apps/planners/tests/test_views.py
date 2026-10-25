@@ -274,8 +274,19 @@ def _routes(resolver: URLResolver, prefix: str = ""):
                 yield prefix + _sample(entry)
 
 
+# The Podium OAuth start/finish answer anyone, staff session or not (they are guarded by
+# the OAuth state, not by login) — not staff data, and not something a planner session
+# changes. Every other /integrations/ route is staff-only and is walked below.
+INTEGRATIONS_OPEN_TO_ALL = {"integrations/podium/authorize/", "integrations/podium/callback/"}
+
+
 def _staff_paths() -> list[str]:
-    paths = [p for p in _routes(get_resolver()) if p.startswith(("portal/", "admin/"))]
+    paths = [
+        p
+        for p in _routes(get_resolver())
+        if p.startswith(("portal/", "admin/"))
+        or (p.startswith("integrations/") and p not in INTEGRATIONS_OPEN_TO_ALL)
+    ]
     # The staff sign-in pages answer anyone by design; they hold no staff data.
     public = {
         "portal/login/",
@@ -294,6 +305,8 @@ def test_the_staff_route_list_is_real():
     paths = _staff_paths()
     assert len(paths) > 100
     assert "/portal/" in paths and "/portal/contacts/1/" in paths
+    assert "/integrations/geocode/autocomplete/" in paths
+    assert "/integrations/quickbooks/callback/" in paths
 
 
 def test_a_planner_session_cannot_load_any_staff_route(planner_client, registered):
@@ -345,3 +358,23 @@ def test_the_wedding_list_costs_the_same_for_one_wedding_or_ten(planner_client, 
     for _ in range(9):
         _wedding(registered.contact)
     assert count() == one
+
+
+def test_removing_the_role_takes_the_wedding_and_its_request_form_away(planner_client, registered):
+    lead = _wedding(registered.contact)
+    page = reverse("planners:wedding", args=[lead.pk])
+    request_url = reverse("planners:request_change", args=[lead.pk])
+    assert planner_client.get(page).status_code == 200
+    LeadContact.objects.filter(lead=lead, contact=registered.contact).delete()
+    assert planner_client.get(page).status_code == 404
+    assert planner_client.post(request_url, {"body": "hi"}).status_code == 404
+
+
+def test_a_lost_order_is_gone_from_the_page_and_the_request(planner_client, registered):
+    lead = _wedding(registered.contact)
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.LOST)
+    assert planner_client.get(reverse("planners:wedding", args=[lead.pk])).status_code == 404
+    response = planner_client.post(
+        reverse("planners:request_change", args=[lead.pk]), {"body": "hi"}
+    )
+    assert response.status_code == 404

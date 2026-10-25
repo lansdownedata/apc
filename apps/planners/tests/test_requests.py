@@ -247,3 +247,17 @@ def test_the_same_words_later_or_elsewhere_are_a_new_request(client, planner):
     PlannerRequest.objects.update(created_at=timezone.now() - timedelta(seconds=31))
     client.post(_url(lead), data)
     assert PlannerRequest.objects.count() == 3
+
+
+def test_a_trip_from_another_wedding_is_ignored_as_the_subject(client, planner):
+    lead, _ = _wedding(planner)
+    stranger = LeadFactory(status=Lead.Status.BOOKED, wedding_name="Someone Else")
+    theirs = Reservation.objects.create(
+        lead=stranger, pickup_date=timezone.localdate() + timedelta(days=5)
+    )
+    Stop.objects.create(reservation=theirs, sequence=0, name="Secret Estate")
+    client.post(_url(lead), {"about": f"trip:{theirs.pk}", "body": "Move this one."})
+    message = Message.objects.get()
+    assert "About: the whole day" in message.body
+    assert "Secret Estate" not in message.body
+    assert PlannerRequest.objects.get().about == ""
