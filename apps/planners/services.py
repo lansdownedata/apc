@@ -12,6 +12,7 @@ from datetime import timedelta
 from urllib.parse import urljoin
 
 from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.urls import reverse
@@ -128,10 +129,17 @@ def revoke(account: PlannerAccount, *, actor) -> None:
 # --- the planner's own actions ---------------------------------------------------------
 
 
+LOCKOUT_FAILURES = 10
+LOCKOUT_FOR = timedelta(minutes=15)
+
+
 def register(account: PlannerAccount, password: str) -> PlannerAccount:
-    """Set the password. The first time, this is registration."""
+    """Set the password. The first time, this is registration. Clears any sign-in lock:
+    whoever holds a valid link has proved they own the address."""
     account.set_password(password)
-    fields = ["password", "updated_at"]
+    account.failed_logins = 0
+    account.locked_until = None
+    fields = ["password", "failed_logins", "locked_until", "updated_at"]
     if account.registered_at is None:
         account.registered_at = timezone.now()
         fields.append("registered_at")
@@ -139,15 +147,36 @@ def register(account: PlannerAccount, password: str) -> PlannerAccount:
     return account
 
 
+def _record_failure(account: PlannerAccount, now) -> None:
+    failures = account.failed_logins + 1
+    if failures >= LOCKOUT_FAILURES:
+        PlannerAccount.objects.filter(pk=account.pk).update(
+            failed_logins=0, locked_until=now + LOCKOUT_FOR
+        )
+    else:
+        PlannerAccount.objects.filter(pk=account.pk).update(failed_logins=failures)
+
+
 def authenticate(email: str, password: str) -> PlannerAccount | None:
-    """The account these credentials open, or None — the same None for an unknown email,
-    a wrong password, a pending invite and a revoked account."""
+    """The account these credentials open, or None — the same None, in about the same
+    time, for an unknown email, a pending invite, a revoked or locked account and a wrong
+    password. Like Django's ModelBackend, the hasher runs exactly once on every path, so
+    response time doesn't say whether an address has an account."""
     email = (email or "").strip().lower()
     if not email or not password:
         return None
+    now = timezone.now()
     account = PlannerAccount.objects.select_related("contact").filter(email=email).first()
-    if account is None or not account.can_sign_in or not account.check_password(password):
+    locked = account is not None and account.locked_until is not None and account.locked_until > now
+    if account is None or not account.can_sign_in or locked:
+        make_password(password)  # the same hashing cost as checking a real password
         return None
+    if not account.check_password(password):
+        _record_failure(account, now)
+        return None
+    if account.failed_logins or account.locked_until:
+        account.failed_logins, account.locked_until = 0, None
+        account.save(update_fields=["failed_logins", "locked_until"])
     return account
 
 

@@ -45,6 +45,10 @@ class PlannerAccount(TimeStampedModel):
     last_login = models.DateTimeField(null=True, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)
     view_count = models.PositiveIntegerField(default=0)
+    # Per-account brake on password guessing (on top of the per-IP one in the view):
+    # `services.LOCKOUT_FAILURES` wrong passwords in a row lock sign-in until `locked_until`.
+    failed_logins = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         verbose_name = "planner account"
