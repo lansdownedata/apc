@@ -208,14 +208,27 @@ def _vendor(qbo_id="56", token="0", name="Capital Coach"):
     return {"Vendor": {"Id": qbo_id, "SyncToken": token, "DisplayName": name}}
 
 
-def _bill(qbo_id="145", token="0", doc="INV-77", vendor="56"):
+def _bill(qbo_id="145", token="0", doc="INV-77", vendor="56", total=470.0):
     return {
-        "Bill": {"Id": qbo_id, "SyncToken": token, "DocNumber": doc, "VendorRef": {"value": vendor}}
+        "Bill": {
+            "Id": qbo_id,
+            "SyncToken": token,
+            "DocNumber": doc,
+            "VendorRef": {"value": vendor},
+            "TotalAmt": total,
+        }
     }
 
 
-def _billpayment(qbo_id="190", token="0", vendor="56"):
-    return {"BillPayment": {"Id": qbo_id, "SyncToken": token, "VendorRef": {"value": vendor}}}
+def _billpayment(qbo_id="190", token="0", vendor="56", total=470.0):
+    return {
+        "BillPayment": {
+            "Id": qbo_id,
+            "SyncToken": token,
+            "VendorRef": {"value": vendor},
+            "TotalAmt": total,
+        }
+    }
 
 
 def _bill_synced(payable, qbo_id="145"):
@@ -436,7 +449,7 @@ def test_a_re_push_updates_the_same_bill_never_a_second_one():
     )
     payable.refresh_from_db()
 
-    with patch(REQ, return_value=_bill(token="1")) as req:
+    with patch(REQ, return_value=_bill(token="1", total=480.0)) as req:
         assert qbo_bills.push_bill(payable) is True
 
     body = req.call_args.kwargs["json"]
@@ -1158,3 +1171,36 @@ def test_a_name_quickbooks_has_but_not_as_this_vendor_is_worded_carefully():
     assert vendor.qbo_sync_error.startswith(
         "QuickBooks already has a name like “Capital Coach” (it may differ in case or spacing)"
     )
+
+
+def test_a_bill_quickbooks_answers_with_a_different_total_stays_queued():
+    """A replayed create can answer with an older bill: what came back must be what we sent,
+    to the cent, before it reads as in QuickBooks."""
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ, return_value=_bill(total=420.0)):
+        assert qbo_bills.push_bill(payable) is False
+
+    payable.refresh_from_db()
+    assert payable.qbo_id == "145"
+    assert payable.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_a_payment_quickbooks_answers_with_a_different_total_stays_queued():
+    _map()
+    payable = _bill_synced(_paid(vendor=_linked_vendor()))
+
+    with patch(REQ, return_value=_billpayment(total=1.0)):
+        assert qbo_bills.push_payment(payable) is False
+
+    payable.refresh_from_db()
+    assert payable.qbo_payment_sync_state == SyncState.NOT_SYNCED
+
+
+def test_cents_add_up_on_an_awkward_split():
+    _map()
+    payable = _payable(vendor=_linked_vendor(), invoice="100.10", payout="33.33")
+
+    with patch(REQ, return_value=_bill(total=100.1)):
+        assert qbo_bills.push_bill(payable) is True

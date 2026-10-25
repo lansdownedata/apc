@@ -491,11 +491,26 @@ def bill_payload(payable: AffiliatePayable, realm: str) -> dict:
     return body
 
 
+def _cents(value) -> Decimal | None:
+    try:
+        return Decimal(str(value)).quantize(Decimal("0.01"))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+
+
+def _same_total(obj: dict, expected: Decimal) -> bool:
+    """QuickBooks' TotalAmt is what we sent, to the cent. Missing counts as different."""
+    return "TotalAmt" in obj and _cents(obj["TotalAmt"]) == _cents(expected)
+
+
 def _bill_matches(obj: dict, body: dict) -> bool:
     if "DocNumber" in body and obj.get("DocNumber", body["DocNumber"]) != body["DocNumber"]:
         return False
     vendor = _ref_value(obj, "VendorRef")
-    return vendor is None or vendor == body["VendorRef"]["value"]
+    if vendor is not None and vendor != body["VendorRef"]["value"]:
+        return False
+    sent = sum((Decimal(str(line["Amount"])) for line in body["Line"]), ZERO)
+    return _same_total(obj, sent)
 
 
 def _payable(payable: AffiliatePayable) -> AffiliatePayable:
@@ -638,7 +653,9 @@ def payment_payload(payable: AffiliatePayable) -> dict:
 
 def _payment_matches(obj: dict, body: dict) -> bool:
     vendor = _ref_value(obj, "VendorRef")
-    return vendor is None or vendor == body["VendorRef"]["value"]
+    if vendor is not None and vendor != body["VendorRef"]["value"]:
+        return False
+    return _same_total(obj, Decimal(str(body["TotalAmt"])))
 
 
 def _bill_in_step(payable: AffiliatePayable, realm: str) -> bool:
