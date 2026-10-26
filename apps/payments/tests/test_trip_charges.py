@@ -427,3 +427,94 @@ def test_a_trip_charge_closes_that_trips_overtime_invoiced_task_only():
     other.refresh_from_db()
     assert mine.status == Task.Status.DONE
     assert other.status == Task.Status.OPEN
+
+
+# --- Task 4: refund a trip ----------------------------------------------------------------
+
+
+def _refunds(*ids):
+    return patch.object(stripe.Refund, "create", side_effect=[MagicMock(id=i) for i in ids])
+
+
+def _charged_trip():
+    """A paid-in-full order whose first trip grew by an hour and was charged $222 for it."""
+    lead, plan, a = _owing_trip()
+    create_p, retrieve_p = _stripe()
+    with create_p, retrieve_p:
+        trip_money.charge_trip(a, Decimal("222.00"))
+    return lead, plan, a
+
+
+def test_refund_trip_returns_the_trips_own_charge_first():
+    lead, plan, a = _charged_trip()
+
+    with _refunds("re_1") as create:
+        refunded = trip_money.refund_trip(a, Decimal("100.00"), reason="Courtesy")
+
+    assert refunded == Decimal("100.00")
+    assert create.call_args.kwargs["payment_intent"] == "pi_trip"
+    row = plan.charges.get(kind=Charge.Kind.REFUND)
+    assert (row.reservation, row.note, row.amount) == (a, "Courtesy", Decimal("100.00"))
+
+
+def test_a_refund_larger_than_the_trips_charges_walks_on_to_the_balance_and_deposit():
+    lead, plan, a = _charged_trip()
+
+    with _refunds("re_1", "re_2") as create:
+        refunded = trip_money.refund_trip(a, Decimal("300.00"), reason="Waived")
+
+    assert refunded == Decimal("300.00")
+    intents = [c.kwargs["payment_intent"] for c in create.call_args_list]
+    assert intents == ["pi_trip", "pi_full"]
+    assert all(r.reservation == a for r in plan.charges.filter(kind=Charge.Kind.REFUND))
+
+
+def test_refund_trip_caps_at_what_the_trip_has():
+    lead, plan, a = _charged_trip()  # allocated 1,332 + 222
+
+    with pytest.raises(services.PaymentError, match="at most"):
+        trip_money.refund_trip(a, Decimal("2000.00"), reason="Too much")
+
+
+def test_refund_trip_needs_a_reason():
+    _lead, _plan, a = _charged_trip()
+    with pytest.raises(services.PaymentError, match="why"):
+        trip_money.refund_trip(a, Decimal("10.00"), reason="  ")
+
+
+def test_refund_trip_adds_a_credit_line_so_the_trip_owes_nothing_after():
+    lead, _plan, a = _charged_trip()
+
+    with _refunds("re_1"):
+        trip_money.refund_trip(a, Decimal("222.00"), reason="Overtime waived as a courtesy")
+
+    a.refresh_from_db()
+    credit = a.extras.get()
+    assert (credit.kind, credit.amount) == ("credit", Decimal("222.00"))
+    assert credit.label.startswith("Refund: Overtime waived")
+    assert trip_money.money_for(a).difference == Decimal("0.00")
+    assert services.remaining_balance(lead) == Decimal("0.00")
+    assert ledger.order_balances(lead)["refunded"] >= Decimal("0.00")
+
+
+def test_an_order_level_refund_still_walks_newest_first_across_trip_charges_too():
+    lead, plan, a = _charged_trip()
+
+    with _refunds("re_1", "re_2") as create:
+        services.refund_payment(plan, Decimal("300.00"))
+
+    intents = [c.kwargs["payment_intent"] for c in create.call_args_list]
+    assert intents == ["pi_trip", "pi_full"]
+    assert all(r.reservation is None for r in plan.charges.filter(kind=Charge.Kind.REFUND))
+
+
+def test_another_trips_charge_is_not_this_trips_to_refund():
+    lead, plan, a = _charged_trip()
+    b = lead.reservations.exclude(pk=a.pk).get()
+
+    with _refunds("re_1") as create:
+        trip_money.refund_trip(b, Decimal("50.00"), reason="Late")
+
+    assert (
+        create.call_args.kwargs["payment_intent"] == "pi_full"
+    )  # the prepaid pool, not A's charge

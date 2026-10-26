@@ -186,6 +186,14 @@ def _recognized(lead):
     return ledger.order_balances(lead)["recognized"]
 
 
+def _overtime_on_refund_rows(plan):
+    from django.db.models import Sum
+
+    return plan.charges.filter(kind=Charge.Kind.REFUND).aggregate(s=Sum("overtime_amount"))[
+        "s"
+    ] or Decimal("0.00")
+
+
 def _refunded(lead):
     return ledger.order_balances(lead)["refunded"]
 
@@ -234,7 +242,7 @@ def test_a_second_partial_continues_where_the_first_stopped():
 
     assert _refunded(plan.lead) == Decimal("160.00")  # all the overtime
     assert ledger.order_balances(plan.lead)["deferred"] == Decimal("1080.00")  # $20 balance part
-    assert services.overtime_refunded(plan.lead) == Decimal("160.00")
+    assert _overtime_on_refund_rows(plan) == Decimal("160.00")
     assert _all_balanced(plan.lead)
 
 
@@ -260,7 +268,7 @@ def test_a_final_bill_with_no_overtime_refunds_like_a_balance():
         services.refund_payment(plan, Decimal("100.00"))
 
     assert _recognized(plan.lead) == before
-    assert services.overtime_refunded(plan.lead) == Decimal("0.00")
+    assert _overtime_on_refund_rows(plan) == Decimal("0.00")
     assert ledger.order_balances(plan.lead)["collected"] == Decimal("0.00")
     assert _all_balanced(plan.lead)
 
@@ -313,18 +321,18 @@ def test_bad_overtime_data_never_moves_more_cash_than_stripe_refunded():
     assert cash_out == Decimal("100.00")
 
 
-def test_refunded_overtime_is_no_longer_owed():
-    """Moe, 2026-10-24: a refund of overtime lowers what's owed, so the order doesn't ask
-    for it again (money card, pay page, Trip Review)."""
+def test_a_historical_final_refund_leaves_remaining_at_zero():
+    """A historical FINAL's overtime never sat on the trip, so refunding it cannot make the
+    order owe it again (Moe, 2026-10-24); what is owed reads the trips, not the refund."""
     from apps.reservations import review_queue
 
-    plan = _fully_paid_with_final()  # a historical FINAL: its overtime is not on the trip
+    plan = _fully_paid_with_final()
     assert services.remaining_balance(plan.lead) == Decimal("0.00")
     with _stripe_refunds("re_1"):
         services.refund_payment(plan, Decimal("160.00"))  # the whole overtime
     assert services.remaining_balance(plan.lead) == Decimal("0.00")
     row = review_queue._load(Lead.objects.filter(pk=plan.lead_id))[0]
-    assert row.overtime_refunded == Decimal("160.00")
+    assert row.total_due == row.order_total
 
 
 def test_a_retried_final_refund_makes_one_stripe_call():

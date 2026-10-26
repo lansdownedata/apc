@@ -179,9 +179,9 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     return charge
 
 
-# Newest money back first (Moe, 2026-10-24): the post-trip final bill, then the balance,
-# then the deposit.
-_REFUND_ORDER = (Charge.Kind.FINAL, Charge.Kind.BALANCE, Charge.Kind.DEPOSIT)
+# Newest money back first (Moe, 2026-10-24): the trip's own charges (APC-101), then a
+# historical final bill, then the balance, then the deposit.
+_REFUND_ORDER = (Charge.Kind.TRIP, Charge.Kind.FINAL, Charge.Kind.BALANCE, Charge.Kind.DEPOSIT)
 
 
 def _refunded_on(plan, payment_intent_id: str) -> Decimal:
@@ -192,10 +192,16 @@ def _refunded_on(plan, payment_intent_id: str) -> Decimal:
     ).aggregate(s=Sum("amount"))["s"] or Decimal("0.00")
 
 
-def _refundable_sources(plan) -> list[tuple[Charge, Decimal]]:
-    """(charge, still refundable) for every succeeded Stripe charge, in refund order."""
+def _refundable_sources(plan, *, trip=None) -> list[tuple[Charge, Decimal]]:
+    """(charge, still refundable) for every succeeded Stripe charge, in refund order. With
+    `trip`, only that trip's TRIP charges count (another trip's money is not this trip's to
+    return); without, every TRIP charge counts, newest first."""
     rank = {kind: i for i, kind in enumerate(_REFUND_ORDER)}
     charges = plan.charges.filter(kind__in=_REFUND_ORDER, status=Charge.Status.SUCCEEDED)
+    if trip is not None:
+        charges = charges.exclude(kind=Charge.Kind.TRIP, reservation__isnull=True).exclude(
+            kind=Charge.Kind.TRIP, reservation__isnull=False
+        ) | charges.filter(kind=Charge.Kind.TRIP, reservation=trip)
     out = []
     for src in sorted(charges, key=lambda c: (rank[c.kind], -c.pk)):
         if not src.stripe_payment_intent_id:
@@ -206,9 +212,10 @@ def _refundable_sources(plan) -> list[tuple[Charge, Decimal]]:
     return out
 
 
-def refundable_total(plan) -> Decimal:
-    """Everything still refundable to the card, the final bill included (APC-75)."""
-    return sum((left for _src, left in _refundable_sources(plan)), Decimal("0.00"))
+def refundable_total(plan, *, trip=None) -> Decimal:
+    """Everything still refundable to the card, trip charges and the final bill included
+    (APC-75, APC-101)."""
+    return sum((left for _src, left in _refundable_sources(plan, trip=trip)), Decimal("0.00"))
 
 
 def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decimal, ...]:
@@ -232,9 +239,10 @@ def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decim
     return tuple(pieces)
 
 
-def refund_payment(plan, amount):
-    """Refund `amount` to the card — the final bill first, then the balance, then the
-    deposit (APC-75). Real Stripe refunds.
+def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None):
+    """Refund `amount` to the card — this trip's charges (APC-101) or the final bill first,
+    then the balance, then the deposit (APC-75). Real Stripe refunds. `reservation` and
+    `note` are stamped on every REFUND row the call makes.
 
     Caps each charge at its remaining refundable amount (captured − already refunded) so a
     repeated/duplicate call cannot over-refund, and records each Stripe refund + its ledger
@@ -245,7 +253,7 @@ def refund_payment(plan, amount):
     amount = Decimal(amount)
     remaining = amount
     total_refunded = Decimal("0.00")
-    for src, refundable in _refundable_sources(plan):
+    for src, refundable in _refundable_sources(plan, trip=reservation):
         if remaining <= Decimal("0.00"):
             break
         already = Decimal(src.amount) - refundable
@@ -272,6 +280,8 @@ def refund_payment(plan, amount):
                     idempotency_key=f"refund-{refund.id}",
                     overtime_amount=gratuity + base,
                     overtime_gratuity=gratuity,
+                    reservation=reservation,
+                    note=note[:255],
                 )
                 if src.kind == Charge.Kind.FINAL:
                     if gratuity + base > Decimal("0.00"):
@@ -300,26 +310,14 @@ def refund_payment(plan, amount):
     return total_refunded
 
 
-def overtime_refunded(lead) -> Decimal:
-    """The overtime given back on this order's refunds — no longer owed (APC-75)."""
-    from django.db.models import Sum
-
-    return Charge.objects.filter(plan__lead=lead, kind=Charge.Kind.REFUND).aggregate(
-        s=Sum("overtime_amount")
-    )["s"] or Decimal("0.00")
-
-
 def remaining_balance(lead) -> Decimal:
     """Total due minus collected cash. Never negative.
 
     Total due is the *live* order total — the sum of the trips' `line_total`, which carries
-    overtime and extras on the trip itself (spec 2026-10-25 §3) — so a price edit on a
-    booked order changes what is owed. The plan's `quote_total` snapshot stays the deposit
-    basis only. `overtime_refunded` is still taken off for historical REFUND rows that
-    returned overtime while the trip kept its hours; story 2 replaces that with a credit
-    line per refund."""
-    total = Decimal(lead.quote_total) - overtime_refunded(lead)
-    leftover = total - ledger.order_balances(lead)["collected"]
+    overtime, extras and every refund's credit line on the trip itself (spec 2026-10-25
+    §3, §4.7) — so a price edit on a booked order changes what is owed. The plan's
+    `quote_total` snapshot stays the deposit basis only."""
+    leftover = Decimal(lead.quote_total) - ledger.order_balances(lead)["collected"]
     return leftover if leftover > ZERO else ZERO
 
 

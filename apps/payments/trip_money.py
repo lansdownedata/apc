@@ -22,6 +22,7 @@ from django.db import transaction
 from django.db.models import Sum
 
 from apps.notifications.models import Notification
+from apps.reservations.models import TripExtra
 
 from . import services
 from .models import Charge, PaymentPlan
@@ -180,3 +181,33 @@ def _record_trip_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> C
         lead, Notification.Kind.BALANCE_FAILED, title="Trip charge failed", detail=reason
     )
     return charge
+
+
+def refund_trip(trip, amount, *, reason: str, user=None) -> Decimal:
+    """Return `amount` to the customer for this trip: its own charges first, then the
+    order's prepaid money newest first. Every REFUND row carries the trip and the reason,
+    and the trip gets a credit line for the same amount so `line_total` keeps telling the
+    truth — afterwards the trip owes nothing more and nothing less (spec §4.7)."""
+    amount = _positive(amount)
+    reason = (reason or "").strip()
+    if not reason:
+        raise services.PaymentError("Say why the customer is refunded.")
+    money = money_for(trip)
+    if amount > money.allocated:
+        raise services.PaymentError(
+            f"Only ${money.allocated:,.2f} was paid for this trip; refund at most that."
+        )
+    plan = trip.lead.payment
+    refundable = services.refundable_total(plan, trip=trip)
+    if amount > refundable:
+        raise services.PaymentError(f"Only ${refundable:,.2f} is still refundable to the card.")
+    refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
+    if refunded > ZERO:
+        TripExtra.objects.create(
+            reservation=trip,
+            kind=TripExtra.Kind.CREDIT,
+            label=f"Refund: {reason}"[:80],
+            amount=refunded,
+            created_by=user,
+        )
+    return refunded
