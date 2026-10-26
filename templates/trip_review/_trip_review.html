@@ -18,6 +18,8 @@
        waiveReason: {{ review.waive_reason|json_string }},
        payable: {{ payable_state|json_attr }},
        money: {{ money|json_attr }},
+       mode: '{% if processing %}processing{% endif %}',
+       locked: {% if locked %}true{% else %}false{% endif %},
        moneyUrls: { charge: '{% url 'trip_charge' trip.pk %}', refund: '{% url 'trip_refund' trip.pk %}', link: '{% url 'trip_pay_link' trip.pk %}' },
        payableUrls: {% if payable %}{ invoice: '{% url 'payable_invoice' payable.pk %}', approve: '{% url 'payable_approve' payable.pk %}', paid: '{% url 'payable_paid' payable.pk %}' }{% else %}null{% endif %}
      })">
@@ -32,12 +34,24 @@
     <span class="font-mono2 text-[12px] font-semibold text-goldd bg-goldl px-2 py-0.5 rounded-lg num">#{{ trip.la_confirmation|default:trip.reference }}</span>
     <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if trip.trip_status %}chip-ok{% else %}chip-ring{% endif %}">{% if trip.trip_status %}{{ trip.get_trip_status_display }}{% else %}No status · ended by schedule{% endif %}</span>
     <span x-show="state.complete" x-cloak class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed</span>
-    <button type="button" @click="$dispatch('trip-review-close')" class="ml-auto w-8 h-8 grid place-items-center rounded-lg text-muted hover:text-ink hover:bg-surface2 focus-gold" aria-label="Close"><i class="ti ti-x text-[18px]"></i></button>
+    {% if not processing %}<button type="button" @click="$dispatch('trip-review-close')" class="ml-auto w-8 h-8 grid place-items-center rounded-lg text-muted hover:text-ink hover:bg-surface2 focus-gold" aria-label="Close"><i class="ti ti-x text-[18px]"></i></button>{% endif %}
   </div>
 
   <div class="overflow-y-auto min-h-0 flex-1 text-[13px]">
+    {% if processing and review.is_processed %}
+    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-surface2 text-[12.5px]">Processed {{ review.processed_at|date:"M j" }}{% if review.processed_by %} by {% firstof review.processed_by.get_full_name review.processed_by.username %}{% endif %}. Times and charges are locked. Unlocking asks for a reason and is recorded.</p>
+    {% elif processing and review.unlocked_at %}
+    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">Unlocked {{ review.unlocked_at|date:"M j" }}{% if review.unlocked_by %} by {% firstof review.unlocked_by.get_full_name review.unlocked_by.username %}{% endif %}: “{{ review.unlock_reason }}”</p>
+    {% endif %}
     <section class="px-6 py-4">
+      {% if processing %}
+      <div class="flex items-center gap-2 mb-2">
+        <p class="text-[11px] font-semibold uppercase tracking-wide text-muted">Trip</p>
+        {% if not locked %}<button type="button" class="ml-auto text-[12px] font-semibold text-goldd hover:underline focus-gold" @click="$dispatch('reservation-edit', { id: {{ trip.pk }} })">Edit price</button>{% endif %}
+      </div>
+      {% else %}
       <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Trip <span class="normal-case tracking-normal font-medium ml-1 px-1.5 py-0.5 rounded-full chip-ring">as booked · edit it from the order</span></p>
+      {% endif %}
       <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2">
         <div><dt class="text-[10.5px] text-muted">Vehicle</dt><dd class="font-medium">{{ trip.vehicle.name|default:"Any vehicle" }}</dd></div>
         <div><dt class="text-[10.5px] text-muted">Passengers</dt><dd class="font-medium num">{{ trip.passengers }}</dd></div>
@@ -45,6 +59,14 @@
         <div><dt class="text-[10.5px] text-muted">Rate · trip total</dt><dd class="font-medium num">${{ trip.rate|floatformat:2|intcomma }}/hr · ${{ trip.line_total|floatformat:2|intcomma }}</dd></div>
         <div class="col-span-2 sm:col-span-4"><dt class="text-[10.5px] text-muted">Route</dt><dd>{% for s in stops %}{% if not forloop.first %} → {% endif %}{{ s.address }}{% endfor %}</dd></div>
       </dl>
+      {% if processing %}
+      <div class="mt-3 max-w-md" data-price-lines>
+        {% for line in price_lines %}
+        <div class="flex justify-between py-0.5"><span class="text-muted">{{ line.label }}</span><span class="num {% if line.amount < 0 %}text-rose-600{% endif %}">{% if line.amount < 0 %}−${{ line.abs_amount|floatformat:2|intcomma }}{% else %}${{ line.amount|floatformat:2|intcomma }}{% endif %}</span></div>
+        {% endfor %}
+        <div class="flex justify-between pt-1.5 mt-1 border-t border-line font-semibold"><span>Trip total</span><span class="num">${{ trip.line_total|floatformat:2|intcomma }}</span></div>
+      </div>
+      {% endif %}
     </section>
 
     <section class="px-6 py-4 border-t border-line grid md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-5">
@@ -54,15 +76,15 @@
           <div>
             <span class="block text-[12px] font-medium mb-1">Pickup</span>
             <div class="grid grid-cols-[1fr_auto] gap-1.5">
-              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.pickup_date" @change="saveTimes()" value="{{ times.pickup_date }}" placeholder="Date" aria-label="Pickup date">
-              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.pickup_time" @change="saveTimes()" value="{{ times.pickup_time }}" placeholder="Time" aria-label="Pickup time">
+              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.pickup_date" :disabled="locked" @change="saveTimes()" value="{{ times.pickup_date }}" placeholder="Date" aria-label="Pickup date">
+              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.pickup_time" :disabled="locked" @change="saveTimes()" value="{{ times.pickup_time }}" placeholder="Time" aria-label="Pickup time">
             </div>
           </div>
           <div>
             <span class="block text-[12px] font-medium mb-1">Drop-off</span>
             <div class="grid grid-cols-[1fr_auto] gap-1.5">
-              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.dropoff_date" @change="saveTimes()" value="{{ times.dropoff_date }}" placeholder="Date" aria-label="Drop-off date">
-              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.dropoff_time" @change="saveTimes()" value="{{ times.dropoff_time }}" placeholder="Time" aria-label="Drop-off time">
+              <input type="text" class="field" data-flatpickr data-fp-past x-model="times.dropoff_date" :disabled="locked" @change="saveTimes()" value="{{ times.dropoff_date }}" placeholder="Date" aria-label="Drop-off date">
+              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.dropoff_time" :disabled="locked" @change="saveTimes()" value="{{ times.dropoff_time }}" placeholder="Time" aria-label="Drop-off time">
             </div>
           </div>
         </div>
@@ -88,8 +110,8 @@
         <p class="text-[11.5px] text-muted mt-1"><span x-text="state.rule"></span> <span class="px-1.5 py-0.5 rounded-full chip-ring text-[10px] font-semibold">{{ f.grace_minutes }}-min grace · full hours</span></p>
         <div class="grid grid-cols-2 gap-3 mt-3 items-end">
           <label class="block"><span class="block text-[12px] font-medium mb-1">Billable minutes</span>
-            <input type="number" min="0" step="5" class="field num" x-model.number="billable" :disabled="waived" @change="saveDecision()"></label>
-          <label class="flex items-center gap-2 pb-2 cursor-pointer"><input type="checkbox" class="accent-gold" x-model="waived" @change="saveDecision()"> Waive overtime</label>
+            <input type="number" min="0" step="5" class="field num" x-model.number="billable" :disabled="waived || locked" @change="saveDecision()"></label>
+          <label class="flex items-center gap-2 pb-2 cursor-pointer"><input type="checkbox" class="accent-gold" x-model="waived" :disabled="locked" @change="saveDecision()"> Waive overtime</label>
         </div>
         <label x-show="waived" x-cloak class="block mt-2"><span class="block text-[12px] font-medium mb-1">Why it's waived (required)</span>
           <input type="text" class="field" x-model="waiveReason" @change="saveDecision()" placeholder="e.g. traffic delay outside the customer's control"></label>
@@ -113,7 +135,8 @@
             <span class="text-[11px] font-semibold uppercase tracking-wide text-muted" x-text="owes() > 0 ? 'To charge' : owes() < 0 ? 'To refund' : 'Nothing owed'"></span>
             <b class="num text-[16px]" x-text="'$' + Math.abs(owes()).toFixed(2)"></b>
           </div>
-          {% if can_pay %}
+          {% if processing %}
+          {% elif can_pay %}
           <div class="grid gap-2 mt-3" x-show="owes() !== 0" x-cloak>
             <template x-if="owes() > 0">
               <div class="grid gap-2">
@@ -285,11 +308,14 @@
       <p class="text-muted">No issues logged. An open issue takes the trip's green-lit away.</p>
       {% endfor %}
     </section>
+    {% if processing %}{% include "processing/_history.html" %}{% endif %}
   </div>
 
+  {% if processing %}{% include "processing/_footer.html" %}{% else %}
   <div class="flex items-center gap-2.5 flex-wrap px-6 py-3.5 border-t border-line bg-surface2">
     <span class="text-[11.5px] text-muted" x-text="saving ? 'Saving…' : (error || 'Saved as you go')" :class="error && 'text-rose-600'"></span>
     <button type="button" class="ml-auto text-[13px] font-medium text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold" @click="$dispatch('trip-review-close')">Save &amp; close</button>
     <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy || state.complete" @click="complete()" x-text="state.complete ? 'Reviewed' : 'Complete review'"></button>
   </div>
+  {% endif %}
 </div>

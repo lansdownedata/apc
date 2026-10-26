@@ -55,6 +55,7 @@ staff_patterns = [
     path("dispatch/", include("apps.dispatch.urls")),
     path("reservations/", include("apps.reservations.urls")),
     path("trip-review/", include("apps.reservations.review_urls")),
+    path("processing/", include("apps.reservations.processing_urls")),
     path("inbox/", include("apps.messaging.urls")),
     path("reviews/", review_list, name="review_list"),
     path("tasks/", include("apps.tasks.urls")),

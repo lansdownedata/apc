@@ -667,6 +667,131 @@ function tripReviewPanel() {
 }
 window.tripReviewPanel = tripReviewPanel;
 
+/* processingPane: the Trip Processing footer (APC-102). Every choice confirms through
+ * $store.modal and posts `expected` — the difference this pane showed — so a stale pane is
+ * refused rather than charging a different amount. Success reloads the page: the list, the
+ * lock and the history are all server-rendered. */
+function processingPane(opts) {
+  const reasonField = (id, placeholder) =>
+    `<input id="${id}" type="text" class="field" maxlength="255" placeholder="${placeholder}">`;
+  const read = (id) => document.getElementById(id)?.value || "";
+  return {
+    busy: false,
+    async _post(url, data, done) {
+      this.busy = true;
+      try {
+        await postForm(url, data);
+        Alpine.store("toast").push({ type: "success", title: done });
+        window.location.reload();
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+        throw e;
+      } finally {
+        this.busy = false;
+      }
+    },
+    _process(data, done) {
+      return this._post(opts.urls.process, { expected: opts.difference, ...data }, done).catch(() => {});
+    },
+    processNone() {
+      Alpine.store("modal").confirm({
+        title: "Process this trip?",
+        message: "Nothing is owed either way. Processing locks the customer side of the trip.",
+        variant: "gold",
+        confirmText: "Process",
+        onConfirm: () => this._process({}, "Processed"),
+      });
+    },
+    processCard() {
+      Alpine.store("modal").confirm({
+        title: `Charge $${opts.difference}?`,
+        message: `What the trip still owes, charged now to ${opts.card}. Then the trip is locked.`,
+        variant: "gold",
+        confirmText: `Charge $${opts.difference}`,
+        onConfirm: () => this._process({ collect: "card" }, `Charged $${opts.difference} and processed`),
+      });
+    },
+    processLink() {
+      Alpine.store("modal").confirm({
+        title: "Send the payment link?",
+        message: `The customer gets a link to pay $${opts.difference} for this trip. The trip is locked now; the money lands when they pay.`,
+        variant: "gold",
+        confirmText: "Send link and process",
+        onConfirm: () => this._process({ collect: "link" }, "Payment link sent; processed"),
+      });
+    },
+    processRefund() {
+      const amount = Math.abs(Number(opts.difference)).toFixed(2);
+      Alpine.store("modal").show({
+        title: `Refund $${amount}?`,
+        html: `<p class="text-[13px] text-muted mb-2">Back to the card the customer paid with. Say why.</p>${reasonField("proc-refund-reason", "e.g. Late pickup")}`,
+        variant: "danger",
+        confirmText: `Refund $${amount}`,
+        showCancel: true,
+        onConfirm: () => this._process({ collect: "refund", reason: read("proc-refund-reason") }, `Refunded $${amount} and processed`),
+      });
+    },
+    processKeep() {
+      const amount = Math.abs(Number(opts.difference)).toFixed(2);
+      Alpine.store("modal").show({
+        title: `Keep $${amount} as credit?`,
+        html: `<p class="text-[13px] text-muted mb-2">For money paid off-card (check, ACH): nothing is refunded; the overpayment stays on the order. Say why.</p>${reasonField("proc-keep-reason", "e.g. Paid by check; applied to the next booking")}`,
+        variant: "gold",
+        confirmText: "Keep and process",
+        showCancel: true,
+        onConfirm: () => this._process({ collect: "keep", reason: read("proc-keep-reason") }, "Processed; overpayment kept"),
+      });
+    },
+    setStatus(value, label) {
+      Alpine.store("modal").confirm({
+        title: `Mark this trip ${label}?`,
+        message: "No final status arrived from LimoAnywhere. This records what happened.",
+        variant: "gold",
+        confirmText: `Mark ${label}`,
+        onConfirm: () => this._post(opts.urls.status, { status: value }, `Marked ${label}`).catch(() => {}),
+      });
+    },
+    unlock() {
+      Alpine.store("modal").show({
+        title: "Unlock this trip?",
+        html: `<p class="text-[13px] text-muted mb-2">Its times and price become editable again. The reason is recorded.</p>${reasonField("proc-unlock-reason", "e.g. Customer called about the wait")}`,
+        variant: "danger",
+        confirmText: "Unlock",
+        showCancel: true,
+        onConfirm: () => this._post(opts.urls.unlock, { reason: read("proc-unlock-reason") }, "Unlocked").catch(() => {}),
+      });
+    },
+    addCharge() {
+      Alpine.store("modal").show({
+        title: "Add a charge",
+        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (e.g. Stain on the seat)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.card ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
+        variant: "gold",
+        confirmText: "Add and charge",
+        showCancel: true,
+        onConfirm: () => this._post(opts.urls.charge, {
+          label: read("proc-charge-label"),
+          amount: read("proc-charge-amount"),
+          collect: opts.card ? "card" : "link",
+        }, "Charge added").catch(() => {}),
+      });
+    },
+    refund() {
+      Alpine.store("modal").show({
+        title: "Refund this trip",
+        html: `<div class="grid gap-2"><input id="proc-refund-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount">${reasonField("proc-refund-why", "Why (it goes on the receipt)")}</div>`,
+        variant: "danger",
+        confirmText: "Refund",
+        showCancel: true,
+        onConfirm: () => this._post(opts.urls.refund, {
+          amount: read("proc-refund-amount"),
+          reason: read("proc-refund-why"),
+        }, "Refunded").catch(() => {}),
+      });
+    },
+  };
+}
+window.processingPane = processingPane;
+
 function tripReviewForm(opts) {
   const s = opts.state;
   return {
@@ -679,6 +804,8 @@ function tripReviewForm(opts) {
     override: s.affiliate_overtime_overridden ? s.affiliate_overtime_amount : "",
     overrideNote: s.override_note || "",
     payable: opts.payable,
+    /* Processed (APC-102): times and the overtime decision are read-only. */
+    locked: !!opts.locked,
     /* The trip's money (APC-101): what it costs, what was paid for it, the difference. */
     money: opts.money || { line_total: "0.00", allocated: "0.00", difference: "0.00" },
     invoiceNumber: opts.payable ? opts.payable.invoice_number : "",
@@ -759,10 +886,16 @@ function tripReviewForm(opts) {
       try {
         const res = await postForm(opts.saveUrl, data);
         this.state = res.review;
+        if (res.money) this.money = res.money;
         // The server's figures win: billable tracks the suggestion until someone decides.
         if (!this.state.decided) this.billable = this.state.billable_minutes;
         this._refreshPayable();
         this.$dispatch("trip-review-changed");
+        // Processing (APC-102): an overtime decision moves the price lines and what the
+        // trip owes, which are server-rendered beside it.
+        if (opts.mode === "processing" && ("billable_minutes" in data || "waived" in data)) {
+          window.location.reload();
+        }
         return true;
       } catch (e) {
         this.error = e.message || "That didn't save.";
@@ -895,6 +1028,8 @@ function tripReviewForm(opts) {
       this._save({ rating: n });
     },
     _reload() {
+      // The processing page renders this fragment itself (APC-102): reload the page.
+      if (opts.mode === "processing") return window.location.reload();
       // The panel re-fetches this fragment, so the issue list is the server's.
       this.$dispatch("trip-review-open", { url: opts.reloadUrl });
     },

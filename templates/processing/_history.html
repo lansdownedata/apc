@@ -1,0 +1,21 @@
+{% load humanize time_filters %}
+{% if trip_charges %}
+<section class="px-6 py-4 border-t border-line">
+  <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Charges on this trip</p>
+  {% for c in trip_charges %}
+  <div class="flex items-baseline gap-3 py-1">
+    <span class="flex-1">{{ c.get_kind_display }}{% if c.note %} · {{ c.note }}{% endif %}{% if c.status != 'succeeded' %} <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{{ c.get_status_display }}</span>{% endif %}</span>
+    <span class="text-[11.5px] text-muted num">{{ c.created_at|trip_clock:trip }}{% if c.card_last4 %} · ••{{ c.card_last4 }}{% endif %}</span>
+    <span class="num w-24 text-right {% if c.kind == 'refund' %}text-rose-600{% endif %}">{% if c.kind == 'refund' %}−{% endif %}${{ c.amount|floatformat:2|intcomma }}</span>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% if events %}
+<section class="px-6 py-4 border-t border-line">
+  <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">History</p>
+  {% for e in events %}
+  <div class="text-[12.5px] text-muted py-0.5"><span class="num">{{ e.created_at|trip_clock:trip }}</span> · {{ e.get_kind_display }}{% if e.amount %} ${{ e.amount|floatformat:2|intcomma }}{% endif %}{% if e.actor %} by {% firstof e.actor.get_full_name e.actor.username %}{% endif %}{% if e.note %}: “{{ e.note }}”{% endif %}</div>
+  {% endfor %}
+</section>
+{% endif %}

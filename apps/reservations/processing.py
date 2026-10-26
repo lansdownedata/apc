@@ -128,6 +128,28 @@ def _reference_pk(q: str) -> int | None:
     return None
 
 
+def _short(stop) -> str:
+    """A stop as the list shows it: its name, else the first part of its address."""
+    if stop is None:
+        return ""
+    return stop.name or (stop.address or "").split(",")[0]
+
+
+def _with_route(trips) -> list:
+    """`trip.route_short` ("The Jefferson → Congressional CC") from the prefetched stops —
+    never `trip.pickup` / `.last()`, which query per row."""
+    for trip in trips:
+        stops = list(trip.stops.all())
+        trip.route_short = (
+            f"{_short(stops[0])} → {_short(stops[-1])}"
+            if len(stops) > 1
+            else _short(stops[0])
+            if stops
+            else ""
+        )
+    return trips
+
+
 def _order(trips) -> list:
     return sorted(trips, key=lambda t: (t.pickup_date or date.max, t.pickup_time or time.max, t.pk))
 
@@ -156,7 +178,7 @@ def ready_trips(filters: Filters) -> list[Reservation]:
                 out.append(trip)
         elif trip.needs_status and post_trip.has_ended(trip, now=now, grace=grace):
             out.append(trip)
-    return _order(out)
+    return _with_route(_order(out))
 
 
 def workable(trip) -> bool:
@@ -200,7 +222,7 @@ def processed_trips(filters: Filters) -> list[Reservation]:
     trips = list(_base(filters).filter(review__processed_at__isnull=False))
     for trip in trips:
         trip.needs_status = False
-    return sorted(trips, key=lambda t: t.review.processed_at, reverse=True)
+    return _with_route(sorted(trips, key=lambda t: t.review.processed_at, reverse=True))
 
 
 def group_by_customer(trips) -> list[CustomerGroup]:

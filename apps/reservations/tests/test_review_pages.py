@@ -85,11 +85,12 @@ def test_the_list_shows_orders_in_review(staff):
     assert "<dialog" not in body
 
 
-def test_the_sidebar_has_a_trip_review_entry(staff):
+def test_the_sidebar_leads_to_processing_not_trip_review(staff):
+    """APC-102: Trip Processing replaces the order-level Trip Review."""
     body = staff.get(reverse("dashboard")).content.decode()
 
-    assert reverse("trip_review_list") in body
-    assert "Trip Review" in body
+    assert reverse("processing") in body
+    assert ">Trip Review<" not in body
 
 
 def test_the_list_page_costs_the_same_for_two_orders_or_eight(staff):

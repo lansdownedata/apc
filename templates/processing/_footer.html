@@ -1,0 +1,55 @@
+{% load humanize %}
+{% comment %}
+  The processing footer (APC-102): what the trip owes, and the one way forward. Every
+  choice confirms through $store.modal and posts `expected`, the difference shown here, so a
+  stale pane is refused rather than charging a different amount.
+{% endcomment %}
+<div class="px-6 py-3.5 border-t border-line bg-surface2"
+     x-data="processingPane({
+       difference: '{{ difference|floatformat:2 }}',
+       card: '{{ card_label|escapejs }}',
+       urls: {
+         process: '{% url 'processing_process' trip.pk %}',
+         unlock: '{% url 'processing_unlock' trip.pk %}',
+         charge: '{% url 'processing_add_charge' trip.pk %}',
+         refund: '{% url 'processing_refund' trip.pk %}',
+         status: '{% url 'processing_set_status' trip.pk %}'
+       }
+     })">
+  {% if review.is_processed %}
+    <div class="flex items-center gap-2.5 flex-wrap">
+      <span class="text-[12px] text-muted">Processed. Times and charges are locked.</span>
+      {% if can_pay %}
+      <button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="addCharge()">Add a charge</button>
+      <button type="button" class="text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="refund()">Refund</button>
+      <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="unlock()">Unlock to edit</button>
+      {% else %}
+      <span class="ml-auto text-[12px] text-muted">Unlocking and charging need payments access.</span>
+      {% endif %}
+    </div>
+  {% elif needs_status %}
+    <div class="flex items-center gap-2.5 flex-wrap">
+      <span class="text-[12px] text-muted">No final status arrived. What happened?</span>
+      {% for value, label in settable_statuses %}
+      <button type="button" class="{% if forloop.first %}ml-auto {% endif %}text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="setStatus('{{ value }}', '{{ label|escapejs }}')">{{ label }}</button>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="flex items-center gap-2.5 flex-wrap">
+      <span class="text-[12px] text-muted">{% if difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>. A receipt follows once receipts ship (APC-103).{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
+      {% if can_pay %}
+        {% if difference > 0 %}
+          {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and charge ${{ difference|floatformat:2|intcomma }}</button>{% endif %}
+          <button type="button" class="{% if not card_on_file %}ml-auto {% endif %}text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processLink()">Process and send pay link</button>
+        {% elif difference < 0 %}
+          <button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processKeep()">Keep as credit</button>
+          <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processRefund()">Process and refund</button>
+        {% else %}
+          <button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processNone()">Process</button>
+        {% endif %}
+      {% else %}
+        <span class="ml-auto text-[12px] text-muted">Processing needs payments access.</span>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

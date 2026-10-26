@@ -1,0 +1,217 @@
+"""Trip Processing screen (APC-102, spec 2026-10-25 §4): one list of finished trips grouped
+by customer, the trip's pane beside it, and the actions that settle and lock a trip.
+
+Reads are open to staff; settling money, locking and unlocking need payments access. The
+pane is the trip review fragment (`review_views.trip_context`) with a processing footer.
+"""
+
+from __future__ import annotations
+
+from django.contrib.auth.decorators import login_required
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_GET, require_POST
+
+from apps.accounts.permissions import payment_access_required
+from apps.payments import trip_money
+from apps.payments.models import Charge
+
+from . import editor as reservation_editor
+from . import processing, review_views
+from .models import Reservation, TripReview
+
+# What an agent may set a trip's status to from here: the three that settle (spec §4.1).
+_SETTABLE = (
+    Reservation.TripStatus.DONE,
+    Reservation.TripStatus.NO_SHOW,
+    Reservation.TripStatus.LATE_CANCEL,
+)
+
+
+def _bad(message: str, status: int = 400) -> JsonResponse:
+    return JsonResponse({"ok": False, "error": message}, status=status)
+
+
+def _trip(pk: int) -> Reservation:
+    return get_object_or_404(
+        Reservation.objects.select_related("lead__contact", "lead__payment", "service_type"),
+        pk=pk,
+    )
+
+
+def _sender(request) -> str:
+    return request.user.get_full_name() or request.user.username
+
+
+@login_required
+@require_GET
+def processing_list(request: HttpRequest) -> HttpResponse:
+    filters = processing.Filters.from_query(request.GET)
+    if filters.view == "processed":
+        trips = processing.processed_trips(filters)
+        groups = []
+    else:
+        trips = processing.ready_trips(filters)
+        groups = processing.group_by_customer(trips)
+    selected = None
+    pane: dict = {}
+    raw = request.GET.get("trip", "")
+    if raw.isdigit():
+        # A deep link (vendor page, reports) opens its trip whatever the filters say.
+        selected = _trip(int(raw))
+        if processing.workable(selected):
+            pane = review_views.trip_context(request, selected)
+            pane.update(_pane(request, selected))
+        else:
+            selected = None
+    return render(
+        request,
+        "processing/list.html",
+        {
+            "nav": "processing",
+            "page_title": "Trip Processing",
+            "filters": filters,
+            "groups": groups,
+            "trips": trips,
+            "selected": selected,
+            "ready_count": len(trips) if filters.view == "ready" else None,
+            "processing": True,
+            **pane,
+            **reservation_editor.editor_context(request, None, []),
+        },
+    )
+
+
+def _pane(request, trip) -> dict:
+    """What the processing footer and history add to the review fragment."""
+    review = TripReview.objects.select_related("processed_by", "unlocked_by").get(reservation=trip)
+    money = trip_money.money_for(trip)
+    plan = getattr(trip.lead, "payment", None)
+    charges = list(
+        Charge.objects.filter(reservation=trip)
+        .exclude(status=Charge.Status.PENDING, stripe_client_secret="")
+        .order_by("created_at")
+    )
+    return {
+        "review": review,
+        "needs_status": processing.needs_status(trip),
+        "settable_statuses": [(s.value, s.label) for s in _SETTABLE],
+        "difference": money.difference,
+        "owed_back": -money.difference if money.difference < 0 else 0,
+        "price_lines": trip.price_lines(),
+        "card_on_file": bool(plan and plan.stripe_payment_method_id),
+        "card_label": (
+            f"{plan.card_brand.title()} ••{plan.card_last4}"
+            if plan and plan.stripe_payment_method_id and plan.card_last4
+            else ""
+        ),
+        "trip_charges": charges,
+        "events": list(review.events.select_related("actor", "charge")),
+    }
+
+
+@login_required
+@payment_access_required
+@require_POST
+def processing_process(request: HttpRequest, pk: int) -> JsonResponse:
+    trip = _trip(pk)
+    try:
+        processing.process(
+            trip,
+            user=request.user,
+            expected=request.POST.get("expected", ""),
+            collect=request.POST.get("collect", ""),
+            reason=request.POST.get("reason", ""),
+            base_url=request.build_absolute_uri("/")[:-1],
+            sender_name=_sender(request),
+        )
+    except processing.ProcessingError as exc:
+        return _bad(str(exc))
+    except ArithmeticError:
+        return _bad("The price changed; check the trip again.")
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def processing_unlock(request: HttpRequest, pk: int) -> JsonResponse:
+    try:
+        processing.unlock(_trip(pk), user=request.user, reason=request.POST.get("reason", ""))
+    except processing.ProcessingError as exc:
+        return _bad(str(exc))
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def processing_add_charge(request: HttpRequest, pk: int) -> JsonResponse:
+    try:
+        processing.add_charge(
+            _trip(pk),
+            user=request.user,
+            amount=request.POST.get("amount", ""),
+            label=request.POST.get("label", ""),
+            collect=request.POST.get("collect", "card"),
+            base_url=request.build_absolute_uri("/")[:-1],
+            sender_name=_sender(request),
+        )
+    except processing.ProcessingError as exc:
+        return _bad(str(exc))
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
+    """A processed trip's courtesy refund (spec §4.7): any amount up to what was paid for
+    the trip, with a reason; the trip gets a credit line for it (APC-101)."""
+    from decimal import Decimal, InvalidOperation
+
+    import stripe
+
+    from apps.payments import services as payments
+
+    from .models import ProcessingEvent
+
+    trip = _trip(pk)
+    review = processing.review_of(trip)
+    if review is None or not review.is_processed:
+        return _bad("Refund an unprocessed trip by lowering its price, then Process.")
+    try:
+        amount = Decimal(request.POST.get("amount", "")).quantize(Decimal("0.01"))
+    except InvalidOperation:
+        return _bad("Enter a valid amount.")
+    reason = request.POST.get("reason", "")
+    try:
+        refunded = trip_money.refund_trip(trip, amount, reason=reason, user=request.user)
+    except payments.PaymentError as exc:
+        return _bad(str(exc))
+    except stripe.error.StripeError as exc:
+        return _bad(getattr(exc, "user_message", None) or "Stripe refused it.", status=502)
+    ProcessingEvent.objects.create(
+        review=review,
+        kind=ProcessingEvent.Kind.REFUNDED,
+        actor=request.user,
+        note=reason.strip()[:255],
+        amount=refunded,
+    )
+    return JsonResponse({"ok": True, "amount": f"{refunded:.2f}"})
+
+
+@login_required
+@require_POST
+def processing_set_status(request: HttpRequest, pk: int) -> JsonResponse:
+    """The parallel-run gap (spec §4.1): LA never sent Done. An agent says what happened."""
+    from .services import set_trip_status
+
+    trip = _trip(pk)
+    status = request.POST.get("status", "")
+    if status not in _SETTABLE:
+        return _bad("Pick Done, No show or Late cancel.")
+    if not processing.workable(trip) or processing.lock_message(trip):
+        return _bad("This trip's status can't be set here.")
+    set_trip_status(trip, status, user=request.user)
+    return JsonResponse({"ok": True})

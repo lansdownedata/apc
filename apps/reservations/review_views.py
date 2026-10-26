@@ -154,50 +154,52 @@ def _review_json(review, coverage) -> dict:
 @require_GET
 def trip_review_trip(request: HttpRequest, pk: int) -> HttpResponse:
     trip = _reviewable(pk)
+    return render(request, "trip_review/_trip_review.html", trip_context(request, trip))
+
+
+def trip_context(request: HttpRequest, trip: Reservation) -> dict:
+    """Everything the trip's review fragment needs — the pop-up and the Trip Processing
+    pane (APC-102) render the same one."""
     review = reviews.review_for(trip)
     coverage = _coverage(trip)
     payable = None
     if coverage is not None and not coverage.is_in_house:
-        # Normally made when the order entered review; this covers one that entered
-        # before payables existed.
-        payables.ensure_payables(trip.lead)
+        # One trip's payable, so the vendor invoice can be entered before Process.
+        payables.ensure_payable(trip)
         payable = AffiliatePayable.objects.filter(assignment=coverage).first()
     stops = list(Stop.objects.filter(reservation=trip).order_by("sequence"))
     pickup, dropoff = review.actual_pickup_local, review.actual_dropoff_local
     zone_now = trip.pickup_at
-    return render(
-        request,
-        "trip_review/_trip_review.html",
-        {
-            "trip": trip,
-            "review": review,
-            "coverage": coverage,
-            "f": reviews.figures(review, coverage),
-            "state": _review_json(review, coverage),
-            "payable": payable,
-            "payable_state": payables.payable_json(payable) if payable else None,
-            "money": _money_json(trip),
-            "card_on_file": bool(
-                getattr(trip.lead, "payment", None) and trip.lead.payment.stripe_payment_method_id
-            ),
-            "invoice_form": PayableInvoiceForm(instance=payable) if payable else None,
-            "can_pay": request.user.has_payments_access,
-            "paid_methods": AffiliatePayable.Method.choices,
-            "stops": stops,
-            "issues": list(
-                review.issues.select_related("created_by").order_by("resolved_at", "-created_at")
-            ),
-            "tz_abbr": zone_now.tzname() if zone_now else "",
-            "times": {
-                "pickup_date": pickup.date().isoformat() if pickup else "",
-                "pickup_time": pickup.strftime("%H:%M") if pickup else "",
-                "dropoff_date": dropoff.date().isoformat() if dropoff else "",
-                "dropoff_time": dropoff.strftime("%H:%M") if dropoff else "",
-            },
-            "categories": TripIssue.Category.choices,
-            "severities": TripIssue.Severity.choices,
+    return {
+        "trip": trip,
+        "review": review,
+        "coverage": coverage,
+        "f": reviews.figures(review, coverage),
+        "state": _review_json(review, coverage),
+        "payable": payable,
+        "payable_state": payables.payable_json(payable) if payable else None,
+        "money": _money_json(trip),
+        "card_on_file": bool(
+            getattr(trip.lead, "payment", None) and trip.lead.payment.stripe_payment_method_id
+        ),
+        "invoice_form": PayableInvoiceForm(instance=payable) if payable else None,
+        "can_pay": request.user.has_payments_access,
+        "paid_methods": AffiliatePayable.Method.choices,
+        "stops": stops,
+        "issues": list(
+            review.issues.select_related("created_by").order_by("resolved_at", "-created_at")
+        ),
+        "tz_abbr": zone_now.tzname() if zone_now else "",
+        "times": {
+            "pickup_date": pickup.date().isoformat() if pickup else "",
+            "pickup_time": pickup.strftime("%H:%M") if pickup else "",
+            "dropoff_date": dropoff.date().isoformat() if dropoff else "",
+            "dropoff_time": dropoff.strftime("%H:%M") if dropoff else "",
         },
-    )
+        "categories": TripIssue.Category.choices,
+        "severities": TripIssue.Severity.choices,
+        "locked": review.is_processed,
+    }
 
 
 def _local(trip, post, prefix: str):
@@ -266,7 +268,10 @@ def trip_review_save(request: HttpRequest, pk: int) -> JsonResponse:
     except (_Bad, reviews.ReviewError) as exc:
         return _bad(str(exc))
     payables.refresh_for_trip(trip)
-    return JsonResponse({"ok": True, "review": _review_json(review, _coverage(trip))})
+    trip.refresh_from_db()
+    return JsonResponse(
+        {"ok": True, "review": _review_json(review, _coverage(trip)), "money": _money_json(trip)}
+    )
 
 
 @login_required
