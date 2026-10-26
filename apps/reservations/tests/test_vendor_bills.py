@@ -198,6 +198,26 @@ def test_the_bills_view_is_a_view():
     assert processing.Filters.from_query({"view": "nope"}).view == "ready"
 
 
+@pytest.mark.parametrize("status", [S.NO_SHOW, S.LATE_CANCEL])
+def test_a_no_show_or_late_cancel_is_billed_like_a_done_trip(status):
+    trip = _farmed(status=status)
+    assert [t.pk for g in _groups() for t in g.trips] == [trip.pk]
+
+
+def test_a_payable_that_cannot_be_made_leaves_that_trip_out_not_the_page(client):
+    broken = _farmed(VendorFactory(name="Broken Limo"))
+    _farmed(VendorFactory(name="Fine Cars"))
+    AffiliatePayable.objects.filter(assignment__reservation=broken).delete()
+    client.force_login(UserFactory())  # reads are open to any staff user
+
+    with patch("apps.payments.payables.ensure_payable", side_effect=RuntimeError("boom")):
+        resp = client.get(reverse("processing"), {"view": "bills"})
+
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    assert "Fine Cars" in html and "Broken Limo" not in html
+
+
 # --- order, search, dates ----------------------------------------------------------------
 
 

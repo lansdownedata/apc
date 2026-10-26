@@ -111,7 +111,7 @@ def processing_list(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _keep(request, filters) -> str:
+def _keep(filters) -> str:
     """The list's filters, carried on a vendor link so picking one doesn't drop them."""
     from urllib.parse import urlencode
 
@@ -150,7 +150,7 @@ def _bills(request, filters, sort: str) -> HttpResponse:
             "sort": sort,
             "sort_options": list(processing.SORTS[filters.view].items()),
             "vendor_groups": groups,
-            "keep": _keep(request, filters),
+            "keep": _keep(filters),
             "vendor": vendor,
             "picked": picked,
             # Filters on, the vendor has trips waiting: say the filters hid them, not that

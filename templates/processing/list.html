@@ -10,7 +10,7 @@
   bill view (APC-104) lists vendors instead, picked by ?vendor=.
 {% endcomment %}
 <div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6 h-[calc(100vh-3rem)] flex flex-col"
-     x-data="{ shown: {% if filters.view == 'bills' %}{{ vendor.pk|default:'null' }}{% else %}{{ selected.pk|default:'null' }}{% endif %}, open: {} }">
+     x-data="{ shown: {% if filters.view == 'bills' %}{{ picked.vendor.pk|default:'null' }}{% else %}{{ selected.pk|default:'null' }}{% endif %}, open: {} }">
   <div class="flex flex-wrap items-end gap-3 mb-4 shrink-0">
     <div>
       <h1 class="font-display text-[22px] font-semibold text-ink">Trip Processing</h1>

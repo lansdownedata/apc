@@ -735,7 +735,11 @@ def _bill_queryset(*, vendor=None, q: str = ""):
 def vendor_bills(filters: Filters, sort: str = "oldest") -> list[VendorGroup]:
     """The Needs vendor bill list: one group per vendor, its trips oldest pickup first, each
     carrying `.payable`, `.vendor` and `.route_short`. A processed trip whose payable was
-    never made gets it here, as the trip pane does when it opens."""
+    never made gets it here, as the trip pane does when it opens — a few queries for each
+    such trip, once (rare: processing makes it). If making it fails, that trip is left out
+    and logged rather than taking the view down for everyone."""
+    import logging
+
     from apps.dispatch.models import Assignment
     from apps.payments import payables
     from apps.payments.models import AffiliatePayable
@@ -761,7 +765,11 @@ def vendor_bills(filters: Filters, sort: str = "oldest") -> list[VendorGroup]:
         try:
             trip.payable = assignment.payable
         except AffiliatePayable.DoesNotExist:
-            trip.payable = payables.ensure_payable(trip)
+            try:
+                trip.payable = payables.ensure_payable(trip)
+            except Exception:  # noqa: BLE001 - one bad trip mustn't break the list
+                logging.getLogger(__name__).exception("payable for trip %s failed", trip.pk)
+                continue
             if trip.payable is None:
                 continue
         trip.vendor = assignment.vendor

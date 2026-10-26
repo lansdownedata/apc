@@ -806,6 +806,7 @@ function vendorBillRow(opts) {
     },
   };
 }
+window.vendorBillRow = vendorBillRow;
 
 function tripReviewForm(opts) {
   const s = opts.state;
