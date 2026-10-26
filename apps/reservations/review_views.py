@@ -5,8 +5,8 @@
 - the trip review pop-up (a fragment) and its JSON actions: save as you go, complete,
   log and resolve issues.
 
-- the final bill (APC-60): charge the card on file, or send the pay link — both only once
-  every trip is reviewed, and only for payments staff.
+- a trip's money (APC-101): charge its difference to the card on file, refund it, or send
+  the pay link — per trip, for payments staff.
 
 Affiliate payables (APC-61) are worked in the pop-up's Driver pay pane through the
 `payments` endpoints; they record, never move money.
@@ -26,7 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.accounts.permissions import payment_access_required
 from apps.dispatch.models import Assignment
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
-from apps.payments import payables
+from apps.payments import payables, trip_money
 from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
@@ -92,7 +92,6 @@ def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
             "nav": "trip_review",
             "page_title": row.lead.quote_no,
             "row": row,
-            "bill": payment_services.final_bill(row.lead, row),
             "plan": plan,
             "card_on_file": bool(plan and plan.stripe_payment_method_id),
             "can_pay": request.user.has_payments_access,
@@ -182,6 +181,10 @@ def trip_review_trip(request: HttpRequest, pk: int) -> HttpResponse:
             "state": _review_json(review, coverage),
             "payable": payable,
             "payable_state": payables.payable_json(payable) if payable else None,
+            "money": _money_json(trip),
+            "card_on_file": bool(
+                getattr(trip.lead, "payment", None) and trip.lead.payment.stripe_payment_method_id
+            ),
             "invoice_form": PayableInvoiceForm(instance=payable) if payable else None,
             "can_pay": request.user.has_payments_access,
             "paid_methods": AffiliatePayable.Method.choices,
@@ -310,51 +313,101 @@ def trip_review_issue_resolve(request: HttpRequest, pk: int) -> JsonResponse:
 # --- the final bill (APC-60) ---------------------------------------------------------
 
 
-def _order_in_review(lead_id: int):
-    from apps.leads.models import Lead
+def _money_json(trip) -> dict:
+    m = trip_money.money_for(trip)
+    return {
+        "line_total": _money(m.line_total),
+        "allocated": _money(m.allocated),
+        "difference": _money(m.difference),
+    }
 
-    lead = get_object_or_404(Lead.objects.select_related("contact", "payment"), pk=lead_id)
-    if not Task.objects.filter(lead=lead, kind="ops_review").exists():
+
+def _settleable(pk: int) -> Reservation:
+    """A trip whose money can be settled: on an order that entered review, any status but a
+    plain cancellation — a no-show or a late cancel is exactly what gets charged or refunded."""
+    trip = get_object_or_404(Reservation.objects.select_related("lead__contact"), pk=pk)
+    in_review = Task.objects.filter(lead_id=trip.lead_id, kind="ops_review").exists()
+    plain = (Reservation.TripStatus.CANCELLED, Reservation.TripStatus.COVID_CANCELLATION)
+    if trip.trip_status in plain or not in_review:
         raise Http404
-    return lead
+    return trip
+
+
+def _amount(raw, fallback: Decimal) -> Decimal:
+    if raw in (None, ""):
+        return fallback
+    try:
+        return Decimal(str(raw)).quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise _Bad("Enter a valid amount.") from exc
 
 
 @login_required
 @payment_access_required
 @require_POST
-def trip_review_charge(request: HttpRequest, lead_id: int) -> JsonResponse:
-    """Charge the final bill to the card on file. Refused until every trip is reviewed."""
-    lead = _order_in_review(lead_id)
+def trip_charge(request: HttpRequest, pk: int) -> JsonResponse:
+    """Charge what the trip still owes (or `amount`) to the card on file."""
+    trip = _settleable(pk)
+    money = trip_money.money_for(trip)
     try:
-        charge = payment_services.charge_final(lead)
-    except payment_services.PaymentError as exc:
+        amount = _amount(request.POST.get("amount"), money.difference)
+        charge = trip_money.charge_trip(
+            trip, amount, user=request.user, note=request.POST.get("note", "")
+        )
+    except (_Bad, payment_services.PaymentError) as exc:
         return _bad(str(exc))
     except stripe.error.StripeError as exc:
         return JsonResponse(
             {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
             status=502,
         )
-    if charge.status == charge.Status.FAILED:
-        return _bad(f"The card was declined: {charge.failure_reason}")
-    return JsonResponse({"ok": True, "status": charge.status, "amount": f"{charge.amount:.2f}"})
+    return JsonResponse({"ok": True, "amount": f"{charge.amount:.2f}", "money": _money_json(trip)})
 
 
 @login_required
 @payment_access_required
 @require_POST
-def trip_review_send_link(request: HttpRequest, lead_id: int) -> JsonResponse:
-    """Text or email the customer their pay page, which asks for the final bill."""
-    lead = _order_in_review(lead_id)
-    if not payment_services.final_bill(lead).ready:
-        return _bad("Every trip has to be reviewed, with something to collect, first.")
+def trip_refund(request: HttpRequest, pk: int) -> JsonResponse:
+    """Refund the trip's overpayment (or `amount`), with a reason."""
+    trip = _settleable(pk)
+    money = trip_money.money_for(trip)
     try:
+        amount = _amount(request.POST.get("amount"), -money.difference)
+        refunded = trip_money.refund_trip(
+            trip, amount, reason=request.POST.get("reason", ""), user=request.user
+        )
+    except (_Bad, payment_services.PaymentError) as exc:
+        return _bad(str(exc))
+    except stripe.error.StripeError as exc:
+        return JsonResponse(
+            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
+            status=502,
+        )
+    return JsonResponse({"ok": True, "amount": f"{refunded:.2f}", "money": _money_json(trip)})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def trip_pay_link(request: HttpRequest, pk: int) -> JsonResponse:
+    """Open a pay-page intent for what the trip owes and text or email the customer."""
+    trip = _settleable(pk)
+    money = trip_money.money_for(trip)
+    try:
+        amount = _amount(request.POST.get("amount"), money.difference)
+        trip_money.open_trip_intent(trip, amount, note=request.POST.get("note", ""))
         channel = payment_services.send_pay_link(
-            lead,
+            trip.lead,
             base_url=request.build_absolute_uri("/")[:-1],
             sender_name=request.user.get_full_name() or request.user.username,
         )
-    except payment_services.PaymentError as exc:
+    except (_Bad, payment_services.PaymentError) as exc:
         return _bad(str(exc))
+    except stripe.error.StripeError as exc:
+        return JsonResponse(
+            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
+            status=502,
+        )
     except (PodiumAPIError, PodiumNotConnected) as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
-    return JsonResponse({"ok": True, "channel": channel})
+    return JsonResponse({"ok": True, "channel": channel, "money": _money_json(trip)})

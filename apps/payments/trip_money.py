@@ -238,12 +238,17 @@ def refund_trip(trip, amount, *, reason: str, user=None) -> Decimal:
     if amount > refundable:
         raise services.PaymentError(f"Only ${refundable:,.2f} is still refundable to the card.")
     refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
-    if refunded > ZERO:
+    # The price may already say this money is owed back (a credit line or a lower rate
+    # made `difference` negative): that part needs no second credit. Anything refunded
+    # beyond it is a courtesy the price must show, so the trip owes nothing more or less.
+    already_owed_back = max(ZERO, -money.difference)
+    credit = refunded - min(refunded, already_owed_back)
+    if credit > ZERO:
         TripExtra.objects.create(
             reservation=trip,
             kind=TripExtra.Kind.CREDIT,
             label=f"Refund: {reason}"[:80],
-            amount=refunded,
+            amount=credit,
             created_by=user,
         )
     return refunded

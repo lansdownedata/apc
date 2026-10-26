@@ -124,7 +124,7 @@ def test_the_order_page(staff):
     assert "Trips reviewed" in body and "0 / 1" in body
     assert "Needs review" in body
     assert "Cancelled · nothing to review" in body
-    assert "Final billing" in body and "Remaining to collect" in body
+    assert "Money" in body and "Remaining to collect" in body
     assert _trip_url("trip_review_trip", trip) in body
     assert _trip_url("trip_review_trip", cancelled) not in body
 
@@ -397,3 +397,170 @@ def test_the_saved_times_come_back_in_the_form(staff):
     body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
 
     assert 'value="22:05"' in body and 'value="01:45"' in body
+
+
+# --- APC-101: each trip's money is settled from its pop-up ------------------------------
+from unittest.mock import MagicMock  # noqa: E402
+
+import stripe  # noqa: E402
+
+from apps.payments import ledger  # noqa: E402
+from apps.payments.models import Charge, JournalEntry  # noqa: E402
+
+
+@pytest.fixture
+def accountant(client):
+    client.force_login(UserFactory(can_manage_payments=True))
+    return client
+
+
+def _owing(card=True):
+    """An order in review, paid in full at booking, whose trip then grew by an hour."""
+    lead, trip = _order()
+    trip.booked_total = trip.line_total
+    trip.save(update_fields=["booked_total"])
+    plan = lead.payment  # `_order` already made one
+    plan.quote_total = trip.line_total
+    plan.stripe_customer_id = "cus_1" if card else ""
+    plan.stripe_payment_method_id = "pm_1" if card else ""
+    plan.card_brand = "visa" if card else ""
+    plan.card_last4 = "4242" if card else ""
+    plan.save()
+    # Paid in full at booking: the Stripe charge row (what allocation reads) and its cash.
+    plan.charges.create(
+        kind=Charge.Kind.BALANCE,
+        amount=trip.line_total,
+        status=Charge.Status.SUCCEEDED,
+        stripe_payment_intent_id="pi_full",
+        idempotency_key="bal",
+    )
+    ledger.post_capture(
+        lead=lead,
+        amount=trip.line_total,
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="paid",
+    )
+    trip.overtime_hours = Decimal("1")
+    trip.save(update_fields=["overtime_hours"])
+    return lead, plan, trip
+
+
+def _pi(pi_id="pi_trip", amount=16800):
+    return MagicMock(
+        id=pi_id,
+        status="succeeded",
+        amount=amount,
+        client_secret=f"{pi_id}_secret",
+        payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
+    )
+
+
+def test_the_trip_popup_shows_what_the_trip_owes_and_the_charge_button(accountant):
+    _lead, _plan, trip = _owing()
+
+    body = accountant.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "data-trip-money" in body
+    assert "168.00" in body  # the difference, in the component's options
+    assert "chargeTrip()" in body and "sendTripLink()" in body and "refundTrip()" in body
+    assert "<select" not in body.split("data-trip-money")[1].split("</div>")[0]
+
+
+def test_without_payments_access_the_popup_only_reads_the_money(staff):
+    _lead, _plan, trip = _owing()
+
+    body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "data-trip-money" in body and "needs payments access" in body
+    assert "chargeTrip()" not in body
+
+
+def test_charge_endpoint_charges_that_trip_and_returns_the_new_figures(accountant):
+    _lead, plan, trip = _owing()
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_pi()),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_pi()),
+    ):
+        resp = accountant.post(_trip_url("trip_charge", trip))
+
+    data = resp.json()
+    assert resp.status_code == 200 and data["ok"] is True
+    assert data["amount"] == "168.00" and data["money"]["difference"] == "0.00"
+    assert plan.charges.get(kind=Charge.Kind.TRIP).reservation == trip
+
+
+def test_the_money_endpoints_need_payments_access(staff):
+    _lead, _plan, trip = _owing()
+    for name in ("trip_charge", "trip_refund", "trip_pay_link"):
+        assert staff.post(_trip_url(name, trip)).status_code == 403
+
+
+def test_refund_endpoint_needs_a_reason(accountant):
+    _lead, _plan, trip = _owing()
+    trip.overtime_hours = Decimal("0")
+    trip.save(update_fields=["overtime_hours"])
+    TripReview.objects.filter(reservation=trip).update(overtime_waived=False)
+    from apps.reservations.factories import TripExtraFactory
+
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
+
+    resp = accountant.post(_trip_url("trip_refund", trip), {"reason": ""})
+
+    assert resp.status_code == 400 and "why" in resp.json()["error"]
+
+
+def test_refund_endpoint_refunds_the_overpayment_with_the_reason(accountant):
+    _lead, plan, trip = _owing()
+    trip.overtime_hours = Decimal("0")
+    trip.save(update_fields=["overtime_hours"])
+    from apps.reservations.factories import TripExtraFactory
+
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
+
+    with patch.object(stripe.Refund, "create", return_value=MagicMock(id="re_1")):
+        resp = accountant.post(_trip_url("trip_refund", trip), {"reason": "Courtesy"})
+
+    data = resp.json()
+    assert resp.status_code == 200 and data["amount"] == "50.00"
+    assert data["money"]["difference"] == "0.00"
+    assert plan.charges.get(kind=Charge.Kind.REFUND).note == "Courtesy"
+
+
+def test_pay_link_endpoint_opens_a_trip_intent_and_sends_the_link(accountant, settings):
+    settings.OUTBOUND_ENABLED = True
+    lead, plan, trip = _owing(card=False)
+    lead.contact.phone = "+15715551212"
+    lead.contact.save()
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_pi("pi_link")),
+        patch("apps.payments.services._send_to_customer", return_value="sms") as send,
+    ):
+        resp = accountant.post(_trip_url("trip_pay_link", trip))
+
+    assert resp.status_code == 200 and resp.json()["channel"] == "sms"
+    link = plan.charges.get(kind=Charge.Kind.TRIP)
+    assert (link.reservation, link.status, link.amount) == (
+        trip,
+        Charge.Status.PENDING,
+        Decimal("168.00"),
+    )
+    assert "/quote/" in send.call_args.kwargs["body"]
+
+
+def test_a_plainly_cancelled_trip_cannot_be_settled(accountant):
+    _lead, _plan, trip = _owing()
+    trip.trip_status = Reservation.TripStatus.CANCELLED
+    trip.save(update_fields=["trip_status"])
+
+    assert accountant.post(_trip_url("trip_charge", trip)).status_code == 404
+
+
+def test_the_order_page_no_longer_offers_a_final_bill(staff):
+    lead, _plan, _trip = _owing()
+
+    body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
+
+    assert "Charge card" not in body and "finalBilling" not in body
+    assert "charged or refunded on its own" in body

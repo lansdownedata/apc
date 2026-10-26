@@ -302,3 +302,102 @@ def services_stripe():
     from apps.payments import services
 
     return services.stripe
+
+
+# --- APC-101: a pay link for one trip --------------------------------------------------
+
+
+def _link_intent(pi, amount):
+    return MagicMock(
+        id=pi,
+        status="succeeded",
+        amount=amount,
+        client_secret=f"{pi}_secret",
+        payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
+    )
+
+
+def _paid_in_full(lead):
+    """What allocation reads: the succeeded Stripe charge row, plus its cash."""
+    lead.payment.charges.create(
+        kind=Charge.Kind.BALANCE,
+        amount=Decimal("1000.00"),
+        status=Charge.Status.SUCCEEDED,
+        stripe_payment_intent_id="pi_full",
+        idempotency_key="bal-full",
+    )
+    _collect(lead, "1000.00")
+
+
+def _trip_link(lead, amount="200.00"):
+    from apps.payments import trip_money
+
+    trip = lead.reservations.get()
+    trip.booked_total = trip.line_total
+    trip.save(update_fields=["booked_total"])
+    trip.rate = trip.rate + Decimal(amount)  # the trip now owes `amount` more than was paid
+    trip.save(update_fields=["rate"])
+    owed = trip_money.money_for(trip).difference  # `amount` on a paid order, more if unpaid
+    with patch.object(
+        services_stripe().PaymentIntent,
+        "create",
+        return_value=_link_intent("pi_link", int(owed * 100)),
+    ):
+        link, _ = trip_money.open_trip_intent(trip, owed)
+    return trip, link
+
+
+def test_the_pay_page_asks_for_an_open_trip_charge_by_its_trip(client):
+    lead = _lead(status=Lead.Status.BOOKED)
+    _paid_in_full(lead)
+    trip, link = _trip_link(lead)
+
+    resp = client.get(reverse("quote_pay", args=[_tok(lead)]))
+
+    assert resp.context["pay_kind"] == Charge.Kind.TRIP
+    assert resp.context["amount"] == Decimal("200.00")
+    body = resp.content.decode()
+    assert "Due for this trip" in body and trip.reference in body
+
+
+def test_the_pay_page_ignores_a_trip_link_whose_trip_owes_something_else(client):
+    lead = _lead(status=Lead.Status.BOOKED)
+    _paid_in_full(lead)
+    trip, _link = _trip_link(lead)
+    trip.rate = trip.rate - Decimal("50")  # edited since the link went out
+    trip.save(update_fields=["rate"])
+
+    resp = client.get(reverse("quote_pay", args=[_tok(lead)]))
+
+    assert resp.context["pay_kind"] == Charge.Kind.BALANCE
+    assert resp.context["amount"] == Decimal("150.00")
+
+
+def test_a_trip_link_comes_before_the_deposit_on_a_card_less_booking(client):
+    lead = _lead(status=Lead.Status.BOOKED)  # nothing collected yet
+    _trip_link(lead, "1200.00")
+
+    resp = client.get(reverse("quote_pay", args=[_tok(lead)]))
+
+    assert resp.context["pay_kind"] == Charge.Kind.TRIP
+
+
+def test_paying_a_trip_link_tags_the_charge_with_the_trip_and_posts_once(client):
+    lead = _lead(status=Lead.Status.BOOKED)
+    _paid_in_full(lead)
+    trip, link = _trip_link(lead)
+    intent = _link_intent("pi_link", 20000)
+
+    with patch.object(services_stripe().PaymentIntent, "create", return_value=intent):
+        secret = client.post(reverse("quote_pay_intent", args=[_tok(lead)])).json()
+    with patch.object(services_stripe().PaymentIntent, "retrieve", return_value=intent):
+        done = client.post(
+            reverse("quote_pay_complete", args=[_tok(lead)]), {"payment_intent_id": "pi_link"}
+        )
+
+    assert secret["client_secret"] == "pi_link_secret"
+    assert done.status_code == 200
+    link.refresh_from_db()
+    assert link.status == Charge.Status.SUCCEEDED and link.reservation == trip
+    assert JournalEntry.objects.filter(charge=link).count() == 1
+    assert ledger.order_balances(lead)["collected"] == Decimal("1200.00")

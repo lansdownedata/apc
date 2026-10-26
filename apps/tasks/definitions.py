@@ -409,8 +409,8 @@ REGISTRY: tuple[TaskKind, ...] = (
         post_trip=True,
     ),
     TaskKind(
-        # Stage 2. Closed by the overtime charge (APC-60); not applicable when the review
-        # approved nothing to bill.
+        # Stage 2. Closed by the trip's charge (APC-101) or by processing (story 3); not
+        # applicable when the review approved nothing to bill.
         key="overtime_invoiced",
         label="Overtime invoiced",
         department=_D.ACCOUNTING,

@@ -2,7 +2,6 @@
 pages. Card data never touches our servers: it is entered into Stripe's own iframes and
 we only ever hold a PaymentMethod id (hosted Checkout was retired 2026-08-30)."""
 
-from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -734,137 +733,9 @@ def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
     return record_payment(plan, intent.id)
 
 
-# --- the final bill (APC-60) -----------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class FinalBill:
-    """What the Final billing card charges: approved overtime + the order balance left.
-
-    `order_balance` is usually $0 (the balance cron takes it at T-30d) and non-zero on a
-    card-less order. `all_reviewed` gates both ways of collecting it."""
-
-    order_balance: Decimal
-    overtime_base: Decimal
-    overtime_gratuity: Decimal
-    all_reviewed: bool
-    charged: Charge | None = None
-
-    @property
-    def overtime_total(self) -> Decimal:
-        return self.overtime_base + self.overtime_gratuity
-
-    @property
-    def amount(self) -> Decimal:
-        return self.order_balance + self.overtime_total
-
-    @property
-    def ready(self) -> bool:
-        return self.all_reviewed and self.amount > ZERO
-
-
-def final_bill(lead, row=None) -> FinalBill:
-    """The order's final bill, from its Trip Review row (pass `row` when you have it). An
-    order not in review has no overtime and is never ready."""
-    from apps.reservations import review_queue
-
-    row = row if row is not None else review_queue.order_review(lead.pk)
-    if row is None:
-        return FinalBill(ZERO, ZERO, ZERO, all_reviewed=False)
-    plan = getattr(row.lead, "payment", None)
-    charged = None
-    if plan is not None:
-        charged = next(
-            (
-                c
-                for c in plan.charges.filter(kind=Charge.Kind.FINAL, status=Charge.Status.SUCCEEDED)
-            ),
-            None,
-        )
-    if charged is not None:
-        # One final bill per order; its overtime is already in Collected.
-        return FinalBill(row.order_balance, ZERO, ZERO, row.all_reviewed, charged)
-    return FinalBill(
-        order_balance=row.order_balance,
-        overtime_base=row.approved_overtime_base,
-        overtime_gratuity=row.approved_overtime_gratuity,
-        all_reviewed=row.all_reviewed,
-    )
-
-
-def _ready_bill(lead) -> FinalBill:
-    bill = final_bill(lead)
-    if not bill.all_reviewed:
-        raise PaymentError("Every trip on the order has to be reviewed before the final bill.")
-    if bill.amount <= ZERO:
-        raise PaymentError("Nothing left to charge on this order.")
-    return bill
-
-
-def charge_final(lead) -> Charge:
-    """Charge the final bill to the card on file, off-session. Idempotent per order.
-
-    The check-and-create runs under a lock on the plan, so a double-click makes one Charge;
-    a retry that finds a PENDING off-session attempt re-sends it under the same Stripe
-    idempotency key (Stripe replays the first result — one charge at the bank). A
-    succeeded final bill is returned as-is, with no Stripe call.
-
-    Reconciles through `record_payment` (unlike `charge_balance`), so the ledger split, the
-    APC-40 card snapshot and the task close are the same code the pay link uses.
-    """
-    with transaction.atomic():
-        plan = PaymentPlan.objects.select_for_update().get(lead=lead)
-        done = plan.charges.filter(kind=Charge.Kind.FINAL, status=Charge.Status.SUCCEEDED).first()
-        if done is not None:
-            return done
-        bill = _ready_bill(lead)
-        if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
-            raise PaymentError("No card on file. Send a payment link instead.")
-        charge = plan.charges.filter(
-            kind=Charge.Kind.FINAL,
-            status=Charge.Status.PENDING,
-            amount=bill.amount,
-            stripe_client_secret="",
-        ).first() or plan.record_charge(
-            kind=Charge.Kind.FINAL,
-            amount=bill.amount,
-            overtime_amount=bill.overtime_total,
-            overtime_gratuity=bill.overtime_gratuity,
-        )
-    try:
-        intent = _stripe().PaymentIntent.create(
-            amount=_cents(bill.amount),
-            currency="usd",
-            customer=plan.stripe_customer_id,
-            payment_method=plan.stripe_payment_method_id,
-            payment_method_types=["card"],
-            off_session=True,
-            confirm=True,
-            metadata={
-                "lead_id": str(plan.lead_id),
-                "kind": Charge.Kind.FINAL.value,
-                "charge_id": str(charge.pk),
-            },
-            idempotency_key=charge.idempotency_key,
-        )
-    except stripe.error.CardError as exc:
-        return _record_final_failure(plan, charge, exc)
-    charge.stripe_payment_intent_id = intent.id
-    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
-    return record_payment(plan, intent.id, kind=Charge.Kind.FINAL)
-
-
-def open_final_intent(plan: PaymentPlan) -> tuple[Charge, str]:
-    """The pay-link side of the final bill: an on-session intent for the customer's pay
-    page, carrying the overtime split for the ledger."""
-    bill = _ready_bill(plan.lead)
-    return open_intent_for(
-        plan,
-        kind=Charge.Kind.FINAL,
-        amount=bill.amount,
-        overtime_amount=bill.overtime_total,
-        overtime_gratuity=bill.overtime_gratuity,
-    )
+# --- the historical final bill (APC-60) -------------------------------------------------
+# Nothing creates a FINAL charge since APC-101 (trips are charged on their own); an intent
+# still in flight at deploy time reconciles through `record_payment` → `_post_final`.
 
 
 def _post_final(plan: PaymentPlan, charge: Charge, payment_intent_id: str) -> None:
@@ -917,24 +788,6 @@ def _close_overtime_invoiced(lead, *, reservation_id: int | None = None) -> None
             tasks.complete(task)
         except tasks.TaskError:
             continue
-
-
-def _record_final_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:
-    """A declined final bill. The alert is the balance one, but the booked balance's own
-    status is left alone — it may well be paid; it's the overtime that failed."""
-    reason = (getattr(exc, "user_message", None) or str(exc))[:255]
-    charge.status = Charge.Status.FAILED
-    charge.failure_reason = reason
-    charge.save(update_fields=["status", "failure_reason", "updated_at"])
-    plan.fail_reason = reason
-    plan.save(update_fields=["fail_reason", "updated_at"])
-    lead = plan.lead
-    lead.has_alert = True
-    lead.save(update_fields=["has_alert", "updated_at"])
-    Notification.notify(
-        lead, Notification.Kind.BALANCE_FAILED, title="Final bill charge failed", detail=reason
-    )
-    return charge
 
 
 def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:

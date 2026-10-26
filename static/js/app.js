@@ -679,6 +679,8 @@ function tripReviewForm(opts) {
     override: s.affiliate_overtime_overridden ? s.affiliate_overtime_amount : "",
     overrideNote: s.override_note || "",
     payable: opts.payable,
+    /* The trip's money (APC-101): what it costs, what was paid for it, the difference. */
+    money: opts.money || { line_total: "0.00", allocated: "0.00", difference: "0.00" },
     invoiceNumber: opts.payable ? opts.payable.invoice_number : "",
     invoiceAmount: opts.payable ? opts.payable.invoice_amount || "" : "",
     approvalNote: "",
@@ -688,6 +690,65 @@ function tripReviewForm(opts) {
     busy: false,
     saving: false,
     error: "",
+    owes() { return Number(this.money.difference) || 0; },
+    async _moneyAction(url, body, done) {
+      this.busy = true;
+      this.error = "";
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok || json.ok === false) throw new Error(json.error || "That didn't go through.");
+        if (json.money) this.money = json.money;
+        this.$dispatch("trip-review-changed");
+        Alpine.store("toast").push({ type: "success", title: done(json) });
+        return json;
+      } catch (e) {
+        this.error = e.message || "That didn't go through.";
+        Alpine.store("toast").push({ type: "danger", title: this.error });
+        throw e;
+      } finally {
+        this.busy = false;
+      }
+    },
+    chargeTrip() {
+      const amount = this.owes().toFixed(2);
+      Alpine.store("modal").confirm({
+        title: `Charge $${amount}?`,
+        message: `The difference between the trip's total and what was already paid, charged now to the card on file.`,
+        variant: "gold",
+        confirmText: `Charge $${amount}`,
+        onConfirm: () => this._moneyAction(opts.moneyUrls.charge, new FormData(), (j) => `Charged $${j.amount}`).catch(() => {}),
+      });
+    },
+    sendTripLink() {
+      const amount = this.owes().toFixed(2);
+      Alpine.store("modal").confirm({
+        title: "Send the payment link?",
+        message: `The customer gets a link to pay $${amount} for this trip.`,
+        variant: "gold",
+        confirmText: "Send link",
+        onConfirm: () => this._moneyAction(opts.moneyUrls.link, new FormData(), (j) => `Payment link sent by ${j.channel === "sms" ? "text" : "email"}`).catch(() => {}),
+      });
+    },
+    refundTrip() {
+      const amount = Math.abs(this.owes()).toFixed(2);
+      Alpine.store("modal").show({
+        title: `Refund $${amount}?`,
+        html: `<p class="text-[13px] text-muted mb-2">Back to the card the customer paid with. Say why — it goes on the receipt.</p><input id="trip-refund-reason" type="text" class="field" placeholder="e.g. Overtime waived as a courtesy" maxlength="255">`,
+        variant: "danger",
+        confirmText: `Refund $${amount}`,
+        showCancel: true,
+        onConfirm: () => {
+          const body = new FormData();
+          body.set("reason", document.getElementById("trip-refund-reason")?.value || "");
+          return this._moneyAction(opts.moneyUrls.refund, body, (j) => `Refunded $${j.amount}`).catch(() => {});
+        },
+      });
+    },
     hm(minutes) {
       if (minutes === null || minutes === undefined) return "—";
       return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
@@ -890,59 +951,6 @@ function tripReviewForm(opts) {
 }
 window.tripReviewForm = tripReviewForm;
 
-/* finalBilling: the Final billing card's two ways to collect (APC-60). Each confirms the
-   amount and its breakdown through $store.modal; the server re-checks every gate. */
-function finalBilling(opts) {
-  const breakdown = () => {
-    const parts = [];
-    if (Number(opts.balance)) parts.push(`$${opts.balance} remaining balance`);
-    parts.push(`$${opts.base} overtime`);
-    if (Number(opts.gratuity)) parts.push(`$${opts.gratuity} gratuity on overtime`);
-    return parts.join(" + ");
-  };
-  return {
-    busy: false,
-    charge() {
-      Alpine.store("modal").confirm({
-        title: `Charge $${opts.amount}?`,
-        message: `${breakdown()}, charged now to ${opts.card}.`,
-        variant: "gold",
-        confirmText: `Charge $${opts.amount}`,
-        onConfirm: async () => {
-          this.busy = true;
-          try {
-            await postForm(opts.chargeUrl);
-            Alpine.store("toast").push({ type: "success", title: `Charged $${opts.amount}` });
-            window.location.reload();
-          } catch (e) {
-            this.busy = false;
-            Alpine.store("toast").push({ type: "danger", title: e.message || "The charge didn't go through" });
-          }
-        },
-      });
-    },
-    sendLink() {
-      Alpine.store("modal").confirm({
-        title: "Send the payment link?",
-        message: `The customer gets a link to pay $${opts.amount} (${breakdown()}).`,
-        variant: "gold",
-        confirmText: "Send link",
-        onConfirm: async () => {
-          this.busy = true;
-          try {
-            const res = await postForm(opts.linkUrl);
-            Alpine.store("toast").push({ type: "success", title: `Payment link sent by ${res.channel === "sms" ? "text" : "email"}` });
-          } catch (e) {
-            Alpine.store("toast").push({ type: "danger", title: e.message || "The link didn't send" });
-          } finally {
-            this.busy = false;
-          }
-        },
-      });
-    },
-  };
-}
-window.finalBilling = finalBilling;
 
 /* One checklist (components/task_checklist.html). After any action it re-fetches its own
    fragment and swaps itself out, so the drawer, the trip modal and the order card always

@@ -635,3 +635,48 @@ def test_a_group_cannot_shrink_away_a_trip_with_money_on_it():
 
     with pytest.raises(DraftError, match="can't be removed"):
         groups.set_group_size(a, 1)
+
+
+def test_an_in_flight_final_intent_still_reconciles():
+    """A FINAL intent opened before this deploy that succeeds afterwards is still booked
+    through _post_final, and still closes every trip's overtime task."""
+    lead, plan, (a, _b) = _two_trips()
+    _card(plan)
+    pending = plan.record_charge(
+        kind=Charge.Kind.FINAL,
+        amount=Decimal("240.00"),
+        overtime_amount=Decimal("240.00"),
+        overtime_gratuity=Decimal("40.00"),
+    )
+    pending.stripe_payment_intent_id = "pi_final"
+    pending.save(update_fields=["stripe_payment_intent_id"])
+    task = Task.objects.create(
+        lead=lead,
+        reservation=a,
+        kind="overtime_invoiced",
+        status=Task.Status.OPEN,
+        opens_at=timezone.now(),
+    )
+
+    with patch.object(
+        stripe.PaymentIntent, "retrieve", return_value=_intent("pi_final", amount=24000)
+    ):
+        webhooks.process_stripe_event(
+            {
+                "type": "payment_intent.succeeded",
+                "data": {
+                    "object": {
+                        "id": "pi_final",
+                        "metadata": {"lead_id": str(lead.pk), "kind": "final"},
+                    }
+                },
+            }
+        )
+
+    pending.refresh_from_db()
+    task.refresh_from_db()
+    assert pending.status == Charge.Status.SUCCEEDED
+    assert JournalEntry.objects.filter(
+        charge=pending, kind=JournalEntry.Kind.OVERTIME_CAPTURED
+    ).exists()
+    assert task.status == Task.Status.DONE

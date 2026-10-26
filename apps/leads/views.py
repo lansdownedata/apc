@@ -635,20 +635,36 @@ def _owed(lead: Lead) -> tuple[str | None, Decimal]:
     plan = getattr(lead, "payment", None)
     if plan is None:
         return None, ZERO
+    # A pay link sent for one trip (APC-101) asks for that trip, before anything else: a
+    # card-less booking may have no deposit yet and still owe a processed trip. Only while
+    # the trip still owes exactly that — an edit or a charge since makes the link stale.
+    link = _open_trip_link(plan)
+    if link is not None:
+        return Charge.Kind.TRIP, Decimal(link.amount)
     owed = payment_services.remaining_balance(lead)
     if owed <= ZERO:
         return None, ZERO
     collected = ledger.order_balances(lead)["collected"]
     if collected < plan.deposit_amount:
         return Charge.Kind.DEPOSIT, min(plan.deposit_amount - collected, owed)
-    bill = payment_services.final_bill(lead)
-    if bill.overtime_total > ZERO:
-        # Approved overtime is collected only as the final bill, once every trip is
-        # reviewed (APC-60); until then the page asks for the booked balance alone.
-        if bill.all_reviewed:
-            return Charge.Kind.FINAL, bill.amount
-        return (Charge.Kind.BALANCE, bill.order_balance) if bill.order_balance else (None, ZERO)
     return Charge.Kind.BALANCE, owed
+
+
+def _open_trip_link(plan):
+    """The newest open pay-link intent for a trip that still owes exactly its amount."""
+    from apps.payments import trip_money
+    from apps.payments.models import Charge
+
+    for link in (
+        plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.PENDING)
+        .exclude(stripe_client_secret="")
+        .exclude(reservation=None)
+        .select_related("reservation")
+        .order_by("-pk")
+    ):
+        if trip_money.money_for(link.reservation).difference == Decimal(link.amount):
+            return link
+    return None
 
 
 def _hold_was_released(lead: Lead) -> bool:
@@ -744,7 +760,7 @@ def quote_pay(request, token: str) -> HttpResponse:
             # confirmed (APC-26) — the page has to say so before asking for another.
             "hold_released": _hold_was_released(lead),
             "needs_terms": kind == "deposit" and lead.accepted_terms_at is None,
-            "final_bill": payment_services.final_bill(lead) if kind == "final" else None,
+            "trip_charge": _open_trip_link(lead.payment) if kind == "trip" else None,
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
                 reverse("quote_deposit_success", args=[token])
@@ -772,8 +788,11 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
             )
         services.accept_terms(lead)
     plan = payment_services.ensure_plan(lead)
-    if kind == "final":
-        _, secret = payment_services.open_final_intent(plan)
+    if kind == "trip":
+        link = _open_trip_link(plan)
+        _, secret = payment_services.open_intent_for(
+            plan, kind=kind, amount=amount, reservation=link.reservation
+        )
     else:
         _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
     return JsonResponse({"ok": True, "client_secret": secret, "amount": str(amount)})

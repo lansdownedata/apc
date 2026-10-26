@@ -115,13 +115,14 @@
       </div>
       {% endif %}
       {# A deposit only ever *authorizes* (APC-26) — never call it "due" or "Pay". #}
-      {% if final_bill %}
-      {% if final_bill.order_balance %}<div class="bill-line"><span>Remaining balance</span><span>${{ final_bill.order_balance|floatformat:2|intcomma }}</span></div>{% endif %}
-      <div class="bill-line"><span>Overtime</span><span>${{ final_bill.overtime_base|floatformat:2|intcomma }}</span></div>
-      {% if final_bill.overtime_gratuity %}<div class="bill-line"><span>Gratuity on overtime</span><span>${{ final_bill.overtime_gratuity|floatformat:2|intcomma }}</span></div>{% endif %}
+      {% if trip_charge %}
+      {% with t=trip_charge.reservation %}
+      <div class="bill-line"><span>Trip {{ t.reference }} · {{ t.pickup_date|date:"D M j" }}</span><span>{{ t.pickup.name|default:t.pickup.address }} → {{ t.dropoff.name|default:t.dropoff.address }}</span></div>
+      {% if trip_charge.note %}<div class="bill-line"><span>{{ trip_charge.note }}</span><span></span></div>{% endif %}
+      {% endwith %}
       {% endif %}
       <div class="amt">
-        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% elif pay_kind == 'final' %}Total due{% else %}Balance due{% endif %}</span>
+        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% elif pay_kind == 'trip' %}Due for this trip{% else %}Balance due{% endif %}</span>
         <span class="n">${{ amount|floatformat:2|intcomma }}</span>
       </div>
 
