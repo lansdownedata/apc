@@ -105,8 +105,14 @@ def _post_trip_state(facts: LeadFacts, config: TaskConfig, now: datetime) -> Non
     facts.ended_trip_ids = {
         t.pk for t in facts.live_trips if post_trip.has_ended(t, now=now, grace=grace)
     }
-    if post_trip.order_entered(facts.trips, now=now, grace=grace):
-        facts.post_trip_ids = {t.pk for t in facts.live_trips}
+    # Per trip (APC-102): each finished trip enters on its own.
+    facts.post_trip_ids = {
+        t.pk for t in facts.live_trips if post_trip.trip_entered(t, now=now, grace=grace)
+    }
+    facts.order_finished = (
+        post_trip.order_finished_at(facts.trips, now=now, grace=grace) is not None
+    )
+    facts.order_entered = post_trip.order_entered(facts.trips, now=now, grace=grace)
 
 
 def _create_missing(lead: Lead, config: TaskConfig, now: datetime):
@@ -198,9 +204,11 @@ def ensure_tasks(lead: Lead) -> list[Task]:
         if new is None:
             return created
         created += new
-        if facts.post_trip_ids:
-            # The order is in review, so each affiliate-covered trip gets its payable
-            # (APC-61). A new one is a draft, so the facts already loaded still hold.
+        if facts.order_entered:
+            # The whole order has finished, so each affiliate-covered trip gets its payable
+            # (APC-61) and the customer's post-trip messages are scheduled. Trip Processing
+            # also makes one trip's payable on its own (APC-102). A new one is a draft, so
+            # the facts already loaded still hold.
             from apps.payments import payables
 
             payables.ensure_payables(lead)

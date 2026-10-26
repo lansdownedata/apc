@@ -301,26 +301,52 @@ def _add_trip(lead, *, started_ago: timedelta, billed_hours="1", **extra):
     return trip
 
 
-def test_an_order_enters_review_only_when_every_trip_has_finished():
+def test_each_trip_enters_review_when_it_has_finished():
+    """Trip Processing (APC-102): trip 1 of a weekend is reviewed when it ends, not when
+    the last trip does."""
     first = _trip(started_ago=timedelta(hours=6))
     later = _add_trip(first.lead, started_ago=-timedelta(hours=3))  # still ahead
 
     run_tasks()
 
-    assert "ops_review" not in _kinds(first)
+    assert _post_trip(first) == {"ops_review": Task.Status.OPEN}
     assert "ops_review" not in _kinds(later)
 
 
-def test_the_last_trip_finishing_opens_a_review_on_every_trip():
-    first = _trip(started_ago=timedelta(hours=6))
-    last = _add_trip(first.lead, started_ago=timedelta(hours=1))
+def test_the_thank_you_waits_for_the_whole_order():
+    """In-house trips (no payable stages): trip 1's review and overtime close on Friday, but
+    the thank-you task and touch-point wait until Sunday's trip is over too."""
+    from apps.messaging.models import TouchPoint
+
+    first = _trip(started_ago=timedelta(hours=6), farmed_out=False)
+    last = _add_trip(first.lead, started_ago=-timedelta(hours=3))
     run_tasks()
-    assert "ops_review" not in _kinds(first)
+    _close(first, "ops_review")
+    services.sync(first.lead)
+    if Task.objects.filter(reservation=first, kind="overtime_invoiced").exists():
+        _close(first, "overtime_invoiced")
+    services.sync(first.lead)
 
-    set_trip_status(last, Reservation.TripStatus.DONE)
+    assert "thank_you_sent" not in _kinds(first)
+    assert not TouchPoint.objects.filter(lead=first.lead, kind=TouchPoint.Kind.THANK_YOU).exists()
 
-    assert _post_trip(first) == {"ops_review": Task.Status.OPEN}
-    assert _post_trip(last) == {"ops_review": Task.Status.OPEN}
+    Reservation.objects.filter(pk=last.pk).update(
+        pickup_date=first.pickup_date, pickup_time=first.pickup_time
+    )
+    services.sync(first.lead)
+
+    assert "thank_you_sent" in _kinds(first)
+
+
+def test_payables_are_made_when_the_order_finishes():
+    from apps.payments.models import AffiliatePayable
+
+    first = _trip(started_ago=timedelta(hours=6))
+    _add_trip(first.lead, started_ago=-timedelta(hours=3))
+
+    run_tasks()
+
+    assert not AffiliatePayable.objects.filter(assignment__reservation__lead=first.lead).exists()
 
 
 def test_a_cancelled_trip_counts_as_finished_and_needs_no_review():
@@ -346,10 +372,11 @@ def test_an_order_with_every_trip_cancelled_never_enters():
     assert not Task.objects.filter(kind="ops_review").exists()
 
 
-def test_the_lookback_runs_from_the_orders_last_trip():
+def test_the_lookback_runs_from_each_trips_own_end():
     old = _trip(started_ago=timedelta(days=20))
-    _add_trip(old.lead, started_ago=timedelta(hours=6))
+    recent = _add_trip(old.lead, started_ago=timedelta(hours=6))
 
     run_tasks()
 
-    assert "ops_review" in _kinds(old)
+    assert "ops_review" not in _kinds(old)
+    assert "ops_review" in _kinds(recent)

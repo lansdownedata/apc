@@ -34,7 +34,14 @@ from apps.leads.models import Lead
 from apps.reservations.models import Reservation
 
 from . import escalation, exceptions, post_trip, vendor_tasks
-from .definitions import POST_TRIP_KINDS, PREDECESSOR_KINDS, REGISTRY, Level, _always
+from .definitions import (
+    POST_TRIP_KINDS,
+    PREDECESSOR_KINDS,
+    REGISTRY,
+    Level,
+    _always,
+    _order_finished,
+)
 from .facts import load_facts
 from .models import Task, TaskConfig
 from .services import _evaluate_many, _predecessors_closed, sync
@@ -84,9 +91,9 @@ def _evaluate(now) -> list[Task]:
 
 
 def _entering(config: TaskConfig, now) -> set[int]:
-    """Orders that have just finished and have no `ops_review` yet. Two queries: the live
-    trips near today that lack one, then every trip on those orders; the finish rule runs
-    in Python (`post_trip.order_entered`)."""
+    """Orders with a trip that has just finished and has no `ops_review` yet (APC-102: per
+    trip), or that has just finished as a whole (the thank-you and payables). Two queries;
+    the finish rules run in Python."""
     grace = timedelta(hours=config.post_trip_grace_hours)
     today = now.date()
     # ±1 day around the window: `pickup_date` is trip-local, `now` is UTC.
@@ -104,6 +111,7 @@ def _entering(config: TaskConfig, now) -> set[int]:
         lead_id
         for lead_id, rows in trips.items()
         if post_trip.order_entered(rows, now=now, grace=grace)
+        or any(post_trip.trip_entered(t, now=now, grace=grace) for t in rows if not t.is_cancelled)
     }
 
 
@@ -125,8 +133,12 @@ def _stalled(now) -> set[int]:
         statuses.setdefault(lead_id, {})[(trip_id, kind)] = status
     # Trip-level only: an order-level follower waits on every trip, and the hook on the
     # last one to close is what opens it.
+    # `_order_finished` followers (the thank-you) count too: re-syncing an order that has
+    # not finished yet costs a sync and creates nothing.
     followers = [
-        k for k in REGISTRY if k.opens_after and k.applies is _always and k.level == Level.TRIP
+        k
+        for k in REGISTRY
+        if k.opens_after and k.applies in (_always, _order_finished) and k.level == Level.TRIP
     ]
     stalled = set()
     for lead_id, by_key in statuses.items():

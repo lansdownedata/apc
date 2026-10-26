@@ -158,6 +158,12 @@ def _entered_post_trip(facts: LeadFacts, reservation) -> bool:
     return reservation.pk in facts.post_trip_ids
 
 
+def _order_finished(facts: LeadFacts, reservation) -> bool:
+    """The whole order has finished (APC-102): the customer's thank-you is about the order,
+    not about one trip of a weekend."""
+    return facts.order_finished
+
+
 def _never(facts: LeadFacts, reservation: object) -> bool:
     """For kinds an event opens (`services.open_request_task`) — generation never does."""
     return False
@@ -453,6 +459,7 @@ REGISTRY: tuple[TaskKind, ...] = (
         department=_D.CUSTOMER_SERVICE,
         level=Level.TRIP,
         due=AfterOpen(hours=48),
+        applies=_order_finished,
         auto_complete=_thank_you_sent,
         post_trip=True,
         opens_after=("overtime_invoiced", "affiliate_payable_approved", "affiliate_paid"),

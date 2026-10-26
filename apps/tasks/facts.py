@@ -38,6 +38,10 @@ class LeadFacts:
     # elsewhere, where only predicates run and neither is read.
     ended_trip_ids: set[int] = field(default_factory=set)
     post_trip_ids: set[int] = field(default_factory=set)
+    # APC-102: the whole order has finished (no lookback — a late-processed order still
+    # gets its thank-you), and finished recently (the touch-points' and payables' rule).
+    order_finished: bool = False
+    order_entered: bool = False
     # APC-92: the booking contact's company is an affiliate account (a farmed-in order).
     is_farm_in: bool = False
 

@@ -4,11 +4,13 @@ A trip has *ended* when LimoAnywhere (or dispatch) marks it Done, **or** when it
 scheduled end has passed by `TaskConfig.post_trip_grace_hours` with no status at all — we
 still run in parallel with LA, so a Done that never arrives must not strand it.
 
-Review is per **order** (Trip Review design, APC-59): an order enters once every live
-trip has ended — a wedding weekend is reviewed as a whole. Cancelled trips (every
-"Cancelled" phase, No Show included) count as finished and need no review. Entering
-creates a Stage 1 `ops_review` task on each live trip; the later stages chain off it
-through `TaskKind.opens_after` (see `definitions.py`).
+Review is per **trip** (Trip Processing, APC-102): each live trip enters when it has
+ended, so a wedding weekend's Friday trip is processed on Saturday. The customer's side —
+the thank-you and its follow-up, the affiliate payables — still waits for the whole order
+(`order_entered` / `order_finished_at`). Cancelled trips (every "Cancelled" phase, No Show
+included) get no review task; Trip Processing finds the ones that carry a charge by
+status. Entering creates a Stage 1 `ops_review` task; the later stages chain off it through
+`TaskKind.opens_after` (see `definitions.py`).
 """
 
 from __future__ import annotations
@@ -50,6 +52,15 @@ def has_ended(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
         return True
     end = scheduled_end(trip)
     return end is not None and end + grace <= now
+
+
+def trip_entered(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
+    """This trip has ended, recently enough that its review is still owed (LOOKBACK runs
+    from its own end)."""
+    if not has_ended(trip, now=now, grace=grace):
+        return False
+    end = min(scheduled_end(trip) or now, now)
+    return end >= now - LOOKBACK
 
 
 def order_finished_at(trips, *, now: datetime, grace: timedelta) -> datetime | None:
