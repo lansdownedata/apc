@@ -32,7 +32,7 @@ DEFAULT_DAYS = 30  # the Processed view's window
 
 @dataclass
 class Filters:
-    view: str = "ready"  # "ready" | "processed"
+    view: str = "ready"  # "ready" | "bills" | "processed"
     q: str = ""
     date_from: date | None = None
     date_to: date | None = None
@@ -45,7 +45,7 @@ class Filters:
         `TaskConfig.processing_from` — so a trip never drops off unprocessed. Processed
         defaults to the last 30 days of pickups."""
         view = query.get("view") or "ready"
-        view = view if view in ("ready", "processed") else "ready"
+        view = view if view in ("ready", "bills", "processed") else "ready"
         date_from, date_to = _day(query.get("from")), _day(query.get("to"))
         if view == "processed" and date_from is None:
             date_from = timezone.localdate() - timedelta(days=DEFAULT_DAYS)
@@ -661,3 +661,125 @@ __all__ = [
     "unlock",
     "add_charge",
 ]
+
+
+# --- Needs vendor bill (APC-104, spec §6) -------------------------------------------------
+
+# Vendor bills: oldest waiting first by default, like Ready.
+BILL_SORTS = {
+    "oldest": "Oldest waiting first",
+    "vendor": "Vendor A to Z",
+    "most": "Most trips first",
+}
+SORTS["bills"] = BILL_SORTS
+# Statuses with nobody to pay: `ensure_payable` makes no payable for them, and one made
+# earlier (the pane opened before LA said the affiliate dropped it) is not a bill.
+NO_VENDOR_BILL = (*NEVER, S.CANCELLED_BY_AFFILIATE)
+
+
+@dataclass
+class VendorGroup:
+    vendor: object
+    trips: list = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.trips)
+
+    @property
+    def expected_total(self) -> Decimal:
+        return sum((Decimal(t.payable.expected_amount) for t in self.trips), Decimal("0.00"))
+
+    @property
+    def oldest(self) -> date | None:
+        return self.trips[0].pickup_date if self.trips else None
+
+
+def _bill_queryset(*, vendor=None, q: str = ""):
+    """Processed trips on a booked order whose confirmed vendor has no invoice on file: the
+    payable is missing (processing's `ensure_payable` failed, or predates it) or a draft
+    with no amount. One `filter()` call, so every condition reads the same assignment —
+    a withdrawn first vendor never stands in for the confirmed one."""
+    from apps.dispatch.models import Assignment
+    from apps.payments.models import AffiliatePayable
+
+    match = Q(
+        assignments__status=Assignment.Status.CONFIRMED, assignments__vendor__isnull=False
+    ) & (
+        Q(assignments__payable__isnull=True)
+        | Q(
+            assignments__payable__status=AffiliatePayable.Status.DRAFT,
+            assignments__payable__invoice_amount__isnull=True,
+        )
+    )
+    if vendor is not None:
+        match &= Q(assignments__vendor=vendor)
+    if q:
+        found = Q(lead__contact__name__icontains=q) | Q(assignments__vendor__name__icontains=q)
+        pk = _reference_pk(q)
+        if pk is not None:
+            found |= Q(pk=pk)
+        match &= found
+    return (
+        Reservation.objects.filter(
+            match,
+            lead__status="booked",
+            review__processed_at__isnull=False,
+            pickup_date__isnull=False,
+        )
+        .exclude(trip_status__in=NO_VENDOR_BILL)
+        .distinct()
+    )
+
+
+def vendor_bills(filters: Filters, sort: str = "oldest") -> list[VendorGroup]:
+    """The Needs vendor bill list: one group per vendor, its trips oldest pickup first, each
+    carrying `.payable`, `.vendor` and `.route_short`. A processed trip whose payable was
+    never made gets it here, as the trip pane does when it opens."""
+    from apps.dispatch.models import Assignment
+    from apps.payments import payables
+    from apps.payments.models import AffiliatePayable
+
+    qs = _bill_queryset(q=filters.q)
+    if filters.date_from is not None:
+        qs = qs.filter(pickup_date__gte=filters.date_from)
+    if filters.date_to is not None:
+        qs = qs.filter(pickup_date__lte=filters.date_to)
+    trips = qs.select_related("lead__contact").prefetch_related(
+        Prefetch("stops", queryset=Stop.objects.order_by("sequence")),
+        Prefetch(
+            "assignments",
+            queryset=Assignment.objects.filter(
+                status=Assignment.Status.CONFIRMED, vendor__isnull=False
+            ).select_related("vendor", "payable"),
+            to_attr="vendor_assignments",
+        ),
+    )
+    groups: dict[int, VendorGroup] = {}
+    for trip in _with_route(_order(trips)):
+        assignment = trip.vendor_assignments[0]
+        try:
+            trip.payable = assignment.payable
+        except AffiliatePayable.DoesNotExist:
+            trip.payable = payables.ensure_payable(trip)
+            if trip.payable is None:
+                continue
+        trip.vendor = assignment.vendor
+        groups.setdefault(trip.vendor.pk, VendorGroup(trip.vendor)).trips.append(trip)
+    out = list(groups.values())
+    if sort == "vendor":
+        return sorted(out, key=lambda g: g.vendor.name.casefold())
+    if sort == "most":
+        return sorted(out, key=lambda g: (-g.count, g.oldest, g.vendor.name.casefold()))
+    return sorted(out, key=lambda g: (g.oldest, g.vendor.name.casefold()))
+
+
+def vendor_bill_count() -> int:
+    """The tab's count: every trip waiting for a vendor bill (one query, no filters)."""
+    return _bill_queryset().count()
+
+
+def vendor_bill_trip_ids(vendor) -> set[int]:
+    """The vendor's trips the Needs vendor bill view lists — the vendor page links those
+    there, and the rest of its open payables to the trip's own pane."""
+    return set(_bill_queryset(vendor=vendor).values_list("pk", flat=True))
