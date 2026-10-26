@@ -93,15 +93,18 @@ class PaymentPlan(TimeStampedModel):
             and self.balance_status == self.BalanceStatus.PAID
         )
 
-    def record_charge(self, *, kind: str, amount: Decimal, **extra) -> "Charge":
-        """Create the next Charge attempt for this plan with a derived idempotency key.
-        `extra` carries kind-specific fields (a final bill's overtime split)."""
+    def record_charge(
+        self, *, kind: str, amount: Decimal, idempotency_key: str = "", **extra
+    ) -> "Charge":
+        """Create the next Charge attempt for this plan with a derived idempotency key
+        (or the one given — a trip charge's names its trip). `extra` carries kind-specific
+        fields (a final bill's overtime split, a trip charge's reservation and note)."""
         attempt = self.charges.filter(kind=kind).count() + 1
         return self.charges.create(
             kind=kind,
             amount=amount,
             attempt_no=attempt,
-            idempotency_key=f"plan{self.pk}-{kind}-{attempt}",
+            idempotency_key=idempotency_key or f"plan{self.pk}-{kind}-{attempt}",
             **extra,
         )
 

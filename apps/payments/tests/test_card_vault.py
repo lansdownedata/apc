@@ -6,6 +6,7 @@ Stripe is mocked throughout; nothing here calls it for real.
 """
 
 from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,6 +93,7 @@ def _booked_plan(
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=contact)
     return PaymentPlanFactory(
         lead=lead,
+        quote_total=Decimal("1000.00"),  # something is owed, or there is no balance to charge
         stripe_customer_id=customer,
         stripe_payment_method_id=pm,
         card_brand="visa" if pm else "",

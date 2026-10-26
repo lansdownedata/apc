@@ -143,6 +143,26 @@ def post_refund(*, lead, amount, idempotency_key, charge=None, created_by=None, 
     )
 
 
+def post_trip_refund(
+    *, lead, reservation, amount, idempotency_key, charge=None, created_by=None, memo="Refund"
+):
+    """Cash out for a trip whose revenue is already recognised (APC-101): straight to
+    Refunds, the contra account every refund of earned money uses. Deferred revenue is
+    untouched — that is other trips' money, not this one's."""
+    amount = Decimal(amount)
+    return post_entry(
+        lead=lead,
+        reservation=reservation,
+        kind=JournalEntry.Kind.REFUND_ISSUED,
+        lines=[(Account.CASH, ZERO, amount), (Account.REFUNDS, amount, ZERO)],
+        idempotency_key=idempotency_key,
+        charge=charge,
+        created_by=created_by,
+        source=JournalEntry.Source.MANUAL,
+        memo=memo,
+    )
+
+
 def post_overtime_refund(*, lead, base, gratuity, idempotency_key, charge=None, created_by=None):
     """Cash out against a final bill's overtime (APC-75). Books to Refunds, the contra
     account every refund of earned money uses (Moe, 2026-10-24), base and gratuity as two
@@ -189,7 +209,9 @@ def recognize_reservation(reservation):
     from apps.reservations.models import Reservation
 
     lead = reservation.lead
-    amount = reservation.line_total
+    # A historical final bill (APC-60) credited this trip's overtime to revenue at capture;
+    # the back-fill then put the hours on the trip. Don't book that part twice.
+    amount = reservation.line_total - _final_overtime_booked_for(reservation)
     if amount <= ZERO:
         return None  # nothing to recognize (e.g. a comped $0 trip) — post no entry
     deferred = order_balances(lead)["deferred"]
@@ -240,16 +262,24 @@ def effective_recognized(reservation) -> Decimal:
     historical final bill booked at capture."""
     from .models import Charge
 
-    refunded = (
-        Charge.objects.filter(
-            reservation=reservation, kind=Charge.Kind.REFUND, status=Charge.Status.SUCCEEDED
-        ).aggregate(s=Sum("amount"))["s"]
-        or ZERO
+    refunds = Charge.objects.filter(
+        reservation=reservation, kind=Charge.Kind.REFUND, status=Charge.Status.SUCCEEDED
     )
+    if reservation.recognized_at is not None:
+        # A refund made before recognition came out of deferred cash, not revenue; the
+        # recognition that followed already read the credit line it left on the trip.
+        refunds = refunds.filter(created_at__gte=reservation.recognized_at)
+    refunded = refunds.aggregate(s=Sum("amount"))["s"] or ZERO
     recognized = Decimal(reservation.recognized_amount or 0)
     return (recognized - Decimal(refunded) + _final_overtime_booked_for(reservation)).quantize(
         Decimal("0.01")
     )
+
+
+def _adjustments(reservation) -> int:
+    return JournalEntry.objects.filter(
+        reservation=reservation, kind=JournalEntry.Kind.ADJUSTMENT
+    ).count()
 
 
 def true_up_recognition(reservation):
@@ -293,7 +323,7 @@ def true_up_recognition(reservation):
         reservation=reservation,
         kind=JournalEntry.Kind.ADJUSTMENT,
         lines=lines,
-        idempotency_key=f"recognize-res{reservation.pk}-adj-{int(target * 100)}",
+        idempotency_key=f"recognize-res{reservation.pk}-adj{_adjustments(reservation) + 1}",
         memo=f"Revenue true-up {reservation}",
     )
     reservation.recognized_amount = Decimal(reservation.recognized_amount or 0) + delta

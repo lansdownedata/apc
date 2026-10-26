@@ -70,8 +70,13 @@ def order_prepaid(lead) -> Decimal:
 
 def allocation(lead) -> dict[int, Decimal]:
     """The prepaid share of each trip, by reservation pk: trips in pickup order, each taking
-    up to its `booked_total` (0 when it was added after booking or never frozen). Cancelled
-    trips take nothing — their money is the next trip's, or a refund's."""
+    up to its `booked_total` (0 when it was added after booking or never frozen). A plain
+    cancellation takes nothing — its money is the next trip's, or a refund's. A no-show, a
+    late cancel or a trip the affiliate dropped keeps its share: that is exactly the money
+    processing settles (spec §4.1)."""
+    from apps.reservations.models import Reservation
+
+    nothing = (Reservation.TripStatus.CANCELLED, Reservation.TripStatus.COVID_CANCELLATION)
     pool = order_prepaid(lead)
     # An undated trip (a quote still being built) sorts last; it has no booked total anyway.
     trips = sorted(
@@ -80,7 +85,7 @@ def allocation(lead) -> dict[int, Decimal]:
     )
     shares: dict[int, Decimal] = {}
     for trip in trips:
-        if trip.is_cancelled:
+        if trip.trip_status in nothing:
             shares[trip.pk] = ZERO
             continue
         take = min(pool, Decimal(trip.booked_total or 0))
@@ -123,6 +128,11 @@ def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
         plan = PaymentPlan.objects.select_for_update().get(lead=trip.lead)
         if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
             raise services.PaymentError("No card on file. Send a payment link instead.")
+        open_links = list(
+            plan.charges.filter(
+                kind=Charge.Kind.TRIP, reservation=trip, status=Charge.Status.PENDING
+            ).exclude(stripe_client_secret="")
+        )
         charge = plan.charges.filter(
             kind=Charge.Kind.TRIP,
             reservation=trip,
@@ -130,8 +140,16 @@ def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
             amount=amount,
             stripe_client_secret="",
         ).first() or plan.record_charge(
-            kind=Charge.Kind.TRIP, amount=amount, reservation=trip, note=note[:255]
+            kind=Charge.Kind.TRIP,
+            amount=amount,
+            reservation=trip,
+            note=note[:255],
+            idempotency_key=_trip_key(plan, trip),
         )
+    # A pay link already sent for this trip must not stay confirmable once the card is
+    # charged here — that would collect the trip twice. Cancelled at Stripe, failed here.
+    for link in open_links:
+        _cancel_intent(link)
     try:
         intent = services._stripe().PaymentIntent.create(
             amount=services._cents(amount),
@@ -155,6 +173,24 @@ def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
     charge.stripe_payment_intent_id = intent.id
     charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
     return services.record_payment(plan, intent.id, kind=Charge.Kind.TRIP)
+
+
+def _trip_key(plan: PaymentPlan, trip) -> str:
+    """`plan{pk}-trip-res{pk}-{attempt}` (spec §4.4): attempts count per trip."""
+    attempt = plan.charges.filter(kind=Charge.Kind.TRIP, reservation=trip).count() + 1
+    return f"plan{plan.pk}-trip-res{trip.pk}-{attempt}"
+
+
+def _cancel_intent(charge: Charge) -> None:
+    try:
+        services._stripe().PaymentIntent.cancel(charge.stripe_payment_intent_id)
+    except stripe.error.StripeError:
+        # Already confirmed or already gone: Stripe knows; the webhook or reconcile sweep
+        # tells us. Either way this row is no longer the one to reuse.
+        pass
+    charge.status = Charge.Status.FAILED
+    charge.failure_reason = "Superseded by a card charge"
+    charge.save(update_fields=["status", "failure_reason", "updated_at"])
 
 
 def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:

@@ -225,7 +225,10 @@ def order_cancel_refund(request, lead_id):
 def order_retry_balance(request, lead_id):
     lead, plan = _plan(lead_id)
     if plan:
-        services.charge_balance(plan)
+        try:
+            services.charge_balance(plan)
+        except services.PaymentError as exc:
+            messages.error(request, str(exc))
     return redirect("lead_detail", pk=lead_id)
 
 

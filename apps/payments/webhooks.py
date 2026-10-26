@@ -102,8 +102,19 @@ def _balance_failed(intent) -> None:
     plan.lead.save(update_fields=["has_alert", "updated_at"])
 
     pi_id = intent.get("id")
+    already_failed = (
+        bool(pi_id)
+        and plan.charges.filter(
+            stripe_payment_intent_id=pi_id, status=Charge.Status.FAILED
+        ).exists()
+    )
     if pi_id:
         plan.charges.filter(stripe_payment_intent_id=pi_id).update(
             status=Charge.Status.FAILED, failure_reason=reason
         )
-    Notification.notify(plan.lead, Notification.Kind.BALANCE_FAILED, title=default, detail=reason)
+    if not already_failed:
+        # An inline off-session decline already raised this alert; the webhook that follows
+        # it is the same decline, not a second one.
+        Notification.notify(
+            plan.lead, Notification.Kind.BALANCE_FAILED, title=default, detail=reason
+        )

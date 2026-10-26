@@ -315,6 +315,13 @@ def _delete_members(doomed: list[Reservation]) -> None:
         return
     from apps.dispatch import services as dispatch_services
 
+    from .drafts import DraftError
+
+    if any(r.charges.exists() for r in doomed):
+        raise DraftError(
+            "A trip with charges or refunds on it can't be removed. Cancel it instead."
+        )
+
     dispatch_services.release_trips(doomed, note="Trip removed from group")
     Reservation.objects.filter(pk__in=[r.pk for r in doomed]).delete()
 

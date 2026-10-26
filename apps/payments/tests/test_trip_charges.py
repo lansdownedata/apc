@@ -505,7 +505,12 @@ def test_an_order_level_refund_still_walks_newest_first_across_trip_charges_too(
 
     intents = [c.kwargs["payment_intent"] for c in create.call_args_list]
     assert intents == ["pi_trip", "pi_full"]
-    assert all(r.reservation is None for r in plan.charges.filter(kind=Charge.Kind.REFUND))
+    # The row that reverses A's trip charge lands on A's figures; the rest is order money.
+    rows = {r.stripe_payment_intent_id: r for r in plan.charges.filter(kind=Charge.Kind.REFUND)}
+    assert rows["pi_trip"].reservation == a and rows["pi_full"].reservation is None
+    money = trip_money.money_for(a)
+    assert (money.charged, money.refunded) == (Decimal("222.00"), Decimal("222.00"))
+    assert trip_money.order_prepaid(lead) == Decimal("1439.00")  # 1,517 − 78
 
 
 def test_another_trips_charge_is_not_this_trips_to_refund():
@@ -518,3 +523,115 @@ def test_another_trips_charge_is_not_this_trips_to_refund():
     assert (
         create.call_args.kwargs["payment_intent"] == "pi_full"
     )  # the prepaid pool, not A's charge
+
+
+# --- plan-review fixes ---------------------------------------------------------------------
+
+
+def test_a_no_show_keeps_its_prepaid_share():
+    """A no-show or late cancel is exactly the money processing settles; only a plain
+    cancellation hands its share on (spec §4.1)."""
+    from apps.reservations.models import Reservation
+
+    lead, _plan, (a, b) = _two_trips()
+    _collect(lead, "1517.00", "full")
+    a.trip_status = Reservation.TripStatus.NO_SHOW
+    a.save(update_fields=["trip_status"])
+    b.trip_status = Reservation.TripStatus.LATE_CANCEL
+    b.save(update_fields=["trip_status"])
+
+    assert trip_money.money_for(a).prepaid == Decimal("1332.00")
+    assert trip_money.money_for(b).prepaid == Decimal("185.00")
+
+
+def test_charging_the_card_cancels_the_open_pay_link_intent():
+    lead, plan, a = _owing_trip()
+    with patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")):
+        link, _secret = trip_money.open_trip_intent(a, Decimal("222.00"))
+    create_p, retrieve_p = _stripe()
+
+    with create_p, retrieve_p, patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        charge = trip_money.charge_trip(a, Decimal("222.00"))
+
+    cancel.assert_called_once_with("pi_link")
+    link.refresh_from_db()
+    assert link.status == Charge.Status.FAILED and charge.pk != link.pk
+    assert plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED).count() == 1
+
+
+def test_the_trip_charge_key_names_the_trip():
+    _lead, plan, a = _owing_trip()
+    create_p, retrieve_p = _stripe()
+    with create_p as create, retrieve_p:
+        trip_money.charge_trip(a, Decimal("222.00"))
+
+    assert create.call_args.kwargs["idempotency_key"] == f"plan{plan.pk}-trip-res{a.pk}-1"
+
+
+def test_the_balance_charge_is_clamped_to_what_is_still_owed():
+    """A retried T-30 balance after per-trip charges must not collect the trips again."""
+    lead, plan, (a, b) = _two_trips()
+    _card(plan)
+    plan.quote_total = Decimal("1517.00")
+    plan.save(update_fields=["quote_total"])
+    _collect(lead, "758.50", "dep")  # the deposit
+    ChargeFactory(
+        plan=plan,
+        kind=Charge.Kind.TRIP,
+        reservation=b,
+        amount=Decimal("185.00"),
+        status=Charge.Status.SUCCEEDED,
+    )
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("185.00"),
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="trip-b",
+    )
+
+    with patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_bal")) as create:
+        services.charge_balance(plan)
+
+    assert create.call_args.kwargs["amount"] == 57350  # 1,517 − 758.50 − 185
+    assert services.remaining_balance(lead) == Decimal("0.00")
+
+
+def test_a_balance_charge_with_nothing_owed_is_refused():
+    lead, plan, _trips = _two_trips()
+    _card(plan)
+    _collect(lead, "1517.00", "full")
+
+    with pytest.raises(services.PaymentError, match="Nothing is owed"):
+        services.charge_balance(plan)
+
+
+def test_a_trip_with_money_on_it_cannot_be_deleted(client):
+    from django.urls import reverse
+
+    from apps.accounts.factories import UserFactory
+
+    lead, plan, (a, _b) = _two_trips()
+    ChargeFactory(plan=plan, kind=Charge.Kind.TRIP, reservation=a, amount=Decimal("10.00"))
+    client.force_login(UserFactory())
+
+    resp = client.post(reverse("reservation_delete", args=[a.pk]))
+
+    assert resp.status_code == 302
+    assert lead.reservations.filter(pk=a.pk).exists()
+
+
+def test_a_group_cannot_shrink_away_a_trip_with_money_on_it():
+    from apps.reservations import groups
+    from apps.reservations.drafts import DraftError
+
+    lead, plan, (a, _b) = _two_trips()
+    groups.set_group_size(a, 2)
+    copy = (
+        [m for m in groups.members_of(a) if m.pk != a.pk][0]
+        if hasattr(groups, "members_of")
+        else (lead.reservations.filter(group_key=a.group_key).exclude(pk=a.pk).get())
+    )
+    ChargeFactory(plan=plan, kind=Charge.Kind.TRIP, reservation=copy, amount=Decimal("10.00"))
+
+    with pytest.raises(DraftError, match="can't be removed"):
+        groups.set_group_size(a, 1)

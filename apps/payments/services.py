@@ -119,11 +119,18 @@ def open_intent_for(
 
 
 def charge_balance(plan: PaymentPlan) -> Charge:
-    """Charge the saved card off-session for the balance (idempotent)."""
-    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=plan.balance_amount)
+    """Charge the saved card off-session for the balance (idempotent).
+
+    Clamped to what the order still owes: once trips are charged on their own (APC-101) the
+    frozen `balance_amount` can exceed the live remainder, and a retry must not collect
+    money the trips already did."""
+    amount = min(Decimal(plan.balance_amount), remaining_balance(plan.lead))
+    if amount <= ZERO:
+        raise PaymentError("Nothing is owed on this order.")
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
     try:
         intent = _stripe().PaymentIntent.create(
-            amount=_cents(plan.balance_amount),
+            amount=_cents(amount),
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
@@ -164,7 +171,7 @@ def charge_balance(plan: PaymentPlan) -> Charge:
         plan.save(update_fields=["balance_status", "updated_at"])
         ledger.post_capture(
             lead=plan.lead,
-            amount=plan.balance_amount,
+            amount=amount,
             kind=JournalEntry.Kind.BALANCE_CAPTURED,
             idempotency_key=f"capture-charge{charge.pk}",
             charge=charge,
@@ -269,8 +276,10 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
                 balance_part = portion
                 if src.kind == Charge.Kind.FINAL:
                     gratuity, base, balance_part = _final_split(src, already, portion)
-                # The overtime part is kept on the refund row so what's owed can come down
-                # by it (Moe, 2026-10-24: a refund of overtime is no longer owed).
+                # The refund is about the trip asked for, else the trip whose charge it
+                # reverses (so an order-level refund of a trip charge still lands on that
+                # trip's figures), else nobody's: order-level money.
+                trip = reservation if reservation is not None else src.reservation
                 charge = plan.charges.create(
                     kind=Charge.Kind.REFUND,
                     amount=portion,
@@ -280,10 +289,22 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
                     idempotency_key=f"refund-{refund.id}",
                     overtime_amount=gratuity + base,
                     overtime_gratuity=gratuity,
-                    reservation=reservation,
+                    reservation=trip,
                     note=note[:255],
                 )
-                if src.kind == Charge.Kind.FINAL:
+                if trip is not None and trip.revenue_status == "recognized":
+                    # Earned money going back: contra revenue, never other trips' deferred
+                    # cash (APC-101).
+                    ledger.post_trip_refund(
+                        lead=plan.lead,
+                        reservation=trip,
+                        amount=portion,
+                        charge=charge,
+                        idempotency_key=f"refund-{refund.id}",
+                        memo="Refund",
+                    )
+                    balance_part = Decimal("0.00")
+                elif src.kind == Charge.Kind.FINAL:
                     if gratuity + base > Decimal("0.00"):
                         ledger.post_overtime_refund(
                             lead=plan.lead,
@@ -444,7 +465,14 @@ def record_payment(
     charge = plan.charges.filter(stripe_payment_intent_id=payment_intent_id).first()
     if charge is None:
         amount = (Decimal(intent.amount) / Decimal(100)).quantize(Decimal("0.01"))
-        charge = plan.record_charge(kind=kind, amount=amount)
+        metadata = getattr(intent, "metadata", None)
+        # Stripe objects are dict-like; a test double may not be.
+        reservation_id = metadata.get("reservation_id") if isinstance(metadata, dict) else None
+        charge = plan.record_charge(
+            kind=kind,
+            amount=amount,
+            reservation_id=int(reservation_id) if reservation_id else None,
+        )
         charge.stripe_payment_intent_id = payment_intent_id
         charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
 

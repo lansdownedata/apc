@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import date, time
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Prefetch
@@ -244,7 +245,10 @@ def reservation_group_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
     _alert_la_stale(res)
-    delete_group(res)
+    try:
+        delete_group(res)
+    except DraftError as exc:  # a member has charges or refunds on it (APC-101)
+        messages.error(request, str(exc))
     return redirect("lead_detail", pk=lead_id)
 
 
@@ -253,6 +257,13 @@ def reservation_group_delete(request, pk) -> HttpResponse:
 def reservation_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
+    if res.charges.exists():
+        # Money moved for this trip (APC-101): its row is the audit trail. Cancel, don't delete.
+        messages.error(
+            request,
+            "This trip has charges or refunds on it and can't be removed. Cancel it instead.",
+        )
+        return redirect("lead_detail", pk=lead_id)
     _alert_la_stale(res)
     # The trip is about to stop existing — pull any affiliate offer first, so coverage is
     # released through the one door instead of vanishing with the CASCADE.

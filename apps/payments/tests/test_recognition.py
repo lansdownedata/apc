@@ -308,3 +308,118 @@ def test_a_trip_whose_overtime_a_historical_final_charge_booked_is_not_booked_ag
 
     assert ledger.true_up_recognition(trip) is None
     assert _bal(lead)["recognized"] == Decimal("960.00")
+
+
+def test_a_trip_refund_hits_refunds_not_another_trips_deferred_cash():
+    """Two trips prepaid in full; A recognised, B still deferred. Refunding A must not draw
+    down B's deferred money."""
+    lead = LeadFactory()
+    a = ReservationFactory(
+        lead=lead,
+        trip_type="hourly",
+        rate=Decimal("200"),
+        hours=Decimal("3"),
+        min_hours=0,
+        trip_status=Reservation.TripStatus.DONE,
+    )
+    ReservationFactory(lead=lead, rate=Decimal("300"), hours=1, min_hours=0)
+    plan = PaymentPlanFactory(lead=lead, quote_total=Decimal("900.00"))
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("900.00"),
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key="paid",
+    )
+    ledger.recognize_reservation(a)
+    a.refresh_from_db()
+    refund = ChargeFactory(
+        plan=plan,
+        kind=Charge.Kind.REFUND,
+        reservation=a,
+        amount=Decimal("100.00"),
+        status=Charge.Status.SUCCEEDED,
+    )
+    ledger.post_trip_refund(
+        lead=lead, reservation=a, amount=Decimal("100.00"), idempotency_key="re", charge=refund
+    )
+
+    bals = _bal(lead)
+    assert (bals["deferred"], bals["refunded"], bals["recognized"]) == (
+        Decimal("300.00"),
+        Decimal("100.00"),
+        Decimal("600.00"),
+    )
+
+
+def test_refund_then_edit_then_true_up_twice_posts_one_adjustment():
+    lead, trip = _earned_trip()
+    ledger.recognize_reservation(trip)  # 720
+    trip.refresh_from_db()
+    TripExtraFactory(
+        reservation=trip, kind="credit", label="Refund: courtesy", amount=Decimal("100")
+    )
+    refund = ChargeFactory(
+        plan=lead.payment,
+        kind=Charge.Kind.REFUND,
+        reservation=trip,
+        amount=Decimal("100.00"),
+        status=Charge.Status.SUCCEEDED,
+    )
+    ledger.post_trip_refund(
+        lead=lead, reservation=trip, amount=Decimal("100.00"), idempotency_key="re", charge=refund
+    )
+    TripExtraFactory(reservation=trip, kind="tolls", amount=Decimal("40"))
+    trip.refresh_from_db()
+
+    first = ledger.true_up_recognition(trip)
+    second = ledger.true_up_recognition(trip)
+
+    assert first is not None and second is None
+    assert (
+        JournalEntry.objects.filter(reservation=trip, kind=JournalEntry.Kind.ADJUSTMENT).count()
+        == 1
+    )
+    assert _bal(lead)["recognized"] == Decimal("760.00")  # 720 + 40, the refund stays contra
+
+
+def test_true_up_round_trip_posts_every_adjustment():
+    lead, trip = _earned_trip()
+    ledger.recognize_reservation(trip)
+    for hours in ("1", "0", "1"):
+        trip.overtime_hours = Decimal(hours)
+        trip.save(update_fields=["overtime_hours"])
+        trip.refresh_from_db()
+        ledger.true_up_recognition(trip)
+
+    assert (
+        JournalEntry.objects.filter(reservation=trip, kind=JournalEntry.Kind.ADJUSTMENT).count()
+        == 3
+    )
+    assert _bal(lead)["recognized"] == Decimal("960.00")
+
+
+def test_the_cron_does_not_rebook_a_historical_finals_overtime():
+    lead, trip = _earned_trip(pickup_date=date.today() - timedelta(days=3))
+    ChargeFactory(
+        plan=lead.payment,
+        kind=Charge.Kind.FINAL,
+        amount=Decimal("240.00"),
+        status=Charge.Status.SUCCEEDED,
+        overtime_amount=Decimal("240.00"),
+        overtime_gratuity=Decimal("40.00"),
+    )
+    ledger.post_entry(
+        lead=lead,
+        kind=JournalEntry.Kind.OVERTIME_CAPTURED,
+        idempotency_key="ot",
+        lines=[
+            (Account.CASH, Decimal("240.00"), Decimal("0.00")),
+            (Account.RECOGNIZED_REVENUE, Decimal("0.00"), Decimal("240.00")),
+        ],
+    )
+    trip.overtime_hours = Decimal("1")
+    trip.save(update_fields=["overtime_hours"])
+
+    recognize_due_revenue()
+
+    assert _bal(lead)["recognized"] == Decimal("960.00")
