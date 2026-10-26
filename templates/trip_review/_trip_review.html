@@ -75,16 +75,16 @@
         <div class="grid grid-cols-2 gap-3">
           <div>
             <span class="block text-[12px] font-medium mb-1">Pickup</span>
-            <div class="grid grid-cols-[1fr_auto] gap-1.5">
+            <div class="grid grid-cols-[minmax(0,1fr)_96px] gap-1.5">
               <input type="text" class="field" data-flatpickr data-fp-past x-model="times.pickup_date" :disabled="locked" @change="saveTimes()" value="{{ times.pickup_date }}" placeholder="Date" aria-label="Pickup date">
-              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.pickup_time" :disabled="locked" @change="saveTimes()" value="{{ times.pickup_time }}" placeholder="Time" aria-label="Pickup time">
+              <input type="text" class="field" data-flatpickr-time x-model="times.pickup_time" :disabled="locked" @change="saveTimes()" value="{{ times.pickup_time }}" placeholder="Time" aria-label="Pickup time">
             </div>
           </div>
           <div>
             <span class="block text-[12px] font-medium mb-1">Drop-off</span>
-            <div class="grid grid-cols-[1fr_auto] gap-1.5">
+            <div class="grid grid-cols-[minmax(0,1fr)_96px] gap-1.5">
               <input type="text" class="field" data-flatpickr data-fp-past x-model="times.dropoff_date" :disabled="locked" @change="saveTimes()" value="{{ times.dropoff_date }}" placeholder="Date" aria-label="Drop-off date">
-              <input type="text" class="field w-[92px]" data-flatpickr-time x-model="times.dropoff_time" :disabled="locked" @change="saveTimes()" value="{{ times.dropoff_time }}" placeholder="Time" aria-label="Drop-off time">
+              <input type="text" class="field" data-flatpickr-time x-model="times.dropoff_time" :disabled="locked" @change="saveTimes()" value="{{ times.dropoff_time }}" placeholder="Time" aria-label="Drop-off time">
             </div>
           </div>
         </div>
