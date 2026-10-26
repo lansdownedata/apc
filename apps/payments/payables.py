@@ -90,6 +90,36 @@ def ensure_payables(lead) -> list[AffiliatePayable]:
     return AffiliatePayable.objects.bulk_create(rows, ignore_conflicts=True)
 
 
+def ensure_payable(trip) -> AffiliatePayable | None:
+    """The trip's payable, made if missing (Trip Processing, APC-102): the active confirmed
+    vendor assignment of a trip that ran or carries a charge — Done, No Show, Late Cancel
+    (the affiliate went out). None for an in-house trip, an uncovered one, or one the
+    affiliate dropped (Cancelled by Affiliate: there is nobody to pay)."""
+    from apps.dispatch.models import Assignment
+    from apps.reservations.models import Reservation
+
+    s = Reservation.TripStatus
+    if trip.trip_status not in (s.DONE, s.NO_SHOW, s.LATE_CANCEL, ""):
+        return None
+    assignment = (
+        Assignment.objects.filter(
+            reservation=trip, status=Assignment.Status.CONFIRMED, vendor__isnull=False
+        )
+        .select_related("reservation", "vendor")
+        .first()
+    )
+    if assignment is None:
+        return None
+    existing = AffiliatePayable.objects.filter(assignment=assignment).first()
+    if existing is not None:
+        return existing
+    AffiliatePayable.objects.bulk_create(
+        [AffiliatePayable(assignment=assignment, expected_amount=expected_for(assignment))],
+        ignore_conflicts=True,
+    )
+    return AffiliatePayable.objects.get(assignment=assignment)
+
+
 def refresh_for_trip(trip) -> AffiliatePayable | None:
     """Re-read a draft payable's expected amount after its trip review changed."""
     payable = (

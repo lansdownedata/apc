@@ -203,6 +203,276 @@ def review_of(trip) -> TripReview | None:
         return None
 
 
+# --- processing (Task 3): money first, each step committing on its own; then the lock ----
+
+
+class ProcessingError(ValueError):
+    """Something processing can't do; the message is shown to the agent."""
+
+
+COLLECT_CHOICES = ("card", "link", "refund", "keep")
+
+
+def _fresh(trip) -> Reservation:
+    return Reservation.objects.select_related("lead__contact", "lead__payment").get(pk=trip.pk)
+
+
+def _event(review, kind, *, user=None, note="", amount=None, charge=None):
+    from .models import ProcessingEvent
+
+    return ProcessingEvent.objects.create(
+        review=review, kind=kind, actor=user, note=note[:255], amount=amount, charge=charge
+    )
+
+
+def process(
+    trip,
+    *,
+    user,
+    expected,
+    collect: str = "",
+    reason: str = "",
+    base_url: str = "",
+    sender_name: str = "",
+) -> TripReview:
+    """Settle the trip's money and lock it (spec §4.4, §4.6).
+
+    1. Checks, on a fresh row: workable; a settled status (else the agent sets one);
+       not processed; the overtime decided when there is a suggestion (the agent must see
+       the money they confirm); `expected` — the difference the pane showed — still true.
+    2. Money, each step committing on its own (never inside the lock's transaction, so a
+       later failure can't erase a charge Stripe already took): charge the card, open and
+       send a pay link, refund with a reason, or keep an off-card overpayment as credit.
+       A difference of 0 cancels any open pay link for the trip.
+    3. The lock, in one transaction with both rows locked: refuse if processed meanwhile
+       or the price moved under us; stamp completion, re-freeze driver pay, the lock and
+       the history.
+    4. After commit: revenue follows the trip; the trip's review tasks close.
+    """
+    from decimal import Decimal
+
+    import stripe
+    from django.db import transaction
+
+    from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+    from apps.payments import services as payments
+    from apps.payments import trip_money
+
+    from . import reviews
+    from .models import ProcessingEvent
+
+    trip = _fresh(trip)
+    if not workable(trip):
+        raise ProcessingError("This trip can't be processed.")
+    if trip.trip_status not in (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE):
+        raise ProcessingError("Set the trip's status first.")
+    review = reviews.review_for(trip)
+    if review.is_processed:
+        raise ProcessingError("This trip is already processed.")
+    if review.decided_at is None and review.suggested_overtime_minutes > 0:
+        raise ProcessingError("Decide the overtime first: keep or change the suggestion.")
+    money = trip_money.money_for(trip)
+    if Decimal(str(expected)).quantize(Decimal("0.01")) != money.difference:
+        raise ProcessingError("The price changed; check the trip again.")
+
+    events: list[tuple] = []
+    try:
+        if money.difference > 0:
+            if collect == "card":
+                charge = trip_money.charge_trip(trip, money.difference)
+                events.append((ProcessingEvent.Kind.CHARGED, money.difference, charge))
+            elif collect == "link":
+                from apps.core import outbound
+
+                if not outbound.enabled():
+                    raise ProcessingError(outbound.OFF_MESSAGE)
+                trip_money.open_trip_intent(trip, money.difference)
+                payments.send_pay_link(trip.lead, base_url=base_url, sender_name=sender_name)
+                events.append((ProcessingEvent.Kind.PAY_LINK_SENT, money.difference, None))
+            else:
+                raise ProcessingError("Charge the card or send a payment link.")
+        elif money.difference < 0:
+            owed_back = -money.difference
+            if collect == "refund":
+                refunded = trip_money.refund_trip(trip, owed_back, reason=reason, user=user)
+                events.append((ProcessingEvent.Kind.REFUNDED, refunded, None))
+            elif collect == "keep":
+                # Money paid off-card has no Stripe intent to refund; the overpayment stays
+                # with the order and the PROCESSED event below says so.
+                if not (reason or "").strip():
+                    raise ProcessingError("Say why the overpayment is kept.")
+            else:
+                raise ProcessingError("Refund the overpayment, or keep it as credit.")
+        else:
+            plan = getattr(trip.lead, "payment", None)
+            if plan is not None:
+                for link in plan.charges.filter(
+                    kind="trip", reservation=trip, status="pending"
+                ).exclude(stripe_client_secret=""):
+                    if trip_money._cancel_intent(plan, link):
+                        raise ProcessingError(
+                            "The customer just paid by the link; check the trip again."
+                        )
+    except payments.PaymentError as exc:
+        raise ProcessingError(str(exc)) from exc
+    except stripe.error.StripeError as exc:
+        raise ProcessingError(getattr(exc, "user_message", None) or "Stripe refused it.") from exc
+    except (PodiumAPIError, PodiumNotConnected) as exc:
+        raise ProcessingError(f"The link didn't send: {exc}") from exc
+
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=trip.pk)
+        review = TripReview.objects.select_for_update().get(pk=review.pk)
+        if review.is_processed:
+            raise ProcessingError("Someone else processed this trip just now.")
+        settled_to = trip_money.money_for(locked).difference
+        expected_after = money.difference if collect in ("link", "keep") else Decimal("0.00")
+        if settled_to != expected_after:
+            raise ProcessingError(
+                "The price changed while processing; check the trip and process it again."
+            )
+        now = timezone.now()
+        if review.completed_at is None:
+            review.completed_at, review.completed_by = now, user
+        reviews._stamp_driver_pay(review)
+        review.processed_at, review.processed_by = now, user
+        review.save()
+        for kind, amount, charge in events:
+            _event(review, kind, user=user, amount=amount, charge=charge)
+        note = ""
+        if collect == "keep":
+            note = f"Overpayment of ${-money.difference:,.2f} kept as credit: {reason.strip()}"
+        elif collect == "refund":
+            note = (reason or "").strip()
+        _event(review, ProcessingEvent.Kind.PROCESSED, user=user, note=note)
+
+    _after_lock(locked, user, keep_overtime_open=collect == "link")
+    return review
+
+
+def _after_lock(trip, user, *, keep_overtime_open: bool) -> None:
+    """Outside the lock: the books follow the trip, the payable exists, the review tasks
+    close. Each step is idempotent; a failure here never undoes the lock."""
+    import logging
+
+    from apps.payments import ledger, payables
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    log = logging.getLogger(__name__)
+    trip.refresh_from_db()
+    try:
+        ledger.true_up_recognition(trip)
+    except Exception:  # noqa: BLE001 - the nightly job and the next process heal it
+        log.exception("true-up after processing trip %s failed", trip.pk)
+    try:
+        payables.ensure_payable(trip)
+    except Exception:  # noqa: BLE001
+        log.exception("payable for processed trip %s failed", trip.pk)
+    kinds = ["ops_review"] if keep_overtime_open else ["ops_review", "overtime_invoiced"]
+    for task in Task.objects.filter(reservation=trip, kind__in=kinds, status__in=Task.UNRESOLVED):
+        try:
+            tasks.complete(task, user)
+        except tasks.TaskError:
+            continue
+
+
+def unlock(trip, *, user, reason: str) -> TripReview:
+    """Reopen a processed trip (spec §4.6): payments access is the view's gate; a reason is
+    required and recorded. The trip's review task reopens; re-processing settles only the
+    new difference."""
+    from django.db import transaction
+
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    from .models import ProcessingEvent
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise ProcessingError("Say why the trip is unlocked.")
+    trip = _fresh(trip)
+    if trip.lead.status != "booked":
+        raise ProcessingError("Only a booked order's trips can be unlocked.")
+    with transaction.atomic():
+        review = TripReview.objects.select_for_update().filter(reservation=trip).first()
+        if review is None or not review.is_processed:
+            raise ProcessingError("This trip isn't processed.")
+        review.processed_at = review.processed_by = None
+        review.unlocked_at, review.unlocked_by = timezone.now(), user
+        review.unlock_reason = reason[:255]
+        review.save()
+        _event(review, ProcessingEvent.Kind.UNLOCKED, user=user, note=reason)
+    for task in Task.objects.filter(reservation=trip, kind="ops_review", status__in=Task.CLOSED):
+        tasks.reopen(task, user)
+    return review
+
+
+def add_charge(
+    trip, *, user, amount, label: str, collect: str = "card", base_url="", sender_name=""
+):
+    """Processed-view convenience (spec §4.7): a new line on the trip, then exactly that
+    amount charged to the card or sent as a link. The line commits first; if the money
+    step fails it is deleted again, so the price and the money never disagree."""
+    from decimal import Decimal, InvalidOperation
+
+    import stripe
+
+    from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+    from apps.payments import services as payments
+    from apps.payments import trip_money
+
+    from .models import ProcessingEvent, TripExtra
+
+    trip = _fresh(trip)
+    if trip.lead.status != "booked":
+        raise ProcessingError("Only a booked order's trips can be charged.")
+    review = review_of(trip)
+    if review is None or not review.is_processed:
+        raise ProcessingError("Add a charge from a processed trip; otherwise edit the price.")
+    label = (label or "").strip()[:80]
+    if not label:
+        raise ProcessingError("Say what the charge is for.")
+    try:
+        amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ProcessingError("Enter a valid amount.") from exc
+    if amount <= 0:
+        raise ProcessingError("The amount has to be above zero.")
+    extra = TripExtra.objects.create(
+        reservation=trip, kind=TripExtra.Kind.OTHER, label=label, amount=amount, created_by=user
+    )
+    try:
+        if collect == "link":
+            from apps.core import outbound
+
+            if not outbound.enabled():
+                raise ProcessingError(outbound.OFF_MESSAGE)
+            trip_money.open_trip_intent(trip, amount, note=label)
+            payments.send_pay_link(trip.lead, base_url=base_url, sender_name=sender_name)
+            charge = None
+            kind = ProcessingEvent.Kind.PAY_LINK_SENT
+        else:
+            charge = trip_money.charge_trip(trip, amount, note=label)
+            kind = ProcessingEvent.Kind.CHARGE_ADDED
+    except (
+        ProcessingError,
+        payments.PaymentError,
+        stripe.error.StripeError,
+        PodiumAPIError,
+        PodiumNotConnected,
+    ) as exc:
+        extra.delete()
+        message = getattr(exc, "user_message", None) or str(exc) or "That didn't go through."
+        raise ProcessingError(message) from exc
+    _event(review, kind, user=user, note=label, amount=amount, charge=charge)
+    trip.refresh_from_db()
+    from apps.payments import ledger
+
+    ledger.true_up_recognition(trip)
+    return charge
+
+
 __all__ = [
     "SETTLE_STATUSES",
     "CustomerGroup",
@@ -213,4 +483,8 @@ __all__ = [
     "review_of",
     "needs_status",
     "workable",
+    "ProcessingError",
+    "process",
+    "unlock",
+    "add_charge",
 ]

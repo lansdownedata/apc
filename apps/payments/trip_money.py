@@ -133,6 +133,10 @@ def charge_trip(trip, amount, *, note: str = "") -> Charge:
                 kind=Charge.Kind.TRIP, reservation=trip, status=Charge.Status.PENDING
             ).exclude(stripe_client_secret="")
         )
+        trip.refresh_from_db()
+        if amount > money_for(trip).difference:
+            # A second press, or another agent, already collected it (APC-102).
+            raise services.PaymentError("Already charged: the trip owes less than that now.")
         charge = plan.charges.filter(
             kind=Charge.Kind.TRIP,
             reservation=trip,

@@ -221,3 +221,333 @@ def test_ready_trips_cost_a_flat_number_of_queries():
         touch()
 
     assert len(many) == len(one), [q["sql"][:120] for q in many.captured_queries]
+
+
+# --- Task 3: process, unlock, add a charge ------------------------------------------------
+from unittest.mock import MagicMock  # noqa: E402
+
+import stripe  # noqa: E402
+
+from apps.accounts.factories import UserFactory  # noqa: E402
+from apps.dispatch.factories import AssignmentFactory  # noqa: E402
+from apps.dispatch.models import Assignment  # noqa: E402
+from apps.payments import ledger, trip_money  # noqa: E402
+from apps.payments.models import AffiliatePayable, Charge, JournalEntry  # noqa: E402
+from apps.reservations import reviews  # noqa: E402
+from apps.reservations.models import ProcessingEvent  # noqa: E402
+from apps.tasks.models import Task  # noqa: E402
+
+
+@pytest.fixture
+def agent():
+    return UserFactory(can_manage_payments=True)
+
+
+def _paid(trip, *, card=True, extra_hours=Decimal("0")):
+    """The order prepaid the trip's booked total; then the trip grows by `extra_hours`."""
+    plan = PaymentPlanFactory(
+        lead=trip.lead,
+        quote_total=trip.line_total,
+        stripe_customer_id="cus_1" if card else "",
+        stripe_payment_method_id="pm_1" if card else "",
+        card_brand="visa" if card else "",
+        card_last4="4242" if card else "",
+    )
+    plan.charges.create(
+        kind=Charge.Kind.BALANCE,
+        amount=trip.line_total,
+        status=Charge.Status.SUCCEEDED,
+        stripe_payment_intent_id="pi_full",
+        idempotency_key=f"bal-{trip.pk}",
+    )
+    ledger.post_capture(
+        lead=trip.lead,
+        amount=trip.line_total,
+        kind=JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key=f"paid-{trip.pk}",
+    )
+    if extra_hours:
+        trip.overtime_hours = extra_hours
+        trip.save(update_fields=["overtime_hours"])
+    return plan
+
+
+def _intent(pi="pi_trip", amount=20000):
+    return MagicMock(
+        id=pi,
+        status="succeeded",
+        amount=amount,
+        client_secret=f"{pi}_secret",
+        payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
+    )
+
+
+def _diff(trip):
+    return trip_money.money_for(Reservation.objects.get(pk=trip.pk)).difference
+
+
+def test_processing_a_paid_trip_locks_it_and_records_who(agent):
+    trip = _trip()
+    _paid(trip)
+
+    review = processing.process(trip, user=agent, expected="0.00")
+
+    assert review.is_processed and review.processed_by == agent
+    assert review.completed_at is not None
+    assert [e.kind for e in review.events.all()] == [ProcessingEvent.Kind.PROCESSED]
+
+
+def test_processing_charges_the_difference_to_the_card_when_asked(agent):
+    trip = _trip()
+    plan = _paid(trip, extra_hours=Decimal("1"))  # +200
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent()) as create,
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+    ):
+        review = processing.process(trip, user=agent, expected="200.00", collect="card")
+
+    assert create.call_args.kwargs["amount"] == 20000
+    assert review.is_processed
+    assert plan.charges.get(kind=Charge.Kind.TRIP).status == Charge.Status.SUCCEEDED
+    assert [e.kind for e in review.events.all()] == ["charged", "processed"]
+    assert _diff(trip) == Decimal("0.00")
+
+
+def test_a_declined_card_leaves_the_trip_unprocessed(agent):
+    trip = _trip()
+    plan = _paid(trip, extra_hours=Decimal("1"))
+    err = stripe.error.CardError("Your card was declined.", "card", "card_declined")
+
+    with patch.object(stripe.PaymentIntent, "create", side_effect=err):
+        with pytest.raises(processing.ProcessingError, match="declined"):
+            processing.process(trip, user=agent, expected="200.00", collect="card")
+
+    assert not TripReview.objects.get(reservation=trip).is_processed
+    # The failed attempt is kept (its key is spent), so a retry makes a new one.
+    assert plan.charges.get(kind=Charge.Kind.TRIP).status == Charge.Status.FAILED
+
+
+def test_an_owing_trip_needs_a_way_to_collect(agent):
+    trip = _trip()
+    _paid(trip, extra_hours=Decimal("1"))
+
+    with pytest.raises(processing.ProcessingError, match="Charge the card or send"):
+        processing.process(trip, user=agent, expected="200.00")
+
+
+def test_processing_with_no_card_sends_the_link_and_locks(agent, settings):
+    settings.OUTBOUND_ENABLED = True
+    trip = _trip()
+    plan = _paid(trip, card=False, extra_hours=Decimal("1"))
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")),
+        patch.object(stripe.Customer, "create", return_value=MagicMock(id="cus_new")),
+        patch("apps.payments.services._send_to_customer", return_value="sms") as send,
+    ):
+        review = processing.process(
+            trip, user=agent, expected="200.00", collect="link", base_url="https://x"
+        )
+
+    assert review.is_processed
+    assert send.called and trip.reference in send.call_args.kwargs["body"]
+    link = plan.charges.get(kind=Charge.Kind.TRIP)
+    assert link.status == Charge.Status.PENDING and link.amount == Decimal("200.00")
+    assert [e.kind for e in review.events.all()] == ["pay_link_sent", "processed"]
+
+
+def test_the_link_path_refuses_before_any_intent_while_outbound_is_off(agent, settings):
+    settings.OUTBOUND_ENABLED = False
+    trip = _trip()
+    plan = _paid(trip, card=False, extra_hours=Decimal("1"))
+
+    with patch.object(stripe.PaymentIntent, "create") as create:
+        with pytest.raises(processing.ProcessingError, match="Outbound"):
+            processing.process(trip, user=agent, expected="200.00", collect="link")
+
+    create.assert_not_called()
+    assert not plan.charges.filter(kind=Charge.Kind.TRIP).exists()
+
+
+def test_processing_refunds_an_overpayment_with_a_reason(agent):
+    from apps.reservations.factories import TripExtraFactory
+
+    trip = _trip()
+    _paid(trip)
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
+
+    with patch.object(stripe.Refund, "create", return_value=MagicMock(id="re_1")):
+        with pytest.raises(processing.ProcessingError, match="why"):
+            processing.process(trip, user=agent, expected="-50.00", collect="refund")
+        review = processing.process(
+            trip, user=agent, expected="-50.00", collect="refund", reason="Late pickup"
+        )
+
+    assert review.is_processed and _diff(trip) == Decimal("0.00")
+    assert review.events.last().note == "Late pickup"
+
+
+def test_an_off_card_overpayment_can_be_kept_as_credit(agent):
+    from apps.reservations.factories import TripExtraFactory
+
+    trip = _trip()
+    _paid(trip)
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
+
+    review = processing.process(
+        trip, user=agent, expected="-50.00", collect="keep", reason="Paid by check; on account"
+    )
+
+    assert review.is_processed
+    assert "kept as credit" in review.events.last().note
+
+
+def test_an_undecided_suggestion_must_be_decided_first(agent):
+    trip = _trip()
+    _paid(trip)
+    review = reviews.review_for(trip)
+    TripReview.objects.filter(pk=review.pk).update(suggested_overtime_minutes=60)
+
+    with pytest.raises(processing.ProcessingError, match="Decide the overtime"):
+        processing.process(trip, user=agent, expected="0.00")
+
+
+def test_a_stale_pane_is_refused(agent):
+    trip = _trip()
+    _paid(trip, extra_hours=Decimal("1"))
+
+    with pytest.raises(processing.ProcessingError, match="price changed"):
+        processing.process(trip, user=agent, expected="0.00", collect="card")
+
+
+def test_a_trip_that_needs_a_status_cannot_be_processed(agent):
+    trip = _trip(S.CUSTOMER_IN_CAR)
+    _paid(trip)
+
+    with pytest.raises(processing.ProcessingError, match="status"):
+        processing.process(trip, user=agent, expected="0.00")
+
+
+def test_processing_twice_is_refused_and_charges_once(agent):
+    trip = _trip()
+    plan = _paid(trip, extra_hours=Decimal("1"))
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent()) as create,
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+    ):
+        processing.process(trip, user=agent, expected="200.00", collect="card")
+        with pytest.raises(processing.ProcessingError):
+            processing.process(trip, user=agent, expected="200.00", collect="card")
+
+    assert create.call_count == 1
+    assert plan.charges.filter(kind=Charge.Kind.TRIP).count() == 1
+
+
+def test_a_second_charge_for_money_already_collected_is_refused(agent):
+    """Two agents on one trip: the second charge_trip finds nothing left to collect."""
+    trip = _trip()
+    _paid(trip, extra_hours=Decimal("1"))
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent()),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+    ):
+        trip_money.charge_trip(trip, Decimal("200.00"))
+        with pytest.raises(Exception, match="Already charged"):
+            trip_money.charge_trip(trip, Decimal("200.00"))
+
+
+def test_processing_freezes_driver_pay_and_creates_the_payable(agent):
+    trip = _trip()
+    _paid(trip)
+    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+
+    processing.process(trip, user=agent, expected="0.00")
+
+    assert AffiliatePayable.objects.filter(assignment__reservation=trip).exists()
+
+
+def test_a_no_show_with_no_times_is_processed(agent):
+    trip = _trip(S.NO_SHOW)
+    _paid(trip)
+
+    review = processing.process(trip, user=agent, expected="0.00")
+
+    assert review.is_processed and review.actual_pickup_at is None
+
+
+def test_processing_closes_the_trips_review_tasks_only(agent):
+    trip = _trip()
+    other = _trip(lead=trip.lead, days_ago=0)
+    _paid(trip)
+    now = timezone.now()
+    mine = Task.objects.create(lead=trip.lead, reservation=trip, kind="ops_review", opens_at=now)
+    theirs = Task.objects.create(lead=trip.lead, reservation=other, kind="ops_review", opens_at=now)
+
+    processing.process(trip, user=agent, expected="0.00")
+
+    mine.refresh_from_db()
+    theirs.refresh_from_db()
+    assert mine.is_closed and not theirs.is_closed
+
+
+def test_processing_trues_up_revenue(agent):
+    trip = _trip()
+    _paid(trip)
+    ledger.recognize_reservation(trip)
+    from apps.reservations.factories import TripExtraFactory
+
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
+    processing.process(trip, user=agent, expected="-50.00", collect="keep", reason="On account")
+
+    assert ledger.order_balances(trip.lead)["recognized"] == Decimal("550.00")
+
+
+def test_unlock_needs_a_reason_records_it_and_reopens_the_review_task(agent):
+    trip = _trip()
+    _paid(trip)
+    task = Task.objects.create(
+        lead=trip.lead, reservation=trip, kind="ops_review", opens_at=timezone.now()
+    )
+    processing.process(trip, user=agent, expected="0.00")
+
+    with pytest.raises(processing.ProcessingError, match="why"):
+        processing.unlock(trip, user=agent, reason=" ")
+    review = processing.unlock(trip, user=agent, reason="Customer called about the wait")
+
+    assert not review.is_processed and review.unlock_reason.startswith("Customer called")
+    assert review.events.last().kind == ProcessingEvent.Kind.UNLOCKED
+    task.refresh_from_db()
+    assert not task.is_closed
+
+
+def test_add_charge_adds_a_line_and_charges_exactly_it(agent):
+    trip = _trip()
+    plan = _paid(trip)
+    processing.process(trip, user=agent, expected="0.00")
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent(amount=5000)) as create,
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent(amount=5000)),
+    ):
+        processing.add_charge(trip, user=agent, amount="50", label="Stain on the seat")
+
+    assert create.call_args.kwargs["amount"] == 5000
+    trip.refresh_from_db()
+    assert trip.extras.get().label == "Stain on the seat"
+    assert plan.charges.get(kind=Charge.Kind.TRIP).note == "Stain on the seat"
+    assert _diff(trip) == Decimal("0.00")
+
+
+def test_add_charge_removes_the_line_when_the_card_declines(agent):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=agent, expected="0.00")
+    err = stripe.error.CardError("Declined.", "card", "card_declined")
+
+    with patch.object(stripe.PaymentIntent, "create", side_effect=err):
+        with pytest.raises(processing.ProcessingError, match="Declined"):
+            processing.add_charge(trip, user=agent, amount="50", label="Stain")
+
+    trip.refresh_from_db()
+    assert not trip.extras.exists() and trip.extras_total == Decimal("0.00")
