@@ -564,3 +564,15 @@ def test_the_order_page_no_longer_offers_a_final_bill(staff):
 
     assert "Charge card" not in body and "finalBilling" not in body
     assert "charged or refunded on its own" in body
+
+
+def test_the_popup_hands_alpine_real_json_not_a_python_repr(accountant):
+    """`json_string` is for scalars: a dict through it becomes "{'billed_minutes': 180}", and
+    every figure on the screen reads "undefined". The objects go through `json_attr`."""
+    _lead, _plan, trip = _owing()
+
+    body = accountant.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "&quot;billed_minutes&quot;: 180" in body
+    assert "&quot;difference&quot;: &quot;168.00&quot;" in body
+    assert "&#x27;billed_minutes&#x27;" not in body
