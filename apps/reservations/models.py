@@ -1092,6 +1092,27 @@ class TripReview(TimeStampedModel):
         on_delete=models.SET_NULL,
     )
 
+    # Trip Processing (APC-102, spec 2026-10-25 §4.6). Processing settles the trip's money
+    # and locks its customer side; unlocking (payments access + a reason) reopens it. The
+    # last unlock is kept here; every step is in `events`.
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    unlocked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    unlock_reason = models.CharField(max_length=255, blank=True)
+
     class Meta(TimeStampedModel.Meta):
         constraints = [
             models.CheckConstraint(
@@ -1138,6 +1159,44 @@ class TripReview(TimeStampedModel):
     def nothing_to_bill(self) -> bool:
         """A completed review decided there's no overtime to invoice."""
         return self.is_complete and (self.overtime_waived or not self.billable_overtime_minutes)
+
+    @property
+    def is_processed(self) -> bool:
+        return self.processed_at is not None
+
+
+class ProcessingEvent(TimeStampedModel):
+    """One step in a trip's processing history (APC-102, spec §4.6): processed, unlocked,
+    charged, refunded, a pay link sent, a charge added. Append-only."""
+
+    class Kind(models.TextChoices):
+        PROCESSED = "processed", "Processed"
+        UNLOCKED = "unlocked", "Unlocked"
+        CHARGED = "charged", "Charged"
+        REFUNDED = "refunded", "Refunded"
+        PAY_LINK_SENT = "pay_link_sent", "Payment link sent"
+        CHARGE_ADDED = "charge_added", "Charge added"
+
+    review = models.ForeignKey(TripReview, related_name="events", on_delete=models.CASCADE)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    note = models.CharField(max_length=255, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    charge = models.ForeignKey(
+        "payments.Charge", related_name="+", null=True, blank=True, on_delete=models.SET_NULL
+    )
+
+    class Meta:
+        ordering = ("created_at", "pk")
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} · {self.review.reservation.reference}"
 
 
 def _local_display(moment: datetime | None) -> str:
