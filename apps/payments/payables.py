@@ -99,7 +99,8 @@ def ensure_payable(trip) -> AffiliatePayable | None:
     from apps.reservations.models import Reservation
 
     s = Reservation.TripStatus
-    if trip.trip_status not in (s.DONE, s.NO_SHOW, s.LATE_CANCEL, ""):
+    gone = (s.CANCELLED, s.COVID_CANCELLATION, s.CANCELLED_BY_AFFILIATE)
+    if trip.trip_status in gone:
         return None
     assignment = (
         Assignment.objects.filter(

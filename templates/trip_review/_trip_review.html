@@ -1,4 +1,4 @@
-{% load json_filters humanize %}
+{% load json_filters humanize time_filters %}
 {% comment %}
   One trip's review (APC-59, signed-off design) — a fragment for the trip review pop-up.
   Shared at the top (the trip as booked, actual times) and bottom (issues); between them
@@ -20,7 +20,6 @@
        money: {{ money|json_attr }},
        mode: '{% if processing %}processing{% endif %}',
        locked: {% if locked %}true{% else %}false{% endif %},
-       moneyUrls: { charge: '{% url 'trip_charge' trip.pk %}', refund: '{% url 'trip_refund' trip.pk %}', link: '{% url 'trip_pay_link' trip.pk %}' },
        payableUrls: {% if payable %}{ invoice: '{% url 'payable_invoice' payable.pk %}', approve: '{% url 'payable_approve' payable.pk %}', paid: '{% url 'payable_paid' payable.pk %}' }{% else %}null{% endif %}
      })">
   <div class="flex items-center gap-3 px-6 py-4 border-b border-line">
@@ -40,9 +39,12 @@
 
   <div class="overflow-y-auto min-h-0 flex-1 text-[13px]">
     {% if processing and review.is_processed %}
-    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-surface2 text-[12.5px]">Processed {{ review.processed_at|date:"M j" }}{% if review.processed_by %} by {% firstof review.processed_by.get_full_name review.processed_by.username %}{% endif %}. Times and charges are locked. Unlocking asks for a reason and is recorded.</p>
+    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-surface2 text-[12.5px]">Processed {{ review.processed_at|trip_clock:trip }}{% if review.processed_by %} by {% firstof review.processed_by.get_full_name review.processed_by.username %}{% endif %}. Times and charges are locked. Unlocking asks for a reason and is recorded.</p>
+    {% if balance_moved %}
+    <p class="mx-6 mt-2 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">What was paid for this trip has moved since it was processed ({% if difference > 0 %}${{ difference|floatformat:2 }} now owed{% else %}${{ owed_back|floatformat:2 }} now overpaid{% endif %}): another trip on the order changed, or money moved on the order. Unlock it to settle the difference.</p>
+    {% endif %}
     {% elif processing and review.unlocked_at %}
-    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">Unlocked {{ review.unlocked_at|date:"M j" }}{% if review.unlocked_by %} by {% firstof review.unlocked_by.get_full_name review.unlocked_by.username %}{% endif %}: “{{ review.unlock_reason }}”</p>
+    <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">Unlocked {{ review.unlocked_at|trip_clock:trip }}{% if review.unlocked_by %} by {% firstof review.unlocked_by.get_full_name review.unlocked_by.username %}{% endif %}: “{{ review.unlock_reason }}”</p>
     {% endif %}
     <section class="px-6 py-4">
       {% if processing %}
@@ -136,26 +138,6 @@
             <span class="text-[11px] font-semibold uppercase tracking-wide text-muted" x-text="owes() > 0 ? 'To charge' : owes() < 0 ? 'To refund' : 'Nothing owed'"></span>
             <b class="num text-[16px]" x-text="'$' + Math.abs(owes()).toFixed(2)"></b>
           </div>
-          {% if processing %}
-          {% elif can_pay %}
-          <div class="grid gap-2 mt-3" x-show="owes() !== 0" x-cloak>
-            <template x-if="owes() > 0">
-              <div class="grid gap-2">
-                {% if card_on_file %}
-                <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed" :disabled="busy" @click="chargeTrip()">Charge card $<span x-text="owes().toFixed(2)"></span></button>
-                {% else %}
-                <p class="text-[11.5px] text-muted">No card on file — send the payment link.</p>
-                {% endif %}
-                <button type="button" class="text-[13px] font-semibold px-4 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50 disabled:cursor-not-allowed" :disabled="busy" @click="sendTripLink()">Send payment link</button>
-              </div>
-            </template>
-            <template x-if="owes() < 0">
-              <button type="button" class="text-[13px] font-semibold px-4 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold disabled:opacity-50 disabled:cursor-not-allowed" :disabled="busy" @click="refundTrip()">Refund $<span x-text="Math.abs(owes()).toFixed(2)"></span></button>
-            </template>
-          </div>
-          {% else %}
-          <p class="text-[11.5px] text-muted mt-2" x-show="owes() !== 0">Charging or refunding needs payments access.</p>
-          {% endif %}
         </div>
       </section>
 

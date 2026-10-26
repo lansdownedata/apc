@@ -227,3 +227,102 @@ def test_the_list_costs_a_flat_number_of_queries(staff):
         _page(staff)
 
     assert len(many) == len(one)
+
+
+# --- branch-review fixes -------------------------------------------------------------------
+
+
+def test_a_processed_trip_whose_balance_moved_says_so(accountant):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=accountant.user, expected="0.00")
+    Reservation.objects.filter(pk=trip.pk).update(overtime_hours=Decimal("1"))  # LA edit, etc.
+
+    body = _page(accountant, trip=trip.pk, view="processed").content.decode()
+
+    assert "has moved since it was processed" in body and "200.00 now owed" in body
+
+
+def test_the_issues_drill_down_lists_every_trip_with_an_open_issue(staff):
+    from apps.reservations.models import TripIssue
+
+    open_one = _trip(contact=ContactFactory(name="Flagged Customer"))
+    _trip(contact=ContactFactory(name="Quiet Customer"))
+    review = TripReview.objects.create(reservation=open_one, processed_at=timezone.now())
+    TripIssue.objects.create(review=review, category="driver", severity="low", note="Late")
+
+    body = _page(staff, issues="1").content.decode()
+
+    assert "Flagged Customer" in body and "Quiet Customer" not in body
+    from apps.tasks import exceptions
+
+    assert exceptions.counts()["open_issues"] == 1
+
+
+def test_a_deep_link_to_a_trip_with_nothing_to_process_says_why(staff):
+    trip = _trip(S.CANCELLED)
+
+    body = _page(staff, trip=trip.pk).content.decode()
+
+    assert "has nothing to process" in body
+
+
+def test_the_old_order_url_opens_its_first_workable_trip(staff):
+    cancelled = _trip(S.CANCELLED, days_ago=3)
+    done = _trip(lead=cancelled.lead, days_ago=2)
+
+    resp = staff.get(reverse("trip_review_order", args=[cancelled.lead_id]))
+
+    assert resp.url == f"{reverse('processing')}?trip={done.pk}"
+
+
+def test_processed_refund_is_refused_on_an_order_that_is_not_booked(accountant):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=accountant.user, expected="0.00")
+    Lead.objects.filter(pk=trip.lead_id).update(status=Lead.Status.LOST)
+
+    resp = accountant.post(
+        reverse("processing_refund", args=[trip.pk]), {"amount": "50", "reason": "x"}
+    )
+
+    assert resp.status_code == 400
+
+
+def test_a_bad_refund_amount_is_a_message_not_a_500(accountant):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=accountant.user, expected="0.00")
+
+    resp = accountant.post(
+        reverse("processing_refund", args=[trip.pk]), {"amount": "NaN", "reason": "x"}
+    )
+
+    assert resp.status_code == 400 and "valid amount" in resp.json()["error"]
+
+
+def test_save_errors_have_a_place_to_show_in_processing(accountant):
+    trip = _trip()
+    _paid(trip)
+
+    body = _page(accountant, trip=trip.pk).content.decode()
+
+    assert 'x-text="error"' in body.split("processingPane(")[1]
+
+
+def test_the_start_date_covers_post_trip_work_already_open():
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    from apps.tasks.models import Task, TaskConfig
+
+    module = importlib.import_module("apps.tasks.migrations.0012_processing_from")
+    old = _trip(days_ago=20)
+    Task.objects.create(lead=old.lead, reservation=old, kind="ops_review", opens_at=timezone.now())
+    TaskConfig.load()
+    TaskConfig.objects.update(processing_from=None)
+
+    module.start_today(django_apps, None)
+
+    assert TaskConfig.load().processing_from == old.pickup_date

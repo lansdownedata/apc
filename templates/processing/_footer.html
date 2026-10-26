@@ -7,7 +7,8 @@
 <div class="px-6 py-3.5 border-t border-line bg-surface2"
      x-data="processingPane({
        difference: '{{ difference|floatformat:2 }}',
-       card: '{{ card_label|escapejs }}',
+       card: '{{ card_label|default:"the card on file"|escapejs }}',
+       cardOnFile: {% if card_on_file %}true{% else %}false{% endif %},
        urls: {
          process: '{% url 'processing_process' trip.pk %}',
          unlock: '{% url 'processing_unlock' trip.pk %}',
@@ -16,6 +17,9 @@
          status: '{% url 'processing_set_status' trip.pk %}'
        }
      })">
+  {% comment %} Save errors from the pane above (times, overtime, issues) land here: the old
+     footer that showed them is replaced in processing mode. {% endcomment %}
+  <p x-show="error" x-cloak class="mb-2 text-[12px] text-rose-600" x-text="error"></p>
   {% if review.is_processed %}
     <div class="flex items-center gap-2.5 flex-wrap">
       <span class="text-[12px] text-muted">Processed. Times and charges are locked.</span>
@@ -36,7 +40,7 @@
     </div>
   {% else %}
     <div class="flex items-center gap-2.5 flex-wrap">
-      <span class="text-[12px] text-muted">{% if difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>. A receipt follows once receipts ship (APC-103).{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
+      <span class="text-[12px] text-muted">{% if difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>.{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
       {% if can_pay %}
         {% if difference > 0 %}
           {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and charge ${{ difference|floatformat:2|intcomma }}</button>{% endif %}

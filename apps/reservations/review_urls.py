@@ -5,9 +5,6 @@ from . import review_views as views
 urlpatterns = [
     path("", views.trip_review_list, name="trip_review_list"),
     path("<int:lead_id>/", views.trip_review_order, name="trip_review_order"),
-    path("trip/<int:pk>/charge/", views.trip_charge, name="trip_charge"),
-    path("trip/<int:pk>/refund/", views.trip_refund, name="trip_refund"),
-    path("trip/<int:pk>/pay-link/", views.trip_pay_link, name="trip_pay_link"),
     path("trip/<int:pk>/", views.trip_review_trip, name="trip_review_trip"),
     path("trip/<int:pk>/save/", views.trip_review_save, name="trip_review_save"),
     path("trip/<int:pk>/complete/", views.trip_review_complete, name="trip_review_complete"),

@@ -109,7 +109,10 @@ def money_for(trip) -> TripMoney:
 
 
 def _positive(amount) -> Decimal:
-    amount = Decimal(amount).quantize(_CENTS)
+    amount = Decimal(amount)
+    if not amount.is_finite():
+        raise services.PaymentError("Enter a valid amount.")
+    amount = amount.quantize(_CENTS)
     if amount <= ZERO:
         raise services.PaymentError("The amount has to be above zero.")
     return amount
@@ -134,7 +137,24 @@ def charge_trip(trip, amount, *, note: str = "") -> Charge:
             ).exclude(stripe_client_secret="")
         )
         trip.refresh_from_db()
-        if amount > money_for(trip).difference:
+        reusable = plan.charges.filter(
+            kind=Charge.Kind.TRIP,
+            reservation=trip,
+            status=Charge.Status.PENDING,
+            amount=amount,
+            stripe_client_secret="",
+        ).first()
+        # Off-session charges still in flight count as collected: a timeout, then an edit
+        # and a retry for a new amount, must not charge the trip twice (APC-102).
+        in_flight = _sum(
+            plan.charges.filter(
+                kind=Charge.Kind.TRIP,
+                reservation=trip,
+                status=Charge.Status.PENDING,
+                stripe_client_secret="",
+            ).exclude(pk=getattr(reusable, "pk", None))
+        )
+        if amount > money_for(trip).difference - in_flight:
             # A second press, or another agent, already collected it (APC-102).
             raise services.PaymentError("Already charged: the trip owes less than that now.")
         charge = plan.charges.filter(

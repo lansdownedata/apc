@@ -111,7 +111,7 @@ def _entering(config: TaskConfig, now) -> set[int]:
         lead_id
         for lead_id, rows in trips.items()
         if post_trip.order_entered(rows, now=now, grace=grace)
-        or any(post_trip.trip_entered(t, now=now, grace=grace) for t in rows if not t.is_cancelled)
+        or bool(post_trip.entered_trips(rows, now=now, grace=grace))
     }
 
 

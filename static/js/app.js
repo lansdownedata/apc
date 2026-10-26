@@ -724,14 +724,14 @@ function processingPane(opts) {
     addCharge() {
       Alpine.store("modal").show({
         title: "Add a charge",
-        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (e.g. Stain on the seat)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.card ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
+        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (e.g. Stain on the seat)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.cardOnFile ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
         variant: "gold",
         confirmText: "Add and charge",
         showCancel: true,
         onConfirm: () => this._post(opts.urls.charge, {
           label: read("proc-charge-label"),
           amount: read("proc-charge-amount"),
-          collect: opts.card ? "card" : "link",
+          collect: opts.cardOnFile ? "card" : "link",
         }, "Charge added").catch(() => {}),
       });
     },
@@ -778,64 +778,6 @@ function tripReviewForm(opts) {
     saving: false,
     error: "",
     owes() { return Number(this.money.difference) || 0; },
-    async _moneyAction(url, body, done) {
-      this.busy = true;
-      this.error = "";
-      try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
-          body,
-        });
-        const json = await resp.json().catch(() => ({}));
-        if (!resp.ok || json.ok === false) throw new Error(json.error || "That didn't go through.");
-        if (json.money) this.money = json.money;
-        this.$dispatch("trip-review-changed");
-        Alpine.store("toast").push({ type: "success", title: done(json) });
-        return json;
-      } catch (e) {
-        this.error = e.message || "That didn't go through.";
-        Alpine.store("toast").push({ type: "danger", title: this.error });
-        throw e;
-      } finally {
-        this.busy = false;
-      }
-    },
-    chargeTrip() {
-      const amount = this.owes().toFixed(2);
-      Alpine.store("modal").confirm({
-        title: `Charge $${amount}?`,
-        message: `The difference between the trip's total and what was already paid, charged now to the card on file.`,
-        variant: "gold",
-        confirmText: `Charge $${amount}`,
-        onConfirm: () => this._moneyAction(opts.moneyUrls.charge, new FormData(), (j) => `Charged $${j.amount}`).catch(() => {}),
-      });
-    },
-    sendTripLink() {
-      const amount = this.owes().toFixed(2);
-      Alpine.store("modal").confirm({
-        title: "Send the payment link?",
-        message: `The customer gets a link to pay $${amount} for this trip.`,
-        variant: "gold",
-        confirmText: "Send link",
-        onConfirm: () => this._moneyAction(opts.moneyUrls.link, new FormData(), (j) => `Payment link sent by ${j.channel === "sms" ? "text" : "email"}`).catch(() => {}),
-      });
-    },
-    refundTrip() {
-      const amount = Math.abs(this.owes()).toFixed(2);
-      Alpine.store("modal").show({
-        title: `Refund $${amount}?`,
-        html: `<p class="text-[13px] text-muted mb-2">Back to the card the customer paid with. Say why — it goes on the receipt.</p><input id="trip-refund-reason" type="text" class="field" placeholder="e.g. Overtime waived as a courtesy" maxlength="255">`,
-        variant: "danger",
-        confirmText: `Refund $${amount}`,
-        showCancel: true,
-        onConfirm: () => {
-          const body = new FormData();
-          body.set("reason", document.getElementById("trip-refund-reason")?.value || "");
-          return this._moneyAction(opts.moneyUrls.refund, body, (j) => `Refunded $${j.amount}`).catch(() => {});
-        },
-      });
-    },
     hm(minutes) {
       if (minutes === null || minutes === undefined) return "—";
       return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;

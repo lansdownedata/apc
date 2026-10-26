@@ -93,6 +93,10 @@
       {% if selected %}
         <div class="sm:hidden px-4 pt-3"><button type="button" class="text-[12.5px] font-semibold text-muted hover:text-ink focus-gold" @click="tripId = null"><i class="ti ti-arrow-left"></i> Back to the list</button></div>
         {% include "trip_review/_trip_review.html" with trip=selected %}
+      {% elif unworkable %}
+        <div class="flex-1 grid place-items-center text-center px-6">
+          <div><i class="ti ti-info-circle text-[28px] text-muted block mb-2"></i><p class="text-[13px] text-muted">Trip #{{ unworkable.reference }} has nothing to process: {% if unworkable.lead.status != 'booked' %}its order isn't booked{% else %}it was cancelled, or hasn't finished yet{% endif %}.</p></div>
+        </div>
       {% else %}
         <div class="flex-1 grid place-items-center text-center px-6">
           <div><i class="ti ti-clipboard-check text-[28px] text-muted block mb-2"></i><p class="text-[13px] text-muted">Pick a trip to process it.</p></div>

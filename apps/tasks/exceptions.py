@@ -19,7 +19,6 @@ from apps.accounts.models import Department
 from apps.dispatch.models import DispatchException
 from apps.payments.models import AffiliatePayable
 from apps.payments.reports import unpaid_deposit_leads
-from apps.reservations.models import TripIssue
 
 from .models import ExceptionSnapshot, Task, TaskConfig
 
@@ -184,9 +183,9 @@ def _measure(now) -> tuple[dict[str, int], dict[str, int]]:
     out["pending_payments"] = unpaid["pending"]
 
     # Trips with an open issue: what the processing list's issues filter shows (APC-102).
-    out["open_issues"] = (
-        TripIssue.objects.open().values("review__reservation_id").distinct().count()
-    )
+    from apps.reservations import processing
+
+    out["open_issues"] = processing.issue_trip_count()
     return out, backlog
 
 

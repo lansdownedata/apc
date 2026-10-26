@@ -1,7 +1,14 @@
 {% load humanize time_filters %}
-{% if trip_charges %}
+{% if trip_charges or prepaid %}
 <section class="px-6 py-4 border-t border-line">
   <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Charges on this trip</p>
+  {% if prepaid %}
+  <div class="flex items-baseline gap-3 py-1">
+    <span class="flex-1">Paid with the order</span>
+    <span class="text-[11.5px] text-muted">deposit + balance</span>
+    <span class="num w-24 text-right">${{ prepaid|floatformat:2|intcomma }}</span>
+  </div>
+  {% endif %}
   {% for c in trip_charges %}
   <div class="flex items-baseline gap-3 py-1">
     <span class="flex-1">{{ c.get_kind_display }}{% if c.note %} · {{ c.note }}{% endif %}{% if c.status != 'succeeded' %} <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{{ c.get_status_display }}</span>{% endif %}</span>

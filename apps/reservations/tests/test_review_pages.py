@@ -325,8 +325,6 @@ def test_the_saved_times_come_back_in_the_form(staff):
 # --- APC-101: each trip's money is settled from its pop-up ------------------------------
 from unittest.mock import MagicMock  # noqa: E402
 
-import stripe  # noqa: E402
-
 from apps.payments import ledger  # noqa: E402
 from apps.payments.models import Charge, JournalEntry  # noqa: E402
 
@@ -378,108 +376,6 @@ def _pi(pi_id="pi_trip", amount=16800):
     )
 
 
-def test_the_trip_popup_shows_what_the_trip_owes_and_the_charge_button(accountant):
-    _lead, _plan, trip = _owing()
-
-    body = accountant.get(_trip_url("trip_review_trip", trip)).content.decode()
-
-    assert "data-trip-money" in body
-    assert "168.00" in body  # the difference, in the component's options
-    assert "chargeTrip()" in body and "sendTripLink()" in body and "refundTrip()" in body
-    assert "<select" not in body.split("data-trip-money")[1].split("</div>")[0]
-
-
-def test_without_payments_access_the_popup_only_reads_the_money(staff):
-    _lead, _plan, trip = _owing()
-
-    body = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
-
-    assert "data-trip-money" in body and "needs payments access" in body
-    assert "chargeTrip()" not in body
-
-
-def test_charge_endpoint_charges_that_trip_and_returns_the_new_figures(accountant):
-    _lead, plan, trip = _owing()
-
-    with (
-        patch.object(stripe.PaymentIntent, "create", return_value=_pi()),
-        patch.object(stripe.PaymentIntent, "retrieve", return_value=_pi()),
-    ):
-        resp = accountant.post(_trip_url("trip_charge", trip))
-
-    data = resp.json()
-    assert resp.status_code == 200 and data["ok"] is True
-    assert data["amount"] == "168.00" and data["money"]["difference"] == "0.00"
-    assert plan.charges.get(kind=Charge.Kind.TRIP).reservation == trip
-
-
-def test_the_money_endpoints_need_payments_access(staff):
-    _lead, _plan, trip = _owing()
-    for name in ("trip_charge", "trip_refund", "trip_pay_link"):
-        assert staff.post(_trip_url(name, trip)).status_code == 403
-
-
-def test_refund_endpoint_needs_a_reason(accountant):
-    _lead, _plan, trip = _owing()
-    trip.overtime_hours = Decimal("0")
-    trip.save(update_fields=["overtime_hours"])
-    TripReview.objects.filter(reservation=trip).update(overtime_waived=False)
-    from apps.reservations.factories import TripExtraFactory
-
-    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
-
-    resp = accountant.post(_trip_url("trip_refund", trip), {"reason": ""})
-
-    assert resp.status_code == 400 and "why" in resp.json()["error"]
-
-
-def test_refund_endpoint_refunds_the_overpayment_with_the_reason(accountant):
-    _lead, plan, trip = _owing()
-    trip.overtime_hours = Decimal("0")
-    trip.save(update_fields=["overtime_hours"])
-    from apps.reservations.factories import TripExtraFactory
-
-    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("50"))
-
-    with patch.object(stripe.Refund, "create", return_value=MagicMock(id="re_1")):
-        resp = accountant.post(_trip_url("trip_refund", trip), {"reason": "Courtesy"})
-
-    data = resp.json()
-    assert resp.status_code == 200 and data["amount"] == "50.00"
-    assert data["money"]["difference"] == "0.00"
-    assert plan.charges.get(kind=Charge.Kind.REFUND).note == "Courtesy"
-
-
-def test_pay_link_endpoint_opens_a_trip_intent_and_sends_the_link(accountant, settings):
-    settings.OUTBOUND_ENABLED = True
-    lead, plan, trip = _owing(card=False)
-    lead.contact.phone = "+15715551212"
-    lead.contact.save()
-
-    with (
-        patch.object(stripe.PaymentIntent, "create", return_value=_pi("pi_link")),
-        patch("apps.payments.services._send_to_customer", return_value="sms") as send,
-    ):
-        resp = accountant.post(_trip_url("trip_pay_link", trip))
-
-    assert resp.status_code == 200 and resp.json()["channel"] == "sms"
-    link = plan.charges.get(kind=Charge.Kind.TRIP)
-    assert (link.reservation, link.status, link.amount) == (
-        trip,
-        Charge.Status.PENDING,
-        Decimal("168.00"),
-    )
-    assert "/quote/" in send.call_args.kwargs["body"]
-
-
-def test_a_plainly_cancelled_trip_cannot_be_settled(accountant):
-    _lead, _plan, trip = _owing()
-    trip.trip_status = Reservation.TripStatus.CANCELLED
-    trip.save(update_fields=["trip_status"])
-
-    assert accountant.post(_trip_url("trip_charge", trip)).status_code == 404
-
-
 def test_the_popup_hands_alpine_real_json_not_a_python_repr(accountant):
     """`json_string` is for scalars: a dict through it becomes "{'billed_minutes': 180}", and
     every figure on the screen reads "undefined". The objects go through `json_attr`."""
@@ -490,15 +386,3 @@ def test_the_popup_hands_alpine_real_json_not_a_python_repr(accountant):
     assert "&quot;billed_minutes&quot;: 180" in body
     assert "&quot;difference&quot;: &quot;168.00&quot;" in body
     assert "&#x27;billed_minutes&#x27;" not in body
-
-
-def test_the_pay_link_endpoint_opens_no_intent_while_outbound_is_off(accountant, settings):
-    settings.OUTBOUND_ENABLED = False
-    _lead, plan, trip = _owing(card=False)
-
-    with patch.object(stripe.PaymentIntent, "create") as create:
-        resp = accountant.post(_trip_url("trip_pay_link", trip))
-
-    assert resp.status_code == 400 and "Outbound messaging is off" in resp.json()["error"]
-    create.assert_not_called()
-    assert not plan.charges.filter(kind=Charge.Kind.TRIP).exists()

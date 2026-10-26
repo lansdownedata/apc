@@ -372,11 +372,21 @@ def test_an_order_with_every_trip_cancelled_never_enters():
     assert not Task.objects.filter(kind="ops_review").exists()
 
 
-def test_the_lookback_runs_from_each_trips_own_end():
+def test_an_old_trip_enters_when_its_order_is_still_being_worked():
+    """A three-week tour: the first trip ended 20 days ago, the latest one today. Both are
+    owed a review (and so the order's thank-you and follow-up can open)."""
     old = _trip(started_ago=timedelta(days=20))
     recent = _add_trip(old.lead, started_ago=timedelta(hours=6))
 
     run_tasks()
 
-    assert "ops_review" not in _kinds(old)
+    assert "ops_review" in _kinds(old)
     assert "ops_review" in _kinds(recent)
+
+
+def test_an_order_whose_last_trip_ended_long_ago_never_enters():
+    old = _trip(started_ago=timedelta(days=20))
+
+    run_tasks()
+
+    assert "ops_review" not in _kinds(old)

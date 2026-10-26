@@ -50,6 +50,10 @@ def processing_list(request: HttpRequest) -> HttpResponse:
     if filters.view == "processed":
         trips = processing.processed_trips(filters)
         groups = []
+    elif filters.issues:
+        # The exceptions drill-down: every trip with an open issue, processed or not.
+        trips = processing.issue_trips()
+        groups = processing.group_by_customer(trips)
     else:
         trips = processing.ready_trips(filters)
         groups = processing.group_by_customer(trips)
@@ -63,6 +67,7 @@ def processing_list(request: HttpRequest) -> HttpResponse:
             pane = review_views.trip_context(request, selected)
             pane.update(_pane(request, selected))
         else:
+            pane = {"unworkable": selected}
             selected = None
     return render(
         request,
@@ -92,8 +97,13 @@ def _pane(request, trip) -> dict:
         .exclude(status=Charge.Status.PENDING, stripe_client_secret="")
         .order_by("created_at")
     )
+    allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
     return {
         "review": review,
+        "prepaid": allocation,
+        # The order's other trips, an order-level refund or a status change can move what a
+        # processed trip has been paid; say so rather than show it as settled.
+        "balance_moved": review.is_processed and money.difference != 0,
         "needs_status": processing.needs_status(trip),
         "settable_statuses": [(s.value, s.label) for s in _SETTABLE],
         "difference": money.difference,
@@ -168,8 +178,6 @@ def processing_add_charge(request: HttpRequest, pk: int) -> JsonResponse:
 def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
     """A processed trip's courtesy refund (spec §4.7): any amount up to what was paid for
     the trip, with a reason; the trip gets a credit line for it (APC-101)."""
-    from decimal import Decimal, InvalidOperation
-
     import stripe
 
     from apps.payments import services as payments
@@ -180,10 +188,13 @@ def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
     review = processing.review_of(trip)
     if review is None or not review.is_processed:
         return _bad("Refund an unprocessed trip by lowering its price, then Process.")
+    if not processing.workable(trip):
+        # A lost order is refunded through cancel-and-refund on the order page.
+        return _bad("This trip can't be refunded here.")
     try:
-        amount = Decimal(request.POST.get("amount", "")).quantize(Decimal("0.01"))
-    except InvalidOperation:
-        return _bad("Enter a valid amount.")
+        amount = processing.parse_amount(request.POST.get("amount", ""))
+    except processing.ProcessingError as exc:
+        return _bad(str(exc))
     reason = request.POST.get("reason", "")
     try:
         refunded = trip_money.refund_trip(trip, amount, reason=reason, user=request.user)

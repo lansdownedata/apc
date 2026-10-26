@@ -203,6 +203,16 @@ def reservation_reverse(request, pk) -> HttpResponse:
     A linked set (APC-14) reverses as a whole so its members stay identical trips.
     """
     res = get_object_or_404(Reservation.objects.select_related("lead"), pk=pk)
+    from . import processing
+
+    members = (
+        [res]
+        if res.group_key is None
+        else list(Reservation.objects.filter(group_key=res.group_key))
+    )
+    if processing.any_processed(members):
+        messages.error(request, "A processed trip's route can't be changed. Unlock it first.")
+        return redirect("lead_detail", pk=res.lead_id)
     reverse_route(res, propagate=True)
     _alert_la_stale(res)
     if res.group_key is not None:

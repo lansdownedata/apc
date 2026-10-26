@@ -624,15 +624,6 @@ def test_times_and_overtime_are_locked_but_issues_and_rating_are_not(agent):
     reviews.add_issue(review, category="driver", severity="low", note="Late", user=agent)
 
 
-def test_the_pop_up_money_actions_refuse_a_processed_trip(client, agent):
-    trip = _processed(agent)
-    client.force_login(agent)
-
-    resp = client.post(reverse("trip_charge", args=[trip.pk]))
-
-    assert resp.status_code == 400 and "processed" in resp.json()["error"]
-
-
 def test_a_no_show_can_be_worked_in_the_pane(client, agent):
     """The pane's endpoints used to 404 every 'Cancelled'-phase trip; a no-show is
     exactly what processing settles."""
@@ -642,3 +633,156 @@ def test_a_no_show_can_be_worked_in_the_pane(client, agent):
     resp = client.get(reverse("trip_review_trip", args=[trip.pk]))
 
     assert resp.status_code == 200
+
+
+# --- branch-review fixes -------------------------------------------------------------------
+
+
+def test_processing_closes_the_overtime_task_that_closing_the_review_opens(agent):
+    """Closing ops_review opens overtime_invoiced (opens_after); processing settled it too,
+    so it must not be left open (it would block the thank-you and escalate)."""
+    from apps.tasks import services as task_services
+    from apps.tasks.jobs import run_tasks
+
+    trip = _trip()
+    _paid(trip, extra_hours=Decimal("1"))
+    review = reviews.review_for(trip)
+    reviews.save_review(review, user=agent, billable_overtime_minutes=60)
+    run_tasks()
+    task_services.sync(trip.lead)
+    assert Task.objects.filter(reservation=trip, kind="ops_review").exists()
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent(amount=24000)),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent(amount=24000)),
+    ):
+        processing.process(trip, user=agent, expected=str(_diff(trip)), collect="card")
+
+    open_kinds = set(
+        Task.objects.filter(reservation=trip, status__in=Task.UNRESOLVED).values_list(
+            "kind", flat=True
+        )
+    )
+    assert not open_kinds & {"ops_review", "overtime_invoiced"}
+
+
+def test_refund_and_keep_cancel_an_open_pay_link(agent, settings):
+    from apps.reservations.factories import TripExtraFactory
+
+    settings.OUTBOUND_ENABLED = True
+    trip = _trip()
+    plan = _paid(trip, card=False, extra_hours=Decimal("1"))
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")),
+        patch.object(stripe.Customer, "create", return_value=MagicMock(id="cus_new")),
+        patch("apps.payments.services._send_to_customer", return_value="sms"),
+    ):
+        processing.process(trip, user=agent, expected="200.00", collect="link")
+    with patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        processing.unlock(trip, user=agent, reason="Waive the hour")
+
+    cancel.assert_called_once_with("pi_link")
+    assert plan.charges.get(kind=Charge.Kind.TRIP).status == Charge.Status.FAILED
+    trip.overtime_hours = Decimal("0")
+    trip.save(update_fields=["overtime_hours"])
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("20"))
+    review = processing.process(
+        trip, user=agent, expected="-20.00", collect="keep", reason="Paid by check"
+    )
+    assert review.is_processed
+
+
+def test_an_in_flight_charge_blocks_a_second_charge_for_a_new_amount(agent):
+    trip = _trip()
+    plan = _paid(trip, extra_hours=Decimal("1"))
+    plan.record_charge(kind=Charge.Kind.TRIP, amount=Decimal("200.00"), reservation=trip)
+    trip.overtime_hours = Decimal("2")  # the price moved while the first was in flight
+    trip.save(update_fields=["overtime_hours"])
+
+    with patch.object(stripe.PaymentIntent, "create") as create:
+        with pytest.raises(Exception, match="Already charged"):
+            trip_money.charge_trip(trip, Decimal("400.00"))
+
+    create.assert_not_called()
+
+
+def test_money_events_survive_a_lock_that_refuses(agent):
+    """The card is charged, then the lock refuses (an edit landed): History still shows the
+    charge, and a retry settles only the new difference."""
+    trip = _trip()
+    _paid(trip, extra_hours=Decimal("1"))
+
+    def edit_then_lock(*args, **kwargs):
+        Reservation.objects.filter(pk=trip.pk).update(overtime_hours=Decimal("2"))
+        return real(*args, **kwargs)
+
+    real = trip_money.charge_trip
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent()),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+        patch.object(trip_money, "charge_trip", side_effect=edit_then_lock),
+    ):
+        with pytest.raises(processing.ProcessingError, match="price changed"):
+            processing.process(trip, user=agent, expected="200.00", collect="card")
+
+    review = TripReview.objects.get(reservation=trip)
+    assert not review.is_processed
+    assert [e.kind for e in review.events.all()] == [ProcessingEvent.Kind.CHARGED]
+    assert _diff(trip) == Decimal("200.00")  # only the new hour is left to settle
+
+
+def test_add_charge_is_covered_by_kept_credit_first(agent):
+    from apps.reservations.factories import TripExtraFactory
+
+    trip = _trip()
+    _paid(trip)
+    TripExtraFactory(reservation=trip, kind="credit", label="Credit", amount=Decimal("80"))
+    processing.process(trip, user=agent, expected="-80.00", collect="keep", reason="Check")
+
+    with patch.object(stripe.PaymentIntent, "create") as create:
+        charge = processing.add_charge(trip, user=agent, amount="50", label="Parking")
+
+    create.assert_not_called()
+    assert charge is None
+    assert (
+        "covered by the trip's credit"
+        in TripReview.objects.get(reservation=trip).events.last().note
+    )
+
+
+def test_add_charge_is_refused_while_a_pay_link_is_open(agent, settings):
+    settings.OUTBOUND_ENABLED = True
+    trip = _trip()
+    _paid(trip, card=False, extra_hours=Decimal("1"))
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")),
+        patch.object(stripe.Customer, "create", return_value=MagicMock(id="cus_new")),
+        patch("apps.payments.services._send_to_customer", return_value="sms"),
+    ):
+        processing.process(trip, user=agent, expected="200.00", collect="link")
+
+    with pytest.raises(processing.ProcessingError, match="link is still open"):
+        processing.add_charge(trip, user=agent, amount="50", label="Parking")
+
+
+@pytest.mark.parametrize("raw", ["NaN", "inf", "abc", "0", "-5"])
+def test_bad_amounts_are_refused_not_500(agent, raw):
+    trip = _processed(agent)
+    with pytest.raises(processing.ProcessingError):
+        processing.add_charge(trip, user=agent, amount=raw, label="Parking")
+
+
+def test_reprocessing_after_unlock_charges_only_the_new_difference(agent):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=agent, expected="0.00")
+    processing.unlock(trip, user=agent, reason="Add the hour")
+    Reservation.objects.filter(pk=trip.pk).update(overtime_hours=Decimal("1"))
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent()) as create,
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+    ):
+        processing.process(trip, user=agent, expected="200.00", collect="card")
+
+    assert create.call_args.kwargs["amount"] == 20000

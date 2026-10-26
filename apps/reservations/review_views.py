@@ -4,8 +4,7 @@
   actions: save as you go, complete, log and resolve issues. The order-level list and
   order pages are retired; their URLs redirect to Trip Processing.
 
-- a trip's money (APC-101): charge its difference to the card on file, refund it, or send
-  the pay link — per trip, for payments staff.
+- money moves only from Trip Processing (APC-102), which locks what it settles.
 
 Affiliate payables (APC-61) are worked in the pop-up's Driver pay pane through the
 `payments` endpoints; they record, never move money.
@@ -16,20 +15,15 @@ from __future__ import annotations
 from datetime import date, time
 from decimal import Decimal, InvalidOperation
 
-import stripe
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.accounts.permissions import payment_access_required
-from apps.core import outbound
 from apps.dispatch.models import Assignment
-from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 from apps.payments import payables, trip_money
-from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
 
@@ -58,10 +52,17 @@ def trip_review_list(request: HttpRequest) -> HttpResponse:
 @require_GET
 def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
     """Retired (APC-102): an order's trips are processed one at a time; open its first."""
-    lead = get_object_or_404(Lead, pk=lead_id)
-    first = lead.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+    from urllib.parse import urlencode
+
+    from . import processing
+
+    lead = get_object_or_404(Lead.objects.select_related("contact"), pk=lead_id)
+    trips = lead.reservations.order_by("pickup_date", "pickup_time", "pk")
+    first = next((t for t in trips if processing.workable(t)), None)
     url = reverse("processing")
-    return redirect(f"{url}?trip={first.pk}" if first else url)
+    if first is not None:
+        return redirect(f"{url}?trip={first.pk}")
+    return redirect(f"{url}?{urlencode({'q': lead.contact.name})}")
 
 
 def _reviewable(pk: int) -> Reservation:
@@ -293,95 +294,3 @@ def _money_json(trip) -> dict:
         "allocated": _money(m.allocated),
         "difference": _money(m.difference),
     }
-
-
-def _settleable(pk: int) -> Reservation:
-    """A workable trip that isn't processed: a processed trip's money moves only from
-    Processing (Add a charge, Refund) or after an unlock."""
-    from . import processing
-
-    trip = _reviewable(pk)
-    if processing.lock_message(trip):
-        raise _Locked
-    return trip
-
-
-class _Locked(Exception):
-    pass
-
-
-@login_required
-@payment_access_required
-@require_POST
-def trip_charge(request: HttpRequest, pk: int) -> JsonResponse:
-    """Charge what the trip still owes (or `amount`) to the card on file."""
-    try:
-        trip = _settleable(pk)
-    except _Locked:
-        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
-    money = trip_money.money_for(trip)
-    try:
-        charge = trip_money.charge_trip(trip, money.difference, note=request.POST.get("note", ""))
-    except (_Bad, payment_services.PaymentError) as exc:
-        return _bad(str(exc))
-    except stripe.error.StripeError as exc:
-        return JsonResponse(
-            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
-            status=502,
-        )
-    return JsonResponse({"ok": True, "amount": f"{charge.amount:.2f}", "money": _money_json(trip)})
-
-
-@login_required
-@payment_access_required
-@require_POST
-def trip_refund(request: HttpRequest, pk: int) -> JsonResponse:
-    """Refund the trip's overpayment (or `amount`), with a reason."""
-    try:
-        trip = _settleable(pk)
-    except _Locked:
-        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
-    money = trip_money.money_for(trip)
-    try:
-        refunded = trip_money.refund_trip(
-            trip, -money.difference, reason=request.POST.get("reason", ""), user=request.user
-        )
-    except (_Bad, payment_services.PaymentError) as exc:
-        return _bad(str(exc))
-    except stripe.error.StripeError as exc:
-        return JsonResponse(
-            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
-            status=502,
-        )
-    return JsonResponse({"ok": True, "amount": f"{refunded:.2f}", "money": _money_json(trip)})
-
-
-@login_required
-@payment_access_required
-@require_POST
-def trip_pay_link(request: HttpRequest, pk: int) -> JsonResponse:
-    """Open a pay-page intent for what the trip owes and text or email the customer."""
-    try:
-        trip = _settleable(pk)
-    except _Locked:
-        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
-    money = trip_money.money_for(trip)
-    if not outbound.enabled():
-        return _bad(outbound.OFF_MESSAGE)  # before an intent is opened, not after
-    try:
-        trip_money.open_trip_intent(trip, money.difference, note=request.POST.get("note", ""))
-        channel = payment_services.send_pay_link(
-            trip.lead,
-            base_url=request.build_absolute_uri("/")[:-1],
-            sender_name=request.user.get_full_name() or request.user.username,
-        )
-    except (_Bad, payment_services.PaymentError) as exc:
-        return _bad(str(exc))
-    except stripe.error.StripeError as exc:
-        return JsonResponse(
-            {"ok": False, "error": getattr(exc, "user_message", None) or "Stripe refused it."},
-            status=502,
-        )
-    except (PodiumAPIError, PodiumNotConnected) as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
-    return JsonResponse({"ok": True, "channel": channel, "money": _money_json(trip)})

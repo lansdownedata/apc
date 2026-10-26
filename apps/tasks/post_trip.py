@@ -55,12 +55,23 @@ def has_ended(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
 
 
 def trip_entered(trip: Reservation, *, now: datetime, grace: timedelta) -> bool:
-    """This trip has ended, recently enough that its review is still owed (LOOKBACK runs
-    from its own end)."""
+    """One trip on its own: ended, within LOOKBACK of its own end."""
     if not has_ended(trip, now=now, grace=grace):
         return False
     end = min(scheduled_end(trip) or now, now)
     return end >= now - LOOKBACK
+
+
+def entered_trips(trips, *, now: datetime, grace: timedelta) -> set[int]:
+    """The live trips whose review is owed (APC-102): every ended live trip, as long as the
+    order's most recently ended trip is within LOOKBACK. A three-week tour's first trip
+    still enters when the order is being worked; the floor only stops a deploy (or an edit
+    to an old order) opening reviews for trips settled long ago."""
+    live = [t for t in trips if not t.is_cancelled]
+    ended = [t for t in live if has_ended(t, now=now, grace=grace)]
+    if not ended or not any(trip_entered(t, now=now, grace=grace) for t in ended):
+        return set()
+    return {t.pk for t in ended}
 
 
 def order_finished_at(trips, *, now: datetime, grace: timedelta) -> datetime | None:

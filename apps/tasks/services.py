@@ -106,9 +106,7 @@ def _post_trip_state(facts: LeadFacts, config: TaskConfig, now: datetime) -> Non
         t.pk for t in facts.live_trips if post_trip.has_ended(t, now=now, grace=grace)
     }
     # Per trip (APC-102): each finished trip enters on its own.
-    facts.post_trip_ids = {
-        t.pk for t in facts.live_trips if post_trip.trip_entered(t, now=now, grace=grace)
-    }
+    facts.post_trip_ids = post_trip.entered_trips(facts.trips, now=now, grace=grace)
     facts.order_finished = (
         post_trip.order_finished_at(facts.trips, now=now, grace=grace) is not None
     )
