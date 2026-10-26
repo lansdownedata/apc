@@ -40,9 +40,6 @@
   <div class="overflow-y-auto min-h-0 flex-1 text-[13px]">
     {% if processing and review.is_processed %}
     <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-surface2 text-[12.5px]">Processed {{ review.processed_at|trip_clock:trip }}{% if review.processed_by %} by {% firstof review.processed_by.get_full_name review.processed_by.username %}{% endif %}. Times and charges are locked. Unlocking asks for a reason and is recorded.</p>
-    {% if balance_moved %}
-    <p class="mx-6 mt-2 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">What was paid for this trip has moved since it was processed ({% if difference > 0 %}${{ difference|floatformat:2 }} now owed{% else %}${{ owed_back|floatformat:2 }} now overpaid{% endif %}): another trip on the order changed, or money moved on the order. Unlock it to settle the difference.</p>
-    {% endif %}
     {% elif processing and review.unlocked_at %}
     <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">Unlocked {{ review.unlocked_at|trip_clock:trip }}{% if review.unlocked_by %} by {% firstof review.unlocked_by.get_full_name review.unlocked_by.username %}{% endif %}: “{{ review.unlock_reason }}”</p>
     {% endif %}

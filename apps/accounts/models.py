@@ -45,6 +45,8 @@ class User(AbstractUser):
         default=False,
         help_text="May run money actions (refunds, mark-paid, retry charges).",
     )
+    # Per-user screen settings, e.g. {"processing": {"ready_sort": "customer"}} (APC-102).
+    preferences = models.JSONField(default=dict, blank=True)
     invited_at = models.DateTimeField(null=True, blank=True)
     invite_accepted_at = models.DateTimeField(null=True, blank=True)
     invited_by = models.ForeignKey(

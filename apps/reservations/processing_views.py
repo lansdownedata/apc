@@ -43,20 +43,39 @@ def _sender(request) -> str:
     return request.user.get_full_name() or request.user.username
 
 
+def _sort(request, view: str) -> str:
+    """The list's sort: the one asked for (and remembered for this user), else the one
+    they chose last, else the view's default — oldest first on Ready (Moe 2026-10-25)."""
+    options = processing.SORTS[view]
+    user = request.user
+    prefs = user.preferences if isinstance(user.preferences, dict) else {}
+    mine = prefs.get("processing") if isinstance(prefs.get("processing"), dict) else {}
+    key = f"{view}_sort"
+    asked = request.GET.get("sort", "")
+    if asked in options:
+        if mine.get(key) != asked:
+            user.preferences = {**prefs, "processing": {**mine, key: asked}}
+            user.save(update_fields=["preferences"])
+        return asked
+    saved = mine.get(key)
+    return saved if saved in options else next(iter(options))
+
+
 @login_required
 @require_GET
 def processing_list(request: HttpRequest) -> HttpResponse:
     filters = processing.Filters.from_query(request.GET)
+    sort = _sort(request, filters.view)
     if filters.view == "processed":
-        trips = processing.processed_trips(filters)
+        trips = processing.processed_trips(filters, sort)
         groups = []
     elif filters.issues:
         # The exceptions drill-down: every trip with an open issue, processed or not.
         trips = processing.issue_trips()
-        groups = processing.group_by_customer(trips)
+        groups = processing.group_by_customer(trips, sort)
     else:
         trips = processing.ready_trips(filters)
-        groups = processing.group_by_customer(trips)
+        groups = processing.group_by_customer(trips, sort)
     selected = None
     pane: dict = {}
     raw = request.GET.get("trip", "")
@@ -76,6 +95,8 @@ def processing_list(request: HttpRequest) -> HttpResponse:
             "nav": "processing",
             "page_title": "Trip Processing",
             "filters": filters,
+            "sort": sort,
+            "sort_options": list(processing.SORTS[filters.view].items()),
             "groups": groups,
             "trips": trips,
             "selected": selected,
@@ -97,13 +118,20 @@ def _pane(request, trip) -> dict:
         .exclude(status=Charge.Status.PENDING, stripe_client_secret="")
         .order_by("created_at")
     )
+    from apps.payments import services as payments
+
     allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
     return {
         "review": review,
         "prepaid": allocation,
-        # The order's other trips, an order-level refund or a status change can move what a
-        # processed trip has been paid; say so rather than show it as settled.
-        "balance_moved": review.is_processed and money.difference != 0,
+        "paid_for_trip": money.allocated,
+        # What can still go back to the card; the rest is recorded as paid back another way.
+        "card_refundable": payments.refundable_total(plan, trip=trip) if plan else 0,
+        "refund_methods": [
+            (value, label)
+            for value, label in Charge.RefundMethod.choices
+            if value != Charge.RefundMethod.CARD
+        ],
         "needs_status": processing.needs_status(trip),
         "settable_statuses": [(s.value, s.label) for s in _SETTABLE],
         "difference": money.difference,
@@ -132,6 +160,8 @@ def processing_process(request: HttpRequest, pk: int) -> JsonResponse:
             expected=request.POST.get("expected", ""),
             collect=request.POST.get("collect", ""),
             reason=request.POST.get("reason", ""),
+            method=request.POST.get("method", "card"),
+            reference=request.POST.get("reference", ""),
             base_url=request.build_absolute_uri("/")[:-1],
             sender_name=_sender(request),
         )
@@ -176,18 +206,17 @@ def processing_add_charge(request: HttpRequest, pk: int) -> JsonResponse:
 @payment_access_required
 @require_POST
 def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
-    """A processed trip's courtesy refund (spec §4.7): any amount up to what was paid for
-    the trip, with a reason; the trip gets a credit line for it (APC-101)."""
+    """A refund for any reason (spec §4.7, Moe 2026-10-25), processed or not: any amount up
+    to what was paid for the trip, with a reason, back to the card or recorded as paid back
+    another way; the trip gets a credit line for it, so what it owes doesn't move."""
     import stripe
 
     from apps.payments import services as payments
 
+    from . import reviews
     from .models import ProcessingEvent
 
     trip = _trip(pk)
-    review = processing.review_of(trip)
-    if review is None or not review.is_processed:
-        return _bad("Refund an unprocessed trip by lowering its price, then Process.")
     if not processing.workable(trip):
         # A lost order is refunded through cancel-and-refund on the order page.
         return _bad("This trip can't be refunded here.")
@@ -195,9 +224,17 @@ def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
         amount = processing.parse_amount(request.POST.get("amount", ""))
     except processing.ProcessingError as exc:
         return _bad(str(exc))
+    review = reviews.review_for(trip)
     reason = request.POST.get("reason", "")
     try:
-        refunded = trip_money.refund_trip(trip, amount, reason=reason, user=request.user)
+        refunded = trip_money.refund_trip(
+            trip,
+            amount,
+            reason=reason,
+            user=request.user,
+            method=request.POST.get("method", "card"),
+            reference=request.POST.get("reference", ""),
+        )
     except payments.PaymentError as exc:
         return _bad(str(exc))
     except stripe.error.StripeError as exc:

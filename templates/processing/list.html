@@ -35,6 +35,10 @@
           <input type="text" name="from" class="field text-[12px]" data-flatpickr value="{{ filters.date_from|date:'Y-m-d' }}" placeholder="From" aria-label="Pickups from">
           <input type="text" name="to" class="field text-[12px]" data-flatpickr value="{{ filters.date_to|date:'Y-m-d' }}" placeholder="To" aria-label="Pickups to">
         </div>
+        {% comment %} Sort (Moe 2026-10-25): remembered per user, so it survives the next visit. {% endcomment %}
+        <div class="text-[12px]" aria-label="Sort the list">
+          {% include "components/searchable_select.html" with name="sort" field_id="proc-sort" options=sort_options selected=sort autosubmit=1 search="off" %}
+        </div>
         <button type="submit" class="text-[12px] font-semibold px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold">Filter</button>
         <p class="text-[11px] text-muted">Times in each trip's pickup timezone.</p>
       </form>

@@ -232,15 +232,16 @@ def test_the_list_costs_a_flat_number_of_queries(staff):
 # --- branch-review fixes -------------------------------------------------------------------
 
 
-def test_a_processed_trip_whose_balance_moved_says_so(accountant):
+def test_a_processed_trip_shows_no_moved_balance_banner(accountant):
+    """Moe 2026-10-25: a processed trip was charged cleanly; no banner."""
     trip = _trip()
     _paid(trip)
     processing.process(trip, user=accountant.user, expected="0.00")
-    Reservation.objects.filter(pk=trip.pk).update(overtime_hours=Decimal("1"))  # LA edit, etc.
+    Reservation.objects.filter(pk=trip.pk).update(overtime_hours=Decimal("1"))
 
     body = _page(accountant, trip=trip.pk, view="processed").content.decode()
 
-    assert "has moved since it was processed" in body and "200.00 now owed" in body
+    assert "has moved since it was processed" not in body
 
 
 def test_the_issues_drill_down_lists_every_trip_with_an_open_issue(staff):
@@ -326,3 +327,93 @@ def test_the_start_date_covers_post_trip_work_already_open():
     module.start_today(django_apps, None)
 
     assert TaskConfig.load().processing_from == old.pickup_date
+
+
+# --- Moe's answers 2026-10-25: sortable list, remembered per user; no moved-balance banner --
+
+
+def _names(resp) -> list[str]:
+    return [g.contact.name for g in resp.context["groups"]]
+
+
+def test_ready_defaults_to_the_oldest_trip_first(staff):
+    _trip(contact=ContactFactory(name="Zed Newer"), days_ago=1)
+    _trip(contact=ContactFactory(name="Amy Older"), days_ago=5)
+
+    assert _names(_page(staff)) == ["Amy Older", "Zed Newer"]
+
+
+def test_a_chosen_sort_is_remembered_for_that_user(client):
+    user = UserFactory()
+    client.force_login(user)
+    _trip(contact=ContactFactory(name="Zed Older"), days_ago=5)
+    _trip(contact=ContactFactory(name="Amy Newer"), days_ago=1)
+
+    assert _names(_page(client, sort="customer")) == ["Amy Newer", "Zed Older"]
+    assert _names(_page(client)) == ["Amy Newer", "Zed Older"]  # remembered
+    assert _names(_page(client, sort="newest")) == ["Amy Newer", "Zed Older"]
+    user.refresh_from_db()
+    assert user.preferences["processing"]["ready_sort"] == "newest"
+
+
+def test_another_users_sort_is_their_own(client):
+    other = UserFactory(preferences={"processing": {"ready_sort": "customer"}})
+    assert other.preferences
+    client.force_login(UserFactory())
+    _trip(contact=ContactFactory(name="Zed Older"), days_ago=5)
+    _trip(contact=ContactFactory(name="Amy Newer"), days_ago=1)
+
+    assert _names(_page(client)) == ["Zed Older", "Amy Newer"]
+
+
+def test_an_unknown_sort_falls_back_to_the_default(staff):
+    _trip(contact=ContactFactory(name="Zed Newer"), days_ago=1)
+    _trip(contact=ContactFactory(name="Amy Older"), days_ago=5)
+
+    assert _names(_page(staff, sort="'; drop")) == ["Amy Older", "Zed Newer"]
+
+
+def test_processed_sorts_too(accountant):
+    old = _trip(contact=ContactFactory(name="Old Pickup"), days_ago=6)
+    new = _trip(contact=ContactFactory(name="New Pickup"), days_ago=2)
+    for t in (new, old):  # old processed last = most recently processed
+        _paid(t)
+        processing.process(t, user=accountant.user, expected="0.00")
+
+    default = [t.pk for t in _page(accountant, view="processed").context["trips"]]
+    oldest = [t.pk for t in _page(accountant, view="processed", sort="oldest").context["trips"]]
+
+    assert default == [old.pk, new.pk]
+    assert oldest == [old.pk, new.pk]
+    newest = [t.pk for t in _page(accountant, view="processed", sort="newest").context["trips"]]
+    assert newest == [new.pk, old.pk]
+
+
+def test_the_list_offers_the_sort_picker(staff):
+    body = _page(staff).content.decode()
+
+    assert 'name="sort"' in body
+
+
+def test_an_off_card_refund_from_the_screen_shows_how_it_went_back(accountant):
+    trip = _trip()
+    _paid(trip)
+
+    resp = accountant.post(
+        reverse("processing_refund", args=[trip.pk]),
+        {"amount": "40", "reason": "Goodwill", "method": "check", "reference": "1042"},
+    )
+
+    assert resp.status_code == 200, resp.content  # Ready trips can be refunded too
+    body = _page(accountant, trip=trip.pk).content.decode()
+    assert "Check 1042" in body
+
+
+def test_the_refund_modal_knows_what_the_card_can_still_take(accountant):
+    trip = _trip()
+    _paid(trip)
+
+    footer = _page(accountant, trip=trip.pk).content.decode().split("processingPane(")[1]
+
+    assert "cardRefundable: &#x27;600.00&#x27;" in footer or "cardRefundable: '600.00'" in footer
+    assert "Hold as credit" not in footer  # nothing overpaid here

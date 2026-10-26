@@ -137,7 +137,18 @@ class Charge(TimeStampedModel):
         EXPIRED = "expired", "Expired"
         FAILED = "failed", "Failed"
 
+    class RefundMethod(models.TextChoices):
+        # How a REFUND went back (APC-102). Blank on older rows = the card, through Stripe.
+        CARD = "card", "Card"
+        CHECK = "check", "Check"
+        ACH = "ach", "ACH"
+        ZELLE = "zelle", "Zelle"
+        OTHER = "other", "Other"
+
     plan = models.ForeignKey(PaymentPlan, related_name="charges", on_delete=models.CASCADE)
+    refund_method = models.CharField(max_length=10, choices=RefundMethod.choices, blank=True)
+    # A check number, ACH trace or Zelle confirmation: how the books find the money.
+    reference = models.CharField(max_length=120, blank=True)
     # The trip this money is about (APC-101): set on every TRIP charge and on a REFUND made
     # for a trip; null on the order-level deposit, balance and historical final bill.
     reservation = models.ForeignKey(

@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize json_filters %}
 {% comment %}
   The processing footer (APC-102): what the trip owes, and the one way forward. Every
   choice confirms through $store.modal and posts `expected`, the difference shown here, so a
@@ -9,6 +9,9 @@
        difference: '{{ difference|floatformat:2 }}',
        card: '{{ card_label|default:"the card on file"|escapejs }}',
        cardOnFile: {% if card_on_file %}true{% else %}false{% endif %},
+       cardRefundable: '{{ card_refundable|floatformat:2 }}',
+       paidForTrip: '{{ paid_for_trip|floatformat:2 }}',
+       methods: {{ refund_methods|json_attr }},
        urls: {
          process: '{% url 'processing_process' trip.pk %}',
          unlock: '{% url 'processing_unlock' trip.pk %}',
@@ -46,10 +49,11 @@
           {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and charge ${{ difference|floatformat:2|intcomma }}</button>{% endif %}
           <button type="button" class="{% if not card_on_file %}ml-auto {% endif %}text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processLink()">Process and send pay link</button>
         {% elif difference < 0 %}
-          <button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processKeep()">Keep as credit</button>
+          <button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processKeep()">Hold as credit</button>
           <button type="button" class="btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processRefund()">Process and refund</button>
         {% else %}
-          <button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processNone()">Process</button>
+          {% if paid_for_trip > 0 %}<button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="refund()">Refund</button>{% endif %}
+          <button type="button" class="{% if not paid_for_trip > 0 %}ml-auto {% endif %}btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processNone()">Process</button>
         {% endif %}
       {% else %}
         <span class="ml-auto text-[12px] text-muted">Processing needs payments access.</span>

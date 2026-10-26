@@ -225,12 +225,38 @@ def needs_status(trip) -> bool:
     return trip.trip_status not in TERMINAL
 
 
-def processed_trips(filters: Filters) -> list[Reservation]:
-    """Processed trips in the range, the most recently processed first."""
+# How each view can be sorted (Moe 2026-10-25): oldest first by default on Ready; each
+# user's choice is remembered (`User.preferences["processing"]`).
+READY_SORTS = {
+    "oldest": "Oldest trip first",
+    "newest": "Newest trip first",
+    "customer": "Customer A to Z",
+    "most": "Most trips first",
+}
+PROCESSED_SORTS = {
+    "processed": "Recently processed",
+    "oldest": "Oldest pickup first",
+    "newest": "Newest pickup first",
+    "customer": "Customer A to Z",
+}
+SORTS = {"ready": READY_SORTS, "processed": PROCESSED_SORTS}
+
+
+def processed_trips(filters: Filters, sort: str = "processed") -> list[Reservation]:
+    """Processed trips in the range, the most recently processed first unless `sort` says
+    otherwise."""
     trips = list(_base(filters).filter(review__processed_at__isnull=False))
     for trip in trips:
         trip.needs_status = False
-    return _with_route(sorted(trips, key=lambda t: t.review.processed_at, reverse=True))
+    if sort == "oldest":
+        trips = _order(trips)
+    elif sort == "newest":
+        trips = _order(trips)[::-1]
+    elif sort == "customer":
+        trips = sorted(_order(trips), key=lambda t: t.lead.contact.name.casefold())
+    else:
+        trips = sorted(trips, key=lambda t: t.review.processed_at, reverse=True)
+    return _with_route(trips)
 
 
 def issue_trip_count() -> int:
@@ -249,14 +275,28 @@ def issue_trips() -> list[Reservation]:
     return _with_route(_order(trips))
 
 
-def group_by_customer(trips) -> list[CustomerGroup]:
-    """One list, grouped by the order's contact (Moe rejected two side-by-side lists),
-    customers sorted by their oldest trip, trips in pickup order within each."""
+def group_by_customer(trips, sort: str = "oldest") -> list[CustomerGroup]:
+    """One list, grouped by the order's contact (Moe rejected two side-by-side lists).
+    Customers by their oldest trip first unless `sort` says otherwise (newest trip, name,
+    most trips); trips in pickup order within each, newest first under "newest"."""
     groups: dict[int, CustomerGroup] = {}
-    for trip in _order(trips):
+    ordered = _order(trips)
+    if sort == "newest":
+        ordered = ordered[::-1]
+    for trip in ordered:
         contact = trip.lead.contact
         groups.setdefault(contact.pk, CustomerGroup(contact=contact)).trips.append(trip)
-    return sorted(groups.values(), key=lambda g: (g.oldest or date.max, g.contact.pk))
+    out = list(groups.values())
+    oldest = lambda g: (min(t.pickup_date for t in g.trips), g.contact.pk)  # noqa: E731
+    if sort == "newest":
+        return sorted(
+            out, key=lambda g: (max(t.pickup_date for t in g.trips), g.contact.pk), reverse=True
+        )
+    if sort == "customer":
+        return sorted(out, key=lambda g: (g.contact.name.casefold(), g.contact.pk))
+    if sort == "most":
+        return sorted(out, key=lambda g: (-len(g.trips), oldest(g)))
+    return sorted(out, key=oldest)
 
 
 def review_of(trip) -> TripReview | None:
@@ -337,6 +377,8 @@ def process(
     expected,
     collect: str = "",
     reason: str = "",
+    method: str = "card",
+    reference: str = "",
     base_url: str = "",
     sender_name: str = "",
 ) -> TripReview:
@@ -404,7 +446,9 @@ def process(
             owed_back = -money.difference
             _cancel_open_links(trip)
             if collect == "refund":
-                refunded = trip_money.refund_trip(trip, owed_back, reason=reason, user=user)
+                refunded = trip_money.refund_trip(
+                    trip, owed_back, reason=reason, user=user, method=method, reference=reference
+                )
                 record(ProcessingEvent.Kind.REFUNDED, refunded, note=reason.strip())
             elif collect == "keep":
                 # Money paid off-card has no Stripe intent to refund; the overpayment stays
@@ -412,7 +456,7 @@ def process(
                 if not (reason or "").strip():
                     raise ProcessingError("Say why the overpayment is kept.")
             else:
-                raise ProcessingError("Refund the overpayment, or keep it as credit.")
+                raise ProcessingError("Refund the overpayment, or hold it as credit.")
         else:
             _cancel_open_links(trip)
     except payments.PaymentError as exc:
@@ -437,11 +481,17 @@ def process(
         if review.completed_at is None:
             review.completed_at, review.completed_by = now, user
         reviews._stamp_driver_pay(review)
+        # The share of the order's prepaid money this trip was settled against; kept while
+        # it stays processed (see trip_money.allocation).
+        review.prepaid_share = trip_money.allocation(locked.lead).get(locked.pk, Decimal("0.00"))
         review.processed_at, review.processed_by = now, user
         review.save()
         note = ""
         if collect == "keep":
-            note = f"Overpayment of ${-money.difference:,.2f} kept as credit: {reason.strip()}"
+            note = (
+                f"Overpayment of ${-money.difference:,.2f} held as credit owed to the"
+                f" customer: {reason.strip()}"
+            )
         elif collect == "refund":
             note = (reason or "").strip()
         _event(review, ProcessingEvent.Kind.PROCESSED, user=user, note=note)
@@ -506,6 +556,7 @@ def unlock(trip, *, user, reason: str) -> TripReview:
         review.processed_at = review.processed_by = None
         review.unlocked_at, review.unlocked_by = timezone.now(), user
         review.unlock_reason = reason[:255]
+        review.prepaid_share = None  # back into the order's allocation until re-processed
         review.save()
         _event(review, ProcessingEvent.Kind.UNLOCKED, user=user, note=reason)
     for task in Task.objects.filter(reservation=trip, kind="ops_review", status__in=Task.CLOSED):

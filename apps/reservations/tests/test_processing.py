@@ -400,7 +400,7 @@ def test_an_off_card_overpayment_can_be_kept_as_credit(agent):
     )
 
     assert review.is_processed
-    assert "kept as credit" in review.events.last().note
+    assert "held as credit" in review.events.last().note
 
 
 def test_an_undecided_suggestion_must_be_decided_first(agent):
@@ -786,3 +786,124 @@ def test_reprocessing_after_unlock_charges_only_the_new_difference(agent):
         processing.process(trip, user=agent, expected="200.00", collect="card")
 
     assert create.call_args.kwargs["amount"] == 20000
+
+
+# --- Moe's answers 2026-10-25: refunds by any route, processed trips keep their share -----
+
+from apps.payments import services  # noqa: E402
+
+
+def test_a_refund_paid_back_off_card_records_the_cash_out_without_stripe(agent):
+    """Best practice: every refund is recorded, reasoned and posted, whatever rail the
+    money went back on (Moe 2026-10-25: refunds for any reason)."""
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=agent, expected="0.00")
+    before = ledger.order_balances(trip.lead)["collected"]
+
+    with patch.object(stripe.Refund, "create") as create:
+        refunded = trip_money.refund_trip(
+            trip, Decimal("75"), reason="Goodwill", user=agent, method="check", reference="1042"
+        )
+
+    create.assert_not_called()
+    assert refunded == Decimal("75.00")
+    row = Charge.objects.get(kind=Charge.Kind.REFUND)
+    assert (row.refund_method, row.reference, row.reservation_id) == ("check", "1042", trip.pk)
+    assert row.note == "Goodwill" and row.status == Charge.Status.SUCCEEDED
+    assert ledger.order_balances(trip.lead)["collected"] == before - Decimal("75")
+    assert _diff(trip) == Decimal("0.00")  # the credit line keeps the price true
+
+
+def test_an_off_card_refund_needs_a_known_method_and_stays_within_what_was_paid(agent):
+    trip = _trip()
+    _paid(trip)
+    with pytest.raises(Exception, match="How was it paid back"):
+        trip_money.refund_trip(trip, Decimal("10"), reason="x", method="bitcoin")
+    with pytest.raises(Exception, match="Only \\$600.00 was paid"):
+        trip_money.refund_trip(trip, Decimal("700"), reason="x", method="check")
+
+
+def test_a_card_refund_never_returns_more_cash_than_the_order_still_holds(agent):
+    """A check refund already returned the money: the card can't send it back again."""
+    trip = _trip()
+    plan = _paid(trip)
+    trip_money.refund_trip(trip, Decimal("600"), reason="All of it", method="check")
+
+    assert services.refundable_total(plan) == Decimal("0.00")
+
+
+def test_process_and_refund_by_check(agent):
+    trip = _trip()
+    _paid(trip)
+    Reservation.objects.filter(pk=trip.pk).update(hours=Decimal("2"))  # 1 hour less
+
+    with patch.object(stripe.Refund, "create") as create:
+        review = processing.process(
+            trip,
+            user=agent,
+            expected="-200.00",
+            collect="refund",
+            reason="Ended early",
+            method="zelle",
+            reference="ZL-88",
+        )
+
+    create.assert_not_called()
+    assert review.is_processed and _diff(trip) == Decimal("0.00")
+
+
+def test_a_processed_trip_keeps_its_share_when_a_sibling_is_cancelled(agent):
+    """Moe 2026-10-25: a processed trip was charged cleanly; a change on the order shows on
+    the sibling, never back on it."""
+    first = _trip(days_ago=3)
+    second = _trip(lead=first.lead, days_ago=2)
+    plan = PaymentPlanFactory(
+        lead=first.lead,
+        quote_total=Decimal("1200"),
+        stripe_customer_id="cus_1",
+        stripe_payment_method_id="pm_1",
+    )
+    plan.charges.create(
+        kind=Charge.Kind.BALANCE,
+        amount=Decimal("600"),  # half the order: the first trip's share
+        status=Charge.Status.SUCCEEDED,
+        stripe_payment_intent_id="pi_half",
+        idempotency_key="half",
+    )
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent(amount=60000)),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent(amount=60000)),
+    ):
+        processing.process(second, user=agent, expected="600.00", collect="card")
+    Reservation.objects.filter(pk=first.pk).update(trip_status=S.CANCELLED)
+
+    assert _diff(second) == Decimal("0.00")
+    assert TripReview.objects.get(reservation=second).prepaid_share == Decimal("0.00")
+
+
+def test_unlocking_returns_the_trip_to_the_order_allocation(agent):
+    trip = _processed(agent)
+    review = TripReview.objects.get(reservation=trip)
+    assert review.prepaid_share == Decimal("600.00")
+
+    processing.unlock(trip, user=agent, reason="Recheck")
+
+    review.refresh_from_db()
+    assert review.prepaid_share is None
+
+
+def test_hold_as_credit_says_it_is_owed_to_the_customer(agent):
+    trip = _trip()
+    _paid(trip)
+    Reservation.objects.filter(pk=trip.pk).update(hours=Decimal("2"))
+
+    review = processing.process(
+        trip, user=agent, expected="-200.00", collect="keep", reason="Rolling to June"
+    )
+
+    note = review.events.get(kind=ProcessingEvent.Kind.PROCESSED).note
+    assert "held as credit owed to the customer" in note
+    # Still a liability on the books, not revenue: the cash beyond the trip stays deferred.
+    books = ledger.order_balances(trip.lead)
+    assert books["recognized"] == Decimal("400.00") and books["deferred"] == Decimal("200.00")

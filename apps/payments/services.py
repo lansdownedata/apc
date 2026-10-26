@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 import stripe
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core import outbound
@@ -220,10 +221,86 @@ def _refundable_sources(plan, *, trip=None) -> list[tuple[Charge, Decimal]]:
     return out
 
 
+def _paid_back_off_card(plan) -> Decimal:
+    """Refunds recorded as paid back outside Stripe (check, ACH, Zelle, other — APC-102)."""
+    agg = (
+        plan.charges.filter(kind=Charge.Kind.REFUND, status=Charge.Status.SUCCEEDED)
+        .exclude(refund_method__in=("", Charge.RefundMethod.CARD))
+        .aggregate(s=Sum("amount"))
+    )
+    return Decimal(agg["s"] or 0)
+
+
 def refundable_total(plan, *, trip=None) -> Decimal:
     """Everything still refundable to the card, trip charges and the final bill included
-    (APC-75, APC-101)."""
-    return sum((left for _src, left in _refundable_sources(plan, trip=trip)), Decimal("0.00"))
+    (APC-75, APC-101) — less money already paid back off-card, which the card must never
+    return a second time (APC-102)."""
+    on_card = sum((left for _src, left in _refundable_sources(plan, trip=trip)), Decimal("0.00"))
+    return max(on_card - _paid_back_off_card(plan), Decimal("0.00"))
+
+
+def record_manual_refund(
+    plan, amount, *, method: str, reservation=None, reference: str = "", note: str = "", user=None
+) -> Decimal:
+    """Money paid back outside Stripe — a check, ACH, Zelle (APC-102). Nothing is sent
+    anywhere: the refund is recorded with how it went back and its reference, and posted to
+    the books exactly as a card refund is (Cash out; Refunds for a recognised trip, else
+    Customer Deposits). The same refund recorded twice in a row is refused (a double-click).
+    """
+    from uuid import uuid4
+
+    amount = Decimal(amount).quantize(Decimal("0.01"))
+    reference = (reference or "").strip()[:120]
+    with transaction.atomic():
+        PaymentPlan.objects.select_for_update().get(pk=plan.pk)
+        duplicate = plan.charges.filter(
+            kind=Charge.Kind.REFUND,
+            reservation=reservation,
+            amount=amount,
+            refund_method=method,
+            reference=reference,
+            created_at__gte=timezone.now() - timedelta(minutes=2),
+        ).exists()
+        if duplicate:
+            raise PaymentError("That refund was just recorded.")
+        key = f"manual-refund-{plan.pk}-{uuid4().hex[:16]}"
+        charge = plan.charges.create(
+            kind=Charge.Kind.REFUND,
+            amount=amount,
+            status=Charge.Status.SUCCEEDED,
+            refund_method=method,
+            reference=reference,
+            reservation=reservation,
+            note=(note or "")[:255],
+            idempotency_key=key,
+        )
+        memo = f"Refund by {Charge.RefundMethod(method).label}" + (
+            f" {reference}" if reference else ""
+        )
+        recognised = (
+            reservation is not None
+            and reservation.revenue_status == Reservation.RevenueStatus.RECOGNIZED
+        )
+        if recognised:
+            ledger.post_trip_refund(
+                lead=plan.lead,
+                reservation=reservation,
+                amount=amount,
+                charge=charge,
+                idempotency_key=key,
+                created_by=user,
+                memo=memo,
+            )
+        else:
+            ledger.post_refund(
+                lead=plan.lead,
+                amount=amount,
+                charge=charge,
+                idempotency_key=key,
+                created_by=user,
+                memo=memo,
+            )
+    return amount
 
 
 def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decimal, ...]:
@@ -258,7 +335,8 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
     final bill reverses its overtime's Recognized Revenue first, then its balance part the
     way a balance refund does.
     """
-    amount = Decimal(amount)
+    # Never more than the card can still give back, net of anything paid back off-card.
+    amount = min(Decimal(amount), refundable_total(plan, trip=reservation))
     remaining = amount
     total_refunded = Decimal("0.00")
     for src, refundable in _refundable_sources(plan, trip=reservation):
@@ -287,6 +365,7 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
                     status=Charge.Status.SUCCEEDED,
                     stripe_payment_intent_id=src.stripe_payment_intent_id,
                     stripe_refund_id=refund.id,
+                    refund_method=Charge.RefundMethod.CARD,
                     idempotency_key=f"refund-{refund.id}",
                     overtime_amount=gratuity + base,
                     overtime_gratuity=gratuity,

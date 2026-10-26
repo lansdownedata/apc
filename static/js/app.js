@@ -635,6 +635,17 @@ function processingPane(opts) {
   const reasonField = (id, placeholder) =>
     `<input id="${id}" type="text" class="field" maxlength="255" placeholder="${placeholder}">`;
   const read = (id) => document.getElementById(id)?.value || "";
+  /* How a refund goes back (Moe 2026-10-25: refunds for any reason). The card through
+   * Stripe while it can still take it; otherwise recorded as paid back by check, ACH, Zelle
+   * or other, with its reference. Radios, not a <select>. */
+  const canCard = Number(opts.cardRefundable) > 0;
+  const methodField = () => {
+    const card = `<label class="flex items-center gap-2"><input type="radio" name="proc-refund-method" value="card" ${canCard ? "checked" : "disabled"}> Back to the card ${canCard ? `(up to $${opts.cardRefundable})` : "(nothing left to refund on it)"}</label>`;
+    const others = (opts.methods || []).map(([value, label], i) =>
+      `<label class="flex items-center gap-2"><input type="radio" name="proc-refund-method" value="${value}" ${!canCard && i === 0 ? "checked" : ""}> ${value === "other" ? "Paid back another way" : value === "check" ? "Paid back by check" : `Paid back by ${label}`}</label>`).join("");
+    return `<fieldset class="grid gap-1.5 text-[13px] mb-2"><legend class="sr-only">How it goes back</legend>${card}${others}</fieldset><input id="proc-refund-ref" type="text" class="field" maxlength="120" placeholder="Reference: check #, trace or confirmation">`;
+  };
+  const method = () => document.querySelector('input[name="proc-refund-method"]:checked')?.value || "card";
   return {
     busy: false,
     async _post(url, data, done) {
@@ -684,22 +695,27 @@ function processingPane(opts) {
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Refund $${amount}?`,
-        html: `<p class="text-[13px] text-muted mb-2">Back to the card the customer paid with. Say why.</p>${reasonField("proc-refund-reason", "e.g. Late pickup")}`,
+        html: `${methodField()}<div class="mt-2">${reasonField("proc-refund-reason", "Why (e.g. Late pickup)")}</div>`,
         variant: "danger",
         confirmText: `Refund $${amount}`,
         showCancel: true,
-        onConfirm: () => this._process({ collect: "refund", reason: read("proc-refund-reason") }, `Refunded $${amount} and processed`),
+        onConfirm: () => this._process({
+          collect: "refund",
+          reason: read("proc-refund-reason"),
+          method: method(),
+          reference: read("proc-refund-ref"),
+        }, `Refunded $${amount} and processed`),
       });
     },
     processKeep() {
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
-        title: `Keep $${amount} as credit?`,
-        html: `<p class="text-[13px] text-muted mb-2">For money paid off-card (check, ACH): nothing is refunded; the overpayment stays on the order. Say why.</p>${reasonField("proc-keep-reason", "e.g. Paid by check; applied to the next booking")}`,
+        title: `Hold $${amount} as credit?`,
+        html: `<p class="text-[13px] text-muted mb-2">Nothing goes back now. The $${amount} stays on the books as money owed to the customer until it is refunded (Refund, from Processed). Say why.</p>${reasonField("proc-keep-reason", "e.g. Customer asked to roll it to the June booking")}`,
         variant: "gold",
-        confirmText: "Keep and process",
+        confirmText: "Hold and process",
         showCancel: true,
-        onConfirm: () => this._process({ collect: "keep", reason: read("proc-keep-reason") }, "Processed; overpayment kept"),
+        onConfirm: () => this._process({ collect: "keep", reason: read("proc-keep-reason") }, "Processed; credit held"),
       });
     },
     setStatus(value, label) {
@@ -738,13 +754,15 @@ function processingPane(opts) {
     refund() {
       Alpine.store("modal").show({
         title: "Refund this trip",
-        html: `<div class="grid gap-2"><input id="proc-refund-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount">${reasonField("proc-refund-why", "Why (it goes on the receipt)")}</div>`,
+        html: `<p class="text-[12px] text-muted mb-2">Up to $${opts.paidForTrip}, for any reason. The trip gets a credit line for it, so what it owes doesn't change.</p><div class="grid gap-2 mb-2"><input id="proc-refund-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount">${reasonField("proc-refund-why", "Why (it goes on the receipt)")}</div>${methodField()}`,
         variant: "danger",
         confirmText: "Refund",
         showCancel: true,
         onConfirm: () => this._post(opts.urls.refund, {
           amount: read("proc-refund-amount"),
           reason: read("proc-refund-why"),
+          method: method(),
+          reference: read("proc-refund-ref"),
         }, "Refunded").catch(() => {}),
       });
     },

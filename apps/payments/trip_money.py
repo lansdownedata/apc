@@ -22,7 +22,7 @@ from django.db import transaction
 from django.db.models import Sum
 
 from apps.notifications.models import Notification
-from apps.reservations.models import TripExtra
+from apps.reservations.models import TripExtra, TripReview
 
 from . import ledger, services
 from .models import Charge, PaymentPlan
@@ -78,6 +78,13 @@ def allocation(lead) -> dict[int, Decimal]:
 
     nothing = (Reservation.TripStatus.CANCELLED, Reservation.TripStatus.COVID_CANCELLATION)
     pool = order_prepaid(lead)
+    # A processed trip keeps the share it was settled against (APC-102, Moe 2026-10-25): a
+    # sibling cancelled or added later moves the other trips' shares, never a settled one.
+    frozen = dict(
+        TripReview.objects.filter(
+            reservation__lead=lead, processed_at__isnull=False, prepaid_share__isnull=False
+        ).values_list("reservation_id", "prepaid_share")
+    )
     # An undated trip (a quote still being built) sorts last; it has no booked total anyway.
     trips = sorted(
         lead.reservations.all(),
@@ -85,6 +92,13 @@ def allocation(lead) -> dict[int, Decimal]:
     )
     shares: dict[int, Decimal] = {}
     for trip in trips:
+        if trip.pk in frozen:
+            take = min(pool, Decimal(frozen[trip.pk]))
+            shares[trip.pk] = take.quantize(_CENTS)
+            pool -= take
+    for trip in trips:
+        if trip.pk in shares:
+            continue
         if trip.trip_status in nothing:
             shares[trip.pk] = ZERO
             continue
@@ -263,11 +277,20 @@ def _record_trip_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> C
     return charge
 
 
-def refund_trip(trip, amount, *, reason: str, user=None) -> Decimal:
-    """Return `amount` to the customer for this trip: its own charges first, then the
-    order's prepaid money newest first. Every REFUND row carries the trip and the reason,
-    and the trip gets a credit line for the same amount so `line_total` keeps telling the
-    truth — afterwards the trip owes nothing more and nothing less (spec §4.7)."""
+def refund_trip(
+    trip, amount, *, reason: str, user=None, method: str = "card", reference: str = ""
+) -> Decimal:
+    """Return `amount` to the customer for this trip, for any reason (Moe 2026-10-25).
+
+    `method` "card" refunds through Stripe: this trip's charges first, then the order's
+    prepaid money newest first. Any other method (check, ACH, Zelle, other) records money
+    paid back outside Stripe, posted to the books the same way. Every REFUND row carries
+    the trip, the reason and how it went back, and the trip gets a credit line for the same
+    amount so `line_total` keeps telling the truth — afterwards the trip owes nothing more
+    and nothing less (spec §4.7)."""
+    method = (method or "card").strip()
+    if method not in Charge.RefundMethod.values:
+        raise services.PaymentError("How was it paid back? Card, check, ACH, Zelle or other.")
     amount = _positive(amount)
     reason = (reason or "").strip()
     if not reason:
@@ -278,10 +301,24 @@ def refund_trip(trip, amount, *, reason: str, user=None) -> Decimal:
             f"Only ${money.allocated:,.2f} was paid for this trip; refund at most that."
         )
     plan = trip.lead.payment
-    refundable = services.refundable_total(plan, trip=trip)
-    if amount > refundable:
-        raise services.PaymentError(f"Only ${refundable:,.2f} is still refundable to the card.")
-    refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
+    if method == Charge.RefundMethod.CARD:
+        refundable = services.refundable_total(plan, trip=trip)
+        if amount > refundable:
+            raise services.PaymentError(
+                f"Only ${refundable:,.2f} can go back to the card. Record the rest as a"
+                " check, ACH or Zelle refund."
+            )
+        refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
+    else:
+        refunded = services.record_manual_refund(
+            plan,
+            amount,
+            reservation=trip,
+            method=method,
+            reference=reference,
+            note=reason,
+            user=user,
+        )
     ledger.true_up_recognition(trip)  # a refund of earned money: the books follow the trip
     # The price may already say this money is owed back (a credit line or a lower rate
     # made `difference` negative): that part needs no second credit. Anything refunded

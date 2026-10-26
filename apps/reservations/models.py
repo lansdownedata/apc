@@ -1112,6 +1112,11 @@ class TripReview(TimeStampedModel):
         on_delete=models.SET_NULL,
     )
     unlock_reason = models.CharField(max_length=255, blank=True)
+    # What the order's prepaid money (deposit, balance) covered of this trip when it was
+    # processed. A processed trip keeps it, so a later change on the order (a sibling
+    # cancelled) lands on the sibling, never back on a trip settled cleanly (Moe,
+    # 2026-10-25). Cleared on unlock.
+    prepaid_share = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         constraints = [
