@@ -10,7 +10,8 @@
   <h1 class="font-display text-[22px] font-semibold text-ink mt-2">Receipt {{ charge.receipt_number }}</h1>
   <p class="text-[12.5px] text-muted mt-1">
     {% if charge.receipt_sent_at %}Sent {{ charge.receipt_sent_at|trip_clock:trip }} to {{ recipient }}.
-    {% elif recipient %}Not sent yet. It goes to {{ recipient }} once outgoing messages are on; the hourly payments sweep retries it for 7 days.
+    {% elif charge.receipt_skipped_at %}Not sent: outgoing messages were off when it was made, so it never goes out.
+    {% elif recipient %}Not sent yet. It goes to {{ recipient }}; the hourly payments sweep retries it for 7 days.
     {% else %}Not sent yet: the order has no email address.{% endif %}
     Subject: “{{ subject }}”
   </p>

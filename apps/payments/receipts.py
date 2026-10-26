@@ -6,8 +6,10 @@ moment the money moves — and it has no `receipt_parent` (a refund split over s
 Stripe charges is one receipt, carried by its first row).
 
 `send_receipt` is the only sender: under a row lock, once, never raising. The money paths
-call `queue` (after commit); `tasks.retry_receipts` picks up anything that did not go.
-Sends go through `deliver_html_email`, so `OUTBOUND_ENABLED` gates them.
+call `queue` (after commit); `tasks.retry_receipts` picks up anything that failed to go.
+A receipt that falls due while `OUTBOUND_ENABLED` is off is closed unsent
+(`receipt_skipped_at`) and never sent later: receipts go out as they are made, with no
+backlog when outgoing messages are switched on (Moe 2026-10-26).
 
 The copy is DRAFT until the client signs it off
 (docs/touchpoints/2026-10-25-APC-103-receipt-wording-for-client.md).
@@ -23,6 +25,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from apps.core import outbound
 from apps.notifications.email import deliver_html_email
 
 from .models import Charge
@@ -76,7 +79,10 @@ def _card(row: Charge) -> str:
 
 
 def _explanation(charge: Charge) -> str:
-    """Which sentence explains the money (the template words it)."""
+    """Which sentence explains the money (the template words it). A difference charge on a
+    trip whose price never rose above its booked total is the unpaid rest of that price
+    (a balance that was never collected), not a change. Read at send time: the trip is
+    locked once processed, so its total holds still."""
     if charge.kind == Charge.Kind.REFUND:
         method = charge.refund_method or Charge.RefundMethod.CARD
         return "refund_card" if method == Charge.RefundMethod.CARD else "refund_other"
@@ -85,6 +91,9 @@ def _explanation(charge: Charge) -> str:
         return "added"
     if any(label.startswith(("Overtime", "Wait time")) for label in labels):
         return "overtime"
+    trip = charge.reservation
+    if trip.booked_total is not None and trip.line_total <= trip.booked_total:
+        return "balance"
     return "change"
 
 
@@ -165,7 +174,14 @@ def send_receipt(charge_id: int) -> bool:
                 .filter(pk=charge_id)
                 .first()
             )
-            if charge is None or charge.receipt_sent_at is not None or not is_receipt(charge):
+            if charge is None or not is_receipt(charge):
+                return False
+            if charge.receipt_sent_at is not None or charge.receipt_skipped_at is not None:
+                return False
+            if not outbound.enabled():
+                logger.info("outbound off: receipt %s closed unsent", charge_id)
+                charge.receipt_skipped_at = timezone.now()
+                charge.save(update_fields=["receipt_skipped_at", "updated_at"])
                 return False
             charge.receipt_attempted_at = timezone.now()
             charge.save(update_fields=["receipt_attempted_at", "updated_at"])

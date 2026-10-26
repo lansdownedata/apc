@@ -536,3 +536,64 @@ def test_other_and_nameless_copy_reads_well():
 
     text = render_to_string("email/trip_receipt.txt", receipts.receipt_context(row))
     assert "Hi ," not in text and "by other" not in text
+
+
+# --- Moe's answers 2026-10-26 -------------------------------------------------------------
+
+
+def test_a_receipt_held_while_outbound_is_off_never_sends_later(
+    settings, django_capture_on_commit_callbacks
+):
+    settings.OUTBOUND_ENABLED = False
+    trip = _trip()
+    _paid(trip)
+    _overtime(trip)
+    with django_capture_on_commit_callbacks(execute=True):
+        charge = _charge(trip)
+    charge.refresh_from_db()
+    assert charge.receipt_skipped_at is not None
+
+    settings.OUTBOUND_ENABLED = True
+    Charge.objects.filter(pk=charge.pk).update(receipt_due_at=timezone.now() - timedelta(hours=1))
+    assert tasks.retry_receipts() == 0
+    assert receipts.send_receipt(charge.pk) is False
+    assert mail.outbox == []
+
+
+def test_the_staff_page_says_a_held_receipt_was_never_sent(client, agent):
+    charge = _due(_trip(), timedelta(hours=1))
+    Charge.objects.filter(pk=charge.pk).update(receipt_skipped_at=timezone.now())
+    client.force_login(agent)
+
+    body = client.get(reverse("order_receipt", args=[charge.pk])).content.decode()
+
+    assert "Not sent: outgoing messages were off" in body
+
+
+def _deposit_only(trip):
+    plan = _paid(trip)
+    plan.charges.filter(kind=Charge.Kind.BALANCE).update(
+        kind=Charge.Kind.DEPOSIT, amount=trip.line_total / 2
+    )
+    return plan
+
+
+def test_an_unpaid_balance_reads_as_the_rest_of_the_price(django_capture_on_commit_callbacks):
+    trip = _trip()
+    _deposit_only(trip)
+    with django_capture_on_commit_callbacks(execute=True):
+        charge = _charge(trip, Decimal("300.00"))
+
+    assert receipts.receipt_context(charge)["explanation"] == "balance"
+    assert "still unpaid" in mail.outbox[0].body
+    assert "changed after booking" not in mail.outbox[0].body
+
+
+def test_a_price_raised_after_booking_reads_as_a_change():
+    trip = _trip()
+    _paid(trip)
+    Reservation.objects.filter(pk=trip.pk).update(hours=Decimal("4"))
+    trip.refresh_from_db()
+    charge = _charge(trip, Decimal("200.00"))
+
+    assert receipts.receipt_context(charge)["explanation"] == "change"

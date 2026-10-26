@@ -128,10 +128,10 @@ RECEIPT_BATCH = 20
 
 
 def retry_receipts(now=None) -> int:
-    """Send the trip receipts that did not go out (APC-103): due between 10 minutes and 7
-    days ago, newest first, a small batch per run. Older ones are left, so switching
-    outgoing messages on never sends a pile of stale receipts. Nothing to do while
-    outgoing messages are off. Returns how many went out."""
+    """Send the trip receipts that failed to go out (APC-103): due between 10 minutes and 7
+    days ago, newest first, a small batch per run. Receipts closed unsent while outgoing
+    messages were off are never picked up. Nothing to do while they are off. Returns how
+    many went out."""
     from apps.core import outbound
 
     from . import receipts
@@ -143,6 +143,7 @@ def retry_receipts(now=None) -> int:
         Charge.objects.filter(
             receipt_due_at__isnull=False,
             receipt_sent_at__isnull=True,
+            receipt_skipped_at__isnull=True,
             receipt_parent__isnull=True,
             status=Charge.Status.SUCCEEDED,
             receipt_due_at__lte=now - RECEIPT_RETRY_AFTER,

@@ -212,6 +212,9 @@ class Charge(TimeStampedModel):
     # The last time a send was tried: the retry tries the never-tried first, so rows that
     # can't send (no email on the order) never crowd out the ones that can.
     receipt_attempted_at = models.DateTimeField(null=True, blank=True)
+    # Closed unsent because outgoing messages were off when it fell due: never sent later,
+    # so switching them on doesn't send a backlog (Moe 2026-10-26, like touch-points).
+    receipt_skipped_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def succeeded(self) -> bool:
