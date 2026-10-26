@@ -1,0 +1,46 @@
+{% extends "email/base_email.html" %}
+{% comment %}
+  APC-103 receipt, from mockup artboard 3. DRAFT copy until the client signs it off
+  (docs/touchpoints/2026-10-25-APC-103-receipt-wording-for-client.md). Customer-facing
+  only: never vendor pay, affiliate cost or margin. The staff "View receipt" page renders
+  this same template.
+{% endcomment %}
+{% block subject %}Your {{ company_name }} {% if is_refund %}refund{% else %}receipt{% endif %} {{ number }}{% endblock %}
+{% block preheader %}{% if is_refund %}Refund of ${{ amount }}{% else %}${{ amount }} for your trip{% endif %} · Receipt {{ number }}{% endblock %}
+{% block content %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ first_name }},</p>
+<p class="dm-muted" style="margin:0 0 24px;font-size:16px;color:#4b5563;line-height:1.6;">
+  {% if is_refund %}We've refunded you for your trip on {{ trip_date }}.{% elif paid_by_link %}Thank you for your payment for your trip on {{ trip_date }}.{% else %}We charged your card for your trip on {{ trip_date }}.{% endif %} Here are the details.
+</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td style="padding:22px 26px;">
+    <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;">{% if is_refund %}AMOUNT REFUNDED{% else %}AMOUNT CHARGED{% endif %}</div>
+    <div class="dm-ink" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:34px;font-weight:600;color:#17191D;padding:6px 0 4px;">${{ amount }}</div>
+    <div class="dm-muted" style="font-size:14px;color:#6b7280;">{% if method_label %}Paid back by {{ method_label }}{% if reference %} {{ reference }}{% endif %}{% else %}{{ cards|join:", " }}{% endif %}{% if cards or method_label %} · {% endif %}{{ when }} · Receipt {{ number }}</div>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;">
+  <tr><td>
+    <div class="dm-soft" style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:#a59e90;">FOR</div>
+    <div class="dm-ink" style="font-size:15px;font-weight:600;color:#17191D;padding-top:6px;">Trip #{{ trip_ref }} · {{ trip_kind }} · {{ trip_date_short }}</div>
+    {% if route %}<div class="dm-muted" style="font-size:14px;color:#4b5563;padding-top:3px;">{{ route }}</div>{% endif %}
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 0;font-size:15px;color:#17191D;">
+  {% for label, value in lines %}
+  <tr><td class="dm-ink" style="padding:4px 0;">{{ label }}</td><td class="dm-ink" align="right" style="padding:4px 0;white-space:nowrap;">{{ value }}</td></tr>
+  {% endfor %}
+  <tr><td class="dm-ink dm-line" style="padding:10px 0 0;border-top:1px solid #E7E3DA;font-weight:bold;">{% if is_refund %}Total refunded{% else %}Total{% endif %}</td><td class="dm-ink dm-line" align="right" style="padding:10px 0 0;border-top:1px solid #E7E3DA;font-weight:bold;">${{ amount }}</td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 0;">
+  <tr><td class="dm-muted dm-line" style="border-top:1px solid #E7E3DA;padding-top:18px;font-size:14px;color:#4b5563;line-height:1.6;">
+    {% include "email/_trip_receipt_explanation.txt" %}
+    Questions about this {% if is_refund %}refund{% else %}charge{% endif %}? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+  </td></tr>
+</table>
+{% endblock %}

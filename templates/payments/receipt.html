@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% load time_filters %}
+{% block content %}
+{% comment %}
+  APC-103: the staff view of a customer receipt. The email itself renders in a sandboxed
+  frame exactly as it was sent; the strip above says whether it went and to whom.
+{% endcomment %}
+<div class="max-w-[760px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'processing' %}?trip={{ trip.pk }}" class="text-[12.5px] text-muted hover:text-ink focus-gold rounded"><i class="ti ti-arrow-left"></i> Back to trip #{{ trip.reference }}</a>
+  <h1 class="font-display text-[22px] font-semibold text-ink mt-2">Receipt {{ charge.receipt_number }}</h1>
+  <p class="text-[12.5px] text-muted mt-1">
+    {% if charge.receipt_sent_at %}Sent {{ charge.receipt_sent_at|trip_clock:trip }} to {{ recipient }}.
+    {% elif recipient %}Not sent yet. It goes to {{ recipient }} once outgoing messages are on; the hourly payments sweep retries it for 7 days.
+    {% else %}Not sent yet: the order has no email address.{% endif %}
+    Subject: “{{ subject }}”
+  </p>
+  <iframe title="Receipt {{ charge.receipt_number }} as the customer sees it" sandbox srcdoc="{{ email_html }}"
+          class="mt-4 w-full h-[900px] rounded-xl ring-1 ring-line bg-white"></iframe>
+</div>
+{% endblock %}

@@ -503,3 +503,33 @@ def payable_sync(request, pk):
         return _json_error("QuickBooks couldn't be reached. Try again in a minute.", status=502)
     payable.refresh_from_db()
     return JsonResponse({"ok": True, "payable": payables.payable_json(payable), "reason": reason})
+
+
+@login_required
+@payment_access_required
+def order_receipt(request, pk):
+    """Staff view of a customer's receipt (APC-103): the same email the customer got, and
+    whether it went."""
+    from django.http import Http404
+    from django.template.loader import render_to_string
+
+    from . import receipts
+    from .models import Charge
+
+    charge = get_object_or_404(Charge.objects.select_related("reservation__lead__contact"), pk=pk)
+    if not receipts.is_receipt(charge):
+        raise Http404("Not a receipt")
+    context = receipts.receipt_context(charge)
+    return render(
+        request,
+        "payments/receipt.html",
+        {
+            "nav": "processing",
+            "page_title": f"Receipt {charge.receipt_number}",
+            "charge": charge,
+            "trip": charge.reservation,
+            "recipient": receipts.recipient(charge),
+            "subject": receipts.subject(context),
+            "email_html": render_to_string("email/trip_receipt.html", context),
+        },
+    )

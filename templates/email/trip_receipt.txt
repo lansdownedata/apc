@@ -1,0 +1,21 @@
+{% autoescape off %}Hi {{ first_name }},
+
+{% if is_refund %}We've refunded you for your trip on {{ trip_date }}.{% elif paid_by_link %}Thank you for your payment for your trip on {{ trip_date }}.{% else %}We charged your card for your trip on {{ trip_date }}.{% endif %} Here are the details.
+
+  {% if is_refund %}AMOUNT REFUNDED{% else %}AMOUNT CHARGED{% endif %}  ${{ amount }}
+  {% if method_label %}Paid back by {{ method_label }}{% if reference %} {{ reference }}{% endif %}{% else %}{{ cards|join:", " }}{% endif %}{% if cards or method_label %} · {% endif %}{{ when }} · Receipt {{ number }}
+
+FOR
+  Trip #{{ trip_ref }} · {{ trip_kind }} · {{ trip_date_short }}
+{% if route %}  {{ route }}
+{% endif %}
+{% for label, value in lines %}  {{ label }}: {{ value }}
+{% endfor %}  {% if is_refund %}Total refunded{% else %}Total{% endif %}: ${{ amount }}
+
+{% include "email/_trip_receipt_explanation.txt" %}
+Questions about this {% if is_refund %}refund{% else %}charge{% endif %}? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
+
+--
+{{ company_name }}
+{% if company_email %}{{ company_email }}{% endif %}{% if company_email and company_phone %} · {% endif %}{% if company_phone %}{{ company_phone }}{% endif %}
+{% endautoescape %}

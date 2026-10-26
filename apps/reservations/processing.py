@@ -610,6 +610,10 @@ def add_charge(
 
         ledger.true_up_recognition(trip)
         return None
+    # The receipt says what the charge is, and what credit covered (APC-103).
+    lines = [[label, amount]]
+    if to_collect < amount:
+        lines.append(["Credit applied", -(amount - to_collect)])
     amount = to_collect
     try:
         if collect == "link":
@@ -617,12 +621,12 @@ def add_charge(
 
             if not outbound.enabled():
                 raise ProcessingError(outbound.OFF_MESSAGE)
-            trip_money.open_trip_intent(trip, amount, note=label)
+            trip_money.open_trip_intent(trip, amount, note=label, lines=lines)
             payments.send_pay_link(trip.lead, base_url=base_url, sender_name=sender_name)
             charge = None
             kind = ProcessingEvent.Kind.PAY_LINK_SENT
         else:
-            charge = trip_money.charge_trip(trip, amount, note=label)
+            charge = trip_money.charge_trip(trip, amount, note=label, lines=lines)
             kind = ProcessingEvent.Kind.CHARGE_ADDED
     except (
         ProcessingError,

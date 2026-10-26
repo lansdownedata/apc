@@ -695,7 +695,7 @@ function processingPane(opts) {
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Refund $${amount}?`,
-        html: `${methodField()}<div class="mt-2">${reasonField("proc-refund-reason", "Why (e.g. Late pickup)")}</div>`,
+        html: `${methodField()}<div class="mt-2">${reasonField("proc-refund-reason", "Why (the customer sees this on the receipt)")}</div>`,
         variant: "danger",
         confirmText: `Refund $${amount}`,
         showCancel: true,
@@ -740,7 +740,7 @@ function processingPane(opts) {
     addCharge() {
       Alpine.store("modal").show({
         title: "Add a charge",
-        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (e.g. Stain on the seat)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.cardOnFile ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
+        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (the customer sees this, e.g. Cleaning)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.cardOnFile ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
         variant: "gold",
         confirmText: "Add and charge",
         showCancel: true,
@@ -754,7 +754,7 @@ function processingPane(opts) {
     refund() {
       Alpine.store("modal").show({
         title: "Refund this trip",
-        html: `<p class="text-[12px] text-muted mb-2">Up to $${opts.paidForTrip}, for any reason. The trip gets a credit line for it, so what it owes doesn't change.</p><div class="grid gap-2 mb-2"><input id="proc-refund-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount">${reasonField("proc-refund-why", "Why (it goes on the receipt)")}</div>${methodField()}`,
+        html: `<p class="text-[12px] text-muted mb-2">Up to $${opts.paidForTrip}, for any reason. The trip gets a credit line for it, so what it owes doesn't change.</p><div class="grid gap-2 mb-2"><input id="proc-refund-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount">${reasonField("proc-refund-why", "Why (the customer sees this on the receipt)")}</div>${methodField()}`,
         variant: "danger",
         confirmText: "Refund",
         showCancel: true,

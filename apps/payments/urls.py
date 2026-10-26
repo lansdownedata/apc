@@ -18,6 +18,7 @@ urlpatterns = [
     path(
         "<int:lead_id>/send-terms-link/", views.order_send_terms_link, name="order_send_terms_link"
     ),
+    path("receipts/<int:pk>/", views.order_receipt, name="order_receipt"),
     path("payables/<int:pk>/invoice/", views.payable_invoice, name="payable_invoice"),
     path("payables/<int:pk>/approve/", views.payable_approve, name="payable_approve"),
     path("payables/<int:pk>/paid/", views.payable_paid, name="payable_paid"),

@@ -119,7 +119,39 @@ def reconcile_payments() -> int:
     that have lapsed. Deliberately one cron rather than two, because an unregistered
     cron-job.org entry is a feature that silently never runs.
     """
-    return reconcile_open_charges() + sweep_authorization_holds()
+    return reconcile_open_charges() + sweep_authorization_holds() + retry_receipts()
+
+
+RECEIPT_RETRY_AFTER = timedelta(minutes=10)
+RECEIPT_RETRY_UNTIL = timedelta(days=7)
+RECEIPT_BATCH = 20
+
+
+def retry_receipts(now=None) -> int:
+    """Send the trip receipts that did not go out (APC-103): due between 10 minutes and 7
+    days ago, newest first, a small batch per run. Older ones are left, so switching
+    outgoing messages on never sends a pile of stale receipts. Nothing to do while
+    outgoing messages are off. Returns how many went out."""
+    from apps.core import outbound
+
+    from . import receipts
+
+    if not outbound.enabled():
+        return 0
+    now = now or timezone.now()
+    due = (
+        Charge.objects.filter(
+            receipt_due_at__isnull=False,
+            receipt_sent_at__isnull=True,
+            receipt_parent__isnull=True,
+            status=Charge.Status.SUCCEEDED,
+            receipt_due_at__lte=now - RECEIPT_RETRY_AFTER,
+            receipt_due_at__gte=now - RECEIPT_RETRY_UNTIL,
+        )
+        .order_by("-receipt_due_at")
+        .values_list("pk", flat=True)[:RECEIPT_BATCH]
+    )
+    return sum(1 for pk in list(due) if receipts.send_receipt(pk))
 
 
 def charge_due_balances() -> int:

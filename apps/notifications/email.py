@@ -29,13 +29,38 @@ def send_html_email(
     inline_images: dict[str, str] | None = None,
     internal: bool = False,
 ) -> bool:
+    """`deliver_html_email`, answering only whether it went: True when handed to the
+    backend. Never raises."""
+    return (
+        deliver_html_email(
+            to=to,
+            subject=subject,
+            template=template,
+            context=context,
+            inline_images=inline_images,
+            internal=internal,
+        )
+        is not None
+    )
+
+
+def deliver_html_email(
+    *,
+    to: str,
+    subject: str,
+    template: str,
+    context: dict,
+    inline_images: dict[str, str] | None = None,
+    internal: bool = False,
+) -> str | None:
     """Render `templates/email/{template}.txt` + `.html` and send both parts.
 
     A multipart message is deliberate: HTML-only mail is penalised by spam filters.
     `inline_images` maps a Content-ID to a filesystem path; each is embedded in the
     message and referenced from the HTML as `cid:<key>`, so it renders without a remote
-    fetch (email clients block remote images by default). Returns True when the message
-    was handed to the backend; never raises — delivery is best-effort.
+    fetch (email clients block remote images by default). Returns the provider's message id
+    ("" when the backend gives none) once the message is handed to the backend, None when
+    it was not sent; never raises — delivery is best-effort.
 
     Nothing is sent while the go-live switch is off (APC-90) unless `internal` says the
     recipient is one of our own staff.
@@ -43,9 +68,9 @@ def send_html_email(
     recipient = (to or "").strip()
     if not recipient:
         logger.warning("email %r not sent: no recipient", template)
-        return False
+        return None
     if not outbound.allowed(kind=f"email {template!r}", recipient=recipient, internal=internal):
-        return False
+        return None
 
     try:
         text_body = render_to_string(f"email/{template}.txt", context)
@@ -66,5 +91,6 @@ def send_html_email(
         message.send()
     except Exception:
         logger.exception("email %r to %s failed", template, recipient)
-        return False
-    return True
+        return None
+    status = getattr(message, "anymail_status", None)
+    return str(getattr(status, "message_id", "") or "")

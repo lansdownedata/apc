@@ -132,7 +132,23 @@ def _positive(amount) -> Decimal:
     return amount
 
 
-def charge_trip(trip, amount, *, note: str = "") -> Charge:
+def charge_lines(trip, amount, *, lines=None) -> list[list[str]]:
+    """What a trip charge is for, as the receipt lists it (APC-103): `lines` when the
+    caller knows them (an added charge), else the trip's own price lines, then what was
+    already paid — so the lines always add up to `amount`."""
+    amount = Decimal(amount).quantize(_CENTS)
+    if lines is not None:
+        return [[label, f"{Decimal(value):.2f}"] for label, value in lines]
+    out = [[line.label, f"{line.amount:.2f}"] for line in trip.price_lines()]
+    if not out:
+        out = [["Trip total", f"{trip.line_total:.2f}"]]
+    paid = (Decimal(trip.line_total) - amount).quantize(_CENTS)
+    if paid:
+        out.append(["Already paid", f"{-paid:.2f}"])
+    return out
+
+
+def charge_trip(trip, amount, *, note: str = "", lines=None) -> Charge:
     """Charge `amount` for this trip to the card on file, off-session.
 
     Under a lock on the plan, so a double-click makes one Charge; a retry that finds a
@@ -171,18 +187,18 @@ def charge_trip(trip, amount, *, note: str = "") -> Charge:
         if amount > money_for(trip).difference - in_flight:
             # A second press, or another agent, already collected it (APC-102).
             raise services.PaymentError("Already charged: the trip owes less than that now.")
-        charge = plan.charges.filter(
-            kind=Charge.Kind.TRIP,
-            reservation=trip,
-            status=Charge.Status.PENDING,
-            amount=amount,
-            stripe_client_secret="",
-        ).first() or plan.record_charge(
+        receipt_lines = charge_lines(trip, amount, lines=lines)
+        charge = reusable
+        if charge is not None and charge.receipt_lines != receipt_lines:
+            charge.receipt_lines = receipt_lines
+            charge.save(update_fields=["receipt_lines", "updated_at"])
+        charge = charge or plan.record_charge(
             kind=Charge.Kind.TRIP,
             amount=amount,
             reservation=trip,
             note=note[:255],
             idempotency_key=_trip_key(plan, trip),
+            receipt_lines=receipt_lines,
         )
     # A pay link already sent for this trip must not stay confirmable once the card is
     # charged here — that would collect the trip twice. Cancelled at Stripe, failed here;
@@ -241,7 +257,7 @@ def _cancel_intent(plan: PaymentPlan, charge: Charge) -> bool:
     return False
 
 
-def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:
+def open_trip_intent(trip, amount, *, note: str = "", lines=None) -> tuple[Charge, str]:
     """The pay-link side: an on-session intent for this trip that the customer's pay page
     confirms. Reused while open."""
     amount = _positive(amount)
@@ -257,7 +273,12 @@ def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:
         if _cancel_intent(plan, link):
             raise services.PaymentError("The customer just paid this trip by the link.")
     return services.open_intent_for(
-        plan, kind=Charge.Kind.TRIP, amount=amount, reservation=trip, note=note[:255]
+        plan,
+        kind=Charge.Kind.TRIP,
+        amount=amount,
+        reservation=trip,
+        note=note[:255],
+        receipt_lines=charge_lines(trip, amount, lines=lines),
     )
 
 
@@ -308,7 +329,9 @@ def refund_trip(
                 f"Only ${refundable:,.2f} can go back to the card. Record the rest as a"
                 " check, ACH or Zelle refund."
             )
-        refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
+        refunded = services.refund_payment(
+            plan, amount, reservation=trip, note=reason, user=user, receipt=True
+        )
     else:
         refunded = services.record_manual_refund(
             plan,
@@ -318,6 +341,7 @@ def refund_trip(
             reference=reference,
             note=reason,
             user=user,
+            receipt=True,
         )
     ledger.true_up_recognition(trip)  # a refund of earned money: the books follow the trip
     # The price may already say this money is owed back (a credit line or a lower rate

@@ -85,6 +85,11 @@ def open_intent_for(
         .first()
     )
     if existing is not None:
+        lines = extra.get("receipt_lines")
+        if lines is not None and existing.receipt_lines != lines:
+            # The same amount for different reasons: the receipt says what it is for now.
+            existing.receipt_lines = lines
+            existing.save(update_fields=["receipt_lines", "updated_at"])
         return existing, existing.stripe_client_secret
 
     customer = get_or_create_customer(plan)
@@ -240,7 +245,15 @@ def refundable_total(plan, *, trip=None) -> Decimal:
 
 
 def record_manual_refund(
-    plan, amount, *, method: str, reservation=None, reference: str = "", note: str = "", user=None
+    plan,
+    amount,
+    *,
+    method: str,
+    reservation=None,
+    reference: str = "",
+    note: str = "",
+    user=None,
+    receipt: bool = False,
 ) -> Decimal:
     """Money paid back outside Stripe — a check, ACH, Zelle (APC-102). Nothing is sent
     anywhere: the refund is recorded with how it went back and its reference, and posted to
@@ -273,6 +286,7 @@ def record_manual_refund(
             reservation=reservation,
             note=(note or "")[:255],
             idempotency_key=key,
+            receipt_due_at=timezone.now() if receipt else None,
         )
         memo = f"Refund by {Charge.RefundMethod(method).label}" + (
             f" {reference}" if reference else ""
@@ -300,6 +314,10 @@ def record_manual_refund(
                 created_by=user,
                 memo=memo,
             )
+    if receipt:
+        from . import receipts
+
+        receipts.queue(charge)
     return amount
 
 
@@ -324,7 +342,9 @@ def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decim
     return tuple(pieces)
 
 
-def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None):
+def refund_payment(
+    plan, amount, *, reservation=None, note: str = "", user=None, receipt: bool = False
+):
     """Refund `amount` to the card — this trip's charges (APC-101) or the final bill first,
     then the balance, then the deposit (APC-75). Real Stripe refunds. `reservation` and
     `note` are stamped on every REFUND row the call makes.
@@ -334,11 +354,18 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
     entry atomically so the books never desync from a recorded refund. A refund against a
     final bill reverses its overtime's Recognized Revenue first, then its balance part the
     way a balance refund does.
+
+    `receipt` (a trip refund from processing, APC-103): the first row this call creates
+    carries the customer's receipt (`receipt_due_at`), the rest point at it, and it is sent
+    once the refund is recorded. Order-console refunds pass nothing and send no receipt.
     """
+    from . import receipts
+
     # Never more than the card can still give back, net of anything paid back off-card.
     amount = min(Decimal(amount), refundable_total(plan, trip=reservation))
     remaining = amount
     total_refunded = Decimal("0.00")
+    head = None  # the first row this call created: the receipt
     for src, refundable in _refundable_sources(plan, trip=reservation):
         if remaining <= Decimal("0.00"):
             break
@@ -371,6 +398,11 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
                     overtime_gratuity=gratuity,
                     reservation=trip,
                     note=note[:255],
+                    # The card this money goes back to, for the receipt (APC-103).
+                    card_brand=src.card_brand,
+                    card_last4=src.card_last4,
+                    receipt_due_at=timezone.now() if receipt and head is None else None,
+                    receipt_parent=head if receipt else None,
                 )
                 if trip is not None and trip.revenue_status == Reservation.RevenueStatus.RECOGNIZED:
                     # Earned money going back: contra revenue, never other trips' deferred
@@ -405,9 +437,14 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
             # A concurrent request sent Stripe the same key, got this same refund back, and
             # recorded it first. It is done: count it and stop here, never go on to refund
             # the next charge as well (a double-click must not refund twice).
-            pass
+            total_refunded += portion
+            break
+        if receipt and head is None:
+            head = charge
         total_refunded += portion
         remaining -= portion
+    if head is not None:
+        receipts.queue(head)
     return total_refunded
 
 
@@ -535,6 +572,7 @@ def record_payment(
     Plan flags are left to `sync_plan_from_collected` — it already sets deposit PAID +
     balance SCHEDULED once collected covers the deposit, so a deposit needs no special case.
     """
+    receipt_now = False
     from apps.leads.models import Lead
     from apps.leads.services import book_lead
 
@@ -564,7 +602,11 @@ def record_payment(
         is_deposit = charge.kind == Charge.Kind.DEPOSIT
         is_trip = charge.kind == Charge.Kind.TRIP
         charge.status = Charge.Status.SUCCEEDED
-        charge.save(update_fields=["status", "updated_at"])
+        # A trip charge is processing's money: its receipt is due from now (APC-103).
+        if is_trip and charge.reservation_id and charge.receipt_due_at is None:
+            charge.receipt_due_at = timezone.now()
+            receipt_now = True
+        charge.save(update_fields=["status", "receipt_due_at", "updated_at"])
         ledger.post_capture(
             lead=plan.lead,
             amount=charge.amount,
@@ -604,6 +646,11 @@ def record_payment(
         from apps.tasks import services as tasks
 
         tasks.sync(plan.lead)
+    if receipt_now:
+        # Last, so the card `_store_card` just wrote is on the row the receipt reads.
+        from . import receipts
+
+        receipts.queue(charge)
     return charge
 
 

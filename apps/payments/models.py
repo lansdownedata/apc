@@ -192,10 +192,30 @@ class Charge(TimeStampedModel):
     authorized_at = models.DateTimeField(null=True, blank=True)
     capture_expires_at = models.DateTimeField(null=True, blank=True)
     captured_at = models.DateTimeField(null=True, blank=True)
+    # The customer's receipt (APC-103, spec 2026-10-25 §4.5). `receipt_due_at` is the
+    # marker: set only where processing moves money (a trip charge succeeding, a trip
+    # refund), at that moment — null means this row never sends a receipt. A refund split
+    # over several Stripe charges is one receipt: the extra rows point at the first.
+    receipt_due_at = models.DateTimeField(null=True, blank=True)
+    receipt_sent_at = models.DateTimeField(null=True, blank=True)
+    receipt_message_id = models.CharField(max_length=120, blank=True)
+    # What the charge was for, snapshotted when it was created: [[label, "0.00"], ...].
+    receipt_lines = models.JSONField(default=list, blank=True)
+    receipt_parent = models.ForeignKey(
+        "self",
+        related_name="receipt_parts",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
 
     @property
     def succeeded(self) -> bool:
         return self.status == self.Status.SUCCEEDED
+
+    @property
+    def receipt_number(self) -> str:
+        return f"R-{self.pk}"
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()} {self.amount} · {self.get_status_display()}"
