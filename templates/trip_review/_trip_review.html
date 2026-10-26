@@ -34,6 +34,7 @@
     <span class="font-mono2 text-[12px] font-semibold text-goldd bg-goldl px-2 py-0.5 rounded-lg num">#{{ trip.la_confirmation|default:trip.reference }}</span>
     <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if trip.trip_status %}chip-ok{% else %}chip-ring{% endif %}">{% if trip.trip_status %}{{ trip.get_trip_status_display }}{% else %}No status · ended by schedule{% endif %}</span>
     <span x-show="state.complete" x-cloak class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ok">Reviewed</span>
+    {% if trip.lead.is_wedding %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{% if trip.lead.fees_acknowledged_at %}Cleaning fee and overtime acknowledged {{ trip.lead.fees_acknowledged_on }}{% else %}Cleaning fee and overtime not yet acknowledged{% endif %}</span>{% endif %}
     {% if not processing %}<button type="button" @click="$dispatch('trip-review-close')" class="ml-auto w-8 h-8 grid place-items-center rounded-lg text-muted hover:text-ink hover:bg-surface2 focus-gold" aria-label="Close"><i class="ti ti-x text-[18px]"></i></button>{% endif %}
   </div>
 

@@ -108,7 +108,7 @@ VIEWS: tuple[View, ...] = (
         "Open trip issues",
         "Customer details",
         (("issues", "1"),),
-        "trip_review_list",
+        "processing",
     ),
     View("unpaid_deposits", "Unpaid deposits", "Money", _kind("deposit_received")),
     View("unpaid_balances", "Unpaid balances", "Money", _kind("final_balance_paid", due="overdue")),
@@ -116,8 +116,8 @@ VIEWS: tuple[View, ...] = (
         "overtime_awaiting",
         "Overtime awaiting decision",
         "Money",
-        (("stage", "needs_review"),),
-        "trip_review_list",
+        (),
+        "processing",
     ),
     View(
         "missing_invoices",
@@ -183,7 +183,10 @@ def _measure(now) -> tuple[dict[str, int], dict[str, int]]:
     out["missing_invoices"] = unpaid["missing"]
     out["pending_payments"] = unpaid["pending"]
 
-    out["open_issues"] = TripIssue.objects.open().count()
+    # Trips with an open issue: what the processing list's issues filter shows (APC-102).
+    out["open_issues"] = (
+        TripIssue.objects.open().values("review__reservation_id").distinct().count()
+    )
     return out, backlog
 
 

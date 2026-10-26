@@ -23,7 +23,6 @@ from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments import ledger, payables
-from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import AffiliatePayable, JournalEntry
 from apps.reservations import reviews
 from apps.reservations.factories import ReservationFactory
@@ -405,36 +404,3 @@ def test_the_vendor_page_lists_payables_with_a_flat_query_count(client, accounta
     with CaptureQueriesContext(connection) as five:
         client.get(url)
     assert len(five) == len(one)
-
-
-def test_final_billing_summarises_payables_by_affiliate(client, accountant):
-    client.force_login(accountant)
-    lead = LeadFactory(status=Lead.Status.BOOKED)
-    vendor = VendorFactory(name="Capitol Coach")
-    a, _b, _c = _entered(
-        _trip(lead, vendor=vendor), _trip(lead, vendor=vendor), _trip(lead, in_house=True)
-    )
-    PaymentPlanFactory(lead=lead, quote_total=lead.quote_total)
-    _invoiced(a)
-
-    body = client.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
-
-    assert "Affiliate payables" in body
-    assert "Capitol Coach" in body
-    assert "1 invoice missing" in body
-    assert "1 awaiting approval" in body
-    assert "No payable" in body
-
-
-def test_final_billing_keeps_a_flat_query_count(client, accountant):
-    client.force_login(accountant)
-
-    def page(n):
-        lead = LeadFactory(status=Lead.Status.BOOKED)
-        _entered(*(_trip(lead) for _ in range(n)))
-        PaymentPlanFactory(lead=lead, quote_total=lead.quote_total)
-        with CaptureQueriesContext(connection) as ctx:
-            client.get(reverse("trip_review_order", args=[lead.pk]))
-        return len(ctx)
-
-    assert page(4) == page(1)

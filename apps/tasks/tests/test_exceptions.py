@@ -255,7 +255,7 @@ def test_a_task_view_drills_into_the_queue_with_its_filters():
         views["overdue_accounting"].url
         == f"{queue}?department=accounting&due=overdue&assignee=anyone"
     )
-    assert views["open_issues"].url == f"{reverse('trip_review_list')}?issues=1"
+    assert views["open_issues"].url == f"{reverse('processing')}?issues=1"
 
 
 def test_the_queue_shows_exactly_what_an_exact_view_counted(client):

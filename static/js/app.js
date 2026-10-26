@@ -626,46 +626,6 @@ function leadPeople(addUrl) {
 }
 window.leadPeople = leadPeople;
 
-/* -------------------------------------------------- trip review (APC-59)
- * tripReviewPanel: the order-in-review page's pop-up — the reservation editor's overlay,
- * widened. It fetches one trip's review fragment and, once anything was saved, reloads
- * the page on close so the trip lines and billing figures catch up.
- * tripReviewForm: inside the fragment. Saves as you go, one group of fields per POST, so
- * touching the times never counts as deciding the customer's overtime. */
-function tripReviewPanel() {
-  return {
-    panelOpen: false,
-    loading: false,
-    error: "",
-    html: "",
-    changed: false,
-    async open(url) {
-      this.panelOpen = true;
-      this.loading = true;
-      this.error = "";
-      try {
-        const resp = await fetch(url, { headers: { Accept: "text/html" } });
-        if (!resp.ok) throw new Error();
-        this.html = await resp.text();
-        this.$nextTick(() => {
-          initFlatpickr(this.$refs.body);
-          initTomSelects(this.$refs.body);
-        });
-      } catch (e) {
-        this.error = "The review didn't load. Close this and try again.";
-      } finally {
-        this.loading = false;
-      }
-    },
-    close() {
-      if (!this.panelOpen) return;
-      this.panelOpen = false;
-      this.html = "";
-      if (this.changed) window.location.reload();
-    },
-  };
-}
-window.tripReviewPanel = tripReviewPanel;
 
 /* processingPane: the Trip Processing footer (APC-102). Every choice confirms through
  * $store.modal and posts `expected` — the difference this pane showed — so a stale pane is

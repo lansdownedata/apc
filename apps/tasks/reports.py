@@ -202,7 +202,7 @@ def complaint_rows(since, until) -> list[dict]:
             {
                 "quote_no": lead.quote_no,
                 "customer": lead.contact.name,
-                "url": _url("trip_review_order", lead.pk),
+                "url": f"{_url('processing')}?trip={trip.pk}",
                 "trip": format_local(trip.pickup_at, "M j, g:i A") if trip.pickup_at else "",
                 "covered_by": covered.provider_name if covered else "Not covered",
                 "severity": issue.get_severity_display(),

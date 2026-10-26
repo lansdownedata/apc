@@ -324,15 +324,11 @@ def test_bad_overtime_data_never_moves_more_cash_than_stripe_refunded():
 def test_a_historical_final_refund_leaves_remaining_at_zero():
     """A historical FINAL's overtime never sat on the trip, so refunding it cannot make the
     order owe it again (Moe, 2026-10-24); what is owed reads the trips, not the refund."""
-    from apps.reservations import review_queue
-
     plan = _fully_paid_with_final()
     assert services.remaining_balance(plan.lead) == Decimal("0.00")
     with _stripe_refunds("re_1"):
         services.refund_payment(plan, Decimal("160.00"))  # the whole overtime
     assert services.remaining_balance(plan.lead) == Decimal("0.00")
-    row = review_queue._load(Lead.objects.filter(pk=plan.lead_id))[0]
-    assert row.total_due == row.order_total
 
 
 def test_a_retried_final_refund_makes_one_stripe_call():

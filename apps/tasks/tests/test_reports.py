@@ -222,7 +222,7 @@ def test_new_complaints_go_out_with_the_incident_numbers():
     assert "Customer complaint 2" in body and "Vehicle 1" in body
     assert "Open now: 3 issues, 2 of them complaints" in body
     assert "Complaints in the last 30 days: 2" in body
-    assert f"https://apc.example/portal/trip-review/{lead.pk}/" in body
+    assert "https://apc.example/portal/processing/?trip=" in body
 
 
 def test_a_complaint_is_reported_once():

@@ -1,9 +1,8 @@
 """The Trip Review screens (APC-59, design signed off 2026-09-26).
 
-- the list of orders in review (`/portal/trip-review/`),
-- one order in review — its trips and the final-billing figures,
-- the trip review pop-up (a fragment) and its JSON actions: save as you go, complete,
-  log and resolve issues.
+- the trip's review fragment (shared with Trip Processing, APC-102) and its JSON
+  actions: save as you go, complete, log and resolve issues. The order-level list and
+  order pages are retired; their URLs redirect to Trip Processing.
 
 - a trip's money (APC-101): charge its difference to the card on file, refund it, or send
   the pay link — per trip, for payments staff.
@@ -20,33 +19,22 @@ from decimal import Decimal, InvalidOperation
 import stripe
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import payment_access_required
 from apps.core import outbound
 from apps.dispatch.models import Assignment
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+from apps.leads.models import Lead
 from apps.payments import payables, trip_money
 from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
 
-from . import review_queue, reviews
+from . import reviews
 from .models import Reservation, Stop, TripIssue
-
-_STAGES = [
-    (review_queue.Stage.NEEDS_REVIEW, "Needs ops review"),
-    (review_queue.Stage.BILLING, "In billing"),
-    (review_queue.Stage.CLOSED, "Closed"),
-]
-_BALANCES = [("owed", "Still owed"), ("settled", "Settled")]
-_WINDOWS = [
-    ("7", "Last 7 days"),
-    ("30", "Last 30 days"),
-    ("90", "Last 90 days"),
-    ("all", "Any time"),
-]
 
 
 class _Bad(Exception):
@@ -60,35 +48,20 @@ def _bad(message: str) -> JsonResponse:
 @login_required
 @require_GET
 def trip_review_list(request: HttpRequest) -> HttpResponse:
-    filters = review_queue.Filters.from_query(request.GET)
-    rows, counts = review_queue.list_page(filters)
-    return render(
-        request,
-        "trip_review/list.html",
-        {
-            "nav": "trip_review",
-            "page_title": "Trip Review",
-            "rows": rows,
-            "counts": counts,
-            "filters": filters,
-            "stage_options": _STAGES,
-            "balance_options": _BALANCES,
-            "window_options": _WINDOWS,
-        },
-    )
+    """Retired (APC-102): Trip Processing replaces the order-level list. Old links and
+    bookmarks land there; the open-issues drill-down keeps its filter."""
+    url = reverse("processing")
+    return redirect(f"{url}?issues=1" if request.GET.get("issues") == "1" else url)
 
 
 @login_required
 @require_GET
 def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
-    row = review_queue.order_review(lead_id)
-    if row is None:
-        raise Http404
-    return render(
-        request,
-        "trip_review/order.html",
-        {"nav": "trip_review", "page_title": row.lead.quote_no, "row": row},
-    )
+    """Retired (APC-102): an order's trips are processed one at a time; open its first."""
+    lead = get_object_or_404(Lead, pk=lead_id)
+    first = lead.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+    url = reverse("processing")
+    return redirect(f"{url}?trip={first.pk}" if first else url)
 
 
 def _reviewable(pk: int) -> Reservation:

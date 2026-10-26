@@ -5,8 +5,6 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
-from django.db import connection
-from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -68,100 +66,12 @@ def _trip_url(name, trip):
 # --- list ----------------------------------------------------------------------------
 
 
-def test_the_list_needs_a_login(client):
-    assert client.get(reverse("trip_review_list")).status_code == 302
-
-
-def test_the_list_shows_orders_in_review(staff):
-    lead, _trip = _order()
-
-    body = staff.get(reverse("trip_review_list")).content.decode()
-
-    assert lead.quote_no in body
-    assert "0 of 1 reviewed" in body
-    assert "Needs ops review" in body
-    assert "Total due" in body and "Remaining" in body
-    assert "data-tom" in body  # filters are Tom Select, never a bare <select>
-    assert "<dialog" not in body
-
-
 def test_the_sidebar_leads_to_processing_not_trip_review(staff):
     """APC-102: Trip Processing replaces the order-level Trip Review."""
     body = staff.get(reverse("dashboard")).content.decode()
 
     assert reverse("processing") in body
     assert ">Trip Review<" not in body
-
-
-def test_the_list_page_costs_the_same_for_two_orders_or_eight(staff):
-    for _ in range(2):
-        _order()
-    with CaptureQueriesContext(connection) as few:
-        staff.get(reverse("trip_review_list"))
-    for _ in range(6):
-        _order()
-    with CaptureQueriesContext(connection) as many:
-        staff.get(reverse("trip_review_list"))
-
-    assert len(many) == len(few)
-
-
-# --- order ---------------------------------------------------------------------------
-
-
-def test_the_order_page(staff):
-    lead, trip = _order()
-    cancelled = ReservationFactory(
-        lead=lead,
-        pickup_date=trip.pickup_date,
-        pickup_time=time(9, 0),
-        pickup_timezone="America/Los_Angeles",
-        trip_status=Reservation.TripStatus.CANCELLED,
-    )
-
-    body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
-
-    assert lead.quote_no in body
-    assert "Trips reviewed" in body and "0 / 1" in body
-    assert "Needs review" in body
-    assert "Cancelled · nothing to review" in body
-    assert "Money" in body and "Remaining to collect" in body
-    assert _trip_url("trip_review_trip", trip) in body
-    assert _trip_url("trip_review_trip", cancelled) not in body
-
-
-def test_a_trip_with_no_status_says_it_ended_by_schedule(staff):
-    lead, _trip = _order(status="")
-
-    body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
-
-    assert "No status · ended by schedule" in body
-
-
-def test_a_reviewed_trip_shows_its_billed_overtime(staff):
-    lead, trip = _order()
-    start = trip.pickup_at
-    review = reviews.save_review(
-        reviews.review_for(trip),
-        user=UserFactory(),
-        actual_pickup_at=start,
-        actual_dropoff_at=start + timedelta(hours=3, minutes=30),
-        billable_overtime_minutes=30,
-    )
-    reviews.complete_review(review, user=UserFactory())
-
-    body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
-
-    assert "Reviewed · 30 min OT billed ($168.00)" in body  # 30 min bills the hour
-
-
-def test_an_order_not_in_review_404s(staff):
-    lead = LeadFactory(status=Lead.Status.BOOKED)
-
-    assert staff.get(reverse("trip_review_order", args=[lead.pk])).status_code == 404
-
-
-# --- the trip review pop-up ----------------------------------------------------------
 
 
 def test_the_trip_review_shows_both_panes_in_the_trips_zone(staff):
@@ -223,7 +133,7 @@ def test_a_cancelled_trip_has_nothing_to_review(staff):
     assert staff.get(_trip_url("trip_review_trip", cancelled)).status_code == 404
 
 
-def test_the_order_page_shows_the_wedding_fee_acknowledgment(staff):
+def test_the_pane_shows_the_wedding_fee_acknowledgment(staff):
     from apps.leads.factories import ServiceTypeFactory
 
     lead, trip = _order()
@@ -231,20 +141,32 @@ def test_the_order_page_shows_the_wedding_fee_acknowledgment(staff):
         service_type=ServiceTypeFactory(name="Wedding Transportation")
     )
 
-    before = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
+    before = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
     Lead.objects.filter(pk=lead.pk).update(
         fees_acknowledged_at=timezone.now(), fees_acknowledged_version="feed1234"
     )
-    after = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
+    after = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
 
     assert "Cleaning fee and overtime not yet acknowledged" in before
     assert "Cleaning fee and overtime acknowledged" in after
 
 
-def test_a_trip_whose_order_isnt_in_review_404s(staff):
-    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
+def test_a_trip_on_an_order_that_isnt_booked_404s(staff):
+    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.QUOTED), trip_status="done")
 
     assert staff.get(_trip_url("trip_review_trip", trip)).status_code == 404
+
+
+def test_the_old_trip_review_urls_redirect_to_processing(staff):
+    lead, trip = _order()
+
+    listing = staff.get(reverse("trip_review_list"))
+    issues = staff.get(reverse("trip_review_list") + "?issues=1")
+    order = staff.get(reverse("trip_review_order", args=[lead.pk]))
+
+    assert listing.status_code == 302 and listing.url == reverse("processing")
+    assert issues.url == reverse("processing") + "?issues=1"
+    assert order.url == f"{reverse('processing')}?trip={trip.pk}"
 
 
 def test_saving_times_entered_in_the_trips_zone(staff):
@@ -556,15 +478,6 @@ def test_a_plainly_cancelled_trip_cannot_be_settled(accountant):
     trip.save(update_fields=["trip_status"])
 
     assert accountant.post(_trip_url("trip_charge", trip)).status_code == 404
-
-
-def test_the_order_page_no_longer_offers_a_final_bill(staff):
-    lead, _plan, _trip = _owing()
-
-    body = staff.get(reverse("trip_review_order", args=[lead.pk])).content.decode()
-
-    assert "Charge card" not in body and "finalBilling" not in body
-    assert "charged or refunded on its own" in body
 
 
 def test_the_popup_hands_alpine_real_json_not_a_python_repr(accountant):

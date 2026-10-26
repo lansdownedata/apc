@@ -94,7 +94,7 @@
         <div class="w-[200px]">{% include "components/searchable_select.html" with name="payables" field_id="v-payables" options=payable_stages selected=payable_stage empty_label="All open" autosubmit=1 search="off" %}</div>
       </form>
       {% for p in payables %}
-      <a href="{% url 'trip_review_order' p.assignment.reservation.lead_id %}" class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
+      <a href="{% url 'processing' %}?trip={{ p.assignment.reservation_id }}" class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-2.5 border-t border-line/60 hover:wash-gold">
         <span class="min-w-0 truncate"><span class="font-medium text-ink text-[13px] num">{{ p.assignment.reservation.lead.quote_no }}</span> <span class="text-[12px] text-muted">· {{ p.assignment.reservation.lead.contact.name }} · {{ p.assignment.reservation.pickup_date|date:"M j" }}</span></span>
         <span class="inline-flex items-center gap-1.5">{% if p.qbo_sync_state == 'error' %}{% include "billing/_sync_chip.html" with record=p %}{% endif %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full {% if p.stage == 'invoice_missing' %}chip-warn{% elif p.stage == 'awaiting_approval' %}chip-gold{% else %}chip-ring{% endif %}">{{ p.stage_label }}</span></span>
         <span class="num text-[13px] text-right w-[88px]">${% if p.invoice_amount is not None %}{{ p.invoice_amount|floatformat:2 }}{% else %}{{ p.expected_amount|floatformat:2 }}{% endif %}</span>
