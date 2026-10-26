@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
@@ -257,3 +258,141 @@ def test_query_count_is_flat():
         [t.route_short for g in groups for t in g.trips]
         [t.lead.contact.name for g in groups for t in g.trips]
     assert len(many) == len(one)
+
+
+# --- the page ------------------------------------------------------------------------------
+
+
+def _get(client, user, **query):
+    client.force_login(user)
+    return client.get(reverse("processing"), {"view": "bills", **query})
+
+
+def test_the_list_shows_each_vendor_with_its_count_total_and_oldest_trip(client, accountant):
+    vendor = VendorFactory(name="Capital Coach")
+    older = _farmed(vendor, days_ago=5, payout="1200")
+    _farmed(vendor, days_ago=2, payout="300")
+
+    html = _get(client, accountant).content.decode()
+
+    assert "Capital Coach" in html
+    assert "$1,500.00" in html
+    assert f"since {older.pickup_date:%b} {older.pickup_date.day}" in html
+    assert f"?view=bills&vendor={vendor.pk}" in html
+    assert 'Needs vendor bill <span class="num">2</span>' in html
+
+
+def test_the_tab_count_shows_on_every_view(client, accountant):
+    _farmed()
+    client.force_login(accountant)
+    html = client.get(reverse("processing")).content.decode()
+    assert 'Needs vendor bill <span class="num">1</span>' in html
+
+
+def test_picking_a_vendor_shows_its_trips_each_with_the_invoice_form(client, accountant):
+    vendor = VendorFactory(name="Capital Coach")
+    a = _farmed(vendor, customer="Dana Whitfield")
+    b = _farmed(vendor, days_ago=3)
+    Reservation.objects.filter(pk=b.pk).update(trip_type="transfer")
+
+    html = _get(client, accountant, vendor=vendor.pk).content.decode()
+
+    for trip in (a, b):
+        payable = _payable(trip)
+        assert f"#{trip.reference}" in html
+        assert reverse("payable_invoice", args=[payable.pk]) in html
+        assert f'id="bill{payable.pk}_invoice_file"' in html
+    assert 'name="invoice_file"' in html
+    assert "Dana Whitfield" in html
+    assert "Hourly, 3 hrs" in html and "Transfer" in html
+    assert "$420.00" in html
+    assert "Save invoice" in html
+
+
+def test_without_payments_access_the_form_is_read_only(client):
+    trip = _farmed()
+    vendor = trip.assignments.get().vendor
+
+    html = _get(client, UserFactory(), vendor=vendor.pk).content.decode()
+
+    assert f"#{trip.reference}" in html
+    assert "Save invoice" not in html
+    assert "needs payments access" in html
+
+
+def test_a_vendor_with_nothing_waiting_or_filtered_out_says_so(client, accountant):
+    trip = _farmed(VendorFactory(name="Capital Coach"))
+    quiet = VendorFactory(name="Quiet Cars")
+    vendor = trip.assignments.get().vendor
+
+    html = _get(client, accountant, vendor=quiet.pk).content.decode()
+    assert "Nothing waiting from Quiet Cars." in html
+    html = _get(client, accountant, vendor=vendor.pk, q="zzz").content.decode()
+    assert "None of Capital Coach's trips match these filters." in html
+    assert _get(client, accountant, vendor="x").status_code == 200
+    assert _get(client, accountant, vendor="999999").status_code == 200
+
+
+def test_the_sort_is_remembered(client, accountant):
+    _get(client, accountant, sort="vendor")
+    accountant.refresh_from_db()
+    assert accountant.preferences["processing"]["bills_sort"] == "vendor"
+
+
+def test_saving_the_invoice_takes_the_trip_off_the_view(client, accountant):
+    trip = _farmed()
+    vendor = trip.assignments.get().vendor
+    payable = _payable(trip)
+    client.force_login(accountant)
+
+    resp = client.post(
+        reverse("payable_invoice", args=[payable.pk]),
+        {"invoice_number": "INV-77", "invoice_amount": "420.00"},
+    )
+
+    assert resp.status_code == 200
+    html = _get(client, accountant, vendor=vendor.pk).content.decode()
+    assert f"#{trip.reference}" not in html
+
+
+def test_saving_needs_payments_access(client):
+    trip = _farmed()
+    client.force_login(UserFactory())
+    resp = client.post(
+        reverse("payable_invoice", args=[_payable(trip).pk]),
+        {"invoice_number": "1", "invoice_amount": "1"},
+    )
+    assert resp.status_code == 403
+
+
+def test_the_page_query_count_is_flat(client, accountant):
+    vendor = VendorFactory()
+    _farmed(vendor)
+    client.force_login(accountant)
+    url = reverse("processing")
+    query = {"view": "bills", "vendor": vendor.pk}
+    client.get(url, query)  # warm the session and settings rows
+    with CaptureQueriesContext(connection) as one:
+        client.get(url, query)
+    for days in range(2, 22):
+        _farmed(vendor, days_ago=days)
+    with CaptureQueriesContext(connection) as many:
+        client.get(url, query)
+    assert len(many) == len(one)
+
+
+def test_the_vendor_page_sends_missing_invoices_to_the_bills_view(client, accountant):
+    vendor = VendorFactory()
+    listed = _farmed(vendor)
+    unprocessed = _farmed(vendor, processed=False)
+    awaiting = _farmed(vendor)
+    payables.record_invoice(_payable(awaiting), user=accountant, number="1", amount=Decimal("1"))
+    client.force_login(accountant)
+
+    html = client.get(reverse("vendor_detail", args=[vendor.pk])).content.decode()
+
+    bills = f"{reverse('processing')}?view=bills&vendor={vendor.pk}"
+    assert html.count(bills) == 1
+    assert f'{reverse("processing")}?trip={listed.pk}"' not in html
+    assert f'{reverse("processing")}?trip={unprocessed.pk}"' in html
+    assert f'{reverse("processing")}?trip={awaiting.pk}"' in html

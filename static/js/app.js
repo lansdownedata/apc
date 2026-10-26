@@ -770,6 +770,43 @@ function processingPane(opts) {
 }
 window.processingPane = processingPane;
 
+/* One trip's vendor invoice on the Needs vendor bill view (APC-104): the trip pane's form
+   (components/payable_invoice_form.html) posting to payable_invoice. Approve and Mark paid
+   stay on the trip's pane; once saved, the row says so and the trip leaves the view. */
+function vendorBillRow(opts) {
+  return {
+    invoiceNumber: opts.number || "",
+    invoiceAmount: "",
+    saving: false,
+    saved: null,
+    async saveInvoice(form) {
+      if (!String(this.invoiceAmount).trim()) {
+        Alpine.store("toast").push({ type: "danger", title: "Enter the invoice amount." });
+        return;
+      }
+      const body = new FormData(form);
+      body.set("invoice_number", this.invoiceNumber || "");
+      body.set("invoice_amount", this.invoiceAmount);
+      this.saving = true;
+      try {
+        const resp = await fetch(opts.url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok || json.ok === false) throw new Error(json.error || "That didn't save.");
+        this.saved = json.payable;
+        Alpine.store("toast").push({ type: "success", title: "Invoice saved" });
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't save." });
+      } finally {
+        this.saving = false;
+      }
+    },
+  };
+}
+
 function tripReviewForm(opts) {
   const s = opts.state;
   return {

@@ -1,0 +1,14 @@
+{% load humanize %}
+{% comment %} Needs vendor bill, left (APC-104): one row per vendor, oldest waiting first. {% endcomment %}
+{% for g in vendor_groups %}
+<a href="?view=bills&vendor={{ g.vendor.pk }}{{ keep }}" @click="shown = {{ g.vendor.pk }}"
+   class="flex items-center gap-2.5 px-4 py-3 border-b border-line/70 transition-colors focus-gold {% if vendor.pk == g.vendor.pk %}bg-goldl/60{% else %}hover:bg-surface2{% endif %}">
+  <span class="min-w-0 flex-1">
+    <span class="block text-[13px] font-semibold text-ink truncate">{{ g.vendor.name }}</span>
+    <span class="block text-[11.5px] text-muted num">${{ g.expected_total|floatformat:2|intcomma }} expected · since {{ g.oldest|date:"M j" }}</span>
+  </span>
+  <span class="num text-[12px] font-semibold text-ink">{{ g.count }}</span>
+</a>
+{% empty %}
+<div class="px-4 py-8 text-center text-[13px] text-muted"><i class="ti ti-circle-check text-[22px] block mb-1 text-emerald-600"></i>No vendor bills waiting.</div>
+{% endfor %}

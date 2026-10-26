@@ -193,16 +193,7 @@
               </div>
             </template>
             <template x-if="payable.stage === 'invoice_missing' || payable.stage === 'awaiting_approval'">
-              <form @submit.prevent="saveInvoice($el)" enctype="multipart/form-data" class="grid grid-cols-2 gap-2">
-                <label class="block"><span class="block text-[12px] font-medium mb-1">Invoice #</span>
-                  <input type="text" name="invoice_number" class="field" x-model="invoiceNumber" {% if not can_pay %}disabled{% endif %}></label>
-                <label class="block"><span class="block text-[12px] font-medium mb-1">Invoice amount</span>
-                  <input type="text" inputmode="decimal" name="invoice_amount" class="field num" x-model="invoiceAmount" {% if not can_pay %}disabled{% endif %}></label>
-                {% if can_pay %}
-                <div class="col-span-2">{% include "components/file_upload.html" with field=invoice_form.invoice_file hint="PDF or photo of the affiliate's invoice" %}</div>
-                <div class="col-span-2 flex justify-end"><button type="submit" class="text-[12.5px] font-semibold px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="saving">Save invoice</button></div>
-                {% endif %}
-              </form>
+              {% include "components/payable_invoice_form.html" %}
             </template>
             <template x-if="payable.stage === 'approved' || payable.stage === 'paid'">
               <div>

@@ -66,6 +66,8 @@ def _sort(request, view: str) -> str:
 def processing_list(request: HttpRequest) -> HttpResponse:
     filters = processing.Filters.from_query(request.GET)
     sort = _sort(request, filters.view)
+    if filters.view == "bills":
+        return _bills(request, filters, sort)
     if filters.view == "processed":
         trips = processing.processed_trips(filters, sort)
         groups = []
@@ -101,9 +103,63 @@ def processing_list(request: HttpRequest) -> HttpResponse:
             "trips": trips,
             "selected": selected,
             "ready_count": len(trips) if filters.view == "ready" else None,
+            "bills_count": processing.vendor_bill_count(),
             "processing": True,
             **pane,
             **reservation_editor.editor_context(request, None, []),
+        },
+    )
+
+
+def _keep(request, filters) -> str:
+    """The list's filters, carried on a vendor link so picking one doesn't drop them."""
+    from urllib.parse import urlencode
+
+    pairs = {
+        "q": filters.q,
+        "from": filters.date_from.isoformat() if filters.date_from else "",
+        "to": filters.date_to.isoformat() if filters.date_to else "",
+    }
+    query = urlencode({k: v for k, v in pairs.items() if v})
+    return f"&{query}" if query else ""
+
+
+def _bills(request, filters, sort: str) -> HttpResponse:
+    """Needs vendor bill (APC-104, spec §6): vendors on the left, the picked vendor's trips
+    on the right, each with the trip pane's invoice form. Approve and Mark paid stay on the
+    trip's pane: a trip leaves this view as soon as its invoice is saved."""
+    from apps.payments.forms import PayableInvoiceForm
+    from apps.vendors.models import Vendor
+
+    groups = processing.vendor_bills(filters, sort)
+    raw = request.GET.get("vendor", "")
+    vendor = Vendor.objects.filter(pk=raw).first() if raw.isdigit() else None
+    picked = next((g for g in groups if vendor and g.vendor.pk == vendor.pk), None)
+    if picked is not None:
+        for trip in picked.trips:
+            trip.invoice_form = PayableInvoiceForm(
+                instance=trip.payable, auto_id=f"bill{trip.payable.pk}_%s"
+            )
+    return render(
+        request,
+        "processing/list.html",
+        {
+            "nav": "processing",
+            "page_title": "Trip Processing",
+            "filters": filters,
+            "sort": sort,
+            "sort_options": list(processing.SORTS[filters.view].items()),
+            "vendor_groups": groups,
+            "keep": _keep(request, filters),
+            "vendor": vendor,
+            "picked": picked,
+            # Filters on, the vendor has trips waiting: say the filters hid them, not that
+            # nothing is owed.
+            "filtered_out": bool(
+                vendor and picked is None and processing.vendor_bill_trip_ids(vendor)
+            ),
+            "bills_count": processing.vendor_bill_count(),
+            "can_pay": request.user.has_payments_access,
         },
     )
 

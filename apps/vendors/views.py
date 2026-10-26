@@ -22,6 +22,7 @@ from apps.addresses.smart_address import apply_posted_address
 from apps.billing.models import SyncState
 from apps.payments import payables
 from apps.payments.models import AffiliatePayable
+from apps.reservations import processing
 from apps.tasks import vendor_tasks
 
 from . import compliance, performance
@@ -253,6 +254,8 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "scorecard": _scorecard_for(vendor),
             "scorecard_window": dict(performance.WINDOWS)[performance.DEFAULT_WINDOW],
             "payables": payables.vendor_payables(vendor, stage),
+            # APC-104: those waiting on a bill open the Needs vendor bill view.
+            "bill_trip_ids": processing.vendor_bill_trip_ids(vendor),
             "qbo_connected": _qbo_connected(),  # APC-74: sync chips and Retry
             "payable_stage": stage,
             "payable_stages": [
