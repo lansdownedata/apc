@@ -680,3 +680,150 @@ def test_an_in_flight_final_intent_still_reconciles():
         charge=pending, kind=JournalEntry.Kind.OVERTIME_CAPTURED
     ).exists()
     assert task.status == Task.Status.DONE
+
+
+# --- branch-review fixes -------------------------------------------------------------------
+
+
+def test_a_link_the_customer_just_paid_is_recorded_and_the_card_is_not_charged():
+    """Race: the customer confirms the link between the page load and "Charge card". The
+    cancel fails at Stripe, the intent reads succeeded, that payment is recorded, and no
+    second charge is made."""
+    lead, plan, a = _owing_trip()
+    with patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")):
+        link, _ = trip_money.open_trip_intent(a, Decimal("222.00"))
+    paid = _intent("pi_link")
+    err = stripe.error.InvalidRequestError("already succeeded", "payment_intent")
+
+    with (
+        patch.object(stripe.PaymentIntent, "cancel", side_effect=err),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=paid),
+        patch.object(stripe.PaymentIntent, "create") as create,
+    ):
+        with pytest.raises(services.PaymentError, match="just paid"):
+            trip_money.charge_trip(a, Decimal("222.00"))
+
+    create.assert_not_called()
+    link.refresh_from_db()
+    assert link.status == Charge.Status.SUCCEEDED
+    assert plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED).count() == 1
+    assert trip_money.money_for(a).difference == Decimal("0.00")
+
+
+def test_a_trip_charge_on_a_recognised_trip_reaches_revenue():
+    lead, _plan, a = _owing_trip()  # recognise at the booked 1,332, then the hour is added
+    a.overtime_hours = Decimal("0")
+    a.save(update_fields=["overtime_hours"])
+    a.trip_status = "done"
+    a.save(update_fields=["trip_status"])
+    ledger.recognize_reservation(a)
+    a.overtime_hours = Decimal("1")
+    a.save(update_fields=["overtime_hours"])
+    create_p, retrieve_p = _stripe()
+
+    with create_p, retrieve_p:
+        trip_money.charge_trip(a, Decimal("222.00"))
+
+    bals = ledger.order_balances(lead)
+    a.refresh_from_db()
+    assert a.recognized_amount == Decimal("1554.00")
+    assert bals["deferred"] == Decimal("185.00")  # trip B's prepaid money only
+    assert (
+        JournalEntry.objects.filter(reservation=a, kind=JournalEntry.Kind.ADJUSTMENT).count() == 1
+    )
+
+
+def test_opening_a_link_for_a_new_amount_cancels_the_stale_one():
+    lead, plan, a = _owing_trip()
+    with patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_old")):
+        old, _ = trip_money.open_trip_intent(a, Decimal("222.00"))
+
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_new")),
+        patch.object(stripe.PaymentIntent, "cancel") as cancel,
+    ):
+        new, _ = trip_money.open_trip_intent(a, Decimal("300.00"))
+
+    cancel.assert_called_once_with("pi_old")
+    old.refresh_from_db()
+    assert old.status == Charge.Status.FAILED and new.pk != old.pk
+
+
+def test_the_balance_cron_skips_a_settled_order_quietly(caplog):
+    lead, plan, _trips = _two_trips()
+    _card(plan)
+    plan.quote_total = Decimal("1517.00")
+    plan.balance_status = PaymentPlan.BalanceStatus.SCHEDULED
+    plan.save()
+    _collect(lead, "1517.00", "full")
+    with patch.object(PaymentPlan, "balance_due_now", new=True):
+        with patch.object(stripe.PaymentIntent, "create") as create:
+            charged = payment_tasks.charge_due_balances()
+
+    create.assert_not_called()
+    assert charged == 0
+    assert "Traceback" not in caplog.text
+    plan.refresh_from_db()
+    assert plan.balance_status == PaymentPlan.BalanceStatus.PAID
+
+
+def test_an_inline_decline_and_its_webhook_raise_one_alert():
+    lead, plan, a = _owing_trip()
+    err = stripe.error.CardError("Declined.", "card", "card_declined")
+    with patch.object(stripe.PaymentIntent, "create", side_effect=err):
+        with pytest.raises(services.PaymentError):
+            trip_money.charge_trip(a, Decimal("222.00"))
+    charge = plan.charges.get(kind=Charge.Kind.TRIP)
+    charge.stripe_payment_intent_id = "pi_declined"
+    charge.save(update_fields=["stripe_payment_intent_id"])
+
+    webhooks.process_stripe_event(
+        {
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_declined",
+                    "metadata": {"lead_id": str(lead.pk), "kind": "trip"},
+                    "last_payment_error": {"message": "Declined."},
+                }
+            },
+        }
+    )
+
+    assert (
+        Notification.objects.filter(lead=lead, kind=Notification.Kind.BALANCE_FAILED).count() == 1
+    )
+
+
+def test_a_webhook_only_trip_success_keeps_its_trip():
+    lead, plan, a = _owing_trip()
+    intent = _intent("pi_ghost")
+    intent.metadata = {"lead_id": str(lead.pk), "kind": "trip", "reservation_id": str(a.pk)}
+
+    with patch.object(stripe.PaymentIntent, "retrieve", return_value=intent):
+        webhooks.process_stripe_event(
+            {
+                "type": "payment_intent.succeeded",
+                "data": {"object": {"id": "pi_ghost", "metadata": intent.metadata}},
+            }
+        )
+
+    charge = plan.charges.get(stripe_payment_intent_id="pi_ghost")
+    assert (charge.kind, charge.reservation, charge.status) == ("trip", a, "succeeded")
+
+
+def test_a_refund_before_recognition_stays_out_of_the_true_up():
+    """Refunded while still deferred → the credit line is in the total the later recognition
+    books; the refund row must not then be subtracted a second time."""
+    lead, plan, a = _owing_trip()
+    a.overtime_hours = Decimal("0")
+    a.save(update_fields=["overtime_hours"])
+    with _refunds("re_1"):
+        trip_money.refund_trip(a, Decimal("100.00"), reason="Courtesy")  # credit line 100
+    a.refresh_from_db()
+    a.trip_status = "done"
+    a.save(update_fields=["trip_status"])
+
+    ledger.recognize_reservation(a)
+    assert ledger.true_up_recognition(a) is None
+    assert ledger.order_balances(lead)["recognized"] == Decimal("1232.00")

@@ -576,3 +576,15 @@ def test_the_popup_hands_alpine_real_json_not_a_python_repr(accountant):
     assert "&quot;billed_minutes&quot;: 180" in body
     assert "&quot;difference&quot;: &quot;168.00&quot;" in body
     assert "&#x27;billed_minutes&#x27;" not in body
+
+
+def test_the_pay_link_endpoint_opens_no_intent_while_outbound_is_off(accountant, settings):
+    settings.OUTBOUND_ENABLED = False
+    _lead, plan, trip = _owing(card=False)
+
+    with patch.object(stripe.PaymentIntent, "create") as create:
+        resp = accountant.post(_trip_url("trip_pay_link", trip))
+
+    assert resp.status_code == 400 and "Outbound messaging is off" in resp.json()["error"]
+    create.assert_not_called()
+    assert not plan.charges.filter(kind=Charge.Kind.TRIP).exists()

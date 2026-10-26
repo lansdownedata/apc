@@ -30,6 +30,7 @@ class ChargeAdmin(admin.ModelAdmin):
     list_display = ("plan", "kind", "amount", "status", "attempt_no", "attempted_at")
     list_filter = ("kind", "status")
     search_fields = ("idempotency_key", "stripe_payment_intent_id")
+    raw_id_fields = ("plan", "reservation")
 
 
 class JournalLineInline(admin.TabularInline):

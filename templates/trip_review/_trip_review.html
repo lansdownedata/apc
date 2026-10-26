@@ -18,7 +18,6 @@
        waiveReason: {{ review.waive_reason|json_string }},
        payable: {{ payable_state|json_attr }},
        money: {{ money|json_attr }},
-       cardOnFile: {% if card_on_file %}true{% else %}false{% endif %},
        moneyUrls: { charge: '{% url 'trip_charge' trip.pk %}', refund: '{% url 'trip_refund' trip.pk %}', link: '{% url 'trip_pay_link' trip.pk %}' },
        payableUrls: {% if payable %}{ invoice: '{% url 'payable_invoice' payable.pk %}', approve: '{% url 'payable_approve' payable.pk %}', paid: '{% url 'payable_paid' payable.pk %}' }{% else %}null{% endif %}
      })">

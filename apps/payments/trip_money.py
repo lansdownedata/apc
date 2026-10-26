@@ -24,7 +24,7 @@ from django.db.models import Sum
 from apps.notifications.models import Notification
 from apps.reservations.models import TripExtra
 
-from . import services
+from . import ledger, services
 from .models import Charge, PaymentPlan
 
 ZERO = Decimal("0.00")
@@ -115,7 +115,7 @@ def _positive(amount) -> Decimal:
     return amount
 
 
-def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
+def charge_trip(trip, amount, *, note: str = "") -> Charge:
     """Charge `amount` for this trip to the card on file, off-session.
 
     Under a lock on the plan, so a double-click makes one Charge; a retry that finds a
@@ -147,9 +147,13 @@ def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
             idempotency_key=_trip_key(plan, trip),
         )
     # A pay link already sent for this trip must not stay confirmable once the card is
-    # charged here — that would collect the trip twice. Cancelled at Stripe, failed here.
+    # charged here — that would collect the trip twice. Cancelled at Stripe, failed here;
+    # and if the customer beat us to it, that payment stands and this charge does not.
     for link in open_links:
-        _cancel_intent(link)
+        if _cancel_intent(plan, link):
+            raise services.PaymentError(
+                "The customer just paid this trip by the link; nothing more to charge."
+            )
     try:
         intent = services._stripe().PaymentIntent.create(
             amount=services._cents(amount),
@@ -181,16 +185,22 @@ def _trip_key(plan: PaymentPlan, trip) -> str:
     return f"plan{plan.pk}-trip-res{trip.pk}-{attempt}"
 
 
-def _cancel_intent(charge: Charge) -> None:
+def _cancel_intent(plan: PaymentPlan, charge: Charge) -> bool:
+    """Cancel an open pay-link intent. Returns True when it turned out to be paid already —
+    the customer confirmed between the page load and the click — in which case that
+    payment is recorded and the caller must not collect again."""
     try:
         services._stripe().PaymentIntent.cancel(charge.stripe_payment_intent_id)
     except stripe.error.StripeError:
-        # Already confirmed or already gone: Stripe knows; the webhook or reconcile sweep
-        # tells us. Either way this row is no longer the one to reuse.
-        pass
+        intent = services._stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+        if getattr(intent, "status", "") == "succeeded":
+            services.record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.TRIP)
+            return True
+        # Otherwise it is gone or dead at Stripe already: nothing to reuse either way.
     charge.status = Charge.Status.FAILED
-    charge.failure_reason = "Superseded by a card charge"
+    charge.failure_reason = "Superseded"
     charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    return False
 
 
 def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:
@@ -198,6 +208,16 @@ def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:
     confirms. Reused while open."""
     amount = _positive(amount)
     plan = services.ensure_plan(trip.lead)
+    # A link for another amount (the price moved since) must not stay confirmable in an
+    # old tab beside the new one.
+    stale = (
+        plan.charges.filter(kind=Charge.Kind.TRIP, reservation=trip, status=Charge.Status.PENDING)
+        .exclude(stripe_client_secret="")
+        .exclude(amount=amount)
+    )
+    for link in stale:
+        if _cancel_intent(plan, link):
+            raise services.PaymentError("The customer just paid this trip by the link.")
     return services.open_intent_for(
         plan, kind=Charge.Kind.TRIP, amount=amount, reservation=trip, note=note[:255]
     )
@@ -238,6 +258,7 @@ def refund_trip(trip, amount, *, reason: str, user=None) -> Decimal:
     if amount > refundable:
         raise services.PaymentError(f"Only ${refundable:,.2f} is still refundable to the card.")
     refunded = services.refund_payment(plan, amount, reservation=trip, note=reason, user=user)
+    ledger.true_up_recognition(trip)  # a refund of earned money: the books follow the trip
     # The price may already say this money is owed back (a credit line or a lower rate
     # made `difference` negative): that part needs no second credit. Anything refunded
     # beyond it is a courtesy the price must show, so the trip owes nothing more or less.

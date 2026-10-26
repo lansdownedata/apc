@@ -141,6 +141,11 @@ def charge_due_balances() -> int:
         if plan.balance_due_now:
             try:
                 services.charge_balance(plan)
+            except services.PaymentError as exc:
+                # Nothing owed any more (trips were charged on their own, or credited):
+                # settled, not failed. The flags were just synced; nothing to retry.
+                logger.info("balance for plan %s skipped: %s", plan.pk, exc)
+                continue
             except Exception:
                 # One order's failure (an error Stripe raised that charge_balance doesn't
                 # record) must never leave every order after it uncharged.

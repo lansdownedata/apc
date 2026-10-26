@@ -24,6 +24,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.core import outbound
 from apps.dispatch.models import Assignment
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.payments import payables, trip_money
@@ -84,18 +85,10 @@ def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
     row = review_queue.order_review(lead_id)
     if row is None:
         raise Http404
-    plan = getattr(row.lead, "payment", None)
     return render(
         request,
         "trip_review/order.html",
-        {
-            "nav": "trip_review",
-            "page_title": row.lead.quote_no,
-            "row": row,
-            "plan": plan,
-            "card_on_file": bool(plan and plan.stripe_payment_method_id),
-            "can_pay": request.user.has_payments_access,
-        },
+        {"nav": "trip_review", "page_title": row.lead.quote_no, "row": row},
     )
 
 
@@ -310,7 +303,7 @@ def trip_review_issue_resolve(request: HttpRequest, pk: int) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
-# --- the final bill (APC-60) ---------------------------------------------------------
+# --- a trip's money (APC-101) ---------------------------------------------------------
 
 
 def _money_json(trip) -> dict:
@@ -333,15 +326,6 @@ def _settleable(pk: int) -> Reservation:
     return trip
 
 
-def _amount(raw, fallback: Decimal) -> Decimal:
-    if raw in (None, ""):
-        return fallback
-    try:
-        return Decimal(str(raw)).quantize(Decimal("0.01"))
-    except InvalidOperation as exc:
-        raise _Bad("Enter a valid amount.") from exc
-
-
 @login_required
 @payment_access_required
 @require_POST
@@ -350,10 +334,7 @@ def trip_charge(request: HttpRequest, pk: int) -> JsonResponse:
     trip = _settleable(pk)
     money = trip_money.money_for(trip)
     try:
-        amount = _amount(request.POST.get("amount"), money.difference)
-        charge = trip_money.charge_trip(
-            trip, amount, user=request.user, note=request.POST.get("note", "")
-        )
+        charge = trip_money.charge_trip(trip, money.difference, note=request.POST.get("note", ""))
     except (_Bad, payment_services.PaymentError) as exc:
         return _bad(str(exc))
     except stripe.error.StripeError as exc:
@@ -372,9 +353,8 @@ def trip_refund(request: HttpRequest, pk: int) -> JsonResponse:
     trip = _settleable(pk)
     money = trip_money.money_for(trip)
     try:
-        amount = _amount(request.POST.get("amount"), -money.difference)
         refunded = trip_money.refund_trip(
-            trip, amount, reason=request.POST.get("reason", ""), user=request.user
+            trip, -money.difference, reason=request.POST.get("reason", ""), user=request.user
         )
     except (_Bad, payment_services.PaymentError) as exc:
         return _bad(str(exc))
@@ -393,9 +373,10 @@ def trip_pay_link(request: HttpRequest, pk: int) -> JsonResponse:
     """Open a pay-page intent for what the trip owes and text or email the customer."""
     trip = _settleable(pk)
     money = trip_money.money_for(trip)
+    if not outbound.enabled():
+        return _bad(outbound.OFF_MESSAGE)  # before an intent is opened, not after
     try:
-        amount = _amount(request.POST.get("amount"), money.difference)
-        trip_money.open_trip_intent(trip, amount, note=request.POST.get("note", ""))
+        trip_money.open_trip_intent(trip, money.difference, note=request.POST.get("note", ""))
         channel = payment_services.send_pay_link(
             trip.lead,
             base_url=request.build_absolute_uri("/")[:-1],

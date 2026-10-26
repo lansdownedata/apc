@@ -790,6 +790,10 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
     plan = payment_services.ensure_plan(lead)
     if kind == "trip":
         link = _open_trip_link(plan)
+        if link is None:  # charged from the office between the page load and this click
+            return JsonResponse(
+                {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
+            )
         _, secret = payment_services.open_intent_for(
             plan, kind=kind, amount=amount, reservation=link.reservation
         )

@@ -15,6 +15,7 @@ from apps.core.choices import Account
 from apps.messaging import touchpoints
 from apps.messaging.models import TouchPoint
 from apps.notifications.models import Notification
+from apps.reservations.models import Reservation
 
 from . import ledger
 from .models import Charge, JournalEntry, PaymentPlan
@@ -125,6 +126,7 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     money the trips already did."""
     amount = min(Decimal(plan.balance_amount), remaining_balance(plan.lead))
     if amount <= ZERO:
+        sync_plan_from_collected(plan)  # the flags catch up: this balance is settled
         raise PaymentError("Nothing is owed on this order.")
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)
     try:
@@ -205,9 +207,9 @@ def _refundable_sources(plan, *, trip=None) -> list[tuple[Charge, Decimal]]:
     rank = {kind: i for i, kind in enumerate(_REFUND_ORDER)}
     charges = plan.charges.filter(kind__in=_REFUND_ORDER, status=Charge.Status.SUCCEEDED)
     if trip is not None:
-        charges = charges.exclude(kind=Charge.Kind.TRIP, reservation__isnull=True).exclude(
-            kind=Charge.Kind.TRIP, reservation__isnull=False
-        ) | charges.filter(kind=Charge.Kind.TRIP, reservation=trip)
+        charges = charges.exclude(kind=Charge.Kind.TRIP) | charges.filter(
+            kind=Charge.Kind.TRIP, reservation=trip
+        )
     out = []
     for src in sorted(charges, key=lambda c: (rank[c.kind], -c.pk)):
         if not src.stripe_payment_intent_id:
@@ -291,7 +293,7 @@ def refund_payment(plan, amount, *, reservation=None, note: str = "", user=None)
                     reservation=trip,
                     note=note[:255],
                 )
-                if trip is not None and trip.revenue_status == "recognized":
+                if trip is not None and trip.revenue_status == Reservation.RevenueStatus.RECOGNIZED:
                     # Earned money going back: contra revenue, never other trips' deferred
                     # cash (APC-101).
                     ledger.post_trip_refund(
@@ -511,6 +513,9 @@ def record_payment(
         _close_overtime_invoiced(plan.lead)
     elif charge.kind == Charge.Kind.TRIP and charge.reservation_id:
         _close_overtime_invoiced(plan.lead, reservation_id=charge.reservation_id)
+        # The trip's revenue follows its live total (spec 2026-10-25 §4.4): a charge on an
+        # already-recognised trip moves the new money out of deferred into revenue.
+        ledger.true_up_recognition(charge.reservation)
     plan.lead.refresh_from_db()
     # ENGAGED is here because capture is exactly the moment a confirmed order becomes a
     # booking (APC-26) — `confirm_order` routes through this same tail.
@@ -877,5 +882,22 @@ def send_pay_link(lead, *, base_url: str, sender_name: str) -> str:
     if not outbound.enabled():
         raise PaymentError(outbound.OFF_MESSAGE)
     link = lead_services.make_pay_page_url(lead, base_url=base_url)
-    body = f"Here's a secure link to pay for reservation {lead.quote_no}: {link}"
+    trip = _open_trip_for(lead)
+    what = f"trip {trip.reference}" if trip is not None else f"reservation {lead.quote_no}"
+    body = f"Here's a secure link to pay for {what}: {link}"
     return _send_to_customer(lead, body=body, sender_name=sender_name)
+
+
+def _open_trip_for(lead):
+    """The trip an open pay link is for, when there is one (APC-101)."""
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        return None
+    link = (
+        plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.PENDING)
+        .exclude(stripe_client_secret="")
+        .select_related("reservation")
+        .order_by("-pk")
+        .first()
+    )
+    return link.reservation if link is not None else None
