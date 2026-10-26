@@ -189,11 +189,7 @@ def recognize_reservation(reservation):
     from apps.reservations.models import Reservation
 
     lead = reservation.lead
-    # Overtime is left out on purpose: the FINAL charge still credits it to revenue at
-    # capture (`services._post_final`), so recognising it here too would book it twice
-    # whenever a review is decided before the trip is marked Done. Story 2 (APC-101)
-    # retires the FINAL charge and recognises the whole `line_total` with a true-up.
-    amount = reservation.line_total - reservation.overtime_amount - reservation.overtime_gratuity
+    amount = reservation.line_total
     if amount <= ZERO:
         return None  # nothing to recognize (e.g. a comped $0 trip) — post no entry
     deferred = order_balances(lead)["deferred"]
@@ -221,4 +217,85 @@ def recognize_reservation(reservation):
         reservation.save(
             update_fields=["revenue_status", "recognized_at", "recognized_amount", "updated_at"]
         )
+    return entry
+
+
+def _final_overtime_booked_for(reservation) -> Decimal:
+    """The overtime a historical FINAL charge (APC-60) already credited to revenue for this
+    trip: its overtime lines, when the order paid a final bill and the trip's overtime was
+    back-filled from it. Nothing creates FINAL charges since APC-101."""
+    from .models import Charge
+
+    paid_final = Charge.objects.filter(
+        plan__lead=reservation.lead, kind=Charge.Kind.FINAL, status=Charge.Status.SUCCEEDED
+    ).exists()
+    if not paid_final:
+        return ZERO
+    return reservation.overtime_amount + reservation.overtime_gratuity
+
+
+def effective_recognized(reservation) -> Decimal:
+    """What this trip's revenue already stands at: what was recognised, less the refunds
+    made for the trip (each posted contra-revenue when it happened), plus any overtime a
+    historical final bill booked at capture."""
+    from .models import Charge
+
+    refunded = (
+        Charge.objects.filter(
+            reservation=reservation, kind=Charge.Kind.REFUND, status=Charge.Status.SUCCEEDED
+        ).aggregate(s=Sum("amount"))["s"]
+        or ZERO
+    )
+    recognized = Decimal(reservation.recognized_amount or 0)
+    return (recognized - Decimal(refunded) + _final_overtime_booked_for(reservation)).quantize(
+        Decimal("0.01")
+    )
+
+
+def true_up_recognition(reservation):
+    """Processing's recognition step (spec 2026-10-25 §4.4): bring the trip's recognised
+    revenue to its live `line_total`.
+
+    A trip that is not earned (not Done, No Show or Late Cancel) is left alone. One not yet
+    recognised is recognised now. Otherwise the difference against `effective_recognized`
+    posts as an ADJUSTMENT: more revenue draws deferred cash first then A/R (recognition's
+    rule); less revenue gives A/R back first, then deferred (an overpayment the customer
+    can be refunded). Idempotent at the same total."""
+    from apps.reservations.models import PROCESSED_EARNED_STATUSES, Reservation
+
+    if reservation.trip_status not in PROCESSED_EARNED_STATUSES:
+        return None
+    if reservation.revenue_status != Reservation.RevenueStatus.RECOGNIZED:
+        return recognize_reservation(reservation)
+    lead = reservation.lead
+    target = reservation.line_total
+    delta = (target - effective_recognized(reservation)).quantize(Decimal("0.01"))
+    if delta == ZERO:
+        return None
+    balances = order_balances(lead)
+    if delta > ZERO:
+        from_deferred = min(delta, balances["deferred"]) if balances["deferred"] > ZERO else ZERO
+        lines = [(Account.RECOGNIZED_REVENUE, ZERO, delta)]
+        if from_deferred > ZERO:
+            lines.append((Account.CUSTOMER_DEPOSITS, from_deferred, ZERO))
+        if delta - from_deferred > ZERO:
+            lines.append((Account.ACCOUNTS_RECEIVABLE, delta - from_deferred, ZERO))
+    else:
+        back = -delta
+        to_ar = min(back, balances["ar"]) if balances["ar"] > ZERO else ZERO
+        lines = [(Account.RECOGNIZED_REVENUE, back, ZERO)]
+        if to_ar > ZERO:
+            lines.append((Account.ACCOUNTS_RECEIVABLE, ZERO, to_ar))
+        if back - to_ar > ZERO:
+            lines.append((Account.CUSTOMER_DEPOSITS, ZERO, back - to_ar))
+    entry = post_entry(
+        lead=lead,
+        reservation=reservation,
+        kind=JournalEntry.Kind.ADJUSTMENT,
+        lines=lines,
+        idempotency_key=f"recognize-res{reservation.pk}-adj-{int(target * 100)}",
+        memo=f"Revenue true-up {reservation}",
+    )
+    reservation.recognized_amount = Decimal(reservation.recognized_amount or 0) + delta
+    reservation.save(update_fields=["recognized_amount", "updated_at"])
     return entry

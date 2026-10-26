@@ -1205,6 +1205,9 @@ EARNED_TERMINAL_STATUSES = (
     Reservation.TripStatus.DONE,
     Reservation.TripStatus.NO_SHOW,
 )
+# What processing recognises (spec 2026-10-25 §4.4): a late cancel carries a charge the
+# agent settles at processing, so it is earned there — never by the nightly job.
+PROCESSED_EARNED_STATUSES = EARNED_TERMINAL_STATUSES + (Reservation.TripStatus.LATE_CANCEL,)
 
 
 class PricingConfig(models.Model):
