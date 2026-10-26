@@ -105,15 +105,78 @@ def test_a_processed_trip_leaves_ready_and_shows_in_processed():
     assert trip in processing.processed_trips(processing.Filters.from_query({"view": "processed"}))
 
 
-def test_only_booked_orders_and_the_date_range_count():
+def test_only_booked_orders_count():
     quoted = _trip(lead=LeadFactory(status=Lead.Status.QUOTED))
-    old = _trip(days_ago=60)
-    recent = _trip(days_ago=2)
+    booked = _trip(days_ago=2)
 
     ready = _ready()
-    assert recent in ready and quoted not in ready and old not in ready
-    wide = _ready(**{"from": (timezone.localdate() - timedelta(days=90)).isoformat()})
-    assert old in wide
+    assert booked in ready and quoted not in ready
+
+
+def test_ready_has_no_rolling_window_but_starts_at_the_processing_date():
+    """A trip never drops off Ready unprocessed; trips before `processing_from` (settled the
+    old way before the deploy) never show."""
+    from apps.tasks.models import TaskConfig
+
+    old = _trip(days_ago=60)
+    before = _trip(days_ago=400)
+    config = TaskConfig.load()
+    config.processing_from = timezone.localdate() - timedelta(days=90)
+    config.save()
+
+    ready = _ready()
+    assert old in ready and before not in ready
+
+
+def test_the_date_filter_narrows_ready_and_processed_defaults_to_30_days():
+    old = _trip(days_ago=60)
+    recent = _trip(days_ago=2)
+    assert _ready(**{"from": (timezone.localdate() - timedelta(days=7)).isoformat()}) == [recent]
+    for t in (old, recent):
+        TripReview.objects.create(reservation=t, processed_at=timezone.now())
+
+    shown = processing.processed_trips(processing.Filters.from_query({"view": "processed"}))
+    assert shown == [recent]
+
+
+def test_a_trip_left_at_a_live_status_after_it_ended_needs_a_status():
+    """The parallel-run gap: LA never sent Done, the trip sits at Customer in car."""
+    trip = _trip(S.CUSTOMER_IN_CAR, days_ago=1)
+
+    (found,) = [t for t in _ready() if t.pk == trip.pk]
+
+    assert found.needs_status is True
+
+
+def test_the_issues_filter_shows_trips_with_an_open_issue():
+    from apps.reservations.models import TripIssue
+
+    flagged = _trip()
+    _trip()
+    review = TripReview.objects.create(reservation=flagged)
+    TripIssue.objects.create(review=review, category="driver", severity="low", note="Late")
+
+    assert _ready(issues="1") == [flagged]
+
+
+@pytest.mark.parametrize(
+    "status,days_ago,expected",
+    [
+        (S.DONE, 1, True),
+        (S.NO_SHOW, 1, True),
+        (S.LATE_CANCEL, 1, True),
+        (S.CANCELLED_BY_AFFILIATE, 1, True),
+        (S.CANCELLED, 1, False),
+        ("", 1, True),
+        ("", -2, False),
+    ],
+)
+def test_workable(status, days_ago, expected):
+    assert processing.workable(_trip(status, days_ago=days_ago)) is expected
+
+
+def test_a_trip_on_an_order_that_is_not_booked_is_not_workable():
+    assert processing.workable(_trip(lead=LeadFactory(status=Lead.Status.LOST))) is False
 
 
 def test_search_by_customer_name_or_trip_reference():
@@ -141,17 +204,18 @@ def test_groups_are_customers_sorted_by_their_oldest_trip():
 
 def test_ready_trips_cost_a_flat_number_of_queries():
     _trip()
+    _trip(S.CANCELLED_BY_AFFILIATE, contact=ContactFactory())
 
     def touch():
         for g in processing.group_by_customer(_ready()):
-            g.pays
+            _ = g.pays
             for t in g.trips:
                 t.line_total, t.reference, list(t.stops.all()), t.active_list
 
     touch()  # the first run creates the TaskConfig singleton; measure after
     with CaptureQueriesContext(connection) as one:
         touch()
-    for _ in range(30):
+    for _ in range(50):
         _trip(contact=ContactFactory())
     with CaptureQueriesContext(connection) as many:
         touch()

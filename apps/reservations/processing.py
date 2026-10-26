@@ -23,7 +23,10 @@ S = Reservation.TripStatus
 SETTLE_STATUSES = (S.DONE, S.LATE_CANCEL, S.NO_SHOW)
 # Never processed: nothing ran and nothing is owed.
 NEVER = (S.CANCELLED, S.COVID_CANCELLATION)
-DEFAULT_DAYS = 30
+# A status LA or dispatch sets when the trip is over. Anything else on a trip whose
+# scheduled end has passed means the status never arrived: the trip "needs a status".
+TERMINAL = (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE, *NEVER)
+DEFAULT_DAYS = 30  # the Processed view's window
 
 
 @dataclass
@@ -33,15 +36,24 @@ class Filters:
     date_from: date | None = None
     date_to: date | None = None
 
+    issues: bool = False  # only trips with an open issue (the exceptions drill-down)
+
     @classmethod
     def from_query(cls, query) -> Filters:
-        today = timezone.localdate()
+        """Ready has no rolling window — it lists every unprocessed finished trip from
+        `TaskConfig.processing_from` — so a trip never drops off unprocessed. Processed
+        defaults to the last 30 days of pickups."""
         view = query.get("view") or "ready"
+        view = view if view in ("ready", "processed") else "ready"
+        date_from, date_to = _day(query.get("from")), _day(query.get("to"))
+        if view == "processed" and date_from is None:
+            date_from = timezone.localdate() - timedelta(days=DEFAULT_DAYS)
         return cls(
-            view=view if view in ("ready", "processed") else "ready",
+            view=view,
             q=(query.get("q") or "").strip(),
-            date_from=_day(query.get("from")) or today - timedelta(days=DEFAULT_DAYS),
-            date_to=_day(query.get("to")) or today,
+            date_from=date_from,
+            date_to=date_to,
+            issues=query.get("issues") == "1",
         )
 
 
@@ -73,11 +85,10 @@ class CustomerGroup:
 
 
 def _base(filters: Filters):
+    from apps.tasks.models import TaskConfig
+
     qs = (
-        Reservation.objects.filter(
-            lead__status="booked",
-            pickup_date__range=(filters.date_from, filters.date_to),
-        )
+        Reservation.objects.filter(lead__status="booked", pickup_date__isnull=False)
         .exclude(trip_status__in=NEVER)
         .select_related("lead__contact", "lead__payment", "vehicle", "review")
         .prefetch_related(
@@ -85,6 +96,17 @@ def _base(filters: Filters):
             coverage_prefetch(),
         )
     )
+    floor = TaskConfig.load().processing_from
+    if floor is not None:
+        qs = qs.filter(pickup_date__gte=floor)
+    if filters.date_from is not None:
+        qs = qs.filter(pickup_date__gte=filters.date_from)
+    if filters.date_to is not None:
+        qs = qs.filter(pickup_date__lte=filters.date_to)
+    if filters.issues:
+        qs = qs.filter(
+            review__issues__isnull=False, review__issues__resolved_at__isnull=True
+        ).distinct()
     if filters.q:
         match = Q(lead__contact__name__icontains=filters.q)
         pk = _reference_pk(filters.q)
@@ -125,16 +147,35 @@ def ready_trips(filters: Filters) -> list[Reservation]:
         Q(review__isnull=True) | Q(review__processed_at__isnull=True)
     )
     for trip in unprocessed:
-        trip.needs_status = not trip.trip_status
+        trip.needs_status = trip.trip_status not in TERMINAL
         if trip.trip_status in SETTLE_STATUSES:
             out.append(trip)
         elif trip.trip_status == S.CANCELLED_BY_AFFILIATE:
             money = trip_money.money_for(trip)
             if money.allocated != 0 or money.line_total != 0:
                 out.append(trip)
-        elif not trip.trip_status and post_trip.has_ended(trip, now=now, grace=grace):
+        elif trip.needs_status and post_trip.has_ended(trip, now=now, grace=grace):
             out.append(trip)
     return _order(out)
+
+
+def workable(trip) -> bool:
+    """Whether the processing pane — and every endpoint it posts to — may work this trip:
+    a booked order, not a plain cancellation, and either settled by status or over by the
+    clock (spec §4.1). No-shows and late cancels are workable; they carry the charge."""
+    from apps.tasks import post_trip
+    from apps.tasks.models import TaskConfig
+
+    if trip.lead.status != "booked" or trip.trip_status in NEVER:
+        return False
+    if trip.trip_status in (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE):
+        return True
+    grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
+    return post_trip.has_ended(trip, now=timezone.now(), grace=grace)
+
+
+def needs_status(trip) -> bool:
+    return trip.trip_status not in TERMINAL
 
 
 def processed_trips(filters: Filters) -> list[Reservation]:
@@ -170,4 +211,6 @@ __all__ = [
     "processed_trips",
     "ready_trips",
     "review_of",
+    "needs_status",
+    "workable",
 ]

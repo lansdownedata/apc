@@ -57,6 +57,14 @@ class TaskConfig(models.Model):
         help_text="How long after a trip's scheduled end, with no Done status, before its "
         "post-trip review opens anyway.",
     )
+    # Trip Processing (APC-102) lists unprocessed finished trips from this pickup date on.
+    # Set to the deploy day by the migration, so years of trips settled the old way never
+    # flood the Ready list.
+    processing_from = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Trip Processing lists finished trips picked up on or after this date.",
+    )
     # The overtime rule (client, 2026-10-19; APC-91). All settings so a change is an edit
     # on the Tasks settings screen, not a deploy. Suggestion only — a person always decides
     # what's billable. The grace itself is never billed; past it, each hour started bills.
