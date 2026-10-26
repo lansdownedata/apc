@@ -136,7 +136,7 @@ def receipt_context(charge: Charge) -> dict:
         "lines": [(label, _money(Decimal(value))) for label, value in lines],
         "explanation": _explanation(charge),
         "added_for": charge.note,
-        "first_name": (contact.name or lead.contact.name or "").split(" ")[0],
+        "first_name": (contact.name or lead.contact.name or "").strip().split(" ")[0],
         "company_name": settings.COMPANY_NAME,
         "company_phone": settings.COMPANY_PHONE,
         "company_email": settings.COMPANY_EMAIL,
@@ -167,6 +167,8 @@ def send_receipt(charge_id: int) -> bool:
             )
             if charge is None or charge.receipt_sent_at is not None or not is_receipt(charge):
                 return False
+            charge.receipt_attempted_at = timezone.now()
+            charge.save(update_fields=["receipt_attempted_at", "updated_at"])
             to = recipient(charge)
             if not to:
                 logger.warning("receipt %s not sent: no email on the order", charge_id)
@@ -183,4 +185,5 @@ def send_receipt(charge_id: int) -> bool:
             return True
     except Exception:  # noqa: BLE001 - a receipt must never break the money path
         logger.exception("receipt for charge %s failed", charge_id)
+        Charge.objects.filter(pk=charge_id).update(receipt_attempted_at=timezone.now())
         return False

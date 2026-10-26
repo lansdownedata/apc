@@ -1,9 +1,9 @@
-{% autoescape off %}Hi {{ first_name }},
+{% autoescape off %}Hi {{ first_name|default:"there" }},
 
 {% if is_refund %}We've refunded you for your trip on {{ trip_date }}.{% elif paid_by_link %}Thank you for your payment for your trip on {{ trip_date }}.{% else %}We charged your card for your trip on {{ trip_date }}.{% endif %} Here are the details.
 
   {% if is_refund %}AMOUNT REFUNDED{% else %}AMOUNT CHARGED{% endif %}  ${{ amount }}
-  {% if method_label %}Paid back by {{ method_label }}{% if reference %} {{ reference }}{% endif %}{% else %}{{ cards|join:", " }}{% endif %}{% if cards or method_label %} · {% endif %}{{ when }} · Receipt {{ number }}
+  {% if method_label %}Paid back {% if method_label == "Other" %}directly{% else %}by {{ method_label }}{% endif %}{% if reference %} {{ reference }}{% endif %}{% else %}{{ cards|join:", " }}{% endif %}{% if cards or method_label %} · {% endif %}{{ when }} · Receipt {{ number }}
 
 FOR
   Trip #{{ trip_ref }} · {{ trip_kind }} · {{ trip_date_short }}

@@ -189,9 +189,11 @@ def charge_trip(trip, amount, *, note: str = "", lines=None) -> Charge:
             raise services.PaymentError("Already charged: the trip owes less than that now.")
         receipt_lines = charge_lines(trip, amount, lines=lines)
         charge = reusable
-        if charge is not None and charge.receipt_lines != receipt_lines:
-            charge.receipt_lines = receipt_lines
-            charge.save(update_fields=["receipt_lines", "updated_at"])
+        if charge is not None and (
+            charge.receipt_lines != receipt_lines or charge.note != note[:255]
+        ):
+            charge.receipt_lines, charge.note = receipt_lines, note[:255]
+            charge.save(update_fields=["receipt_lines", "note", "updated_at"])
         charge = charge or plan.record_charge(
             kind=Charge.Kind.TRIP,
             amount=amount,
@@ -329,9 +331,13 @@ def refund_trip(
                 f"Only ${refundable:,.2f} can go back to the card. Record the rest as a"
                 " check, ACH or Zelle refund."
             )
-        refunded = services.refund_payment(
-            plan, amount, reservation=trip, note=reason, user=user, receipt=True
+        mine: list[Charge] = []
+        services.refund_payment(
+            plan, amount, reservation=trip, note=reason, user=user, receipt=True, recorded=mine
         )
+        # Only what this call recorded: the loser of a double-click refunds (and credits)
+        # nothing a second time.
+        refunded = sum((Decimal(row.amount) for row in mine), ZERO)
     else:
         refunded = services.record_manual_refund(
             plan,

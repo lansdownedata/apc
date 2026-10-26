@@ -206,8 +206,12 @@ class Charge(TimeStampedModel):
         related_name="receipt_parts",
         null=True,
         blank=True,
-        on_delete=models.PROTECT,
+        # Parts carry no `receipt_due_at`, so losing their head never makes them receipts.
+        on_delete=models.SET_NULL,
     )
+    # The last time a send was tried: the retry tries the never-tried first, so rows that
+    # can't send (no email on the order) never crowd out the ones that can.
+    receipt_attempted_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def succeeded(self) -> bool:

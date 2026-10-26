@@ -86,10 +86,11 @@ def open_intent_for(
     )
     if existing is not None:
         lines = extra.get("receipt_lines")
-        if lines is not None and existing.receipt_lines != lines:
+        note = extra.get("note", existing.note)
+        if lines is not None and (existing.receipt_lines != lines or existing.note != note):
             # The same amount for different reasons: the receipt says what it is for now.
-            existing.receipt_lines = lines
-            existing.save(update_fields=["receipt_lines", "updated_at"])
+            existing.receipt_lines, existing.note = lines, note
+            existing.save(update_fields=["receipt_lines", "note", "updated_at"])
         return existing, existing.stripe_client_secret
 
     customer = get_or_create_customer(plan)
@@ -343,7 +344,14 @@ def _final_split(src: Charge, already: Decimal, portion: Decimal) -> tuple[Decim
 
 
 def refund_payment(
-    plan, amount, *, reservation=None, note: str = "", user=None, receipt: bool = False
+    plan,
+    amount,
+    *,
+    reservation=None,
+    note: str = "",
+    user=None,
+    receipt: bool = False,
+    recorded: list | None = None,
 ):
     """Refund `amount` to the card — this trip's charges (APC-101) or the final bill first,
     then the balance, then the deposit (APC-75). Real Stripe refunds. `reservation` and
@@ -358,14 +366,35 @@ def refund_payment(
     `receipt` (a trip refund from processing, APC-103): the first row this call creates
     carries the customer's receipt (`receipt_due_at`), the rest point at it, and it is sent
     once the refund is recorded. Order-console refunds pass nothing and send no receipt.
+    `recorded`, when given, collects the rows this call itself created — a concurrent
+    duplicate is counted in the return value but recorded by the other request.
     """
     from . import receipts
 
     # Never more than the card can still give back, net of anything paid back off-card.
     amount = min(Decimal(amount), refundable_total(plan, trip=reservation))
     remaining = amount
+    heads: list[Charge] = []  # the first row this call creates: the receipt
+    try:
+        total_refunded = _refund_sources(
+            plan,
+            remaining,
+            reservation=reservation,
+            note=note,
+            receipt=receipt,
+            heads=heads,
+            recorded=recorded if recorded is not None else [],
+        )
+    finally:
+        # Even when a later Stripe call fails, the part that did move gets its receipt.
+        if heads:
+            receipts.queue(heads[0])
+    return total_refunded
+
+
+def _refund_sources(plan, remaining, *, reservation, note, receipt, heads, recorded) -> Decimal:
     total_refunded = Decimal("0.00")
-    head = None  # the first row this call created: the receipt
+    head = None
     for src, refundable in _refundable_sources(plan, trip=reservation):
         if remaining <= Decimal("0.00"):
             break
@@ -439,12 +468,12 @@ def refund_payment(
             # the next charge as well (a double-click must not refund twice).
             total_refunded += portion
             break
+        recorded.append(charge)
         if receipt and head is None:
             head = charge
+            heads.append(charge)
         total_refunded += portion
         remaining -= portion
-    if head is not None:
-        receipts.queue(head)
     return total_refunded
 
 

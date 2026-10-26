@@ -148,7 +148,8 @@ def retry_receipts(now=None) -> int:
             receipt_due_at__lte=now - RECEIPT_RETRY_AFTER,
             receipt_due_at__gte=now - RECEIPT_RETRY_UNTIL,
         )
-        .order_by("-receipt_due_at")
+        # Never-tried first, then the longest since a try; newest money first among equals.
+        .order_by(F("receipt_attempted_at").asc(nulls_first=True), "-receipt_due_at")
         .values_list("pk", flat=True)[:RECEIPT_BATCH]
     )
     return sum(1 for pk in list(due) if receipts.send_receipt(pk))

@@ -14,7 +14,7 @@
     {% else %}Not sent yet: the order has no email address.{% endif %}
     Subject: “{{ subject }}”
   </p>
-  <iframe title="Receipt {{ charge.receipt_number }} as the customer sees it" sandbox srcdoc="{{ email_html }}"
+  <iframe title="Receipt {{ charge.receipt_number }} as the customer sees it" sandbox srcdoc="{{ email_html|force_escape }}"
           class="mt-4 w-full h-[900px] rounded-xl ring-1 ring-line bg-white"></iframe>
 </div>
 {% endblock %}

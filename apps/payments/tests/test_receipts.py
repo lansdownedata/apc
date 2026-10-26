@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import stripe
 from django.core import mail
-from django.db import IntegrityError
 from django.urls import reverse
 from django.utils import timezone
 
@@ -415,19 +414,125 @@ def test_processing_links_each_receipt(client, agent):
     assert reverse("order_receipt", args=[charge.pk]) in body
 
 
-def test_receipt_rows_carry_no_integrity_surprise():
-    """Parts protect their parent: a receipt's parent can't vanish under its parts."""
+def test_a_part_never_becomes_a_receipt_of_its_own():
+    """Parts carry no marker: even if the head row went away they would send nothing."""
     trip = _trip()
     plan = _paid(trip)
     parent = plan.charges.create(
-        kind=Charge.Kind.REFUND, amount=1, status="succeeded", idempotency_key="p"
+        kind=Charge.Kind.REFUND,
+        amount=1,
+        status="succeeded",
+        idempotency_key="p",
+        reservation=trip,
+        receipt_due_at=timezone.now(),
     )
-    plan.charges.create(
+    part = plan.charges.create(
         kind=Charge.Kind.REFUND,
         amount=1,
         status="succeeded",
         idempotency_key="c",
+        reservation=trip,
         receipt_parent=parent,
     )
-    with pytest.raises(IntegrityError):
-        Charge.objects.filter(pk=parent.pk).delete()
+    Charge.objects.filter(pk=parent.pk).delete()
+
+    part.refresh_from_db()
+    assert part.receipt_parent_id is None and not receipts.is_receipt(part)
+
+
+# --- branch-review fixes -------------------------------------------------------------------
+
+
+def test_the_staff_page_keeps_the_email_inside_its_frame(client, agent):
+    charge = _due(_trip(), timedelta(hours=1))
+    client.force_login(agent)
+
+    body = client.get(reverse("order_receipt", args=[charge.pk])).content.decode()
+
+    assert 'srcdoc="&lt;' in body.replace("\n", "") or 'srcdoc="&lt;' in body
+    assert '<meta charset="utf-8">' not in body.split("srcdoc=")[1]
+
+
+def test_rows_that_cannot_send_do_not_starve_the_retry():
+    for _ in range(tasks.RECEIPT_BATCH + 1):
+        row = _due(_trip(), timedelta(hours=1))
+        contact = row.reservation.lead.contact
+        contact.email = ""
+        contact.save(update_fields=["email"])
+    sendable = _due(_trip(), timedelta(hours=3))  # older than every blocked row
+
+    tasks.retry_receipts()
+    tasks.retry_receipts()
+
+    sendable.refresh_from_db()
+    assert sendable.receipt_sent_at is not None
+
+
+def test_a_reused_charge_row_says_what_it_is_for_now():
+    trip = _trip()
+    plan = _paid(trip)
+    _overtime(trip)
+    with (
+        patch.object(stripe.PaymentIntent, "create", return_value=_intent("pi_link")),
+        patch.object(stripe.Customer, "create", return_value=MagicMock(id="cus_1")),
+    ):
+        trip_money.open_trip_intent(
+            trip, Decimal("200"), note="Cleaning", lines=[["Cleaning", 200]]
+        )
+        trip_money.open_trip_intent(trip, Decimal("200"))
+
+    row = plan.charges.get(kind=Charge.Kind.TRIP)
+    assert row.note == "" and receipts.receipt_context(row)["explanation"] == "overtime"
+
+
+def test_a_refund_cut_short_still_queues_the_part_that_moved():
+    trip = _trip()
+    plan = _paid(trip)
+    _overtime(trip)
+    _charge(trip)
+    with (
+        patch.object(
+            stripe.Refund,
+            "create",
+            side_effect=[MagicMock(id="re_1"), stripe.error.APIError("down")],
+        ),
+        patch.object(receipts, "queue") as queue,
+    ):
+        with pytest.raises(stripe.error.APIError):
+            trip_money.refund_trip(trip, Decimal("300"), reason="Late pickup")
+
+    queue.assert_called_once()
+    assert queue.call_args.args[0] == plan.charges.get(kind=Charge.Kind.REFUND)
+
+
+def test_the_losing_double_click_refunds_and_credits_nothing():
+    trip = _trip()
+    plan = _paid(trip)
+    _overtime(trip)
+    _charge(trip)
+    plan.charges.create(
+        kind=Charge.Kind.REFUND,
+        amount=Decimal("200"),
+        status=Charge.Status.SUCCEEDED,
+        idempotency_key="refund-re_dup",
+    )
+    with patch.object(stripe.Refund, "create", return_value=MagicMock(id="re_dup")):
+        refunded = trip_money.refund_trip(trip, Decimal("100"), reason="Twice")
+
+    assert refunded == Decimal("0.00")
+    assert not trip.extras.filter(kind="credit").exists()
+
+
+def test_other_and_nameless_copy_reads_well():
+    trip = _trip()
+    _paid(trip)
+    contact = trip.lead.contact
+    contact.name = ""
+    contact.save(update_fields=["name"])
+    trip_money.refund_trip(trip, Decimal("40"), reason="Goodwill", method="other")
+    row = Charge.objects.get(kind=Charge.Kind.REFUND)
+
+    from django.template.loader import render_to_string
+
+    text = render_to_string("email/trip_receipt.txt", receipts.receipt_context(row))
+    assert "Hi ," not in text and "by other" not in text

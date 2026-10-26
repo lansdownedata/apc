@@ -239,6 +239,8 @@ def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
         return _bad(str(exc))
     except stripe.error.StripeError as exc:
         return _bad(getattr(exc, "user_message", None) or "Stripe refused it.", status=502)
+    if not refunded:
+        return _bad("That refund was just made.", status=409)
     ProcessingEvent.objects.create(
         review=review,
         kind=ProcessingEvent.Kind.REFUNDED,
