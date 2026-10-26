@@ -321,6 +321,10 @@ def _delete_members(doomed: list[Reservation]) -> None:
         raise DraftError(
             "A trip with charges or refunds on it can't be removed. Cancel it instead."
         )
+    from . import processing
+
+    if processing.any_processed(doomed):
+        raise DraftError("A processed trip can't be removed.")
 
     dispatch_services.release_trips(doomed, note="Trip removed from group")
     Reservation.objects.filter(pk__in=[r.pk for r in doomed]).delete()

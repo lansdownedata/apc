@@ -31,7 +31,6 @@ from apps.payments import payables, trip_money
 from apps.payments import services as payment_services
 from apps.payments.forms import PayableInvoiceForm
 from apps.payments.models import AffiliatePayable
-from apps.tasks.models import Task
 
 from . import review_queue, reviews
 from .models import Reservation, Stop, TripIssue
@@ -93,12 +92,15 @@ def trip_review_order(request: HttpRequest, lead_id: int) -> HttpResponse:
 
 
 def _reviewable(pk: int) -> Reservation:
-    """A live trip on an order that has entered review; anything else has nothing to do."""
+    """A trip the processing pane may work (APC-102, `processing.workable`): a booked order,
+    not a plain cancellation, settled by status or over by the clock. No-shows and late
+    cancels included — they carry the charge."""
+    from . import processing
+
     trip = get_object_or_404(
         Reservation.objects.select_related("lead__contact", "service_type", "vehicle"), pk=pk
     )
-    in_review = Task.objects.filter(lead_id=trip.lead_id, kind="ops_review").exists()
-    if trip.is_cancelled or not in_review:
+    if not processing.workable(trip):
         raise Http404
     return trip
 
@@ -316,14 +318,18 @@ def _money_json(trip) -> dict:
 
 
 def _settleable(pk: int) -> Reservation:
-    """A trip whose money can be settled: on an order that entered review, any status but a
-    plain cancellation — a no-show or a late cancel is exactly what gets charged or refunded."""
-    trip = get_object_or_404(Reservation.objects.select_related("lead__contact"), pk=pk)
-    in_review = Task.objects.filter(lead_id=trip.lead_id, kind="ops_review").exists()
-    plain = (Reservation.TripStatus.CANCELLED, Reservation.TripStatus.COVID_CANCELLATION)
-    if trip.trip_status in plain or not in_review:
-        raise Http404
+    """A workable trip that isn't processed: a processed trip's money moves only from
+    Processing (Add a charge, Refund) or after an unlock."""
+    from . import processing
+
+    trip = _reviewable(pk)
+    if processing.lock_message(trip):
+        raise _Locked
     return trip
+
+
+class _Locked(Exception):
+    pass
 
 
 @login_required
@@ -331,7 +337,10 @@ def _settleable(pk: int) -> Reservation:
 @require_POST
 def trip_charge(request: HttpRequest, pk: int) -> JsonResponse:
     """Charge what the trip still owes (or `amount`) to the card on file."""
-    trip = _settleable(pk)
+    try:
+        trip = _settleable(pk)
+    except _Locked:
+        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
     money = trip_money.money_for(trip)
     try:
         charge = trip_money.charge_trip(trip, money.difference, note=request.POST.get("note", ""))
@@ -350,7 +359,10 @@ def trip_charge(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 def trip_refund(request: HttpRequest, pk: int) -> JsonResponse:
     """Refund the trip's overpayment (or `amount`), with a reason."""
-    trip = _settleable(pk)
+    try:
+        trip = _settleable(pk)
+    except _Locked:
+        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
     money = trip_money.money_for(trip)
     try:
         refunded = trip_money.refund_trip(
@@ -371,7 +383,10 @@ def trip_refund(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 def trip_pay_link(request: HttpRequest, pk: int) -> JsonResponse:
     """Open a pay-page intent for what the trip owes and text or email the customer."""
-    trip = _settleable(pk)
+    try:
+        trip = _settleable(pk)
+    except _Locked:
+        return _bad("This trip is processed. Unlock it, or use Add a charge or Refund.")
     money = trip_money.money_for(trip)
     if not outbound.enabled():
         return _bad(outbound.OFF_MESSAGE)  # before an intent is opened, not after

@@ -1088,6 +1088,11 @@ def test_the_trip_review_pane_shows_the_quickbooks_state_and_retry(cashier):
     Task.objects.create(
         lead=trip.lead, reservation=trip, kind="ops_review", opens_at=trip.created_at
     )  # the order is in review
+    # The pane works a finished trip on a booked order (APC-102, processing.workable).
+    trip.lead.status = "booked"
+    trip.lead.save(update_fields=["status"])
+    trip.trip_status = "done"
+    trip.save(update_fields=["trip_status"])
 
     html = cashier.get(
         reverse("trip_review_trip", args=[payable.assignment.reservation_id])

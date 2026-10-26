@@ -281,6 +281,19 @@ def _save_review(
     """`save_review` inside one transaction: the review and the trip's Overtime line are
     two records of one fact and must never be left disagreeing."""
     trip = review.reservation
+    touching_money = (
+        actual_pickup_at is not _UNSET
+        or actual_dropoff_at is not _UNSET
+        or billable_overtime_minutes is not None
+        or overtime_waived is not None
+    )
+    if (
+        touching_money
+        and TripReview.objects.filter(pk=review.pk, processed_at__isnull=False).exists()
+    ):
+        # Processed (APC-102): the times and the overtime are what was settled. The rating
+        # and issues stay open — they aren't money.
+        raise ReviewError("This trip is processed. Unlock it to change its times or overtime.")
     if actual_pickup_at is not _UNSET:
         review.actual_pickup_at = actual_pickup_at
     if actual_dropoff_at is not _UNSET:

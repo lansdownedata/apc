@@ -551,3 +551,94 @@ def test_add_charge_removes_the_line_when_the_card_declines(agent):
 
     trip.refresh_from_db()
     assert not trip.extras.exists() and trip.extras_total == Decimal("0.00")
+
+
+# --- Task 4: the lock holds -----------------------------------------------------------------
+import json  # noqa: E402
+
+from django.urls import reverse  # noqa: E402
+
+from apps.reservations.editor import reservation_draft  # noqa: E402
+
+
+def _processed(agent):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=agent, expected="0.00")
+    return trip
+
+
+def test_the_editor_refuses_a_processed_trip(client, agent):
+    trip = _processed(agent)
+    client.force_login(agent)
+    draft = {**reservation_draft(trip), "lead_id": trip.lead_id, "rate": 999}
+
+    resp = client.post(
+        reverse("reservation_save"), json.dumps(draft), content_type="application/json"
+    )
+
+    assert resp.status_code == 400
+    assert "Unlock it from Trip Processing" in resp.content.decode()
+    trip.refresh_from_db()
+    assert trip.rate == Decimal("200.00")
+
+
+def test_apply_to_group_refuses_when_a_sibling_is_processed(client, agent):
+    from apps.reservations import groups
+
+    trip = _trip()
+    _paid(trip)
+    groups.set_group_size(trip, 2)
+    sibling = trip.lead.reservations.exclude(pk=trip.pk).get()
+    TripReview.objects.update_or_create(
+        reservation=sibling, defaults={"processed_at": timezone.now()}
+    )
+    client.force_login(agent)
+    trip.refresh_from_db()
+    draft = {**reservation_draft(trip), "lead_id": trip.lead_id, "applyToGroup": True}
+
+    resp = client.post(
+        reverse("reservation_save"), json.dumps(draft), content_type="application/json"
+    )
+
+    assert resp.status_code == 400 and "processed" in resp.content.decode()
+
+
+def test_a_processed_trip_cannot_be_deleted(client, agent):
+    trip = _processed(agent)
+    client.force_login(agent)
+
+    client.post(reverse("reservation_delete", args=[trip.pk]))
+
+    assert Reservation.objects.filter(pk=trip.pk).exists()
+
+
+def test_times_and_overtime_are_locked_but_issues_and_rating_are_not(agent):
+    trip = _processed(agent)
+    review = TripReview.objects.get(reservation=trip)
+
+    with pytest.raises(reviews.ReviewError, match="processed"):
+        reviews.save_review(review, user=agent, billable_overtime_minutes=60)
+    with pytest.raises(reviews.ReviewError, match="processed"):
+        reviews.save_review(review, user=agent, actual_pickup_at=timezone.now())
+    reviews.add_issue(review, category="driver", severity="low", note="Late", user=agent)
+
+
+def test_the_pop_up_money_actions_refuse_a_processed_trip(client, agent):
+    trip = _processed(agent)
+    client.force_login(agent)
+
+    resp = client.post(reverse("trip_charge", args=[trip.pk]))
+
+    assert resp.status_code == 400 and "processed" in resp.json()["error"]
+
+
+def test_a_no_show_can_be_worked_in_the_pane(client, agent):
+    """The pane's endpoints used to 404 every 'Cancelled'-phase trip; a no-show is
+    exactly what processing settles."""
+    trip = _trip(S.NO_SHOW)
+    client.force_login(agent)
+
+    resp = client.get(reverse("trip_review_trip", args=[trip.pk]))
+
+    assert resp.status_code == 200

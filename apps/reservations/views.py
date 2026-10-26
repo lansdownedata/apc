@@ -107,6 +107,20 @@ def reservation_save(request) -> HttpResponse:
     if rid not in (None, "") and str(rid).isdigit():
         instance = lead.reservations.filter(pk=rid).first()
     editing_existing = instance is not None
+    from . import processing
+    from .groups import _members
+
+    if instance is not None:
+        # A processed trip is locked (APC-102): its price is the money that was settled.
+        locked = processing.lock_message(instance)
+        if locked:
+            return HttpResponseBadRequest(locked)
+        if payload.get("applyToGroup") and instance.group_key is not None:
+            siblings = _members(instance.group_key).exclude(pk=instance.pk)
+            if processing.any_processed(siblings):
+                return HttpResponseBadRequest(
+                    "A trip in this set is processed; edit the trips one at a time."
+                )
     try:
         saved = save_reservation_from_draft(lead, payload, instance=instance, user=request.user)
     except DraftError as exc:
@@ -257,6 +271,11 @@ def reservation_group_delete(request, pk) -> HttpResponse:
 def reservation_delete(request, pk) -> HttpResponse:
     res = get_object_or_404(Reservation, pk=pk)
     lead_id = res.lead_id
+    from . import processing
+
+    if processing.lock_message(res):
+        messages.error(request, "This trip is processed and can't be removed.")
+        return redirect("lead_detail", pk=lead_id)
     if res.charges.exists():
         # Money moved for this trip (APC-101): its row is the audit trail. Cancel, don't delete.
         messages.error(

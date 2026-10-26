@@ -2224,8 +2224,15 @@ function reservationEditor(opts = {}) {
         // Never navigate from here — `closeEditor` decides what the screen behind needs,
         // because a reload would close the dispatch drawer this may have opened from.
         if (r.ok || r.redirected) return true;
-        Alpine.store("toast").push({ type: "danger", title: "Could not save reservation" });
-        return false;
+        // The server says why (a processed trip is locked, a bad flight number…).
+        return r.text().then((message) => {
+          Alpine.store("toast").push({
+            type: "danger",
+            title: "Could not save reservation",
+            message: r.status === 400 && message.length < 300 ? message : "",
+          });
+          return false;
+        });
       }).catch(() => {
         Alpine.store("toast").push({ type: "danger", title: "Network error — could not save" });
         return false;

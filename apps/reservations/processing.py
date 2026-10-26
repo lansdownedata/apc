@@ -174,6 +174,23 @@ def workable(trip) -> bool:
     return post_trip.has_ended(trip, now=timezone.now(), grace=grace)
 
 
+def lock_message(trip) -> str:
+    """Why a trip can't be edited, or "" when it can (spec §3.4, §4.6)."""
+    review = TripReview.objects.filter(reservation_id=trip.pk, processed_at__isnull=False).first()
+    if review is None:
+        return ""
+    who = review.processed_by
+    name = (who.get_full_name() or who.username) if who else "someone"
+    when = timezone.localtime(review.processed_at).strftime("%b %-d")
+    return f"Processed on {when} by {name}. Unlock it from Trip Processing to change the price."
+
+
+def any_processed(trips) -> bool:
+    return TripReview.objects.filter(
+        reservation__in=list(trips), processed_at__isnull=False
+    ).exists()
+
+
 def needs_status(trip) -> bool:
     return trip.trip_status not in TERMINAL
 
