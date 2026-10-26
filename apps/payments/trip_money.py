@@ -17,9 +17,14 @@ from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
 
+import stripe
+from django.db import transaction
 from django.db.models import Sum
 
-from .models import Charge
+from apps.notifications.models import Notification
+
+from . import services
+from .models import Charge, PaymentPlan
 
 ZERO = Decimal("0.00")
 _CENTS = Decimal("0.01")
@@ -92,3 +97,86 @@ def money_for(trip) -> TripMoney:
         charged=_sum(own.filter(kind=Charge.Kind.TRIP)),
         refunded=_sum(own.filter(kind=Charge.Kind.REFUND)),
     )
+
+
+# --- the two money actions ---------------------------------------------------------------
+
+
+def _positive(amount) -> Decimal:
+    amount = Decimal(amount).quantize(_CENTS)
+    if amount <= ZERO:
+        raise services.PaymentError("The amount has to be above zero.")
+    return amount
+
+
+def charge_trip(trip, amount, *, user=None, note: str = "") -> Charge:
+    """Charge `amount` for this trip to the card on file, off-session.
+
+    Under a lock on the plan, so a double-click makes one Charge; a retry that finds a
+    PENDING off-session attempt for this trip and amount re-sends it under the same Stripe
+    idempotency key (Stripe replays the first result). A decline records a FAILED charge and
+    alerts — the booked balance's own status is left alone — and raises `PaymentError`.
+    Success reconciles through `record_payment`, like the pay link does."""
+    amount = _positive(amount)
+    with transaction.atomic():
+        plan = PaymentPlan.objects.select_for_update().get(lead=trip.lead)
+        if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
+            raise services.PaymentError("No card on file. Send a payment link instead.")
+        charge = plan.charges.filter(
+            kind=Charge.Kind.TRIP,
+            reservation=trip,
+            status=Charge.Status.PENDING,
+            amount=amount,
+            stripe_client_secret="",
+        ).first() or plan.record_charge(
+            kind=Charge.Kind.TRIP, amount=amount, reservation=trip, note=note[:255]
+        )
+    try:
+        intent = services._stripe().PaymentIntent.create(
+            amount=services._cents(amount),
+            currency="usd",
+            customer=plan.stripe_customer_id,
+            payment_method=plan.stripe_payment_method_id,
+            payment_method_types=["card"],
+            off_session=True,
+            confirm=True,
+            metadata={
+                "lead_id": str(plan.lead_id),
+                "kind": Charge.Kind.TRIP.value,
+                "charge_id": str(charge.pk),
+                "reservation_id": str(trip.pk),
+            },
+            idempotency_key=charge.idempotency_key,
+        )
+    except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
+        _record_trip_failure(plan, charge, exc)
+        raise services.PaymentError(charge.failure_reason) from exc
+    charge.stripe_payment_intent_id = intent.id
+    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    return services.record_payment(plan, intent.id, kind=Charge.Kind.TRIP)
+
+
+def open_trip_intent(trip, amount, *, note: str = "") -> tuple[Charge, str]:
+    """The pay-link side: an on-session intent for this trip that the customer's pay page
+    confirms. Reused while open."""
+    amount = _positive(amount)
+    plan = services.ensure_plan(trip.lead)
+    return services.open_intent_for(
+        plan, kind=Charge.Kind.TRIP, amount=amount, reservation=trip, note=note[:255]
+    )
+
+
+def _record_trip_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:
+    reason = (getattr(exc, "user_message", None) or str(exc))[:255]
+    charge.status = Charge.Status.FAILED
+    charge.failure_reason = reason
+    charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    plan.fail_reason = reason
+    plan.save(update_fields=["fail_reason", "updated_at"])
+    lead = plan.lead
+    lead.has_alert = True
+    lead.save(update_fields=["has_alert", "updated_at"])
+    Notification.notify(
+        lead, Notification.Kind.BALANCE_FAILED, title="Trip charge failed", detail=reason
+    )
+    return charge

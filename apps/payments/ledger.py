@@ -96,6 +96,7 @@ def post_capture(
     source=JournalEntry.Source.STRIPE,
     stripe_ref="",
     memo="",
+    reservation=None,
 ):
     """Cash in. Clears any outstanding A/R first, then adds to deferred revenue."""
     amount = Decimal(amount)
@@ -115,6 +116,7 @@ def post_capture(
         source=source,
         stripe_ref=stripe_ref,
         memo=memo,
+        reservation=reservation,
     )
 
 

@@ -14,6 +14,7 @@ _SUCCESS_KINDS = {
     "deposit": Charge.Kind.DEPOSIT,
     "balance": Charge.Kind.BALANCE,
     "final": Charge.Kind.FINAL,
+    "trip": Charge.Kind.TRIP,
 }
 
 
@@ -79,16 +80,20 @@ def _balance_failed(intent) -> None:
     plan = _plan_from_metadata(intent)
     if plan is None:
         return
-    final = (intent.get("metadata") or {}).get("kind") == Charge.Kind.FINAL
-    default = "Final bill charge failed" if final else "Balance charge failed"
+    kind = (intent.get("metadata") or {}).get("kind")
+    # A final bill or a trip charge is money on top of a booked balance that may well be
+    # paid — its failure mustn't mark that balance failed.
+    final = kind in (Charge.Kind.FINAL, Charge.Kind.TRIP)
+    default = {
+        Charge.Kind.FINAL: "Final bill charge failed",
+        Charge.Kind.TRIP: "Trip charge failed",
+    }.get(kind, "Balance charge failed")
     reason = ((intent.get("last_payment_error") or {}).get("message")) or default
     reason = reason[:255]
 
     plan.fail_reason = reason
     fields = ["fail_reason", "updated_at"]
     if not final:
-        # A final bill (APC-60) is overtime on top of a booked balance that may well be
-        # paid — its failure mustn't mark that balance failed.
         plan.balance_status = PaymentPlan.BalanceStatus.FAILED
         fields.append("balance_status")
     plan.save(update_fields=fields)

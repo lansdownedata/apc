@@ -56,7 +56,9 @@ def get_or_create_customer(plan: PaymentPlan) -> str:
     return plan.stripe_customer_id
 
 
-def open_intent_for(plan: PaymentPlan, *, kind: str, amount, **extra) -> tuple[Charge, str]:
+def open_intent_for(
+    plan: PaymentPlan, *, kind: str, amount, reservation=None, **extra
+) -> tuple[Charge, str]:
     """Reuse this plan's open intent for `kind` at `amount`, else create one.
 
     `record_charge()` mints a row per call, so a public endpoint calling it per page load
@@ -74,7 +76,9 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount, **extra) -> tuple[C
     """
     amount = Decimal(amount)
     existing = (
-        plan.charges.filter(kind=kind, status=Charge.Status.PENDING, amount=amount)
+        plan.charges.filter(
+            kind=kind, status=Charge.Status.PENDING, amount=amount, reservation=reservation
+        )
         .exclude(stripe_payment_intent_id="")
         .exclude(stripe_client_secret="")
         .first()
@@ -83,7 +87,14 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount, **extra) -> tuple[C
         return existing, existing.stripe_client_secret
 
     customer = get_or_create_customer(plan)
-    charge = plan.record_charge(kind=kind, amount=amount, **extra)
+    charge = plan.record_charge(kind=kind, amount=amount, reservation=reservation, **extra)
+    metadata = {
+        "lead_id": str(plan.lead_id),
+        "kind": Charge.Kind(kind).value,
+        "charge_id": str(charge.pk),
+    }
+    if reservation is not None:
+        metadata["reservation_id"] = str(reservation.pk)
     extra = {}
     if kind == Charge.Kind.DEPOSIT:
         # APC-26: the deposit only *holds* at checkout. Availability can shift between
@@ -97,11 +108,7 @@ def open_intent_for(plan: PaymentPlan, *, kind: str, amount, **extra) -> tuple[C
         customer=customer,
         payment_method_types=["card"],
         setup_future_usage="off_session",
-        metadata={
-            "lead_id": str(plan.lead_id),
-            "kind": Charge.Kind(kind).value,
-            "charge_id": str(charge.pk),
-        },
+        metadata=metadata,
         idempotency_key=charge.idempotency_key,
         **extra,
     )
@@ -449,6 +456,7 @@ def record_payment(
         _post_final(plan, charge, payment_intent_id)
     elif charge.status != Charge.Status.SUCCEEDED:
         is_deposit = charge.kind == Charge.Kind.DEPOSIT
+        is_trip = charge.kind == Charge.Kind.TRIP
         charge.status = Charge.Status.SUCCEEDED
         charge.save(update_fields=["status", "updated_at"])
         ledger.post_capture(
@@ -462,13 +470,22 @@ def record_payment(
             idempotency_key=f"capture-charge{charge.pk}",
             charge=charge,
             stripe_ref=payment_intent_id,
-            memo="Deposit captured" if is_deposit else "Card payment",
+            memo=(
+                "Deposit captured"
+                if is_deposit
+                else f"Trip charge ({charge.reservation})"
+                if is_trip
+                else "Card payment"
+            ),
+            reservation=charge.reservation if is_trip else None,
         )
 
     _store_card(plan, getattr(intent, "payment_method", None), charge)
     sync_plan_from_collected(plan)
     if charge.kind == Charge.Kind.FINAL:
         _close_overtime_invoiced(plan.lead)
+    elif charge.kind == Charge.Kind.TRIP and charge.reservation_id:
+        _close_overtime_invoiced(plan.lead, reservation_id=charge.reservation_id)
     plan.lead.refresh_from_db()
     # ENGAGED is here because capture is exactly the moment a confirmed order becomes a
     # booking (APC-26) — `confirm_order` routes through this same tail.
@@ -860,14 +877,16 @@ def _post_final(plan: PaymentPlan, charge: Charge, payment_intent_id: str) -> No
         )
 
 
-def _close_overtime_invoiced(lead) -> None:
-    """The final bill is paid: every trip's overtime is invoiced."""
+def _close_overtime_invoiced(lead, *, reservation_id: int | None = None) -> None:
+    """Overtime is collected: a trip's charge closes that trip's task (APC-101); a historical
+    final bill closed every trip's."""
     from apps.tasks import services as tasks
     from apps.tasks.models import Task
 
-    for task in Task.objects.filter(
-        lead=lead, kind="overtime_invoiced", status__in=Task.UNRESOLVED
-    ):
+    tasks_qs = Task.objects.filter(lead=lead, kind="overtime_invoiced", status__in=Task.UNRESOLVED)
+    if reservation_id is not None:
+        tasks_qs = tasks_qs.filter(reservation_id=reservation_id)
+    for task in tasks_qs:
         try:
             tasks.complete(task)
         except tasks.TaskError:
