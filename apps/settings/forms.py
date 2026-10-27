@@ -335,7 +335,12 @@ class ChecklistScheduleForm(forms.Form):
                 initial=amount,
                 label=f"{row.label} amount",
                 widget=forms.NumberInput(
-                    attrs={"class": "field", "min": 0, "inputmode": "numeric"}
+                    attrs={
+                        "class": "field",
+                        "min": 0,
+                        "inputmode": "numeric",
+                        "aria-label": f"{row.label} amount",
+                    }
                 ),
             )
             self.fields[f"unit__{row.key}__{row.variant}"] = forms.ChoiceField(

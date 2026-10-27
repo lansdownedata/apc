@@ -197,3 +197,18 @@ def test_move_future_booking_offset():
         "unit": "days",
     }
     assert migration.schedule_row_for(330) is None
+
+
+def test_farm_in_summary_reads_the_effective_timings():
+    from apps.tasks.models import TaskSchedule
+
+    assert schedule.farm_in_summary() == (
+        "deposit due 3 days before the trip, balance 24 hours after it ends"
+    )
+    TaskSchedule.objects.create(kind="deposit_received", variant="farm_in", amount=5, unit="days")
+    TaskSchedule.objects.create(
+        kind="final_balance_paid", variant="farm_in", amount=1, unit="hours"
+    )
+    assert schedule.farm_in_summary() == (
+        "deposit due 5 days before the trip, balance 1 hour after it ends"
+    )

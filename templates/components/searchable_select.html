@@ -3,7 +3,7 @@
   Reusable searchable dropdown (Tom Select) — never a native <select> UI.
 
   Include with: name, field_id, options (iterable of value/label pairs, e.g. a
-  TextChoices.choices), selected (or selected_list for a multiple), empty_label, placeholder, autosubmit, search, multiple.
+  TextChoices.choices), selected (or selected_list for a multiple), empty_label, placeholder, autosubmit, search, multiple, aria_label (optional accessible name).
 
   Two extras, added for the coverage controls (APC-48) and available to any picker:
 
@@ -18,6 +18,7 @@
     `create` stays Tom Select's client-side-only behaviour, where the value IS the text.
 {% endcomment %}
 <select name="{{ name }}" id="{{ field_id|default:name }}" data-tom
+        {% if aria_label %}aria-label="{{ aria_label }}"{% endif %}
         {% if placeholder %}data-placeholder="{{ placeholder }}"{% endif %}
         {% if autosubmit %}data-autosubmit{% endif %}
         {% if search == 'off' %}data-search="off"{% endif %}

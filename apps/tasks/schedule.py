@@ -160,6 +160,24 @@ def code_default(key: str, variant: str) -> Timing:
     return default_timing(kind)
 
 
+def _span(amount: int, unit: str) -> str:
+    noun = {DAYS: "day", HOURS: "hour", BUSINESS_DAYS: "business day"}[unit]
+    return f"{amount} {noun}{'' if amount == 1 else 's'}"
+
+
+def farm_in_summary() -> str:
+    """The farm-in payment clock in words, from the saved FARM_IN rows or the code defaults."""
+    saved = load()
+
+    def timing(key: str) -> str:
+        return _span(*(saved.get((key, FARM)) or code_default(key, FARM)))
+
+    return (
+        f"deposit due {timing('deposit_received')} before the trip, "
+        f"balance {timing('final_balance_paid')} after it ends"
+    )
+
+
 def save(values: dict[Key, Timing], *, user) -> int:
     """Store the posted timings and re-date open work for the ones that changed.
 

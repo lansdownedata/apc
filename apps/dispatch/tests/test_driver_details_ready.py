@@ -176,3 +176,57 @@ def test_settings_form_saves_flags(client):
     assert cfg.require_driver_cell is True
     page = client.get(reverse("dispatch_alerts")).content.decode()
     assert "Required before driver details go to the customer" in page
+
+
+def _drawer(client, a):
+    client.force_login(UserFactory())
+    return client.get(reverse("dispatch_assign_panel", args=[a.reservation_id])).content.decode()
+
+
+def test_drawer_says_what_the_customer_message_waits_for(client):
+    a = _confirmed()
+    _set(a, name="Sam Rivera")
+
+    page = _drawer(client, a)
+
+    assert "Customer message waits for: driver&#x27;s cell" in page
+    assert (
+        "Once the required details are saved, the customer is sent them automatically." not in page
+    )
+
+
+def test_drawer_shows_no_hold_once_the_required_details_are_saved(client):
+    a = _confirmed()
+    _set(a, name="Sam Rivera", cell="555-0100")
+
+    page = _drawer(client, a)
+
+    assert "Customer message waits for" not in page
+    assert "not on file" not in page
+
+
+def test_drawer_hint_names_the_required_details_rule(client):
+    a = _confirmed()
+
+    page = _drawer(client, a)
+
+    assert "Once the required details are saved, the customer is sent them automatically." in page
+    assert "Saving a name here" not in page
+
+
+def test_drawer_query_count_is_the_same_held_or_ready(client):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    held = _confirmed()
+    _set(held, name="Sam Rivera")
+    ready = _confirmed()
+    _set(ready, name="Sam Rivera", cell="555-0100")
+    client.force_login(UserFactory())
+    client.get(reverse("dispatch_assign_panel", args=[ready.reservation_id]))  # warm caches
+
+    with CaptureQueriesContext(connection) as ready_q:
+        client.get(reverse("dispatch_assign_panel", args=[ready.reservation_id]))
+    with CaptureQueriesContext(connection) as held_q:
+        client.get(reverse("dispatch_assign_panel", args=[held.reservation_id]))
+    assert len(held_q) == len(ready_q)

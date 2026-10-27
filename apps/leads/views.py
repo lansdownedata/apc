@@ -45,6 +45,7 @@ from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
+from apps.tasks import schedule as task_schedule
 from apps.tasks import selectors as task_selectors
 
 from . import contact_roles, services
@@ -247,6 +248,7 @@ def lead_detail(request, pk):
         "nav": "leads",
         "page_title": lead.quote_no,
         "lead": lead,
+        "farm_in_summary": task_schedule.farm_in_summary() if lead.is_farm_in else "",
         "booking_intent": request.GET.get("booking") == "1",
         "wedding_state": wedding_state,
         "wedding_answers": wedding_answers(wedding_state),

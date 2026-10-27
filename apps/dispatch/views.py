@@ -23,7 +23,7 @@ from apps.vendors.models import Vendor, VendorDriver
 
 from . import selectors, services
 from .board_filters import BoardFilters
-from .models import Assignment
+from .models import Assignment, DispatchAlertConfig
 
 
 def _filter_labels(filters: BoardFilters) -> dict:
@@ -212,9 +212,16 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     if farmed_out:
         vendor = Vendor.objects.prefetch_related("policies").get(pk=assignment.vendor_id)
         insured = selectors.insurance_for(vendor, trip)
+    # Names the required details still blank once a driver is on file, so the fragment can
+    # say what the customer message is waiting for (one config row per fragment, not per row).
+    held_for = ""
+    if farmed_out and assignment.has_driver_info:
+        missing = services.missing_driver_fields(assignment, DispatchAlertConfig.load())
+        held_for = " and ".join(missing)
     return {
         "trip": trip,
         "assignment": assignment,
+        "driver_held_for": held_for,
         "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
         "coverage_state": selectors.coverage_state(trip, assignment),
         "previewed": selectors.offer_was_previewed(assignment),

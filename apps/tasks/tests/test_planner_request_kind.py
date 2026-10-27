@@ -60,3 +60,15 @@ def test_open_request_task_opens_one_owned_task_each_time():
     services.reschedule(lead)
     first.refresh_from_db()
     assert first.due_at == AfterOpenBusinessDays(days=1).resolve_from(first.opens_at)
+
+
+def test_a_new_request_follows_the_saved_checklist_schedule(settings):
+    from apps.tasks.models import TaskSchedule
+
+    settings.TIME_ZONE = "America/New_York"
+    TaskSchedule.objects.create(
+        kind="planner_change_request", variant="standard", amount=5, unit="business_days"
+    )
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    task = services.open_request_task(lead, "planner_change_request")
+    assert task.due_at == AfterOpenBusinessDays(days=5).resolve_from(task.opens_at)

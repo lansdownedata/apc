@@ -161,3 +161,12 @@ def test_preview_value_errors():
     ):
         with pytest.raises(ValueError):
             schedule.preview(*args, now=FIXED)
+
+
+def test_schedule_inputs_carry_accessible_labels(client):
+    _owner(client)
+
+    html = client.get(reverse("checklist_schedule")).content.decode()
+
+    assert 'aria-label="Deposit received amount"' in html
+    assert 'aria-label="Deposit received unit"' in html

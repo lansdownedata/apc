@@ -66,3 +66,13 @@ def test_the_settings_index_links_to_it(client):
 
     assert reverse("dispatch_alerts") in body
     assert "Dispatch alerts" in body
+
+
+def test_driver_details_setting_says_when_it_takes_effect(client):
+    _owner(client)
+
+    resp = client.get(reverse("dispatch_alerts"))
+
+    assert (
+        "Takes effect the next time driver details are saved for a trip." in resp.content.decode()
+    )

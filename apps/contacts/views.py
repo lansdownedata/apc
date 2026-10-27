@@ -35,6 +35,7 @@ from apps.leads.models import Lead
 from apps.messaging.models import Message
 from apps.payments.models import PaymentPlan
 from apps.planners import selectors as planner_selectors
+from apps.tasks import schedule as task_schedule
 
 from . import services
 from .models import Company, Contact, ContactPhone
@@ -385,6 +386,7 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
         {
             "nav": "contacts",
             "company": company,
+            "farm_in_summary": task_schedule.farm_in_summary(),
             "members": members,
             "leads": leads,
             "stats": {"ltv": ltv, "orders": orders, "trips": trips},

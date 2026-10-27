@@ -218,3 +218,20 @@ def test_sync_vendor_is_the_hook():
     vendor_tasks.sync_vendor(policy.vendor)
 
     assert _task(policy).status == Task.Status.OPEN
+
+
+def test_a_new_renewal_task_is_never_born_overdue_whatever_the_schedule():
+    from apps.tasks.models import TaskSchedule
+
+    TaskSchedule.objects.create(
+        kind="insurance_renewal", variant="standard", amount=45, unit="days"
+    )
+    policy = _policy(60)
+
+    run_tasks()
+
+    task = _task(policy)
+    assert task.due_at == task.opens_at
+    vendor_tasks.redate()
+    task.refresh_from_db()
+    assert task.due_at == task.opens_at

@@ -75,7 +75,7 @@
                    @change="header.is_affiliate_account = $event.target.checked ? '1' : '0'; saveHeader()">
             <span>
               <span class="block text-[12.5px] font-medium text-ink">Affiliate account</span>
-              <span class="block text-[11.5px] text-muted">An operator that sends us trips. Its orders' deposit is due 3 days before the trip and the balance 24 hours after.</span>
+              <span class="block text-[11.5px] text-muted">An operator that sends us trips. Its orders: {{ farm_in_summary }}.</span>
             </span>
           </label>
         </div>

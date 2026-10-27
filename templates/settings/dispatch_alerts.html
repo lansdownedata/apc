@@ -60,6 +60,7 @@
           <label class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.require_vehicle_desc }} Vehicle description</label>
           <label class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.require_vehicle_number }} Vehicle number</label>
         </div>
+        <p class="text-[11.5px] text-muted mt-2">Takes effect the next time driver details are saved for a trip.</p>
       </div>
 
       {% include "components/form_field.html" with field=form.alert_emails %}

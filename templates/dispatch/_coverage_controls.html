@@ -61,15 +61,18 @@
     </div>
 
     {% comment %} Driver + vehicle (APC-21) — farmed-out only; in-house already carries both
-         on the assignment. Saving a name here releases those details to the customer
-         (touchpoints.trigger_driver_released), so this is the one control on this fragment
-         that fires a customer-facing send. Picking a roster driver does not, and neither
-         does creating one — only Save does. {% endcomment %}
+         on the assignment. Saving releases those details to the customer
+         (touchpoints.trigger_driver_released) once every detail Settings requires is on
+         file; until then a chip names what the message waits for (driver_held_for). This is
+         the one control on this fragment that fires a customer-facing send. Picking a roster
+         driver does not, and neither does creating one — only Save does. {% endcomment %}
     {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
       Driver &amp; vehicle
       {% if not assignment.has_driver_info %}
         <span class="chip-warn inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ml-1 normal-case tracking-normal">not on file</span>
+      {% elif driver_held_for %}
+        <span class="chip-warn inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ml-1 normal-case tracking-normal">Customer message waits for: {{ driver_held_for }}</span>
       {% endif %}
     </p>
     <form @submit.prevent class="mb-5 pb-5 border-b border-line/60 space-y-2">
@@ -98,7 +101,7 @@
       </button>
       {% if not assignment.has_driver_info %}
       <p class="text-[11px] text-muted">
-        Saving a name here sends the customer their driver + vehicle details automatically.
+        Once the required details are saved, the customer is sent them automatically.
       </p>
       {% endif %}
     </form>

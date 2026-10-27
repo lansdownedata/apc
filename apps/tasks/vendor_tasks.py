@@ -74,7 +74,7 @@ def run(
                 assignee=owner,
                 status=Task.Status.SCHEDULED if opens_at > now else Task.Status.OPEN,
                 opens_at=opens_at,
-                due_at=kind.due.resolve(policy.expiry_date),
+                due_at=max(kind.due.resolve(policy.expiry_date), opens_at),
             )
         )
     Task.objects.bulk_create(new)

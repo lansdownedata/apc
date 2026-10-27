@@ -40,7 +40,7 @@
                 <input type="hidden" name="{{ item.unit.html_name }}" value="{{ item.row.units.0 }}">
                 <span class="text-[12.5px] text-ink">{{ item.single_unit }}</span>
                 {% else %}
-                {% include "components/searchable_select.html" with name=item.unit.html_name field_id=item.unit.id_for_label options=item.unit_options selected=item.unit.value search="off" %}
+                {% include "components/searchable_select.html" with name=item.unit.html_name field_id=item.unit.id_for_label options=item.unit_options selected=item.unit.value search="off" aria_label=item.unit.label %}
                 {% endif %}
               </div>
               <span class="text-[12.5px] text-muted">{{ item.row.anchor }}</span>
