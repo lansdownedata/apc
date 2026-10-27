@@ -118,6 +118,7 @@ class TouchPoint(TimeStampedModel):
         )
         TRIP_CONFIRM_AFFILIATE = "trip_confirm_affiliate", "Affiliate trip confirmation (T-48h)"
         DRIVER_RELEASED = "driver_released", "Driver details released to customer"
+        DRIVER_UPDATED = "driver_updated", "Driver details updated"
         STATUS_DISPATCHED = "status_dispatched", "Trip status: Dispatched"
         STATUS_ON_THE_WAY = "status_on_the_way", "Trip status: On The Way"
         STATUS_ARRIVED = "status_arrived", "Trip status: Arrived"

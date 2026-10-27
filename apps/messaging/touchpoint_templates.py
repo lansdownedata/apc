@@ -355,6 +355,32 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "They'll reach out as pickup nears."
         ),
     ),
+    "driver_updated": TouchPointTemplate(
+        kind="driver_updated",
+        anchor="triggered",
+        offset=timedelta(0),
+        channels=("email", "sms"),
+        subject="Updated driver details for {trip_pickup_date}",
+        email_body=(
+            "{first_name},\n\n"
+            "Your driver details have changed:\n\n"
+            "  Driver:     {driver_name}\n"
+            "  Cell:       {driver_cell}\n"
+            "  Vehicle:    {vehicle_description}\n"
+            "  Vehicle #:  {vehicle_number}\n\n"
+            "Your driver will contact you as pickup approaches. If you need anything before "
+            "then, call us at {company_phone}.\n\n"
+            "{company_name}"
+        ),
+        sms_body=(
+            "{first_name}, it's {company_name}. Your driver details have changed:\n"
+            "{driver_name}\n"
+            "Cell {driver_cell}\n"
+            "{vehicle_description}\n"
+            "Vehicle #{vehicle_number}\n"
+            "They'll reach out as pickup nears."
+        ),
+    ),
     "status_dispatched": TouchPointTemplate(
         kind="status_dispatched",
         anchor="triggered",

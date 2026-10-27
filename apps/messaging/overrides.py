@@ -302,6 +302,7 @@ MESSAGES: tuple[MessageSpec, ...] = tuple(
             "Trip day",
             (
                 ("driver_released", "Driver details"),
+                ("driver_updated", "Driver details updated"),
                 ("status_on_the_way", "On the way"),
                 ("status_arrived", "Arrived"),
             ),

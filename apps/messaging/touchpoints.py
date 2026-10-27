@@ -47,8 +47,15 @@ _SERVICE_DATE_KINDS = frozenset(
 # per customer per pickup date (APC-19).
 _CUSTOMER_CONFIRM_KINDS = frozenset({_K.TRIP_CONFIRM_CUSTOMER, _K.TRIP_CONFIRM_CUSTOMER_2})
 _TRIGGERED_KINDS = frozenset(
-    {_K.DRIVER_RELEASED, _K.STATUS_DISPATCHED, _K.STATUS_ON_THE_WAY, _K.STATUS_ARRIVED}
+    {
+        _K.DRIVER_RELEASED,
+        _K.DRIVER_UPDATED,
+        _K.STATUS_DISPATCHED,
+        _K.STATUS_ON_THE_WAY,
+        _K.STATUS_ARRIVED,
+    }
 )
+_DRIVER_KINDS = frozenset({_K.DRIVER_RELEASED, _K.DRIVER_UPDATED})
 _RESERVATION_KINDS = _SERVICE_DATE_KINDS | _TRIGGERED_KINDS
 
 # Lead-level outcome messages (APC-26): how the customer's wait ended. Each fires on a
@@ -318,6 +325,8 @@ def sync_driver_message(reservation) -> TouchPoint | None:
             .exclude(status=TouchPoint.Status.CANCELLED)
             .first()
         )
+        if existing is not None and existing.status == TouchPoint.Status.SENT:
+            return _maybe_update(locked, existing)
         if existing is not None and existing.status != TouchPoint.Status.SCHEDULED:
             return None
         rows = overrides.load()
@@ -333,6 +342,44 @@ def sync_driver_message(reservation) -> TouchPoint | None:
         if not _driver_message_ready(locked, coverage):
             return None
         return _ensure(locked, kind, pickup, at=at, rows=rows)
+
+
+def _maybe_update(reservation, sent: TouchPoint) -> TouchPoint | None:
+    """Queue a "driver details updated" message when the ready details differ from the last
+    ones the customer was sent.
+
+    "Last sent" is the newest SENT row among the driver message and its updates. A row sent
+    before details were recorded is unknown, so it never triggers an update. One SCHEDULED
+    update at a time: it reads the details current at send time. Caller holds the lock.
+    """
+    from apps.dispatch.models import DispatchAlertConfig
+    from apps.dispatch.services import driver_details_ready
+
+    kind = TouchPoint.Kind.DRIVER_UPDATED
+    rows = overrides.load()
+    if not overrides.is_enabled(kind, rows):
+        return None
+    if reservation.trip_status not in DRIVER_MESSAGE_STATUSES:
+        return None
+    assignment = _confirmed_assignment(reservation)
+    if assignment is None or not driver_details_ready(assignment, DispatchAlertConfig.load()):
+        return None
+    newest = max(
+        TouchPoint.objects.filter(
+            reservation=reservation, kind__in=_DRIVER_KINDS, status=TouchPoint.Status.SENT
+        ),
+        key=lambda tp: (tp.sent_at or tp.created_at, tp.pk),
+        default=sent,
+    )
+    if newest.driver_details is None or newest.driver_details == assignment.driver_info:
+        return None
+    if TouchPoint.objects.filter(
+        reservation=reservation, kind=kind, status=TouchPoint.Status.SCHEDULED
+    ).exists():
+        return None
+    return TouchPoint.objects.create(
+        lead=reservation.lead, reservation=reservation, kind=kind, scheduled_for=timezone.now()
+    )
 
 
 def notify_status_change(reservation, status: str) -> None:
@@ -497,7 +544,7 @@ def _send(
         tp.podium_message_uid = first_uid
         tp.error = ""
         fields = ["status", "sent_at", "podium_message_uid", "error", "updated_at"]
-        if tp.kind == TouchPoint.Kind.DRIVER_RELEASED:
+        if tp.kind in _DRIVER_KINDS:
             tp.driver_details = _confirmed_assignment(tp.reservation).driver_info
             fields.append("driver_details")
         tp.save(update_fields=fields)
@@ -688,7 +735,7 @@ def _process(tp: TouchPoint, rows=None, master: bool | None = None) -> bool:
         if tp.reservation is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="no reservation")
             return False
-        if kind == TouchPoint.Kind.DRIVER_RELEASED:
+        if kind in _DRIVER_KINDS:
             # Cancelled, dropped below Dispatched or details cleared: held (left SCHEDULED)
             # until pickup, when it is closed. Checked before the shared cancelled skip.
             pickup = tp.reservation.pickup_at
