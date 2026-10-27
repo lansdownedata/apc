@@ -36,7 +36,7 @@ def test_lists_groups_and_rows(client):
 def test_catalogue_kinds_are_known_and_unique():
     kinds = [m.kind for m in overrides.MESSAGES]
     assert len(kinds) == len(set(kinds))
-    assert "trip_confirm_customer_2" not in kinds
+    assert kinds.index("trip_confirm_customer_2") == kinds.index("trip_confirm_customer") + 1
     for kind in kinds:
         overrides.default(kind)
 
@@ -107,3 +107,23 @@ def test_index_card_links_to_messages(client):
     html = client.get(reverse("settings_index")).content.decode()
     assert reverse("messages") in html
     assert "Customer notifications" not in html
+
+
+def test_rows_show_their_channels(client):
+    client.force_login(_owner_admin())
+    html = client.get(reverse("messages")).content.decode()
+    assert "Email &amp; SMS" in html
+    assert ">Email<" in html
+    assert ">SMS<" in html
+
+
+def test_second_notice_row_uses_the_confirmation_switch(client):
+    client.force_login(_owner_admin())
+    html = client.get(reverse("messages")).content.decode()
+    assert "Trip confirmation — second notice" in html
+    assert "(also sent as the second notice)" not in html
+    assert "Uses the Trip confirmation switch" in html
+    assert "Sent with the Thank-you timing" in html
+    assert (
+        client.post(reverse("message_toggle", args=["trip_confirm_customer_2"])).status_code == 404
+    )

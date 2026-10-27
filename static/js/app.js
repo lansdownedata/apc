@@ -1651,7 +1651,7 @@ function messageEditor(opts = {}) {
         example.textContent = "";
         return;
       }
-      const url = prefix === "timing2" ? opts.timing2Url : opts.timingUrl;
+      const url = opts.timingUrl;
       try {
         const res = await fetch(`${url}?${new URLSearchParams({ amount, unit })}`, {
           headers: { Accept: "application/json" },

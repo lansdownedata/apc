@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="max-w-[1040px] mx-auto px-4 sm:px-6 py-6"
-     x-data="messageEditor({ previewUrl: '{% url 'message_preview' spec.kind %}', timingUrl: '{% url 'message_timing_preview' spec.kind %}', timing2Url: '{% if form.second_kind %}{% url 'message_timing_preview' form.second_kind %}{% endif %}', tab: '{{ tab }}' })">
+     x-data="messageEditor({ previewUrl: '{% url 'message_preview' spec.kind %}', timingUrl: '{% url 'message_timing_preview' spec.kind %}', tab: '{{ tab }}' })">
   <a href="{% url 'messages' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Messages</a>
 
   <form id="message-form" method="post" @input="queue($event)" @change="queue($event)">
@@ -23,7 +23,7 @@
           </button>
         </div>
         {% else %}
-        <span class="text-[11.5px] text-muted">Uses the Thank-you switch</span>
+        <span class="text-[11.5px] text-muted">Uses the {{ switch_label }} switch</span>
         {% endif %}
         <button type="button" @click="confirmReset()" {% if not edited %}disabled{% endif %}
                 class="text-[12.5px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Reset to default</button>
@@ -46,25 +46,11 @@
             <p class="text-[11.5px] text-muted mt-1.5" data-example="timing">{{ timing_example }}</p>
             {% for error in form.timing_amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
           </div>
+          {% elif timed_by %}
+          <p class="text-[13px] text-ink mb-5">{{ timed_by }}</p>
           {% else %}
           <p class="text-[13px] text-ink mb-5">Sent when it happens</p>
           {% endif %}
-          {% if form.second_kind %}
-          <div class="mb-5" data-timing="timing2">
-            <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Second notice</div>
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-[13px] text-ink">Send</span>
-              <div class="w-20">{{ form.timing2_amount }}</div>
-              <div class="w-32">
-                {% include "components/searchable_select.html" with name="timing2_unit" field_id="id_timing2_unit" options=form.timing2_unit.field.choices selected=form.timing2_unit.value search="off" aria_label="Second notice timing unit" %}
-              </div>
-              <span class="text-[13px] text-ink">{{ anchor_phrase2 }}</span>
-            </div>
-            <p class="text-[11.5px] text-muted mt-1.5" data-example="timing2">{{ timing_example2 }}</p>
-            {% for error in form.timing2_amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-          </div>
-          {% endif %}
-
           {% if channels|length > 1 %}
           <div class="flex items-center gap-1 mb-4" role="tablist">
             {% for channel in channels %}

@@ -418,12 +418,10 @@ class AffiliateDocumentTypeForm(forms.ModelForm):
 
 
 class MessageTemplateForm(forms.Form):
-    """One message's editor: the text of each channel it sends on, its timing (and, on the
-    first trip confirmation, the second notice's), and its switch. Validation is
-    `overrides.check`; its per-box errors land on the matching field."""
+    """One message's editor: the text of each channel it sends on, its timing and its switch.
+    Validation is `overrides.check`; its per-box errors land on the matching field."""
 
     TEXTS = ("subject", "email_body", "sms_body")
-    _SECOND = {"trip_confirm_customer": "trip_confirm_customer_2"}
 
     def __init__(self, kind: str, data=None, *, has_switch: bool = True):
         super().__init__(data)
@@ -433,7 +431,6 @@ class MessageTemplateForm(forms.Form):
         base = overrides.default(kind)
         current = overrides.effective(kind, rows)
         self.channels = base.channels
-        self.second_kind = self._SECOND.get(kind)
         self._current = current
         self._enabled = overrides.is_enabled(kind, rows, master=True)
         area = lambda: forms.Textarea(attrs={"class": "field", "rows": 8})  # noqa: E731
@@ -441,6 +438,8 @@ class MessageTemplateForm(forms.Form):
             self.fields["subject"] = forms.CharField(
                 required=False,
                 strip=False,
+                max_length=200,
+                error_messages={"max_length": "Keep the subject under 200 characters."},
                 initial=current.subject,
                 widget=forms.TextInput(attrs={"class": "field", "aria-label": "Subject"}),
             )
@@ -451,11 +450,9 @@ class MessageTemplateForm(forms.Form):
             self.fields["sms_body"] = forms.CharField(
                 required=False, strip=False, initial=current.sms_body, widget=area()
             )
-        self.has_timing = base.anchor != "triggered"
+        self.has_timing = overrides.has_timing(kind)
         if self.has_timing:
             self._add_timing("timing", overrides.timing_of(kind, rows))
-        if self.second_kind:
-            self._add_timing("timing2", overrides.timing_of(self.second_kind, rows))
         if has_switch:
             self.fields["enabled"] = forms.BooleanField(required=False, initial=self._enabled)
 
@@ -499,23 +496,11 @@ class MessageTemplateForm(forms.Form):
             field = "timing_amount" if box == "timing" else box
             if field in self.fields and field not in self.errors:
                 self.add_error(field, message)
-        if self.second_kind:
-            second = self._timing(cleaned, "timing2")
-            second_current = overrides.effective(self.second_kind)
-            errors = overrides.check(
-                self.second_kind,
-                subject=second_current.subject,
-                email_body=second_current.email_body,
-                sms_body=second_current.sms_body,
-                timing=second,
-            )
-            if "timing" in errors and "timing2_amount" not in self.errors:
-                self.add_error("timing2_amount", errors["timing"])
         self.texts = texts
         return cleaned
 
     def save(self, user) -> int:
-        """Store the message (and the second notice's timing); returns sends re-dated."""
+        """Store the message; returns how many scheduled sends were re-dated."""
         cleaned = self.cleaned_data
         enabled = cleaned["enabled"] if self.has_switch else self._enabled
         count = overrides.save(
@@ -525,15 +510,4 @@ class MessageTemplateForm(forms.Form):
             enabled=enabled,
             user=user,
         )
-        if self.second_kind:
-            second = overrides.effective(self.second_kind)
-            count += overrides.save(
-                self.second_kind,
-                subject=second.subject,
-                email_body=second.email_body,
-                sms_body=second.sms_body,
-                timing=(cleaned["timing2_amount"], cleaned["timing2_unit"]),
-                enabled=True,
-                user=user,
-            )
         return count

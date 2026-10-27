@@ -61,11 +61,11 @@
     </div>
 
     {% comment %} Driver + vehicle (APC-21) — farmed-out only; in-house already carries both
-         on the assignment. Saving releases those details to the customer
-         (touchpoints.trigger_driver_released) once every detail Settings requires is on
-         file; until then a chip names what the message waits for (driver_held_for). This is
-         the one control on this fragment that fires a customer-facing send. Picking a roster
-         driver does not, and neither does creating one — only Save does. {% endcomment %}
+         on the assignment. Saving stores those details; the customer's driver message goes
+         out N hours before pickup once the trip is Dispatched and every detail Settings
+         requires is on file, and until then a chip names what the message waits for
+         (driver_held_for). Picking a roster driver does not send anything, and neither
+         does creating one. {% endcomment %}
     {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
     <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
       Driver &amp; vehicle

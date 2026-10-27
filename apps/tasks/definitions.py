@@ -571,16 +571,25 @@ def default_timing(kind: TaskKind) -> tuple[int, str]:
     return due.days, "days"
 
 
+DRIVER_TASK_GRACE_MINUTES = 60
+
+
+def driver_message_due(amount: int, unit: str) -> BeforePickup:
+    """When "Driver info released" is due for a Driver details message sent `amount` `unit`
+    before pickup: an hour after it sends, so the task is never overdue before the send."""
+    seconds = {"minutes": 60, "hours": 3600, "days": 86400}[unit] * amount
+    return BeforePickup(minutes=max(0, seconds // 60 - DRIVER_TASK_GRACE_MINUTES))
+
+
 def _follow_driver_message(kind: TaskKind, facts: LeadFacts) -> TaskKind:
-    """ "Driver info released" is due when the Driver details message goes out: the
-    message's own timing (Settings -> Messages), never a checklist schedule row."""
+    """ "Driver info released" is due an hour after the Driver details message goes out: the
+    message's own timing (Settings -> Messages) plus a grace hour, never a schedule row."""
     from apps.messaging import overrides
 
     timing = overrides.timing_of("driver_released", facts.message_rows)
     if timing is None:
         return kind
-    amount, unit = timing
-    return replace(kind, due=BeforePickup(**{unit: amount}))
+    return replace(kind, due=driver_message_due(*timing))
 
 
 def effective_kind(kind: TaskKind, facts: LeadFacts) -> TaskKind:

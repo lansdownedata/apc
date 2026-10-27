@@ -50,9 +50,18 @@ def effective(kind: str, rows: dict | None = None) -> TouchPointTemplate:
     return replace(base, **changes)
 
 
+# Kinds whose send time is another kind's: the wedding thank-you is scheduled by the
+# `thank_you` row, so it has no timing of its own.
+_TIMED_BY = {"thank_you_wedding": "thank_you"}
+
+
+def has_timing(kind: str) -> bool:
+    return default(kind).anchor != "triggered" and kind not in _TIMED_BY
+
+
 def timing_of(kind: str, rows: dict | None = None) -> tuple[int, str] | None:
     """The effective (amount, unit) for a kind that has a timing, else None."""
-    if default(kind).anchor == "triggered":
+    if not has_timing(kind):
         return None
     seconds = abs(int(effective(kind, rows).offset.total_seconds()))
     for unit in reversed(TIMING_UNITS):
@@ -66,6 +75,11 @@ DEFAULT_OFF = frozenset({"status_on_the_way", "status_arrived", "status_dispatch
 
 # Kinds that have no switch of their own and follow another kind's.
 _SWITCH_OF = {"trip_confirm_customer_2": "trip_confirm_customer", "thank_you_wedding": "thank_you"}
+
+
+def switch_owner(kind: str) -> str | None:
+    """The kind whose on/off switch `kind` follows, or None when it has its own."""
+    return _SWITCH_OF.get(kind)
 
 
 def is_enabled(kind: str, rows: dict | None = None, *, master: bool | None = None) -> bool:
@@ -96,6 +110,10 @@ class SaveError(Exception):
 MIN_DRIVER_LEAD = "The driver message must go out at least 1 hour before pickup."
 
 
+def _seconds(timing: tuple[int, str]) -> int:
+    return timing[0] * _UNIT_SECONDS[timing[1]]
+
+
 def check(
     kind: str,
     *,
@@ -108,7 +126,9 @@ def check(
     errors = fields.validate(kind, subject=subject, email_body=email_body, sms_body=sms_body)
     if timing is not None:
         amount, unit = timing
-        if default(kind).anchor == "triggered":
+        if kind in _TIMED_BY:
+            errors["timing"] = "This message is sent with the Thank-you timing."
+        elif default(kind).anchor == "triggered":
             errors["timing"] = "This message sends when it happens; it has no timing."
         elif unit not in TIMING_UNITS:
             errors["timing"] = "Pick minutes, hours or days."
@@ -116,6 +136,14 @@ def check(
             errors["timing"] = f"Use 0 to {MAX_TIMING[unit]} {unit}."
         elif kind == "driver_released" and timedelta(**{unit: amount}) < timedelta(hours=1):
             errors["timing"] = MIN_DRIVER_LEAD
+        elif kind == "trip_confirm_customer_2":
+            first = timing_of("trip_confirm_customer")
+            if first and _seconds(timing) >= _seconds(first):
+                errors["timing"] = "The second notice must go out after the first."
+        elif kind == "trip_confirm_customer":
+            second = timing_of("trip_confirm_customer_2")
+            if second and _seconds(timing) <= _seconds(second):
+                errors["timing"] = "The first notice must go out before the second."
     return errors
 
 
@@ -152,6 +180,8 @@ def save(
     if timing is not None and _signed(base, timing) == base.offset:
         amount, unit = None, ""
     default_enabled = _SWITCH_OF.get(kind, kind) not in DEFAULT_OFF
+    if kind in _SWITCH_OF:
+        enabled = default_enabled
     with transaction.atomic():
         old = _offset_of(kind)
         if not any(texts.values()) and amount is None and enabled == default_enabled:
@@ -168,8 +198,7 @@ def save(
                 },
             )
         new = _offset_of(kind)
-        count = redate(kind, from_offset=old) if new != old else 0
-        return count + _redate_checklist(kind, changed=new != old)
+    return _redate_all(kind, old, new)
 
 
 def reset(kind: str) -> int:
@@ -178,8 +207,13 @@ def reset(kind: str) -> int:
         old = _offset_of(kind)
         MessageTemplate.objects.filter(kind=kind).delete()
         new = _offset_of(kind)
-        count = redate(kind, from_offset=old) if new != old else 0
-        return count + _redate_checklist(kind, changed=new != old)
+    return _redate_all(kind, old, new)
+
+
+def _redate_all(kind: str, old: timedelta, new: timedelta) -> int:
+    """Re-date after the row change has committed, so a failure here cannot poison it."""
+    count = redate(kind, from_offset=old) if new != old else 0
+    return count + _redate_checklist(kind, changed=new != old)
 
 
 def _redate_checklist(kind: str, *, changed: bool) -> int:
@@ -307,6 +341,7 @@ MESSAGES: tuple[MessageSpec, ...] = tuple(
             (
                 ("wed_final_details", "Wedding details request"),
                 ("trip_confirm_customer", "Trip confirmation"),
+                ("trip_confirm_customer_2", "Trip confirmation — second notice"),
                 ("trip_confirm_affiliate", "Affiliate trip confirmation"),
             ),
         ),
@@ -339,6 +374,7 @@ _TIMING_WHAT = {
     "trips_done": "the trips are done",
     "balance_due": "the balance is due",
 }
+_TIMED_BY_LABEL = "Thank-you"
 _UNIT_WORD = {"minutes": ("min", "min"), "hours": ("hour", "hours"), "days": ("day", "days")}
 
 
@@ -346,6 +382,8 @@ def timing_phrase(kind: str, rows: dict | None = None) -> str:
     """The row's timing in words, e.g. "2 hours after the lead comes in"."""
     timing = timing_of(kind, rows)
     if timing is None:
+        if kind in _TIMED_BY:
+            return f"Sent with the {_TIMED_BY_LABEL} timing"
         return "When it happens"
     amount, unit = timing
     word = _UNIT_WORD[unit][0 if amount == 1 else 1]

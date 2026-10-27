@@ -51,25 +51,25 @@ def _task(lead):
 
 def test_task_due_follows_message_default():
     lead, trip = _order()
-    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=12)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=11)
 
 
 def test_task_due_follows_message_row():
     MessageTemplate.objects.create(kind="driver_released", timing_amount=6, timing_unit="hours")
     lead, trip = _order()
-    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=6)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=5)
 
 
 def test_task_due_follows_message_row_in_minutes():
     MessageTemplate.objects.create(kind="driver_released", timing_amount=90, timing_unit="minutes")
     lead, trip = _order()
-    assert _task(lead).due_at == trip.pickup_at - timedelta(minutes=90)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(minutes=30)
 
 
 def test_schedule_row_is_ignored():
     TaskSchedule.objects.create(kind="driver_released", variant="standard", amount=3, unit="days")
     lead, trip = _order()
-    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=12)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=11)
 
 
 def test_saving_message_timing_redates_open_tasks():
@@ -85,9 +85,9 @@ def test_saving_message_timing_redates_open_tasks():
         user=UserFactory(),
     )
     assert count >= 1
-    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=4)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=3)
     overrides.reset("driver_released")
-    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=12)
+    assert _task(lead).due_at == trip.pickup_at - timedelta(hours=11)
 
 
 def test_schedule_save_ignores_driver_released():
@@ -98,7 +98,8 @@ def test_schedule_save_ignores_driver_released():
 def test_schedule_page_row_readonly(client):
     client.force_login(UserFactory(role="owner_admin"))
     body = client.get(reverse("checklist_schedule")).content.decode()
-    assert "Set on the Driver details message" in body
+    assert "Set on the Driver details message (due an hour after it sends)" in body
+    assert "due Sat" in body and "8:30 AM" in body
     assert reverse("message_edit", args=["driver_released"]) in body
     assert "amount__driver_released__standard" not in body
     assert "unit__driver_released__standard" not in body

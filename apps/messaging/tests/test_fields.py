@@ -43,9 +43,9 @@ def test_bad_braces():
     assert fields.validate("tp1_welcome", **texts) == {}
 
 
-def test_format_spec_validated_by_name():
+def test_format_spec_is_refused_not_ignored():
     texts = _defaults("tp1_welcome") | {"sms_body": "{first_name!r} {first_name:>5}"}
-    assert fields.validate("tp1_welcome", **texts) == {}
+    assert "Formatting isn't supported" in fields.validate("tp1_welcome", **texts)["sms_body"]
 
 
 def test_required_link():
@@ -125,3 +125,24 @@ def test_trip_day_kinds_get_no_order_links(kind):
 def test_trip_confirmations_keep_order_links():
     for kind in ("trip_confirm_customer", "trip_confirm_customer_2", "wed_final_details"):
         assert {"quote_link", "pay_link"} <= {f.key for f in fields.fields_for(kind)}
+
+
+@pytest.mark.parametrize("text", ["{first_name: }", "{first_name:x}", "{first_name!r}"])
+def test_format_spec_or_conversion_refused(text):
+    texts = _defaults("tp1_welcome") | {"sms_body": f"Hi {text}"}
+    assert fields.validate("tp1_welcome", **texts) == {
+        "sms_body": (
+            "Formatting isn't supported inside a field. Use the buttons below to insert fields."
+        )
+    }
+
+
+def test_escaped_braces_stay_valid():
+    texts = _defaults("tp1_welcome") | {"sms_body": "Hi {first_name} {{ok}}"}
+    assert fields.validate("tp1_welcome", **texts) == {}
+
+
+def test_review_request_gets_no_order_links():
+    keys = {f.key for f in fields.fields_for("review_request")}
+    assert not keys & {"quote_link", "pay_link"}
+    assert "review_link" in keys

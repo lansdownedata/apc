@@ -22,6 +22,7 @@ from .definitions import (
     BeforePickup,
     apply_schedule,
     default_timing,
+    driver_message_due,
 )
 from .models import Task, TaskSchedule
 
@@ -140,7 +141,7 @@ def _build_rows() -> tuple[ScheduleRow, ...]:
         ),
     )
     notes = {
-        "driver_released": "Set on the Driver details message",
+        "driver_released": "Set on the Driver details message (due an hour after it sends)",
         "final_balance_paid": _BALANCE_NOTE,
         "insurance_renewal": _RENEWAL_NOTE,
     }
@@ -260,7 +261,7 @@ def driver_released_example(*, now: datetime | None = None) -> str:
 
     amount, unit = overrides.timing_of("driver_released") or (12, "hours")
     pickup = sample_pickup(now)
-    at = BeforePickup(**{unit: amount}).resolve(pickup)
+    at = driver_message_due(amount, unit).resolve(pickup)
     zone = timezone.get_current_timezone()
     return f"{stamp(pickup)} pickup → due {stamp(at.astimezone(zone))}"
 

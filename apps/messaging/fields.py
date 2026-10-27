@@ -97,7 +97,7 @@ def _keys_for(kind: str) -> set[str]:
             group("Trip") | group("Affiliate") | group("Company") | group("Driver") | {"ack_link"}
         )
     keys = group("Customer") | group("Order") | group("Payment") | group("Company")
-    if kind not in _DRIVER_KINDS:
+    if kind not in _DRIVER_KINDS and kind != "review_request":
         keys |= {"quote_link", "pay_link"}
     if kind in _TRIP_KINDS:
         keys |= group("Trip")
@@ -127,6 +127,14 @@ def _names(text: str) -> set[str]:
         if spec:
             names |= _names(spec)
     return names
+
+
+def _has_formatting(text: str) -> bool:
+    """Whether any field carries a format spec or conversion (`{name:x}`, `{name!r}`)."""
+    return any(
+        name is not None and (spec or conv)
+        for _, name, spec, conv in string.Formatter().parse(text)
+    )
 
 
 def _default_texts(kind: str) -> tuple[str, ...]:
@@ -183,6 +191,10 @@ def validate(kind: str, *, subject: str, email_body: str, sms_body: str) -> dict
         unknown = sorted(n for n in names if n not in allowed)
         if unknown:
             errors[box] = f"Unknown field {{{unknown[0]}}}. Use the buttons below to insert fields."
+        elif _has_formatting(text):
+            errors[box] = (
+                "Formatting isn't supported inside a field. Use the buttons below to insert fields."
+            )
 
     missing = sorted(required_for(kind) - present)
     if missing:

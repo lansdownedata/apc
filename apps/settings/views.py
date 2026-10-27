@@ -44,7 +44,7 @@ def _fleet_attention_count() -> int:
     return sum(1 for s in subjects if s.needs_attention)
 
 
-_SHARED_SWITCH = frozenset({"thank_you_wedding"})
+_SHARED_SWITCH = frozenset({"thank_you_wedding", "trip_confirm_customer_2"})
 
 
 @login_required
@@ -277,6 +277,18 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("renewal_type_list")
 
 
+def _switch_label(kind: str) -> str:
+    """The label of the message whose switch `kind` follows, or "" when it has its own."""
+    owner = overrides.switch_owner(kind)
+    return next(m.label for m in overrides.MESSAGES if m.kind == owner) if owner else ""
+
+
+def _channels_text(rows: dict, kind: str) -> str:
+    names = {"email": "Email", "sms": "SMS"}
+    channels = overrides.effective(kind, rows).channels
+    return " & ".join(names[c] for c in ("email", "sms") if c in channels)
+
+
 @login_required
 @owner_admin_required
 def messages_list(request: HttpRequest) -> HttpResponse:
@@ -294,7 +306,8 @@ def messages_list(request: HttpRequest) -> HttpResponse:
                 "timing": overrides.timing_phrase(spec.kind, rows),
                 "edited": spec.kind in rows,
                 "enabled": overrides.is_enabled(spec.kind, rows, master=True),
-                "shared_switch": spec.kind in _SHARED_SWITCH,
+                "shared_switch": _switch_label(spec.kind),
+                "channels": _channels_text(rows, spec.kind),
             }
         )
     return render(
@@ -370,7 +383,6 @@ def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
     tab = "sms" if first_error == "sms_body" else "email" if first_error else ""
     channels = [{"key": c, "label": "Email" if c == "email" else "SMS"} for c in form.channels]
     chips = [{"key": f.key, "label": f.label, "group": f.group} for f in fields.fields_for(kind)]
-    second = overrides.default(form.second_kind) if form.second_kind else None
     return render(
         request,
         "settings/message_edit.html",
@@ -386,21 +398,21 @@ def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
             "orders": [(lead.pk, _order_label(lead)) for lead in orders],
             "default_order": orders[0].pk if orders else "",
             "anchor_phrase": overrides.timing_anchor_phrase(kind) if form.has_timing else "",
-            "anchor_phrase2": (overrides.timing_anchor_phrase(form.second_kind) if second else ""),
-            "edited": bool({kind, form.second_kind} & overrides.load().keys()),
+            "edited": kind in overrides.load(),
             "timing_example": _timing_example(kind, form),
-            "timing_example2": _timing_example(form.second_kind, form, prefix="timing2")
-            if second
-            else "",
+            "timed_by": ""
+            if form.has_timing or overrides.default(kind).anchor == "triggered"
+            else overrides.timing_phrase(kind),
+            "switch_label": _switch_label(kind),
         },
     )
 
 
-def _timing_example(kind: str | None, form, prefix: str = "timing") -> str:
-    if not kind or overrides.default(kind).anchor == "triggered":
+def _timing_example(kind: str, form) -> str:
+    if not form.has_timing:
         return ""
-    amount = form[f"{prefix}_amount"].value()
-    unit = form[f"{prefix}_unit"].value()
+    amount = form["timing_amount"].value()
+    unit = form["timing_unit"].value()
     try:
         return overrides.timing_example(kind, int(amount), unit, now=_now())
     except (TypeError, ValueError):
@@ -414,8 +426,6 @@ def message_reset(request: HttpRequest, kind: str) -> HttpResponse:
     """Drop the owner's wording, timing and switch for a message."""
     _message_spec(kind)
     overrides.reset(kind)
-    if kind == "trip_confirm_customer":
-        overrides.reset("trip_confirm_customer_2")
     messages.success(request, "Reset to the default.")
     return redirect("message_edit", kind=kind)
 
@@ -456,9 +466,8 @@ def message_preview(request: HttpRequest, kind: str) -> JsonResponse:
 @login_required
 @owner_admin_required
 def message_timing_preview(request: HttpRequest, kind: str) -> JsonResponse:
-    """The worked example for a timing being typed (a message, or the second notice)."""
-    if kind != "trip_confirm_customer_2":
-        _message_spec(kind)
+    """The worked example for a timing being typed."""
+    _message_spec(kind)
     try:
         text = overrides.timing_example(
             kind, int(request.GET.get("amount", "")), request.GET.get("unit", ""), now=_now()

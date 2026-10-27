@@ -242,6 +242,74 @@ def test_trip_confirm_customer_redated_from_pickup():
         scheduled_for=pickup - timedelta(hours=1),
         status="scheduled",
     )
-    _save("trip_confirm_customer", timing=(24, "hours"))
+    _save("trip_confirm_customer", timing=(4, "days"))
     tp.refresh_from_db()
-    assert tp.scheduled_for == pickup - timedelta(hours=24)
+    assert tp.scheduled_for == pickup - timedelta(days=4)
+
+
+def test_wedding_thank_you_has_no_timing():
+    assert overrides.timing_of("thank_you_wedding") is None
+    errors = overrides.check(
+        "thank_you_wedding",
+        subject="s",
+        email_body="{confirm_link}",
+        sms_body="m",
+        timing=(1, "days"),
+    )
+    assert errors["timing"] == "This message is sent with the Thank-you timing."
+    assert overrides.timing_phrase("thank_you_wedding") == "Sent with the Thank-you timing"
+
+
+def test_second_notice_timing_is_its_own():
+    _save("trip_confirm_customer_2", timing=(36, "hours"))
+    assert overrides.timing_of("trip_confirm_customer_2") == (36, "hours")
+
+
+def _check(kind, timing):
+    base = TEMPLATES[kind]
+    return overrides.check(
+        kind,
+        subject=base.subject,
+        email_body=base.email_body,
+        sms_body=base.sms_body,
+        timing=timing,
+    )
+
+
+def test_second_notice_must_follow_the_first():
+    first = overrides.timing_of("trip_confirm_customer")
+    assert first is not None
+    assert _check("trip_confirm_customer_2", (1, "days")) == {}
+    err = _check("trip_confirm_customer_2", (30, "days"))
+    assert err["timing"] == "The second notice must go out after the first."
+    assert _check("trip_confirm_customer_2", first)["timing"] == err["timing"]
+
+
+def test_first_notice_must_precede_the_second():
+    second = overrides.timing_of("trip_confirm_customer_2")
+    assert second == (2, "days")
+    err = _check("trip_confirm_customer", (24, "hours"))
+    assert err["timing"] == "The first notice must go out before the second."
+    assert _check("trip_confirm_customer", (3, "days")) == {}
+
+
+def test_save_and_reset_redate_after_the_transaction_commits(monkeypatch):
+    from django.db import connection
+
+    depth = []
+    monkeypatch.setattr(
+        overrides,
+        "_redate_checklist",
+        lambda kind, changed: depth.append(len(connection.savepoint_ids)) or 0,
+    )
+    real = overrides.redate
+    monkeypatch.setattr(
+        overrides,
+        "redate",
+        lambda kind, from_offset: (
+            depth.append(len(connection.savepoint_ids)) or real(kind, from_offset=from_offset)
+        ),
+    )
+    _save("tp2_lead_followup", timing=(5, "hours"))
+    overrides.reset("tp2_lead_followup")
+    assert depth == [0, 0, 0, 0]

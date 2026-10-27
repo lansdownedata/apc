@@ -136,15 +136,47 @@ def test_save_invalid_timing_shows_error(client):
     assert "Use 0 to 1440 minutes." in resp.content.decode()
 
 
-def test_second_notice_timing_on_confirmation_editor(client):
+def test_first_confirmation_editor_has_no_second_timing(client):
     client.force_login(_owner_admin())
-    url = reverse("message_edit", args=["trip_confirm_customer"])
+    html = client.get(reverse("message_edit", args=["trip_confirm_customer"])).content.decode()
+    assert "timing2" not in html
+    assert "Second notice" not in html
+
+
+def test_second_notice_editor_edits_wording_and_timing(client):
+    client.force_login(_owner_admin())
+    url = reverse("message_edit", args=["trip_confirm_customer_2"])
     html = client.get(url).content.decode()
-    assert 'name="timing2_amount"' in html
-    data = _post_data("trip_confirm_customer", timing2_amount="36", timing2_unit="hours")
+    assert 'name="timing_amount"' in html
+    assert "Uses the Trip confirmation switch" in html
+    data = _post_data(
+        "trip_confirm_customer_2",
+        sms_body="Please confirm {trip_pickup_when} {confirm_link}",
+        timing_amount="36",
+        timing_unit="hours",
+    )
+    del data["enabled"]
     assert client.post(url, data).status_code == 302
     assert overrides.timing_of("trip_confirm_customer_2") == (36, "hours")
-    assert MessageTemplate.objects.get(kind="trip_confirm_customer_2").timing_amount == 36
+    row = MessageTemplate.objects.get(kind="trip_confirm_customer_2")
+    assert row.sms_body.startswith("Please confirm")
+
+
+def test_wedding_thank_you_editor_has_no_timing_inputs(client):
+    client.force_login(_owner_admin())
+    html = client.get(reverse("message_edit", args=["thank_you_wedding"])).content.decode()
+    assert "Sent with the Thank-you timing" in html
+    assert 'name="timing_amount"' not in html
+
+
+def test_subject_over_200_characters_is_refused(client):
+    client.force_login(_owner_admin())
+    resp = client.post(
+        reverse("message_edit", args=["tp1_welcome"]),
+        _post_data("tp1_welcome", subject="x" * 201),
+    )
+    assert resp.status_code == 200
+    assert "Keep the subject under 200 characters." in resp.content.decode()
 
 
 def test_preview_renders_real_order(client):

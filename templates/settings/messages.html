@@ -58,10 +58,10 @@
               <span class="text-[13px] font-medium text-ink">{{ item.label }}</span>
               {% if item.edited %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">Edited</span>{% endif %}
             </div>
-            <div class="text-[11.5px] text-muted">{{ item.timing }}</div>
+            <div class="text-[11.5px] text-muted">{{ item.timing }} · <span>{{ item.channels }}</span></div>
           </a>
           {% if item.shared_switch %}
-          <span class="text-[11.5px] text-muted shrink-0">Uses the Thank-you switch</span>
+          <span class="text-[11.5px] text-muted shrink-0">Uses the {{ item.shared_switch }} switch</span>
           {% else %}
           <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if item.enabled %}true{% else %}false{% endif %}" aria-label="{{ item.label }} switch" @click="flip()" :disabled="busy"
                   class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"
