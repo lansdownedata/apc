@@ -1,6 +1,7 @@
 """Model forms for vendor management."""
 
 from django import forms
+from django.db.models import Q
 
 from apps.core.phone import to_e164
 
@@ -102,7 +103,7 @@ class VendorInsuranceForm(forms.ModelForm):
 class VendorDocumentForm(forms.ModelForm):
     # Optional on the form: an upload with no type picked is filed as Other.
     document_type = forms.ModelChoiceField(
-        queryset=AffiliateDocumentType.objects.filter(active=True),
+        queryset=AffiliateDocumentType.objects.none(),
         required=False,
         empty_label=None,
         widget=forms.Select(attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}),
@@ -115,6 +116,14 @@ class VendorDocumentForm(forms.ModelForm):
             "label": forms.TextInput(attrs=_TEXT),
             "file": forms.FileInput(attrs={"class": "sr-only"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Other is always offered (and preselected) even if deactivated: it's the default.
+        other = AffiliateDocumentType.objects.other()
+        field = self.fields["document_type"]
+        field.queryset = AffiliateDocumentType.objects.filter(Q(active=True) | Q(pk=other.pk))
+        field.initial = other.pk
 
     def clean_document_type(self) -> AffiliateDocumentType:
         return self.cleaned_data.get("document_type") or AffiliateDocumentType.objects.other()

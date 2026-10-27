@@ -111,3 +111,47 @@ def test_detail_shows_type_name(client, staff):
 
     assert 'ml-2">W-9</span>' in body
     assert 'ml-2">Other</span>' not in body
+
+
+def _options(body):
+    from html.parser import HTMLParser
+
+    found, state = [], {"in": False}
+
+    class P(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            if tag == "select" and a.get("name") == "document_type":
+                state["in"] = True
+            elif tag == "option" and state["in"]:
+                found.append([None, "selected" in a])
+
+        def handle_data(self, data):
+            if state["in"] and found and found[-1][0] is None and data.strip():
+                found[-1][0] = data.strip()
+
+        def handle_endtag(self, tag):
+            if tag == "select":
+                state["in"] = False
+
+    P().feed(body)
+    return {name: sel for name, sel in found}
+
+
+def test_upload_preselects_other(client, staff):
+    vendor = VendorFactory()
+
+    body = client.get(reverse("document_create", args=[vendor.pk])).content.decode()
+
+    opts = _options(body)
+    assert opts["Other"] is True
+    assert opts["DOT operating authority"] is False
+
+
+def test_upload_offers_and_preselects_other_even_if_inactive(client, staff):
+    AffiliateDocumentType.objects.filter(name="Other").update(active=False)
+    vendor = VendorFactory()
+
+    body = client.get(reverse("document_create", args=[vendor.pk])).content.decode()
+
+    assert _options(body)["Other"] is True
