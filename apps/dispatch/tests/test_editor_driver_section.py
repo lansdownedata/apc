@@ -352,7 +352,7 @@ def test_saving_a_picked_roster_driver_releases_them_once(client, agent):
 
     a = _confirmed()
     driver = VendorDriver.objects.create(vendor=a.vendor, name="Luis Ortega", phone="+15715550101")
-    with patch("apps.messaging.touchpoints.trigger_driver_released") as released:
+    with patch("apps.messaging.touchpoints.sync_driver_message") as released:
         resp = client.post(
             reverse("dispatch_driver_info", args=[a.pk]),
             {"vendor_driver": driver.pk, "vehicle_desc": "Black Suburban"},

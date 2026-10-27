@@ -48,6 +48,7 @@ def _reschedule_if_pickup_moved(reservation, lead, prev_pickup: tuple) -> None:
         from apps.messaging import touchpoints
 
         touchpoints.reschedule_service_touchpoints(reservation)
+        touchpoints.sync_driver_message(reservation)
 
 
 # A wedding shuttle is the motivating case — four minibuses on one itinerary — but a

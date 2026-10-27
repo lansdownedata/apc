@@ -79,14 +79,14 @@ def test_set_status_refuses_a_status_outside_the_curated_set(logged_in_client):
 
 
 def test_set_status_fires_the_configured_customer_notification(logged_in_client):
-    MessageTemplate.objects.create(kind="status_dispatched", enabled=True)
+    MessageTemplate.objects.create(kind="status_on_the_way", enabled=True)
     trip = _trip()
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
 
-    logged_in_client.post(reverse("dispatch_set_status", args=[trip.pk]), {"status": "dispatched"})
+    logged_in_client.post(reverse("dispatch_set_status", args=[trip.pk]), {"status": "on_the_way"})
 
     assert TouchPoint.objects.filter(
-        reservation=trip, kind=TouchPoint.Kind.STATUS_DISPATCHED
+        reservation=trip, kind=TouchPoint.Kind.STATUS_ON_THE_WAY
     ).exists()
 
 

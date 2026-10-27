@@ -431,6 +431,7 @@ def save_reservation_from_draft(
             touchpoints.schedule_service_touchpoints(lead)
         elif prev_pickup != (instance.pickup_date, instance.pickup_time):
             touchpoints.reschedule_service_touchpoints(instance)
+            touchpoints.sync_driver_message(instance)
 
         from apps.tasks import services as tasks
 

@@ -1,9 +1,10 @@
 """Dispatching never waits on driver details; the customer message does."""
 
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.dispatch import monitoring, services
 from apps.dispatch.factories import AssignmentFactory
@@ -24,7 +25,7 @@ DRV = TouchPoint.Kind.DRIVER_RELEASED
 def _name_only_trip():
     trip = ReservationFactory(
         lead=LeadFactory(status=Lead.Status.BOOKED),
-        pickup_date=date(2026, 8, 26),
+        pickup_date=timezone.now().date() + timedelta(days=10),
         pickup_time=time(6, 15),
     )
     a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)

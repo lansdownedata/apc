@@ -57,7 +57,6 @@ _ORDER_KINDS = frozenset({_K.ORDER_AUTH_EXPIRED, _K.ORDER_CONFIRMED, _K.ORDER_CA
 
 # Trip status -> the customer notification kind it fires (APC-22).
 _STATUS_KINDS = {
-    "dispatched": _K.STATUS_DISPATCHED,
     "on_the_way": _K.STATUS_ON_THE_WAY,
     "arrived": _K.STATUS_ARRIVED,
 }
@@ -260,25 +259,63 @@ def cancel_affiliate_confirmation(reservation) -> int:
     ).update(status=TouchPoint.Status.CANCELLED)
 
 
-def trigger_driver_released(assignment) -> None:
-    """Driver info was entered on a confirmed trip — release it to the customer (APC-21).
+# Trip statuses at which the customer may be told who is driving: from Dispatched onward.
+DRIVER_MESSAGE_STATUSES = frozenset(
+    {
+        "dispatched",
+        "dispatched_non_la",
+        "on_the_way",
+        "circling",
+        "arrived",
+        "customer_in_car",
+    }
+)
 
-    Trigger-based: the row is created with `scheduled_for = now` and delivered by
-    `run_touchpoints` on the next tick, keeping one send path.
-    """
-    from apps.dispatch.models import Assignment, DispatchAlertConfig
+
+def _driver_message_ready(reservation, assignment) -> bool:
+    """The send-time conditions: a Dispatched-or-later status and the confirmed coverage's
+    required driver details all on file."""
+    from apps.dispatch.models import DispatchAlertConfig
     from apps.dispatch.services import driver_details_ready
 
-    if assignment.status != Assignment.Status.CONFIRMED:
-        return
-    if not driver_details_ready(assignment, DispatchAlertConfig.load()):
-        return
-    _ensure(
-        assignment.reservation,
-        TouchPoint.Kind.DRIVER_RELEASED,
-        timezone.now(),
-        at=timezone.now(),
+    if reservation.trip_status not in DRIVER_MESSAGE_STATUSES:
+        return False
+    return assignment is not None and driver_details_ready(assignment, DispatchAlertConfig.load())
+
+
+def sync_driver_message(reservation) -> TouchPoint | None:
+    """Queue, or re-date, the driver message once the trip is Dispatched with details ready.
+
+    Called after every change that can alter those facts (status, driver info, coverage,
+    pickup). It sends at `max(now, pickup + the message's timing offset)`: early dispatches
+    wait for the window, late ones go on the next tick. A message already SENT is left
+    alone. Returns the row created or re-dated.
+    """
+    from apps.dispatch.models import Assignment
+
+    kind = TouchPoint.Kind.DRIVER_RELEASED
+    pickup = reservation.pickup_at
+    now = timezone.now()
+    if pickup is None or pickup <= now or not overrides.is_enabled(kind):
+        return None
+    # Read coverage fresh: the caller may hold a prefetch from before the change.
+    coverage = reservation.assignments.filter(status=Assignment.Status.CONFIRMED).first()
+    if not _driver_message_ready(reservation, coverage):
+        return None
+    existing = (
+        TouchPoint.objects.filter(reservation=reservation, kind=kind)
+        .exclude(status=TouchPoint.Status.CANCELLED)
+        .first()
     )
+    at = max(now, pickup + overrides.effective(kind).offset)
+    if existing is None:
+        return _ensure(reservation, kind, pickup, at=at)
+    if existing.status != TouchPoint.Status.SCHEDULED:
+        return None
+    if existing.scheduled_for != at:
+        existing.scheduled_for = at
+        existing.save(update_fields=["scheduled_for", "updated_at"])
+    return existing
 
 
 def notify_status_change(reservation, status: str) -> None:
@@ -442,7 +479,11 @@ def _send(
         tp.sent_at = timezone.now()
         tp.podium_message_uid = first_uid
         tp.error = ""
-        tp.save(update_fields=["status", "sent_at", "podium_message_uid", "error", "updated_at"])
+        fields = ["status", "sent_at", "podium_message_uid", "error", "updated_at"]
+        if tp.kind == TouchPoint.Kind.DRIVER_RELEASED:
+            tp.driver_details = _confirmed_assignment(tp.reservation).driver_info
+            fields.append("driver_details")
+        tp.save(update_fields=fields)
         return True
     _mark(tp, status=TouchPoint.Status.FAILED, error="; ".join(errors))
     return False
@@ -633,6 +674,13 @@ def _process(tp: TouchPoint, rows=None, master: bool | None = None) -> bool:
         if tp.reservation.trip_status in CANCELLED_STATUSES:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip cancelled")
             return False
+        if kind == TouchPoint.Kind.DRIVER_RELEASED:
+            pickup = tp.reservation.pickup_at
+            if pickup is not None and pickup <= timezone.now():
+                _mark(tp, status=TouchPoint.Status.SKIPPED, error="pickup passed")
+                return False
+            if not _driver_message_ready(tp.reservation, _confirmed_assignment(tp.reservation)):
+                return False  # held: stays SCHEDULED, retried every tick
         if kind in _SERVICE_DATE_KINDS and tp.reservation.pickup_at is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip has no pickup date")
             return False

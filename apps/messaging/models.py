@@ -150,6 +150,9 @@ class TouchPoint(TimeStampedModel):
     sent_at = models.DateTimeField(null=True, blank=True)
     podium_message_uid = models.CharField(max_length=64, blank=True)
     error = models.CharField(max_length=255, blank=True)
+    # The driver / vehicle details a driver_released send carried (name, cell, vehicle_desc,
+    # vehicle_number), so a later change can be compared against what the customer was told.
+    driver_details = models.JSONField(null=True, blank=True)
 
     @property
     def is_due(self) -> bool:

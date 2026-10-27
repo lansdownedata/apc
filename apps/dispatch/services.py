@@ -118,6 +118,7 @@ def _on_assignment_confirmed(assignment: Assignment) -> None:
     from apps.messaging import touchpoints
 
     touchpoints.schedule_affiliate_confirmation(assignment)
+    touchpoints.sync_driver_message(assignment.reservation)
 
 
 def _on_assignment_released(reservation: Reservation) -> None:
@@ -389,7 +390,7 @@ def set_driver_info(
     assignment.save(update_fields=fields)
     from apps.messaging import touchpoints
 
-    touchpoints.trigger_driver_released(assignment)
+    touchpoints.sync_driver_message(assignment.reservation)
     _sync_tasks(assignment.reservation)
     return assignment
 

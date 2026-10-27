@@ -1,9 +1,10 @@
 """APC-21 — farmed-out driver + vehicle detail, and its release to the customer."""
 
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.dispatch import services
 from apps.dispatch.factories import AssignmentFactory
@@ -12,13 +13,14 @@ from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging.models import TouchPoint
 from apps.reservations.factories import ReservationFactory
+from apps.reservations.services import set_trip_status
 
 pytestmark = pytest.mark.django_db
 
 
 def _trip(**kwargs):
     kwargs.setdefault("lead", LeadFactory(status=Lead.Status.BOOKED))
-    kwargs.setdefault("pickup_date", date(2026, 8, 26))
+    kwargs.setdefault("pickup_date", timezone.localdate() + timedelta(days=10))
     kwargs.setdefault("pickup_time", time(6, 15))
     return ReservationFactory(**kwargs)
 
@@ -28,6 +30,7 @@ def _trip(**kwargs):
 
 def test_set_driver_info_saves_the_fields_and_triggers_release():
     trip = _trip()
+    set_trip_status(trip, "dispatched")
     a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
 
     services.set_driver_info(
@@ -65,6 +68,7 @@ def test_set_driver_info_refuses_an_unconfirmed_offer():
 
 def test_set_driver_info_does_not_release_twice():
     trip = _trip()
+    set_trip_status(trip, "dispatched")
     a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
     cell = "+15715551212"
     services.set_driver_info(a, name="Sam Rivera", cell=cell, vehicle_desc="", vehicle_number="")

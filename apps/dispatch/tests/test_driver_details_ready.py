@@ -1,6 +1,6 @@
 """Driver details required — one setting, one check, every consumer."""
 
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 
 import pytest
 from django.urls import reverse
@@ -15,6 +15,7 @@ from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging.models import TouchPoint
 from apps.reservations.factories import ReservationFactory
+from apps.reservations.services import set_trip_status
 from apps.tasks import services as tasks
 from apps.tasks.models import Task
 
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.django_db
 def _trip():
     return ReservationFactory(
         lead=LeadFactory(status=Lead.Status.BOOKED),
-        pickup_date=date(2026, 8, 26),
+        pickup_date=timezone.localdate() + timedelta(days=10),
         pickup_time=time(6, 15),
     )
 
@@ -126,6 +127,7 @@ def test_customer_message_waits_for_ready():
     a = _confirmed(trip)
     drv = TouchPoint.Kind.DRIVER_RELEASED
 
+    set_trip_status(trip, "dispatched")
     _set(a)
     assert not TouchPoint.objects.filter(reservation=trip, kind=drv).exists()
 

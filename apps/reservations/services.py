@@ -217,9 +217,10 @@ def set_trip_status(
     event = TripStatusEvent.objects.create(
         reservation=reservation, status=status, source=source, changed_by=user
     )
-    from apps.messaging.touchpoints import notify_status_change
+    from apps.messaging.touchpoints import notify_status_change, sync_driver_message
 
     notify_status_change(reservation, status)
+    sync_driver_message(reservation)
     if status == Reservation.TripStatus.DONE:
         # APC-58: a Done trip enters the post-trip workflow now, not on the next tick.
         from apps.tasks.services import sync

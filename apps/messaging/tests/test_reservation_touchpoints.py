@@ -265,34 +265,34 @@ def test_status_change_creates_a_message_only_when_enabled():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future())
 
-    set_trip_status(res, "dispatched")
-    assert not TouchPoint.objects.filter(kind=K.STATUS_DISPATCHED).exists()
+    set_trip_status(res, "on_the_way")
+    assert not TouchPoint.objects.filter(kind=K.STATUS_ON_THE_WAY).exists()
 
-    MessageTemplate.objects.create(kind="status_dispatched", enabled=True)
-    set_trip_status(res, "on_the_way")  # change again so the event fires
-    set_trip_status(res, "dispatched")
-    tp = TouchPoint.objects.get(reservation=res, kind=K.STATUS_DISPATCHED)
+    MessageTemplate.objects.create(kind="status_on_the_way", enabled=True)
+    set_trip_status(res, "arrived")  # change again so the event fires
+    set_trip_status(res, "on_the_way")
+    tp = TouchPoint.objects.get(reservation=res, kind=K.STATUS_ON_THE_WAY)
     assert tp.scheduled_for <= timezone.now()
 
 
-def test_trigger_driver_released_needs_confirmed_plus_driver_info():
+def test_sync_driver_message_needs_confirmed_plus_driver_info():
     lead = _booked_lead()
-    res = ReservationFactory(lead=lead, pickup_date=_future())
+    res = ReservationFactory(lead=lead, pickup_date=_future(), trip_status="dispatched")
     a = AssignmentFactory(
         reservation=res,
         status=Assignment.Status.CONFIRMED,
         driver_name="",
         driver_cell="",
     )
-    touchpoints.trigger_driver_released(a)
+    touchpoints.sync_driver_message(res)
     assert not TouchPoint.objects.filter(kind=K.DRIVER_RELEASED).exists()
 
     a.driver_name = "Sam Rivera"
     a.driver_cell = "+15715551212"
     a.save()
-    touchpoints.trigger_driver_released(a)
+    touchpoints.sync_driver_message(res)
     assert TouchPoint.objects.filter(reservation=res, kind=K.DRIVER_RELEASED).count() == 1
-    touchpoints.trigger_driver_released(a)  # once only
+    touchpoints.sync_driver_message(res)  # once only
     assert TouchPoint.objects.filter(reservation=res, kind=K.DRIVER_RELEASED).count() == 1
 
 

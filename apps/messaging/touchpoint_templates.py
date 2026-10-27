@@ -336,7 +336,7 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         subject="Your driver for {trip_pickup_date} — {company_name}",
         email_body=(
             "{first_name},\n\n"
-            "Here are your driver and vehicle details for {trip_pickup_when}:\n\n"
+            "Your trip on {trip_pickup_when} is confirmed and your driver is assigned:\n\n"
             "  Driver:     {driver_name}\n"
             "  Cell:       {driver_cell}\n"
             "  Vehicle:    {vehicle_description}\n"
@@ -346,7 +346,8 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{company_name}"
         ),
         sms_body=(
-            "{first_name}, it's {company_name}. Your driver for {trip_pickup_when}:\n"
+            "{first_name}, it's {company_name}. Your trip on {trip_pickup_when} is confirmed. "
+            "Your driver:\n"
             "{driver_name}\n"
             "Cell {driver_cell}\n"
             "{vehicle_description}\n"
