@@ -40,6 +40,11 @@ HOURS, DAYS, BUSINESS_DAYS = (
 MAX_AMOUNT = {DAYS: 365, HOURS: 8760, BUSINESS_DAYS: 30}
 
 
+# Rows whose timing is not set here: "Driver info released" is due when the Driver
+# details message goes out, so its timing lives on that message.
+FOLLOWS_MESSAGE = frozenset({("driver_released", "standard")})
+
+
 @dataclass(frozen=True)
 class ScheduleRow:
     """One line of the Settings -> Checklist schedule page."""
@@ -54,6 +59,10 @@ class ScheduleRow:
     @property
     def label(self) -> str:
         return KINDS[self.key].label
+
+    @property
+    def follows_message(self) -> bool:
+        return (self.key, self.variant) in FOLLOWS_MESSAGE
 
     @property
     def department(self) -> str:
@@ -130,7 +139,11 @@ def _build_rows() -> tuple[ScheduleRow, ...]:
             ("complaint_followup", "planner_change_request", "insurance_renewal"),
         ),
     )
-    notes = {"final_balance_paid": _BALANCE_NOTE, "insurance_renewal": _RENEWAL_NOTE}
+    notes = {
+        "driver_released": "Set on the Driver details message",
+        "final_balance_paid": _BALANCE_NOTE,
+        "insurance_renewal": _RENEWAL_NOTE,
+    }
     rows = []
     for group, keys in groups:
         for key in keys:
@@ -187,6 +200,8 @@ def save(values: dict[Key, Timing], *, user) -> int:
     changed: set[Key] = set()
     with transaction.atomic():
         for key, timing in values.items():
+            if key in FOLLOWS_MESSAGE:
+                continue
             kind, variant = key
             timing = (int(timing[0]), timing[1])
             default = code_default(kind, variant)
@@ -237,6 +252,17 @@ def sample_pickup(now: datetime | None = None) -> datetime:
     today = (now or timezone.now()).astimezone(zone).date()
     saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
     return datetime.combine(saturday, time(19, 30), tzinfo=zone)
+
+
+def driver_released_example(*, now: datetime | None = None) -> str:
+    """The worked example for the message-driven row, from the Driver details message timing."""
+    from apps.messaging import overrides
+
+    amount, unit = overrides.timing_of("driver_released") or (12, "hours")
+    pickup = sample_pickup(now)
+    at = BeforePickup(**{unit: amount}).resolve(pickup)
+    zone = timezone.get_current_timezone()
+    return f"{stamp(pickup)} pickup → due {stamp(at.astimezone(zone))}"
 
 
 def preview(key: str, variant: str, amount: int, unit: str, *, now: datetime | None = None) -> str:

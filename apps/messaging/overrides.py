@@ -168,7 +168,8 @@ def save(
                 },
             )
         new = _offset_of(kind)
-        return redate(kind, from_offset=old) if new != old else 0
+        count = redate(kind, from_offset=old) if new != old else 0
+        return count + _redate_checklist(kind, changed=new != old)
 
 
 def reset(kind: str) -> int:
@@ -177,7 +178,18 @@ def reset(kind: str) -> int:
         old = _offset_of(kind)
         MessageTemplate.objects.filter(kind=kind).delete()
         new = _offset_of(kind)
-        return redate(kind, from_offset=old) if new != old else 0
+        count = redate(kind, from_offset=old) if new != old else 0
+        return count + _redate_checklist(kind, changed=new != old)
+
+
+def _redate_checklist(kind: str, *, changed: bool) -> int:
+    """The "Driver info released" checklist task is due with the driver message, so a new
+    timing re-dates its open tasks too. Returns how many."""
+    if kind != "driver_released" or not changed:
+        return 0
+    from apps.tasks import schedule
+
+    return schedule.redate({("driver_released", "standard")})
 
 
 _RESERVATION_KINDS = frozenset(

@@ -49,6 +49,7 @@ class BeforePickup:
     days: int = 0
     hours: int = 0
     day_start: bool = False
+    minutes: int = 0
 
     def resolve(self, pickup_at: datetime | None) -> datetime | None:
         if pickup_at is None:
@@ -57,7 +58,8 @@ class BeforePickup:
             day = pickup_at.date() - timedelta(days=self.days)
             local = datetime.combine(day, time(0, 0), tzinfo=pickup_at.tzinfo)
             return (local - timedelta(hours=self.hours)).astimezone(UTC)
-        return (pickup_at - timedelta(days=self.days, hours=self.hours)).astimezone(UTC)
+        offset = timedelta(days=self.days, hours=self.hours, minutes=self.minutes)
+        return (pickup_at - offset).astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -569,12 +571,27 @@ def default_timing(kind: TaskKind) -> tuple[int, str]:
     return due.days, "days"
 
 
+def _follow_driver_message(kind: TaskKind, facts: LeadFacts) -> TaskKind:
+    """ "Driver info released" is due when the Driver details message goes out: the
+    message's own timing (Settings -> Messages), never a checklist schedule row."""
+    from apps.messaging import overrides
+
+    timing = overrides.timing_of("driver_released", facts.message_rows)
+    if timing is None:
+        return kind
+    amount, unit = timing
+    return replace(kind, due=BeforePickup(**{unit: amount}))
+
+
 def effective_kind(kind: TaskKind, facts: LeadFacts) -> TaskKind:
     """`kind` as it applies to this order: the code default, then the Settings row, then —
     for a farmed-in order — the farm-in clock (code override, then its own Settings row)."""
-    row = facts.schedules.get((kind.key, "standard"))
-    if row:
-        kind = apply_schedule(kind, *row)
+    if kind.key == "driver_released":
+        kind = _follow_driver_message(kind, facts)
+    else:
+        row = facts.schedules.get((kind.key, "standard"))
+        if row:
+            kind = apply_schedule(kind, *row)
     if not facts.is_farm_in:
         return kind
     overrides = FARM_IN.get(kind.key)

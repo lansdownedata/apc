@@ -306,6 +306,8 @@ class ChecklistScheduleForm(forms.Form):
         super().__init__(data)
         saved = schedule.load() if saved is None else saved
         for row in schedule.ROWS:
+            if row.follows_message:
+                continue
             amount, unit = saved.get((row.key, row.variant)) or schedule.code_default(
                 row.key, row.variant
             )
@@ -331,6 +333,8 @@ class ChecklistScheduleForm(forms.Form):
     def clean(self):
         cleaned = super().clean()
         for row in schedule.ROWS:
+            if row.follows_message:
+                continue
             amount_name = f"amount__{row.key}__{row.variant}"
             amount = cleaned.get(amount_name)
             unit = cleaned.get(f"unit__{row.key}__{row.variant}")
@@ -348,6 +352,7 @@ class ChecklistScheduleForm(forms.Form):
                 self.cleaned_data[f"unit__{row.key}__{row.variant}"],
             )
             for row in schedule.ROWS
+            if not row.follows_message
         }
 
     def groups(self) -> list[dict]:
@@ -355,6 +360,17 @@ class ChecklistScheduleForm(forms.Form):
         default (for Reset) and a first example line computed from the current value."""
         out: list[dict] = []
         for row in schedule.ROWS:
+            if row.follows_message:
+                if not out or out[-1]["name"] != row.group:
+                    out.append({"name": row.group, "items": []})
+                out[-1]["items"].append(
+                    {
+                        "row": row,
+                        "follows_message": True,
+                        "example": schedule.driver_released_example(),
+                    }
+                )
+                continue
             amount = self[f"amount__{row.key}__{row.variant}"]
             unit = self[f"unit__{row.key}__{row.variant}"]
             default_amount, default_unit = schedule.code_default(row.key, row.variant)

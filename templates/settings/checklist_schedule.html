@@ -22,7 +22,7 @@
       <div class="divide-y divide-line">
         {% for item in group.items %}
         <div class="py-3 first:pt-0 last:pb-0{% if item.row.variant == 'farm_in' %} pl-5{% endif %}"
-             data-row data-key="{{ item.row.key }}" data-variant="{{ item.row.variant }}"
+             {% if not item.follows_message %}data-row{% endif %} data-key="{{ item.row.key }}" data-variant="{{ item.row.variant }}"
              data-default-amount="{{ item.default_amount }}" data-default-unit="{{ item.default_unit }}">
           <div class="grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
             <div class="min-w-0">
@@ -33,6 +33,9 @@
               <div class="text-[11.5px] text-muted">{{ item.row.department }}</div>
               {% endif %}
             </div>
+            {% if item.follows_message %}
+            <a href="{% url 'message_edit' 'driver_released' %}" class="text-[12.5px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-1 py-0.5 transition-colors">Set on the Driver details message <i class="ti ti-arrow-right text-[13px]"></i></a>
+            {% else %}
             <div class="flex flex-wrap items-center justify-end gap-2">
               <div class="w-20">{{ item.amount }}</div>
               <div class="w-32">
@@ -47,9 +50,10 @@
               <button type="button" @click="reset($el.closest('[data-row]'))"
                       class="text-[12px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-1 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Reset</button>
             </div>
+            {% endif %}
           </div>
           <p class="text-[11.5px] text-muted mt-1.5" data-example>{{ item.example }}</p>
-          {% if item.row.note %}<p class="text-[11.5px] text-muted mt-0.5">{{ item.row.note }}</p>{% endif %}
+          {% if item.row.note and not item.follows_message %}<p class="text-[11.5px] text-muted mt-0.5">{{ item.row.note }}</p>{% endif %}
           {% for error in item.amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
           {% for error in item.unit.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
         </div>

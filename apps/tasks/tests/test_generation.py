@@ -168,8 +168,8 @@ def test_ensure_tasks_query_count_does_not_grow_with_trips():
 
     assert len(ten) == len(one)
     assert (
-        len(ten) <= 18
-    )  # +1 farm-in fact (APC-92), +1 schedules, +1 dispatch config, once per batch
+        len(ten) <= 19
+    )  # +1 farm-in fact (APC-92), +1 schedules, +1 dispatch config, +1 message rows, once per batch
 
 
 # --- due dates ----------------------------------------------------------------------

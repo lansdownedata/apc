@@ -191,7 +191,9 @@ def test_query_count_is_bounded_for_fifty_orders():
         run_tasks()
 
     assert len(many) == len(few)
-    assert len(many) <= 25  # +complaints, +farm-in, +2 schedules, +1 dispatch config
+    assert (
+        len(many) <= 26
+    )  # +complaints, +farm-in, +2 schedules, +1 dispatch config, +1 message rows
 
 
 def test_a_disabled_config_makes_the_job_a_no_op():
