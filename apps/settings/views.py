@@ -1,9 +1,12 @@
 """Settings screens — owner-admin only."""
 
+from datetime import datetime
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import owner_admin_required
@@ -14,9 +17,11 @@ from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
 from apps.messaging.models import NotificationConfig
 from apps.reservations.models import PricingConfig
+from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
 
 from .forms import (
+    ChecklistScheduleForm,
     DispatchAlertConfigForm,
     NotificationConfigForm,
     PricingConfigForm,
@@ -362,6 +367,44 @@ def task_settings(request: HttpRequest) -> HttpResponse:
         "settings/tasks.html",
         {"nav": "settings", "page_title": "Tasks", "form": form},
     )
+
+
+def _now() -> datetime:
+    return timezone.now()
+
+
+@login_required
+@owner_admin_required
+def checklist_schedule(request: HttpRequest) -> HttpResponse:
+    """Every checklist due timing in one form (spec 2026-10-26 §1). Saving re-dates the
+    open tasks of each timing that changed."""
+    form = ChecklistScheduleForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        count = schedule.save(form.cleaned_values(), user=request.user)
+        messages.success(request, f"Saved. {count} open task{'s' if count != 1 else ''} re-dated.")
+        return redirect("checklist_schedule")
+    return render(
+        request,
+        "settings/checklist_schedule.html",
+        {"nav": "settings", "page_title": "Checklist schedule", "form": form},
+    )
+
+
+@login_required
+@owner_admin_required
+def checklist_schedule_preview(request: HttpRequest) -> JsonResponse:
+    """The worked example for one row, from the real due-date resolver."""
+    try:
+        text = schedule.preview(
+            request.GET.get("key", ""),
+            request.GET.get("variant", ""),
+            int(request.GET.get("amount", "")),
+            request.GET.get("unit", ""),
+            now=_now(),
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "text": text})
 
 
 # --- points of interest -------------------------------------------------------------

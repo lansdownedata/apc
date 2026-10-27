@@ -4,6 +4,9 @@ from django import forms
 
 from apps.addresses.models import Venue
 from apps.leads.models import ServiceType, VehicleType
+from apps.tasks import schedule
+
+UNIT_LABELS = {"hours": "hours", "days": "days", "business_days": "business days"}
 
 
 class VehicleTypeForm(forms.ModelForm):
@@ -306,3 +309,80 @@ class VenueForm(forms.ModelForm):
         ].help_text = (
             "Defaults to our largest coach. Pick a smaller vehicle when the site cannot take one."
         )
+
+
+class ChecklistScheduleForm(forms.Form):
+    """Every checklist timing on one page: `amount__<key>__<variant>` and
+    `unit__<key>__<variant>` per row, starting from the saved value or the code default."""
+
+    def __init__(self, data=None, *, saved: dict | None = None):
+        super().__init__(data)
+        saved = schedule.load() if saved is None else saved
+        for row in schedule.ROWS:
+            amount, unit = saved.get((row.key, row.variant)) or schedule.code_default(
+                row.key, row.variant
+            )
+            self.fields[f"amount__{row.key}__{row.variant}"] = forms.IntegerField(
+                min_value=0,
+                initial=amount,
+                label=f"{row.label} amount",
+                widget=forms.NumberInput(
+                    attrs={"class": "field", "min": 0, "inputmode": "numeric"}
+                ),
+            )
+            self.fields[f"unit__{row.key}__{row.variant}"] = forms.ChoiceField(
+                choices=[(u, UNIT_LABELS[u]) for u in row.units],
+                initial=unit,
+                label=f"{row.label} unit",
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        for row in schedule.ROWS:
+            amount_name = f"amount__{row.key}__{row.variant}"
+            amount = cleaned.get(amount_name)
+            unit = cleaned.get(f"unit__{row.key}__{row.variant}")
+            if amount is not None and unit and amount > schedule.MAX_AMOUNT[unit]:
+                self.add_error(
+                    amount_name,
+                    f"At most {schedule.MAX_AMOUNT[unit]:,} {UNIT_LABELS[unit]}.",
+                )
+        return cleaned
+
+    def cleaned_values(self) -> dict[tuple[str, str], tuple[int, str]]:
+        return {
+            (row.key, row.variant): (
+                self.cleaned_data[f"amount__{row.key}__{row.variant}"],
+                self.cleaned_data[f"unit__{row.key}__{row.variant}"],
+            )
+            for row in schedule.ROWS
+        }
+
+    def groups(self) -> list[dict]:
+        """The rows grouped for the template, each carrying its bound fields, its code
+        default (for Reset) and a first example line computed from the current value."""
+        out: list[dict] = []
+        for row in schedule.ROWS:
+            amount = self[f"amount__{row.key}__{row.variant}"]
+            unit = self[f"unit__{row.key}__{row.variant}"]
+            default_amount, default_unit = schedule.code_default(row.key, row.variant)
+            try:
+                example = schedule.preview(
+                    row.key, row.variant, int(amount.value()), str(unit.value())
+                )
+            except (TypeError, ValueError):
+                example = ""
+            item = {
+                "row": row,
+                "amount": amount,
+                "unit": unit,
+                "unit_options": [(u, UNIT_LABELS[u]) for u in row.units],
+                "single_unit": UNIT_LABELS[row.units[0]] if len(row.units) == 1 else "",
+                "default_amount": default_amount,
+                "default_unit": default_unit,
+                "example": example,
+            }
+            if not out or out[-1]["name"] != row.group:
+                out.append({"name": row.group, "items": []})
+            out[-1]["items"].append(item)
+        return out

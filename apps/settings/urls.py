@@ -6,6 +6,12 @@ urlpatterns = [
     path("", views.settings_index, name="settings_index"),
     path("dispatch-alerts/", views.dispatch_alerts, name="dispatch_alerts"),
     path("tasks/", views.task_settings, name="task_settings"),
+    path("checklist-schedule/", views.checklist_schedule, name="checklist_schedule"),
+    path(
+        "checklist-schedule/preview/",
+        views.checklist_schedule_preview,
+        name="checklist_schedule_preview",
+    ),
     path("quickbooks/", views.quickbooks_settings, name="quickbooks_settings"),
     path("quickbooks/connect/", views.quickbooks_connect, name="quickbooks_connect"),
     path("quickbooks/disconnect/", views.quickbooks_disconnect, name="quickbooks_disconnect"),

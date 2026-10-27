@@ -1481,6 +1481,66 @@ function cardVault(opts) {
 }
 window.cardVault = cardVault;
 
+/* -------------------------------------------------- checklistSchedule
+ * Settings -> Checklist schedule. The example line under each row is computed server-side by
+ * the real due-date resolver; this only asks for a fresh one (debounced) as a value changes,
+ * and drives Reset / Reset all. Nothing is saved until the form is submitted.
+ */
+function checklistSchedule(opts = {}) {
+  const timers = new WeakMap();
+  const parts = (row) => ({
+    amount: row.querySelector('input[name^="amount__"]'),
+    unit: row.querySelector('[name^="unit__"]'),
+    example: row.querySelector("[data-example]"),
+  });
+  return {
+    previewUrl: opts.previewUrl,
+    queue(event) {
+      const row = event.target.closest && event.target.closest("[data-row]");
+      if (!row) return;
+      clearTimeout(timers.get(row));
+      timers.set(row, setTimeout(() => this.refresh(row), 250));
+    },
+    async refresh(row) {
+      const { amount, unit, example } = parts(row);
+      if (amount.value === "") {
+        example.textContent = "";
+        return;
+      }
+      const qs = new URLSearchParams({
+        key: row.dataset.key,
+        variant: row.dataset.variant,
+        amount: amount.value,
+        unit: unit.value,
+      });
+      try {
+        const res = await fetch(`${this.previewUrl}?${qs}`, { headers: { Accept: "application/json" } });
+        const data = await res.json();
+        example.textContent = data.ok ? data.text : data.error;
+      } catch (e) {
+        example.textContent = "";
+      }
+    },
+    reset(row) {
+      const { amount, unit } = parts(row);
+      amount.value = row.dataset.defaultAmount;
+      if (unit.tomselect) unit.tomselect.setValue(row.dataset.defaultUnit, true);
+      else unit.value = row.dataset.defaultUnit;
+      this.refresh(row);
+    },
+    resetAll() {
+      Alpine.store("modal").confirm({
+        title: "Reset every timing?",
+        message: "Every item goes back to its default. Open tasks are re-dated when you save.",
+        variant: "gold",
+        confirmText: "Reset all",
+        onConfirm: () => this.$root.querySelectorAll("[data-row]").forEach((row) => this.reset(row)),
+      });
+    },
+  };
+}
+window.checklistSchedule = checklistSchedule;
+
 /* -------------------------------------------------- LA sync payload preview */
 // LA sync: show a recorded payload (json_script element) in the shared modal.
 window.showLaPayload = function (elementId, title) {

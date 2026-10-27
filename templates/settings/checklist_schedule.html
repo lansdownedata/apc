@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[760px] mx-auto px-4 sm:px-6 py-6"
+     x-data="checklistSchedule({ previewUrl: '{% url 'checklist_schedule_preview' %}' })">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <form method="post" class="space-y-4" @input="queue($event)" @change="queue($event)">
+    {% csrf_token %}
+    <div class="px-1">
+      <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Checklist schedule</h1>
+      <p class="text-[12.5px] text-muted">
+        When each checklist item falls due. Saving re-dates the open tasks of every timing you change;
+        finished tasks keep their dates.
+      </p>
+    </div>
+
+    {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600 px-1">{{ form.non_field_errors|striptags }}</p>{% endif %}
+
+    {% for group in form.groups %}
+    <div class="card p-5 sm:p-6">
+      <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-3">{{ group.name }}</div>
+      <div class="divide-y divide-line">
+        {% for item in group.items %}
+        <div class="py-3 first:pt-0 last:pb-0{% if item.row.variant == 'farm_in' %} pl-5{% endif %}"
+             data-row data-key="{{ item.row.key }}" data-variant="{{ item.row.variant }}"
+             data-default-amount="{{ item.default_amount }}" data-default-unit="{{ item.default_unit }}">
+          <div class="grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
+            <div class="min-w-0">
+              {% if item.row.variant == 'farm_in' %}
+              <div class="text-[13px] font-medium text-ink">Farmed-in orders</div>
+              {% else %}
+              <div class="text-[13px] font-medium text-ink">{{ item.row.label }}</div>
+              <div class="text-[11.5px] text-muted">{{ item.row.department }}</div>
+              {% endif %}
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <div class="w-20">{{ item.amount }}</div>
+              <div class="w-32">
+                {% if item.single_unit %}
+                <input type="hidden" name="{{ item.unit.html_name }}" value="{{ item.row.units.0 }}">
+                <span class="text-[12.5px] text-ink">{{ item.single_unit }}</span>
+                {% else %}
+                {% include "components/searchable_select.html" with name=item.unit.html_name field_id=item.unit.id_for_label options=item.unit_options selected=item.unit.value search="off" %}
+                {% endif %}
+              </div>
+              <span class="text-[12.5px] text-muted">{{ item.row.anchor }}</span>
+              <button type="button" @click="reset($el.closest('[data-row]'))"
+                      class="text-[12px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-1 py-0.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Reset</button>
+            </div>
+          </div>
+          <p class="text-[11.5px] text-muted mt-1.5" data-example>{{ item.example }}</p>
+          {% if item.row.note %}<p class="text-[11.5px] text-muted mt-0.5">{{ item.row.note }}</p>{% endif %}
+          {% for error in item.amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+          {% for error in item.unit.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="flex items-center justify-between gap-2.5 pt-2">
+      <button type="button" @click="resetAll()"
+              class="text-[13px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-2 py-1 transition-colors">Reset all</button>
+      <div class="flex items-center gap-2.5">
+        <a href="{% url 'settings_index' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+        <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
