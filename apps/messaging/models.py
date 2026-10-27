@@ -164,69 +164,15 @@ class TouchPoint(TimeStampedModel):
 
 
 class NotificationConfig(models.Model):
-    """Singleton — per-message switches for the reservation-lifecycle messaging (APC-18-22).
+    """Singleton — the master switch for automated messaging.
 
-    One row (pk=1). Mirrors `dispatch.DispatchAlertConfig`. Edited on the Settings screen
-    (`/portal/settings/notifications/`), read by `messaging.touchpoints` at schedule and
-    send time. The message *offsets* stay in code — the 7d-vs-72h question is a copy/merge
-    decision (APC-27), not a slider.
+    One row (pk=1). Each message's own on/off lives on its `MessageTemplate` row; see
+    `overrides.is_enabled`.
     """
-
-    # kind slug -> the `<stem>_enabled` flag on this model.
-    _STEM = {
-        "wed_final_details": "wedding_final_details",
-        "trip_confirm_customer": "trip_confirm_customer",
-        # Second wave of the same message — one switch governs both (APC-19).
-        "trip_confirm_customer_2": "trip_confirm_customer",
-        "trip_confirm_affiliate": "trip_confirm_affiliate",
-        "driver_released": "driver_released",
-        "status_dispatched": "status_dispatched",
-        "status_on_the_way": "status_on_the_way",
-        "status_arrived": "status_arrived",
-        "order_auth_expired": "order_auth_expired",
-        "order_confirmed": "order_confirmed",
-        "order_cancelled": "order_cancelled",
-    }
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     enabled = models.BooleanField(
         default=True, help_text="Master switch — turn every lifecycle message off at once."
-    )
-
-    wedding_final_details_enabled = models.BooleanField(
-        default=True, help_text="APC-18 · T-7d wedding: request day-of contact + wedding name."
-    )
-    trip_confirm_customer_enabled = models.BooleanField(
-        default=True,
-        help_text="APC-19 · customer trip confirmation + acknowledgement (T-72h, repeated T-48h).",
-    )
-    trip_confirm_affiliate_enabled = models.BooleanField(
-        default=True, help_text="APC-20 · T-48h affiliate trip confirmation + acknowledgement."
-    )
-    driver_released_enabled = models.BooleanField(
-        default=True, help_text="APC-21 · release driver + vehicle details to the customer."
-    )
-    # APC-22 — the client may not want all three live day one, so these start opt-in.
-    status_dispatched_enabled = models.BooleanField(default=False, help_text="APC-22 · Dispatched.")
-    status_on_the_way_enabled = models.BooleanField(default=False, help_text="APC-22 · On The Way.")
-    status_arrived_enabled = models.BooleanField(default=False, help_text="APC-22 · Arrived.")
-    # Defaults ON, unlike the status messages: this one tells a customer their money was
-    # released and they need to book again. Silence here is the worst outcome (APC-26).
-    order_auth_expired_enabled = models.BooleanField(
-        default=True,
-        help_text="APC-26 · deposit hold released before we confirmed — tells the customer "
-        "no money was taken and gives them the link back.",
-    )
-
-    # Both default ON: these are the messages that end the customer's wait. An order
-    # confirmed in silence, or cancelled in silence, is the failure this flow exists to
-    # avoid (APC-26 step 9).
-    order_confirmed_enabled = models.BooleanField(
-        default=True, help_text="APC-26 · we confirmed the order and captured the deposit."
-    )
-    order_cancelled_enabled = models.BooleanField(
-        default=True,
-        help_text="APC-26 · we could not cover the trip; the hold was released untouched.",
     )
 
     class Meta:
@@ -238,10 +184,6 @@ class NotificationConfig(models.Model):
     @classmethod
     def load(cls) -> "NotificationConfig":
         return cls.objects.get_or_create(pk=1)[0]
-
-    def is_enabled(self, kind: str) -> bool:
-        stem = self._STEM.get(kind)
-        return bool(self.enabled and stem and getattr(self, f"{stem}_enabled", False))
 
 
 class Review(TimeStampedModel):

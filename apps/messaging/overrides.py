@@ -3,7 +3,7 @@
 from dataclasses import replace
 from datetime import timedelta
 
-from .models import MessageTemplate
+from .models import MessageTemplate, NotificationConfig
 from .touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING, TouchPointTemplate
 
 TIMING_UNITS = ("minutes", "hours", "days")
@@ -48,3 +48,27 @@ def timing_of(kind: str, rows: dict | None = None) -> tuple[int, str] | None:
         if seconds and seconds % _UNIT_SECONDS[unit] == 0:
             return seconds // _UNIT_SECONDS[unit], unit
     return seconds // 60, "minutes"
+
+
+# Off until the owner turns them on: the client may not want all three live day one.
+DEFAULT_OFF = frozenset({"status_on_the_way", "status_arrived", "status_dispatched"})
+
+# Kinds that have no switch of their own and follow another kind's.
+_SWITCH_OF = {"trip_confirm_customer_2": "trip_confirm_customer", "thank_you_wedding": "thank_you"}
+
+
+def is_enabled(kind: str, rows: dict | None = None, *, master: bool | None = None) -> bool:
+    """Whether a message may go out: the master switch, then the kind's row, then the default.
+
+    ``master`` lets a batch read the `NotificationConfig` singleton once.
+    """
+    if master is None:
+        master = NotificationConfig.load().enabled
+    if not master:
+        return False
+    switch = _SWITCH_OF.get(kind, kind)
+    rows = load() if rows is None else rows
+    row = rows.get(switch)
+    if row is not None:
+        return row.enabled
+    return switch not in DEFAULT_OFF

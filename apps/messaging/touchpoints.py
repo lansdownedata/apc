@@ -12,7 +12,7 @@ from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 
 from . import overrides
-from .models import Review, TouchPoint
+from .models import NotificationConfig, Review, TouchPoint
 from .touchpoint_templates import build_context, render
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,10 @@ _STATUS_KINDS = {
 }
 
 
-def _create(lead, kind: str, anchor_dt) -> TouchPoint:
+def _create(lead, kind: str, anchor_dt) -> TouchPoint | None:
+    """Create a lead-level row, unless the owner has switched that message off."""
+    if not overrides.is_enabled(kind):
+        return None
     return TouchPoint.objects.create(
         lead=lead, kind=kind, scheduled_for=anchor_dt + overrides.effective(kind).offset
     )
@@ -166,7 +169,7 @@ def _ensure(reservation, kind: str, anchor_dt, *, at: datetime | None = None) ->
         .exclude(status=TouchPoint.Status.CANCELLED)
         .exists()
     )
-    if blocking:
+    if blocking or not overrides.is_enabled(kind):
         return None
     return TouchPoint.objects.create(
         lead=reservation.lead,
@@ -270,8 +273,6 @@ def trigger_driver_released(assignment) -> None:
         return
     if not driver_details_ready(assignment, DispatchAlertConfig.load()):
         return
-    if not _config().is_enabled(TouchPoint.Kind.DRIVER_RELEASED):
-        return
     _ensure(
         assignment.reservation,
         TouchPoint.Kind.DRIVER_RELEASED,
@@ -283,7 +284,7 @@ def trigger_driver_released(assignment) -> None:
 def notify_status_change(reservation, status: str) -> None:
     """Map a trip-status transition to its customer message (APC-22), if configured on."""
     kind = _STATUS_KINDS.get(status)
-    if kind is None or not _config().is_enabled(kind):
+    if kind is None:
         return
     _ensure(reservation, kind, timezone.now())
 
@@ -299,8 +300,6 @@ def trigger_auth_expired(lead) -> TouchPoint | None:
     takes it out of that set.
     """
     kind = TouchPoint.Kind.ORDER_AUTH_EXPIRED
-    if not _config().is_enabled(kind):
-        return None
     undelivered = TouchPoint.objects.filter(
         lead=lead, kind=kind, status=TouchPoint.Status.SCHEDULED
     ).exists()
@@ -317,17 +316,9 @@ def trigger_order_decided(lead, *, confirmed: bool) -> TouchPoint | None:
     ship one without the other.
     """
     kind = TouchPoint.Kind.ORDER_CONFIRMED if confirmed else TouchPoint.Kind.ORDER_CANCELLED
-    if not _config().is_enabled(kind):
-        return None
     if TouchPoint.objects.filter(lead=lead, kind=kind, status=TouchPoint.Status.SCHEDULED).exists():
         return None
     return _create(lead, kind, timezone.now())
-
-
-def _config():
-    from .models import NotificationConfig
-
-    return NotificationConfig.load()
 
 
 def cancel_pending(lead, *, kinds=None) -> int:
@@ -596,16 +587,20 @@ def _recipient(tp: TouchPoint, template):
     return tp.lead.contact
 
 
-def _process(tp: TouchPoint, cfg=None, rows=None) -> bool:
+def _process(tp: TouchPoint, rows=None, master: bool | None = None) -> bool:
     """Evaluate skip conditions at send time and send. Returns True iff SENT.
 
-    ``cfg`` lets `run_touchpoints` load the `NotificationConfig` singleton once for the
-    whole batch instead of once per row — it's a fresh row-by-row query otherwise. ``rows``
-    is the batch's `MessageTemplate` overrides (loaded here when None).
+    ``rows`` is the batch's `MessageTemplate` overrides and ``master`` the master switch;
+    `run_touchpoints` loads both once for the whole batch (each is loaded here when None).
     """
     lead = tp.lead
     kind = tp.kind
     group = None
+
+    rows = overrides.load() if rows is None else rows
+    if not overrides.is_enabled(kind, rows, master=master):
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error="message disabled")
+        return False
 
     # ORDER_CANCELLED is the one message that exists *because* the lead is lost — telling
     # a customer we released their booking is not something to skip for being lost.
@@ -640,9 +635,6 @@ def _process(tp: TouchPoint, cfg=None, rows=None) -> bool:
             return False
         if kind in _SERVICE_DATE_KINDS and tp.reservation.pickup_at is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip has no pickup date")
-            return False
-        if not (cfg or _config()).is_enabled(kind):
-            _mark(tp, status=TouchPoint.Status.SKIPPED, error="message disabled")
             return False
         if kind in _LINK_KINDS and not settings.PUBLIC_BASE_URL:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
@@ -689,9 +681,6 @@ def _process(tp: TouchPoint, cfg=None, rows=None) -> bool:
         # status-based skips: `order_confirmed` fires on a lead that is now BOOKED, and
         # `order_cancelled` on one that is now LOST — the very states those skips exist to
         # stop the *quote* program in.
-        if not (cfg or _config()).is_enabled(kind):
-            _mark(tp, status=TouchPoint.Status.SKIPPED, error="message disabled")
-            return False
         if kind in _LINK_KINDS and not settings.PUBLIC_BASE_URL:
             # These messages are mostly "here is the link" — without a base URL the link
             # renders as a bare path and the customer gets a dead one, permanently, because
@@ -779,12 +768,12 @@ def run_touchpoints() -> int:
         "reservation__assignments__vehicle",
     )
 
-    cfg = _config()
+    master = NotificationConfig.load().enabled
     rows = overrides.load()
     sent = 0
     for tp in due:
         try:
-            if _process(tp, cfg=cfg, rows=rows):
+            if _process(tp, rows=rows, master=master):
                 sent += 1
         except Exception:  # noqa: BLE001 - one bad row must not kill the run
             logger.exception("touch-point %s failed to send", tp.pk)

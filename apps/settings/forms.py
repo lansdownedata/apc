@@ -235,25 +235,13 @@ class PricingConfigForm(forms.ModelForm):
 
 
 class NotificationConfigForm(forms.ModelForm):
-    """The reservation-lifecycle messaging switches (APC-18-22). One row, no list."""
+    """The master messaging switch. One row, no list."""
 
     class Meta:
         from apps.messaging.models import NotificationConfig
 
         model = NotificationConfig
-        fields = [
-            "enabled",
-            "wedding_final_details_enabled",
-            "trip_confirm_customer_enabled",
-            "trip_confirm_affiliate_enabled",
-            "driver_released_enabled",
-            "status_dispatched_enabled",
-            "status_on_the_way_enabled",
-            "status_arrived_enabled",
-            "order_auth_expired_enabled",
-            "order_confirmed_enabled",
-            "order_cancelled_enabled",
-        ]
+        fields = ["enabled"]
 
 
 class VenueForm(forms.ModelForm):

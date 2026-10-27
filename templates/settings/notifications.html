@@ -6,34 +6,19 @@
   <div class="card p-5 sm:p-6">
     <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Customer notifications</h1>
     <p class="text-[12.5px] text-muted mb-5">
-      The automated messages sent to customers and affiliates around each booked trip. Turn any
-      one off without losing the others; the master switch stops them all.
+      The automated messages sent to customers and affiliates around each booked trip. The
+      master switch stops them all.
     </p>
 
     <form method="post" class="space-y-5">
       {% csrf_token %}
 
-      <div class="flex items-center gap-2 pb-3 border-b border-line">
+      <div class="flex items-center gap-2">
         {{ form.enabled }}
         <label for="{{ form.enabled.id_for_label }}" class="text-[12.5px] font-semibold text-ink">All lifecycle messaging is on</label>
       </div>
 
-      <div class="space-y-3">
-        {% for field in form %}
-          {% if field.name != "enabled" %}
-            <div class="flex items-start gap-2.5">
-              <div class="pt-0.5">{{ field }}</div>
-              <div>
-                <label for="{{ field.id_for_label }}" class="block text-[12.5px] text-ink">{{ field.label }}</label>
-                {% if field.help_text %}<p class="text-[11.5px] text-muted">{{ field.help_text }}</p>{% endif %}
-                {% for error in field.errors %}<p class="text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-              </div>
-            </div>
-          {% endif %}
-        {% endfor %}
-      </div>
-
-      <p class="text-[11.5px] text-muted">Message wording is being finalised with the client (APC-27); switches take effect immediately.</p>
+      <p class="text-[11.5px] text-muted">The switch takes effect immediately.</p>
 
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
       <div class="flex items-center justify-end gap-2.5 pt-2">

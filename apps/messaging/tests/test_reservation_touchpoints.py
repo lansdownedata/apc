@@ -17,7 +17,7 @@ from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.messaging import touchpoints
-from apps.messaging.models import NotificationConfig, TouchPoint
+from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.services import set_trip_status
 
@@ -268,9 +268,7 @@ def test_status_change_creates_a_message_only_when_enabled():
     set_trip_status(res, "dispatched")
     assert not TouchPoint.objects.filter(kind=K.STATUS_DISPATCHED).exists()
 
-    cfg = NotificationConfig.load()
-    cfg.status_dispatched_enabled = True
-    cfg.save()
+    MessageTemplate.objects.create(kind="status_dispatched", enabled=True)
     set_trip_status(res, "on_the_way")  # change again so the event fires
     set_trip_status(res, "dispatched")
     tp = TouchPoint.objects.get(reservation=res, kind=K.STATUS_DISPATCHED)
@@ -467,9 +465,7 @@ def test_reservation_kind_skips_a_cancelled_trip():
 
 @override_settings(PUBLIC_BASE_URL="https://apc.example.com")
 def test_reservation_kind_skips_when_the_message_is_disabled():
-    cfg = NotificationConfig.load()
-    cfg.trip_confirm_customer_enabled = False
-    cfg.save()
+    MessageTemplate.objects.create(kind="trip_confirm_customer", enabled=False)
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future())
     tp = TouchPoint.objects.create(

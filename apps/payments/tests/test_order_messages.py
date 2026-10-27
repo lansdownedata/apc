@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.leads.models import Lead
 from apps.leads.services import make_deposit_token
-from apps.messaging.models import NotificationConfig, TouchPoint
+from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.payments import services
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import Charge, PaymentPlan
@@ -168,10 +168,8 @@ def test_a_lost_lead_still_sends_its_cancellation(settings):
 
 
 def test_both_messages_can_be_switched_off():
-    cfg = NotificationConfig.load()
-    cfg.order_confirmed_enabled = False
-    cfg.order_cancelled_enabled = False
-    cfg.save()
+    MessageTemplate.objects.create(kind="order_confirmed", enabled=False)
+    MessageTemplate.objects.create(kind="order_cancelled", enabled=False)
     plan = _engaged()
 
     with patch.object(services.stripe.PaymentIntent, "cancel"):

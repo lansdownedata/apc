@@ -9,7 +9,7 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging.models import NotificationConfig, TouchPoint
+from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripStatusEvent
 
@@ -79,9 +79,7 @@ def test_set_status_refuses_a_status_outside_the_curated_set(logged_in_client):
 
 
 def test_set_status_fires_the_configured_customer_notification(logged_in_client):
-    cfg = NotificationConfig.load()
-    cfg.status_dispatched_enabled = True
-    cfg.save()
+    MessageTemplate.objects.create(kind="status_dispatched", enabled=True)
     trip = _trip()
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
 
