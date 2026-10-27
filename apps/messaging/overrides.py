@@ -93,6 +93,9 @@ class SaveError(Exception):
         self.errors = errors
 
 
+MIN_DRIVER_LEAD = "The driver message must go out at least 1 hour before pickup."
+
+
 def check(
     kind: str,
     *,
@@ -111,6 +114,8 @@ def check(
             errors["timing"] = "Pick minutes, hours or days."
         elif not 0 <= amount <= MAX_TIMING[unit]:
             errors["timing"] = f"Use 0 to {MAX_TIMING[unit]} {unit}."
+        elif kind == "driver_released" and timedelta(**{unit: amount}) < timedelta(hours=1):
+            errors["timing"] = MIN_DRIVER_LEAD
     return errors
 
 

@@ -155,7 +155,9 @@ def schedule_payment_reminder(lead) -> None:
 # --- reservation-anchored scheduling (APC-18-22) --------------------------------------
 
 
-def _ensure(reservation, kind: str, anchor_dt, *, at: datetime | None = None) -> TouchPoint | None:
+def _ensure(
+    reservation, kind: str, anchor_dt, *, at: datetime | None = None, rows: dict | None = None
+) -> TouchPoint | None:
     """Create one reservation-anchored row unless a non-CANCELLED one already exists.
 
     A SENT / SKIPPED / FAILED row still blocks — the customer already got it, or we already
@@ -168,13 +170,13 @@ def _ensure(reservation, kind: str, anchor_dt, *, at: datetime | None = None) ->
         .exclude(status=TouchPoint.Status.CANCELLED)
         .exists()
     )
-    if blocking or not overrides.is_enabled(kind):
+    if blocking or not overrides.is_enabled(kind, rows):
         return None
     return TouchPoint.objects.create(
         lead=reservation.lead,
         reservation=reservation,
         kind=kind,
-        scheduled_for=at or anchor_dt + overrides.effective(kind).offset,
+        scheduled_for=at or anchor_dt + overrides.effective(kind, rows).offset,
     )
 
 
@@ -288,34 +290,49 @@ def sync_driver_message(reservation) -> TouchPoint | None:
 
     Called after every change that can alter those facts (status, driver info, coverage,
     pickup). It sends at `max(now, pickup + the message's timing offset)`: early dispatches
-    wait for the window, late ones go on the next tick. A message already SENT is left
-    alone. Returns the row created or re-dated.
+    wait for the window, late ones go on the next tick. A SCHEDULED row follows the pickup
+    even while it is held. A message already SENT is left alone. Returns the row created
+    or re-dated.
     """
+    from django.db import transaction
+
     from apps.dispatch.models import Assignment
+    from apps.reservations.models import Reservation
 
     kind = TouchPoint.Kind.DRIVER_RELEASED
     pickup = reservation.pickup_at
     now = timezone.now()
-    if pickup is None or pickup <= now or not overrides.is_enabled(kind):
+    if pickup is None or pickup <= now:
         return None
-    # Read coverage fresh: the caller may hold a prefetch from before the change.
-    coverage = reservation.assignments.filter(status=Assignment.Status.CONFIRMED).first()
-    if not _driver_message_ready(reservation, coverage):
+    waiting = TouchPoint.objects.filter(
+        reservation=reservation, kind=kind, status=TouchPoint.Status.SCHEDULED
+    ).exists()
+    if reservation.trip_status not in DRIVER_MESSAGE_STATUSES and not waiting:
         return None
-    existing = (
-        TouchPoint.objects.filter(reservation=reservation, kind=kind)
-        .exclude(status=TouchPoint.Status.CANCELLED)
-        .first()
-    )
-    at = max(now, pickup + overrides.effective(kind).offset)
-    if existing is None:
-        return _ensure(reservation, kind, pickup, at=at)
-    if existing.status != TouchPoint.Status.SCHEDULED:
-        return None
-    if existing.scheduled_for != at:
-        existing.scheduled_for = at
-        existing.save(update_fields=["scheduled_for", "updated_at"])
-    return existing
+    with transaction.atomic():
+        # The webhook and a dispatcher can land together; the row lock serialises them so
+        # the customer gets one message.
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        existing = (
+            TouchPoint.objects.filter(reservation=locked, kind=kind)
+            .exclude(status=TouchPoint.Status.CANCELLED)
+            .first()
+        )
+        if existing is not None and existing.status != TouchPoint.Status.SCHEDULED:
+            return None
+        rows = overrides.load()
+        at = max(now, pickup + overrides.effective(kind, rows).offset)
+        if existing is not None:
+            if existing.scheduled_for != at:
+                existing.scheduled_for = at
+                existing.save(update_fields=["scheduled_for", "updated_at"])
+            return existing
+        if not overrides.is_enabled(kind, rows):
+            return None
+        coverage = locked.assignments.filter(status=Assignment.Status.CONFIRMED).first()
+        if not _driver_message_ready(locked, coverage):
+            return None
+        return _ensure(locked, kind, pickup, at=at, rows=rows)
 
 
 def notify_status_change(reservation, status: str) -> None:
@@ -671,16 +688,18 @@ def _process(tp: TouchPoint, rows=None, master: bool | None = None) -> bool:
         if tp.reservation is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="no reservation")
             return False
-        if tp.reservation.trip_status in CANCELLED_STATUSES:
-            _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip cancelled")
-            return False
         if kind == TouchPoint.Kind.DRIVER_RELEASED:
+            # Cancelled, dropped below Dispatched or details cleared: held (left SCHEDULED)
+            # until pickup, when it is closed. Checked before the shared cancelled skip.
             pickup = tp.reservation.pickup_at
             if pickup is not None and pickup <= timezone.now():
                 _mark(tp, status=TouchPoint.Status.SKIPPED, error="pickup passed")
                 return False
             if not _driver_message_ready(tp.reservation, _confirmed_assignment(tp.reservation)):
-                return False  # held: stays SCHEDULED, retried every tick
+                return False
+        elif tp.reservation.trip_status in CANCELLED_STATUSES:
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip cancelled")
+            return False
         if kind in _SERVICE_DATE_KINDS and tp.reservation.pickup_at is None:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="trip has no pickup date")
             return False

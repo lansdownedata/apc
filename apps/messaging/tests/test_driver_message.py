@@ -207,3 +207,89 @@ def test_editable_timing_applies():
     set_trip_status(res, "dispatched")
     (tp,) = _rows(res)
     assert tp.scheduled_for == res.pickup_at - timedelta(hours=4)
+
+
+def test_held_when_cancelled_then_sends_when_reinstated():
+    res = _trip()
+    _confirmed(res)
+    set_trip_status(res, "dispatched")
+    (tp,) = _rows(res)
+    _due(tp)
+    set_trip_status(res, "cancelled")
+    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
+        touchpoints.run_touchpoints()
+        tp.refresh_from_db()
+        assert tp.status == TouchPoint.Status.SCHEDULED
+        send.assert_not_called()
+        set_trip_status(res, "dispatched")
+        tp.refresh_from_db()
+        _due(tp)  # reinstating re-dates the row to its window; make it due again
+        assert touchpoints.run_touchpoints() == 1
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SENT
+
+
+@pytest.mark.parametrize("timing", [(0, "hours"), (59, "minutes"), (0, "days"), (0, "minutes")])
+def test_driver_message_needs_at_least_an_hour(timing):
+    from apps.messaging import overrides
+    from apps.messaging.touchpoint_templates import TEMPLATES
+
+    t = TEMPLATES["driver_released"]
+    errors = overrides.check(
+        "driver_released",
+        subject=t.subject,
+        email_body=t.email_body,
+        sms_body=t.sms_body,
+        timing=timing,
+    )
+    assert errors["timing"] == "The driver message must go out at least 1 hour before pickup."
+
+
+def test_driver_message_one_hour_is_allowed():
+    from apps.messaging import overrides
+    from apps.messaging.touchpoint_templates import TEMPLATES
+
+    t = TEMPLATES["driver_released"]
+    assert not overrides.check(
+        "driver_released",
+        subject=t.subject,
+        email_body=t.email_body,
+        sms_body=t.sms_body,
+        timing=(1, "hours"),
+    )
+
+
+def test_two_syncs_make_one_row():
+    res = _trip()
+    _confirmed(res)
+    set_trip_status(res, "dispatched")
+    touchpoints.sync_driver_message(res)
+    touchpoints.sync_driver_message(res)
+    assert _rows(res).count() == 1
+
+
+def test_non_dispatch_status_costs_no_override_queries():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    res = _trip()
+    _confirmed(res)
+    set_trip_status(res, "assigned")
+    with CaptureQueriesContext(connection) as ctx:
+        touchpoints.sync_driver_message(res)
+    sql = " ".join(q["sql"] for q in ctx.captured_queries)
+    assert "messaging_messagetemplate" not in sql
+    assert "messaging_notificationconfig" not in sql
+
+
+def test_held_row_follows_a_pickup_move():
+    res = _trip(hours=72)
+    a = _confirmed(res)
+    set_trip_status(res, "dispatched")
+    (tp,) = _rows(res)
+    Assignment.objects.filter(pk=a.pk).update(driver_cell="")
+    res.pickup_date = res.pickup_date + timedelta(days=1)
+    res.save()
+    touchpoints.sync_driver_message(res)
+    tp.refresh_from_db()
+    assert tp.scheduled_for == res.pickup_at - timedelta(hours=12)
