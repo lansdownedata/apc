@@ -165,17 +165,12 @@ class Assignment(TimeStampedModel):
     def has_driver_info(self) -> bool:
         return self.driver_info is not None
 
-    @property
-    def driver_info_complete(self) -> bool:
-        """Enough for the customer to reach the driver — a name and a cell. Stricter than
-        `has_driver_info` (name alone), and what `driver_info_at` measures."""
-        info = self.driver_info
-        return bool(info and info["name"] and info["cell"])
+    def stamp_driver_info(self, config: "DispatchAlertConfig") -> bool:
+        """Set `driver_info_at` the first time every required detail is on file. Returns
+        whether it did; the caller saves."""
+        from .services import driver_details_ready
 
-    def stamp_driver_info(self) -> bool:
-        """Set `driver_info_at` the first time the info is complete. Returns whether it did;
-        the caller saves."""
-        if self.driver_info_at is None and self.driver_info_complete:
+        if self.driver_info_at is None and driver_details_ready(self, config):
             self.driver_info_at = timezone.now()
             return True
         return False
@@ -258,6 +253,12 @@ class DispatchAlertConfig(models.Model):
     # internal nudge here, not an escalating critical alert.
     affiliate_unacked_warn_hours = models.PositiveIntegerField(default=24)
 
+    # What counts as "driver details complete" for the drawer, the task, the monitor, the
+    # customer message and the turnaround stamp. The driver's name is always required.
+    require_driver_cell = models.BooleanField(default=True)
+    require_vehicle_desc = models.BooleanField(default=False)
+    require_vehicle_number = models.BooleanField(default=False)
+
     alert_emails = models.TextField(
         blank=True,
         help_text="Who gets the exception digest email. One per line or comma-separated. "
@@ -278,6 +279,17 @@ class DispatchAlertConfig(models.Model):
     @classmethod
     def load(cls) -> "DispatchAlertConfig":
         return cls.objects.get_or_create(pk=1)[0]
+
+    def required_driver_fields(self) -> tuple[str, ...]:
+        """Keys of `Assignment.driver_info` that must be filled in."""
+        keys = ["name"]
+        if self.require_driver_cell:
+            keys.append("cell")
+        if self.require_vehicle_desc:
+            keys.append("vehicle_desc")
+        if self.require_vehicle_number:
+            keys.append("vehicle_number")
+        return tuple(keys)
 
     @property
     def email_list(self) -> list[str]:

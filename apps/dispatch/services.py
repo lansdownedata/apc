@@ -26,7 +26,7 @@ from apps.reservations.models import Reservation
 from apps.vendors.models import Vendor
 
 from . import gnet_sync
-from .models import Assignment
+from .models import Assignment, DispatchAlertConfig
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def _claim(
             resolved_at=resolved,
         )
         # In-house coverage carries its driver from the start, so its info is on file now.
-        assignment.stamp_driver_info()
+        assignment.stamp_driver_info(DispatchAlertConfig.load())
         assignment.save()
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
@@ -343,6 +343,29 @@ def withdraw(assignment: Assignment, *, note: str = "", release_gateway: bool = 
     return resolved
 
 
+DRIVER_FIELD_LABELS = {
+    "name": "driver's name",
+    "cell": "driver's cell",
+    "vehicle_desc": "vehicle description",
+    "vehicle_number": "vehicle number",
+}
+
+
+def missing_driver_fields(assignment: Assignment, config: DispatchAlertConfig) -> list[str]:
+    """Labels of the required driver details still blank, in a stable order."""
+    info = assignment.driver_info or {}
+    return [
+        DRIVER_FIELD_LABELS[key]
+        for key in config.required_driver_fields()
+        if not (info.get(key) or "").strip()
+    ]
+
+
+def driver_details_ready(assignment: Assignment, config: DispatchAlertConfig) -> bool:
+    """Every required driver detail is on file — the one check all consumers share."""
+    return not missing_driver_fields(assignment, config)
+
+
 def set_driver_info(
     assignment: Assignment, *, name: str, cell: str, vehicle_desc: str, vehicle_number: str
 ) -> Assignment:
@@ -361,7 +384,7 @@ def set_driver_info(
     assignment.vehicle_desc = vehicle_desc
     assignment.vehicle_number = vehicle_number
     fields = ["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
-    if assignment.stamp_driver_info():
+    if assignment.stamp_driver_info(DispatchAlertConfig.load()):
         fields.append("driver_info_at")
     assignment.save(update_fields=fields)
     from apps.messaging import touchpoints

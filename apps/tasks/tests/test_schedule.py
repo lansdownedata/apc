@@ -12,6 +12,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.contacts.factories import CompanyFactory, ContactFactory
+from apps.dispatch.models import DispatchAlertConfig
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
@@ -166,6 +167,7 @@ def test_default_timing_values():
 
 
 def test_facts_query_count_is_fixed():
+    DispatchAlertConfig.load()
     one, many = _order(trips=1), _order(trips=10)
     with CaptureQueriesContext(connection) as few:
         load_facts([one])

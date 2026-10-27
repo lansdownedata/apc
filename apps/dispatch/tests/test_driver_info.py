@@ -66,9 +66,10 @@ def test_set_driver_info_refuses_an_unconfirmed_offer():
 def test_set_driver_info_does_not_release_twice():
     trip = _trip()
     a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
-    services.set_driver_info(a, name="Sam Rivera", cell="", vehicle_desc="", vehicle_number="")
+    cell = "+15715551212"
+    services.set_driver_info(a, name="Sam Rivera", cell=cell, vehicle_desc="", vehicle_number="")
 
-    services.set_driver_info(a, name="Sam Rivera", cell="", vehicle_desc="", vehicle_number="9")
+    services.set_driver_info(a, name="Sam Rivera", cell=cell, vehicle_desc="", vehicle_number="9")
 
     assert (
         TouchPoint.objects.filter(reservation=trip, kind=TouchPoint.Kind.DRIVER_RELEASED).count()
@@ -169,6 +170,8 @@ def test_saving_driver_info_clears_the_evaluate_gap():
     now = trip.pickup_at - timedelta(hours=1)
     assert monitoring.K.NO_DRIVER_INFO in monitoring.evaluate(trip, cfg, now)
 
-    services.set_driver_info(a, name="Sam Rivera", cell="", vehicle_desc="", vehicle_number="")
+    services.set_driver_info(
+        a, name="Sam Rivera", cell="+15715551212", vehicle_desc="", vehicle_number=""
+    )
 
     assert monitoring.K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, now)

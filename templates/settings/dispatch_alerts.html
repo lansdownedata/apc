@@ -52,6 +52,16 @@
         {% include "components/form_field.html" with field=form.affiliate_unacked_warn_hours %}
       </div>
 
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Required before driver details go to the customer</div>
+        <div class="space-y-2">
+          <label class="flex items-center gap-2 text-[12.5px] text-ink opacity-60"><input type="checkbox" checked disabled class="rounded focus-visible:ring-2 focus-visible:ring-gold disabled:opacity-50"> Driver name</label>
+          <label class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.require_driver_cell }} Driver cell</label>
+          <label class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.require_vehicle_desc }} Vehicle description</label>
+          <label class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.require_vehicle_number }} Vehicle number</label>
+        </div>
+      </div>
+
       {% include "components/form_field.html" with field=form.alert_emails %}
       {% include "components/form_field.html" with field=form.critical_sms %}
 

@@ -100,6 +100,7 @@ class ServiceTypeForm(forms.ModelForm):
 
 
 _NUM = {"class": "field w-full", "min": 0}
+_CHECK = {"class": "rounded focus-visible:ring-2 focus-visible:ring-gold disabled:opacity-50"}
 _AREA = {"class": "field w-full", "rows": 3}
 
 
@@ -121,10 +122,16 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "driver_info_warn_hours",
             "driver_info_critical_hours",
             "affiliate_unacked_warn_hours",
+            "require_driver_cell",
+            "require_vehicle_desc",
+            "require_vehicle_number",
             "alert_emails",
             "critical_sms",
         ]
         widgets = {
+            "require_driver_cell": forms.CheckboxInput(attrs=_CHECK),
+            "require_vehicle_desc": forms.CheckboxInput(attrs=_CHECK),
+            "require_vehicle_number": forms.CheckboxInput(attrs=_CHECK),
             "unassigned_warn_hours": forms.NumberInput(attrs=_NUM),
             "unassigned_critical_hours": forms.NumberInput(attrs=_NUM),
             "otw_warn_minutes": forms.NumberInput(attrs=_NUM),

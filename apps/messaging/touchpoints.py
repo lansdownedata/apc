@@ -260,9 +260,12 @@ def trigger_driver_released(assignment) -> None:
     Trigger-based: the row is created with `scheduled_for = now` and delivered by
     `run_touchpoints` on the next tick, keeping one send path.
     """
-    from apps.dispatch.models import Assignment
+    from apps.dispatch.models import Assignment, DispatchAlertConfig
+    from apps.dispatch.services import driver_details_ready
 
-    if assignment.status != Assignment.Status.CONFIRMED or not assignment.has_driver_info:
+    if assignment.status != Assignment.Status.CONFIRMED:
+        return
+    if not driver_details_ready(assignment, DispatchAlertConfig.load()):
         return
     if not _config().is_enabled(TouchPoint.Kind.DRIVER_RELEASED):
         return

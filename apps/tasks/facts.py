@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from apps.contacts.models import Contact
-from apps.dispatch.models import Assignment
+from apps.dispatch.models import Assignment, DispatchAlertConfig
 from apps.leads.models import CustomerFeedback, Lead, LeadContact
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
@@ -49,6 +49,8 @@ class LeadFacts:
     # Settings overrides of due timing, (kind, variant) -> (amount, unit). Order-independent,
     # but carried here so every `effective_kind` caller already has it.
     schedules: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict)
+    # What "driver details complete" means (Settings → Dispatch alerts).
+    dispatch_config: DispatchAlertConfig | None = None
 
     @property
     def live_trips(self) -> list[Reservation]:
@@ -93,8 +95,10 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     ids = list(facts)
 
     schedules = schedule.load()
+    dispatch_config = DispatchAlertConfig.load()
     for f in facts.values():
         f.schedules = schedules
+        f.dispatch_config = dispatch_config
 
     for plan in PaymentPlan.objects.filter(lead_id__in=ids):
         facts[plan.lead_id].plan = plan

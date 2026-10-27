@@ -254,8 +254,12 @@ def _driver_assigned(task: Task, facts: LeadFacts) -> bool:
 
 
 def _driver_info_received(task: Task, facts: LeadFacts) -> bool:
+    from apps.dispatch.services import driver_details_ready
+
     a = facts.active_assignment(task.reservation_id)
-    return bool(a and a.has_driver_info)
+    if a is None or facts.dispatch_config is None:
+        return False
+    return driver_details_ready(a, facts.dispatch_config)
 
 
 def _driver_released(task: Task, facts: LeadFacts) -> bool:

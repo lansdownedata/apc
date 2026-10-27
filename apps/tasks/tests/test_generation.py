@@ -12,7 +12,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.dispatch import services as dispatch
 from apps.dispatch.factories import AssignmentFactory
-from apps.dispatch.models import Assignment
+from apps.dispatch.models import Assignment, DispatchAlertConfig
 from apps.fleet.factories import DriverFactory
 from apps.leads import contact_roles
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
@@ -157,6 +157,7 @@ def test_default_assignee_comes_from_the_department_owner():
 
 def test_ensure_tasks_query_count_does_not_grow_with_trips():
     TaskConfig.load()
+    DispatchAlertConfig.load()
     small = _order(trips=1)
     big = _order(trips=10)
 
@@ -166,7 +167,9 @@ def test_ensure_tasks_query_count_does_not_grow_with_trips():
         services.ensure_tasks(big)
 
     assert len(ten) == len(one)
-    assert len(ten) <= 17  # +1 farm-in fact (APC-92), +1 schedules, once per batch
+    assert (
+        len(ten) <= 18
+    )  # +1 farm-in fact (APC-92), +1 schedules, +1 dispatch config, once per batch
 
 
 # --- due dates ----------------------------------------------------------------------

@@ -30,6 +30,7 @@ from apps.reservations.models import Reservation
 
 from .models import Assignment, DispatchAlertConfig, DispatchException
 from .selectors import CANCELLED_STATUSES, COVERAGE_CONFIRMED, confirmed_assignment
+from .services import driver_details_ready
 
 log = logging.getLogger(__name__)
 
@@ -93,12 +94,12 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
 
     # "Driver info missing" (APC-21) — a farmed-out trip's driver name/cell/vehicle,
     # which we don't hold a roster for. An in-house assignment already carries this
-    # (Driver + Vehicle), so `has_driver_info` is true for those and the check never bites.
+    # (Driver + Vehicle), so only a blank required field (e.g. a driver with no phone) bites.
     # Gated on ARRIVED_OR_BEYOND like NOT_ARRIVED: once the trip has happened, releasing
     # driver info to the customer is moot — without this a DONE trip that never got info
     # entered stays CRITICAL (pickup is in the past, so `hours_to` is always inside the
     # window) for as long as it's still inside the monitor's lookback window.
-    if covered and status not in ARRIVED_OR_BEYOND and not confirmed.has_driver_info:
+    if covered and status not in ARRIVED_OR_BEYOND and not driver_details_ready(confirmed, cfg):
         if hours_to <= cfg.driver_info_critical_hours:
             out[K.NO_DRIVER_INFO] = T.CRITICAL
         elif hours_to <= cfg.driver_info_warn_hours:
