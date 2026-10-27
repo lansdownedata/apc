@@ -28,6 +28,13 @@ urlpatterns = [
     path("messages/master/", views.messages_master, name="messages_master"),
     path("messages/<str:kind>/", views.message_edit, name="message_edit"),
     path("messages/<str:kind>/toggle/", views.message_toggle, name="message_toggle"),
+    path("messages/<str:kind>/reset/", views.message_reset, name="message_reset"),
+    path("messages/<str:kind>/preview/", views.message_preview, name="message_preview"),
+    path(
+        "messages/<str:kind>/timing/",
+        views.message_timing_preview,
+        name="message_timing_preview",
+    ),
     path("pricing/", views.pricing, name="pricing"),
     path("affiliate-scoring/", views.affiliate_scoring, name="affiliate_scoring"),
     path("vehicle-types/", views.vehicle_type_list, name="vehicle_type_list"),

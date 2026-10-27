@@ -14,8 +14,8 @@ from apps.addresses.models import Venue
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
-from apps.leads.models import ServiceType, VehicleType
-from apps.messaging import overrides
+from apps.leads.models import Lead, ServiceType, VehicleType
+from apps.messaging import fields, overrides
 from apps.messaging.models import NotificationConfig
 from apps.reservations.models import PricingConfig
 from apps.tasks import schedule
@@ -26,6 +26,7 @@ from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
     DispatchAlertConfigForm,
+    MessageTemplateForm,
     PricingConfigForm,
     ServiceTypeForm,
     TaskConfigForm,
@@ -313,15 +314,18 @@ def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
     rows = overrides.load()
     enabled = not overrides.is_enabled(kind, rows, master=True)
     current = overrides.effective(kind, rows)
-    overrides.save(
-        kind,
-        subject=current.subject,
-        email_body=current.email_body,
-        sms_body=current.sms_body,
-        timing=overrides.timing_of(kind, rows),
-        enabled=enabled,
-        user=request.user,
-    )
+    try:
+        overrides.save(
+            kind,
+            subject=current.subject,
+            email_body=current.email_body,
+            sms_body=current.sms_body,
+            timing=overrides.timing_of(kind, rows),
+            enabled=enabled,
+            user=request.user,
+        )
+    except overrides.SaveError as exc:
+        return JsonResponse({"ok": False, "error": next(iter(exc.errors.values()))}, status=400)
     return JsonResponse({"ok": True, "enabled": enabled})
 
 
@@ -336,11 +340,141 @@ def messages_master(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "enabled": config.enabled})
 
 
+# Accepted in any customer message but offered as chips only outside trip-day messages,
+# where a quote or payment link has no job to do.
+_ORDER_ONLY_LINKS = frozenset({"quote_link", "pay_link"})
+
+
+def _message_spec(kind: str):
+    spec = next((m for m in overrides.MESSAGES if m.kind == kind), None)
+    if spec is None:
+        raise Http404
+    return spec
+
+
+def _order_label(lead) -> str:
+    pickups = [r.pickup_date for r in lead.reservations.all() if r.pickup_date]
+    first = f"{min(pickups):%b %-d, %Y}" if pickups else "no date"
+    return f"{lead.quote_no} · {lead.contact.name} · {first}"
+
+
 @login_required
 @owner_admin_required
 def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
-    """Placeholder until the editor lands."""
-    raise Http404
+    """One message: wording per channel, timing and switch, with field chips and a live preview."""
+    spec = _message_spec(kind)
+    form = MessageTemplateForm(kind, request.POST or None, has_switch=kind not in _SHARED_SWITCH)
+    if request.method == "POST" and form.is_valid():
+        count = form.save(request.user)
+        note = f" {count} scheduled message{'s' if count != 1 else ''} re-dated." if count else ""
+        messages.success(request, f"Saved. Applies to messages not yet sent.{note}")
+        return redirect("messages")
+    orders = overrides.preview_orders(kind)
+    box_errors = {name: form.errors[name][0] for name in form.TEXTS if name in form.errors}
+    first_error = next((n for n in form.TEXTS if n in box_errors), None)
+    tab = "sms" if first_error == "sms_body" else "email" if first_error else ""
+    channels = [{"key": c, "label": "Email" if c == "email" else "SMS"} for c in form.channels]
+    chips = [
+        {"key": f.key, "label": f.label, "group": f.group}
+        for f in fields.fields_for(kind)
+        if not (kind in overrides.PREVIEW_TRIP_KINDS and f.key in _ORDER_ONLY_LINKS)
+    ]
+    second = overrides.default(form.second_kind) if form.second_kind else None
+    return render(
+        request,
+        "settings/message_edit.html",
+        {
+            "nav": "settings",
+            "page_title": spec.label,
+            "spec": spec,
+            "form": form,
+            "channels": channels,
+            "tab": tab or channels[0]["key"],
+            "box_errors": box_errors,
+            "chips": chips,
+            "orders": [(lead.pk, _order_label(lead)) for lead in orders],
+            "default_order": orders[0].pk if orders else "",
+            "anchor_phrase": overrides.timing_anchor_phrase(kind) if form.has_timing else "",
+            "anchor_phrase2": (overrides.timing_anchor_phrase(form.second_kind) if second else ""),
+            "edited": bool({kind, form.second_kind} & overrides.load().keys()),
+            "timing_example": _timing_example(kind, form),
+            "timing_example2": _timing_example(form.second_kind, form, prefix="timing2")
+            if second
+            else "",
+        },
+    )
+
+
+def _timing_example(kind: str | None, form, prefix: str = "timing") -> str:
+    if not kind or overrides.default(kind).anchor == "triggered":
+        return ""
+    amount = form[f"{prefix}_amount"].value()
+    unit = form[f"{prefix}_unit"].value()
+    try:
+        return overrides.timing_example(kind, int(amount), unit, now=_now())
+    except (TypeError, ValueError):
+        return ""
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def message_reset(request: HttpRequest, kind: str) -> HttpResponse:
+    """Drop the owner's wording, timing and switch for a message."""
+    _message_spec(kind)
+    overrides.reset(kind)
+    if kind == "trip_confirm_customer":
+        overrides.reset("trip_confirm_customer_2")
+    messages.success(request, "Reset to the default.")
+    return redirect("message_edit", kind=kind)
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def message_preview(request: HttpRequest, kind: str) -> JsonResponse:
+    """A draft rendered by the real renderer against an order, or a built-in sample."""
+    _message_spec(kind)
+    texts = {
+        name: request.POST.get(name, "").replace("\r\n", "\n").replace("\r", "\n")
+        for name in MessageTemplateForm.TEXTS
+    }
+    errors = fields.validate(kind, **texts)
+    if errors:
+        return JsonResponse({"ok": False, "errors": errors}, status=400)
+    lead = None
+    pk = request.POST.get("lead", "")
+    if pk.isdigit():
+        lead = (
+            Lead.objects.select_related("contact")
+            .prefetch_related(
+                "reservations__stops",
+                "reservations__vehicle",
+                "reservations__service_type",
+                "reservations__assignments__driver",
+                "reservations__assignments__vendor",
+            )
+            .filter(pk=int(pk))
+            .first()
+        )
+    rendered = overrides.preview(kind, lead, **texts)
+    source = lead.quote_no if lead else "Sample order"
+    return JsonResponse({"ok": True, "source": source, **rendered})
+
+
+@login_required
+@owner_admin_required
+def message_timing_preview(request: HttpRequest, kind: str) -> JsonResponse:
+    """The worked example for a timing being typed (a message, or the second notice)."""
+    if kind != "trip_confirm_customer_2":
+        _message_spec(kind)
+    try:
+        text = overrides.timing_example(
+            kind, int(request.GET.get("amount", "")), request.GET.get("unit", ""), now=_now()
+        )
+    except ValueError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "text": text})
 
 
 @login_required

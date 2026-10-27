@@ -4,6 +4,7 @@ from django import forms
 
 from apps.addresses.models import Venue
 from apps.leads.models import ServiceType, VehicleType
+from apps.messaging import overrides
 from apps.tasks import schedule
 from apps.vendors.models import AffiliateDocumentType
 
@@ -398,3 +399,125 @@ class AffiliateDocumentTypeForm(forms.ModelForm):
         if self.protected:
             for field in ("name", "active"):
                 self.fields[field].disabled = True
+
+
+class MessageTemplateForm(forms.Form):
+    """One message's editor: the text of each channel it sends on, its timing (and, on the
+    first trip confirmation, the second notice's), and its switch. Validation is
+    `overrides.check`; its per-box errors land on the matching field."""
+
+    TEXTS = ("subject", "email_body", "sms_body")
+    _SECOND = {"trip_confirm_customer": "trip_confirm_customer_2"}
+
+    def __init__(self, kind: str, data=None, *, has_switch: bool = True):
+        super().__init__(data)
+        self.kind = kind
+        self.has_switch = has_switch
+        rows = overrides.load()
+        base = overrides.default(kind)
+        current = overrides.effective(kind, rows)
+        self.channels = base.channels
+        self.second_kind = self._SECOND.get(kind)
+        self._current = current
+        self._enabled = overrides.is_enabled(kind, rows, master=True)
+        area = lambda: forms.Textarea(attrs={"class": "field", "rows": 8})  # noqa: E731
+        if "email" in base.channels:
+            self.fields["subject"] = forms.CharField(
+                required=False,
+                strip=False,
+                initial=current.subject,
+                widget=forms.TextInput(attrs={"class": "field", "aria-label": "Subject"}),
+            )
+            self.fields["email_body"] = forms.CharField(
+                required=False, strip=False, initial=current.email_body, widget=area()
+            )
+        if "sms" in base.channels:
+            self.fields["sms_body"] = forms.CharField(
+                required=False, strip=False, initial=current.sms_body, widget=area()
+            )
+        self.has_timing = base.anchor != "triggered"
+        if self.has_timing:
+            self._add_timing("timing", overrides.timing_of(kind, rows))
+        if self.second_kind:
+            self._add_timing("timing2", overrides.timing_of(self.second_kind, rows))
+        if has_switch:
+            self.fields["enabled"] = forms.BooleanField(required=False, initial=self._enabled)
+
+    def _add_timing(self, prefix: str, timing: tuple[int, str] | None) -> None:
+        amount, unit = timing or (None, "")
+        self.fields[f"{prefix}_amount"] = forms.IntegerField(
+            required=False,
+            initial=amount,
+            error_messages={"invalid": "Enter a whole number."},
+            widget=forms.NumberInput(attrs={"class": "field", "min": 0, "inputmode": "numeric"}),
+        )
+        self.fields[f"{prefix}_unit"] = forms.ChoiceField(
+            required=False,
+            initial=unit,
+            choices=[(u, u) for u in overrides.TIMING_UNITS],
+        )
+
+    def _timing(self, cleaned: dict, prefix: str) -> tuple[int, str] | None:
+        amount = cleaned.get(f"{prefix}_amount")
+        if amount is None:
+            if f"{prefix}_amount" not in self.errors:
+                self.add_error(f"{prefix}_amount", "Enter a number.")
+            return None
+        return amount, cleaned.get(f"{prefix}_unit") or ""
+
+    def _texts(self, cleaned: dict) -> dict[str, str]:
+        out = {}
+        for name in self.TEXTS:
+            if name in self.fields:
+                out[name] = (cleaned.get(name) or "").replace("\r\n", "\n").replace("\r", "\n")
+            else:
+                out[name] = getattr(self._current, name)
+        return out
+
+    def clean(self):
+        cleaned = super().clean()
+        texts = self._texts(cleaned)
+        timing = self._timing(cleaned, "timing") if self.has_timing else None
+        errors = overrides.check(self.kind, **texts, timing=timing)
+        for box, message in errors.items():
+            field = "timing_amount" if box == "timing" else box
+            if field in self.fields and field not in self.errors:
+                self.add_error(field, message)
+        if self.second_kind:
+            second = self._timing(cleaned, "timing2")
+            second_current = overrides.effective(self.second_kind)
+            errors = overrides.check(
+                self.second_kind,
+                subject=second_current.subject,
+                email_body=second_current.email_body,
+                sms_body=second_current.sms_body,
+                timing=second,
+            )
+            if "timing" in errors and "timing2_amount" not in self.errors:
+                self.add_error("timing2_amount", errors["timing"])
+        self.texts = texts
+        return cleaned
+
+    def save(self, user) -> int:
+        """Store the message (and the second notice's timing); returns sends re-dated."""
+        cleaned = self.cleaned_data
+        enabled = cleaned["enabled"] if self.has_switch else self._enabled
+        count = overrides.save(
+            self.kind,
+            **self.texts,
+            timing=(cleaned["timing_amount"], cleaned["timing_unit"]) if self.has_timing else None,
+            enabled=enabled,
+            user=user,
+        )
+        if self.second_kind:
+            second = overrides.effective(self.second_kind)
+            count += overrides.save(
+                self.second_kind,
+                subject=second.subject,
+                email_body=second.email_body,
+                sms_body=second.sms_body,
+                timing=(cleaned["timing2_amount"], cleaned["timing2_unit"]),
+                enabled=True,
+                user=user,
+            )
+        return count

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -330,10 +331,162 @@ def timing_phrase(kind: str, rows: dict | None = None) -> str:
         return "When it happens"
     amount, unit = timing
     word = _UNIT_WORD[unit][0 if amount == 1 else 1]
+    return f"{amount} {word} {timing_anchor_phrase(kind)}"
+
+
+def timing_anchor_phrase(kind: str) -> str:
+    """The fixed half of a timing, e.g. "after the lead comes in" or "before pickup"."""
     base = default(kind)
     side = "before" if base.offset < timedelta(0) else "after"
     if base.anchor in _PICKUP_ANCHORS:
         what = "pickup" + (", once Dispatched" if base.anchor == "dispatched_pickup" else "")
     else:
         what = _TIMING_WHAT[base.anchor]
-    return f"{amount} {word} {side} {what}"
+    return f"{side} {what}"
+
+
+# Kinds rendered against one trip of the order (the rest read the order as a whole).
+PREVIEW_TRIP_KINDS = frozenset(
+    {
+        "wed_final_details",
+        "trip_confirm_customer",
+        "trip_confirm_customer_2",
+        "trip_confirm_affiliate",
+        "driver_released",
+        "driver_updated",
+        "status_on_the_way",
+        "status_arrived",
+    }
+)
+_PREVIEW_DRIVER_KINDS = frozenset(
+    {"driver_released", "driver_updated", "status_on_the_way", "status_arrived"}
+)
+_PREVIEW_WEDDING_KINDS = frozenset({"wed_final_details", "thank_you_wedding"})
+_PREVIEW_SCAN = 200
+
+
+def _live_trips(lead) -> list:
+    return [r for r in lead.reservations.all() if not r.is_cancelled]
+
+
+def _has_driver_info(reservation) -> bool:
+    from apps.dispatch.selectors import confirmed_assignment
+
+    assignment = confirmed_assignment(reservation)
+    return bool(assignment and assignment.driver_info)
+
+
+def preview_trip(kind: str, lead):
+    """The trip of an order a trip-level message is previewed against, else None."""
+    if kind not in PREVIEW_TRIP_KINDS:
+        return None
+    trips = _live_trips(lead)
+    if kind in _PREVIEW_DRIVER_KINDS:
+        trips = sorted(trips, key=lambda r: not _has_driver_info(r))
+    return trips[0] if trips else None
+
+
+def _is_wedding_order(lead) -> bool:
+    from apps.reservations.services import is_wedding_trip
+
+    return bool(lead.wedding_name) or any(is_wedding_trip(r) for r in lead.reservations.all())
+
+
+def preview_orders(kind: str, limit: int = 20) -> list:
+    """Booked orders to preview a message against, newest first.
+
+    Trip-level kinds need a live trip, wedding kinds a wedding order, and driver kinds list
+    orders with driver details on file first."""
+    from apps.leads.models import Lead
+
+    candidates = (
+        Lead.objects.filter(status=Lead.Status.BOOKED)
+        .select_related("contact")
+        .prefetch_related(
+            "reservations__stops",
+            "reservations__vehicle",
+            "reservations__service_type",
+            "reservations__assignments__driver",
+            "reservations__assignments__vendor",
+        )
+        .order_by("-created_at", "-pk")[:_PREVIEW_SCAN]
+    )
+    leads = []
+    for lead in candidates:
+        if kind in PREVIEW_TRIP_KINDS and not _live_trips(lead):
+            continue
+        if kind in _PREVIEW_WEDDING_KINDS and not _is_wedding_order(lead):
+            continue
+        leads.append(lead)
+    if kind in _PREVIEW_DRIVER_KINDS:
+        leads.sort(key=lambda lead: not any(_has_driver_info(r) for r in _live_trips(lead)))
+    return leads[:limit]
+
+
+def _sample_context(base_url: str) -> dict[str, str]:
+    """Plausible values for every field, for previewing without an order."""
+    from apps.tasks import schedule
+
+    pickup = schedule.sample_pickup()
+    date_text = f"{pickup:%b %d, %Y}"
+    time_text = f"{pickup:%-I:%M %p} {pickup:%Z}"
+    return {
+        "first_name": "Sample",
+        "quote_no": "Q-1042",
+        "pickup_date": date_text,
+        "pickup_time": time_text,
+        "pickup_address": "1 Main St, Washington, DC",
+        "dropoff_address": "Dulles International Airport (IAD)",
+        "quote_breakdown": f"{pickup:%b %d} · {time_text} — Luxury SUV · 4 passengers — $450.00",
+        "agent_first": "Alex",
+        "balance_amount": "$225.00",
+        "balance_due_date": f"{pickup - timedelta(days=30):%b %d, %Y}",
+        "card_last4": "4242",
+        "trip_pickup_date": date_text,
+        "trip_pickup_time": time_text,
+        "trip_pickup_tz": f"{pickup:%Z}",
+        "trip_pickup_when": f"{date_text} at {time_text}",
+        "trip_routing": "1 Main St, Washington, DC → Dulles International Airport (IAD)",
+        "trip_passengers": "4",
+        "trip_vehicle": "Luxury SUV",
+        "trip_sheet": (
+            f"Trip Q-1042\n{date_text} at {time_text}\n"
+            "1 Main St, Washington, DC → Dulles International Airport (IAD)"
+        ),
+        "contact_on_file": "Sample Customer · (555) 010-0100",
+        "driver_name": "Sam Driver",
+        "driver_cell": "(555) 010-0199",
+        "vehicle_description": "Black Cadillac Escalade",
+        "vehicle_number": "12",
+        "vendor_name": "Sample Limousines",
+        "payout": "$300.00",
+        "quote_link": f"{base_url}/quote/sample/",
+        "pay_link": f"{base_url}/quote/sample/pay/",
+        "confirm_link": f"{base_url}/confirm/sample/",
+        "ack_link": f"{base_url}/acknowledge/sample/",
+        "review_link": f"{base_url}/review/sample/",
+        "company_name": settings.COMPANY_NAME,
+        "company_phone": settings.COMPANY_PHONE,
+        "company_email": settings.COMPANY_EMAIL,
+    }
+
+
+def preview(kind: str, lead, *, subject: str, email_body: str, sms_body: str) -> dict[str, str]:
+    """Render a draft the way a send would: the real context and link builders, no sending.
+
+    With no lead a built-in sample order is used. Returns {"email", "sms"}; the email is the
+    subject line, a blank line and the body."""
+    from .touchpoint_templates import build_context, render
+    from .touchpoints import _fill_links
+
+    base_url = settings.PUBLIC_BASE_URL or "https://example.com"
+    if lead is None:
+        ctx = _sample_context(base_url)
+    else:
+        trip = preview_trip(kind, lead)
+        ctx = build_context(lead, trip)
+        _fill_links(TouchPoint(lead=lead, reservation=trip, kind=kind), ctx, base_url)
+    body = render(email_body, ctx) if email_body.strip() else ""
+    head = render(subject, ctx) if subject.strip() else ""
+    email = f"{head}\n\n{body}" if head and body else head or body
+    return {"email": email, "sms": render(sms_body, ctx) if sms_body.strip() else ""}

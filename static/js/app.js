@@ -1541,6 +1541,129 @@ function checklistSchedule(opts = {}) {
 }
 window.checklistSchedule = checklistSchedule;
 
+/* -------------------------------------------------- messageEditor
+ * Settings -> Messages -> one message. Field chips insert {key} at the caret; the preview and
+ * the timing example are rendered server-side by the real renderer and only re-requested
+ * (debounced 300 ms) as the owner types. Everything lands via textContent.
+ */
+function messageEditor(opts = {}) {
+  const DEBOUNCE_MS = 300;
+  const timers = {};
+  let previewSeq = 0;
+  const later = (key, fn) => {
+    clearTimeout(timers[key]);
+    timers[key] = setTimeout(fn, DEBOUNCE_MS);
+  };
+  return {
+    tab: opts.tab,
+    last: "",
+    smsText: null,
+    init() {
+      this.updateCounter();
+      this.refreshPreview();
+    },
+    box(name) {
+      return this.$root.querySelector(`[name="${name}"]`);
+    },
+    target() {
+      const boxes = this.tab === "sms" ? ["sms_body"] : ["subject", "email_body"];
+      const name = boxes.includes(this.last) ? this.last : boxes[boxes.length - 1];
+      return this.box(name);
+    },
+    insert(key) {
+      const el = this.target();
+      if (!el) return;
+      el.focus();
+      el.setRangeText(`{${key}}`, el.selectionStart, el.selectionEnd, "end");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    queue(event) {
+      const timing = event.target.closest && event.target.closest("[data-timing]");
+      if (timing) {
+        later(`t-${timing.dataset.timing}`, () => this.refreshTiming(timing.dataset.timing));
+        return;
+      }
+      if (event.target.name === "sms_body") this.updateCounter();
+      if (event.target.name === "enabled") return;
+      later("preview", () => this.refreshPreview());
+    },
+    updateCounter() {
+      const counter = this.$root.querySelector("[data-counter]");
+      const box = this.box("sms_body");
+      if (!counter || !box) return;
+      const text = this.smsText !== null ? this.smsText : box.value;
+      const n = text.length;
+      const segments = n === 0 ? 0 : n <= 160 ? 1 : Math.ceil(n / 153);
+      counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${segments} segment${segments === 1 ? "" : "s"}`;
+    },
+    async refreshPreview() {
+      const body = new URLSearchParams();
+      for (const name of ["subject", "email_body", "sms_body", "lead"]) {
+        const el = this.box(name);
+        if (el) body.append(name, el.value);
+      }
+      const seq = ++previewSeq;
+      const error = this.$root.querySelector("[data-preview-error]");
+      try {
+        const res = await fetch(opts.previewUrl, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body,
+        });
+        const data = await res.json();
+        if (seq !== previewSeq) return;
+        if (data.ok) {
+          error.classList.add("hidden");
+          error.textContent = "";
+          for (const channel of ["email", "sms"]) {
+            const pane = this.$root.querySelector(`[data-preview="${channel}"]`);
+            if (pane) pane.textContent = data[channel];
+          }
+          this.smsText = data.sms;
+        } else {
+          const first = Object.values(data.errors || {})[0] || "";
+          error.textContent = first;
+          error.classList.remove("hidden");
+          this.smsText = null;
+        }
+      } catch (e) {
+        return;
+      }
+      this.updateCounter();
+    },
+    async refreshTiming(prefix) {
+      const row = this.$root.querySelector(`[data-timing="${prefix}"]`);
+      const example = row.querySelector("[data-example]");
+      const amount = row.querySelector(`[name="${prefix}_amount"]`).value;
+      const unit = row.querySelector(`[name="${prefix}_unit"]`).value;
+      if (amount === "") {
+        example.textContent = "";
+        return;
+      }
+      const url = prefix === "timing2" ? opts.timing2Url : opts.timingUrl;
+      try {
+        const res = await fetch(`${url}?${new URLSearchParams({ amount, unit })}`, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await res.json();
+        example.textContent = data.ok ? data.text : data.error;
+      } catch (e) {
+        example.textContent = "";
+      }
+    },
+    confirmReset() {
+      Alpine.store("modal").confirm({
+        title: "Reset this message?",
+        message: "Its wording, timing and switch go back to the defaults.",
+        variant: "gold",
+        confirmText: "Reset",
+        onConfirm: () => document.getElementById("message-reset-form").submit(),
+      });
+    },
+  };
+}
+window.messageEditor = messageEditor;
+
 /* -------------------------------------------------- LA sync payload preview */
 // LA sync: show a recorded payload (json_script element) in the shared modal.
 window.showLaPayload = function (elementId, title) {
