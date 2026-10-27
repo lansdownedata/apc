@@ -4,7 +4,7 @@ from django import forms
 
 from apps.core.phone import to_e164
 
-from .models import Vendor, VendorDocument, VendorDriver, VendorInsurance
+from .models import AffiliateDocumentType, Vendor, VendorDocument, VendorDriver, VendorInsurance
 
 _TEXT = {"class": "field w-full"}
 
@@ -100,21 +100,21 @@ class VendorInsuranceForm(forms.ModelForm):
 
 
 class VendorDocumentForm(forms.ModelForm):
+    # Optional on the form: an upload with no type picked is filed as Other.
+    document_type = forms.ModelChoiceField(
+        queryset=AffiliateDocumentType.objects.filter(active=True),
+        required=False,
+        empty_label=None,
+        widget=forms.Select(attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}),
+    )
+
     class Meta:
         model = VendorDocument
-        fields = ["kind", "label", "file"]
+        fields = ["document_type", "label", "file"]
         widgets = {
-            "kind": forms.Select(
-                attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}
-            ),
             "label": forms.TextInput(attrs=_TEXT),
             "file": forms.FileInput(attrs={"class": "sr-only"}),
         }
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Optional on the form: an upload with no kind picked is filed as Other.
-        self.fields["kind"].required = False
-
-    def clean_kind(self) -> str:
-        return self.cleaned_data.get("kind") or VendorDocument.Kind.OTHER
+    def clean_document_type(self) -> AffiliateDocumentType:
+        return self.cleaned_data.get("document_type") or AffiliateDocumentType.objects.other()

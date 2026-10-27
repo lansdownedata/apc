@@ -3,7 +3,7 @@ from datetime import timedelta
 import factory
 from django.utils import timezone
 
-from .models import Vendor, VendorDocument, VendorDriver, VendorInsurance
+from .models import AffiliateDocumentType, Vendor, VendorDocument, VendorDriver, VendorInsurance
 
 
 class VendorFactory(factory.django.DjangoModelFactory):
@@ -25,11 +25,19 @@ class VendorDriverFactory(factory.django.DjangoModelFactory):
     name = factory.Faker("name")
 
 
+class AffiliateDocumentTypeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = AffiliateDocumentType
+
+    name = factory.Sequence(lambda n: f"Document type {n}")
+
+
 class VendorDocumentFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = VendorDocument
 
     vendor = factory.SubFactory(VendorFactory)
+    document_type = factory.LazyFunction(AffiliateDocumentType.objects.other)
     label = "W-9"
     file = factory.django.FileField(filename="w9.pdf")
 

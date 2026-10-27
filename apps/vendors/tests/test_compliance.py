@@ -13,7 +13,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.vendors import compliance
 from apps.vendors.factories import VendorDocumentFactory, VendorFactory, VendorInsuranceFactory
-from apps.vendors.models import Vendor, VendorDocument
+from apps.vendors.models import AffiliateDocumentType, Vendor
 
 pytestmark = pytest.mark.django_db
 
@@ -23,6 +23,10 @@ def _vendor(name, *days, **kw):
     for d in days:
         VendorInsuranceFactory(vendor=v, expiry_date=timezone.localdate() + timedelta(days=d))
     return v
+
+
+def _type(name):
+    return AffiliateDocumentType.objects.get(name=name)
 
 
 def _names(rows):
@@ -66,16 +70,16 @@ def test_worst_policy_governs_the_status_and_expiry():
 
 def test_missing_documents_counts_expected_kinds_not_on_file():
     v = _vendor("Some docs", 200)
-    VendorDocumentFactory(vendor=v, kind=VendorDocument.Kind.W9)
-    VendorDocumentFactory(vendor=v, kind=VendorDocument.Kind.W9)
-    VendorDocumentFactory(vendor=v, kind=VendorDocument.Kind.OTHER)
+    VendorDocumentFactory(vendor=v, document_type=_type("W-9"))
+    VendorDocumentFactory(vendor=v, document_type=_type("W-9"))
+    VendorDocumentFactory(vendor=v, document_type=_type("Other"))
     full = _vendor("All docs", 200)
-    for kind in compliance.EXPECTED_DOCUMENT_KINDS:
-        VendorDocumentFactory(vendor=full, kind=kind)
+    for t in compliance.required_types():
+        VendorDocumentFactory(vendor=full, document_type=t)
 
     by_name = {r.vendor.name: r for r in compliance.report()}
 
-    assert by_name["Some docs"].missing_documents == len(compliance.EXPECTED_DOCUMENT_KINDS) - 1
+    assert by_name["Some docs"].missing_documents == len(compliance.required_types()) - 1
     assert by_name["All docs"].missing_documents == 0
     assert "W-9" not in by_name["Some docs"].missing_labels
 
@@ -121,17 +125,17 @@ def test_counts_per_status_and_the_out_of_compliance_number():
 def test_query_count_is_flat_across_fifty_vendors():
     for i in range(5):
         v = _vendor(f"V{i}", i * 10 - 5)
-        VendorDocumentFactory(vendor=v, kind=VendorDocument.Kind.W9)
+        VendorDocumentFactory(vendor=v, document_type=_type("W-9"))
     with CaptureQueriesContext(connection) as few:
         list(compliance.report())
     for i in range(45):
         v = _vendor(f"W{i}", i * 7 - 20)
-        VendorDocumentFactory(vendor=v, kind=VendorDocument.Kind.OTHER)
+        VendorDocumentFactory(vendor=v, document_type=_type("Other"))
     with CaptureQueriesContext(connection) as many:
         rows = compliance.report()
 
     assert len(rows) == 50
-    assert len(many) == len(few) <= 3
+    assert len(many) == len(few) <= 4
 
 
 # --- the page + CSV ---------------------------------------------------------------
@@ -187,5 +191,5 @@ def test_the_upload_form_asks_for_the_document_kind(client, staff):
 
     body = client.get(reverse("document_create", args=[v.pk])).content.decode()
 
-    assert 'name="kind"' in body
+    assert 'name="document_type"' in body
     assert "data-tom" in body

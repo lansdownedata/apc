@@ -186,7 +186,7 @@ def vendor_compliance(request: HttpRequest) -> HttpResponse:
             "status": status,
             "within": str(within) if within is not None else "",
             "window_options": _WINDOWS,
-            "expected_documents": [k.label for k in compliance.EXPECTED_DOCUMENT_KINDS],
+            "expected_documents": [t.name for t in compliance.required_types()],
             "csv_query": request.GET.urlencode(),
         },
     )
@@ -234,7 +234,7 @@ def vendor_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "policies",
             Prefetch(
                 "documents",
-                queryset=VendorDocument.objects.select_related("uploaded_by"),
+                queryset=VendorDocument.objects.select_related("uploaded_by", "document_type"),
             ),
         ),
         pk=pk,

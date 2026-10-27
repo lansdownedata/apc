@@ -190,18 +190,37 @@ class VendorDriver(TimeStampedModel):
         return self.name
 
 
+class AffiliateDocumentTypeManager(models.Manager):
+    def other(self) -> "AffiliateDocumentType":
+        """The catch-all type an upload with no type picked is filed under."""
+        return self.get_or_create(name="Other", defaults={"required": False, "sort_order": 100})[0]
+
+
+class AffiliateDocumentType(models.Model):
+    """A kind of document an affiliate can have on file. Required + active types are what
+    the compliance report (APC-73) expects every affiliate to have; managed in Settings."""
+
+    name = models.CharField(max_length=80, unique=True)
+    required = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    objects = AffiliateDocumentTypeManager()
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class VendorDocument(TimeStampedModel):
     """A file attached to a vendor. created_at is the uploaded-on timestamp."""
 
-    class Kind(models.TextChoices):
-        # What the compliance report (APC-73) checks for — see compliance.EXPECTED_DOCUMENT_KINDS.
-        OPERATING_AUTHORITY = "operating_authority", "DOT operating authority"
-        W9 = "w9", "W-9"
-        AFFILIATE_AGREEMENT = "affiliate_agreement", "Affiliate agreement"
-        OTHER = "other", "Other"
-
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name="documents")
-    kind = models.CharField(max_length=32, choices=Kind.choices, default=Kind.OTHER)
+    document_type = models.ForeignKey(
+        AffiliateDocumentType, on_delete=models.PROTECT, related_name="documents"
+    )
     label = models.CharField(max_length=160)
     file = models.FileField(upload_to="vendor-docs/")
     uploaded_by = models.ForeignKey(

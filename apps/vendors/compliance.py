@@ -12,7 +12,7 @@ from datetime import date
 
 from django.db.models import Prefetch
 
-from .models import Vendor, VendorDocument, VendorInsurance
+from .models import AffiliateDocumentType, Vendor, VendorDocument, VendorInsurance
 
 # Worst first. "none" (no policy on file) sits right after a lapsed policy: an affiliate
 # with no coverage at all is as out of compliance as one whose coverage lapsed.
@@ -26,14 +26,6 @@ STATUS_LABELS = {
     "valid": "Valid",
 }
 OUT_OF_COMPLIANCE = ("expired", "none")
-
-# PLACEHOLDER — the document kinds every affiliate should have on file. Confirm the list
-# with the client; it's one tuple so that's a one-line change.
-EXPECTED_DOCUMENT_KINDS = (
-    VendorDocument.Kind.OPERATING_AUTHORITY,
-    VendorDocument.Kind.W9,
-    VendorDocument.Kind.AFFILIATE_AGREEMENT,
-)
 
 
 @dataclass
@@ -53,15 +45,20 @@ class ComplianceRow:
         return STATUS_LABELS[self.status]
 
 
-def _row(vendor: Vendor) -> ComplianceRow:
+def required_types() -> list[AffiliateDocumentType]:
+    """Active required document types, in Settings order."""
+    return list(AffiliateDocumentType.objects.filter(active=True, required=True))
+
+
+def _row(vendor: Vendor, types: list[AffiliateDocumentType]) -> ComplianceRow:
     summary = vendor.insurance_summary()
-    have = {d.kind for d in vendor.documents.all()}
+    have = {d.document_type_id for d in vendor.documents.all()}
     return ComplianceRow(
         vendor=vendor,
         status=summary["status"],
         expiry=summary["expiry"],
         days=summary["days"],
-        missing_labels=[k.label for k in EXPECTED_DOCUMENT_KINDS if k not in have],
+        missing_labels=[t.name for t in types if t.pk not in have],
     )
 
 
@@ -70,11 +67,12 @@ def report(*, status: str = "", within: int | None = None) -> list[ComplianceRow
     `within` keeps affiliates whose governing policy expires inside N days — lapsed ones
     included, since they're past every window."""
     policies = VendorInsurance.objects.only("id", "vendor_id", "expiry_date")
-    documents = VendorDocument.objects.only("id", "vendor_id", "kind")
+    documents = VendorDocument.objects.only("id", "vendor_id", "document_type_id")
     vendors = Vendor.objects.filter(status=Vendor.Status.ACTIVE).prefetch_related(
         Prefetch("policies", queryset=policies), Prefetch("documents", queryset=documents)
     )
-    rows = [_row(v) for v in vendors]
+    types = required_types()
+    rows = [_row(v, types) for v in vendors]
     if status in STATUS_ORDER:
         rows = [r for r in rows if r.status == status]
     if within is not None:
