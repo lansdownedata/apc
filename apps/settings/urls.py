@@ -24,7 +24,10 @@ urlpatterns = [
     path(
         "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
     ),
-    path("notifications/", views.notifications, name="notifications"),
+    path("messages/", views.messages_list, name="messages"),
+    path("messages/master/", views.messages_master, name="messages_master"),
+    path("messages/<str:kind>/", views.message_edit, name="message_edit"),
+    path("messages/<str:kind>/toggle/", views.message_toggle, name="message_toggle"),
     path("pricing/", views.pricing, name="pricing"),
     path("affiliate-scoring/", views.affiliate_scoring, name="affiliate_scoring"),
     path("vehicle-types/", views.vehicle_type_list, name="vehicle_type_list"),

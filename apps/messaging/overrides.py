@@ -1,6 +1,6 @@
 """Resolve a message: the owner's `MessageTemplate` row layered over the code default."""
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 
 from django.db import transaction
@@ -250,3 +250,90 @@ def timing_example(kind: str, amount: int, unit: str, *, now: datetime | None = 
         else f"{_ANCHOR_PHRASE[base.anchor]} {schedule.stamp(anchor)}"
     )
     return f"{phrase} → sends {schedule.stamp(sends.astimezone(anchor.tzinfo))}"
+
+
+@dataclass(frozen=True)
+class MessageSpec:
+    kind: str
+    label: str
+    group: str
+
+
+MESSAGES: tuple[MessageSpec, ...] = tuple(
+    MessageSpec(kind, label, group)
+    for group, items in (
+        (
+            "Leads & quotes",
+            (
+                ("tp1_welcome", "Welcome message"),
+                ("tp2_lead_followup", "Lead follow-up"),
+                ("tp3_quote_sent_sms", "Quote sent"),
+                ("tp4_viewed_sms", "Quote viewed (text)"),
+                ("tp5_viewed_email", "Quote viewed (email)"),
+                ("tp6_quote_followup", "Quote follow-up"),
+                ("tp7_expiring", "Quote expiring"),
+                ("tp8_expired", "Quote expired"),
+            ),
+        ),
+        (
+            "Orders",
+            (
+                ("order_confirmed", "Order confirmed"),
+                ("order_cancelled", "Order cancelled"),
+                ("order_auth_expired", "Deposit hold released"),
+                ("payment_reminder", "Payment reminder"),
+            ),
+        ),
+        (
+            "Before the trip",
+            (
+                ("wed_final_details", "Wedding details request"),
+                ("trip_confirm_customer", "Trip confirmation"),
+                ("trip_confirm_affiliate", "Affiliate trip confirmation"),
+            ),
+        ),
+        (
+            "Trip day",
+            (
+                ("driver_released", "Driver details"),
+                ("status_on_the_way", "On the way"),
+                ("status_arrived", "Arrived"),
+            ),
+        ),
+        (
+            "After the trip",
+            (
+                ("thank_you", "Thank-you"),
+                ("thank_you_wedding", "Thank-you (wedding)"),
+                ("review_request", "Review request"),
+            ),
+        ),
+    )
+    for kind, label in items
+)
+
+_TIMING_WHAT = {
+    "lead_created": "the lead comes in",
+    "quote_sent": "the quote is sent",
+    "quote_viewed": "the quote is viewed",
+    "quote_expires": "the quote expires",
+    "trips_done": "the trips are done",
+    "balance_due": "the balance is due",
+}
+_UNIT_WORD = {"minutes": ("min", "min"), "hours": ("hour", "hours"), "days": ("day", "days")}
+
+
+def timing_phrase(kind: str, rows: dict | None = None) -> str:
+    """The row's timing in words, e.g. "2 hours after the lead comes in"."""
+    timing = timing_of(kind, rows)
+    if timing is None:
+        return "When it happens"
+    amount, unit = timing
+    word = _UNIT_WORD[unit][0 if amount == 1 else 1]
+    base = default(kind)
+    side = "before" if base.offset < timedelta(0) else "after"
+    if base.anchor in _PICKUP_ANCHORS:
+        what = "pickup" + (", once Dispatched" if base.anchor == "dispatched_pickup" else "")
+    else:
+        what = _TIMING_WHAT[base.anchor]
+    return f"{amount} {word} {side} {what}"

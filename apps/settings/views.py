@@ -4,7 +4,7 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -15,6 +15,7 @@ from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import ServiceType, VehicleType
+from apps.messaging import overrides
 from apps.messaging.models import NotificationConfig
 from apps.reservations.models import PricingConfig
 from apps.tasks import schedule
@@ -25,7 +26,6 @@ from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
     DispatchAlertConfigForm,
-    NotificationConfigForm,
     PricingConfigForm,
     ServiceTypeForm,
     TaskConfigForm,
@@ -41,6 +41,9 @@ def _fleet_attention_count() -> int:
         *Vehicle.objects.filter(status=Vehicle.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
     ]
     return sum(1 for s in subjects if s.needs_attention)
+
+
+_SHARED_SWITCH = frozenset({"thank_you_wedding"})
 
 
 @login_required
@@ -275,19 +278,69 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
 
 @login_required
 @owner_admin_required
-def notifications(request: HttpRequest) -> HttpResponse:
-    """The reservation-lifecycle messaging switches (APC-18-22) — one singleton form."""
-    config = NotificationConfig.load()
-    form = NotificationConfigForm(request.POST or None, instance=config)
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Notification settings saved.")
-        return redirect("notifications")
+def messages_list(request: HttpRequest) -> HttpResponse:
+    """Every automated message, grouped, with its timing and its own on/off switch."""
+    rows = overrides.load()
+    master = NotificationConfig.load().enabled
+    groups: list[dict] = []
+    for spec in overrides.MESSAGES:
+        if not groups or groups[-1]["name"] != spec.group:
+            groups.append({"name": spec.group, "items": []})
+        groups[-1]["items"].append(
+            {
+                "kind": spec.kind,
+                "label": spec.label,
+                "timing": overrides.timing_phrase(spec.kind, rows),
+                "edited": spec.kind in rows,
+                "enabled": overrides.is_enabled(spec.kind, rows, master=True),
+                "shared_switch": spec.kind in _SHARED_SWITCH,
+            }
+        )
     return render(
         request,
-        "settings/notifications.html",
-        {"nav": "settings", "page_title": "Customer notifications", "form": form},
+        "settings/messages.html",
+        {"nav": "settings", "page_title": "Messages", "groups": groups, "master_on": master},
     )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
+    """Flip one message's switch, leaving its text and timing as they are."""
+    if kind not in {m.kind for m in overrides.MESSAGES} or kind in _SHARED_SWITCH:
+        raise Http404
+    rows = overrides.load()
+    enabled = not overrides.is_enabled(kind, rows, master=True)
+    current = overrides.effective(kind, rows)
+    overrides.save(
+        kind,
+        subject=current.subject,
+        email_body=current.email_body,
+        sms_body=current.sms_body,
+        timing=overrides.timing_of(kind, rows),
+        enabled=enabled,
+        user=request.user,
+    )
+    return JsonResponse({"ok": True, "enabled": enabled})
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def messages_master(request: HttpRequest) -> JsonResponse:
+    """Flip the master switch that stops every automated message."""
+    config = NotificationConfig.load()
+    config.enabled = not config.enabled
+    config.save(update_fields=["enabled"])
+    return JsonResponse({"ok": True, "enabled": config.enabled})
+
+
+@login_required
+@owner_admin_required
+def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
+    """Placeholder until the editor lands."""
+    raise Http404
 
 
 @login_required

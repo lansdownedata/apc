@@ -234,16 +234,6 @@ class PricingConfigForm(forms.ModelForm):
         return value
 
 
-class NotificationConfigForm(forms.ModelForm):
-    """The master messaging switch. One row, no list."""
-
-    class Meta:
-        from apps.messaging.models import NotificationConfig
-
-        model = NotificationConfig
-        fields = ["enabled"]
-
-
 class VenueForm(forms.ModelForm):
     """A point of interest — venue, hotel or ceremony site — and what it can take.
 

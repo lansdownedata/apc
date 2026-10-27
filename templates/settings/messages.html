@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-[760px] mx-auto px-4 sm:px-6 py-6">
+  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
+
+  <div class="flex items-start justify-between gap-4 mb-4 px-1"
+       x-data="{ on: {% if master_on %}true{% else %}false{% endif %}, busy: false,
+         async flip() {
+           if (this.busy) return;
+           this.busy = true;
+           try {
+             const resp = await fetch('{% url 'messages_master' %}', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), Accept: 'application/json' } });
+             const data = await resp.json();
+             if (!resp.ok || !data.ok) throw new Error('failed');
+             this.on = data.enabled;
+           } catch (e) {
+             $store.toast.push({ type: 'danger', title: 'Could not change the master switch' });
+           } finally { this.busy = false; }
+         } }">
+    <div>
+      <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Messages</h1>
+      <p class="text-[12.5px] text-muted">
+        The automated messages sent to customers and affiliates. Open one to change its wording or timing.
+      </p>
+    </div>
+    <div class="flex items-center gap-2 shrink-0 pt-1">
+      <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'All messaging on' : 'All messaging off'">{% if master_on %}All messaging on{% else %}All messaging off{% endif %}</span>
+      <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if master_on %}true{% else %}false{% endif %}" aria-label="Master messaging switch" @click="flip()" :disabled="busy"
+              class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"
+              :class="on ? 'bg-emerald-600' : 'bg-slate-300'">
+        <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="space-y-4">
+    {% for group in groups %}
+    <div class="card p-5 sm:p-6">
+      <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-3">{{ group.name }}</div>
+      <div class="divide-y divide-line">
+        {% for item in group.items %}
+        <div class="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3"
+             x-data="{ on: {% if item.enabled %}true{% else %}false{% endif %}, busy: false,
+               async flip() {
+                 if (this.busy) return;
+                 this.busy = true;
+                 try {
+                   const resp = await fetch('{% url 'message_toggle' item.kind %}', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), Accept: 'application/json' } });
+                   const data = await resp.json();
+                   if (!resp.ok || !data.ok) throw new Error('failed');
+                   this.on = data.enabled;
+                 } catch (e) {
+                   $store.toast.push({ type: 'danger', title: 'Could not change that switch' });
+                 } finally { this.busy = false; }
+               } }">
+          <a href="{% url 'message_edit' item.kind %}" class="min-w-0 flex-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line">
+            <div class="flex items-center gap-2">
+              <span class="text-[13px] font-medium text-ink">{{ item.label }}</span>
+              {% if item.edited %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-500/20">Edited</span>{% endif %}
+            </div>
+            <div class="text-[11.5px] text-muted">{{ item.timing }}</div>
+          </a>
+          {% if item.shared_switch %}
+          <span class="text-[11.5px] text-muted shrink-0">Uses the Thank-you switch</span>
+          {% else %}
+          <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if item.enabled %}true{% else %}false{% endif %}" aria-label="{{ item.label }} switch" @click="flip()" :disabled="busy"
+                  class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"
+                  :class="on ? 'bg-emerald-600' : 'bg-slate-300'">
+            <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
+          </button>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

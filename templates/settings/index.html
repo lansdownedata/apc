@@ -122,13 +122,13 @@
         When each checklist item falls due, from deposits to insurance renewals.
       </p>
     </a>
-    <a href="{% url 'notifications' %}" class="card p-4 hover:wash-gold transition-colors">
+    <a href="{% url 'messages' %}" class="card p-4 hover:wash-gold transition-colors">
       <div class="flex items-center gap-2">
         <i class="ti ti-message-2 text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Customer notifications</h2>
+        <h2 class="font-display text-[15px] font-semibold text-ink">Messages</h2>
       </div>
       <p class="text-[12.5px] text-muted mt-1">
-        The automated trip-lifecycle messages — wedding details, trip confirmations, driver release, status updates.
+        Every automated message to customers and affiliates: what it says, when it sends, and whether it is on.
       </p>
       <p class="text-[12.5px] text-muted mt-2">
         {% if notifications_on %}Messaging on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Messaging off</span>{% endif %}
