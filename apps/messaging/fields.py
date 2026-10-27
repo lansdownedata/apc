@@ -116,8 +116,16 @@ def fields_for(kind: str) -> list[Field]:
 
 
 def _names(text: str) -> set[str]:
-    """Field names used in a text; escaped braces are literal. Raises ValueError if unbalanced."""
-    return {name for _, name, _, _ in string.Formatter().parse(text) if name is not None}
+    """Field names used in a text, including inside format specs; escaped braces are literal.
+
+    Raises ValueError if unbalanced."""
+    names: set[str] = set()
+    for _, name, spec, _ in string.Formatter().parse(text):
+        if name is not None:
+            names.add(name)
+        if spec:
+            names |= _names(spec)
+    return names
 
 
 def _default_texts(kind: str) -> tuple[str, ...]:

@@ -226,9 +226,17 @@ def redate(keys: set[Key]) -> int:
     return total
 
 
-def _stamp(moment: datetime) -> str:
+def stamp(moment: datetime) -> str:
     """`Sat Nov 14, 7:30 PM EST` — the zone abbreviation is part of every shown time."""
     return moment.strftime("%a %b %-d, %-I:%M %p %Z")
+
+
+def sample_pickup(now: datetime | None = None) -> datetime:
+    """The sample pickup the Settings previews use: the next Saturday, 7:30 PM local."""
+    zone = timezone.get_current_timezone()
+    today = (now or timezone.now()).astimezone(zone).date()
+    saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
+    return datetime.combine(saturday, time(19, 30), tzinfo=zone)
 
 
 def preview(key: str, variant: str, amount: int, unit: str, *, now: datetime | None = None) -> str:
@@ -247,21 +255,20 @@ def preview(key: str, variant: str, amount: int, unit: str, *, now: datetime | N
         raise ValueError(f"amount must be between 0 and {MAX_AMOUNT[unit]} {unit}")
 
     zone = timezone.get_current_timezone()
-    today = (now or timezone.now()).astimezone(zone).date()
-    saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
-    pickup = datetime.combine(saturday, time(19, 30), tzinfo=zone)
+    pickup = sample_pickup(now)
+    saturday = pickup.date()
     opened = datetime.combine(saturday - timedelta(days=5), time(9, 0), tzinfo=zone)
 
     due = apply_schedule(_kind(key, variant), amount, unit).due
     if isinstance(due, BeforePickup):
-        start, at = f"{_stamp(pickup)} pickup", due.resolve(pickup)
+        start, at = f"{stamp(pickup)} pickup", due.resolve(pickup)
     elif isinstance(due, AfterOrderEnd):
-        start, at = f"Trip ends {_stamp(pickup)}", due.resolve(pickup)
+        start, at = f"Trip ends {stamp(pickup)}", due.resolve(pickup)
     elif isinstance(due, AfterLastPickup):
-        start, at = f"Last trip {_stamp(pickup)}", due.resolve(pickup)
+        start, at = f"Last trip {stamp(pickup)}", due.resolve(pickup)
     elif isinstance(due, BeforeExpiry):
         start, at = f"Policy expires {saturday.strftime('%a %b %-d')}", due.resolve(saturday)
     else:
         assert isinstance(due, AfterOpen)
-        start, at = f"Opened {_stamp(opened)}", due.resolve_from(opened)
-    return f"{start} → due {_stamp(at.astimezone(zone))}"
+        start, at = f"Opened {stamp(opened)}", due.resolve_from(opened)
+    return f"{start} → due {stamp(at.astimezone(zone))}"
