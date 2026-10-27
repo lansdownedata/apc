@@ -1,12 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.utils import timezone
 
 from apps.leads.factories import LeadFactory
 from apps.messaging import fields, overrides
 from apps.messaging.factories import TouchPointFactory
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.messaging.touchpoint_templates import TEMPLATES
+from apps.reservations.factories import ReservationFactory
 from apps.tasks import schedule
 
 pytestmark = pytest.mark.django_db
@@ -54,7 +56,7 @@ def test_save_refuses_invalid():
     assert not MessageTemplate.objects.exists()
 
 
-@pytest.mark.parametrize("timing", [(61, "days"), (2, "weeks"), (0, "hours"), (1441, "minutes")])
+@pytest.mark.parametrize("timing", [(61, "days"), (2, "weeks"), (-1, "hours"), (1441, "minutes")])
 def test_timing_bounds(timing):
     with pytest.raises(overrides.SaveError) as exc:
         _save("tp2_lead_followup", timing=timing)
@@ -174,3 +176,72 @@ def test_nested_format_spec_field_is_unknown():
         "tp1_welcome", subject="s", email_body="{first_name:{bogus}}", sms_body="x"
     )
     assert errors["email_body"].startswith("Unknown field {bogus}")
+
+
+def test_zero_timing_is_valid_and_stored():
+    assert (
+        overrides.check(
+            "tp2_lead_followup", subject="s", email_body="b", sms_body="m", timing=(0, "hours")
+        )
+        == {}
+    )
+    _save("tp2_lead_followup", timing=(0, "hours"))
+    assert MessageTemplate.objects.get(kind="tp2_lead_followup").timing_amount == 0
+    assert overrides.effective("tp2_lead_followup").offset == timedelta(0)
+
+
+def test_zero_row_overrides_default_offset():
+    MessageTemplate.objects.create(kind="tp2_lead_followup", timing_amount=0, timing_unit="hours")
+    assert overrides.effective("tp2_lead_followup").offset == timedelta(0)
+
+
+def _trip(days_out=None, hours_out=None):
+    when = timezone.now() + timedelta(days=days_out or 0, hours=hours_out or 0)
+    local = when.astimezone(timezone.get_current_timezone())
+    res = ReservationFactory(
+        pickup_date=local.date(), pickup_time=local.time().replace(microsecond=0)
+    )
+    return res, res.pickup_at
+
+
+def test_driver_released_send_now_row_redated_from_pickup():
+    res, pickup = _trip(days_out=3)
+    tp = TouchPointFactory(
+        lead=res.lead,
+        reservation=res,
+        kind="driver_released",
+        scheduled_for=timezone.now(),
+        status="scheduled",
+    )
+    assert _save("driver_released", timing=(4, "hours")) == 1
+    tp.refresh_from_db()
+    assert tp.scheduled_for == pickup - timedelta(hours=4)
+
+
+def test_driver_released_never_redated_into_the_past():
+    res, pickup = _trip(hours_out=2)
+    tp = TouchPointFactory(
+        lead=res.lead,
+        reservation=res,
+        kind="driver_released",
+        scheduled_for=timezone.now(),
+        status="scheduled",
+    )
+    before = timezone.now()
+    _save("driver_released", timing=(4, "hours"))
+    tp.refresh_from_db()
+    assert tp.scheduled_for >= before
+
+
+def test_trip_confirm_customer_redated_from_pickup():
+    res, pickup = _trip(days_out=10)
+    tp = TouchPointFactory(
+        lead=res.lead,
+        reservation=res,
+        kind="trip_confirm_customer",
+        scheduled_for=pickup - timedelta(hours=1),
+        status="scheduled",
+    )
+    _save("trip_confirm_customer", timing=(24, "hours"))
+    tp.refresh_from_db()
+    assert tp.scheduled_for == pickup - timedelta(hours=24)

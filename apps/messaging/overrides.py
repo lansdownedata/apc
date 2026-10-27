@@ -28,7 +28,7 @@ def _row_offset(row, base: TouchPointTemplate) -> timedelta | None:
     if (
         base.anchor == "triggered"
         or not row
-        or not row.timing_amount
+        or row.timing_amount is None
         or row.timing_unit not in TIMING_UNITS
     ):
         return None
@@ -108,8 +108,8 @@ def check(
             errors["timing"] = "This message sends when it happens; it has no timing."
         elif unit not in TIMING_UNITS:
             errors["timing"] = "Pick minutes, hours or days."
-        elif not 1 <= amount <= MAX_TIMING[unit]:
-            errors["timing"] = f"Use 1 to {MAX_TIMING[unit]} {unit}."
+        elif not 0 <= amount <= MAX_TIMING[unit]:
+            errors["timing"] = f"Use 0 to {MAX_TIMING[unit]} {unit}."
     return errors
 
 
@@ -174,22 +174,44 @@ def reset(kind: str) -> int:
         return redate(kind, from_offset=old) if new != old else 0
 
 
-def redate(kind: str, *, from_offset: timedelta | None = None) -> int:
+_RESERVATION_KINDS = frozenset(
+    {
+        "wed_final_details",
+        "trip_confirm_customer",
+        "trip_confirm_customer_2",
+        "trip_confirm_affiliate",
+        "driver_released",
+    }
+)
+
+
+def redate(kind: str, *, from_offset: timedelta) -> int:
     """Re-date every SCHEDULED send of a kind to its anchor plus the effective offset.
 
-    The anchor is recovered as `scheduled_for - from_offset`, the offset the rows were
-    scheduled with (the code default when not given). Returns the count."""
+    Reservation-anchored kinds are recomputed from the trip's pickup (rows may have been
+    scheduled "now", so their date is not anchor + offset); driver_released never lands in
+    the past. Lead-level kinds recover the anchor as `scheduled_for - from_offset`, the
+    offset they were scheduled with. Returns the count."""
     if default(kind).anchor == "triggered":
         return 0
-    old = default(kind).offset if from_offset is None else from_offset
     new = _offset_of(kind)
-    rows = list(
-        TouchPoint.objects.filter(
-            kind=kind, status=TouchPoint.Status.SCHEDULED, scheduled_for__isnull=False
-        )
+    qs = TouchPoint.objects.filter(
+        kind=kind, status=TouchPoint.Status.SCHEDULED, scheduled_for__isnull=False
     )
-    for row in rows:
-        row.scheduled_for = row.scheduled_for - old + new
+    rows = []
+    if kind in _RESERVATION_KINDS:
+        now = timezone.now()
+        for row in qs.select_related("reservation"):
+            pickup = row.reservation.pickup_at if row.reservation else None
+            if pickup is None:
+                continue
+            at = pickup + new
+            row.scheduled_for = max(now, at) if kind == "driver_released" else at
+            rows.append(row)
+    else:
+        for row in qs:
+            row.scheduled_for = row.scheduled_for - from_offset + new
+            rows.append(row)
     TouchPoint.objects.bulk_update(rows, ["scheduled_for"])
     return len(rows)
 
@@ -213,7 +235,7 @@ def timing_example(kind: str, amount: int, unit: str, *, now: datetime | None = 
     base = default(kind)
     if base.anchor == "triggered":
         raise ValueError(f"{kind} has no timing")
-    if unit not in TIMING_UNITS or not 1 <= amount <= MAX_TIMING[unit]:
+    if unit not in TIMING_UNITS or not 0 <= amount <= MAX_TIMING[unit]:
         raise ValueError(f"bad timing {amount} {unit}")
     pickup = schedule.sample_pickup(now)
     if base.anchor in _PICKUP_ANCHORS or base.anchor in _SATURDAY_ANCHORS:
