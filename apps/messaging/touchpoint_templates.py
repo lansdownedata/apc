@@ -4,6 +4,7 @@ Source: docs/touchpoints/'Touch Points & Communicationsv2.pdf' (LQC program TP1-
 Copy is verbatim client copy — do not rewrite; %TOKENS% became {format} keys.
 """
 
+import string
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -336,16 +337,20 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         email_body=(
             "{first_name},\n\n"
             "Here are your driver and vehicle details for {trip_pickup_when}:\n\n"
-            "  Driver:  {driver_name}\n"
-            "  Cell:    {driver_cell}\n"
-            "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
+            "  Driver:     {driver_name}\n"
+            "  Cell:       {driver_cell}\n"
+            "  Vehicle:    {vehicle_description}\n"
+            "  Vehicle #:  {vehicle_number}\n\n"
             "Your driver will contact you as pickup approaches. If you need anything before "
             "then, call us at {company_phone}.\n\n"
             "{company_name}"
         ),
         sms_body=(
-            "{first_name}, it's {company_name}. Your driver for {trip_pickup_when}: "
-            "{driver_name}, cell {driver_cell}, {vehicle_description} ({vehicle_number}). "
+            "{first_name}, it's {company_name}. Your driver for {trip_pickup_when}:\n"
+            "{driver_name}\n"
+            "Cell {driver_cell}\n"
+            "{vehicle_description}\n"
+            "Vehicle #{vehicle_number}\n"
             "They'll reach out as pickup nears."
         ),
     ),
@@ -358,16 +363,19 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
         email_body=(
             "{first_name},\n\n"
             "Your trip is confirmed and assigned for {trip_pickup_when}.\n\n"
-            "  Driver:  {driver_name}\n"
-            "  Cell:    {driver_cell}\n"
-            "  Vehicle: {vehicle_description} ({vehicle_number})\n\n"
+            "  Driver:     {driver_name}\n"
+            "  Cell:       {driver_cell}\n"
+            "  Vehicle:    {vehicle_description}\n"
+            "  Vehicle #:  {vehicle_number}\n\n"
             "Full details: {confirm_link}\n\n"
             "{company_name}"
         ),
         sms_body=(
             "{first_name}, it's {company_name}. Your trip is confirmed and assigned for "
-            "{trip_pickup_when}. Driver: {driver_name}, {vehicle_description}. Full "
-            "details: {confirm_link}"
+            "{trip_pickup_when}.\n"
+            "Driver: {driver_name}.\n"
+            "{vehicle_description}\n"
+            "Full details: {confirm_link}"
         ),
     ),
     "status_on_the_way": TouchPointTemplate(
@@ -642,5 +650,25 @@ def build_context(lead, reservation=None) -> dict[str, str]:
 
 
 def render(text: str, ctx: dict[str, str]) -> str:
-    """Render a template string with the context dict using str.format."""
-    return text.format(**ctx)
+    """Render a template with str.format, dropping lines whose fields are all blank.
+
+    A line is omitted only if it has at least one placeholder and every placeholder renders
+    to an empty string (after strip). Lines with fixed text only, and blank lines, are kept.
+    """
+    formatter = string.Formatter()
+    kept = []
+    for line in text.split("\n"):
+        fields = [f for f in formatter.parse(line) if f[1] is not None]
+        rendered = line.format(**ctx)
+        if fields and all(not _render_field(f, ctx).strip() for f in fields):
+            continue
+        kept.append(rendered)
+    return "\n".join(kept)
+
+
+def _render_field(field: tuple, ctx: dict[str, str]) -> str:
+    """Render one parsed placeholder (name, conversion, spec) on its own."""
+    _, name, spec, conversion = field
+    spec_part = f":{spec}" if spec else ""
+    conv_part = f"!{conversion}" if conversion else ""
+    return ("{" + name + conv_part + spec_part + "}").format(**ctx)
