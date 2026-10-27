@@ -277,3 +277,25 @@ class Review(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"Review invite · {self.get_delivery_status_display()}"
+
+
+class MessageTemplate(TimeStampedModel):
+    """Owner edits to one automated message, layered over the code default.
+
+    A blank text field means "use the default"; timing applies only when both timing fields
+    are set. No row at all is the code default, so deleting a row restores it.
+    """
+
+    kind = models.CharField(max_length=40, unique=True)
+    subject = models.CharField(max_length=200, blank=True)
+    email_body = models.TextField(blank=True)
+    sms_body = models.TextField(blank=True)
+    timing_amount = models.PositiveIntegerField(null=True, blank=True)
+    timing_unit = models.CharField(max_length=10, blank=True)
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    def __str__(self) -> str:
+        return self.kind

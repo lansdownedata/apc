@@ -11,8 +11,9 @@ from apps.integrations import podium
 from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 
+from . import overrides
 from .models import Review, TouchPoint
-from .touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING, build_context, render
+from .touchpoint_templates import build_context, render
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ _STATUS_KINDS = {
 
 def _create(lead, kind: str, anchor_dt) -> TouchPoint:
     return TouchPoint.objects.create(
-        lead=lead, kind=kind, scheduled_for=anchor_dt + TEMPLATES[kind].offset
+        lead=lead, kind=kind, scheduled_for=anchor_dt + overrides.effective(kind).offset
     )
 
 
@@ -83,7 +84,7 @@ def schedule_quote_sent(lead) -> None:
     _create(lead, TouchPoint.Kind.TP6_QUOTE_FOLLOWUP, sent)
     expires = lead.quote_expires_at
     if expires:
-        if expires + TEMPLATES[TouchPoint.Kind.TP7_EXPIRING].offset > timezone.now():
+        if expires + overrides.effective(TouchPoint.Kind.TP7_EXPIRING).offset > timezone.now():
             _create(lead, TouchPoint.Kind.TP7_EXPIRING, expires)
         _create(lead, TouchPoint.Kind.TP8_EXPIRED, expires)
 
@@ -152,11 +153,13 @@ def schedule_payment_reminder(lead) -> None:
 # --- reservation-anchored scheduling (APC-18-22) --------------------------------------
 
 
-def _ensure(reservation, kind: str, anchor_dt) -> TouchPoint | None:
+def _ensure(reservation, kind: str, anchor_dt, *, at: datetime | None = None) -> TouchPoint | None:
     """Create one reservation-anchored row unless a non-CANCELLED one already exists.
 
     A SENT / SKIPPED / FAILED row still blocks — the customer already got it, or we already
     decided not to send. Only a CANCELLED row (a supersede) allows a fresh one.
+
+    ``at`` is an exact ``scheduled_for`` that overrides anchor + offset.
     """
     blocking = (
         TouchPoint.objects.filter(reservation=reservation, kind=kind)
@@ -169,7 +172,7 @@ def _ensure(reservation, kind: str, anchor_dt) -> TouchPoint | None:
         lead=reservation.lead,
         reservation=reservation,
         kind=kind,
-        scheduled_for=anchor_dt + TEMPLATES[kind].offset,
+        scheduled_for=at or anchor_dt + overrides.effective(kind).offset,
     )
 
 
@@ -269,7 +272,12 @@ def trigger_driver_released(assignment) -> None:
         return
     if not _config().is_enabled(TouchPoint.Kind.DRIVER_RELEASED):
         return
-    _ensure(assignment.reservation, TouchPoint.Kind.DRIVER_RELEASED, timezone.now())
+    _ensure(
+        assignment.reservation,
+        TouchPoint.Kind.DRIVER_RELEASED,
+        timezone.now(),
+        at=timezone.now(),
+    )
 
 
 def notify_status_change(reservation, status: str) -> None:
@@ -449,7 +457,7 @@ def _send(
     return False
 
 
-def _send_review_invite(tp: TouchPoint) -> bool:
+def _send_review_invite(tp: TouchPoint, rows=None) -> bool:
     """Create the Podium review invitation, log a Review row, and SMS the link."""
     lead = tp.lead
     contact = lead.contact
@@ -475,7 +483,7 @@ def _send_review_invite(tp: TouchPoint) -> bool:
         requested_at=timezone.now(),
     )
 
-    template = TEMPLATES[tp.kind]
+    template = overrides.effective(tp.kind, rows)
     ctx = build_context(lead)
     ctx["review_link"] = link
     body = render(template.sms_body, ctx)
@@ -523,11 +531,11 @@ def _review_hold_reason(lead) -> str:
     return ""
 
 
-def _thank_you_template(lead):
+def _thank_you_template(lead, rows=None):
     from apps.reservations.services import is_wedding_trip
 
     wedding = bool(lead.wedding_name) or any(is_wedding_trip(r) for r in lead.reservations.all())
-    return THANK_YOU_WEDDING if wedding else TEMPLATES[TouchPoint.Kind.THANK_YOU]
+    return overrides.effective("thank_you_wedding" if wedding else TouchPoint.Kind.THANK_YOU, rows)
 
 
 def _confirmed_assignment(reservation):
@@ -588,11 +596,12 @@ def _recipient(tp: TouchPoint, template):
     return tp.lead.contact
 
 
-def _process(tp: TouchPoint, cfg=None) -> bool:
+def _process(tp: TouchPoint, cfg=None, rows=None) -> bool:
     """Evaluate skip conditions at send time and send. Returns True iff SENT.
 
     ``cfg`` lets `run_touchpoints` load the `NotificationConfig` singleton once for the
-    whole batch instead of once per row — it's a fresh row-by-row query otherwise.
+    whole batch instead of once per row — it's a fresh row-by-row query otherwise. ``rows``
+    is the batch's `MessageTemplate` overrides (loaded here when None).
     """
     lead = tp.lead
     kind = tp.kind
@@ -615,7 +624,7 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
 
             tasks.sync(lead)
             return False
-        return _send_review_invite(tp)
+        return _send_review_invite(tp, rows)
 
     if kind in _RESERVATION_KINDS:
         from apps.dispatch.selectors import CANCELLED_STATUSES
@@ -713,7 +722,12 @@ def _process(tp: TouchPoint, cfg=None) -> bool:
             logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, kind)
             return False
 
-    template = _thank_you_template(lead) if kind == TouchPoint.Kind.THANK_YOU else TEMPLATES[kind]
+    if rows is None:
+        rows = overrides.load()
+    if kind == TouchPoint.Kind.THANK_YOU:
+        template = _thank_you_template(lead, rows)
+    else:
+        template = overrides.effective(kind, rows)
     recipient = _recipient(tp, template)
     if recipient is None:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error="no confirmed affiliate")
@@ -766,10 +780,11 @@ def run_touchpoints() -> int:
     )
 
     cfg = _config()
+    rows = overrides.load()
     sent = 0
     for tp in due:
         try:
-            if _process(tp, cfg=cfg):
+            if _process(tp, cfg=cfg, rows=rows):
                 sent += 1
         except Exception:  # noqa: BLE001 - one bad row must not kill the run
             logger.exception("touch-point %s failed to send", tp.pk)

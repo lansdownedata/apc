@@ -330,8 +330,8 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
     ),
     "driver_released": TouchPointTemplate(
         kind="driver_released",
-        anchor="triggered",
-        offset=timedelta(0),
+        anchor="dispatched_pickup",
+        offset=-timedelta(hours=12),
         channels=("email", "sms"),
         subject="Your driver for {trip_pickup_date} — {company_name}",
         email_body=(
