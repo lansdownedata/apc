@@ -17,7 +17,7 @@ from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
 from apps.tasks import services as tasks
 from apps.tasks.jobs import run_tasks
-from apps.tasks.models import Task, TaskConfig
+from apps.tasks.models import Task, TaskSchedule
 
 pytestmark = pytest.mark.django_db
 
@@ -205,9 +205,9 @@ def test_future_booking_is_due_the_offset_after_the_last_trip_in_its_zone():
 
 
 def test_the_offset_is_a_setting():
-    cfg = TaskConfig.load()
-    cfg.future_booking_offset_days = 30
-    cfg.save()
+    TaskSchedule.objects.create(
+        kind="future_booking_followup", variant="standard", amount=30, unit="days"
+    )
     lead = _order(status=Reservation.TripStatus.DONE)
     trip = lead.reservations.get()
 

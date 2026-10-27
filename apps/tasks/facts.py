@@ -19,6 +19,8 @@ from apps.payments.models import PaymentPlan
 from apps.reservations.models import Reservation, TripIssue, TripReview
 from apps.reservations.services import is_wedding_trip
 
+from . import schedule
+
 
 @dataclass
 class LeadFacts:
@@ -44,6 +46,9 @@ class LeadFacts:
     order_entered: bool = False
     # APC-92: the booking contact's company is an affiliate account (a farmed-in order).
     is_farm_in: bool = False
+    # Settings overrides of due timing, (kind, variant) -> (amount, unit). Order-independent,
+    # but carried here so every `effective_kind` caller already has it.
+    schedules: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict)
 
     @property
     def live_trips(self) -> list[Reservation]:
@@ -78,7 +83,7 @@ class LeadFacts:
 
 
 def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
-    """Facts for every lead in `leads`, keyed by lead pk. Eight queries, whatever the size.
+    """Facts for every lead in `leads`, keyed by lead pk. Nine queries, whatever the size.
 
     Predicates read `lead` fields straight off these instances, so pass fresh rows.
     """
@@ -86,6 +91,10 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     if not facts:
         return facts
     ids = list(facts)
+
+    schedules = schedule.load()
+    for f in facts.values():
+        f.schedules = schedules
 
     for plan in PaymentPlan.objects.filter(lead_id__in=ids):
         facts[plan.lead_id].plan = plan

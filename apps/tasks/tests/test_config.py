@@ -86,7 +86,6 @@ def test_the_overtime_block_cannot_be_zero(client):
             "airport_domestic_grace_minutes": 25,
             "airport_international_grace_minutes": 50,
             "overtime_block_minutes": 0,
-            "future_booking_offset_days": 330,
         },
     )
 
@@ -112,7 +111,6 @@ def test_owner_admin_can_save(client):
             "airport_international_grace_minutes": 45,
             "overtime_block_minutes": 30,
             "cleaning_fee": "250.00",
-            "future_booking_offset_days": 360,
             "digest_emails": "ops@allprocharter.com",
         },
     )
@@ -124,7 +122,6 @@ def test_owner_admin_can_save(client):
     assert cfg.post_trip_grace_hours == 3
     assert _rule(cfg) == (4, 10, 12, 20, 45, 30)
     assert cfg.cleaning_fee == Decimal("250.00")
-    assert cfg.future_booking_offset_days == 360
     assert cfg.sales_owner is None
     assert TaskConfig.objects.count() == 1
 

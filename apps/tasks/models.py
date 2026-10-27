@@ -100,11 +100,6 @@ class TaskConfig(models.Model):
         help_text="Charged when a vehicle needs more than normal cleaning after a trip. Shown "
         "to wedding customers on the 72-hour confirmation; 0 hides it.",
     )
-    future_booking_offset_days = models.PositiveIntegerField(
-        default=330,
-        help_text="Days after an order's last trip that Sales follows up about booking again "
-        "(330 is about a wedding's first anniversary).",
-    )
     digest_emails = models.TextField(
         blank=True,
         help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "
@@ -373,3 +368,38 @@ class ReportedOrder(models.Model):
 
     def __str__(self) -> str:
         return f"{self.lead_id} · {self.reported_at:%Y-%m-%d}"
+
+
+class TaskSchedule(TimeStampedModel):
+    """A Settings override of one checklist kind's due timing (the code default stays in
+    `definitions.REGISTRY`; a missing row means "use the default"). `variant` picks the
+    clock: the standard one, or the farmed-in order's own."""
+
+    class Variant(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        FARM_IN = "farm_in", "Farmed-in"
+
+    class Unit(models.TextChoices):
+        HOURS = "hours", "Hours"
+        DAYS = "days", "Days"
+        BUSINESS_DAYS = "business_days", "Business days"
+
+    kind = models.CharField(max_length=64)
+    variant = models.CharField(max_length=16, choices=Variant.choices, default=Variant.STANDARD)
+    amount = models.PositiveIntegerField()
+    unit = models.CharField(max_length=16, choices=Unit.choices)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["kind", "variant"], name="uniq_task_schedule")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind} ({self.variant}): {self.amount} {self.unit}"

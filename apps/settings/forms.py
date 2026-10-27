@@ -161,7 +161,6 @@ class TaskConfigForm(forms.ModelForm):
             "airport_international_grace_minutes",
             "overtime_block_minutes",
             "cleaning_fee",
-            "future_booking_offset_days",
             "digest_emails",
             "report_emails",
         ]
@@ -180,7 +179,6 @@ class TaskConfigForm(forms.ModelForm):
             "airport_international_grace_minutes": forms.NumberInput(attrs=_NUM),
             "overtime_block_minutes": forms.NumberInput(attrs=_NUM),
             "cleaning_fee": forms.NumberInput(attrs={**_NUM, "step": "0.01"}),
-            "future_booking_offset_days": forms.NumberInput(attrs=_NUM),
             "digest_emails": forms.Textarea(attrs=_AREA),
             "report_emails": forms.Textarea(attrs=_AREA),
         }

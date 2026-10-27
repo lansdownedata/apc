@@ -109,18 +109,17 @@ class AfterOpenBusinessDays(AfterOpen):
 
 @dataclass(frozen=True)
 class AfterLastPickup:
-    """Due `TaskConfig.future_booking_offset_days` after the order's last trip, at `hour`
-    on that local day in the last trip's own zone — an anniversary lands on the calendar
-    day the customer would recognise, never shifted by UTC."""
+    """Due `days` after the order's last trip, at `hour` on that local day in the last
+    trip's own zone — an anniversary lands on the calendar day the customer would
+    recognise, never shifted by UTC."""
 
+    days: int = 330  # about a wedding's first anniversary
     hour: int = 9
 
     def resolve(self, last_pickup_at: datetime | None) -> datetime | None:
         if last_pickup_at is None:
             return None
-        from .models import TaskConfig
-
-        day = last_pickup_at.date() + timedelta(days=TaskConfig.load().future_booking_offset_days)
+        day = last_pickup_at.date() + timedelta(days=self.days)
         local = datetime.combine(day, time(self.hour, 0), tzinfo=last_pickup_at.tzinfo)
         return local.astimezone(UTC)
 
@@ -527,7 +526,57 @@ FARM_IN: dict[str, dict] = {
 }
 
 
+def apply_schedule(kind: TaskKind, amount: int, unit: str) -> TaskKind:
+    """`kind` with its due timing replaced by a Settings row — same anchor, new offset.
+
+    Days on a start-of-day `BeforePickup` stay midnight-in-the-trip's-zone; hours are
+    always an exact offset.
+    """
+    due = kind.due
+    if isinstance(due, BeforePickup):
+        if unit == "hours":
+            new = BeforePickup(hours=amount)
+        else:
+            new = BeforePickup(days=amount, day_start=due.day_start)
+    elif isinstance(due, AfterOpenBusinessDays):
+        new = AfterOpenBusinessDays(days=amount)
+    elif isinstance(due, AfterOpen | AfterOrderEnd):
+        new = replace(due, hours=amount * 24 if unit == "days" else amount)
+    elif isinstance(due, AfterLastPickup | BeforeExpiry):
+        new = replace(due, days=amount)
+    else:
+        return kind
+    return replace(kind, due=new)
+
+
+def default_timing(kind: TaskKind) -> tuple[int, str]:
+    """The code default of `kind.due` as the (amount, unit) a Settings row would hold."""
+    due = kind.due
+    if isinstance(due, BeforePickup):
+        if due.hours == 0:
+            return due.days, "days"
+        return due.days * 24 + due.hours, "hours"
+    if isinstance(due, AfterOpenBusinessDays):
+        return due.days, "business_days"
+    if isinstance(due, AfterOpen | AfterOrderEnd):
+        if due.hours >= 168 and due.hours % 24 == 0:
+            return due.hours // 24, "days"
+        return due.hours, "hours"
+    return due.days, "days"
+
+
 def effective_kind(kind: TaskKind, facts: LeadFacts) -> TaskKind:
-    """`kind` as it applies to this order — the farm-in clock for a farmed-in order."""
-    overrides = FARM_IN.get(kind.key) if facts.is_farm_in else None
-    return replace(kind, **overrides) if overrides else kind
+    """`kind` as it applies to this order: the code default, then the Settings row, then —
+    for a farmed-in order — the farm-in clock (code override, then its own Settings row)."""
+    row = facts.schedules.get((kind.key, "standard"))
+    if row:
+        kind = apply_schedule(kind, *row)
+    if not facts.is_farm_in:
+        return kind
+    overrides = FARM_IN.get(kind.key)
+    if overrides:
+        kind = replace(kind, **overrides)
+    row = facts.schedules.get((kind.key, "farm_in"))
+    if row:
+        kind = apply_schedule(kind, *row)
+    return kind

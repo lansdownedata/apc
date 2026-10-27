@@ -23,7 +23,8 @@ from django.utils import timezone
 
 from apps.vendors.models import Vendor, VendorInsurance
 
-from .definitions import KINDS
+from . import schedule
+from .definitions import KINDS, apply_schedule
 from .models import Task, TaskConfig
 
 KIND = "insurance_renewal"
@@ -47,6 +48,8 @@ def run(
         return 0
     now = now or timezone.now()
     kind = KINDS[KIND]
+    if row := schedule.load().get((KIND, "standard")):
+        kind = apply_schedule(kind, *row)
     policies = VendorInsurance.objects.filter(vendor__status=Vendor.Status.ACTIVE)
     tasks = Task.objects.filter(kind=KIND)
     if vendor_id is not None:
