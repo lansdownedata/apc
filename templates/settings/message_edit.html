@@ -121,6 +121,7 @@
         <div class="mb-3">
           {% include "components/searchable_select.html" with name="lead" field_id="id_lead" options=orders selected=default_order empty_label="Sample order" aria_label="Order to preview" %}
         </div>
+        <p class="text-[11.5px] text-muted mb-2 hidden" data-sample-label>Sample order</p>
         <p class="text-[12.5px] text-rose-600 hidden" data-preview-error></p>
         {% for channel in channels %}
         <div class="text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="{{ channel.key }}" x-show="tab === '{{ channel.key }}'" {% if channel.key != tab %}style="display: none"{% endif %}></div>

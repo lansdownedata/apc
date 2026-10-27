@@ -340,11 +340,6 @@ def messages_master(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "enabled": config.enabled})
 
 
-# Accepted in any customer message but offered as chips only outside trip-day messages,
-# where a quote or payment link has no job to do.
-_ORDER_ONLY_LINKS = frozenset({"quote_link", "pay_link"})
-
-
 def _message_spec(kind: str):
     spec = next((m for m in overrides.MESSAGES if m.kind == kind), None)
     if spec is None:
@@ -374,11 +369,7 @@ def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
     first_error = next((n for n in form.TEXTS if n in box_errors), None)
     tab = "sms" if first_error == "sms_body" else "email" if first_error else ""
     channels = [{"key": c, "label": "Email" if c == "email" else "SMS"} for c in form.channels]
-    chips = [
-        {"key": f.key, "label": f.label, "group": f.group}
-        for f in fields.fields_for(kind)
-        if not (kind in overrides.PREVIEW_TRIP_KINDS and f.key in _ORDER_ONLY_LINKS)
-    ]
+    chips = [{"key": f.key, "label": f.label, "group": f.group} for f in fields.fields_for(kind)]
     second = overrides.default(form.second_kind) if form.second_kind else None
     return render(
         request,

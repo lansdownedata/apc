@@ -1604,29 +1604,40 @@ function messageEditor(opts = {}) {
       }
       const seq = ++previewSeq;
       const error = this.$root.querySelector("[data-preview-error]");
+      const label = this.$root.querySelector("[data-sample-label]");
+      const fail = (text) => {
+        error.textContent = text;
+        error.classList.remove("hidden");
+        this.smsText = null;
+        this.updateCounter();
+      };
       try {
         const res = await fetch(opts.previewUrl, {
           method: "POST",
           headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
           body,
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
         if (seq !== previewSeq) return;
+        if (!data || (!data.ok && !data.errors)) {
+          fail("Preview unavailable. Check the text and try again.");
+          return;
+        }
         if (data.ok) {
           error.classList.add("hidden");
           error.textContent = "";
+          label.classList.toggle("hidden", data.source !== "Sample order");
           for (const channel of ["email", "sms"]) {
             const pane = this.$root.querySelector(`[data-preview="${channel}"]`);
             if (pane) pane.textContent = data[channel];
           }
           this.smsText = data.sms;
         } else {
-          const first = Object.values(data.errors || {})[0] || "";
-          error.textContent = first;
-          error.classList.remove("hidden");
-          this.smsText = null;
+          fail(Object.values(data.errors)[0] || "");
+          return;
         }
       } catch (e) {
+        if (seq === previewSeq) fail("Preview unavailable. Check the text and try again.");
         return;
       }
       this.updateCounter();
@@ -1648,7 +1659,7 @@ function messageEditor(opts = {}) {
         const data = await res.json();
         example.textContent = data.ok ? data.text : data.error;
       } catch (e) {
-        example.textContent = "";
+        example.textContent = "Example unavailable.";
       }
     },
     confirmReset() {

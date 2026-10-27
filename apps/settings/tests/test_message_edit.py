@@ -288,3 +288,37 @@ def test_every_message_opens_and_previews_default_text(client, kind):
             },
         )
         assert resp.status_code == 200, resp.content
+
+
+def test_preview_sends_nothing_and_creates_no_touchpoint(client, monkeypatch):
+    from unittest import mock
+
+    from apps.messaging.models import TouchPoint
+
+    client.force_login(_owner_admin())
+    lead = _booked_lead()
+    before = TouchPoint.objects.count()
+    default = overrides.default("trip_confirm_customer")
+    texts = {
+        "subject": default.subject,
+        "email_body": default.email_body,
+        "sms_body": default.sms_body,
+    }
+    with mock.patch("apps.integrations.podium.send_message") as send:
+        overrides.preview("trip_confirm_customer", lead, **texts)
+        client.post(
+            reverse("message_preview", args=["trip_confirm_customer"]), {**texts, "lead": lead.pk}
+        )
+        client.post(reverse("message_preview", args=["trip_confirm_customer"]), texts)
+    send.assert_not_called()
+    assert TouchPoint.objects.count() == before
+
+
+def test_editor_has_error_state_and_sample_label(client):
+    client.force_login(_owner_admin())
+    html = client.get(reverse("message_edit", args=["tp1_welcome"])).content.decode()
+    assert "data-sample-label" in html
+    assert "Sample order" in html
+    js = open("static/js/app.js").read()
+    assert "Preview unavailable. Check the text and try again." in js
+    assert "Example unavailable." in js

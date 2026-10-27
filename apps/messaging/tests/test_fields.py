@@ -103,3 +103,25 @@ def test_fields_for_groups():
 def test_required_for():
     assert fields.required_for("payment_reminder") == {"pay_link"}
     assert fields.required_for("tp1_welcome") == frozenset()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "driver_released",
+        "driver_updated",
+        "status_on_the_way",
+        "status_arrived",
+        "status_dispatched",
+    ],
+)
+def test_trip_day_kinds_get_no_order_links(kind):
+    keys = {f.key for f in fields.fields_for(kind)}
+    assert not keys & {"quote_link", "pay_link"}
+    texts = {"subject": "S", "email_body": "E", "sms_body": "Hi {pay_link}"}
+    assert "Unknown field {pay_link}" in fields.validate(kind, **texts)["sms_body"]
+
+
+def test_trip_confirmations_keep_order_links():
+    for kind in ("trip_confirm_customer", "trip_confirm_customer_2", "wed_final_details"):
+        assert {"quote_link", "pay_link"} <= {f.key for f in fields.fields_for(kind)}

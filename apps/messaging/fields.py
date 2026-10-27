@@ -97,7 +97,8 @@ def _keys_for(kind: str) -> set[str]:
             group("Trip") | group("Affiliate") | group("Company") | group("Driver") | {"ack_link"}
         )
     keys = group("Customer") | group("Order") | group("Payment") | group("Company")
-    keys |= {"quote_link", "pay_link"}
+    if kind not in _DRIVER_KINDS:
+        keys |= {"quote_link", "pay_link"}
     if kind in _TRIP_KINDS:
         keys |= group("Trip")
     if kind in _DRIVER_KINDS:
