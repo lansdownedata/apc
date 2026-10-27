@@ -90,6 +90,26 @@ def run(
     return changed
 
 
+def redate(now: datetime | None = None) -> int:
+    """Recompute `due_at` of unresolved renewal tasks after the schedule changed. The open
+    time and escalation tier stay put; due never lands before the task opened."""
+    now = now or timezone.now()
+    kind = KINDS[KIND]
+    if row := schedule.load().get((KIND, "standard")):
+        kind = apply_schedule(kind, *row)
+    changed = []
+    tasks = Task.objects.filter(
+        kind=KIND, status__in=Task.UNRESOLVED, insurance__isnull=False
+    ).select_related("insurance")
+    for task in tasks:
+        due_at = max(kind.due.resolve(task.insurance.expiry_date), task.opens_at)
+        if due_at != task.due_at:
+            task.due_at, task.updated_at = due_at, now
+            changed.append(task)
+    Task.objects.bulk_update(changed, ["due_at", "updated_at"])
+    return len(changed)
+
+
 def sync_vendor(vendor: Vendor) -> int:
     """The hook for the vendor screens — the same pass, for one vendor."""
     return run(vendor_id=vendor.pk)
