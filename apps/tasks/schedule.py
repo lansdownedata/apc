@@ -1,5 +1,6 @@
 """Settings overrides of checklist due timing, read as one lookup, saved and re-dated."""
 
+import logging
 from dataclasses import replace
 
 from django.db import transaction
@@ -9,6 +10,8 @@ from apps.leads.models import Lead
 from . import services
 from .definitions import FARM_IN, KINDS, default_timing
 from .models import Task, TaskSchedule
+
+logger = logging.getLogger(__name__)
 
 Key = tuple[str, str]
 Timing = tuple[int, str]
@@ -67,7 +70,10 @@ def redate(keys: set[Key]) -> int:
             .distinct()
         )
         for lead in Lead.objects.filter(pk__in=list(leads)):
-            total += services.reschedule(lead)
+            try:
+                total += services.reschedule(lead)
+            except Exception:
+                logger.exception("schedule re-date failed for lead %s", lead.pk)
     if vendor_tasks.KIND in kinds:
         total += vendor_tasks.redate()
     return total

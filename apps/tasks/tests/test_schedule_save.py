@@ -168,3 +168,23 @@ def test_insurance_renewal_redated():
     local = datetime.combine(day, time(9, 0), tzinfo=timezone.get_current_timezone())
     assert task.due_at == local.astimezone(UTC)
     assert count == 1
+
+
+def test_one_lead_failing_does_not_stop_the_rest(caplog):
+    leads = [_order() for _ in range(3)]
+    bad = leads[1]
+    real = services.reschedule
+
+    def flaky(lead):
+        if lead.pk == bad.pk:
+            raise RuntimeError("boom")
+        return real(lead)
+
+    with patch.object(services, "reschedule", side_effect=flaky):
+        count = schedule.save({KEY: (5, "days")}, user=UserFactory())
+
+    for lead in (leads[0], leads[2]):
+        due = _task(lead, "affiliate_assigned").due_at
+        assert due == _pickup(lead).astimezone(UTC) - timedelta(days=5)
+    assert count == 2
+    assert f"lead {bad.pk}" in caplog.text
