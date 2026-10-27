@@ -5,6 +5,7 @@ from django import forms
 from apps.addresses.models import Venue
 from apps.leads.models import ServiceType, VehicleType
 from apps.tasks import schedule
+from apps.vendors.models import AffiliateDocumentType
 
 UNIT_LABELS = {"hours": "hours", "days": "days", "business_days": "business days"}
 
@@ -386,3 +387,24 @@ class ChecklistScheduleForm(forms.Form):
                 out.append({"name": row.group, "items": []})
             out[-1]["items"].append(item)
         return out
+
+
+class AffiliateDocumentTypeForm(forms.ModelForm):
+    """ "Other" is where blank uploads are filed (``AffiliateDocumentType.objects.other()``
+    finds it by name), so its name and active flag are locked; the rest stays editable."""
+
+    class Meta:
+        model = AffiliateDocumentType
+        fields = ["name", "required", "sort_order", "active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "field w-full"}),
+            "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
+        }
+        help_texts = {"sort_order": "Lower numbers appear first."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.protected = bool(self.instance.pk) and self.instance.name == "Other"
+        if self.protected:
+            for field in ("name", "active"):
+                self.fields[field].disabled = True

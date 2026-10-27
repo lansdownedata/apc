@@ -43,4 +43,12 @@ urlpatterns = [
     path("renewal-types/new/", views.renewal_type_create, name="renewal_type_create"),
     path("renewal-types/<int:pk>/", views.renewal_type_edit, name="renewal_type_edit"),
     path("renewal-types/<int:pk>/delete/", views.renewal_type_delete, name="renewal_type_delete"),
+    path("affiliate-documents/", views.document_type_list, name="document_type_list"),
+    path("affiliate-documents/new/", views.document_type_create, name="document_type_create"),
+    path("affiliate-documents/<int:pk>/", views.document_type_edit, name="document_type_edit"),
+    path(
+        "affiliate-documents/<int:pk>/delete/",
+        views.document_type_delete,
+        name="document_type_delete",
+    ),
 ]

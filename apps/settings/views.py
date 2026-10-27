@@ -19,8 +19,10 @@ from apps.messaging.models import NotificationConfig
 from apps.reservations.models import PricingConfig
 from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
+from apps.vendors.models import AffiliateDocumentType
 
 from .forms import (
+    AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
     DispatchAlertConfigForm,
     NotificationConfigForm,
@@ -633,3 +635,68 @@ def quickbooks_disconnect(request: HttpRequest) -> HttpResponse:
     qbo.disconnect()
     messages.success(request, "QuickBooks disconnected.")
     return redirect("quickbooks_settings")
+
+
+@login_required
+@owner_admin_required
+def document_type_list(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "settings/document_type_list.html",
+        {
+            "nav": "settings",
+            "page_title": "Affiliate documents",
+            "document_types": AffiliateDocumentType.objects.all(),
+        },
+    )
+
+
+@login_required
+@owner_admin_required
+def document_type_create(request: HttpRequest) -> HttpResponse:
+    form = AffiliateDocumentTypeForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Document type added.")
+        return redirect("document_type_list")
+    return render(
+        request,
+        "settings/document_type_form.html",
+        {"nav": "settings", "page_title": "New document type", "form": form, "target": None},
+    )
+
+
+@login_required
+@owner_admin_required
+def document_type_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    target = get_object_or_404(AffiliateDocumentType, pk=pk)
+    form = AffiliateDocumentTypeForm(request.POST or None, instance=target)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Document type updated.")
+        return redirect("document_type_list")
+    return render(
+        request,
+        "settings/document_type_form.html",
+        {"nav": "settings", "page_title": target.name, "form": form, "target": target},
+    )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def document_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Deactivate when documents reference the type (PROTECT). "Other" is the upload
+    default, so it can't go at all."""
+    target = get_object_or_404(AffiliateDocumentType, pk=pk)
+    if target.name == "Other":
+        messages.error(request, "Other is the default for uploads and can't be removed.")
+    elif target.documents.exists():
+        target.active = False
+        target.save(update_fields=["active"])
+        messages.success(request, f"{target.name} deactivated (it has documents).")
+    else:
+        name = target.name
+        target.delete()
+        messages.success(request, f"{name} deleted.")
+    return redirect("document_type_list")
