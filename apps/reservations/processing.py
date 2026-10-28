@@ -493,6 +493,13 @@ def process(
         review = TripReview.objects.select_for_update().get(pk=review.pk)
         if review.is_processed:
             raise ProcessingError("Someone else processed this trip just now.")
+        from apps.leads.models import Lead
+
+        # How the order is paid can't move under us: `bill_to_account` / `bill_to_card` lock
+        # the order too, and refuse once a trip is processed.
+        order = Lead.objects.select_for_update().get(pk=locked.lead_id)
+        if order.on_account != on_account:
+            raise ProcessingError("How this order is paid just changed; check the trip again.")
         settled_to = trip_money.money_for(locked).difference
         expected_after = (
             money.difference if collect in ("link", "keep", "invoice") else Decimal("0.00")

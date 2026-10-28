@@ -53,13 +53,21 @@ def close_open_intents(lead) -> int:
     if plan is None:
         return 0
     cancelled = 0
-    for charge in plan.charges.filter(status=Charge.Status.PENDING).exclude(
-        stripe_payment_intent_id=""
-    ):
+    open_charges = (
+        plan.charges.filter(status=Charge.Status.PENDING)
+        .exclude(stripe_payment_intent_id="")
+        .order_by("pk")
+    )
+    for charge in open_charges:
         try:
             _stripe().PaymentIntent.cancel(charge.stripe_payment_intent_id)
         except stripe.error.StripeError as exc:
-            intent = _stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+            try:
+                intent = _stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+            except stripe.error.StripeError as unreachable:
+                raise PaymentError(
+                    "Stripe couldn't be reached to close an open payment. Try again."
+                ) from unreachable
             if getattr(intent, "status", "") in ("succeeded", "requires_capture", "processing"):
                 raise PaymentError(
                     "A card payment on this order just went through. Reload the page."
@@ -106,7 +114,8 @@ def open_intent_for(
 
     The check is deliberately local — no `PaymentIntent.retrieve`. A spent intent is already
     caught by the PENDING filter (both the customer's `complete` POST and the webhook flip the
-    Charge to SUCCEEDED), we never cancel deposit/balance intents, and a genuinely dead one
+    Charge to SUCCEEDED), the one place that cancels deposit/balance intents
+    (`close_open_intents`) marks their rows FAILED as it goes, and a genuinely dead one
     only makes `confirmPayment` error client-side, which a refresh clears. That is worth not
     paying a Stripe round-trip on every hit of a public endpoint.
 
@@ -793,6 +802,7 @@ def confirm_order(lead, *, user=None) -> Charge:
 
     Idempotent: an already-captured order returns its charge rather than double-capturing.
     """
+    _card_order_only(lead)
     plan = getattr(lead, "payment", None)
     if plan is None:
         raise PaymentError("This order has no payment plan.")
@@ -826,6 +836,7 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     """
     from apps.leads.models import Lead
 
+    _card_order_only(lead)
     plan = getattr(lead, "payment", None)
     if plan is None:
         raise PaymentError("This order has no payment plan.")

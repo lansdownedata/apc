@@ -748,20 +748,23 @@ def quote_book_on_account(request, token: str) -> HttpResponse:
     """APC-105: an order billed to an account books from its quote page with no pay step.
     The terms checkbox is still the contract (APC-55), stamped exactly as the pay page
     stamps it. Only a live quote billed to an account; anything else 404s."""
-    lead = _lead_from_token(token)
-    if not lead.on_account or lead.status != Lead.Status.QUOTED or lead.quote_expired:
-        raise Http404
-    if request.POST.get("accept") != "on":
-        return render(
-            request,
-            "public/quote.html",
-            _quote_page_context(
-                lead, token, error="Please agree to the terms and conditions first."
-            ),
-        )
     from apps.tasks import services as task_services
 
+    lead = _lead_from_token(token)
     with transaction.atomic():
+        # Locked: staff switching the order back to card mid-request must not leave it
+        # booked with no deposit asked for.
+        lead = Lead.objects.select_for_update().get(pk=lead.pk)
+        if not lead.on_account or lead.status != Lead.Status.QUOTED or lead.quote_expired:
+            raise Http404
+        if lead.accepted_terms_at is None and request.POST.get("accept") != "on":
+            return render(
+                request,
+                "public/quote.html",
+                _quote_page_context(
+                    lead, token, error="Please agree to the terms and conditions first."
+                ),
+            )
         services.accept_terms(lead)
         services.book_lead(lead)
         task_services.evaluate_lead(lead)

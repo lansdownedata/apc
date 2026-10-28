@@ -107,3 +107,16 @@ def test_reconcile_still_records_money_that_was_already_in_flight():
         stripe.return_value.PaymentIntent.retrieve.return_value = MagicMock(status="succeeded")
         assert tasks.reconcile_open_charges() == 1
     record.assert_called_once()
+
+
+def test_confirm_never_captures_a_hold_on_an_account_order():
+    from apps.payments import services
+
+    lead, _ = _due_order()
+    on_account(lead)
+    with (
+        patch("apps.payments.services._stripe") as stripe,
+        pytest.raises(services.PaymentError, match="billed to an account"),
+    ):
+        services.confirm_order(lead)
+    stripe.assert_not_called()

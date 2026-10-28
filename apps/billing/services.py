@@ -183,45 +183,61 @@ def _locked_lead(lead):
     return Lead.objects.select_for_update().select_related("contact__company").get(pk=lead.pk)
 
 
-@transaction.atomic
+def _refuse_to_account(lead, group: AccountGroup, po_number: str) -> None:
+    """Every rule that keeps an order off an account. Run before the Stripe calls and again
+    under the lock, so a payment landing in between is still caught."""
+    from apps.leads.models import Lead
+    from apps.payments import ledger
+    from apps.payments.models import Charge
+    from apps.reservations.models import TripReview
+
+    from . import selectors
+
+    if lead.status == Lead.Status.LOST:
+        raise BillingError("A lost order can't be billed to an account.")
+    plan = getattr(lead, "payment", None)
+    held = plan is not None and plan.charges.filter(status=Charge.Status.AUTHORIZED).exists()
+    if lead.status == Lead.Status.ENGAGED or held:
+        # A booked order can carry a hold too (a direct booking's pay link, APC-26).
+        raise BillingError(
+            "The customer's deposit is on hold on their card. Confirm or cancel it first."
+        )
+    if group.pk not in {g.pk for g in selectors.groups_for_lead(lead)}:
+        raise BillingError(f"{group.name} isn't one of this customer's billing groups.")
+    if group.po_required and not po_number:
+        raise BillingError(f"{group.name} needs a PO number on every order.")
+    if ledger.order_balances(lead)["collected"] > 0:
+        raise BillingError("Refund what was collected first, then bill to account.")
+    if TripReview.objects.filter(reservation__lead=lead, processed_at__isnull=False).exists():
+        # Settled under card rules (a pay link may be open on it); it would be billed twice.
+        raise BillingError("Unlock its processed trips first, then bill to account.")
+
+
 def bill_to_account(lead, group: AccountGroup, *, po_number: str, user) -> object:
     """Invoice the whole order to `group` instead of a card (spec 2026-10-25 §5).
 
     Only a label moves; the ledger does not. Refused once the card holds the customer's
     money — collected, or a deposit on hold — because a trip's price would then be part
     card, part invoice; the agent refunds or releases it first.
+
+    Open card intents are cancelled first, each committed on its own and outside the order
+    lock (a Stripe cancel can't be rolled back, so its row must not be either); then the
+    rules run again under the lock and the order is switched.
     """
-    from apps.leads.models import Lead
-    from apps.payments import ledger
     from apps.payments import services as payments
-    from apps.reservations.models import TripReview
 
-    from . import selectors
-
-    lead = _locked_lead(lead)
-    if lead.status == Lead.Status.LOST:
-        raise BillingError("A lost order can't be billed to an account.")
-    if lead.status == Lead.Status.ENGAGED:
-        raise BillingError(
-            "The customer's deposit is on hold on their card. Confirm or cancel it first."
-        )
-    if group.pk not in {g.pk for g in selectors.groups_for_lead(lead)}:
-        raise BillingError(f"{group.name} isn't one of this customer's billing groups.")
     po_number = (po_number or "").strip()
-    if group.po_required and not po_number:
-        raise BillingError(f"{group.name} needs a PO number on every order.")
-    if ledger.order_balances(lead)["collected"] > 0:
-        raise BillingError("Refund the card payments first, then bill to account.")
-    if TripReview.objects.filter(reservation__lead=lead, processed_at__isnull=False).exists():
-        # Settled under card rules (a pay link may be open on it); it would be billed twice.
-        raise BillingError("Unlock its processed trips first, then bill to account.")
+    _refuse_to_account(lead, group, po_number)
     try:
         payments.close_open_intents(lead)
     except payments.PaymentError as exc:
         raise BillingError(str(exc)) from exc
-    lead.billing_group, lead.po_number = group, po_number
-    lead.save(update_fields=["billing_group", "po_number", "updated_at"])
-    transaction.on_commit(lambda: _resync_tasks(lead))
+    with transaction.atomic():
+        lead = _locked_lead(lead)
+        _refuse_to_account(lead, group, po_number)
+        lead.billing_group, lead.po_number = group, po_number
+        lead.save(update_fields=["billing_group", "po_number", "updated_at"])
+        transaction.on_commit(lambda: _resync_tasks(lead))
     return lead
 
 

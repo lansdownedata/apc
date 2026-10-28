@@ -136,3 +136,23 @@ def test_a_booked_account_order_reads_as_booked_on_the_quote_page(client):
     assert "already booked" in html
     assert "Book Now" not in html
     assert 'name="accept"' not in html
+
+
+def test_book_404s_for_an_expired_or_booked_account_quote(client):
+    expired = _quote()
+    Lead.objects.filter(pk=expired.pk).update(
+        quote_expires_at=timezone.now() - timezone.timedelta(days=1)
+    )
+    booked = _quote(status=Lead.Status.BOOKED)
+    for lead in (expired, booked):
+        assert client.post(_url("quote_book_on_account", lead), {"accept": "on"}).status_code == 404
+
+
+def test_terms_already_accepted_are_not_asked_again(client):
+    lead = _quote()
+    services.accept_terms(lead)
+
+    html = client.get(_url("quote_page", lead)).content.decode()
+    assert 'name="accept"' not in html
+    assert client.post(_url("quote_book_on_account", lead)).status_code == 302
+    assert Lead.objects.get(pk=lead.pk).status == Lead.Status.BOOKED

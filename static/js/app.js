@@ -428,7 +428,9 @@ function escapeHtml(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")  // safe inside an attribute value too (the APC-105 PO field)
+    .replace(/'/g, "&#39;");
 }
 window.escapeHtml = escapeHtml;
 

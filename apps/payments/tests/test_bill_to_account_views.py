@@ -187,3 +187,31 @@ def test_the_orders_list_says_on_account(cashier):
     html = cashier.get(reverse("orders_list")).content.decode()
 
     assert "On account" in html
+
+
+def test_an_account_order_keeps_its_change_button_when_its_group_is_no_longer_offered(cashier):
+    from apps.contacts.factories import ContactFactory
+
+    lead, group = _order()
+    billing.bill_to_account(lead, group, po_number="", user=None)
+    Lead.objects.filter(pk=lead.pk).update(contact=ContactFactory())
+
+    html = cashier.get(reverse("order_detail", args=[lead.pk])).content.decode()
+
+    assert "billToAccount(" in html
+
+
+def test_the_workspace_query_count_does_not_grow_with_an_account(cashier):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    lead, group = _order()
+    Lead.objects.filter(pk=lead.pk).update(status=Lead.Status.QUOTED)
+    cashier.get(reverse("lead_detail", args=[lead.pk]))
+    with CaptureQueriesContext(connection) as card:
+        cashier.get(reverse("lead_detail", args=[lead.pk]))
+    billing.bill_to_account(lead, group, po_number="", user=None)
+    with CaptureQueriesContext(connection) as account:
+        cashier.get(reverse("lead_detail", args=[lead.pk]))
+
+    assert len(account) <= len(card)

@@ -182,10 +182,12 @@
         <form method="post" action="{% url 'quote_book_on_account' token %}">
           {% csrf_token %}
           <p class="on-account">Billed to your account{% if lead.po_number %}, PO {{ lead.po_number }}{% endif %}. No payment is taken now.</p>
+          {% if not lead.accepted_terms_at %}
           <label class="consent" for="accept-terms">
             <input id="accept-terms" name="accept" type="checkbox">
             <span>I agree to the terms and conditions below.</span>
           </label>
+          {% endif %}
           <button type="submit" class="btn-gold">Book</button>
         </form>
         {% if lead.quote_expires_at %}

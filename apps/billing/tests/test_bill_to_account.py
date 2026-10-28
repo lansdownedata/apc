@@ -106,7 +106,7 @@ def test_an_order_with_card_money_collected_is_refused():
     lead, group = _order()
     _collect(lead, "100.00")
 
-    with pytest.raises(BillingError, match="Refund the card payments first"):
+    with pytest.raises(BillingError, match="Refund what was collected first"):
         services.bill_to_account(lead, group, po_number="", user=None)
 
 
@@ -251,3 +251,76 @@ def test_a_card_payment_that_just_went_through_stops_the_switch():
             services.bill_to_account(lead, group, po_number="", user=None)
 
     assert not Lead.objects.get(pk=lead.pk).on_account
+
+
+# --- branch review (APC-105) -------------------------------------------------------------
+
+
+def test_a_deposit_on_hold_on_a_booked_order_stops_the_switch():
+    from apps.payments.models import Charge
+
+    lead, group = _order()
+    charge = _open_intent(lead)
+    Charge.objects.filter(pk=charge.pk).update(status=Charge.Status.AUTHORIZED)
+
+    with pytest.raises(BillingError, match="on hold on their card"):
+        services.bill_to_account(lead, group, po_number="", user=None)
+
+
+def test_a_cancelled_intent_stays_cancelled_when_a_later_one_stops_the_switch():
+    from unittest.mock import MagicMock, patch
+
+    import stripe as stripe_lib
+
+    from apps.payments.models import Charge
+
+    lead, group = _order()
+    first = _open_intent(lead, pi="pi_a")
+    lead.payment.charges.create(
+        kind=Charge.Kind.BALANCE,
+        amount=Decimal("5.00"),
+        status=Charge.Status.PENDING,
+        stripe_payment_intent_id="pi_b",
+        idempotency_key="k-pi_b",
+    )
+
+    def cancel(pi):
+        if pi == "pi_b":
+            raise stripe_lib.error.InvalidRequestError("succeeded", None)
+
+    with patch("apps.payments.services._stripe") as stripe:
+        stripe.return_value.PaymentIntent.cancel.side_effect = cancel
+        stripe.return_value.PaymentIntent.retrieve.return_value = MagicMock(status="succeeded")
+        with pytest.raises(BillingError, match="just went through"):
+            services.bill_to_account(lead, group, po_number="", user=None)
+
+    first.refresh_from_db()
+    assert first.status == Charge.Status.FAILED  # dead at Stripe, so never reused
+
+
+def test_stripe_unreachable_is_a_refusal_not_a_crash():
+    from unittest.mock import patch
+
+    import stripe as stripe_lib
+
+    lead, group = _order()
+    _open_intent(lead)
+
+    with patch("apps.payments.services._stripe") as stripe:
+        stripe.return_value.PaymentIntent.cancel.side_effect = stripe_lib.error.APIConnectionError(
+            "x"
+        )
+        stripe.return_value.PaymentIntent.retrieve.side_effect = (
+            stripe_lib.error.APIConnectionError("x")
+        )
+        with pytest.raises(BillingError, match="Stripe"):
+            services.bill_to_account(lead, group, po_number="", user=None)
+    assert not Lead.objects.get(pk=lead.pk).on_account
+
+
+def test_the_current_group_is_still_offered_after_the_billing_contact_changes():
+    lead, group = _order()
+    services.bill_to_account(lead, group, po_number="", user=None)
+    lead = Lead.objects.get(pk=lead.pk)
+    lead.contact = ContactFactory()  # the account no longer belongs to the booking contact
+    assert group in selectors.groups_for_lead(lead)

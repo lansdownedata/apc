@@ -200,9 +200,14 @@ def groups_for_lead(lead) -> list:
     groups = AccountGroup.objects.filter(account__contact_id__in=contact_ids).select_related(
         "account"
     )
-    return sorted(
+    ordered = sorted(
         groups, key=lambda g: (contact_ids.index(g.account.contact_id), -g.is_default, g.name)
     )
+    # The order's own group stays offered even once neither contact owns it any more (the
+    # company's billing contact changed): staff can still change the PO or go back to card.
+    if lead.billing_group_id and lead.billing_group_id not in {g.pk for g in ordered}:
+        ordered.append(lead.billing_group)
+    return ordered
 
 
 def _terms_label(code: str) -> str:
