@@ -36,6 +36,7 @@
       <div class="text-[13px] text-muted">
         {{ lead.contact.name }}{% if lead.contact.company %} &middot; {{ lead.contact.company.name }}{% endif %}
       </div>
+      {% if lead.on_account %}<div class="text-[12.5px] text-ink mt-0.5">Billed to {{ lead.billed_to_label }}</div>{% endif %}
     </div>
     <span class="ml-auto num font-display text-[20px] font-semibold text-ink">${{ lead.quote_total|floatformat:2|intcomma }}</span>
     <a href="{% url 'lead_detail' lead.pk %}"

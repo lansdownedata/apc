@@ -330,3 +330,22 @@ def test_detail_shows_resend_for_quoted(client, agent):
     client.force_login(agent)
     body = client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
     assert "Resend quote" in body
+
+
+def test_an_account_quote_asks_for_no_deposit(mailoutbox):
+    """APC-105: billed to an account, so the quote never asks for the deposit."""
+    from apps.billing.factories import AccountGroupFactory
+
+    lead = _quotable_lead()
+    lead.billing_group = AccountGroupFactory(account__contact=lead.contact)
+    lead.save(update_fields=["billing_group"])
+    with patch.object(services.podium, "send_message", return_value={}) as send:
+        assert services.send_quote(lead, base_url=BASE_URL).ok
+
+    sms = send.call_args.kwargs["body"]
+    assert "deposit" not in sms
+    assert "billed to your account" in sms
+    email = mailoutbox[-1]
+    assert "deposit" not in email.body
+    assert "billed to your account" in email.body.replace("\n", " ")
+    assert "deposit" not in email.alternatives[0][0]

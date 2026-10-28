@@ -92,3 +92,18 @@ def test_a_task_a_person_closed_is_not_reopened(django_capture_on_commit_callbac
         billing.bill_to_card(lead, user=None)
 
     assert _statuses(lead)["deposit_received"] == Task.Status.SKIPPED
+
+
+def test_back_to_card_leaves_a_cancelled_orders_tasks_closed(django_capture_on_commit_callbacks):
+    from apps.reservations.models import Reservation
+
+    lead, group = _order()
+    services.ensure_tasks(lead)
+    with django_capture_on_commit_callbacks(execute=True):
+        billing.bill_to_account(lead, group, po_number="", user=None)
+    lead.reservations.update(trip_status=Reservation.TripStatus.CANCELLED)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        billing.bill_to_card(lead, user=None)
+
+    assert set(_statuses(lead).values()) == {Task.Status.NOT_APPLICABLE}

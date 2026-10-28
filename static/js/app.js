@@ -467,6 +467,61 @@ async function postForm(url, data = {}) {
   return json;
 }
 
+/* -------------------------------------------------- bill to account (APC-105) */
+/* "Paid by" on the money card: the whole order by card, or invoiced to one of the
+   customer's account groups. The rows come from the page (billing-picker, json_script)
+   and are drawn here, through $store.modal like every other choice. */
+function billToAccount(opts) {
+  const groups = JSON.parse(document.getElementById("billing-picker")?.textContent || "[]");
+  const radio = (name, value, checked, title, detail) =>
+    `<label class="flex items-start gap-2.5 rounded-lg px-3 py-2.5 ring-1 ring-line hover:bg-surface2 cursor-pointer">
+       <input type="radio" name="${name}" value="${value}" class="mt-1" ${checked ? "checked" : ""}>
+       <span><span class="block text-[13px] font-semibold text-ink">${title}</span>
+       <span class="block text-[11.5px] text-muted">${detail}</span></span></label>`;
+  const picked = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value || "";
+  return {
+    open() {
+      const chosen = opts.current || (groups.find((g) => g.default) || groups[0] || {}).id;
+      const rows = groups
+        .map((g) => radio("bill-group", g.id, g.id === chosen, escapeHtml(g.label), escapeHtml(g.detail)))
+        .join("");
+      Alpine.store("modal").show({
+        title: "How is this order paid?",
+        message: `${opts.quote}: the whole order, one way or the other.`,
+        html: `<div class="mt-3 grid gap-2 text-left">
+            ${radio("bill-how", "card", !opts.onAccount, "Card", "50% deposit, balance charged 30 days before pickup.")}
+            ${radio("bill-how", "account", opts.onAccount, "Billing account", "No deposit. Each trip is invoiced to the group below on its terms.")}
+            <fieldset class="grid gap-1.5 mt-1 pl-6"><legend class="text-[11px] font-medium text-muted mb-1">Bill to</legend>${rows}</fieldset>
+            <label class="block pl-6"><span class="block text-[11px] font-medium text-muted mb-1">PO number (when the group needs one)</span>
+              <input id="bill-po" type="text" maxlength="64" class="field w-full num" value="${escapeHtml(opts.po || "")}"></label>
+            <p class="text-[11.5px] text-muted">Billing to an account is refused while card money is collected or held on the order. Back to card: the deposit is owed again, and the group and PO are cleared.</p>
+          </div>`,
+        confirmText: "Save",
+        variant: "gold",
+        onConfirm: async () => {
+          const toAccount = picked("bill-how") === "account";
+          if (!toAccount && !opts.onAccount) return;
+          try {
+            if (toAccount) {
+              await postForm(opts.toAccount, {
+                group: picked("bill-group"),
+                po_number: document.getElementById("bill-po")?.value || "",
+              });
+            } else {
+              await postForm(opts.toCard);
+            }
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't save." });
+            throw e;
+          }
+          window.location.reload();
+        },
+      });
+    },
+  };
+}
+window.billToAccount = billToAccount;
+
 /* -------------------------------------------------- tasks (APC-53 / APC-54) */
 /* The queue page. Each action posts to the shared JSON endpoints; a handled row leaves
    the list in place. Skip and Reassign go through $store.modal — never a native dialog. */

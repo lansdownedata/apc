@@ -66,3 +66,14 @@ def test_payment_chip_property_states():
     plan.save(update_fields=["balance_status", "updated_at"])
     lead = Lead.objects.get(pk=lead.pk)
     assert lead.payment_chip == "Balance failed"
+
+
+def test_payment_chip_reads_on_account_for_an_invoiced_order():
+    """APC-105: an order billed to an account shows that, never a card plan's status."""
+    from apps.billing.factories import AccountGroupFactory
+    from apps.payments.models import PaymentPlan
+
+    lead = LeadFactory()
+    PaymentPlanFactory(lead=lead, deposit_status=PaymentPlan.DepositStatus.PAID)
+    lead.billing_group = AccountGroupFactory(account__contact=lead.contact)
+    assert lead.payment_chip == "On account"

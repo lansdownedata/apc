@@ -261,6 +261,8 @@ class Lead(TimeStampedModel):
     @property
     def payment_chip(self) -> str:
         """Short payment-status label for pipeline/list cards (pipeline spec 2026-07-12 §1)."""
+        if self.on_account:
+            return "On account"  # invoiced, not a card plan (APC-105)
         plan = getattr(self, "payment", None)
         if plan is None:
             return ""

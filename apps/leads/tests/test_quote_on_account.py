@@ -128,3 +128,11 @@ def test_the_card_services_refuse_an_account_order(call, settings):
     ):
         call(lead)
     stripe.assert_not_called()
+
+
+def test_a_booked_account_order_reads_as_booked_on_the_quote_page(client):
+    html = client.get(_url("quote_page", _quote(status=Lead.Status.BOOKED))).content.decode()
+
+    assert "already booked" in html
+    assert "Book Now" not in html
+    assert 'name="accept"' not in html

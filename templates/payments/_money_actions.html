@@ -54,7 +54,7 @@
     </form>
 
     <!-- Retry balance (only when last attempt failed) -->
-    {% if payment.balance_status == 'failed' %}
+    {% if payment.balance_status == 'failed' and not lead.on_account %}
     <form method="post" action="{% url 'order_retry_balance' lead.pk %}" class="contents">
       {% csrf_token %}
       <button
@@ -74,7 +74,7 @@
     {% endif %}
 
     <!-- The pay page link (the customer settles it themselves) -->
-    {% if lead.status != 'lost' %}
+    {% if lead.status != 'lost' and not lead.on_account %}
     <div x-data="sendPayLink('{% url 'order_send_pay_link' lead.pk %}')">
       <button
         type="button"
@@ -91,7 +91,9 @@
 
   {% comment %} Nothing owed, nothing to take: the block used to render with 0.00 in the
      amount box, which the server then refused. `remaining` is what is still owed. {% endcomment %}
-  {% if lead.status != 'lost' and balances.remaining %}
+  {% comment %} Billed to an account: invoiced, never charged (APC-105). To take a card,
+     switch the order back to card first. {% endcomment %}
+  {% if lead.status != 'lost' and balances.remaining and not lead.on_account %}
   <!-- Take payment (Stripe Payment Element) -->
   <div class="mt-4 pt-4 border-t border-line"
        x-data="adminCardPay({

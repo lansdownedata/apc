@@ -20,6 +20,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.billing import selectors as billing_selectors
 from apps.contacts import services as contact_services
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
@@ -192,7 +193,9 @@ def _wedding_trip_defaults(wedding_state: dict | None) -> dict:
 @login_required
 def lead_detail(request, pk):
     lead = get_object_or_404(
-        Lead.objects.select_related("contact", "assigned_agent").prefetch_related(
+        Lead.objects.select_related(
+            "contact", "assigned_agent", "billing_group__account"
+        ).prefetch_related(
             "reservations__vehicle",
             "reservations__service_type",
             "reservations__extras",  # the editor's drafts list them; one query, not one per trip
@@ -269,6 +272,7 @@ def lead_detail(request, pk):
             "posted_at", "id"
         ),
         "charges": [c for p in [getattr(lead, "payment", None)] if p for c in p.charges.all()],
+        **billing_selectors.paid_by_context(lead),
         "channels": Channel.choices,
         "agents": services.agent_options(),
         "reservation_lines": reservation_lines,

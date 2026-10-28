@@ -12,6 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.dispatch import selectors as dispatch_selectors
 from apps.dispatch import services as dispatch_services
@@ -53,7 +54,9 @@ def order_detail(request, lead_id):
     build-a-quote action set.
     """
     lead = get_object_or_404(
-        Lead.objects.select_related("contact", "payment").prefetch_related(
+        Lead.objects.select_related(
+            "contact", "payment", "billing_group__account"
+        ).prefetch_related(
             "reservations__vehicle",
             "reservations__service_type",
             "reservations__extras",  # the editor's drafts list them; one query, not one per trip
@@ -98,6 +101,7 @@ def order_detail(request, lead_id):
                 "posted_at", "id"
             ),
             "charges": list(plan.charges.all()) if plan else [],
+            **billing_selectors.paid_by_context(lead),
         },
     )
 
@@ -412,6 +416,47 @@ def order_send_terms_link(request, lead_id):
 
 
 # --- affiliate payables (APC-61): record only, nothing moves money -------------------
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_bill_to_account(request, lead_id):
+    """APC-105: invoice the whole order to one of the customer's account groups."""
+    from apps.billing import services as billing
+    from apps.billing.models import AccountGroup
+
+    lead = get_object_or_404(Lead, pk=lead_id)
+    raw = request.POST.get("group", "")
+    group = (
+        AccountGroup.objects.select_related("account").filter(pk=raw).first()
+        if raw.isdigit()
+        else None
+    )
+    if group is None:
+        return _json_error("Pick a billing group.")
+    try:
+        billing.bill_to_account(
+            lead, group, po_number=request.POST.get("po_number", ""), user=request.user
+        )
+    except billing.BillingError as exc:
+        return _json_error(str(exc))
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def order_bill_to_card(request, lead_id):
+    """APC-105: back to card; the deposit and the balance schedule apply again."""
+    from apps.billing import services as billing
+
+    lead = get_object_or_404(Lead, pk=lead_id)
+    try:
+        billing.bill_to_card(lead, user=request.user)
+    except billing.BillingError as exc:
+        return _json_error(str(exc))
+    return JsonResponse({"ok": True})
 
 
 def _payable(pk: int) -> AffiliatePayable:

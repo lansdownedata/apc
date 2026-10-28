@@ -227,7 +227,9 @@
 
             <!-- Status / next -->
             <td class="px-5 py-3.5">
-              {% if o.plan %}
+              {% if o.lead.on_account %}
+                <span class="text-muted text-[12px]">On account</span>
+              {% elif o.plan %}
                 {% if o.plan.balance_status == "failed" %}
                   <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 ring-1 ring-rose-200 text-[11px] font-semibold">
                     <i class="ti ti-alert-triangle text-[12px]"></i> Failed

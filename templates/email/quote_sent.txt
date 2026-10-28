@@ -6,7 +6,7 @@ Your quote is ready. Review the full itinerary and reserve your date below.
   PREPARED FOR    {{ contact_name }}
   ESTIMATED TOTAL ${{ quote_total }}
 
-A {{ deposit_pct }}% deposit of ${{ deposit_amount }} reserves your booking.
+{% if on_account %}This booking is billed to your account. No payment is taken now.{% else %}A {{ deposit_pct }}% deposit of ${{ deposit_amount }} reserves your booking.{% endif %}
 {% if quote_url %}
 View your quote & reserve:
 {{ quote_url }}

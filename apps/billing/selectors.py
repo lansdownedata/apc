@@ -203,3 +203,37 @@ def groups_for_lead(lead) -> list:
     return sorted(
         groups, key=lambda g: (contact_ids.index(g.account.contact_id), -g.is_default, g.name)
     )
+
+
+def _terms_label(code: str) -> str:
+    return dict(Terms.choices).get(code, code)
+
+
+def paid_by_context(lead) -> dict:
+    """The money card's "Paid by" line and its picker (APC-105): the groups this order may
+    bill to, and the rows the picker draws (built in JS, so as plain data)."""
+    groups = groups_for_lead(lead)
+    group = lead.billing_group
+    return {
+        "billing_groups": groups,
+        "billed_group": group,
+        "billed_terms": _terms_label(group.effective_terms) if group else "",
+        "billing_picker": [
+            {
+                "id": g.pk,
+                "label": f"{g.account.name} — {g.name}",
+                "detail": " · ".join(
+                    x
+                    for x in (
+                        g.invoice_email or "No invoice email yet",
+                        _terms_label(g.effective_terms),
+                        "PO number required" if g.po_required else "",
+                    )
+                    if x
+                ),
+                "po": g.po_required,
+                "default": g.is_default,
+            }
+            for g in groups
+        ],
+    }

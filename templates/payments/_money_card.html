@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize json_filters %}
 {% comment %}
   payments/_money_card.html — the whole money surface for one order: the four totals, the
   payment plan, the journal, per-trip revenue recognition, the charges and the actions.
@@ -6,8 +6,9 @@
   Shared by the quote workspace (leads/lead_detail.html) and the order page
   (orders/order_detail.html) so an order's money reads the same in sales and in ops.
   Requires from the view: lead, payment, balances, ledger_entries, reservations, charges,
-  stripe_pk, and the authorized-hold keys (payments.reports.authorized_hold). The actions
-  inside gate themselves on `user.has_payments_access`.
+  stripe_pk, the authorized-hold keys (payments.reports.authorized_hold) and the "Paid by"
+  keys (billing.selectors.paid_by_context). The actions inside gate themselves on
+  `user.has_payments_access`.
 {% endcomment %}
   <!-- Payments & Ledger -->
   <div class="card overflow-hidden">
@@ -28,6 +29,36 @@
         {% elif lead.status == 'booked' %}
         <span class="text-[12px] text-muted ml-3">· Cleaning fee and overtime not yet acknowledged</span>
         {% endif %}
+      {% endif %}
+    </div>
+
+    {% comment %} APC-105: how the whole order is paid. The only place it changes; the order
+       header repeats the result. Staff-only: the customer is never offered an account. {% endcomment %}
+    <div class="px-5 py-3 border-b border-line flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+      <span class="text-muted">Paid by</span>
+      {% if lead.on_account %}
+        <span class="font-semibold text-ink">Billing account</span>
+        <span class="text-muted">&middot; {{ lead.billed_to_label }}</span>
+      {% else %}
+        <span class="font-semibold text-ink">Card</span>
+        <span class="text-muted">&middot; {% if payment %}{{ payment.deposit_pct }}% deposit, balance 30 days before pickup{% else %}deposit and balance by card{% endif %}</span>
+        {% if not billing_groups and lead.contact_id %}
+        <span class="text-muted">&middot; No billing account &middot; <a href="{% url 'contact_detail' lead.contact_id %}" class="text-goldd hover:underline focus-visible:underline">set one up on the customer profile</a></span>
+        {% endif %}
+      {% endif %}
+      {% if user.has_payments_access and billing_groups and lead.status != 'lost' %}
+        {{ billing_picker|json_script:"billing-picker" }}
+        <button type="button"
+                class="ml-auto text-[12px] font-medium text-goldd hover:underline focus-visible:underline focus-gold rounded"
+                x-data="billToAccount({
+                  onAccount: {{ lead.on_account|yesno:'true,false' }},
+                  current: {{ lead.billing_group_id|default:'null' }},
+                  po: {{ lead.po_number|json_string }},
+                  quote: {{ lead.quote_no|json_string }},
+                  toAccount: '{% url 'order_bill_to_account' lead.pk %}',
+                  toCard: '{% url 'order_bill_to_card' lead.pk %}'
+                })"
+                @click="open()">{% if lead.on_account %}Change{% else %}Bill to account instead{% endif %}</button>
       {% endif %}
     </div>
 
@@ -58,9 +89,29 @@
     <!-- Payment plan -->
     <div class="px-5 py-4 border-b border-line">
       <div class="font-display text-[12.5px] font-semibold text-ink mb-3 flex items-center gap-1.5">
-        <i class="ti ti-calendar-dollar text-[14px] text-muted"></i> Payment plan
+        <i class="ti ti-calendar-dollar text-[14px] text-muted"></i> {% if lead.on_account %}On account{% else %}Payment plan{% endif %}
       </div>
-      {% if payment %}
+      {% if lead.on_account %}
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+          <div>
+            <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Invoice goes to</div>
+            <div class="text-ink text-[13px] break-words">{{ billed_group.invoice_email|default:"No invoice email yet" }}</div>
+          </div>
+          <div>
+            <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Terms</div>
+            <div class="text-ink text-[13px]">{{ billed_terms }}</div>
+          </div>
+          <div>
+            <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">PO number</div>
+            <div class="num text-ink text-[13px]">{{ lead.po_number|default:"None" }}</div>
+          </div>
+          <div>
+            <div class="text-[10.5px] text-muted uppercase tracking-wide font-medium mb-0.5">Invoice</div>
+            <div class="text-[13px] font-medium text-slate-500">Not yet invoiced</div>
+          </div>
+        </div>
+        <p class="text-[12px] text-muted mt-3">No deposit and no card charge. Each trip goes on an invoice once it is processed.</p>
+      {% elif payment %}
         {% if payment.balance_status == 'failed' %}
         <div class="flex items-start gap-2.5 text-[12px] text-rose-700 bg-rose-50 ring-1 ring-inset ring-rose-600/15 rounded-lg px-3 py-2.5 mb-3">
           <i class="ti ti-alert-triangle text-[15px] mt-0.5 shrink-0"></i>

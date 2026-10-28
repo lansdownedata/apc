@@ -146,6 +146,13 @@ class SendQuoteResult:
 
 def _quote_message(lead: Lead, plan: PaymentPlan, link: str) -> str:
     contact = lead.contact
+    if lead.on_account:
+        # APC-105, draft wording until the client signs it off: no deposit is asked.
+        return (
+            f"Hi {contact.name}, here's your All Pro Charter quote {lead.quote_no} "
+            f"for ${plan.quote_total:,.2f}, billed to your account. "
+            f"Review and book here: {link}"
+        )
     return (
         f"Hi {contact.name}, here's your All Pro Charter quote {lead.quote_no} "
         f"for ${plan.quote_total:,.2f}. To confirm, pay your {plan.deposit_pct}% "
@@ -161,6 +168,7 @@ def _quote_email_context(lead: Lead, plan: PaymentPlan, link: str) -> dict:
         "quote_total": f"{plan.quote_total:,.2f}",
         "deposit_pct": plan.deposit_pct,
         "deposit_amount": f"{plan.deposit_amount:,.2f}",
+        "on_account": lead.on_account,  # APC-105: no deposit line
         "quote_url": link,
         "trip_count": lead.reservations.count(),
         "expires_at": lead.quote_expires_at,

@@ -281,7 +281,8 @@ def test_no_money_affiliate_cost_or_internal_notes_in_the_page(client, planner):
     lead, (trip,) = _wedding(planner)
     _driver(trip)
     Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.DISPATCHED)
-    html = _page(client, lead)
+    # The static files' cache-buster (`?v=<mtime>`) is digits too; it must not read as a leak.
+    html = re.sub(r"\?v=\d+", "", _page(client, lead))
     assert not re.search(r"\$\s?\d", html)
     for leak in (
         "7391",

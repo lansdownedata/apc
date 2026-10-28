@@ -61,3 +61,49 @@ def test_the_unpaid_deposit_report_leaves_out_an_account_order():
     on_account(_due_order()[0])
 
     assert [r["lead"].pk for r in reports.unpaid_deposit_rows()] == [card.pk]
+
+
+def test_a_day_with_only_account_orders_sends_no_deposit_report(mailoutbox, settings):
+    from apps.payments.tasks import send_unpaid_deposit_report
+
+    settings.DEPOSIT_REPORT_EMAILS = ["office@example.com"]
+    on_account(_due_order()[0])
+
+    assert send_unpaid_deposit_report() == 0
+    assert mailoutbox == []
+
+
+def test_the_exceptions_dashboard_does_not_count_an_account_order():
+    from apps.tasks import exceptions
+
+    _due_order()
+    on_account(_due_order()[0])
+
+    assert exceptions.counts()["unpaid_deposits"] == 1
+
+
+def test_reconcile_still_records_money_that_was_already_in_flight():
+    """Decision 5: the switch cancels open intents, so this is a race the switch lost. If
+    money did land, it is real and must reach the books."""
+    from unittest.mock import MagicMock
+
+    from apps.payments import tasks
+
+    lead, plan = _due_order()
+    on_account(lead)
+    plan.charges.create(
+        kind="balance",
+        amount=Decimal("10.00"),
+        status="pending",
+        stripe_payment_intent_id="pi_late",
+        idempotency_key="late",
+    )
+    plan.charges.update(updated_at=timezone.now() - timedelta(hours=1))
+
+    with (
+        patch("apps.payments.services._stripe") as stripe,
+        patch("apps.payments.tasks.services.record_payment") as record,
+    ):
+        stripe.return_value.PaymentIntent.retrieve.return_value = MagicMock(status="succeeded")
+        assert tasks.reconcile_open_charges() == 1
+    record.assert_called_once()

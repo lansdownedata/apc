@@ -355,8 +355,16 @@ CARD_MONEY_KINDS = ("deposit_received", "final_balance_paid")
 
 def reopen_card_tasks(lead: Lead) -> int:
     """An order went back to card (APC-105): the money tasks the system closed when it was
-    billed to an account apply again. One a person closed stays closed. Re-dated, then
-    opened if their time has come. Returns how many reopened."""
+    billed to an account apply again. One a person closed stays closed, and so does an
+    order that is no longer booked or has no live trip left (`cancel_for_trips` closed
+    those, and they stay closed). Re-dated, then opened if their time has come. Returns
+    how many reopened."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    lead = Lead.objects.get(pk=lead.pk)
+    live = lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES).exists()
+    if lead.status != Lead.Status.BOOKED or not live:
+        return 0
     closed = Task.objects.filter(
         lead=lead,
         kind__in=CARD_MONEY_KINDS,
