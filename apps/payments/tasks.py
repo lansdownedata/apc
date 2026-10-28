@@ -169,6 +169,7 @@ def charge_due_balances() -> int:
     scheduled = (
         PaymentPlan.objects.filter(balance_status=PaymentPlan.BalanceStatus.SCHEDULED)
         .exclude(stripe_payment_method_id="")
+        .exclude(lead__billing_group__isnull=False)  # invoiced, never charged (APC-105)
         .select_related("lead")
     )
     for plan in scheduled:

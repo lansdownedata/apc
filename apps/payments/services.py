@@ -33,6 +33,45 @@ class PaymentError(Exception):
     """User-facing payment failure (bad amount, incomplete intent, no card)."""
 
 
+ON_ACCOUNT_MESSAGE = "This order is billed to an account. Switch it back to card first."
+
+
+def _card_order_only(lead) -> None:
+    """An order billed to an account is invoiced, never charged (APC-105): every door that
+    opens or takes card money refuses it, so no page or button can slip past."""
+    if lead.on_account:
+        raise PaymentError(ON_ACCOUNT_MESSAGE)
+
+
+def close_open_intents(lead) -> int:
+    """Cancel every card payment still open on the order (APC-105, before it is billed to an
+    account): a pay page left open in a customer's tab could otherwise take card money
+    after the switch. Raises `PaymentError` when one turns out to have just gone through;
+    the webhook or `reconcile-payments` records it, and the switch is refused. Returns how
+    many were cancelled."""
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        return 0
+    cancelled = 0
+    for charge in plan.charges.filter(status=Charge.Status.PENDING).exclude(
+        stripe_payment_intent_id=""
+    ):
+        try:
+            _stripe().PaymentIntent.cancel(charge.stripe_payment_intent_id)
+        except stripe.error.StripeError as exc:
+            intent = _stripe().PaymentIntent.retrieve(charge.stripe_payment_intent_id)
+            if getattr(intent, "status", "") in ("succeeded", "requires_capture", "processing"):
+                raise PaymentError(
+                    "A card payment on this order just went through. Reload the page."
+                ) from exc
+            # Otherwise it is already dead at Stripe: nothing can take money through it.
+        charge.status = Charge.Status.FAILED
+        charge.failure_reason = "Cancelled: the order is billed to an account"
+        charge.save(update_fields=["status", "failure_reason", "updated_at"])
+        cancelled += 1
+    return cancelled
+
+
 def _stripe():
     stripe.api_key = settings.STRIPE_SECRET_KEY
     return stripe
@@ -75,6 +114,7 @@ def open_intent_for(
     a fresh idempotency key) is created and the old PENDING one is abandoned, not cancelled —
     Stripe expires unconfirmed intents on its own.
     """
+    _card_order_only(plan.lead)
     amount = Decimal(amount)
     existing = (
         plan.charges.filter(
@@ -131,6 +171,7 @@ def charge_balance(plan: PaymentPlan) -> Charge:
     Clamped to what the order still owes: once trips are charged on their own (APC-101) the
     frozen `balance_amount` can exceed the live remainder, and a retry must not collect
     money the trips already did."""
+    _card_order_only(plan.lead)
     amount = min(Decimal(plan.balance_amount), remaining_balance(plan.lead))
     if amount <= ZERO:
         sync_plan_from_collected(plan)  # the flags catch up: this balance is settled
@@ -861,6 +902,7 @@ def expire_authorization(charge: Charge) -> Charge:
 
 def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
     """Off-session charge of the card already on the plan."""
+    _card_order_only(plan.lead)
     amount = _parse_positive_amount(amount)
     if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
         raise PaymentError("No card on file.")
@@ -1032,6 +1074,7 @@ def send_pay_link(lead, *, base_url: str, sender_name: str) -> str:
     Podium failures propagate as `PodiumAPIError` / `PodiumNotConnected` for the caller to
     report; a contact with no way to reach them is a `PaymentError`.
     """
+    _card_order_only(lead)
     from apps.leads import services as lead_services
 
     if not outbound.enabled():

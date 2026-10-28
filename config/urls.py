@@ -18,6 +18,7 @@ from apps.integrations.views import (
 )
 from apps.leads.views import (
     pipeline,
+    quote_book_on_account,
     quote_deposit_success,
     quote_page,
     quote_pay,
@@ -75,6 +76,11 @@ urlpatterns = [
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
     path("quote/<str:token>/terms/", quote_terms, name="quote_terms"),
+    path(
+        "quote/<str:token>/book-on-account/",
+        quote_book_on_account,
+        name="quote_book_on_account",
+    ),
     path("quote/<str:token>/intent/", quote_pay_intent, name="quote_pay_intent"),
     path("quote/<str:token>/complete/", quote_pay_complete, name="quote_pay_complete"),
     # Where Stripe sends the customer back after a 3-D Secure challenge.

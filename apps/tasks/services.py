@@ -350,6 +350,33 @@ def _mark_not_applicable(tasks) -> int:
     )
 
 
+CARD_MONEY_KINDS = ("deposit_received", "final_balance_paid")
+
+
+def reopen_card_tasks(lead: Lead) -> int:
+    """An order went back to card (APC-105): the money tasks the system closed when it was
+    billed to an account apply again. One a person closed stays closed. Re-dated, then
+    opened if their time has come. Returns how many reopened."""
+    closed = Task.objects.filter(
+        lead=lead,
+        kind__in=CARD_MONEY_KINDS,
+        status=Task.Status.NOT_APPLICABLE,
+        completed_by__isnull=True,
+    )
+    count = closed.update(
+        status=Task.Status.SCHEDULED, completed_at=None, updated_at=timezone.now()
+    )
+    if count:
+        reschedule(lead)
+        Task.objects.filter(
+            lead=lead,
+            kind__in=CARD_MONEY_KINDS,
+            status=Task.Status.SCHEDULED,
+            opens_at__lte=timezone.now(),
+        ).update(status=Task.Status.OPEN)
+    return count
+
+
 def cancel_for_trips(reservations) -> int:
     """Trips stopped needing work (cancelled, or about to be deleted). Their unresolved
     tasks become not-applicable; if that leaves an order with no live trips, its

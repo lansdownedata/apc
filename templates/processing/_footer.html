@@ -9,6 +9,7 @@
        difference: '{{ difference|floatformat:2 }}',
        card: '{{ card_label|default:"the card on file"|escapejs }}',
        cardOnFile: {% if card_on_file %}true{% else %}false{% endif %},
+       onAccount: {% if invoice_note %}true{% else %}false{% endif %},
        cardRefundable: '{{ card_refundable|floatformat:2 }}',
        paidForTrip: '{{ paid_for_trip|floatformat:2 }}',
        methods: {{ refund_methods|json_attr }},
@@ -43,9 +44,15 @@
     </div>
   {% else %}
     <div class="flex items-center gap-2.5 flex-wrap">
+      {% if invoice_note and difference > 0 %}
+      <span class="text-[12px] text-muted">{{ invoice_note }} Processing locks the customer side of this trip.</span>
+      {% else %}
       <span class="text-[12px] text-muted">{% if difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>.{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
+      {% endif %}
       {% if can_pay %}
-        {% if difference > 0 %}
+        {% if invoice_note and difference > 0 %}
+          <button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processInvoice()">Process</button>
+        {% elif difference > 0 %}
           {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and charge ${{ difference|floatformat:2|intcomma }}</button>{% endif %}
           <button type="button" class="{% if not card_on_file %}ml-auto {% endif %}text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processLink()">Process and send pay link</button>
         {% elif difference < 0 %}

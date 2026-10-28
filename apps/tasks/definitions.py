@@ -220,6 +220,16 @@ def _balance_paid(task: Task, facts: LeadFacts) -> bool:
     return bool(plan and plan.balance_status == plan.BalanceStatus.PAID)
 
 
+def _card_order(facts: LeadFacts, reservation: object) -> bool:
+    """Not billed to an account (APC-105): an invoiced order owes no deposit and no card
+    balance, so the two money tasks never open for it."""
+    return not facts.lead.on_account
+
+
+def _on_account(task: Task, facts: LeadFacts) -> bool:
+    return facts.lead.on_account
+
+
 def _terms_accepted(task: Task, facts: LeadFacts) -> bool:
     return facts.lead.accepted_terms_at is not None
 
@@ -308,7 +318,9 @@ REGISTRY: tuple[TaskKind, ...] = (
         department=_D.CUSTOMER_SERVICE,
         level=Level.ORDER,
         due=AfterOpen(hours=72),
+        applies=_card_order,
         auto_complete=_deposit_paid,
+        not_applicable=_on_account,
     ),
     TaskKind(
         # APC-55 / APC-93. Online bookings accept on the pay page; staff and phone bookings
@@ -406,7 +418,9 @@ REGISTRY: tuple[TaskKind, ...] = (
         # Opens when the balance cron would charge it (T-30d).
         opens=BeforePickup(days=30, day_start=True),
         due=BeforePickup(days=28, day_start=True),
+        applies=_card_order,
         auto_complete=_balance_paid,
+        not_applicable=_on_account,
     ),
     # --- post-trip (APC-58): ops review → accounting → customer service -------------
     TaskKind(

@@ -37,6 +37,11 @@
   .expiry{text-align:center;font-size:12px;color:rgb(var(--muted));margin-top:12px}
   .alert{background:#fde8e8;border:1px solid #f3b4b4;color:#8a1f1f;border-radius:10px;
          padding:12px 14px;font-size:13px;margin-bottom:16px}
+  .on-account{margin:16px 0 0;font-size:13.5px;color:rgb(var(--muted))}
+  .consent{display:flex;gap:10px;align-items:flex-start;margin:10px 0 14px;font-size:13.5px;line-height:1.5;
+           color:rgb(var(--text));cursor:pointer}
+  .consent input{margin-top:3px;width:16px;height:16px;accent-color:rgb(var(--gold));flex-shrink:0}
+  .consent input:focus-visible{outline:2px solid rgb(var(--gold));outline-offset:2px}
   .note{text-align:center;background:rgb(var(--gold)/.1);border:1px solid rgb(var(--gold)/.3);
         border-radius:10px;padding:14px;font-size:14px;color:rgb(var(--text))}
   details{margin-top:8px}
@@ -166,12 +171,27 @@
 
       <div class="totals">
         <div class="row"><span>Quote total</span><span class="num">${{ quote_total|floatformat:2|intcomma }}</span></div>
-        {% if deposit_pct %}
+        {% if deposit_pct and not on_account %}
         <div class="row deposit"><span>{{ deposit_pct }}% deposit</span><span class="num">${{ deposit_amount|floatformat:2|intcomma }}</span></div>
         {% endif %}
       </div>
 
-      {% if is_active %}
+      {% if is_active and on_account %}
+        {% comment %} APC-105: billed to the customer's account, so no pay step. The box is
+           still the contract (APC-55); the terms are on this page, just below. {% endcomment %}
+        <form method="post" action="{% url 'quote_book_on_account' token %}">
+          {% csrf_token %}
+          <p class="on-account">Billed to your account{% if lead.po_number %}, PO {{ lead.po_number }}{% endif %}. No payment is taken now.</p>
+          <label class="consent" for="accept-terms">
+            <input id="accept-terms" name="accept" type="checkbox">
+            <span>I agree to the terms and conditions below.</span>
+          </label>
+          <button type="submit" class="btn-gold">Book</button>
+        </form>
+        {% if lead.quote_expires_at %}
+        <div class="expiry">This quote is valid until {{ lead.quote_expires_at|date:"M j, Y g:i A" }}.</div>
+        {% endif %}
+      {% elif is_active %}
         <a href="{% url 'quote_pay' token %}" class="btn-gold">Book Now</a>
         {% if lead.quote_expires_at %}
         <div class="expiry">This quote is valid until {{ lead.quote_expires_at|date:"M j, Y g:i A" }}.</div>

@@ -165,4 +165,89 @@ def delete_group(group: AccountGroup) -> None:
         )
     if group.is_default:
         raise BillingError("Make another group the default before removing this one.")
+    orders = group.orders.count()
+    if orders:
+        raise BillingError(
+            f"{orders} order{'s' if orders != 1 else ''} bill{'s' if orders == 1 else ''} "
+            "to this group. Move them first."
+        )
     group.delete()
+
+
+# --- an order billed to a group (APC-105) ------------------------------------------------
+
+
+def _locked_lead(lead):
+    from apps.leads.models import Lead
+
+    return Lead.objects.select_for_update().select_related("contact__company").get(pk=lead.pk)
+
+
+@transaction.atomic
+def bill_to_account(lead, group: AccountGroup, *, po_number: str, user) -> object:
+    """Invoice the whole order to `group` instead of a card (spec 2026-10-25 §5).
+
+    Only a label moves; the ledger does not. Refused once the card holds the customer's
+    money — collected, or a deposit on hold — because a trip's price would then be part
+    card, part invoice; the agent refunds or releases it first.
+    """
+    from apps.leads.models import Lead
+    from apps.payments import ledger
+    from apps.payments import services as payments
+    from apps.reservations.models import TripReview
+
+    from . import selectors
+
+    lead = _locked_lead(lead)
+    if lead.status == Lead.Status.LOST:
+        raise BillingError("A lost order can't be billed to an account.")
+    if lead.status == Lead.Status.ENGAGED:
+        raise BillingError(
+            "The customer's deposit is on hold on their card. Confirm or cancel it first."
+        )
+    if group.pk not in {g.pk for g in selectors.groups_for_lead(lead)}:
+        raise BillingError(f"{group.name} isn't one of this customer's billing groups.")
+    po_number = (po_number or "").strip()
+    if group.po_required and not po_number:
+        raise BillingError(f"{group.name} needs a PO number on every order.")
+    if ledger.order_balances(lead)["collected"] > 0:
+        raise BillingError("Refund the card payments first, then bill to account.")
+    if TripReview.objects.filter(reservation__lead=lead, processed_at__isnull=False).exists():
+        # Settled under card rules (a pay link may be open on it); it would be billed twice.
+        raise BillingError("Unlock its processed trips first, then bill to account.")
+    try:
+        payments.close_open_intents(lead)
+    except payments.PaymentError as exc:
+        raise BillingError(str(exc)) from exc
+    lead.billing_group, lead.po_number = group, po_number
+    lead.save(update_fields=["billing_group", "po_number", "updated_at"])
+    transaction.on_commit(lambda: _resync_tasks(lead))
+    return lead
+
+
+@transaction.atomic
+def bill_to_card(lead, *, user) -> object:
+    """Back to card: the group and PO are cleared and the card paths apply again.
+
+    Refused once a trip was processed on account: it was locked with its price owed to the
+    invoice, and would read as owed to a card nobody charged. (APC-106 adds the invoice
+    lines to this check.)
+    """
+    from apps.reservations.models import TripReview
+
+    lead = _locked_lead(lead)
+    if TripReview.objects.filter(reservation__lead=lead, processed_at__isnull=False).exists():
+        raise BillingError("Unlock its processed trips first, then switch it back to card.")
+    lead.billing_group, lead.po_number = None, ""
+    lead.save(update_fields=["billing_group", "po_number", "updated_at"])
+    transaction.on_commit(lambda: _resync_tasks(lead, reopen=True))
+    return lead
+
+
+def _resync_tasks(lead, *, reopen: bool = False) -> None:
+    """The deposit and balance tasks follow how the order is paid."""
+    from apps.tasks import services as tasks
+
+    if reopen:
+        tasks.reopen_card_tasks(lead)
+    tasks.sync(lead)

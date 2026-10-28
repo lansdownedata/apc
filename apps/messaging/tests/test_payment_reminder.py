@@ -205,3 +205,32 @@ def test_cancel_pending_default_does_not_cancel_the_reminder():
 def setattr_and_save(obj, field, value):
     setattr(obj, field, value)
     obj.save(update_fields=[field, "updated_at"])
+
+
+# --- an order billed to an account (APC-105) -------------------------------------------
+def _on_account(lead):
+    from apps.billing.factories import AccountGroupFactory
+
+    lead.billing_group = AccountGroupFactory(account__contact=lead.contact)
+    lead.save(update_fields=["billing_group"])
+
+
+def test_not_scheduled_for_an_order_billed_to_an_account():
+    plan = _plan()
+    _on_account(plan.lead)
+    touchpoints.schedule_payment_reminder(plan.lead)
+    assert not _reminder(plan.lead).exists()
+
+
+def test_a_queued_reminder_skips_once_the_order_is_billed_to_an_account(settings):
+    settings.PUBLIC_BASE_URL = "https://pay.example.com"
+    plan = _plan()
+    touchpoints.schedule_payment_reminder(plan.lead)
+    tp = _reminder(plan.lead).get()
+    _due(tp)
+    _on_account(plan.lead)
+    with patch("apps.messaging.touchpoints.podium.send_message") as send:
+        assert touchpoints._process(tp) is False
+    send.assert_not_called()
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, "billed to an account")

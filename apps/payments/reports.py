@@ -166,13 +166,14 @@ def authorized_hold(lead, now=None) -> dict:
 def unpaid_deposit_leads(today: date | None = None):
     """Booked orders whose deposit isn't paid and whose earliest pickup is inside the
     balance window (`today + BALANCE_CHARGE_DAYS_BEFORE`), annotated with `earliest`.
-    A booked lead with no plan at all counts as unpaid. The deposit report lists these;
+    A booked lead with no plan at all counts as unpaid; one billed to an account owes no
+    deposit (APC-105) and never counts. The deposit report lists these;
     the exception dashboard (APC-69) counts them."""
     today = today or timezone.localdate()
     cutoff = today + timedelta(days=settings.BALANCE_CHARGE_DAYS_BEFORE)
     unpaid = ~Q(payment__deposit_status=PaymentPlan.DepositStatus.PAID)
     return (
-        Lead.objects.filter(status=Lead.Status.BOOKED)
+        Lead.objects.filter(status=Lead.Status.BOOKED, billing_group__isnull=True)
         .filter(Q(payment__isnull=True) | unpaid)
         .annotate(earliest=Min("reservations__pickup_date"))
         .filter(earliest__isnull=False, earliest__lte=cutoff)

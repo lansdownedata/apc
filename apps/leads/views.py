@@ -554,7 +554,7 @@ def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
     deposit_unpaid = plan is None or plan.deposit_status != plan.DepositStatus.PAID
     is_expired = lead.status == Lead.Status.QUOTED and lead.quote_expired
     is_active = (lead.status == Lead.Status.QUOTED and not lead.quote_expired) or (
-        lead.status == Lead.Status.BOOKED and deposit_unpaid
+        lead.status == Lead.Status.BOOKED and deposit_unpaid and not lead.on_account
     )
     return {
         "lead": lead,
@@ -574,7 +574,9 @@ def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
         "quote_total": lead.quote_total,
         "is_active": is_active,
         "is_expired": is_expired,
-        "is_booked": lead.status == Lead.Status.BOOKED and not deposit_unpaid,
+        "is_booked": lead.status == Lead.Status.BOOKED and (not deposit_unpaid or lead.on_account),
+        # APC-105: no deposit and no pay step; Book accepts the terms and books.
+        "on_account": lead.on_account,
         "error": error,
     }
 
@@ -685,6 +687,8 @@ def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
         return None, ZERO
     if lead.status == Lead.Status.QUOTED and lead.quote_expired:
         return None, ZERO
+    if lead.on_account:  # invoiced to their account; nothing is paid here (APC-105)
+        return None, ZERO
     if lead.status == Lead.Status.ENGAGED:
         # Their deposit is authorized and held (APC-26). `_owed` reads the ledger, which an
         # authorization deliberately never touches, so without this the pay page would ask
@@ -735,6 +739,31 @@ def quote_terms(request, token: str) -> HttpResponse:
     )
 
 
+@require_POST
+def quote_book_on_account(request, token: str) -> HttpResponse:
+    """APC-105: an order billed to an account books from its quote page with no pay step.
+    The terms checkbox is still the contract (APC-55), stamped exactly as the pay page
+    stamps it. Only a live quote billed to an account; anything else 404s."""
+    lead = _lead_from_token(token)
+    if not lead.on_account or lead.status != Lead.Status.QUOTED or lead.quote_expired:
+        raise Http404
+    if request.POST.get("accept") != "on":
+        return render(
+            request,
+            "public/quote.html",
+            _quote_page_context(
+                lead, token, error="Please agree to the terms and conditions first."
+            ),
+        )
+    from apps.tasks import services as task_services
+
+    with transaction.atomic():
+        services.accept_terms(lead)
+        services.book_lead(lead)
+        task_services.evaluate_lead(lead)
+    return redirect("quote_page", token=token)
+
+
 @require_GET
 def quote_pay(request, token: str) -> HttpResponse:
     """The customer pay page — deposit or balance, whichever is owed."""
@@ -753,6 +782,7 @@ def quote_pay(request, token: str) -> HttpResponse:
             "amount_cents": int(amount * 100),
             "is_expired": lead.status == Lead.Status.QUOTED and lead.quote_expired,
             "is_lost": lead.status == Lead.Status.LOST,
+            "on_account": lead.on_account,
             # ENGAGED has nothing to pay (`_pay_state`) but is emphatically NOT paid —
             # the money is only held (APC-26). Without this the page falls through to
             # "paid in full", which is false and invites a chargeback.

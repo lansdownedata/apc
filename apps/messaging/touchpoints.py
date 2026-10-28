@@ -148,6 +148,8 @@ def schedule_payment_reminder(lead) -> None:
     per-trip zone yet (see the trip-timezone spec); revisit together with that work.
     """
     kind = TouchPoint.Kind.PAYMENT_REMINDER
+    if lead.on_account:  # invoiced, never auto-charged (APC-105)
+        return
     if TouchPoint.objects.filter(lead=lead, kind=kind).exists():
         return
     plan = getattr(lead, "payment", None)
@@ -768,6 +770,11 @@ def _process(tp: TouchPoint, rows=None, master: bool | None = None) -> bool:
         from apps.payments.services import remaining_balance
 
         plan = getattr(lead, "payment", None)
+        if lead.on_account:
+            # Checked when due, not cancelled at the switch: an order switched back to card
+            # before this fires still gets its notice (APC-105).
+            _mark(tp, status=TouchPoint.Status.SKIPPED, error="billed to an account")
+            return False
         if plan is None or not plan.stripe_payment_method_id:
             _mark(tp, status=TouchPoint.Status.SKIPPED, error="no card on file")
             return False

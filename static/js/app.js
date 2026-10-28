@@ -673,6 +673,15 @@ function processingPane(opts) {
         onConfirm: () => this._process({}, "Processed"),
       });
     },
+    processInvoice() {
+      Alpine.store("modal").confirm({
+        title: "Process this trip?",
+        message: `Nothing is charged: the $${opts.difference} goes on the account's next invoice. Processing locks the customer side of the trip.`,
+        variant: "gold",
+        confirmText: "Process",
+        onConfirm: () => this._process({ collect: "invoice" }, "Processed for the invoice"),
+      });
+    },
     processCard() {
       Alpine.store("modal").confirm({
         title: `Charge $${opts.difference}?`,
@@ -740,14 +749,14 @@ function processingPane(opts) {
     addCharge() {
       Alpine.store("modal").show({
         title: "Add a charge",
-        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (the customer sees this, e.g. Cleaning)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.cardOnFile ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
+        html: `<div class="grid gap-2"><input id="proc-charge-label" type="text" class="field" maxlength="80" placeholder="What for (the customer sees this, e.g. Cleaning)"><input id="proc-charge-amount" type="text" inputmode="decimal" class="field num" placeholder="Amount"></div><p class="text-[12px] text-muted mt-2">${opts.onAccount ? "Nothing is charged: it goes on the account's next invoice." : opts.cardOnFile ? "Charged to " + opts.card + "." : "No card on file: the customer gets a payment link."}</p>`,
         variant: "gold",
-        confirmText: "Add and charge",
+        confirmText: opts.onAccount ? "Add" : "Add and charge",
         showCancel: true,
         onConfirm: () => this._post(opts.urls.charge, {
           label: read("proc-charge-label"),
           amount: read("proc-charge-amount"),
-          collect: opts.cardOnFile ? "card" : "link",
+          collect: opts.onAccount ? "invoice" : opts.cardOnFile ? "card" : "link",
         }, "Charge added").catch(() => {}),
       });
     },

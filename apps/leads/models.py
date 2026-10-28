@@ -167,8 +167,32 @@ class Lead(TimeStampedModel):
     fees_acknowledged_at = models.DateTimeField(null=True, blank=True)
     fees_acknowledged_ip = models.GenericIPAddressField(null=True, blank=True)
     fees_acknowledged_version = models.CharField(max_length=16, blank=True)
+    # APC-105: the whole order is invoiced to this group instead of paid by card. Set and
+    # cleared only through `billing.services.bill_to_account` / `bill_to_card`; every card
+    # path (deposit, balance cron, reminder, pay page) skips an order that has one.
+    billing_group = models.ForeignKey(
+        "billing.AccountGroup",
+        related_name="orders",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
+    po_number = models.CharField(max_length=64, blank=True)
 
     objects = LeadQuerySet.as_manager()
+
+    @property
+    def on_account(self) -> bool:
+        return self.billing_group_id is not None
+
+    @property
+    def billed_to_label(self) -> str:
+        """E.g. "Ridgeline Partners — Accounts Payable · PO 4471"; blank for a card order."""
+        group = self.billing_group
+        if group is None:
+            return ""
+        label = f"{group.account.name} — {group.name}"
+        return f"{label} · PO {self.po_number}" if self.po_number else label
 
     @property
     def quote_no(self) -> str:

@@ -188,3 +188,18 @@ def _card_context(contact) -> dict:
         "billing_card_count": len(vault) + len(legacy),
         "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
     }
+
+
+def groups_for_lead(lead) -> list:
+    """The groups an order may be billed to (APC-105): those under the booking contact's
+    account, then those under the order's billing contact's account when that is someone
+    else — a colleague booking for a company whose account sits on its billing contact."""
+    from .models import AccountGroup
+
+    contact_ids = list(dict.fromkeys([lead.contact_id, lead.effective_billing_contact.pk]))
+    groups = AccountGroup.objects.filter(account__contact_id__in=contact_ids).select_related(
+        "account"
+    )
+    return sorted(
+        groups, key=lambda g: (contact_ids.index(g.account.contact_id), -g.is_default, g.name)
+    )

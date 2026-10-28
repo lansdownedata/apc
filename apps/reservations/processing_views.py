@@ -34,7 +34,9 @@ def _bad(message: str, status: int = 400) -> JsonResponse:
 
 def _trip(pk: int) -> Reservation:
     return get_object_or_404(
-        Reservation.objects.select_related("lead__contact", "lead__payment", "service_type"),
+        Reservation.objects.select_related(
+            "lead__contact", "lead__payment", "lead__billing_group__account", "service_type"
+        ),
         pk=pk,
     )
 
@@ -194,6 +196,8 @@ def _pane(request, trip) -> dict:
         "owed_back": -money.difference if money.difference < 0 else 0,
         "price_lines": trip.price_lines(),
         "card_on_file": bool(plan and plan.stripe_payment_method_id),
+        # APC-105: billed to an account, so processing never touches the card.
+        "invoice_note": processing.invoice_note(trip.lead) if trip.lead.on_account else "",
         "card_label": (
             f"{plan.card_brand.title()} ••{plan.card_last4}"
             if plan and plan.stripe_payment_method_id and plan.card_last4

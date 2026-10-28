@@ -76,13 +76,20 @@ class CustomerGroup:
 
     @property
     def pays(self) -> str:
-        plans = [getattr(t.lead, "payment", None) for t in self.trips]
+        """How this customer's listed trips are paid: their card, "Invoice" for orders billed
+        to an account (APC-105), or both when they have one of each."""
+        invoiced = any(t.lead.on_account for t in self.trips)
+        card_trips = [t for t in self.trips if not t.lead.on_account]
+        if not card_trips:
+            return "Invoice"
+        plans = [getattr(t.lead, "payment", None) for t in card_trips]
         card = next((p for p in plans if p is not None and p.stripe_payment_method_id), None)
-        return (
+        label = (
             f"Card ••{card.card_last4}"
             if card is not None and card.card_last4
             else ("Card on file" if card is not None else "No card")
         )
+        return f"{label} · Invoice" if invoiced else label
 
 
 def _base(filters: Filters):
@@ -313,7 +320,13 @@ class ProcessingError(ValueError):
     """Something processing can't do; the message is shown to the agent."""
 
 
-COLLECT_CHOICES = ("card", "link", "refund", "keep")
+COLLECT_CHOICES = ("card", "link", "refund", "keep", "invoice")
+ON_ACCOUNT = "This order is billed to an account: process it for the invoice."
+
+
+def invoice_note(lead) -> str:
+    """The PROCESSED note and the pane's footer line for a trip billed to an account."""
+    return f"Billed to {lead.billed_to_label}. Goes on the next invoice."
 
 
 def _fresh(trip) -> Reservation:
@@ -427,8 +440,17 @@ def process(
         # below refuses (the agent re-processes; only the new difference is settled).
         _event(review, kind, user=user, amount=amount, charge=charge, note=note)
 
+    on_account = trip.lead.on_account
+    if money.difference > 0 and on_account and collect != "invoice":
+        raise ProcessingError(ON_ACCOUNT)
+    if collect == "invoice" and not on_account:
+        raise ProcessingError("Charge the card or send a payment link.")
+
     try:
-        if money.difference > 0:
+        if money.difference > 0 and collect == "invoice":
+            # Never a card action (spec §4.4): the price stays owed, for the invoice.
+            _cancel_open_links(trip)
+        elif money.difference > 0:
             if collect == "card":
                 charge = trip_money.charge_trip(trip, money.difference)
                 record(ProcessingEvent.Kind.CHARGED, money.difference, charge)
@@ -472,7 +494,9 @@ def process(
         if review.is_processed:
             raise ProcessingError("Someone else processed this trip just now.")
         settled_to = trip_money.money_for(locked).difference
-        expected_after = money.difference if collect in ("link", "keep") else Decimal("0.00")
+        expected_after = (
+            money.difference if collect in ("link", "keep", "invoice") else Decimal("0.00")
+        )
         if settled_to != expected_after:
             raise ProcessingError(
                 "The price changed while processing; check the trip and process it again."
@@ -494,6 +518,8 @@ def process(
             )
         elif collect == "refund":
             note = (reason or "").strip()
+        elif collect == "invoice":
+            note = invoice_note(locked.lead)
         _event(review, ProcessingEvent.Kind.PROCESSED, user=user, note=note)
 
     _after_lock(locked, user, keep_overtime_open=collect == "link")
@@ -587,6 +613,10 @@ def add_charge(
     label = (label or "").strip()[:80]
     if not label:
         raise ProcessingError("Say what the charge is for.")
+    if trip.lead.on_account and collect != "invoice":
+        raise ProcessingError(ON_ACCOUNT)
+    if collect == "invoice" and not trip.lead.on_account:
+        raise ProcessingError("Charge the card or send a payment link.")
     amount = parse_amount(amount)
     if _open_link(trip) is not None:
         raise ProcessingError(
@@ -597,14 +627,10 @@ def add_charge(
     )
     # Credit the customer already has on the trip (a kept overpayment) covers it first.
     to_collect = min(amount, trip_money.money_for(_fresh(trip)).difference)
-    if to_collect <= 0:
-        _event(
-            review,
-            ProcessingEvent.Kind.CHARGE_ADDED,
-            user=user,
-            amount=amount,
-            note=f"{label} (covered by the trip's credit)",
-        )
+    if to_collect <= 0 or collect == "invoice":
+        covered = to_collect <= 0
+        note = f"{label} (covered by the trip's credit)" if covered else f"{label}: on the invoice"
+        _event(review, ProcessingEvent.Kind.CHARGE_ADDED, user=user, amount=amount, note=note)
         trip.refresh_from_db()
         from apps.payments import ledger
 

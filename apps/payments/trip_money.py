@@ -156,6 +156,7 @@ def charge_trip(trip, amount, *, note: str = "", lines=None) -> Charge:
     idempotency key (Stripe replays the first result). A decline records a FAILED charge and
     alerts — the booked balance's own status is left alone — and raises `PaymentError`.
     Success reconciles through `record_payment`, like the pay link does."""
+    services._card_order_only(trip.lead)
     amount = _positive(amount)
     with transaction.atomic():
         plan = PaymentPlan.objects.select_for_update().get(lead=trip.lead)
@@ -262,6 +263,7 @@ def _cancel_intent(plan: PaymentPlan, charge: Charge) -> bool:
 def open_trip_intent(trip, amount, *, note: str = "", lines=None) -> tuple[Charge, str]:
     """The pay-link side: an on-session intent for this trip that the customer's pay page
     confirms. Reused while open."""
+    services._card_order_only(trip.lead)
     amount = _positive(amount)
     plan = services.ensure_plan(trip.lead)
     # A link for another amount (the price moved since) must not stay confirmable in an

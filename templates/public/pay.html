@@ -93,6 +93,11 @@
         <b>Nothing has been charged yet</b> — we'll email you as soon as your trip is booked.
       </p>
 
+    {% elif on_account %}
+      <div class="badge">{% icon "check" attrs='width="28" height="28"' %}</div>
+      <h1>Billed to your account</h1>
+      <p>Billed to your account. Nothing to pay here. Reservation {{ quote_no }} is invoiced on your account's terms.</p>
+
     {% elif not pay_kind %}
       <div class="badge">{% icon "check" attrs='width="28" height="28"' %}</div>
       <h1>You're all set</h1>
