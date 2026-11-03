@@ -141,11 +141,16 @@ an invisible backdrop eating the next click on the page. The panel's entrance is
           <div class="mt-2 space-y-2">
             <template x-for="(p, i) in draft.passengerList" :key="i">
               <div class="flex flex-col sm:flex-row sm:items-center gap-2">
-                <input x-model="p.name" type="text" maxlength="120" placeholder="Name" aria-label="Passenger name"
-                       class="field text-[13px] sm:flex-1">
-                <div class="flex items-center gap-2">
-                  <input x-model="p.mobile" @input="onPassengerMobile(p)" type="tel" placeholder="Mobile (optional)" aria-label="Passenger mobile"
-                         class="field text-[13px] num flex-1 sm:w-40 sm:flex-none">
+                {% comment %} .field is width:100% and beats w-* on the input, so the sizing lives on these wrappers. {% endcomment %}
+                <div class="min-w-0 sm:flex-1">
+                  <input x-model="p.name" type="text" maxlength="120" placeholder="Name" aria-label="Passenger name"
+                         class="field text-[13px]">
+                </div>
+                <div class="flex items-center gap-2 min-w-0">
+                  <div class="min-w-0 flex-1 sm:w-36 sm:flex-none" data-passenger-mobile>
+                    <input x-model="p.mobile" @input="onPassengerMobile(p)" type="tel" placeholder="Mobile (optional)" aria-label="Passenger mobile"
+                           class="field text-[13px] num">
+                  </div>
                   <button x-show="p.lead" type="button" @click="p.lead = false" title="Lead passenger: tap to unmark"
                           class="shrink-0 px-2.5 py-1.5 rounded-full bg-goldl text-goldd text-[11.5px] font-semibold ring-1 ring-gold hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-2">Lead</button>
                   <button x-show="!p.lead && p.mobile.trim()" type="button" @click="makeLead(p)"

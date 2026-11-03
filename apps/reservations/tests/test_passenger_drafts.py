@@ -138,3 +138,13 @@ def test_editor_html_escapes_the_booking_contact_name(staff):
     res.lead.contact.save()
     html = staff.get(reverse("lead_detail", args=[res.lead_id])).content.decode()
     assert "bookingContactName: &quot;Dana \\&quot;DJ\\&quot;" in html
+
+
+def test_passenger_inputs_are_sized_by_wrappers_not_by_w_classes():
+    """.field is width:100% and beats w-* on an input, so sizing must sit on a wrapper.
+    This only greps the markup (no layout engine in tests)."""
+    html = (ROOT / "templates/leads/_reservation_editor.html").read_text()
+    for label in ("Passenger name", "Passenger mobile"):
+        tag = html[html.index(f'aria-label="{label}"') :].split(">", 1)[0]
+        assert "sm:w-" not in tag and "flex-none" not in tag and "sm:flex-1" not in tag
+    assert 'class="min-w-0 flex-1 sm:w-36 sm:flex-none" data-passenger-mobile' in html
