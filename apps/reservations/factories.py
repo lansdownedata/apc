@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.addresses.factories import AirlineFactory, AirportFactory
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 
-from .models import Flight, FlightDirection, Reservation, Stop, TripExtra
+from .models import Flight, FlightDirection, Passenger, Reservation, Stop, TripExtra
 
 
 class ReservationFactory(factory.django.DjangoModelFactory):
@@ -76,3 +76,11 @@ class TripExtraFactory(factory.django.DjangoModelFactory):
     kind = TripExtra.Kind.TOLLS
     label = "Tolls"
     amount = 10
+
+
+class PassengerFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Passenger
+
+    reservation = factory.SubFactory(ReservationFactory)
+    name = factory.Sequence(lambda n: f"Passenger {n}")

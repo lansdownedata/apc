@@ -608,6 +608,37 @@ class Reservation(TimeStampedModel):
     def __str__(self) -> str:
         return f"{self.get_trip_type_display()} · {self.service_label}"
 
+    @property
+    def passenger_summary(self) -> str:
+        """One-line roll-up of the named passengers; reads the (prefetchable) relation."""
+        named = list(self.named_passengers.all())
+        if not named:
+            return ""
+        lead = next((p for p in named if p.is_lead), None)
+        if lead is None:
+            return f"{len(named)} named"
+        text = f"{lead.name} · lead"
+        others = len(named) - 1
+        return f"{text}, +{others} named" if others else text
+
+
+class Passenger(TimeStampedModel):
+    """A named rider on one trip. The lead (at most one, needs a mobile) is who messages go to."""
+
+    reservation = models.ForeignKey(
+        Reservation, related_name="named_passengers", on_delete=models.CASCADE
+    )
+    name = models.CharField(max_length=120, blank=True)
+    mobile = models.CharField(max_length=16, blank=True)  # E.164
+    is_lead = models.BooleanField(default=False)
+    sort = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort", "pk"]
+
+    def __str__(self) -> str:
+        return self.name or self.mobile
+
 
 class Stop(TimeStampedModel):
     reservation = models.ForeignKey(Reservation, related_name="stops", on_delete=models.CASCADE)
