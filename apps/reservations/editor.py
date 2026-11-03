@@ -8,6 +8,7 @@ per view is how they drift into offering different vehicles or a different set o
 
 from __future__ import annotations
 
+from apps.core.templatetags.phone_filters import phone_display
 from apps.leads.models import Lead, VehicleType
 
 from . import groups
@@ -41,6 +42,12 @@ def reservation_draft(r, *, quantity: int = 1) -> dict:
         "costRatioPct": float(r.cost_ratio_pct),
         "dropoffDate": r.dropoff_date.isoformat() if r.dropoff_date else "",
         "dropoffTime": r.dropoff_time.strftime("%H:%M") if r.dropoff_time else "",
+        # Named people for the trip's messages (spec C §1). Mobiles are shown formatted; the
+        # parser takes either form back.
+        "passengerList": [
+            {"name": p.name, "mobile": phone_display(p.mobile), "lead": p.is_lead}
+            for p in r.named_passengers.all()
+        ],
         "stops": [
             {
                 "address": s.address,
@@ -97,6 +104,8 @@ def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=No
     )
     sizes = {m.pk: line.size for line in groups.as_lines(reservations) for m in line.members}
     return {
+        # Who passenger texts fall back to when nobody on the trip has a mobile.
+        "booking_contact_name": lead.contact.name if lead is not None else "",
         "open_editor_id": open_editor_id(request, reservations),
         # What a new trip starts with. Only a wedding sets any — see leads.views.
         "trip_defaults": trip_defaults or {},

@@ -72,19 +72,21 @@ def reservation_draft(request, pk: int):
     posts against a lead, and the board's rows each belong to a different one.
     """
     trip = get_object_or_404(
-        Reservation.objects.select_related("lead").prefetch_related(
+        Reservation.objects.select_related("lead__contact").prefetch_related(
+            "named_passengers",
             Prefetch(
                 "stops",
                 queryset=Stop.objects.select_related(
                     "airport", "airline", "flight", "flight__airport", "flight__airline"
                 ).order_by("sequence"),
-            )
+            ),
         ),
         pk=pk,
     )
     return JsonResponse(
         {
             "leadId": trip.lead_id,
+            "bookingContactName": trip.lead.contact.name,
             # The linked set's size, so "apply to all N" means the same here as it does
             # on the quote — the editor cannot count members it was never handed.
             "draft": editor.reservation_draft(trip, quantity=group_size(trip)),

@@ -10,6 +10,7 @@ from django.db import transaction
 
 from .flights import link_flights
 from .models import Reservation, Stop
+from .passengers import parse_passengers, save_passengers
 
 
 class DraftError(ValueError):
@@ -251,6 +252,8 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
         "cost_ratio_pct": _cost_ratio(payload.get("costRatioPct")),
         "dropoff_date": _date(payload.get("dropoffDate")),
         "dropoff_time": _time(payload.get("dropoffTime")),
+        # None = the surface posted no list (wedding builder): leave the saved one alone.
+        "passenger_list": parse_passengers(payload.get("passengerList")),
         "stops": [
             {
                 "address": (s.get("address") or "").strip()[:255],
@@ -381,6 +384,7 @@ def save_reservation_from_draft(
     data = parse_draft(payload, grandfathered_airline_ids=kept)
     stops = data.pop("stops")
     extras = data.pop("extras")
+    passenger_list = data.pop("passenger_list")
     link_flights(stops, data.get("pickup_date"))
     is_new = instance is None
     prev_pickup = None if is_new else (instance.pickup_date, instance.pickup_time)
@@ -421,6 +425,8 @@ def save_reservation_from_draft(
         ]
     )
     instance.refresh_pickup_timezone()
+    if passenger_list is not None:
+        save_passengers(instance, passenger_list)
 
     # Keep the per-trip service-date messaging (APC-18-22) in step with a booked order:
     # a new trip gets its rows, a moved pickup reschedules them.

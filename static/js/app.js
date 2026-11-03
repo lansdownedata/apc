@@ -2079,6 +2079,9 @@ function reservationEditor(opts = {}) {
     coverageHtml: "",
     privateAirlineId: opts.privateAirlineId ?? null,
     openEditorId: opts.openEditorId ?? null,
+    /* The booking contact, named in the passenger-text fallback line. A page holding one
+     * lead's trips knows it up front; the dispatch board's fetched draft brings its own. */
+    bookingContactName: opts.bookingContactName || "",
     defaultCostRatio: opts.defaultCostRatio ?? 65,
     /* "+ Cleaning fee" pre-fills the Settings amount (spec 2026-10-25 §3.1). */
     cleaningFee: Number(opts.cleaningFee) || 0,
@@ -2105,7 +2108,7 @@ function reservationEditor(opts = {}) {
         date: this.tripDefaults.date || "", time: "",
         dropoffDate: "", dropoffTime: "",
         vehicle: v ? v.id : "",
-        pax: 1, quantity: 1,
+        pax: 1, quantity: 1, passengerList: [],
         rate: v ? v.rate : 0, hours: "", minHours: v ? v.transferMin : 0,
         gratuityPct: 0, gratuityFlat: 0,
         discountPct: 0, discountFlat: 0, discountMode: "flat",
@@ -2168,7 +2171,10 @@ function reservationEditor(opts = {}) {
           if (!res.ok) throw new Error("not found");
           return res.json();
         })
-        .then((body) => this.openDraft(body.draft, body.leadId))
+        .then((body) => {
+          this.bookingContactName = body.bookingContactName || "";
+          this.openDraft(body.draft, body.leadId);
+        })
         .catch(() =>
           Alpine.store("toast").push({ type: "danger", title: "Could not open that trip" }),
         );
@@ -2177,6 +2183,7 @@ function reservationEditor(opts = {}) {
       this.draftLeadId = leadId ?? this.leadId;
       this.draft = JSON.parse(JSON.stringify(r));
       this.draft.quantity = Number(this.draft.quantity) || 1;
+      if (!Array.isArray(this.draft.passengerList)) this.draft.passengerList = [];
       this.groupSizeAtOpen = this.draft.quantity;
       this.applyToGroup = false;   // never carried over from the last trip edited
       if (!(Number(this.draft.hours) > 0)) this.draft.hours = "";  // a stored 0 is "no override" — show an empty box, not "0"
@@ -2209,6 +2216,41 @@ function reservationEditor(opts = {}) {
       this.onHoursChanged();
       this.syncVehicleSelect();
       this.loadCoverage();
+    },
+
+    /* ---- passenger list (spec C §1) ----------------------------------------------
+     * Who passenger texts reach: the lead if marked, else everyone with a mobile, else
+     * the booking contact. The server decides again at send time; this only says so. */
+    addPassenger() {
+      this.draft.passengerList.push({ name: "", mobile: "", lead: false });
+    },
+    removePassenger(i) {
+      this.draft.passengerList.splice(i, 1);
+    },
+    makeLead(p) {
+      this.draft.passengerList.forEach((x) => { x.lead = false; });
+      p.lead = true;
+    },
+    /* A lead needs a mobile to be texted, so clearing the number clears the lead. */
+    onPassengerMobile(p) {
+      if (!p.mobile.trim()) p.lead = false;
+    },
+    namedPassengerCount() {
+      return this.draft.passengerList.filter((p) => p.name.trim()).length;
+    },
+    mobilePassengers() {
+      return this.draft.passengerList.filter((p) => p.mobile.trim());
+    },
+    passengerLabel(p) {
+      return p.name.trim() || p.mobile.trim();
+    },
+    leadPassengerLabel() {
+      const p = this.draft.passengerList.find((x) => x.lead);
+      return p ? this.passengerLabel(p) : "";
+    },
+    passengerMode() {
+      if (this.draft.passengerList.some((p) => p.lead && p.mobile.trim())) return "lead";
+      return this.mobilePassengers().length ? "mobiles" : "contact";
     },
 
     /* ---- coverage ------------------------------------------------------------

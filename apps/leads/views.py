@@ -199,6 +199,7 @@ def lead_detail(request, pk):
             "reservations__vehicle",
             "reservations__service_type",
             "reservations__extras",  # the editor's drafts list them; one query, not one per trip
+            "reservations__named_passengers",
             Prefetch(
                 "reservations__stops",
                 queryset=Stop.objects.select_related(
