@@ -1,0 +1,484 @@
+{
+  "driver_released": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM is confirmed. Your driver:\nSam Rivera\nCell +12025550199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your driver for Apr 20, 2027 — All Pro Charter\n\nDana,\n\nYour trip on Apr 20, 2027 at 8:30 PM is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "driver_released",
+    "status": "sent"
+  },
+  "driver_released_pacific_trip": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM PDT is confirmed. Your driver:\nSam Rivera\nCell +12025550199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your driver for Apr 20, 2027 — All Pro Charter\n\nDana,\n\nYour trip on Apr 20, 2027 at 8:30 PM PDT is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "driver_released",
+    "status": "sent"
+  },
+  "driver_updated": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your driver details have changed:\nSam Rivera\nCell +12025550177\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Updated driver details for Apr 20, 2027\n\nDana,\n\nYour driver details have changed:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550177\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "driver_updated",
+    "status": "sent"
+  },
+  "order_auth_expired": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. We couldn't confirm your trip in time and your bank released the hold on your card — no money was taken. Your quote <Q> is still good; you can authorize again here: https://example.test/quote/<TOKEN>/pay/ Or call us at (703) 555-0100.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your All Pro Charter booking needs a new payment authorization\n\nDana,\n\nWe're sorry — we weren't able to confirm your trip in time, and your bank has now released the hold on your card.\n\n**No money was taken.** The hold has come off your account, and there is nothing for you to cancel or dispute.\n\nYour quote <Q> is still good and we'd still like to take the trip. To book it, please authorize again here: https://example.test/quote/<TOKEN>/pay/\n\nIf anything about your plans has changed, or you'd rather talk it through, call us at (703) 555-0100 — we'd rather hear from you than lose the booking.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "order_auth_expired",
+    "status": "sent"
+  },
+  "order_cancelled": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. We're sorry — we couldn't cover your trip on Apr 20, 2027 and have released the booking. You have NOT been charged; the hold on your card is gone. Call (703) 555-0100 if you'd like us to look at other options.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "We couldn't confirm your All Pro Charter trip — <Q>\n\nDana,\n\nI'm sorry — after checking availability we aren't able to cover your trip on Apr 20, 2027, so we've had to release your booking.\n\n**You have not been charged.** The hold placed on your card has been released and nothing was taken; there's nothing for you to cancel or dispute.\n\nIf your plans are flexible on timing or vehicle, we'd genuinely like another go at it — call us at (703) 555-0100 and we'll see what we can do.\n\nWith apologies,\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "order_cancelled",
+    "status": "sent"
+  },
+  "order_confirmed": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. You're booked — we've confirmed your transportation for Apr 20, 2027 and charged your deposit. Details: https://example.test/quote/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "You're booked — All Pro Charter <Q>\n\nDana,\n\nGood news — we've confirmed your transportation and your booking is set.\n\nApr 20 · 2:00 PM — Luxury SUV · 3 passengers — $185.00\n\nYour deposit has now been charged. We'll be in touch before the day with your final details, and the remaining balance is charged closer to the trip.\n\nYou can review everything here: https://example.test/quote/<TOKEN>/\n\nThank you for choosing All Pro Charter.\n(703) 555-0100",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "order_confirmed",
+    "status": "sent"
+  },
+  "payment_reminder": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. The remaining balance of $92.50 for reservation <Q> will be charged on Apr 14, 2027 to the card ending 4242. Nothing to do — reply here if anything's changed. https://example.test/quote/<TOKEN>/pay/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your remaining balance for reservation <Q>\n\nDana,\n\nThis is a friendly reminder that the remaining balance of $92.50 for reservation <Q> is scheduled to be charged on Apr 14, 2027 to the card ending 4242.\n\nNo action is needed — we'll take care of it automatically. If anything has changed, or you'd like to use a different card, reply here or call us at (703) 555-0100.\n\nYou can review your reservation and payment here: https://example.test/quote/<TOKEN>/pay/\n\nThank you for choosing All Pro Charter.",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "payment_reminder",
+    "status": "sent"
+  },
+  "payment_reminder_account_order": {
+    "calls": [],
+    "error": "billed to an account",
+    "kind": "payment_reminder",
+    "status": "skipped"
+  },
+  "review_request": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. If the trip went well, would you leave us a short review? It helps more than you'd think. https://podium.test/r/golden-review",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "first_name": "Dana",
+        "last_name": "Whitfield",
+        "review_invite": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "review_request",
+    "status": "sent"
+  },
+  "review_request_held_by_complaint": {
+    "calls": [],
+    "error": "Review request held: complaint logged",
+    "kind": "review_request",
+    "status": "cancelled"
+  },
+  "status_arrived": {
+    "calls": [
+      {
+        "body": "Dana, your All Pro Charter driver has arrived at the pickup location.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "status_arrived",
+    "status": "sent"
+  },
+  "status_dispatched": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your trip is confirmed and assigned for Apr 20, 2027 at 8:30 PM.\nDriver: Sam Rivera.\nBlack Cadillac Escalade\nFull details: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your trip is confirmed and assigned — All Pro Charter\n\nDana,\n\nYour trip is confirmed and assigned for Apr 20, 2027 at 8:30 PM.\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nFull details: https://example.test/trip/<TOKEN>/\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "status_dispatched",
+    "status": "sent"
+  },
+  "status_on_the_way": {
+    "calls": [
+      {
+        "body": "Dana, your All Pro Charter driver is on the way to your 8:30 PM pickup.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "status_on_the_way",
+    "status": "sent"
+  },
+  "thank_you": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Thank you for trusting us with your trip on Apr 20, 2027. If anything wasn't right, reply here and tell us. If you have a minute, you can rate the trip: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Thank you from All Pro Charter\n\nDana,\n\nThank you for booking with us for Apr 20, 2027. We hope the trip went the way you planned it.\n\nIf something wasn't right, please tell us. Reply to this email or call (703) 555-0100 and you'll reach a person.\n\nIf you have a minute, you can rate the trip here: https://example.test/trip/<TOKEN>/\n\nAll Pro Charter\n(703) 555-0100",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "thank_you",
+    "status": "sent"
+  },
+  "tp1_welcome": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Thank you for taking the time to visit our website and providing details about your upcoming transportation needs. We are very excited to earn your business.\n\nPick-up: 1600 Pennsylvania Ave NW, Washington, DC 20500 2:00 PM Apr 20, 2027\n\nIf you haven't received a quote from us via email, then we need additional information from you to properly provide a quote. Please reach out to us at (703) 555-0100 when convenient for you.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Thank you for your interest in All Pro Charter\n\nDana,\nThank you for taking the time to visit our website and providing details about your upcoming transportation needs. We are very excited to earn your business.\n\nPick-up: 1600 Pennsylvania Ave NW, Washington, DC 20500 2:00 PM Apr 20, 2027\nDrop-off: Washington Dulles International Airport (IAD)\n\nApr 20 · 2:00 PM — Luxury SUV · 3 passengers — $185.00\n\nIf you haven't received a quote from us via email, then we need additional information from you to properly provide a quote. Please reach out to us at (703) 555-0100 when convenient for you.\n\nWe can discuss your trip details to make sure we fully understand your needs and help you select the best options.\n\nWe look forward to serving you and hope you have a wonderful day!",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "tp1_welcome",
+    "status": "sent"
+  },
+  "tp2_lead_followup": {
+    "calls": [
+      {
+        "body": "Any questions about your transportation request?\n\nDana,\nDo you have any questions about your request for transportation from 1600 Pennsylvania Ave NW, Washington, DC 20500 at 2:00 PM?\n\nAs a reminder we've included a breakdown:\nApr 20 · 2:00 PM — Luxury SUV · 3 passengers — $185.00\n\nPlease feel free to reach out to us should you need any assistance.\n\nAll Pro Charter\n(703) 555-0100\nreservations@allprocharter.com",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "tp2_lead_followup",
+    "status": "sent"
+  },
+  "tp3_quote_sent_sms": {
+    "calls": [
+      {
+        "body": "Hey, Dana! This is Jordan with All Pro Charter. We just emailed you the quote you requested for Apr 20, 2027. It should be in your inbox at any moment. If you'd prefer to book now, you can do so right here: https://example.test/quote/<TOKEN>/ Please let me know if you have any questions.",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "tp3_quote_sent_sms",
+    "status": "sent"
+  },
+  "tp4_viewed_sms": {
+    "calls": [
+      {
+        "body": "Dana, do you have any questions about your quote? https://example.test/quote/<TOKEN>/ Please give us a call at (703) 555-0100 or send us an email at reservations@allprocharter.com if so.\n\nBest wishes, All Pro Charter",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "tp4_viewed_sms",
+    "status": "sent"
+  },
+  "tp5_viewed_email": {
+    "calls": [
+      {
+        "body": "We have noticed you haven't booked your quote\n\nDo you have any questions about your request for transportation from 1600 Pennsylvania Ave NW, Washington, DC 20500 at 2:00 PM?\n\nAs a reminder we've included a breakdown:\nApr 20 · 2:00 PM — Luxury SUV · 3 passengers — $185.00\n\nBook your quote here: https://example.test/quote/<TOKEN>/",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "tp5_viewed_email",
+    "status": "sent"
+  },
+  "tp6_quote_followup": {
+    "calls": [
+      {
+        "body": "Following up on your All Pro Charter quote\n\nDana, We wanted to follow up on the quote that we sent you yesterday. If you have any questions or would like to discuss trip details, please reply to this email.\n\nApr 20 · 2:00 PM — Luxury SUV · 3 passengers — $185.00\n\nBook now: https://example.test/quote/<TOKEN>/\n\nAll Pro Charter\n(703) 555-0100\nreservations@allprocharter.com",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "tp6_quote_followup",
+    "status": "sent"
+  },
+  "tp7_expiring": {
+    "calls": [
+      {
+        "body": "Hi, Dana, I wanted to give you a heads up that your quote is expiring tomorrow. Please review the email we just sent you for more information and options.\n\nRegards, All Pro Charter (703) 555-0100",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Your quote is expiring tomorrow\n\nDana,\nWe hope you're doing well! We wanted to let you know that your quote is scheduled to expire tomorrow if it hasn't been reserved yet.\n\nIf you have any questions, need additional information, or would like assistance moving forward, please feel free to reach out. We're always happy to help.\n\nIf you like, I can:\n- Update any details or adjust the scope to better fit your needs\n- Answer any questions you have about the pricing, options or timeline.\n\nBook here before it expires: https://example.test/quote/<TOKEN>/\n\nAll Pro Charter (703) 555-0100",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "tp7_expiring",
+    "status": "sent"
+  },
+  "tp8_expired": {
+    "calls": [
+      {
+        "body": "Dana, We just wanted to check in with you to see if you still need transportation for Apr 20, 2027. If you'd like a fresh quote, reply here or call us at (703) 555-0100 and we'll get one right over: https://example.test/quote/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      }
+    ],
+    "error": "",
+    "kind": "tp8_expired",
+    "status": "sent"
+  },
+  "trip_confirm_affiliate": {
+    "calls": [
+      {
+        "body": "Confirm coverage — All Pro Charter trip Apr 20, 2027\n\nMorgan Lee,\n\nPlease confirm you're covering this trip for All Pro Charter.\n\nTrip <Q>\n  Tuesday, April 20, 2027 at 2:00 PM\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nPayout: $140.00\n\nConfirm here: https://example.test/trip/affiliate/<TOKEN>/\n\nIf you can no longer cover this trip, tell us now by replying or calling (703) 555-0100 so we can arrange a backup.\n\nAll Pro Charter\n(703) 555-0100",
+        "channel_type": "email",
+        "identifier": "dispatch@capitalcoach.example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_affiliate",
+    "status": "sent"
+  },
+  "trip_confirm_customer": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Please confirm your trip — All Pro Charter <Q>\n\nDana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q>\n  Tuesday, April 20, 2027 at 2:00 PM\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer",
+    "status": "sent"
+  },
+  "trip_confirm_customer_2": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. We still need your confirmation for your travel on Apr 20, 2027 at 2:00 PM. Please take a look: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Still need your confirmation — All Pro Charter <Q>\n\nDana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q>\n  Tuesday, April 20, 2027 at 2:00 PM\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer_2",
+    "status": "sent"
+  },
+  "trip_confirm_customer_2_day_confirmed": {
+    "calls": [],
+    "error": "day already confirmed",
+    "kind": "trip_confirm_customer_2",
+    "status": "skipped"
+  },
+  "two_trips_same_day_one_message": {
+    "calls": [
+      {
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 10:00 AM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550101"
+      },
+      {
+        "body": "Please confirm your trip — All Pro Charter <Q>\n\nDana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q>\n  Tuesday, April 20, 2027 at 10:00 AM\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q>\n  Tuesday, April 20, 2027 at 4:00 PM\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "dana.whitfield@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer",
+    "status": "sent"
+  },
+  "two_trips_same_day_second_stands_down": {
+    "calls": [],
+    "error": "covered by the grouped notice",
+    "kind": "trip_confirm_customer",
+    "status": "skipped"
+  },
+  "wed_final_details": {
+    "calls": [
+      {
+        "body": "Casey, it's All Pro Charter. Your wedding transportation is Apr 24, 2027. We need two last details: your day-of point of contact (name + cell) and the wedding name for our notes. Send them here: https://example.test/wedding/<TOKEN>/details/",
+        "channel_type": "phone",
+        "identifier": "+12025550102"
+      },
+      {
+        "body": "Final details for your All Pro Charter wedding transportation\n\nCasey,\n\nYour wedding transportation is booked for Apr 24, 2027 — we're looking forward to it.\n\nAbout a week out, we ask every couple for two last things so the day runs smoothly:\n\n  1. Your day-of point of contact — the name and cell number of whoever we should call if plans shift on the day (often a planner or a member of the wedding party, not the couple).\n  2. The wedding name as you'd like it to appear on our dispatch and driver notes.\n\nPlease send those here: https://example.test/wedding/<TOKEN>/details/\n\nIf anything about the schedule has changed, this is the perfect time to tell us.\n\nAll Pro Charter\n(703) 555-0100",
+        "channel_type": "email",
+        "identifier": "casey.morgan@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "wed_final_details",
+    "status": "sent"
+  },
+  "wedding_and_plain_same_day_two_messages": {
+    "calls": [
+      {
+        "body": "Casey, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550102"
+      },
+      {
+        "body": "Pat, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550103"
+      },
+      {
+        "body": "Please confirm your trip — All Pro Charter <Q>\n\nCasey,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "casey.morgan@example.com"
+      },
+      {
+        "body": "Please confirm your trip — All Pro Charter <Q>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "pat.okafor@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer",
+    "status": "sent"
+  },
+  "wedding_confirm_48h_to_billing_contact": {
+    "calls": [
+      {
+        "body": "Pat, it's All Pro Charter. We still need your confirmation for your travel on Apr 24, 2027 at 2:00 PM. Please take a look: https://example.test/trip/w/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550103"
+      },
+      {
+        "body": "Still need your confirmation — All Pro Charter <Q>\n\nPat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "pat.okafor@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer_2",
+    "status": "sent"
+  },
+  "wedding_confirm_72h_to_billing_contact": {
+    "calls": [
+      {
+        "body": "Pat, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550103"
+      },
+      {
+        "body": "Please confirm your trip — All Pro Charter <Q>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "channel_type": "email",
+        "identifier": "pat.okafor@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "trip_confirm_customer",
+    "status": "sent"
+  },
+  "wedding_thank_you": {
+    "calls": [
+      {
+        "body": "Casey, it's All Pro Charter. Congratulations on the wedding, and thank you for letting us be part of the day. If anything wasn't right, reply here and tell us. If you have a minute, you can rate the trip: https://example.test/trip/<TOKEN>/",
+        "channel_type": "phone",
+        "identifier": "+12025550102"
+      },
+      {
+        "body": "Thank you from All Pro Charter\n\nCasey,\n\nCongratulations on the wedding, and thank you for letting us be part of the day. We hope everything went the way you planned it.\n\nIf something wasn't right, please tell us. Reply to this email or call (703) 555-0100 and you'll reach a person.\n\nIf you have a minute, you can rate the trip here: https://example.test/trip/<TOKEN>/\n\nAll Pro Charter\n(703) 555-0100",
+        "channel_type": "email",
+        "identifier": "casey.morgan@example.com"
+      }
+    ],
+    "error": "",
+    "kind": "thank_you",
+    "status": "sent"
+  }
+}
