@@ -84,19 +84,37 @@ def test_split_names():
 
 
 def test_data_migration_copies_names_to_first_trip(capsys):
+    """`Lead.passenger_names` is dropped (leads.0020), so the historical lead rows are stood in
+    for by real leads carrying the old free text; trips and passengers are the real models."""
     from importlib import import_module
-
-    from django.apps import apps
 
     from apps.leads.factories import LeadFactory
 
     migration = import_module("apps.reservations.migrations.0029_passengers_from_names")
-    lead = LeadFactory(passenger_names="Shane Thomas, Ana Ruiz")
+    lead = LeadFactory()
+    lead.passenger_names = "Shane Thomas, Ana Ruiz"
     first = ReservationFactory(lead=lead, pickup_date="2026-12-01")
     ReservationFactory(lead=lead, pickup_date="2026-11-01")
     first_by_date = lead.reservations.order_by("pickup_date").first()
-    empty = LeadFactory(passenger_names="Nobody")
-    migration.names_to_passengers(apps, None)
+    empty = LeadFactory()
+    empty.passenger_names = "Nobody"
+
+    class _Leads:
+        def exclude(self, **kwargs):
+            return self
+
+        def iterator(self):
+            return iter([lead, empty])
+
+    class _Apps:
+        def get_model(self, app, name):
+            if name == "Lead":
+                return type("FakeLead", (), {"objects": _Leads()})
+            return django_apps.get_model(app, name)
+
+    from django.apps import apps as django_apps
+
+    migration.names_to_passengers(_Apps(), None)
     assert list(first_by_date.named_passengers.values_list("name", flat=True)) == [
         "Shane Thomas",
         "Ana Ruiz",

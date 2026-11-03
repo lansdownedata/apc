@@ -621,6 +621,11 @@ class Reservation(TimeStampedModel):
         others = len(named) - 1
         return f"{text}, +{others} named" if others else text
 
+    @property
+    def passenger_name_list(self) -> str:
+        """Names only, comma-separated, for the customer-facing quote page (never mobiles)."""
+        return ", ".join(p.name for p in self.named_passengers.all() if p.name)
+
 
 class Passenger(TimeStampedModel):
     """A named rider on one trip. The lead (at most one, needs a mobile) is who messages go to."""

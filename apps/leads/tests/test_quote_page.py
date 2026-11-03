@@ -13,7 +13,11 @@ from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFac
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.payments.factories import PaymentPlanFactory
-from apps.reservations.factories import ReservationFactory, TransferReservationFactory
+from apps.reservations.factories import (
+    PassengerFactory,
+    ReservationFactory,
+    TransferReservationFactory,
+)
 from apps.reservations.models import Stop
 
 pytestmark = pytest.mark.django_db
@@ -145,11 +149,11 @@ def test_quote_page_booked_unpaid_shows_book_now(client):
 def lead_with_itinerary():
     lead = LeadFactory(
         status=Lead.Status.QUOTED,
-        passenger_names="Shane Thomas",
         billing_contact=ContactFactory(name="Dana Ledger"),
     )
     vt = VehicleTypeFactory(name="Signature SUV", capacity=6, description="Leather, chilled water.")
     res = ReservationFactory(lead=lead, vehicle=vt, rate="594.71", stops=[])
+    PassengerFactory(reservation=res, name="Shane Thomas")
     Stop.objects.create(
         reservation=res,
         sequence=0,

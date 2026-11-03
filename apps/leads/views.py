@@ -568,9 +568,9 @@ def _quote_page_context(lead: Lead, token: str, *, error: str = "") -> dict:
         "reservations": lead.reservations.select_related("vehicle").prefetch_related(
             Prefetch("stops", queryset=Stop.objects.select_related("airline").order_by("sequence")),
             "extras",
+            "named_passengers",
         ),
         "billing_contact": lead.effective_billing_contact,
-        "passenger_names": lead.passenger_names,
         "plan": plan,
         "deposit_pct": plan.deposit_pct if plan else None,
         "deposit_amount": plan.deposit_amount if plan else None,

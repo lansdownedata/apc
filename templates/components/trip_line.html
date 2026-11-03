@@ -60,6 +60,7 @@
         {% comment %} The movement's own headcount, not the anchor's share of it: a 100-guest
            run split across two coaches is still a 100-guest run (APC-14). {% endcomment %}
         <span class="flex items-center gap-1"><i class="ti ti-users text-[13px]"></i> {{ line.passengers }} pax</span>
+        {% with names=res.passenger_summary %}{% if names %}<span class="flex items-center gap-1" data-passenger-summary><i class="ti ti-star-filled text-[13px] text-gold"></i> {{ names }}</span>{% endif %}{% endwith %}
         {% if res.pickup_date %}<span class="flex items-center gap-1 num"><i class="ti ti-calendar text-[13px]"></i> {{ res.pickup_date|date:"M j, Y" }}{% if res.pickup_time %} · {{ res|pickup_clock }}{% endif %}</span>{% endif %}
         {% if res.trip_type == 'hourly' %}<span class="flex items-center gap-1 num"><i class="ti ti-clock text-[13px]"></i> {{ res.billed_hours|floatformat:"-2" }} hrs{% if res.min_applied %} (min){% endif %}</span>{% endif %}
         {% with fs=res.flight_summary %}{% if fs %}

@@ -104,9 +104,6 @@
         {% if lead.billing_contact %}
         <div><div class="label">Billing Contact</div><div>{{ billing_contact.name }}</div></div>
         {% endif %}
-        {% if passenger_names %}
-        <div><div class="label">Passengers</div><div>{{ passenger_names }}</div></div>
-        {% endif %}
       </div>
 
       {% for r in reservations %}
@@ -143,6 +140,9 @@
             </li>
             {% endfor %}
           </ul>
+          {% with names=r.passenger_name_list %}{% if names %}
+          <div class="when"><strong>Passengers</strong> {{ names }}</div>
+          {% endif %}{% endwith %}
           {% comment %} Spec 2026-09-05 §4: a flat price is ONE row labelled Total — the word
           "Subtotal" only appears when there is genuinely something to sub-total. `price_lines`
           decides, so this page and the touch-point message can't disagree. {% endcomment %}
