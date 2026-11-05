@@ -139,6 +139,47 @@ def test_a_balance_paid_queues_the_balance_paid_rows():
     assert not _queued(other).exists()
 
 
+def _balance_due_plan():
+    plan = _plan(status=Lead.Status.BOOKED)
+    plan.stripe_payment_method_id = "pm_1"
+    plan.balance_status = "scheduled"
+    plan.save(update_fields=["stripe_payment_method_id", "balance_status", "updated_at"])
+    return plan
+
+
+def _charge_balance(plan, **create):
+    create.setdefault("return_value", MagicMock(id="pi_bal", status="succeeded", amount=50000))
+    with patch.object(payments.stripe.PaymentIntent, "create", **create):
+        return payments.charge_balance(plan)
+
+
+def test_the_balance_cron_charging_the_card_is_a_balance_paid():
+    row = _added("balance_paid")
+    plan = _balance_due_plan()
+    _charge_balance(plan)
+    (tp,) = _queued(row)
+    assert (tp.lead, tp.reservation) == (plan.lead, None)
+
+
+def test_the_webhook_for_a_cron_charged_balance_does_not_tell_them_again():
+    row = _added("balance_paid")
+    plan = _balance_due_plan()
+    _charge_balance(plan)
+    _queued(row).update(status=S.CANCELLED)  # nothing left to block a second one
+    _pay(plan, "pi_bal", Charge.Kind.BALANCE)  # payment_intent.succeeded arrives
+    assert _queued(row).count() == 1
+
+
+def test_a_declined_balance_is_not_a_balance_paid():
+    import stripe
+
+    row = _added("balance_paid")
+    plan = _balance_due_plan()
+    declined = stripe.error.CardError("Your card was declined.", None, "card_declined")
+    _charge_balance(plan, side_effect=declined)
+    assert not _queued(row).exists()
+
+
 def test_a_trip_charge_is_neither_payment_event():
     rows = [_added("deposit_paid"), _added("balance_paid")]
     plan = _plan(status=Lead.Status.BOOKED)
@@ -169,6 +210,16 @@ def test_an_affiliate_accepting_queues_the_affiliate_accepted_rows():
     trip = _trip()
     offer = AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
     dispatch_services.confirm(offer)
+    (tp,) = _queued(row)
+    assert (tp.lead, tp.reservation) == (trip.lead, trip)
+
+
+def test_coverage_arranged_by_phone_is_an_affiliate_accepting():
+    from apps.vendors.factories import VendorFactory
+
+    row = _added("affiliate_accepted")
+    trip = _trip()
+    dispatch_services.assign_direct(trip, VendorFactory(), payout=Decimal("100.00"))
     (tp,) = _queued(row)
     assert (tp.lead, tp.reservation) == (trip.lead, trip)
 
@@ -367,3 +418,42 @@ def test_a_repointed_thank_you_sends_the_wedding_words(live):
     assert tp.status == S.SENT
     bodies = [c.kwargs["body"] for c in send.call_args_list]
     assert bodies and all("Congratulations on the wedding" in b for b in bodies)
+
+
+# --- a whole order cancelled and refunded --------------------------------------------------
+
+
+def test_cancelling_an_order_tells_each_live_trip_once(client, live):
+    """Only the trips still live are news; one already cancelled was told then."""
+    from apps.accounts.models import User
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    row = _added("trip_cancelled")
+    trip = _trip()
+    gone = ReservationFactory(lead=trip.lead, trip_status=Reservation.TripStatus.CANCELLED)
+    plan = PaymentPlanFactory(lead=trip.lead, quote_total=Decimal("1000.00"))
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    with patch(SEND, return_value={"uid": "m"}) as send:
+        response = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+    assert response.status_code == 302
+    trip.refresh_from_db()
+    assert trip.trip_status in CANCELLED_STATUSES
+    assert Lead.objects.get(pk=trip.lead_id).status == Lead.Status.LOST
+    (tp,) = _queued(row)
+    assert tp.reservation == trip
+    assert not _queued(row, reservation=gone).exists()
+    send.assert_not_called()  # due now, but sent on commit (the test never commits)
+
+
+def test_a_cancelled_order_s_trip_message_goes_out(live):
+    from apps.messaging import sender
+
+    row = _added("trip_cancelled")
+    trip = _trip()
+    payments.cancel_booked_order(trip.lead)
+    (tp,) = _queued(row)
+    with patch(SEND, return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
+    send.assert_called_once()
+    tp.refresh_from_db()
+    assert tp.status == S.SENT

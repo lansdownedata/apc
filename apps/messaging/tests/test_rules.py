@@ -159,6 +159,22 @@ def test_trip_cancelled_trigger_still_sends_for_a_cancelled_trip():
     assert rules.check(_tp(row, lead, trip), row) == SEND
 
 
+def test_trip_cancelled_trigger_still_sends_on_a_cancelled_order():
+    """A whole order cancelled cancels its trips: the trip's cancellation message is the
+    cancellation itself (spec section 3), so the order being lost doesn't stop it."""
+    row = MessageRowFactory(trigger="trip_cancelled", sms_body="Cancelled.")
+    lead = LeadFactory(status=Lead.Status.LOST)
+    trip = _status(_trip(lead), Reservation.TripStatus.CANCELLED)
+    assert rules.check(_tp(row, lead, trip), row) == SEND
+
+
+def test_other_trip_rows_still_skip_on_a_lost_order():
+    row = MessageRowFactory(trigger="trip_done", sms_body="Thanks.")
+    lead = LeadFactory(status=Lead.Status.LOST)
+    trip = _trip(lead)
+    assert rules.check(_tp(row, lead, trip), row) == ("skip", "lead LOST")
+
+
 def test_before_row_past_pickup_skips():
     row = _row("trip_confirm_customer")
     lead = _booked()

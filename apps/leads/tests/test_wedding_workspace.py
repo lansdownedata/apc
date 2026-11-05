@@ -94,6 +94,7 @@ def test_an_ordinary_new_lead_still_schedules_touch_points(client, agent, monkey
         {"name": "Jane Rider", "email": "jane@example.com", "channel": "website"},
     )
     assert len(called) == 1
+    assert called[0][0] == "lead_created"
 
 
 # --- the markup itself --------------------------------------------------------------

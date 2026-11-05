@@ -265,11 +265,17 @@ def assign_direct(
     """Record coverage already arranged out of band (phone, text) — no offer step.
 
     Always MANUAL, even for a GNet-capable vendor: this is a phone-arranged coverage
-    record, not a farm-out, so it never touches the gateway.
+    record, not a farm-out, so it never touches the gateway. The affiliate has accepted
+    (by phone), so it is the affiliate-accepted message event too; in-house coverage goes
+    through `assign_in_house` and is not.
     """
-    return _claim(
+    from apps.messaging import events
+
+    assignment = _claim(
         reservation, vendor=vendor, payout=payout, note=note, status=Assignment.Status.CONFIRMED
     )
+    events.emit("affiliate_accepted", reservation.lead, reservation)
+    return assignment
 
 
 def assign_in_house(

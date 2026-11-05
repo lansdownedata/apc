@@ -104,6 +104,15 @@ def _stops(lookup: str):
 # --- the row ---------------------------------------------------------------------------
 
 
+class Rows(dict):
+    """A batch's message rows by key, with an index by pk built once for the batch."""
+
+    def __init__(self, rows: Iterable[MessageTemplate]):
+        rows = list(rows)
+        super().__init__((row.key, row) for row in rows)
+        self.by_pk = {row.pk: row for row in rows}
+
+
 def _row_for(tp: TouchPoint, rows: dict[str, MessageTemplate] | None) -> MessageTemplate | None:
     """The message row a TouchPoint sends, pointing a TouchPoint the old scheduler queued
     (no message yet) at the row for its kind.
@@ -119,7 +128,8 @@ def _row_for(tp: TouchPoint, rows: dict[str, MessageTemplate] | None) -> Message
         if rows is None:
             return tp.message
         # The batch's rows, service types already loaded: no join, no query per TouchPoint.
-        row = next((r for r in rows.values() if r.pk == tp.message_id), None)
+        index = rows.by_pk if isinstance(rows, Rows) else {r.pk: r for r in rows.values()}
+        row = index.get(tp.message_id)
         if row is None:
             return tp.message
         tp.message = row
@@ -580,7 +590,7 @@ def _send_batch(due) -> int:
         return 0
 
     master = NotificationConfig.load().enabled
-    rows = {r.key: r for r in MessageTemplate.objects.prefetch_related("service_types")}
+    rows = Rows(MessageTemplate.objects.prefetch_related("service_types"))
     sent = 0
     batch = (
         due.select_related(*_SELECT)

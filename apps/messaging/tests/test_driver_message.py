@@ -169,7 +169,11 @@ def test_sent_not_resent_on_pickup_move():
     TouchPoint.objects.filter(pk=tp.pk).update(status=TouchPoint.Status.SENT)
     res.pickup_date = res.pickup_date - timedelta(days=1)
     res.save()
-    assert events.sync_waiting(res) is None
+    events.sync_waiting(res)
+    # The old `sync_driver_message(res) is None`: no update queued, the sent row untouched.
+    assert not TouchPoint.objects.filter(reservation=res, kind=K.DRIVER_UPDATED).exists()
+    sent = TouchPoint.objects.get(pk=tp.pk)
+    assert (sent.status, sent.scheduled_for) == (TouchPoint.Status.SENT, tp.scheduled_for)
     assert _rows(res).count() == 1
 
 

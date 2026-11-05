@@ -191,6 +191,7 @@ def test_left_scheduled_when_public_base_url_is_unset(settings):
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
+    assert tp.error == "waiting for PUBLIC_BASE_URL"
 
 
 # --- cancel_pending leaves it alone ------------------------------------------

@@ -210,6 +210,7 @@ def test_the_explanation_is_never_sent_without_a_working_link(settings):
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
+    assert tp.error == "waiting for PUBLIC_BASE_URL"
 
 
 # --- the way back --------------------------------------------------------------------

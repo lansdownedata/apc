@@ -15,14 +15,13 @@ from apps.accounts.permissions import payment_access_required
 from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.dispatch import selectors as dispatch_selectors
-from apps.dispatch import services as dispatch_services
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads import contact_roles
 from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
-from apps.reservations.models import Reservation, Stop
+from apps.reservations.models import Stop
 from apps.tasks import selectors as task_selectors
 
 from . import ledger, payables, reports, services, webhooks
@@ -209,17 +208,7 @@ def order_cancel_refund(request, lead_id):
                 f"{exc.user_message or exc}",
             )
             return redirect("lead_detail", pk=lead_id)
-    lead.reservations.update(
-        trip_status=Reservation.TripStatus.CANCELLED,
-        revenue_status=Reservation.RevenueStatus.REVERSED,
-    )
-    # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
-    # them would be unreachable — pull it here while we still know the trip died.
-    dispatch_services.release_trips(lead.reservations.all(), note="Order cancelled")
-    lead.status = Lead.Status.LOST
-    lead.lost_reason = "Cancelled"
-    lead.has_alert = False
-    lead.save(update_fields=["status", "lost_reason", "has_alert", "updated_at"])
+    services.cancel_booked_order(lead)
     messages.success(request, "Order cancelled and refunded.")
     return redirect("lead_detail", pk=lead_id)
 

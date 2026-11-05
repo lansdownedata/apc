@@ -235,11 +235,14 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             stripe_ref=intent.id,
             memo="Balance captured",
         )
-    # Not through record_payment, so it needs its own hook — or every cron-charged
-    # balance would leave "Final balance paid" open until the next run-tasks tick.
+    # Not through record_payment, so it needs its own hooks — or every cron-charged
+    # balance would leave "Final balance paid" open until the next run-tasks tick, and
+    # the balance-paid message would never be queued. The charge is new to this call and
+    # already SUCCEEDED, so the webhook's `record_payment` for it fires nothing again.
     from apps.tasks import services as tasks
 
     tasks.sync(plan.lead)
+    events.emit("balance_paid", plan.lead)
     return charge
 
 
@@ -866,6 +869,36 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     # explaining the cancellation must not be cancelled by the cancellation.
     events.emit("order_cancelled", lead)
     return charge
+
+
+def cancel_booked_order(lead) -> list:
+    """Cancel a booked order once its money is back (the Orders console's Cancel & refund):
+    every trip cancelled with its revenue reversed, any affiliate let go, the order lost.
+
+    Each trip that was still live is a `trip_cancelled` message event; one already
+    cancelled was news when it was. The events come last, after every write, because a
+    message due now goes out on commit, which outside a transaction is right here. Returns
+    the trips this cancelled."""
+    from apps.dispatch import services as dispatch_services
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.leads.models import Lead
+    from apps.reservations.models import Reservation
+
+    live = list(lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES))
+    lead.reservations.update(
+        trip_status=Reservation.TripStatus.CANCELLED,
+        revenue_status=Reservation.RevenueStatus.REVERSED,
+    )
+    # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
+    # them would be unreachable — pull it here while we still know the trip died.
+    dispatch_services.release_trips(lead.reservations.all(), note="Order cancelled")
+    lead.status = Lead.Status.LOST
+    lead.lost_reason = "Cancelled"
+    lead.has_alert = False
+    lead.save(update_fields=["status", "lost_reason", "has_alert", "updated_at"])
+    for trip in live:
+        events.emit("trip_cancelled", lead, trip)
+    return live
 
 
 def expire_authorization(charge: Charge) -> Charge:

@@ -352,8 +352,11 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         master = NotificationConfig.load().enabled
     if not master or not row.enabled or row.archived_at is not None:
         return "skip", DISABLED
-    # The cancellation message exists because the order is lost.
-    if lead.status == lead.Status.LOST and row.trigger != "order_cancelled":
+    # A cancellation message exists because the order is lost: the order's own, or a
+    # trip's when the whole order was cancelled (spec section 3, "unless the trigger is the
+    # cancellation itself").
+    cancellation = row.trigger in _CANCELLATIONS
+    if lead.status == lead.Status.LOST and not cancellation:
         return "skip", "lead LOST"
 
     if built_in and row.key == "review_request":
@@ -370,7 +373,8 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         _WAITS.get(row.key, "") if built_in else ""
     )
     if trigger is not None and trigger.level == "trip":
-        if lead.status != lead.Status.BOOKED:
+        lost_and_cancelling = cancellation and lead.status == lead.Status.LOST
+        if lead.status != lead.Status.BOOKED and not lost_and_cancelling:
             return "skip", "lead not booked"
         if res is None:
             return "skip", "no reservation"
