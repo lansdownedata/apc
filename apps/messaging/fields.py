@@ -1,9 +1,13 @@
-"""The fields an owner may put in a message, per kind, and the save-time check on a draft."""
+"""The fields an owner may put in a message, per trigger, and the save-time check on a draft.
+
+`fields_for` / `validate(row_data)` are the editor's (Task 15). The kind-based `fields_for_kind`
+and `validate(kind, ...)` serve spec B's settings page until the editor replaces it.
+"""
 
 import string
 from dataclasses import dataclass
 
-from . import defaults
+from . import defaults, triggers
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,8 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("trip_pickup_tz", "Time zone"),
         ("trip_pickup_when", "Pickup date & time"),
         ("trip_routing", "Route"),
-        ("trip_passengers", "Passengers"),
+        ("trip_passengers", "Number of passengers"),
+        ("trip_passenger_names", "Passengers"),
         ("trip_vehicle", "Vehicle type"),
         ("trip_sheet", "Trip details"),
         ("contact_on_file", "Day-of contact"),
@@ -66,6 +71,8 @@ FIELDS: dict[str, Field] = {
 }
 
 _LINKS = ("quote_link", "pay_link", "confirm_link", "ack_link", "review_link")
+# Links the sender fills only in particular cases; `fields_for` adds each where it can.
+_SENDER_LINKS = ("confirm_link", "ack_link", "review_link")
 _TRIP_KINDS = frozenset(
     {
         "wed_final_details",
@@ -110,10 +117,38 @@ def _keys_for(kind: str) -> set[str]:
     return keys
 
 
-def fields_for(kind: str) -> list[Field]:
-    """The fields offered (and accepted) for a kind, in registry order."""
+def fields_for_kind(kind: str) -> list[Field]:
+    """The fields offered (and accepted) for a seeded kind, in registry order (spec B page)."""
     keys = _keys_for(kind)
     return [f for key, f in FIELDS.items() if key in keys]
+
+
+def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
+    """The fields a message on this trigger and audience may use, in registry order.
+
+    Only what the sender fills: the Affiliate group is for the affiliate audience; `confirm_link`
+    only on trip-level triggers for a non-affiliate audience (`rules.fill_links`); `ack_link` and
+    `review_link` only for the seeded message that carries them, while it stays on its trigger
+    (`key` names that seeded message).
+    """
+    trigger = triggers.get(trigger_key)
+    groups = set(trigger.field_groups)
+    if audience != "affiliate":
+        groups.discard("Affiliate")
+    keys = {k for g in groups for k, _ in _GROUPS[g]}
+    keys -= set(_SENDER_LINKS)
+    if "Links" in groups:
+        keys |= {"quote_link", "pay_link"}
+        if trigger.level == "trip" and audience != "affiliate":
+            keys.add("confirm_link")
+    if _original_trigger(key, trigger_key):
+        keys |= required_for(key)
+    return [f for k, f in FIELDS.items() if k in keys]
+
+
+def _original_trigger(key: str, trigger_key: str) -> bool:
+    default = defaults.DEFAULTS.get(key)
+    return default is not None and default.trigger == trigger_key
 
 
 def _names(text: str) -> set[str]:
@@ -165,15 +200,8 @@ _PURPOSE = {
 _CHANNEL_NAME = {"email": "email", "sms": "SMS"}
 
 
-def validate(kind: str, *, subject: str, email_body: str, sms_body: str) -> dict[str, str]:
-    """Per-box errors for a draft, keyed subject | email_body | sms_body; {} when valid.
-
-    One message per box, in priority order: braces, unknown field, missing link, empty.
-    """
-    boxes = {"subject": subject, "email_body": email_body, "sms_body": sms_body}
-    allowed = {f.key for f in fields_for(kind)}
-    channels = _channels(kind)
-    used = {"subject": "email", "email_body": "email", "sms_body": "sms"}
+def _check_boxes(boxes: dict[str, str], allowed: set[str]) -> tuple[dict[str, str], set[str]]:
+    """Per-box brace, unknown-field and formatting errors, and every field name used."""
     errors: dict[str, str] = {}
     present: set[str] = set()
     for box, text in boxes.items():
@@ -190,18 +218,77 @@ def validate(kind: str, *, subject: str, email_body: str, sms_body: str) -> dict
             errors[box] = (
                 "Formatting isn't supported inside a field. Use the buttons below to insert fields."
             )
+    return errors, present
 
-    missing = sorted(required_for(kind) - present)
-    if missing:
-        first = next(
-            (b for b in ("subject", "email_body", "sms_body") if used[b] == channels[0]), None
-        )
-        first = "email_body" if first == "subject" else first
-        if first and first not in errors:
-            key = missing[0]
-            errors[first] = f"This message needs {{{key}}} — it's how the customer {_PURPOSE[key]}."
+
+def _missing_link(
+    errors: dict[str, str], present: set[str], required: frozenset[str], order: tuple[str, ...]
+) -> None:
+    """Report the first required link the wording lacks against the first channel's box."""
+    missing = sorted(required - present)
+    first = next((b for b in ("email_body", "sms_body") if _BOX_CHANNEL[b] in order[:1]), "")
+    if missing and first and first not in errors:
+        key = missing[0]
+        errors[first] = f"This message needs {{{key}}} — it's how the customer {_PURPOSE[key]}."
+
+
+_BOX_CHANNEL = {"subject": "email", "email_body": "email", "sms_body": "sms"}
+_BOX_ORDER = ("subject", "email_body", "sms_body")
+
+
+def validate(data, **texts: str) -> dict[str, str]:
+    """Save-time errors for a message, keyed by form field; {} when valid.
+
+    `validate(row_data)`: `row_data` holds trigger, audience, send_sms, send_email, subject,
+    email_body, sms_body, recipients, staff_emails, timing_direction and, for a seeded message,
+    key and seeded. `validate(kind, subject=, email_body=, sms_body=)` is spec B's text-only
+    check, kept until the editor replaces that page.
+    """
+    if isinstance(data, str):
+        return _validate_kind(data, **texts)
+    trigger = triggers.CATALOG.get(data.get("trigger", ""))
+    if trigger is None:
+        return {"trigger": "Pick when this message goes out."}
+    audience = data.get("audience", "customer")
+    seeded = bool(data.get("seeded"))
+    key = data.get("key", "") if seeded else ""
+    builtin = _original_trigger(key, trigger.key)
+    on = {"sms": bool(data.get("send_sms")), "email": bool(data.get("send_email"))}
+    errors: dict[str, str] = {}
+    if not any(on.values()):
+        errors["channels"] = "Turn on Text or Email."
+    if audience == "staff":
+        if not data.get("staff_emails"):
+            errors["staff_emails"] = "Add at least one email."
+    elif not data.get("recipients"):
+        errors["recipients"] = "Tick at least one person."
+    if data.get("timing_direction") == "before" and trigger.kind != "date":
+        errors["timing_direction"] = "Before only works with a date."
+
+    boxes = {b: data.get(b, "") or "" for b in _BOX_ORDER}
+    allowed = {f.key for f in fields_for(trigger.key, audience, key)}
+    box_errors, present = _check_boxes(boxes, allowed)
+    order = tuple(c for c in (_channels(key) if builtin else ("sms", "email")) if on[c])
+    _missing_link(box_errors, present, required_for(key) if builtin else frozenset(), order)
     for box, text in boxes.items():
-        if box not in errors and not text.strip() and used[box] in channels:
-            name = _CHANNEL_NAME[used[box]]
+        if box in box_errors or text.strip() or not on[_BOX_CHANNEL[box]]:
+            continue
+        if box == "subject":
+            box_errors[box] = "Add a subject for the email."
+        else:
+            name = _CHANNEL_NAME[_BOX_CHANNEL[box]]
+            box_errors[box] = f"Can't be empty — this message sends by {name}."
+    return errors | box_errors
+
+
+def _validate_kind(kind: str, *, subject: str, email_body: str, sms_body: str) -> dict[str, str]:
+    """Per-box errors for a seeded kind's draft; {} when valid (spec B page)."""
+    boxes = dict(zip(_BOX_ORDER, (subject, email_body, sms_body), strict=True))
+    channels = _channels(kind)
+    errors, present = _check_boxes(boxes, {f.key for f in fields_for_kind(kind)})
+    _missing_link(errors, present, required_for(kind), channels)
+    for box, text in boxes.items():
+        if box not in errors and not text.strip() and _BOX_CHANNEL[box] in channels:
+            name = _CHANNEL_NAME[_BOX_CHANNEL[box]]
             errors[box] = f"Can't be empty — this message sends by {name}."
     return errors

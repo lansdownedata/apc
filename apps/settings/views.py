@@ -372,7 +372,9 @@ def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
     first_error = next((n for n in form.TEXTS if n in box_errors), None)
     tab = "sms" if first_error == "sms_body" else "email" if first_error else ""
     channels = [{"key": c, "label": "Email" if c == "email" else "SMS"} for c in form.channels]
-    chips = [{"key": f.key, "label": f.label, "group": f.group} for f in fields.fields_for(kind)]
+    chips = [
+        {"key": f.key, "label": f.label, "group": f.group} for f in fields.fields_for_kind(kind)
+    ]
     return render(
         request,
         "settings/message_edit.html",

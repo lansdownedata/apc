@@ -538,6 +538,7 @@ def _trip_context(reservation) -> dict[str, str]:
         "trip_pickup_when",
         "trip_routing",
         "trip_passengers",
+        "trip_passenger_names",
         "trip_vehicle",
         "trip_sheet",
         "contact_on_file",
@@ -575,6 +576,7 @@ def _trip_context(reservation) -> dict[str, str]:
     stops = list(reservation.stops.all())
     ctx["trip_routing"] = " → ".join(s.address for s in stops if s.address)
     ctx["trip_passengers"] = str(reservation.passengers)
+    ctx["trip_passenger_names"] = reservation.passenger_name_list
     ctx["trip_vehicle"] = (reservation.vehicle.name if reservation.vehicle else "") or (
         reservation.service_type.name if reservation.service_type else ""
     )
