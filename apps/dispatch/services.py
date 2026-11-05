@@ -13,14 +13,12 @@ from collections.abc import Iterable
 from decimal import Decimal
 
 from django.conf import settings
-from django.contrib.staticfiles import finders
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core import outbound
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead
-from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.vendors.models import Vendor
@@ -136,11 +134,6 @@ def _on_assignment_released(reservation: Reservation) -> None:
     )
 
 
-def _offer_logo() -> str | None:
-    """Absolute path to the email banner logo PNG, or None if it isn't collectable."""
-    return finders.find("brand/apc-logo-email.png")
-
-
 def offer_email_context(assignment: Assignment) -> dict:
     """Trip-sheet fields for the affiliate. Deliberately omits the customer price —
     an affiliate sees only what we pay them."""
@@ -155,17 +148,34 @@ def offer_email_context(assignment: Assignment) -> dict:
         "company_name": settings.COMPANY_NAME,
         "company_phone": settings.COMPANY_PHONE,
         "company_email": settings.COMPANY_EMAIL,
-        # The banner logo is embedded as an inline CID attachment (see _offer_logo /
-        # the send_html_email call) so it renders without a remote fetch.
-        "logo_cid": "logo" if _offer_logo() else "",
     }
+
+
+def _affiliate(vendor: Vendor):
+    from apps.messaging.recipients import Recipient
+
+    return Recipient(
+        name=vendor.name,
+        label=f"{vendor.name} (company)",
+        phone="",
+        email=vendor.email.strip(),
+        contact_id=None,
+        channels=("email",),
+    )
+
+
+def _affiliate_values(vendor: Vendor, trip: Reservation) -> dict[str, str]:
+    """What the affiliate offer and cancellation rows fill from this click. A trip with no
+    pickup date yet says so in the subject."""
+    day = f"{trip.pickup_date:%b %-d}" if trip.pickup_date else "date to be set"
+    return {"vendor_name": vendor.name, "trip_day": day}
 
 
 def send_offer(
     reservation: Reservation, vendor: Vendor, *, payout: Decimal, note: str = ""
 ) -> Assignment:
     """Offer the trip to an affiliate — over GNet if it's a GNet-capable vendor, by
-    trip-sheet email otherwise.
+    trip-sheet email otherwise (the "Trip offer" message row).
 
     Both channels are best-effort: a GNet gateway problem or an email that fails to send
     (or a vendor with no email on file) still leaves the assignment recorded, because
@@ -203,18 +213,21 @@ def send_offer(
     if not vendor.email:
         return assignment
 
-    if reservation.pickup_date:
-        subject = f"Trip offer — {reservation.pickup_date:%b %-d}"
-    else:
-        subject = "Trip offer"
-    logo = _offer_logo()
-    if send_html_email(
-        to=vendor.email,
-        subject=subject,
-        template="vendor_offer",
-        context=offer_email_context(assignment),
-        inline_images={"logo": logo} if logo else None,
-    ):
+    from apps.messaging import rendering, sender
+
+    sent = sender.send_now(
+        "affiliate_offer",
+        reservation.lead,
+        reservation,
+        to=[_affiliate(vendor)],
+        extra_ctx={
+            **_affiliate_values(vendor, reservation),
+            "payout": f"${assignment.payout:,.2f}",
+        },
+        blocks={"trip_sheet": rendering.block("trip_sheet", offer_email_context(assignment))},
+        logo=True,
+    )
+    if sent.sent:
         return assignment
 
     Notification.notify(
@@ -227,7 +240,8 @@ def send_offer(
 
 
 def send_cancellation(assignment: Assignment) -> bool:
-    """Tell a farmed-out affiliate the trip is off. The offer email's counterpart.
+    """Tell a farmed-out affiliate the trip is off (the "Trip cancelled" message row). The
+    offer email's counterpart.
 
     Not automatic, and deliberately so: some reassignments are the affiliate's own doing
     and a "we've released it" note reads oddly back at them. The dispatcher decides.
@@ -241,22 +255,21 @@ def send_cancellation(assignment: Assignment) -> bool:
     vendor = assignment.vendor
     if assignment.is_in_house or vendor is None or not vendor.email:
         return False
+    from apps.messaging import rendering, sender
+
     trip = assignment.reservation
-    when = f" — {trip.pickup_date:%b %-d}" if trip.pickup_date else ""
-    return send_html_email(
-        to=vendor.email,
-        subject=f"Trip cancelled{when}",
-        template="vendor_cancel",
-        context={
-            "vendor": vendor,
-            "trip": trip,
-            # No payout, no total, no money of any kind — see the template.
-            "stops": list(trip.ordered_stops),
-            "company_name": settings.COMPANY_NAME,
-            "company_phone": settings.COMPANY_PHONE,
-            "company_email": settings.COMPANY_EMAIL,
-        },
+    # No payout, no total, no money of any kind — see the sheet.
+    sheet = rendering.block(
+        "cancelled_trip_sheet", {"trip": trip, "stops": list(trip.ordered_stops)}
     )
+    return sender.send_now(
+        "affiliate_cancel",
+        trip.lead,
+        trip,
+        to=[_affiliate(vendor)],
+        extra_ctx=_affiliate_values(vendor, trip),
+        blocks={"cancelled_trip_sheet": sheet},
+    ).sent
 
 
 def assign_direct(

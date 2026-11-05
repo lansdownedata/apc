@@ -133,9 +133,13 @@ def test_combine_waits_for_and_email_via():
     assert {k for k, t in triggers.CATALOG.items() if t.waits_for} == {"pickup_dispatched"}
     assert triggers.get("pickup_dispatched").waits_for == "dispatched_with_driver"
     postmark = {k for k, t in triggers.CATALOG.items() if t.email_via == "postmark"}
-    assert postmark == {
-        k for k, t in triggers.CATALOG.items() if t.kind in ("staff_click", "schedule")
-    } | {"wedding_details_received"}
+    # The payment and terms links are a Podium message recorded on the customer's
+    # conversation (APC-120): their email fallback is Podium's, as it always was.
+    podium_clicks = {"send_pay_link", "send_terms_link"}
+    assert postmark == (
+        {k for k, t in triggers.CATALOG.items() if t.kind in ("staff_click", "schedule")}
+        - podium_clicks
+    ) | {"wedding_details_received"}
 
 
 def test_every_default_trigger_is_in_the_catalog():

@@ -5,7 +5,8 @@ A row is a receipt only when `Charge.receipt_due_at` is set — processing sets 
 moment the money moves — and it has no `receipt_parent` (a refund split over several
 Stripe charges is one receipt, carried by its first row).
 
-`send_receipt` is the only sender: under a row lock, once, never raising. The money paths
+`send_receipt` is the only sender: claimed under a row lock, sent once through the
+"Receipt" message row (`messaging.sender.send_now`), never raising. The money paths
 call `queue` (after commit); `tasks.retry_receipts` picks up anything that failed to go.
 A receipt that falls due while `OUTBOUND_ENABLED` is off is closed unsent
 (`receipt_skipped_at`) and never sent later: receipts go out as they are made, with no
@@ -18,21 +19,24 @@ The copy is DRAFT until the client signs it off
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import transaction
+from django.template import engines
 from django.utils import timezone
 
 from apps.core import outbound
-from apps.notifications.email import deliver_html_email
 
 from .models import Charge
 
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0.00")
+# How long a claimed receipt counts as being sent by the call that claimed it.
+SENDING = timedelta(minutes=5)
 
 
 def is_receipt(charge: Charge) -> bool:
@@ -163,9 +167,60 @@ def subject(context: dict) -> str:
     return f"Your {context['company_name']} {what} {context['number']}"
 
 
+def _person(charge: Charge, to: str):
+    from apps.messaging.recipients import Recipient
+
+    lead = charge.reservation.lead
+    billing = lead.effective_billing_contact
+    contact = billing if (billing.email or "").strip() else lead.contact
+    why = "billing contact" if contact == billing else "booking contact"
+    return Recipient(
+        name=contact.name,
+        label=f"{contact.name} ({why})",
+        phone="",
+        email=to,
+        contact_id=contact.pk,
+        channels=("email",),
+    )
+
+
+def _sentence(name: str, context: dict) -> str:
+    """One of the receipt's own sentences (the partials `trip_receipt.*` include too), as
+    plain text: the sender escapes the HTML part itself."""
+    plain = engines["django"].from_string(
+        "{% autoescape off %}{% include name %}{% endautoescape %}"
+    )
+    return plain.render({**context, "name": f"email/{name}.txt"}).strip()
+
+
+def message_values(context: dict) -> dict[str, str]:
+    """What the "Receipt" message row fills from this receipt (`fields._GROUPS["Receipt"]`)."""
+    return {
+        "first_name": context["first_name"] or "there",
+        "receipt_name": f"{'refund' if context['is_refund'] else 'receipt'} {context['number']}",
+        "receipt_intro": _sentence("_trip_receipt_intro", context),
+        "receipt_explanation": _sentence("_trip_receipt_explanation", context),
+        "receipt_kind": "refund" if context["is_refund"] else "charge",
+    }
+
+
+def _in_flight(charge: Charge) -> bool:
+    """Another call took this receipt moments ago and may be sending it now (the send runs
+    after the row lock is let go); a try that failed is retried by `tasks.retry_receipts`."""
+    tried = charge.receipt_attempted_at
+    return tried is not None and tried > timezone.now() - SENDING
+
+
 def send_receipt(charge_id: int) -> bool:
     """Send one receipt, once. True when it went out now. Never raises: a failure leaves it
-    unsent for `tasks.retry_receipts`."""
+    unsent for `tasks.retry_receipts`.
+
+    The row is claimed under its lock (`receipt_attempted_at`), and the "Receipt" message row
+    is sent after the lock is let go, so the trail of a message that went out is never rolled
+    back."""
+    from apps.messaging import rendering, sender
+    from apps.messaging.models import Delivery
+
     try:
         with transaction.atomic():
             charge = (
@@ -183,6 +238,8 @@ def send_receipt(charge_id: int) -> bool:
                 charge.receipt_skipped_at = timezone.now()
                 charge.save(update_fields=["receipt_skipped_at", "updated_at"])
                 return False
+            if _in_flight(charge):
+                return False
             charge.receipt_attempted_at = timezone.now()
             charge.save(update_fields=["receipt_attempted_at", "updated_at"])
             to = recipient(charge)
@@ -190,15 +247,26 @@ def send_receipt(charge_id: int) -> bool:
                 logger.warning("receipt %s not sent: no email on the order", charge_id)
                 return False
             context = receipt_context(charge)
-            message_id = deliver_html_email(
-                to=to, subject=subject(context), template="trip_receipt", context=context
-            )
-            if message_id is None:
-                return False
-            charge.receipt_sent_at = timezone.now()
-            charge.receipt_message_id = message_id[:120]
-            charge.save(update_fields=["receipt_sent_at", "receipt_message_id", "updated_at"])
-            return True
+        trip = charge.reservation
+        result = sender.send_now(
+            "payment_receipt",
+            trip.lead,
+            trip,
+            to=[_person(charge, to)],
+            extra_ctx=message_values(context),
+            blocks={"receipt_lines": rendering.block("receipt_lines", context)},
+        )
+        if not result.sent:
+            return False
+        message_id = next(
+            (d.provider_id for d in result.deliveries if d.status == Delivery.Status.SENT), ""
+        )
+        Charge.objects.filter(pk=charge_id).update(
+            receipt_sent_at=timezone.now(),
+            receipt_message_id=message_id[:120],
+            updated_at=timezone.now(),
+        )
+        return True
     except Exception:  # noqa: BLE001 - a receipt must never break the money path
         logger.exception("receipt for charge %s failed", charge_id)
         Charge.objects.filter(pk=charge_id).update(receipt_attempted_at=timezone.now())

@@ -675,7 +675,31 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         "balance_due_date": f"{balance_due:%b %d, %Y}" if balance_due else "",
         "card_last4": plan.card_last4 if plan else "",
         **_trip_context(reservation),
+        # Filled by a staff click's caller (`sender.send_now`), on its own trigger only.
+        **dict.fromkeys(_CLICK_KEYS, ""),
     }
+
+
+# The values and generated parts a staff click hands over (`fields._GROUPS`, the click
+# groups); a test keeps the two in step.
+_CLICK_KEYS = (
+    "contact_name",
+    "quote_total",
+    "deposit_pct",
+    "deposit_amount",
+    "quote_valid_through",
+    "quote_summary",
+    "button",
+    "payment_for",
+    "terms_link",
+    "receipt_name",
+    "receipt_intro",
+    "receipt_lines",
+    "receipt_explanation",
+    "receipt_kind",
+    "trip_day",
+    "cancelled_trip_sheet",
+)
 
 
 def render(text: str, ctx: dict[str, str]) -> str:

@@ -1064,15 +1064,11 @@ def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge
 
 # --- the pay link --------------------------------------------------------------------
 
-_PAY_LINK_CHANNEL = {"sms": "phone", "email": "email"}
-
 
 def send_terms_link(lead, *, base_url: str, sender_name: str) -> str:
     """APC-93 — send a staff or phone booking the link to accept the T&Cs, over Podium (SMS
     preferred, email fallback), recorded on the conversation. Returns the channel used.
-
-    CLIENT COPY PENDING (APC-27): the body is a placeholder sentence until the wording
-    document is signed off.
+    The wording is the "Terms link" message row's (CLIENT COPY PENDING, APC-27).
     """
     from apps.leads import services as lead_services
 
@@ -1083,32 +1079,64 @@ def send_terms_link(lead, *, base_url: str, sender_name: str) -> str:
     if lead.accepted_terms_at is not None:
         raise PaymentError("The customer has already accepted the terms.")
     link = lead_services.make_terms_page_url(lead, base_url=base_url)
-    body = f"Please review and accept the terms for reservation {lead.quote_no}: {link}"
-    return _send_to_customer(lead, body=body, sender_name=sender_name)
+    return _send_link(lead, "send_terms_link", {"terms_link": link}, sender_name=sender_name)
 
 
-def _send_to_customer(lead, *, body: str, sender_name: str) -> str:
-    """One Podium message to the order's contact, SMS preferred, email fallback, recorded
-    as outbound on their conversation. Returns the channel used."""
-    from apps.integrations import podium
-    from apps.messaging import services as messaging_services
-    from apps.messaging.models import Message
+def _reach(contact):
+    """Who a link goes to and on which channel: the order's contact, SMS preferred, email
+    fallback, at the address as stored."""
+    from apps.messaging.recipients import Recipient
 
-    contact = lead.contact
     if contact.phone:
-        channel, identifier = "sms", contact.phone
+        channel = "sms"
     elif contact.email:
-        channel, identifier = "email", contact.email
+        channel = "email"
     else:
         raise PaymentError("No phone or email on file for this contact.")
-    response = podium.send_message(
-        identifier=identifier, body=body, channel_type=_PAY_LINK_CHANNEL[channel]
+    person = Recipient(
+        name=contact.name,
+        label=f"{contact.name} (booking contact)",
+        phone=contact.phone or "",
+        email=(contact.email or "").strip(),
+        contact_id=contact.pk,
     )
-    uid = ""
-    if isinstance(response, dict):
-        uid = response.get("uid") or (response.get("data") or {}).get("uid") or ""
+    return channel, person
+
+
+def _send_link(lead, key: str, values: dict, *, sender_name: str) -> str:
+    """Send message row ``key`` (a link) to the order's contact; returns the channel used."""
+    from apps.messaging import sender
+
+    channel, person = _reach(lead.contact)
+    body = sender.podium_text(key, lead, person, channel, extra_ctx=values)
+    return _send_to_customer(
+        lead,
+        key=key,
+        body=body,
+        values=values,
+        channel=channel,
+        person=person,
+        sender_name=sender_name,
+    )
+
+
+def _send_to_customer(lead, *, key, body, values, channel, person, sender_name) -> str:
+    """One Podium message (the row ``key``, which renders as ``body``) to the order's
+    contact on ``channel``, recorded as outbound on their conversation. Returns the channel.
+
+    A send that fails raises `PodiumAPIError` with the provider's reason, for the caller to
+    report as the gateway failure it is."""
+    from apps.integrations.podium import PodiumAPIError
+    from apps.messaging import sender
+    from apps.messaging import services as messaging_services
+    from apps.messaging.models import Delivery, Message
+
+    result = sender.send_now(key, lead, to=[person], extra_ctx=values, channels={channel})
+    if not result.sent:
+        raise PodiumAPIError("; ".join(result.errors) or "The message was not sent.")
+    uid = next((d.provider_id for d in result.deliveries if d.status == Delivery.Status.SENT), "")
     messaging_services.record_outbound(
-        messaging_services.conversation_for(contact),
+        messaging_services.conversation_for(lead.contact),
         channel=Message.Channel.SMS if channel == "sms" else Message.Channel.EMAIL,
         body=body,
         podium_message_uid=uid,
@@ -1120,10 +1148,11 @@ def _send_to_customer(lead, *, body: str, sender_name: str) -> str:
 def send_pay_link(lead, *, base_url: str, sender_name: str) -> str:
     """Send the customer their pay-page link over Podium — SMS preferred, email fallback —
     and record it on the conversation. Returns the channel used. The page itself decides
-    what's owed (deposit, balance or the final bill).
+    what's owed (deposit, balance or the final bill); the wording is the "Payment link"
+    message row's.
 
-    Podium failures propagate as `PodiumAPIError` / `PodiumNotConnected` for the caller to
-    report; a contact with no way to reach them is a `PaymentError`.
+    A Podium failure raises `PodiumAPIError` for the caller to report; a contact with no way
+    to reach them is a `PaymentError`.
     """
     _card_order_only(lead)
     from apps.leads import services as lead_services
@@ -1133,8 +1162,8 @@ def send_pay_link(lead, *, base_url: str, sender_name: str) -> str:
     link = lead_services.make_pay_page_url(lead, base_url=base_url)
     trip = _open_trip_for(lead)
     what = f"trip {trip.reference}" if trip is not None else f"reservation {lead.quote_no}"
-    body = f"Here's a secure link to pay for {what}: {link}"
-    return _send_to_customer(lead, body=body, sender_name=sender_name)
+    values = {"pay_link": link, "payment_for": what}
+    return _send_link(lead, "send_pay_link", values, sender_name=sender_name)
 
 
 def _open_trip_for(lead):

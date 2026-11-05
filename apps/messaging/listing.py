@@ -148,7 +148,7 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
 
 def edited(row: MessageTemplate) -> bool:
     """A seeded row that differs from its original (its switch aside)."""
-    default = defaults.DEFAULTS.get(row.key)
+    default = defaults.ORIGINALS.get(row.key)
     if default is None:
         return False
     plain = (n for n in defaults._RESET_FIELDS if n not in ("recipients", "staff_emails"))

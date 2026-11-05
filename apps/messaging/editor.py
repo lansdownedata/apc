@@ -42,7 +42,7 @@ def is_staff_click(trigger_key: str) -> bool:
 
 
 def _builtin(key: str, trigger_key: str, seeded: bool) -> bool:
-    default = defaults.DEFAULTS.get(key)
+    default = defaults.ORIGINALS.get(key)
     return bool(seeded and default is not None and default.trigger == trigger_key)
 
 
@@ -114,7 +114,7 @@ def _normalise(row: MessageTemplate) -> None:
         row.timing_direction = MessageTemplate.Direction.AFTER
     if is_staff_click(row.trigger):
         row.enabled = True
-    default = defaults.DEFAULTS.get(row.key)
+    default = defaults.ORIGINALS.get(row.key)
     if row.seeded and default is not None and has_timing(row.trigger):
         original = _offset(default.timing_amount, default.timing_unit, default.timing_direction)
         if row.offset == original:
@@ -148,7 +148,7 @@ def reset(row: MessageTemplate, *, user=None) -> int:
     with transaction.atomic():
         was = _lock(row)
         defaults.reset(row)
-        row.enabled = defaults.DEFAULTS[row.key].enabled
+        row.enabled = defaults.ORIGINALS[row.key].enabled
         row.updated_by = user
         row.save(update_fields=["enabled", "updated_by", "updated_at"])
     return _follow(row, was)
@@ -507,6 +507,36 @@ def sample_context(base_url: str) -> dict[str, str]:
             "company_name": settings.COMPANY_NAME,
             "company_phone": settings.COMPANY_PHONE,
             "company_email": settings.COMPANY_EMAIL,
+            # What a staff click's caller hands over (its own field groups).
+            "contact_name": "Sample Customer",
+            "quote_total": "$450.00",
+            "deposit_pct": "50",
+            "deposit_amount": "$225.00",
+            "quote_valid_through": f"{pickup - timedelta(days=14):%B %-d, %Y}",
+            "quote_summary": (
+                "  QUOTE NO.       Q-1042\n  PREPARED FOR    Sample Customer\n"
+                "  ESTIMATED TOTAL $450.00\n\nA 50% deposit of $225.00 reserves your booking."
+            ),
+            "button": f"View your quote & reserve:\n{base_url}/quote/sample/",
+            "payment_for": "reservation Q-1042",
+            "terms_link": f"{base_url}/quote/sample/terms/",
+            "receipt_name": "receipt R-1042",
+            "receipt_intro": f"We charged your card for your trip on {pickup:%A, %B %-d}.",
+            "receipt_lines": (
+                f"  AMOUNT CHARGED  $120.00\n  Visa ••4242 · {date_text} · Receipt R-1042\n\n"
+                "  Overtime (1 hr): $120.00\n  Total: $120.00"
+            ),
+            "receipt_explanation": (
+                "Your trip ran past its scheduled end, and time beyond the grace period "
+                "bills by the hour, as in your booking terms."
+            ),
+            "receipt_kind": "charge",
+            "trip_day": f"{pickup:%b %-d}",
+            "cancelled_trip_sheet": (
+                f"{pickup:%A, %B %-d, %Y} at {time_text}\nVehicle: Luxury SUV\nPassengers: 4\n\n"
+                "Routing:\n  1. 1 Main St, Washington, DC\n"
+                "  2. Dulles International Airport (IAD)"
+            ),
         }
     )
     return ctx
@@ -586,10 +616,13 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
         people = rules.recipients_for(tp, row, recipients.resolve(row, lead, trip))
         lines = _to_lines(row, people)
         contexts, heads = {}, {}
+        samples = sample_context(base_url)
         for channel in on:
             claimed = _claimed(people, channel)
             first = next((p for p in people if id(p) in claimed), None)
             ctx = build_context(lead, trip)
+            # A staff click's own values come from its caller; samples stand in for them.
+            ctx.update({key: samples[key] for key in message_fields.CLICK_FIELDS})
             if first is not None and row.audience in (
                 MessageTemplate.Audience.CUSTOMER,
                 MessageTemplate.Audience.PLANNER,

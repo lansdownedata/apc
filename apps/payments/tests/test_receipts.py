@@ -169,7 +169,7 @@ def test_a_send_that_raises_never_breaks_the_charge(django_capture_on_commit_cal
     trip = _trip()
     _paid(trip)
     _overtime(trip)
-    with patch.object(receipts, "deliver_html_email", side_effect=RuntimeError("down")):
+    with patch("apps.notifications.email.deliver_html_email", side_effect=RuntimeError("down")):
         with django_capture_on_commit_callbacks(execute=True):
             charge = _charge(trip)
 

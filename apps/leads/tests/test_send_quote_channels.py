@@ -28,8 +28,8 @@ def new_lead(contact_with_both):
 
 def test_email_only_does_not_send_sms(new_lead):
     with (
-        patch("apps.leads.services.send_html_email", return_value=True) as send_email,
-        patch("apps.leads.services.podium.send_message") as send_sms,
+        patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send_email,
+        patch("apps.integrations.podium.send_message") as send_sms,
     ):
         result = services.send_quote(new_lead, base_url="https://x.test", channels={"email"})
     assert result.ok
@@ -41,8 +41,8 @@ def test_email_only_does_not_send_sms(new_lead):
 
 def test_sms_only_does_not_send_email(new_lead):
     with (
-        patch("apps.leads.services.send_html_email") as send_email,
-        patch("apps.leads.services.podium.send_message") as send_sms,
+        patch("apps.notifications.email.deliver_html_email") as send_email,
+        patch("apps.integrations.podium.send_message") as send_sms,
     ):
         result = services.send_quote(new_lead, base_url="https://x.test", channels={"sms"})
     assert send_email.call_count == 0
@@ -54,8 +54,8 @@ def test_sms_only_does_not_send_email(new_lead):
 
 def test_both_is_the_default(new_lead):
     with (
-        patch("apps.leads.services.send_html_email", return_value=True) as send_email,
-        patch("apps.leads.services.podium.send_message") as send_sms,
+        patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send_email,
+        patch("apps.integrations.podium.send_message") as send_sms,
     ):
         result = services.send_quote(new_lead, base_url="https://x.test")
     assert send_email.call_count == 1
@@ -65,8 +65,8 @@ def test_both_is_the_default(new_lead):
 
 def test_a_delivery_failure_does_not_roll_back_the_transition(new_lead):
     with (
-        patch("apps.leads.services.send_html_email", return_value=False),
-        patch("apps.leads.services.podium.send_message", side_effect=Exception("podium down")),
+        patch("apps.notifications.email.deliver_html_email", return_value=None),
+        patch("apps.integrations.podium.send_message", side_effect=Exception("podium down")),
     ):
         result = services.send_quote(new_lead, base_url="https://x.test")
     new_lead.refresh_from_db()
@@ -110,7 +110,7 @@ def test_sms_still_works_without_an_email_address():
         status=Lead.Status.NEW, contact=ContactFactory(email="", phone="+13015550100")
     )
     ReservationFactory(lead=lead, rate="500.00")
-    with patch("apps.leads.services.podium.send_message"):
+    with patch("apps.integrations.podium.send_message"):
         result = services.send_quote(lead, base_url="https://x.test", channels={"sms"})
     assert result.ok
 
@@ -122,6 +122,6 @@ def test_email_still_works_without_a_phone_number():
         status=Lead.Status.NEW, contact=ContactFactory(email="customer@example.com", phone="")
     )
     ReservationFactory(lead=lead, rate="500.00")
-    with patch("apps.leads.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         result = services.send_quote(lead, base_url="https://x.test", channels={"email"})
     assert result.ok

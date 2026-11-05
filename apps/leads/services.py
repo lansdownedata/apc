@@ -15,17 +15,17 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.contrib.staticfiles import finders
 from django.core import signing
+from django.template.defaultfilters import date as date_filter
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.core import outbound
-from apps.integrations import podium
-from apps.messaging import events
-from apps.notifications.email import send_html_email
+from apps.messaging import events, rendering, sender
+from apps.messaging.models import Delivery
+from apps.messaging.recipients import Recipient
 from apps.payments.models import PaymentPlan
 
 logger = logging.getLogger(__name__)
@@ -144,24 +144,22 @@ class SendQuoteResult:
         }
 
 
-def _quote_message(lead: Lead, plan: PaymentPlan, link: str) -> str:
-    contact = lead.contact
-    if lead.on_account:
-        # APC-105, draft wording until the client signs it off: no deposit is asked.
-        return (
-            f"Hi {contact.name}, here's your All Pro Charter quote {lead.quote_no} "
-            f"for ${plan.quote_total:,.2f}, billed to your account. "
-            f"Review and book here: {link}"
-        )
-    return (
-        f"Hi {contact.name}, here's your All Pro Charter quote {lead.quote_no} "
-        f"for ${plan.quote_total:,.2f}. To confirm, pay your {plan.deposit_pct}% "
-        f"deposit of ${plan.deposit_amount:,.2f} here: {link}"
-    )
+def _quote_values(lead: Lead, plan: PaymentPlan, link: str) -> dict[str, str]:
+    """What the Send-quote message rows fill from this send (`fields._GROUPS["Quote"]`)."""
+    return {
+        "contact_name": lead.contact.name,
+        "quote_total": f"${plan.quote_total:,.2f}",
+        "deposit_pct": f"{plan.deposit_pct}",
+        "deposit_amount": f"${plan.deposit_amount:,.2f}",
+        "quote_valid_through": (
+            date_filter(lead.quote_expires_at, "F j, Y") if lead.quote_expires_at else ""
+        ),
+        "quote_link": link,
+    }
 
 
 def _quote_email_context(lead: Lead, plan: PaymentPlan, link: str) -> dict:
-    """Template context for templates/email/quote_sent.{html,txt}."""
+    """Template context for the quote summary (templates/email/blocks/quote_summary.*)."""
     return {
         "contact_name": lead.contact.name,
         "quote_no": lead.quote_no,
@@ -169,22 +167,7 @@ def _quote_email_context(lead: Lead, plan: PaymentPlan, link: str) -> dict:
         "deposit_pct": plan.deposit_pct,
         "deposit_amount": f"{plan.deposit_amount:,.2f}",
         "on_account": lead.on_account,  # APC-105: no deposit line
-        "quote_url": link,
-        "trip_count": lead.reservations.count(),
-        "expires_at": lead.quote_expires_at,
-        "company_name": settings.COMPANY_NAME,
-        "company_phone": settings.COMPANY_PHONE,
-        "company_email": settings.COMPANY_EMAIL,
-        # The banner logo is embedded as an inline CID attachment (see _quote_logo /
-        # the send_html_email call) so it renders without a remote fetch.
-        "logo_cid": "logo" if _quote_logo() else "",
     }
-
-
-def _quote_logo() -> str | None:
-    """Absolute path to the email banner logo PNG (email clients can't render the SVG),
-    or None if it isn't collectable. Attached inline as cid:logo."""
-    return finders.find("brand/apc-logo-email.png")
 
 
 def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -> SendQuoteResult:
@@ -192,9 +175,9 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     deliver the public quote-page link on the selected channels.
 
     ``channels`` is any non-empty subset of {"email", "sms"}; ``None`` (the default) means
-    both. Email goes out as the branded HTML/text pair via
-    ``apps.notifications.email.send_html_email``; SMS keeps the short Podium text message.
-    Delivery is per-channel best-effort — the NEW->QUOTED transition, the
+    both. The wording is the Send-quote message row's (``messaging.sender.send_now``): the
+    branded email by our own mail, the short text by Podium. Delivery is per-channel
+    best-effort — the NEW->QUOTED transition, the
     quote_sent_at/quote_expires_at stamps, the quote_viewed_at reset, the PaymentPlan
     snapshot, and touch-point scheduling all commit even if every channel fails to send, so a
     missing Podium scope or a broken mail relay degrades gracefully. The Stripe deposit
@@ -264,35 +247,41 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     if lead.status != lead.Status.BOOKED:
         events.emit("quote_sent", lead)
 
-    # 6. deliver on each selected channel — best-effort, never rolls back the transition
+    # 6. deliver on each selected channel through the Send-quote message row (an order
+    # billed to an account has its own wording) — best-effort, never rolls back the
+    # transition
+    contact = lead.contact
+    person = Recipient(
+        name=contact.name,
+        label=f"{contact.name} (booking contact)",
+        phone=phone,
+        email=email,
+        contact_id=contact.pk,
+    )
+    sent = sender.send_now(
+        "send_quote_on_account" if lead.on_account else "send_quote",
+        lead,
+        to=[person],
+        extra_ctx=_quote_values(lead, plan, link),
+        blocks={
+            "quote_summary": rendering.block(
+                "quote_summary", _quote_email_context(lead, plan, link)
+            ),
+            "button": rendering.button("View your quote & reserve", link),
+        },
+        channels=selected,
+        logo=True,
+    )
     delivery: dict = {}
-    if "email" in selected:
-        result = {"sent": False, "recipient": email, "error": None}
-        try:
-            logo = _quote_logo()
-            sent = send_html_email(
-                to=email,
-                subject=f"Your {settings.COMPANY_NAME} quote {lead.quote_no}",
-                template="quote_sent",
-                context=_quote_email_context(lead, plan, link),
-                inline_images={"logo": logo} if logo else None,
-            )
-            result["sent"] = sent
-            if not sent:
-                result["error"] = "Email delivery failed — see the server log."
-        except Exception as exc:  # noqa: BLE001 — delivery must never break the send
-            result["error"] = str(exc)
-        delivery["email"] = result
-    if "sms" in selected:
-        result = {"sent": False, "recipient": phone, "error": None}
-        try:
-            podium.send_message(
-                identifier=phone, channel_type="phone", body=_quote_message(lead, plan, link)
-            )
-            result["sent"] = True
-        except Exception as exc:  # noqa: BLE001 — delivery must never break the send
-            result["error"] = str(exc)
-        delivery["sms"] = result
+    for channel, address in (("email", email), ("sms", phone)):
+        if channel not in selected:
+            continue
+        mine = [d for d in sent.deliveries if d.channel == channel]
+        ok = any(d.status == Delivery.Status.SENT for d in mine)
+        error = None
+        if not ok:
+            error = next((d.reason for d in mine if d.reason), "") or "; ".join(sent.errors)
+        delivery[channel] = {"sent": ok, "recipient": address, "error": error or None}
 
     return SendQuoteResult(
         ok=True, http_status=200, link=link, status=lead.status, delivery=delivery

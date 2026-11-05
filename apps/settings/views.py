@@ -460,7 +460,7 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
     trigger_key = form["trigger"].value() or ""
     audience = form["audience"].value() or ""
     trigger = triggers.CATALOG.get(trigger_key)
-    default = defaults.DEFAULTS.get(row.key) if row.seeded else None
+    default = defaults.ORIGINALS.get(row.key) if row.seeded else None
     original = default.trigger if default else ""
     stored = MessageTemplate.objects.prefetch_related("service_types").filter(pk=row.pk).first()
     types = list(stored.service_types.all()) if stored else []

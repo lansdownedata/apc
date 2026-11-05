@@ -10,7 +10,7 @@
 {% block content %}
 <p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ first_name|default:"there" }},</p>
 <p class="dm-muted" style="margin:0 0 24px;font-size:16px;color:#4b5563;line-height:1.6;">
-  {% if is_refund %}We've refunded you for your trip on {{ trip_date }}.{% elif paid_by_link %}Thank you for your payment for your trip on {{ trip_date }}.{% else %}We charged your card for your trip on {{ trip_date }}.{% endif %} Here are the details.
+  {% include "email/_trip_receipt_intro.txt" %} Here are the details.
 </p>
 
 {% include "email/blocks/receipt_lines.html" %}

@@ -311,6 +311,37 @@ def _address(person: Recipient, channel: str) -> str:
     return person.phone if channel == "sms" else person.email.strip()
 
 
+def _podium_text(row: MessageTemplate, channel: str, texts: dict[str, str]) -> str:
+    """The body a Podium send carries: the text, or the email as its subject line, a blank
+    line and the body (Podium email has no subject of its own)."""
+    if channel == "sms":
+        return render(row.sms_body, texts)
+    subject = render(row.subject, texts) if row.subject else ""
+    body = render(row.email_body, texts) if row.email_body else ""
+    return f"{subject}\n\n{body}" if subject else body
+
+
+def _uid(resp) -> str:
+    """Podium's message id from its answer; "" for an answer that carries none."""
+    if not isinstance(resp, dict):
+        return ""
+    return resp.get("uid") or (resp.get("data") or {}).get("uid") or ""
+
+
+def _call(send, *, tolerant: bool, **kwargs):
+    """Call a provider. In a click (``tolerant``) any failure of the call itself is that
+    delivery's error, as the button sends always reported it, and the click carries on with
+    its other sends; the batch keeps treating an unknown error as unexpected."""
+    if not tolerant:
+        return send(**kwargs)
+    try:
+        return send(**kwargs)
+    except _SEND_ERRORS:
+        raise
+    except Exception as exc:  # noqa: BLE001 - recorded on the Delivery
+        raise _NotSent(str(exc) or type(exc).__name__) from exc
+
+
 def _transport(
     row: MessageTemplate,
     channel: str,
@@ -319,27 +350,23 @@ def _transport(
     blocks: dict[str, Block] | None = None,
     *,
     logo: bool = False,
+    tolerant: bool = False,
 ) -> str:
     """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`.
 
     Our own mail goes out in the branded layout, the blocks' HTML in place
     (`rendering`), with the inline logo only when ``logo`` asks for it; texts and Podium
-    email carry the blocks' plain text."""
+    email carry the blocks' plain text. ``tolerant``: see `_call`."""
     blocks = blocks or {}
     texts = rendering.texts(ctx, blocks)
-    if channel == "sms":
-        resp = podium.send_message(
-            identifier=address,
-            channel_type=PODIUM_CHANNEL["sms"],
-            body=render(row.sms_body, texts),
-        )
-        return resp.get("uid") or resp.get("data", {}).get("uid", "")
-    if _via_postmark(row):
+    if channel == "email" and _via_postmark(row):
         logo = rendering.logo_path() if logo else None
         subject, layout = rendering.layout_context(
             row, ctx, blocks, logo_cid="logo" if logo else ""
         )
-        provider_id = mail.deliver_html_email(
+        provider_id = _call(
+            mail.deliver_html_email,
+            tolerant=tolerant,
             to=address,
             subject=subject,
             template="message",
@@ -351,14 +378,15 @@ def _transport(
         if provider_id is None:
             raise _NotSent("Email not sent")
         return provider_id
-    subject = render(row.subject, texts) if row.subject else ""
-    body = render(row.email_body, texts) if row.email_body else ""
-    resp = podium.send_message(
+    body = _podium_text(row, channel, texts)
+    resp = _call(
+        podium.send_message,
+        tolerant=tolerant,
         identifier=address,
-        channel_type=PODIUM_CHANNEL["email"],
-        body=f"{subject}\n\n{body}" if subject else body,
+        channel_type=PODIUM_CHANNEL[channel],
+        body=body,
     )
-    return resp.get("uid") or resp.get("data", {}).get("uid", "")
+    return _uid(resp)
 
 
 # --- sending ---------------------------------------------------------------------------
@@ -498,6 +526,7 @@ def _send(
     extra = click.extra_ctx if click is not None else None
     blocks = click.blocks if click is not None else None
     logo = click.logo if click is not None else False
+    tolerant = click is not None
     for _, person, _ in plan:
         if person not in contexts:
             contexts[person] = context(tp, row, person, extra)
@@ -505,7 +534,9 @@ def _send(
     errors: list[str] = []
     for channel, person, address in plan:
         try:
-            provider_id = _transport(row, channel, address, contexts[person], blocks, logo=logo)
+            provider_id = _transport(
+                row, channel, address, contexts[person], blocks, logo=logo, tolerant=tolerant
+            )
         except _SEND_ERRORS as exc:
             errors.append(f"{channel}: {exc}")
             _record(tp, row, channel, person, address, key, "failed", str(exc))
@@ -795,3 +826,20 @@ def send_now(
     if not sent and not errors and tp.error:
         errors = [tp.error]
     return SendResult(sent=sent, deliveries=deliveries, errors=errors)
+
+
+def podium_text(
+    key: str,
+    lead,
+    recipient: Recipient,
+    channel: str,
+    *,
+    reservation=None,
+    extra_ctx: dict | None = None,
+) -> str:
+    """What a click's Podium send of row ``key`` to ``recipient`` on ``channel`` carries,
+    rendered as `send_now` renders it: for a caller that records the message it sent on the
+    customer's conversation."""
+    row = MessageTemplate.objects.get(key=key)
+    tp = TouchPoint(lead=lead, reservation=reservation, message=row, kind=row.key)
+    return _podium_text(row, channel, context(tp, row, recipient, extra_ctx))

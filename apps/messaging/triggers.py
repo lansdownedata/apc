@@ -3,7 +3,8 @@
 A fixed dict in code. A message row names one trigger by key; the trigger says whether it is a
 date (with an anchor to time the send from), an app event, a staff click or a schedule; whether
 it belongs to the order or one trip; which audiences may use it; which placeholder groups
-(`fields._GROUPS`) it can fill; and how it sends.
+(`fields._GROUPS`) it can fill; and how it sends. A staff click's own groups ("Quote",
+"Receipt", ...) are values and generated parts its caller hands over (`sender.send_now`).
 """
 
 from collections.abc import Callable
@@ -171,17 +172,18 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {CUSTOMER, PLANNER},
-        _ORDER_FIELDS,
+        _ORDER_FIELDS | {"Quote"},
         email_via="postmark",
     ),
+    # The payment and terms links are a Podium message (text, else email) recorded on the
+    # customer's conversation, as they always were.
     _t(
         "send_pay_link",
         "Send payment link",
         "staff_click",
         "order",
         {CUSTOMER, PLANNER},
-        _ORDER_FIELDS,
-        email_via="postmark",
+        _ORDER_FIELDS | {"Payment link"},
     ),
     _t(
         "send_terms_link",
@@ -189,8 +191,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {CUSTOMER, PLANNER},
-        _ORDER_FIELDS,
-        email_via="postmark",
+        _ORDER_FIELDS | {"Terms"},
     ),
     _t(
         "payment_receipt",
@@ -198,7 +199,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {CUSTOMER, PLANNER},
-        _ORDER_FIELDS,
+        _ORDER_FIELDS | {"Receipt"},
         email_via="postmark",
     ),
     _t(
@@ -207,7 +208,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "trip",
         {AFFILIATE},
-        _AFFILIATE_FIELDS,
+        _AFFILIATE_FIELDS | {"Affiliate click"},
         email_via="postmark",
     ),
     _t(
@@ -216,7 +217,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "trip",
         {AFFILIATE},
-        _AFFILIATE_FIELDS,
+        _AFFILIATE_FIELDS | {"Affiliate click", "Cancellation"},
         email_via="postmark",
     ),
     _t(

@@ -74,7 +74,7 @@ def test_direct_assign_does_not_email(mailoutbox):
 
 
 def test_a_failed_send_alerts_but_keeps_the_offer(monkeypatch):
-    monkeypatch.setattr("apps.dispatch.services.send_html_email", lambda **kw: False)
+    monkeypatch.setattr("apps.notifications.email.deliver_html_email", lambda **kw: None)
     trip = _trip()
     assignment = services.send_offer(trip, VendorFactory(email="x@y.example"), payout=Decimal("1"))
     assert assignment.status == services.Assignment.Status.OFFERED

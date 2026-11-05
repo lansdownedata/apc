@@ -65,13 +65,41 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("company_phone", "Company phone"),
         ("company_email", "Company email"),
     ],
+    # Filled by a staff click's caller (`sender.send_now`), on its own trigger only. The
+    # summaries, sheets and the button are generated blocks: alone on a line in an email they
+    # render as their own panel. Inside a click the `trip_sheet` block stands in for the
+    # Trip group's `trip_sheet` text, so an offer shows the affiliate's sheet with flights.
+    "Quote": [
+        ("contact_name", "Customer full name"),
+        ("quote_total", "Quote total"),
+        ("deposit_pct", "Deposit percent"),
+        ("deposit_amount", "Deposit amount"),
+        ("quote_valid_through", "Quote valid through"),
+        ("quote_summary", "Quote summary"),
+        ("button", "View-quote button"),
+    ],
+    "Payment link": [("payment_for", "What it pays for")],
+    "Terms": [("terms_link", "Terms link")],
+    "Receipt": [
+        ("receipt_name", "Receipt name and number"),
+        ("receipt_intro", "Opening sentence"),
+        ("receipt_lines", "Receipt lines"),
+        ("receipt_explanation", "What the money was for"),
+        ("receipt_kind", "Charge or refund"),
+    ],
+    "Affiliate click": [("trip_day", "Pickup day")],
+    "Cancellation": [("cancelled_trip_sheet", "Trip details (no money)")],
 }
+
+# The groups a staff click's caller fills; nothing else does.
+_CLICK_GROUPS = ("Quote", "Payment link", "Terms", "Receipt", "Affiliate click", "Cancellation")
+CLICK_FIELDS = frozenset(key for group in _CLICK_GROUPS for key, _ in _GROUPS[group])
 
 FIELDS: dict[str, Field] = {
     key: Field(key, label, group) for group, items in _GROUPS.items() for key, label in items
 }
 
-_LINKS = ("quote_link", "pay_link", "confirm_link", "ack_link", "review_link")
+_LINKS = ("quote_link", "pay_link", "confirm_link", "ack_link", "review_link", "terms_link")
 # Links the sender fills only in particular cases; `fields_for` adds each where it can.
 _SENDER_LINKS = ("confirm_link", "ack_link", "review_link")
 _TRIP_KINDS = frozenset(
@@ -148,7 +176,7 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
 
 
 def _original_trigger(key: str, trigger_key: str) -> bool:
-    default = defaults.DEFAULTS.get(key)
+    default = defaults.ORIGINALS.get(key)
     return default is not None and default.trigger == trigger_key
 
 
@@ -174,7 +202,7 @@ def _has_formatting(text: str) -> bool:
 
 
 def _default_texts(kind: str) -> tuple[str, ...]:
-    d = defaults.DEFAULTS.get(kind)
+    d = defaults.ORIGINALS.get(kind)
     return (d.subject, d.email_body, d.sms_body) if d else ()
 
 
@@ -187,7 +215,7 @@ def required_for(kind: str) -> frozenset[str]:
 
 
 def _channels(kind: str) -> tuple[str, ...]:
-    d = defaults.DEFAULTS.get(kind)
+    d = defaults.ORIGINALS.get(kind)
     return ("email", "sms") if d is None else d.channels
 
 
@@ -197,6 +225,7 @@ _PURPOSE = {
     "ack_link": "acknowledges",
     "quote_link": "opens the quote",
     "review_link": "leaves a review",
+    "terms_link": "accepts the terms",
 }
 _CHANNEL_NAME = {"email": "email", "sms": "SMS"}
 
@@ -275,6 +304,8 @@ def validate(data, **texts: str) -> dict[str, str]:
         if box in box_errors or text.strip() or not on[_BOX_CHANNEL[box]]:
             continue
         if box == "subject":
+            if builtin and not defaults.ORIGINALS[key].subject:
+                continue  # the payment and terms links: a Podium email has no subject line
             box_errors[box] = "Add a subject for the email."
         else:
             name = _CHANNEL_NAME[_BOX_CHANNEL[box]]

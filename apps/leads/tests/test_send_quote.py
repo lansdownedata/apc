@@ -45,7 +45,7 @@ def _quotable_lead():
 def test_send_quote_happy_path():
     lead = _quotable_lead()
     phone = lead.contact.phone
-    with patch.object(services.podium, "send_message", return_value={}) as send:
+    with patch("apps.integrations.podium.send_message", return_value={}) as send:
         result = services.send_quote(lead, base_url=BASE_URL)
 
     assert result.ok and result.http_status == 200
@@ -72,7 +72,7 @@ def test_send_quote_happy_path():
 
 def test_send_quote_message_links_quote_page_not_stripe():
     lead = _quotable_lead()
-    with patch.object(services.podium, "send_message", return_value={}) as send:
+    with patch("apps.integrations.podium.send_message", return_value={}) as send:
         services.send_quote(lead, base_url=BASE_URL)
     body = send.call_args.kwargs["body"]
     assert "/quote/" in body
@@ -82,7 +82,7 @@ def test_send_quote_message_links_quote_page_not_stripe():
 def test_send_quote_stamps_sent_and_expiry_and_schedules_touchpoints():
     lead = _quotable_lead()
     with (
-        patch.object(services.podium, "send_message", return_value={}),
+        patch("apps.integrations.podium.send_message", return_value={}),
         patch.object(services.events, "emit") as scheduled,
     ):
         result = services.send_quote(lead, base_url=BASE_URL)
@@ -114,8 +114,8 @@ def test_send_quote_allows_booked_when_unpaid():
     lead = LeadFactory(status=Lead.Status.BOOKED, contact=ContactFactory(email="a@b.com"))
     TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     with (
-        patch("apps.leads.services.send_html_email", return_value=True),
-        patch("apps.leads.services.podium.send_message"),
+        patch("apps.notifications.email.deliver_html_email", return_value="pm-1"),
+        patch("apps.integrations.podium.send_message"),
     ):
         result = services.send_quote(lead, base_url=BASE_URL)
     assert result.ok
@@ -157,7 +157,7 @@ def test_send_quote_resend_keeps_quoted():
     lead = _quotable_lead()
     lead.status = Lead.Status.QUOTED
     lead.save(update_fields=["status"])
-    with patch.object(services.podium, "send_message", return_value={}):
+    with patch("apps.integrations.podium.send_message", return_value={}):
         result = services.send_quote(lead, base_url=BASE_URL)
     assert result.ok
     lead.refresh_from_db()
@@ -169,7 +169,7 @@ def test_send_quote_resend_clears_viewed_and_recomputes_expiry():
     lead.status = Lead.Status.QUOTED
     lead.quote_viewed_at = timezone.now()
     lead.save(update_fields=["status", "quote_viewed_at"])
-    with patch.object(services.podium, "send_message", return_value={}):
+    with patch("apps.integrations.podium.send_message", return_value={}):
         result = services.send_quote(lead, base_url=BASE_URL)
     assert result.ok
     lead.refresh_from_db()
@@ -179,9 +179,8 @@ def test_send_quote_resend_clears_viewed_and_recomputes_expiry():
 
 def test_send_quote_degrades_when_podium_fails():
     lead = _quotable_lead()
-    with patch.object(
-        services.podium,
-        "send_message",
+    with patch(
+        "apps.integrations.podium.send_message",
         side_effect=PodiumAPIError("403 missing write_messages"),
     ):
         result = services.send_quote(lead, base_url=BASE_URL)
@@ -261,7 +260,7 @@ def test_send_quote_view_requires_login(client):
 def test_send_quote_view_happy_path(client, agent):
     lead = _quotable_lead()
     client.force_login(agent)
-    with patch.object(services.podium, "send_message", return_value={}):
+    with patch("apps.integrations.podium.send_message", return_value={}):
         resp = client.post(reverse("lead_send_quote", args=[lead.pk]))
     assert resp.status_code == 200
     data = resp.json()
@@ -339,7 +338,7 @@ def test_an_account_quote_asks_for_no_deposit(mailoutbox):
     lead = _quotable_lead()
     lead.billing_group = AccountGroupFactory(account__contact=lead.contact)
     lead.save(update_fields=["billing_group"])
-    with patch.object(services.podium, "send_message", return_value={}) as send:
+    with patch("apps.integrations.podium.send_message", return_value={}) as send:
         assert services.send_quote(lead, base_url=BASE_URL).ok
 
     sms = send.call_args.kwargs["body"]
