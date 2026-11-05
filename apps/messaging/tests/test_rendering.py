@@ -130,7 +130,9 @@ def test_the_signature_stays_out_of_the_html_part():
     assert html.count("info@apc.test") == 2  # the footer's mailto link and its text only
 
 
-def test_the_layout_carries_the_company_and_the_logo():
+def test_the_layout_carries_the_company_and_the_logo_only_when_asked():
+    """The logo is opt-in: only the emails that carry it today (the quote, the affiliate
+    offer) ask for it."""
     row = _row("Hi")
 
     _, _, plain = rendering.render_email(row, CTX, {})
@@ -138,6 +140,19 @@ def test_the_layout_carries_the_company_and_the_logo():
 
     assert "All Pro Charter" in plain and "cid:logo" not in plain
     assert 'src="cid:logo"' in branded
+
+
+def test_a_value_can_never_stand_in_for_a_block():
+    """The block marker is built from a NUL byte; a value carrying one is stripped of it, so
+    no customer-typed name can pull a block's HTML into the email."""
+    row = _row("Hi {first_name}\n\n{report_table}")
+    ctx = {**CTX, "first_name": "\x00block:report_table\x00"}
+    table = Block(text="rows", html="<table>rows</table>")
+
+    _, _, html = rendering.render_email(row, ctx, {"report_table": table})
+
+    assert html.count("<table>rows</table>") == 1
+    assert "\x00" not in html
 
 
 def test_layout_context_feeds_the_message_templates():

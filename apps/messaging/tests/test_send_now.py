@@ -450,3 +450,110 @@ def test_a_click_is_leased_from_birth():
         sender.send_now(row.key, lead, **ARGS)
 
     assert seen == {"leased": True}
+
+
+# --- fix round 1: the logo, interrupted clicks, outbound off ------------------------------
+
+
+def test_the_logo_goes_only_where_the_caller_asks_for_it():
+    lead = _lead()
+    row = _click(send_sms=False)
+
+    with patch(POSTMARK, return_value="pm") as mail_:
+        sender.send_now(row.key, lead, **ARGS, logo=True)
+
+    kwargs = mail_.call_args.kwargs
+    assert set(kwargs["inline_images"]) == {"logo"}
+    assert kwargs["context"]["logo_cid"] == "logo"
+
+
+def test_a_click_has_no_logo_by_default():
+    lead = _lead()
+    row = _click(send_sms=False)
+
+    with patch(POSTMARK, return_value="pm") as mail_:
+        sender.send_now(row.key, lead, **ARGS)
+
+    assert mail_.call_args.kwargs["inline_images"] is None
+    assert mail_.call_args.kwargs["context"]["logo_cid"] == ""
+
+
+def test_reports_and_invites_carry_no_logo():
+    report = _staff_row()
+    invite = _planner_row()
+
+    with patch(POSTMARK, return_value="pm") as mail_:
+        sender.send_now(report.key, blocks={"report_table": Block("t", "<p>t</p>")})
+        sender.send_now(invite.key, to=[_planner()], blocks={"button": Block("b", "<p>b</p>")})
+
+    assert [c.kwargs["inline_images"] for c in mail_.call_args_list] == [None, None]
+
+
+def test_queued_planner_mail_carries_no_logo():
+    """The cron's transport (no click) never attaches the logo."""
+    row = MessageRowFactory(
+        trigger="order_confirmed", audience=_A.PLANNER, send_sms=False, subject="s", email_body="b"
+    )
+
+    with patch(POSTMARK, return_value="pm") as mail_:
+        sender._transport(row, "email", "w@plans.test", {"company_name": "APC"})
+
+    assert mail_.call_args.kwargs["inline_images"] is None
+
+
+def _dead_click(lead, row):
+    return TouchPoint.objects.create(
+        lead=lead,
+        message=row,
+        kind=row.key,
+        scheduled_for=timezone.now() - timedelta(minutes=10),
+    )
+
+
+def test_an_interrupted_click_that_reached_someone_is_settled_sent():
+    lead = _lead()
+    row = _click()
+    tp = _dead_click(lead, row)
+    Delivery.objects.create(
+        touchpoint=tp,
+        message=row,
+        channel="email",
+        address="dana@example.com",
+        status=Delivery.Status.SENT,
+    )
+
+    with patch(SEND) as send, patch(POSTMARK) as mail_:
+        assert sender.run_touchpoints() == 0
+
+    send.assert_not_called()
+    mail_.assert_not_called()
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SENT, "")
+    assert tp.sent_at is not None
+
+
+def test_outbound_off_leaves_an_in_flight_click_alone(settings):
+    """The cron's outbound-off close must not take a TouchPoint a click holds the lease on."""
+    lead = _lead()
+    row = _click()
+    tp = _dead_click(lead, row)
+    leased = timezone.now() + sender.LEASE
+    TouchPoint.objects.filter(pk=tp.pk).update(updated_at=leased)
+    settings.OUTBOUND_ENABLED = False
+
+    assert sender.run_touchpoints() == 0
+
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SCHEDULED, "")
+
+
+def test_outbound_off_still_closes_unleased_due_rows(settings):
+    lead = _lead(status=Lead.Status.BOOKED)
+    row = MessageRowFactory(trigger="order_confirmed", subject="s", email_body="b", sms_body="t")
+    tp = _dead_click(lead, row)
+    settings.OUTBOUND_ENABLED = False
+
+    sender.run_touchpoints()
+
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, sender.OUTBOUND_OFF)

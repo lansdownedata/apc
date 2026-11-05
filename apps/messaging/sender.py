@@ -73,6 +73,9 @@ class _Click:
     extra_ctx: dict = field(default_factory=dict)
     blocks: dict[str, Block] = field(default_factory=dict)
     channels: frozenset[str] | None = None
+    # The masthead logo, attached inline: only where today's email has it (the quote, the
+    # affiliate offer). A caller flag, not a list of triggers: Admins add rows on any trigger.
+    logo: bool = False
 
 
 @dataclass
@@ -314,11 +317,14 @@ def _transport(
     address: str,
     ctx: dict,
     blocks: dict[str, Block] | None = None,
+    *,
+    logo: bool = False,
 ) -> str:
     """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`.
 
     Our own mail goes out in the branded layout, the blocks' HTML in place
-    (`rendering`); texts and Podium email carry the blocks' plain text."""
+    (`rendering`), with the inline logo only when ``logo`` asks for it; texts and Podium
+    email carry the blocks' plain text."""
     blocks = blocks or {}
     texts = rendering.texts(ctx, blocks)
     if channel == "sms":
@@ -329,7 +335,7 @@ def _transport(
         )
         return resp.get("uid") or resp.get("data", {}).get("uid", "")
     if _via_postmark(row):
-        logo = rendering.logo_path()
+        logo = rendering.logo_path() if logo else None
         subject, layout = rendering.layout_context(
             row, ctx, blocks, logo_cid="logo" if logo else ""
         )
@@ -491,6 +497,7 @@ def _send(
     contexts: dict[Recipient, dict] = {}
     extra = click.extra_ctx if click is not None else None
     blocks = click.blocks if click is not None else None
+    logo = click.logo if click is not None else False
     for _, person, _ in plan:
         if person not in contexts:
             contexts[person] = context(tp, row, person, extra)
@@ -498,7 +505,7 @@ def _send(
     errors: list[str] = []
     for channel, person, address in plan:
         try:
-            provider_id = _transport(row, channel, address, contexts[person], blocks)
+            provider_id = _transport(row, channel, address, contexts[person], blocks, logo=logo)
         except _SEND_ERRORS as exc:
             errors.append(f"{channel}: {exc}")
             _record(tp, row, channel, person, address, key, "failed", str(exc))
@@ -612,8 +619,10 @@ def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bo
     trigger = triggers.CATALOG.get(row.trigger)
     if click is None and trigger is not None and trigger.kind in _SENT_NOW:
         # Only `send_now` sends these, with what its caller handed over; one left behind
-        # by an interrupted click is closed rather than sent without it.
-        _mark(tp, status=TouchPoint.Status.SKIPPED, error=INTERRUPTED)
+        # by an interrupted click is settled rather than sent without it: SENT if it had
+        # reached anyone, else closed. Only the cron gets here, so with TOUCHPOINTS_ENABLED
+        # off such a row simply stays SCHEDULED.
+        _settle_after_error(tp, status=TouchPoint.Status.SKIPPED, error=INTERRUPTED)
         return False
     verdict, reason = rules.check(tp, row, master=master)
     if verdict == "wait" and click is not None:
@@ -642,15 +651,18 @@ def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bo
     return _send(tp, row, people, click)
 
 
-def _settle_after_error(tp: TouchPoint) -> None:
-    """A send that blew up part-way: SENT if anyone was reached, else today's FAILED."""
+def _settle_after_error(
+    tp: TouchPoint, *, status: str = TouchPoint.Status.FAILED, error: str = "unexpected error"
+) -> None:
+    """A send that blew up part-way: SENT if anyone was reached, else today's FAILED (or the
+    given status and reason)."""
     if Delivery.objects.filter(touchpoint=tp, status=Delivery.Status.SENT).exists():
         tp.status = TouchPoint.Status.SENT
         tp.error = ""
         tp.sent_at = tp.sent_at or timezone.now()
         tp.save(update_fields=["status", "error", "sent_at", "updated_at"])
     else:
-        _mark(tp, status=TouchPoint.Status.FAILED, error="unexpected error")
+        _mark(tp, status=status, error=error)
 
 
 # --- batches ---------------------------------------------------------------------------
@@ -667,9 +679,10 @@ def _send_batch(due) -> int:
 
     With the go-live switch off (APC-90), each due row is closed as SKIPPED with the reason
     rather than left SCHEDULED: left alone they would pile up and all send at once, weeks
-    stale, the moment the switch flips. One bad row never stops the rest."""
+    stale, the moment the switch flips. A row someone holds the lease on (a click sending it
+    right now) is left to them. One bad row never stops the rest."""
     if not outbound.enabled():
-        held = due.update(
+        held = due.filter(updated_at__lte=timezone.now()).update(
             status=TouchPoint.Status.SKIPPED, error=OUTBOUND_OFF, updated_at=timezone.now()
         )
         if held:
@@ -727,6 +740,7 @@ def send_now(
     extra_ctx: dict | None = None,
     blocks: dict[str, Block] | None = None,
     channels: set[str] | None = None,
+    logo: bool = False,
 ) -> SendResult:
     """Send the row ``key`` now, inside the click: a staff-click send, an invite or password
     reset, or a staff report (spec C sections 3 and 8). Never raises for a send.
@@ -735,7 +749,8 @@ def send_now(
     a report) and a Delivery per person per channel, through the same deliver path. ``to``
     replaces the row's recipients; ``extra_ctx`` adds or overrides placeholder values (the
     caller's links, built from its request); ``blocks`` fills the generated parts;
-    ``channels`` narrows the row's channels to the ones the user picked.
+    ``channels`` narrows the row's channels to the ones the user picked; ``logo`` attaches
+    the masthead logo (only the quote and the affiliate offer carry it today).
 
     Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
     which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the
@@ -747,6 +762,7 @@ def send_now(
         extra_ctx=dict(extra_ctx or {}),
         blocks=dict(blocks or {}),
         channels=None if channels is None else frozenset(channels),
+        logo=logo,
     )
     now = timezone.now()
     with transaction.atomic():

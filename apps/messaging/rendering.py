@@ -82,7 +82,12 @@ def _body_html(email_body: str, ctx: dict[str, str], blocks: dict[str, Block]) -
                 lines.append(_MARK.format(alone.group(1)))
             continue
         lines.append(line)
-    rendered = escape(render("\n".join(lines), texts(ctx, blocks)))
+    # A value can never carry the block marker's NUL byte, so only a placeholder line can
+    # become a block.
+    values = {
+        k: v.replace("\x00", "") if isinstance(v, str) else v for k, v in texts(ctx, blocks).items()
+    }
+    rendered = escape(render("\n".join(lines), values))
 
     parts: list[str] = []
     paragraph: list[str] = []
