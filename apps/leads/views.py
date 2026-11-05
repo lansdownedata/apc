@@ -30,6 +30,7 @@ from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
 from apps.messaging import events
+from apps.messaging import history as message_history
 from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import reports as payment_reports
@@ -278,6 +279,7 @@ def lead_detail(request, pk):
         "reservation_lines": reservation_lines,
         "order_tasks": task_selectors.checklist_for_order(lead),
         "is_booked": lead.status == Lead.Status.BOOKED,
+        "message_history": message_history.for_lead(lead),
         **services.feedback_context(lead),
         **contact_roles.people_context(lead),
         # Everything the shared trip editor needs — the order page feeds it the same way.

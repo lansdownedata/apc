@@ -1,0 +1,42 @@
+{% comment %}
+  Message history (APC-119): every automated send on this order and why anything is waiting.
+  Shared by the quote workspace and the order page. Requires: message_history (list of HistoryRow).
+{% endcomment %}
+<div class="card overflow-hidden mb-4">
+  <div class="flex items-center px-5 py-3.5 border-b border-line">
+    <i class="ti ti-messages text-[17px] text-gold mr-2"></i>
+    <span class="font-display text-[15px] font-semibold text-ink">Message history</span>
+  </div>
+  {% if message_history %}
+  <div class="max-h-96 overflow-y-auto">
+    <table class="w-full text-left text-[13px]">
+      <thead class="sticky top-0 bg-surface2 text-[11px] uppercase tracking-wide text-muted">
+        <tr>
+          <th class="px-5 py-2 font-semibold">Message</th>
+          <th class="px-3 py-2 font-semibold">When</th>
+          <th class="px-3 py-2 font-semibold">To</th>
+          <th class="px-5 py-2 font-semibold">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in message_history %}
+        <tr class="align-top border-t border-line/60">
+          <td class="px-5 py-2.5 text-ink">
+            <div class="font-medium">{{ row.name }}</div>
+            {% if row.trip_label %}<div class="text-[11.5px] text-muted">{{ row.trip_label }}</div>{% endif %}
+          </td>
+          <td class="px-3 py-2.5 text-muted num whitespace-nowrap">{{ row.when_display }}</td>
+          <td class="px-3 py-2.5 text-muted">{{ row.to|default:"—" }}</td>
+          <td class="px-5 py-2.5">
+            <div class="font-medium {% if row.group == 0 %}text-rose-600{% else %}text-ink{% endif %}">{{ row.status }}</div>
+            {% if row.reason %}<div class="text-[11.5px] text-muted">{{ row.reason }}</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="px-5 py-4 text-[13px] text-muted">No messages sent or scheduled for this order yet.</p>
+  {% endif %}
+</div>

@@ -8,7 +8,9 @@ from apps.leads.services import make_deposit_token
 from apps.reservations.factories import PassengerFactory, ReservationFactory
 
 pytestmark = pytest.mark.django_db
-QUERY_BUDGET = 43  # lead detail, 5 trips x 3 passengers, measured before this task
+QUERY_BUDGET = (
+    44  # lead detail, 5 trips x 3 passengers; 43 before the message history (+1 fixed query)
+)
 
 
 @pytest.fixture

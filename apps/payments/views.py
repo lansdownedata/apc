@@ -19,6 +19,7 @@ from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads import contact_roles
 from apps.leads import services as lead_services
 from apps.leads.models import Lead
+from apps.messaging import history as message_history
 from apps.reservations import editor as reservation_editor
 from apps.reservations import groups
 from apps.reservations.models import Stop
@@ -102,6 +103,7 @@ def order_detail(request, lead_id):
             ),
             "charges": list(plan.charges.all()) if plan else [],
             **billing_selectors.paid_by_context(lead),
+            "message_history": message_history.for_lead(lead),
         },
     )
 
