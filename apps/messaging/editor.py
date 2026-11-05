@@ -188,7 +188,9 @@ def _follow(row: MessageTemplate, was: _Was | None) -> int:
     switched_on = was is not None and row.enabled and not was.enabled
     count = 0
     if was is not None:
-        if not row.enabled or moved:
+        if not row.enabled:
+            events.withdraw(row, reason=events.SWITCHED_OFF)
+        elif moved:
             events.withdraw(row)
         elif row.offset != was.offset:
             count = events.redate(row, old_offset=was.offset)

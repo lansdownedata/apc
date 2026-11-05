@@ -65,6 +65,10 @@ _PICKUP_TRIGGERS = tuple(
 # How an earlier TouchPoint of the same row (same order, or same trip) blocks a new one.
 ONCE = "once"  # anything but a cancelled one: sent, queued, skipped or failed
 EVER = "ever"  # anything at all: a held (cancelled) review request stays held
+# The error on a send withdrawn because its row was switched off (`withdraw`). The balance
+# due notice's once-ever rule lets it through, so switching the row back on brings the
+# notice back; every other cancellation still blocks.
+SWITCHED_OFF = "Switched off"
 PENDING = "pending"  # only a queued one: a second lapse is told a second time
 FRESH = "fresh"  # nothing: the trigger withdraws its queued sends and starts over
 
@@ -236,11 +240,21 @@ def _quote_expiry(lead, *, only: MessageTemplate | None = None) -> list[TouchPoi
     return created
 
 
+def _ever_queued(row: MessageTemplate, lead) -> bool:
+    """The once-ever rule (`EVER`), except a send withdrawn by switching the row off."""
+    return (
+        TouchPoint.objects.filter(_of_row(row), lead=lead, reservation=None)
+        .exclude(status=_S.CANCELLED, error=SWITCHED_OFF)
+        .exists()
+    )
+
+
 def _balance_due(lead, *, only: MessageTemplate | None = None) -> list[TouchPoint]:
     """The pre-charge notice: only for an order the balance cron will charge, so not one
     billed to an account, and only once its balance is scheduled on a card with a due date
     (as the old `schedule_payment_reminder`, which ran when the balance became
-    scheduled). One per order, ever."""
+    scheduled). One per order, ever, unless the earlier one was withdrawn by switching the
+    row off (`_ever_queued`)."""
     from apps.payments.models import PaymentPlan
 
     if lead.on_account:
@@ -256,7 +270,7 @@ def _balance_due(lead, *, only: MessageTemplate | None = None) -> list[TouchPoin
     anchor = catalog.get("balance_due").anchor(lead, None)
     created = []
     for row in _rows_on(["balance_due"], only=only):
-        if rules.matches(row, lead) and not _blocked(row, lead, None, EVER):
+        if rules.matches(row, lead) and not _ever_queued(row, lead):
             created.append(_create(row, lead, None, anchor + row.offset))
     return created
 
@@ -503,10 +517,15 @@ def cancel(
     return qs.update(status=_S.CANCELLED)
 
 
-def withdraw(row: MessageTemplate) -> int:
+def withdraw(row: MessageTemplate, *, reason: str = "") -> int:
     """Cancel every queued send of a row, on every order: it was switched off, archived or
-    moved to another trigger (spec section 9). Returns how many."""
-    return TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED).update(status=_S.CANCELLED)
+    moved to another trigger (spec section 9). ``reason`` goes on each as its error;
+    `SWITCHED_OFF` lets the row's sends come back when it is switched on again. Returns
+    how many."""
+    changes = {"status": _S.CANCELLED}
+    if reason:
+        changes["error"] = reason
+    return TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED).update(**changes)
 
 
 def redate(row: MessageTemplate, *, old_offset: timedelta) -> int:

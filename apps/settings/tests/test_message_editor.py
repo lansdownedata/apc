@@ -994,3 +994,52 @@ def test_moving_a_row_onto_balance_due_follows_the_balance_gate(client):
     assert list(
         TouchPoint.objects.filter(message=row, status="scheduled").values_list("lead", flat=True)
     ) == [engaged.pk]
+
+
+# --- fix round 3: the payment reminder returns when switched back on --------------------------
+
+
+def _reminder_order():
+    from apps.payments.factories import PaymentPlanFactory
+    from apps.payments.models import PaymentPlan
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    _upcoming(lead, days=60)
+    PaymentPlanFactory(
+        lead=lead,
+        quote_total="1000.00",
+        stripe_payment_method_id="pm_1",
+        balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
+    )
+    events.schedule_dates(lead)
+    return lead
+
+
+def test_payment_reminder_returns_when_switched_back_on(client):
+    client.force_login(_owner_admin())
+    row = _row("payment_reminder")
+    lead = _reminder_order()
+    queued = TouchPoint.objects.filter(message=row, lead=lead, status="scheduled")
+    assert queued.count() == 1
+    url = reverse("message_toggle", args=[row.key])
+    switched_off = TouchPoint.objects.filter(
+        message=row, lead=lead, status="cancelled", error="Switched off"
+    )
+    for times in (1, 2):  # off and on, twice: never more than one queued
+        client.post(url)
+        assert queued.count() == 0
+        assert switched_off.count() == times
+        client.post(url)
+        assert queued.count() == 1
+
+
+def test_payment_reminder_cancelled_otherwise_still_blocks(client):
+    client.force_login(_owner_admin())
+    row = _row("payment_reminder")
+    lead = _reminder_order()
+    events.cancel(lead, triggers=events.EVERY)  # e.g. the order was lost and reopened
+    url = reverse("message_toggle", args=[row.key])
+    client.post(url)
+    client.post(url)
+    events.schedule_dates(lead)
+    assert not TouchPoint.objects.filter(message=row, lead=lead, status="scheduled").exists()
