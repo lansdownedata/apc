@@ -414,11 +414,14 @@ def test_save_keeps_the_default_timing_units_when_only_the_units_differ():
 
 
 def _wording(row_or_template):
+    """What spec B's template equality compared: wording, timing, channels and audience."""
     return (
         row_or_template.subject,
         row_or_template.email_body,
         row_or_template.sms_body,
         row_or_template.offset,
+        tuple(sorted(row_or_template.channels)),
+        row_or_template.audience,
     )
 
 

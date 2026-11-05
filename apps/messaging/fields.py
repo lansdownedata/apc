@@ -282,6 +282,19 @@ def validate(data, **texts: str) -> dict[str, str]:
     return errors | box_errors
 
 
+def wording_errors(data: dict) -> dict[str, str]:
+    """The errors that stop a row's wording rendering at all (a stray brace, a field the
+    trigger can't fill, formatting inside a field), keyed by box; {} when it renders.
+    ``data`` is `validate`'s row data."""
+    trigger = triggers.CATALOG.get(data.get("trigger", ""))
+    if trigger is None:
+        return {}
+    key = data.get("key", "") if data.get("seeded") else ""
+    allowed = {f.key for f in fields_for(trigger.key, data.get("audience", "customer"), key)}
+    boxes = {b: data.get(b, "") or "" for b in _BOX_ORDER}
+    return _check_boxes(boxes, allowed)[0]
+
+
 def _validate_kind(kind: str, *, subject: str, email_body: str, sms_body: str) -> dict[str, str]:
     """Per-box errors for a seeded kind's draft; {} when valid (spec B page)."""
     boxes = dict(zip(_BOX_ORDER, (subject, email_body, sms_body), strict=True))

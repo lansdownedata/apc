@@ -19,7 +19,7 @@ from . import defaults, events, recipients, rules, triggers
 from . import fields as message_fields
 from . import rows as message_rows
 from .defaults import TIMING_UNITS
-from .models import MessageTemplate, TouchPoint
+from .models import MessageTemplate, NotificationConfig, TouchPoint
 from .touchpoint_templates import build_context, render
 
 MAX_TIMING = {"minutes": 1440, "hours": 720, "days": 60}
@@ -179,32 +179,40 @@ def archive(row: MessageTemplate, *, user=None) -> int:
 
 def _follow(row: MessageTemplate, was: _Was | None) -> int:
     """After a row change has committed (so a failure here cannot poison it): switched off
-    withdraws its queued sends; a new trigger withdraws them and queues the row for the
-    booked orders when it is a date; a new timing re-dates them. Returns the re-dated
-    count, the Driver details checklist tasks included."""
+    withdraws its queued sends; a new trigger withdraws them and queues the row on a date
+    trigger for the booked orders; switched back on queues a date row again (an event row's
+    withdrawn sends stay withdrawn: the event has happened); a new timing re-dates them.
+    Only this row's sends are touched. Returns the re-dated count, the Driver details
+    checklist tasks included."""
     moved = was is None or row.trigger != was.trigger
+    switched_on = was is not None and row.enabled and not was.enabled
     count = 0
     if was is not None:
         if not row.enabled or moved:
             events.withdraw(row)
         elif row.offset != was.offset:
             count = events.redate(row, old_offset=was.offset)
-    if row.enabled and moved:
+    if row.enabled and (moved or switched_on):
         _queue_dates(row)
     changed = was is not None and (moved or row.offset != was.offset)
     return count + _redate_checklist(row.key, changed=changed)
 
 
 def _queue_dates(row: MessageTemplate) -> None:
-    """A row now on a date trigger: queue it for every booked order with a live trip ahead,
-    through `events.schedule_dates` (per trip for a trip date, per order otherwise); a row
-    that waits for dispatch through `events.sync_waiting`."""
+    """Queue a row on a date trigger, and only that row, for every booked order with a live
+    trip ahead: `events.schedule_dates` per trip for a trip date, per order otherwise;
+    `events.sync_waiting` for a row that waits for dispatch. The master switch and the row
+    are read once, not per order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
 
     trigger = triggers.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind != "date":
         return
+    master = NotificationConfig.load().enabled
+    if not master:
+        return
+    only = MessageTemplate.objects.prefetch_related("service_types").get(pk=row.pk)
     now = timezone.now()
     leads = (
         Lead.objects.filter(
@@ -212,6 +220,7 @@ def _queue_dates(row: MessageTemplate) -> None:
             reservations__pickup_date__gte=timezone.localdate() - timedelta(days=1),
         )
         .distinct()
+        .select_related("payment")
         .prefetch_related("reservations")
     )
     for lead in leads:
@@ -223,13 +232,13 @@ def _queue_dates(row: MessageTemplate) -> None:
         if not trips:
             continue
         if trigger.level == "order":
-            events.schedule_dates(lead)
+            events.schedule_dates(lead, only=only, master=master)
             continue
         for trip in trips:
             if trigger.waits_for:
-                events.sync_waiting(trip)
+                events.sync_waiting(trip, only=only, master=master)
             else:
-                events.schedule_dates(lead, trip)
+                events.schedule_dates(lead, trip, only=only, master=master)
 
 
 def _redate_checklist(key: str, *, changed: bool) -> int:
@@ -346,15 +355,21 @@ def _wants_driver(trigger) -> bool:
     return "Driver" in trigger.field_groups
 
 
-def preview_orders(trigger_key: str, service_types=(), limit: int = 20) -> list:
+def preview_orders(trigger_key: str, service_types=(), limit: int = 20, *, key: str = "") -> list:
     """Booked orders to preview a message against, newest first.
 
-    A trip-level trigger needs a live trip, and chosen service types a live trip of one of
-    them; a trigger with driver fields lists orders with driver details on file first."""
+    An order is offered when the message would match it at send time (`rules.types_match`,
+    as `rules.matches`): a trip-level trigger needs a live trip, chosen service types a
+    live trip of one of them. ``key`` names the seeded message being previewed, so its own
+    matching applies (the wedding thank-you also goes to an order with a wedding name). A
+    trigger with driver fields lists orders with driver details on file first."""
     from apps.leads.models import Lead
 
     trigger = triggers.get(trigger_key)
     types = list(service_types)
+    wedding_name = rules.wedding_name_counts(
+        MessageTemplate(key=key, trigger=trigger_key, seeded=bool(key))
+    )
     candidates = (
         Lead.objects.filter(status=Lead.Status.BOOKED)
         .select_related("contact")
@@ -369,9 +384,14 @@ def preview_orders(trigger_key: str, service_types=(), limit: int = 20) -> list:
     )
     leads = []
     for lead in candidates:
-        if (trigger.level == "trip" or types) and not _matching_trips(lead, types):
-            continue
-        leads.append(lead)
+        if trigger.level == "trip":
+            offered = any(
+                rules.types_match(types, lead, trip, trip_level=True) for trip in _live_trips(lead)
+            )
+        else:
+            offered = rules.types_match(types, lead, trip_level=False, wedding_name=wedding_name)
+        if offered:
+            leads.append(lead)
     if _wants_driver(trigger):
         leads.sort(key=lambda lead: not any(_has_driver_info(r) for r in _live_trips(lead)))
     return leads[:limit]

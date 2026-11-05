@@ -10,6 +10,8 @@ from datetime import date, time, timedelta
 from unittest import mock
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import escape
@@ -18,7 +20,7 @@ from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead, LeadContact
-from apps.messaging import defaults, editor, listing, rules
+from apps.messaging import defaults, editor, events, listing, rules
 from apps.messaging import rows as message_rows
 from apps.messaging.factories import MessageRowFactory, TouchPointFactory
 from apps.messaging.models import MessageTemplate, TouchPoint
@@ -361,12 +363,17 @@ class TestPreviewOrders:
     def test_wedding_kinds_only_wedding_orders(self):
         wedding_type = ServiceTypeFactory(name=WEDDING_SERVICE_NAME)
         plain = _booked_lead()
-        wedding = _booked_lead(service_type=wedding_type)
+        wedding = _booked_lead()
         wedding.wedding_name = "Kim & Lee"
         wedding.save()
-        assert editor.preview_orders("pickup", [wedding_type]) == [wedding]
-        assert editor.preview_orders("all_trips_done", [wedding_type]) == [wedding]
+        # The wedding thank-you also goes to an order with only a wedding name, as it sends.
+        assert editor.preview_orders("all_trips_done", [wedding_type], key="thank_you_wedding") == [
+            wedding
+        ]
         assert plain in editor.preview_orders("all_trips_done")
+        # The wedding details request matches by service type only (spec C).
+        wedding.reservations.update(service_type=wedding_type)
+        assert editor.preview_orders("pickup", [wedding_type]) == [wedding]
 
     def test_limit(self):
         for i in range(3):
@@ -380,7 +387,7 @@ def test_every_message_opens_and_previews_default_text(client, kind):
     _booked_lead()
     assert client.get(reverse("message_edit", args=[kind])).status_code == 200
     row = _row(kind)
-    orders = editor.preview_orders(row.trigger, row.service_types.all())
+    orders = editor.preview_orders(row.trigger, row.service_types.all(), key=kind)
     for lead in ("", orders[0].pk if orders else ""):
         resp = client.post(reverse("message_preview", args=[kind]), _post_data(kind, lead=lead))
         assert resp.status_code == 200, resp.content
@@ -776,3 +783,120 @@ def test_each_section_links_to_a_new_message_in_it(client):
     html = client.get(reverse("messages")).content.decode()
     for section in MessageTemplate.Section.values:
         assert f"{reverse('messages_new')}?section={section}" in html
+
+
+# --- fix round 1: re-queue only the edited row, also when switched back on --------------------
+
+
+def _upcoming(lead, days=10):
+    local = (timezone.now() + timedelta(days=days)).astimezone(timezone.get_current_timezone())
+    return ReservationFactory(lead=lead, pickup_date=local.date(), pickup_time=time(15, 0))
+
+
+def _booked_with_trips(count=2):
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    trips = [_upcoming(lead, days=10 + i) for i in range(count)]
+    events.schedule_dates(lead)
+    return lead, trips
+
+
+def _scheduled(row, trip):
+    return TouchPoint.objects.filter(message=row, reservation=trip, status="scheduled")
+
+
+def test_switching_a_date_row_back_on_queues_it_again(client):
+    """The reviewer's probe: off cancels every queued send; on queues each trip again, once."""
+    client.force_login(_owner_admin())
+    row = _row("trip_confirm_customer")
+    _, trips = _booked_with_trips()
+    assert all(_scheduled(row, t).count() == 1 for t in trips)
+    url = reverse("message_toggle", args=[row.key])
+    assert json.loads(client.post(url).content)["enabled"] is False
+    assert not TouchPoint.objects.filter(message=row, status="scheduled").exists()
+    assert json.loads(client.post(url).content)["enabled"] is True
+    for trip in trips:
+        assert _scheduled(row, trip).count() == 1
+        assert _scheduled(row, trip).get().scheduled_for == trip.pickup_at - timedelta(hours=72)
+
+
+def test_switching_back_on_in_the_editor_queues_it_again(client):
+    client.force_login(_owner_admin())
+    row = _row("trip_confirm_customer")
+    _, (trip,) = _booked_with_trips(1)
+    url = reverse("message_edit", args=[row.key])
+    client.post(url, post_data(row, enabled=None))
+    assert _scheduled(row, trip).count() == 0
+    client.post(url, post_data(_row(row.key), enabled="on"))
+    assert _scheduled(row, trip).count() == 1
+
+
+def test_switching_an_event_row_back_on_does_not_restore_its_sends(client):
+    """Ruling: the event already happened; off cancels and on does not bring it back."""
+    client.force_login(_owner_admin())
+    row = _row("tp2_lead_followup")
+    tp = _queued(row)
+    url = reverse("message_toggle", args=[row.key])
+    client.post(url)
+    client.post(url)
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.CANCELLED
+    assert not TouchPoint.objects.filter(message=row, status="scheduled").exists()
+
+
+@pytest.mark.parametrize(
+    "trigger,timing",
+    [("pickup", (2, "days")), ("balance_due", (3, "days")), ("pickup_dispatched", (3, "hours"))],
+)
+def test_saving_a_row_onto_a_date_leaves_other_rows_alone(client, trigger, timing):
+    client.force_login(_owner_admin())
+    confirm = _row("trip_confirm_customer")
+    _, trips = _booked_with_trips()
+    toggle = reverse("message_toggle", args=[confirm.key])
+    client.post(toggle)  # off: its sends cancelled
+    client.post(toggle)  # on again
+    others = set(TouchPoint.objects.values_list("pk", "status", "message"))
+    row = MessageRowFactory(
+        name="Heads-up",
+        section="trip_day",
+        trigger="quote_sent",
+        recipients=["booking_contact"],
+        send_email=False,
+        sms_body="See you",
+    )
+    with mock.patch(TRANSPORTS[0]):
+        resp = client.post(
+            reverse("message_edit", args=[row.key]),
+            post_data(row, trigger=trigger, timing=timing, timing_direction="before"),
+        )
+    assert resp.status_code == 302
+    after = set(TouchPoint.objects.exclude(message=row).values_list("pk", "status", "message"))
+    assert after == others
+    for trip in trips:
+        assert _scheduled(confirm, trip).count() == 1
+
+
+def _queue_queries(count):
+    row = MessageRowFactory(
+        trigger="quote_sent", recipients=["booking_contact"], send_email=False, sms_body="Hi"
+    )
+    for _ in range(count):
+        _upcoming(LeadFactory(status=Lead.Status.BOOKED))
+    row.trigger, row.timing_amount, row.timing_unit = "pickup", 2, "days"
+    row.timing_direction = "before"
+    with CaptureQueriesContext(connection) as ctx:
+        editor.save(row)
+    assert TouchPoint.objects.filter(message=row).count() >= count
+    return [q["sql"] for q in ctx.captured_queries]
+
+
+def test_queueing_reads_the_switch_and_rows_once():
+    one = _queue_queries(1)
+    four = _queue_queries(4)
+
+    def reads(sqls, table):
+        return sum(1 for sql in sqls if sql.startswith("SELECT") and f"FROM `{table}`" in sql)
+
+    for table in ("messaging_notificationconfig", "messaging_messagetemplate"):
+        assert reads(four, table) == reads(one, table)
+    assert reads(four, "messaging_notificationconfig") <= 1
+    assert (len(four) - len(one)) / 3 <= 8  # per booked order, not per row or per trip read

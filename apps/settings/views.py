@@ -463,7 +463,11 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
     original = default.trigger if default else ""
     stored = MessageTemplate.objects.prefetch_related("service_types").filter(pk=row.pk).first()
     types = list(stored.service_types.all()) if stored else []
-    orders = editor.preview_orders(trigger_key, types) if trigger else []
+    orders = (
+        editor.preview_orders(trigger_key, types, key=row.key if row.seeded else "")
+        if trigger
+        else []
+    )
     picked = [str(v) for v in form["recipients"].value() or []]
     services = [str(v) for v in form["service_types"].value() or []]
     timing_amount = form["timing_amount"].value()
@@ -575,10 +579,6 @@ def message_reset(request: HttpRequest, key: str) -> HttpResponse:
     return redirect("message_edit", key=key)
 
 
-# Wording errors that leave a message unable to render (an unknown field, a stray brace).
-_UNRENDERABLE = ("Unknown field", "Unmatched", "Formatting")
-
-
 @login_required
 @owner_admin_required
 @require_POST
@@ -588,13 +588,9 @@ def message_toggle(request: HttpRequest, key: str) -> JsonResponse:
     row = _live_row(key)
     if editor.is_staff_click(row.trigger):
         return JsonResponse({"ok": False, "error": "This one has no switch."}, status=400)
-    broken = [
-        message
-        for message in listing.validation_errors(row).values()
-        if message.startswith(_UNRENDERABLE)
-    ]
+    broken = fields.wording_errors(listing.row_data(row))
     if broken:
-        return JsonResponse({"ok": False, "error": broken[0]}, status=400)
+        return JsonResponse({"ok": False, "error": next(iter(broken.values()))}, status=400)
     editor.set_enabled(row, not row.enabled, user=request.user)
     return JsonResponse({"ok": True, "enabled": row.enabled})
 

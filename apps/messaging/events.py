@@ -85,8 +85,19 @@ def _master_on() -> bool:
     return NotificationConfig.load().enabled
 
 
-def _rows_on(trigger_keys: Iterable[str], *, enabled_only: bool = True) -> list[MessageTemplate]:
-    qs = MessageTemplate.objects.live().filter(trigger__in=list(trigger_keys))
+def _rows_on(
+    trigger_keys: Iterable[str],
+    *,
+    enabled_only: bool = True,
+    only: MessageTemplate | None = None,
+) -> list[MessageTemplate]:
+    """The live rows on these triggers (enabled ones unless told otherwise). ``only`` limits
+    the answer to that one row, read by the caller (service types prefetched): no query."""
+    keys = list(trigger_keys)
+    if only is not None:
+        on = only.trigger in keys and only.archived_at is None
+        return [only] if on and (only.enabled or not enabled_only) else []
+    qs = MessageTemplate.objects.live().filter(trigger__in=keys)
     if enabled_only:
         qs = qs.filter(enabled=True)
     return list(qs.prefetch_related("service_types").order_by("pk"))
@@ -197,7 +208,7 @@ def emit(trigger_key: str, lead, reservation=None) -> list[TouchPoint]:
 # --- dates -----------------------------------------------------------------------------
 
 
-def _quote_expiry(lead) -> list[TouchPoint]:
+def _quote_expiry(lead, *, only: MessageTemplate | None = None) -> list[TouchPoint]:
     """The quote's expiring/expired nudges, while the quote is still open (new or quoted).
 
     A `before` row whose send time has passed is not made (as TP7 today). A queued row, or
@@ -208,7 +219,7 @@ def _quote_expiry(lead) -> list[TouchPoint]:
         return []
     now = timezone.now()
     created = []
-    for row in _rows_on(["quote_expiry"]):
+    for row in _rows_on(["quote_expiry"], only=only):
         at = expires + row.offset
         if row.timing_direction == row.Direction.BEFORE and at <= now:
             continue
@@ -225,7 +236,7 @@ def _quote_expiry(lead) -> list[TouchPoint]:
     return created
 
 
-def _balance_due(lead) -> list[TouchPoint]:
+def _balance_due(lead, *, only: MessageTemplate | None = None) -> list[TouchPoint]:
     """The pre-charge notice: only for an order the balance cron will charge, so not one
     billed to an account, and only once its balance is scheduled on a card with a due date
     (as the old `schedule_payment_reminder`, which ran when the balance became
@@ -244,7 +255,7 @@ def _balance_due(lead) -> list[TouchPoint]:
         return []
     anchor = catalog.get("balance_due").anchor(lead, None)
     created = []
-    for row in _rows_on(["balance_due"]):
+    for row in _rows_on(["balance_due"], only=only):
         if rules.matches(row, lead) and not _blocked(row, lead, None, EVER):
             created.append(_create(row, lead, None, anchor + row.offset))
     return created
@@ -263,11 +274,11 @@ def _manual_farm_out(reservation) -> bool:
     )
 
 
-def _pickup_rows(lead, trips: Iterable) -> list[TouchPoint]:
+def _pickup_rows(lead, trips: Iterable, *, only: MessageTemplate | None = None) -> list[TouchPoint]:
     """Each trip's rows on the pickup date trigger, timed from its pickup; a trip with no
     pickup date gets none. A past send time is queued anyway: a late booking still gets its
     confirmation, on commit. Affiliate rows only for a confirmed manual farm-out."""
-    rows = _rows_on(_PICKUP_TRIGGERS)
+    rows = _rows_on(_PICKUP_TRIGGERS, only=only)
     trips = [t for t in trips if t.pickup_at is not None]
     if not rows or not trips:
         return []
@@ -297,22 +308,29 @@ def _pickup_rows(lead, trips: Iterable) -> list[TouchPoint]:
     return created
 
 
-def schedule_dates(lead, reservation=None) -> None:
+def schedule_dates(
+    lead,
+    reservation=None,
+    *,
+    only: MessageTemplate | None = None,
+    master: bool | None = None,
+) -> None:
     """(Re)ensure every date row's TouchPoint from its anchor. Idempotent.
 
     Trip-level rows for every trip of a booked order (only `reservation`, when given); the
     order's expiry and balance-due rows when no trip is given. Rows already due go out on
-    commit.
+    commit. ``only`` limits it to that one row (the editor queueing the row it saved), and
+    ``master`` is the master switch already read, so a loop over orders reads it once.
     """
-    if not _master_on():
+    if not (_master_on() if master is None else master):
         return
     created = []
     if reservation is None:
-        created += _quote_expiry(lead)
-        created += _balance_due(lead)
+        created += _quote_expiry(lead, only=only)
+        created += _balance_due(lead, only=only)
     if lead.status == lead.Status.BOOKED:
         trips = [reservation] if reservation is not None else list(lead.reservations.all())
-        created += _pickup_rows(lead, trips)
+        created += _pickup_rows(lead, trips, only=only)
     _send_on_commit(created)
 
 
@@ -374,7 +392,9 @@ def _maybe_driver_changed(lead, reservation) -> None:
     emit("driver_changed", lead, reservation)
 
 
-def sync_waiting(reservation) -> None:
+def sync_waiting(
+    reservation, *, only: MessageTemplate | None = None, master: bool | None = None
+) -> None:
     """Queue, or re-date, every row that waits for the trip to be Dispatched with its
     driver's details (as the old `sync_driver_message`).
 
@@ -382,7 +402,9 @@ def sync_waiting(reservation) -> None:
     pickup. A row sends at `max(now, pickup + its timing)`: an early dispatch waits for the
     window, a late one goes out on commit. A queued row follows the pickup even while it is
     held; a sent one is left alone, and a change of driver after it emits `driver_changed`.
-    Nothing happens once the pickup has passed.
+    Nothing happens once the pickup has passed. ``only`` limits it to that one row and skips
+    the driver-change check (the editor queueing the row it saved); ``master`` is the master
+    switch already read.
     """
     from apps.reservations.models import Reservation
 
@@ -402,7 +424,7 @@ def sync_waiting(reservation) -> None:
             return
     else:
         queued = None
-    rows = _rows_on(_WAITING_TRIGGERS, enabled_only=False)
+    rows = _rows_on(_WAITING_TRIGGERS, enabled_only=False, only=only)
     if not rows or (queued is not None and not queued & {r.key for r in rows}):
         return
 
@@ -420,7 +442,6 @@ def sync_waiting(reservation) -> None:
                 readiness[waits_for] = rules.ready(locked, waits_for)
             return readiness[waits_for]
 
-        master = None
         any_sent = False
         for row in rows:
             existing = (
@@ -448,7 +469,7 @@ def sync_waiting(reservation) -> None:
             if not master or not ready(row) or not rules.matches(row, lead, locked):
                 continue
             queued_now.append(_create(row, lead, locked, at))
-        if any_sent and locked.trip_status in rules.DRIVER_MESSAGE_STATUSES:
+        if only is None and any_sent and locked.trip_status in rules.DRIVER_MESSAGE_STATUSES:
             _maybe_driver_changed(lead, locked)
     _send_on_commit(queued_now)
 

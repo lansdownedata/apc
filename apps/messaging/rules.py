@@ -158,15 +158,33 @@ def matches(row: MessageTemplate, lead, reservation=None) -> bool:
     """The row's service-type filter (spec section 3). Empty matches everything; a trip-level
     row matches on its own trip, an order-level row on any live trip of the order. The
     seeded wedding thank-you also matches an order with a wedding name."""
+    trigger = triggers.CATALOG.get(row.trigger)
+    return types_match(
+        list(row.service_types.all()),
+        lead,
+        reservation,
+        trip_level=trigger is not None and trigger.level == "trip",
+        wedding_name=wedding_name_counts(row),
+    )
+
+
+def wedding_name_counts(row: MessageTemplate) -> bool:
+    """The seeded wedding thank-you, on its own trigger, also goes to an order that has only
+    a wedding name."""
+    return row.key == "thank_you_wedding" and has_built_ins(row)
+
+
+def types_match(
+    types: list, lead, reservation=None, *, trip_level: bool, wedding_name: bool = False
+) -> bool:
+    """`matches` for a list of service types (the editor's draft has no saved ones)."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
 
-    types = list(row.service_types.all())
     if not types:
         return True
-    if row.key == "thank_you_wedding" and has_built_ins(row) and lead.wedding_name:
+    if wedding_name and lead.wedding_name:
         return True
-    trigger = triggers.CATALOG.get(row.trigger)
-    if trigger is not None and trigger.level == "trip" and reservation is not None:
+    if trip_level and reservation is not None:
         trips = [reservation]
     else:
         trips = [r for r in lead.reservations.all() if r.trip_status not in CANCELLED_STATUSES]

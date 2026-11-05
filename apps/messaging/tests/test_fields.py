@@ -320,3 +320,22 @@ def test_review_request_gets_no_order_links():
     keys = {f.key for f in fields.fields_for_kind("review_request")}
     assert not keys & {"quote_link", "pay_link"}
     assert "review_link" in keys
+
+
+def test_wording_errors_are_only_the_ones_that_stop_rendering():
+    data = {
+        "trigger": "lead_created",
+        "audience": "customer",
+        "send_sms": True,
+        "send_email": False,
+        "subject": "",
+        "email_body": "{driver_cell}",
+        "sms_body": "Hi {first_name",
+        "recipients": [],
+        "staff_emails": [],
+        "timing_direction": "after",
+    }
+    assert set(fields.validate(data)) == {"recipients", "email_body", "sms_body"}
+    assert set(fields.wording_errors(data)) == {"email_body", "sms_body"}
+    fine = data | {"email_body": "", "sms_body": "Hi {first_name}"}
+    assert fields.wording_errors(fine) == {}

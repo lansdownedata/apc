@@ -131,7 +131,7 @@
             <div x-show="ruleLines.length"{% if not rule_lines %} style="display: none"{% endif %}>
               <div class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">How this trigger behaves</div>
               <ul class="space-y-1">
-                <template x-for="line in ruleLines" :key="line">
+                <template x-for="(line, i) in ruleLines" :key="i">
                   <li class="flex gap-2 text-[12.5px] text-ink"><span class="text-amber-700">•</span><span x-text="line"></span></li>
                 </template>
               </ul>
@@ -248,7 +248,7 @@
         <div>
           <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">On this order it would go to</h3>
           <ul class="space-y-1">
-            <template x-for="line in to" :key="line">
+            <template x-for="(line, i) in to" :key="i">
               <li class="text-[12.5px] text-ink" x-text="line"></li>
             </template>
             <li class="text-[12.5px] text-muted" x-show="!to.length">Nobody</li>

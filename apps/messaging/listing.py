@@ -115,24 +115,22 @@ def is_staff_click(row: MessageTemplate) -> bool:
     return trigger is not None and trigger.kind == "staff_click"
 
 
-def validation_errors(row: MessageTemplate) -> dict[str, str]:
-    """The editor's save-time checks (`fields.validate`) run on a stored row."""
-    return fields.validate(
-        {
-            "trigger": row.trigger,
-            "audience": row.audience,
-            "send_sms": row.send_sms,
-            "send_email": row.send_email,
-            "subject": row.subject,
-            "email_body": row.email_body,
-            "sms_body": row.sms_body,
-            "recipients": row.recipients,
-            "staff_emails": row.staff_emails,
-            "timing_direction": row.timing_direction,
-            "key": row.key,
-            "seeded": row.seeded,
-        }
-    )
+def row_data(row: MessageTemplate) -> dict:
+    """A stored row as `fields.validate` / `fields.wording_errors` read it."""
+    return {
+        "trigger": row.trigger,
+        "audience": row.audience,
+        "send_sms": row.send_sms,
+        "send_email": row.send_email,
+        "subject": row.subject,
+        "email_body": row.email_body,
+        "sms_body": row.sms_body,
+        "recipients": row.recipients,
+        "staff_emails": row.staff_emails,
+        "timing_direction": row.timing_direction,
+        "key": row.key,
+        "seeded": row.seeded,
+    }
 
 
 def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
@@ -142,7 +140,7 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     if not (row.staff_emails if staff else row.recipients):
         found.append(NO_RECIPIENTS)
     if row.trigger in triggers.CATALOG:
-        errors = validation_errors(row)
+        errors = fields.validate(row_data(row))
         if any(msg.startswith("Unknown field") for msg in errors.values()):
             found.append(BAD_FIELD)
     if row.enabled and not master_on and not is_staff_click(row):
