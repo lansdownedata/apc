@@ -1074,10 +1074,12 @@ def test_combine_line_shows_when_the_trigger_really_combines(client):
 def test_trigger_options_are_grouped_by_label_prefix(client):
     client.force_login(_owner_admin())
     html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
-    for prefix in ("Dates: ", "Events: ", "Staff clicks: ", "Schedules: "):
+    for prefix in ("Dates: ", "Events: "):
         assert f">{prefix}" in html
-    assert html.index(">Dates: ") < html.index(">Events: ") < html.index(">Staff clicks: ")
-    assert html.index(">Staff clicks: ") < html.index(">Schedules: ")
+    assert html.index(">Dates: ") < html.index(">Events: ")
+    # No row moves onto a staff click or a schedule (APC-120): only the app's own sends use them.
+    for prefix in ("Staff clicks: ", "Schedules: "):
+        assert f">{prefix}" not in html
 
 
 def test_messages_and_editor_redirect_anonymous_users(client):

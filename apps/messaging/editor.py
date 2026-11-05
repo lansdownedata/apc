@@ -68,7 +68,7 @@ CLICK_WHO = {
     "affiliate_offer": "Goes to the affiliate company by email — set by the button.",
     "affiliate_cancel": "Goes to the affiliate company by email — set by the button.",
 }
-# Nothing sends an added row on these: a staff click is sent by its button, a schedule by
+# Nothing sends any other row on these: a staff click is sent by its button, a schedule by
 # its job, each by its own seeded key.
 _NOT_ADDABLE = ("staff_click", "schedule")
 NOT_ADDABLE = "Staff clicks and schedules are sent by the app's own messages. Pick another trigger."
@@ -80,15 +80,16 @@ def is_locked(row: MessageTemplate) -> bool:
 
 
 def can_pick(row: MessageTemplate, trigger_key: str) -> bool:
-    """Whether ``row`` may be put on ``trigger_key``. A locked row keeps its own; an added
-    row may take any trigger but a staff click or a schedule (APC-129 tracks button sends
-    that read their rows)."""
+    """Whether ``row`` may be put on ``trigger_key``. A seeded row created on a staff click
+    or a schedule keeps that trigger; no other row, seeded or added, moves onto one, since
+    only the app's own sends use them (APC-129 tracks button sends that read their rows)."""
     trigger = triggers.CATALOG.get(trigger_key)
     if trigger is None:
         return False
-    if is_locked(row):
-        return trigger_key == defaults.CLICKS[row.key].trigger
-    return bool(row.seeded) or trigger.kind not in _NOT_ADDABLE
+    original = defaults.ORIGINALS.get(row.key) if row.seeded else None
+    if original is not None and triggers.get(original.trigger).kind in _NOT_ADDABLE:
+        return trigger_key == original.trigger
+    return trigger.kind not in _NOT_ADDABLE
 
 
 def _builtin(key: str, trigger_key: str, seeded: bool) -> bool:

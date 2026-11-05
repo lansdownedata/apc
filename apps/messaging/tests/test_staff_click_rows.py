@@ -622,3 +622,24 @@ def test_the_receipt_stamp_never_overwrites_an_earlier_send():
 
     charge.refresh_from_db()
     assert (charge.receipt_sent_at, charge.receipt_message_id) == (earlier, "first")
+
+
+@pytest.mark.parametrize("trigger", ["send_quote", "deposit_report"])
+def test_a_seeded_touch_point_row_cannot_move_onto_a_click_or_schedule(client, trigger):
+    _owner(client)
+    before = listing.row_data(_row("tp1_welcome"))
+
+    resp = _edit(client, "tp1_welcome", trigger=trigger, timing=(0, "minutes"))
+
+    assert resp.status_code == 200
+    assert escape(editor.NOT_ADDABLE) in resp.content.decode()
+    assert listing.row_data(_row("tp1_welcome")) == before
+
+
+def test_a_seeded_touch_point_rows_choices_leave_out_clicks_and_schedules(client):
+    from django.urls import reverse
+
+    _owner(client)
+    html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
+    assert ">Staff clicks: " not in html and ">Schedules: " not in html
+    assert ">Dates: " in html and ">Events: " in html
