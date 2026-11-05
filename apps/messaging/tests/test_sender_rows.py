@@ -35,7 +35,8 @@ def test_send_uses_edited_text(settings):
     assert bodies == [f"Booked {lead.quote_no}"]
 
 
-def test_rows_load_once_per_run(settings):
+def test_rows_load_in_two_queries_per_run(settings):
+    """Two row queries per run, however many sends are due (Moe accepted 1 -> 2, 2026-11-05)."""
     settings.TOUCHPOINTS_ENABLED = True
     lead = LeadFactory(contact=ContactFactory(email="a@example.com", phone="5551234567"))
     for kind in ("tp1_welcome", "tp2_lead_followup", "order_confirmed"):
@@ -48,4 +49,4 @@ def test_rows_load_once_per_run(settings):
         sender.run_touchpoints()
 
     hits = [q for q in ctx.captured_queries if "messaging_messagetemplate" in q["sql"]]
-    assert len(hits) == 1
+    assert len(hits) == 2
