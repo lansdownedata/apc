@@ -10,7 +10,9 @@ Everything the messaging engine's own API is called for lives in the small helpe
 trip status). A port of the engine edits those helpers and nothing else.
 """
 
+import json
 import re
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -19,13 +21,16 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import stripe
+from django.core import signing
 
 from apps.accounts.factories import UserFactory
 from apps.billing.factories import AccountGroupFactory, BillingAccountFactory
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
+from apps.contacts.models import Contact
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
+from apps.fleet.factories import DriverFactory
 from apps.leads import services as lead_services
 from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
@@ -37,7 +42,12 @@ from apps.public.services import WEDDING_SERVICE_NAME
 from apps.reservations import reviews
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripIssue
-from apps.reservations.services import confirm_trip_day, set_trip_status, trip_day_group
+from apps.reservations.services import (
+    confirm_trip_day,
+    set_trip_status,
+    trip_day_group,
+    wedding_day_group,
+)
 from apps.vendors.factories import VendorFactory
 
 K = TouchPoint.Kind
@@ -148,18 +158,62 @@ _LINK = re.compile(re.escape(BASE_URL) + r"/\S+")
 _QUOTE_NO = re.compile(r"\b(?:Q|APC)-\d+\b")
 
 
+def _trip_label(trip: Reservation) -> str:
+    return f"{trip.lead.contact.name} {trip.pickup_date} {trip.pickup_time:%H:%M}"
+
+
+def _lead_label(lead: Lead) -> str:
+    first = lead.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+    return _trip_label(first) if first else lead.contact.name
+
+
+def _assignment_label(assignment: Assignment) -> str:
+    return assignment.vendor.name if assignment.vendor_id else assignment.driver.name
+
+
+# What each id in a signed link payload points at, by a name that is the same every run.
+_TARGETS = {
+    "contact": lambda pk: Contact.objects.get(pk=pk).name,
+    "lead": lambda pk: _lead_label(Lead.objects.get(pk=pk)),
+    "reservation": lambda pk: _trip_label(Reservation.objects.get(pk=pk)),
+    "assignment": lambda pk: _assignment_label(Assignment.objects.get(pk=pk)),
+}
+
+
+def _token(segment: str) -> str:
+    """A signed link token (`payload:timestamp:signature`, payload `.`-prefixed when
+    compressed) rendered as what it points at, e.g. `<TOKEN contact=Dana Whitfield
+    date=2027-04-20>`, so a link signed for the wrong person, trip or day fails."""
+    head = segment.split(":", 1)[0]
+    raw = signing.b64_decode(head.lstrip(".").encode())
+    if head.startswith("."):
+        raw = zlib.decompress(raw)
+    payload = json.loads(raw)
+    parts = [
+        f"{key}={_TARGETS[key](value) if key in _TARGETS else value}"
+        for key, value in sorted(payload.items())
+    ]
+    return f"<TOKEN {' '.join(parts)}>"
+
+
 def _link(match: re.Match) -> str:
-    """Keep a link's shape (which page it opens), drop what varies per run: the signed
-    token (always contains ':') and any bare pk segment."""
+    """Keep a link's page; render its signed token by target, any bare pk as <PK>."""
     segments = match.group(0)[len(BASE_URL) :].split("/")
     return BASE_URL + "/".join(
-        "<TOKEN>" if ":" in s else "<PK>" if s.isdigit() else s for s in segments
+        _token(s) if ":" in s else "<PK>" if s.isdigit() else s for s in segments
     )
 
 
+def _number_quotes(text: str) -> str:
+    """Quote numbers become <Q1>, <Q2>, ... in order of first appearance in this text."""
+    seen: dict[str, str] = {}
+    return _QUOTE_NO.sub(lambda m: seen.setdefault(m.group(0), f"<Q{len(seen) + 1}>"), text)
+
+
 def normalise(text: str) -> str:
-    """Strip what differs between runs (signed tokens, pks, quote numbers), nothing else."""
-    return _QUOTE_NO.sub("<Q>", _LINK.sub(_link, text))
+    """Strip what differs between runs (token signatures, pks, quote numbers), nothing else.
+    Reads the database to name a token's targets, so call it before the test rolls back."""
+    return _number_quotes(_LINK.sub(_link, text))
 
 
 # --- engine seams (the only calls into the messaging engine's own API) ---------------------
@@ -218,13 +272,28 @@ def _agent():
     )
 
 
-def _order(person: dict, *, billing: dict | None = None) -> Lead:
+def _company(name: str, *, billing: dict | None = None, operator: bool = False):
+    """A customer's company; `operator` marks an affiliate that farms trips in (APC-92)."""
+    return CompanyFactory(
+        name=name,
+        billing_contact=ContactFactory(**billing) if billing else None,
+        is_affiliate_account=operator,
+    )
+
+
+def _order(person: dict, *, billing: dict | None = None, company=None) -> Lead:
     return LeadFactory(
-        contact=ContactFactory(**person),
+        contact=ContactFactory(**person, company=company),
         billing_contact=ContactFactory(**billing) if billing else None,
         assigned_agent=_agent(),
         status=Lead.Status.NEW,
     )
+
+
+def _force(lead: Lead, **fields) -> None:
+    """Put the order in a state without the service that would also tidy its queued
+    messages, so the send-time guard is what has to catch it."""
+    Lead.objects.filter(pk=lead.pk).update(**fields)
 
 
 def _trip(
@@ -235,8 +304,12 @@ def _trip(
     zone: ZoneInfo = EASTERN,
     route: tuple[str, ...] = DC_ROUTE,
     wedding: bool = False,
+    leg: str = "",
 ) -> Reservation:
+    """`wedding` sets the Wedding service type; `leg` is a legacy wedding-builder leg id
+    (`source_leg_id`), a wedding with no Wedding service type."""
     return ReservationFactory(
+        source_leg_id=leg,
         lead=lead,
         pickup_date=day,
         pickup_time=at,
@@ -264,18 +337,37 @@ def _book(lead: Lead) -> Lead:
     return lead
 
 
-def _plain_booked(person: dict = DANA, *, at: time = time(14, 0), zone=EASTERN, route=DC_ROUTE):
-    lead = _order(person)
+def _plain_booked(
+    person: dict = DANA, *, at: time = time(14, 0), zone=EASTERN, route=DC_ROUTE, company=None
+):
+    lead = _order(person, company=company)
     trip = _trip(lead, PLAIN_DAY, at, zone=zone, route=route)
     return _book(lead), trip
 
 
-def _wedding_booked(*, legs: int = 2) -> tuple[Lead, list[Reservation]]:
-    """Casey books, Pat pays: the wedding's confirmations go to Pat (APC-94)."""
-    lead = _order(CASEY, billing=PAT)
-    trips = [_trip(lead, WEDDING_DAY, time(14, 0), route=CEREMONY_ROUTE, wedding=True)]
-    if legs > 1:
-        trips.append(_trip(lead, WEDDING_DAY, time(18, 0), route=RECEPTION_ROUTE, wedding=True))
+def _wedding_booked(
+    *,
+    legs: int = 2,
+    person: dict = CASEY,
+    billing: dict | None = PAT,
+    company=None,
+    legacy: bool = False,
+) -> tuple[Lead, list[Reservation]]:
+    """By default Casey books and Pat pays: the wedding's confirmations go to Pat (APC-94).
+    `legacy` builds the legs the retired wedding builder made (leg ids, no service type)."""
+    lead = _order(person, billing=billing, company=company)
+    plan = [(time(14, 0), CEREMONY_ROUTE, "ceremony"), (time(18, 0), RECEPTION_ROUTE, "reception")]
+    trips = [
+        _trip(
+            lead,
+            WEDDING_DAY,
+            at,
+            route=route,
+            wedding=not legacy,
+            leg=leg if legacy else "",
+        )
+        for at, route, leg in plan[:legs]
+    ]
     return _book(lead), trips
 
 
@@ -311,10 +403,10 @@ def _dispatched(*, zone=EASTERN, route=DC_ROUTE) -> tuple[Lead, Reservation, Ass
     return lead, trip, assignment
 
 
-def _quoted(person: dict = DANA) -> Lead:
+def _quoted(person: dict = DANA, *, zone: ZoneInfo = EASTERN, route=DC_ROUTE) -> Lead:
     """Quote sent through the Send quote button at SETUP."""
     lead = _order(person)
-    _trip(lead, PLAIN_DAY, time(14, 0))
+    _trip(lead, PLAIN_DAY, time(14, 0), zone=zone, route=route)
     result = lead_services.send_quote(lead, base_url=BASE_URL)
     assert result.ok, result.error
     lead.refresh_from_db()
@@ -395,8 +487,8 @@ def tp3_quote_sent_sms() -> TouchPoint:
     return ready(_message(K.TP3_QUOTE_SENT_SMS, lead=_quoted()))
 
 
-def _viewed_an_hour_later() -> Lead:
-    lead = _quoted()
+def _viewed_an_hour_later(**trip) -> Lead:
+    lead = _quoted(**trip)
     advance(SETUP + timedelta(hours=1))
     _quote_viewed(lead)
     return lead
@@ -553,13 +645,15 @@ def wedding_thank_you() -> TouchPoint:
     return ready(_message(K.THANK_YOU, lead=lead))
 
 
-def _two_orders_same_day() -> tuple[Reservation, Reservation]:
-    """Dana books twice for the same day: a 10 AM and a 4 PM, separate orders."""
+def _two_orders_same_day(
+    *, later: time = time(16, 0), zone: ZoneInfo = EASTERN, route=DC_ROUTE
+) -> tuple[Reservation, Reservation]:
+    """Dana books twice for the same local day: a 10 AM and a later one, separate orders."""
     morning_lead = _order(DANA)
-    morning = _trip(morning_lead, PLAIN_DAY, time(10, 0))
+    morning = _trip(morning_lead, PLAIN_DAY, time(10, 0), zone=zone, route=route)
     _book(morning_lead)
     afternoon_lead = LeadFactory(contact=morning_lead.contact, assigned_agent=_agent())
-    afternoon = _trip(afternoon_lead, PLAIN_DAY, time(16, 0), route=tuple(reversed(DC_ROUTE)))
+    afternoon = _trip(afternoon_lead, PLAIN_DAY, later, zone=zone, route=tuple(reversed(route)))
     _book(afternoon_lead)
     return morning, afternoon
 
@@ -626,6 +720,179 @@ def review_request_held_by_complaint() -> TouchPoint:
     return ready(_message(K.REVIEW_REQUEST, lead=lead))
 
 
+# --- scenarios: fix round 1 (routing gaps) ---------------------------------------------
+
+MORGAN_OFFICE = "Morgan Family Office"
+OPERATOR = "Beltway Executive Sedans"
+RILEY = {"name": "Riley Chen", "email": "dispatch@beltwayexec.example.com", "phone": "+12025550144"}
+AVERY = {"name": "Avery Park", "email": "accounts@beltwayexec.example.com", "phone": "+12025550145"}
+
+
+def wedding_confirm_72h_company_billing_contact() -> TouchPoint:
+    """No per-order billing contact: the booker's company's billing contact (Pat) gets it."""
+    _, trips = _wedding_booked(billing=None, company=_company(MORGAN_OFFICE, billing=PAT))
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trips[0]))
+
+
+def wedding_confirm_72h_no_billing_contact() -> TouchPoint:
+    """No billing contact anywhere: the booker (Casey) gets it."""
+    _, trips = _wedding_booked(billing=None)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trips[0]))
+
+
+def legacy_wedding_leg_confirm_72h() -> TouchPoint:
+    """Wedding-builder legs (leg ids, no Wedding service type) still count as a wedding."""
+    _, trips = _wedding_booked(legacy=True)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trips[0]))
+
+
+def legacy_wedding_leg_thank_you() -> TouchPoint:
+    lead, _ = _wedding_booked(legacy=True)
+    _finished(lead, WEDDING_DAY)
+    return ready(_message(K.THANK_YOU, lead=lead))
+
+
+def _wedding_day_confirmed() -> tuple[Lead, list[Reservation]]:
+    lead, trips = _wedding_booked()
+    advance(SETUP + timedelta(days=1))
+    confirm_trip_day(wedding_day_group(lead, WEDDING_DAY))
+    return lead, trips
+
+
+def wedding_confirm_48h_confirmed_fees_owed() -> TouchPoint:
+    """Day confirmed, fee acknowledgment still owed: the 48h notice still goes to Pat."""
+    _, trips = _wedding_day_confirmed()
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER_2, trip=trips[0]))
+
+
+def wedding_confirm_48h_confirmed_fees_acknowledged() -> TouchPoint:
+    lead, trips = _wedding_day_confirmed()
+    lead_services.acknowledge_fees(lead, ip="203.0.113.7")
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER_2, trip=trips[0]))
+
+
+def gnet_assignment_no_affiliate_confirmation() -> TouchPoint:
+    """GNet coverage gets no affiliate confirmation: at T-48h only the customer is sent to."""
+    _, trip = _plain_booked()
+    offer = AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(**VENDOR),
+        status=Assignment.Status.OFFERED,
+        channel=Assignment.Channel.GNET,
+        payout=Decimal("140.00"),
+    )
+    dispatch_services.confirm(offer)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER_2, trip=trip))
+
+
+def in_house_assignment_no_affiliate_confirmation() -> TouchPoint:
+    """In-house coverage gets no affiliate confirmation either."""
+    _, trip = _plain_booked()
+    driver = DriverFactory(
+        name="Alex Romero", phone="+12025550166", email="alex.romero@allprocharter.com"
+    )
+    dispatch_services.assign_in_house(trip, driver)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER_2, trip=trip))
+
+
+def farm_in_confirm_72h() -> TouchPoint:
+    """An operator (affiliate account) farms a trip in: the 72h goes to the operator."""
+    _, trip = _plain_booked(RILEY, company=_company(OPERATOR, operator=True))
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trip))
+
+
+def farm_in_wedding_confirm_72h() -> TouchPoint:
+    """Not in build(): today this goes to the operator's billing contact, not the operator
+    (spec section 4 says operator only). Pinned by a later task's ordinary test."""
+    operator = _company(OPERATOR, billing=AVERY, operator=True)
+    _, trips = _wedding_booked(person=RILEY, billing=None, company=operator)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trips[0]))
+
+
+def utc_boundary_pair_one_message() -> TouchPoint:
+    """Los Angeles, 10 AM and 8:30 PM PDT the same local day (the second is the next day in
+    UTC): one message covers both."""
+    morning, _ = _two_orders_same_day(later=time(20, 30), zone=PACIFIC, route=LA_ROUTE)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=morning))
+
+
+def tp1_welcome_pacific() -> TouchPoint:
+    lead = _order(DANA)
+    _trip(lead, PLAIN_DAY, time(14, 0), zone=PACIFIC, route=LA_ROUTE)
+    _lead_came_in(lead)
+    return ready(_message(K.TP1_WELCOME, lead=lead))
+
+
+def tp5_viewed_email_pacific() -> TouchPoint:
+    lead = _viewed_an_hour_later(zone=PACIFIC, route=LA_ROUTE)
+    return ready(_message(K.TP5_VIEWED_EMAIL, lead=lead))
+
+
+def review_request_held_by_low_rating() -> TouchPoint:
+    lead, _ = _plain_booked()
+    _finished(lead, PLAIN_DAY)
+    advance(local(PLAIN_DAY, time(19, 30)))
+    lead_services.record_feedback(lead, rating=2, comment="The car was not clean.")
+    return ready(_message(K.REVIEW_REQUEST, lead=lead))
+
+
+def review_request_no_phone() -> TouchPoint:
+    lead, _ = _plain_booked(DANA | {"phone": ""})
+    _finished(lead, PLAIN_DAY)
+    return ready(_message(K.REVIEW_REQUEST, lead=lead))
+
+
+def trip_confirm_customer_phone_only() -> TouchPoint:
+    """No email on file: the 72h goes by text only."""
+    _, trip = _plain_booked(DANA | {"email": ""})
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=trip))
+
+
+def _quote_followup_after(**state) -> TouchPoint:
+    """Quote sent; an hour later the order moves on; the 24h follow-up is then due."""
+    lead = _quoted()
+    advance(SETUP + timedelta(hours=1))
+    _force(lead, **state)
+    return ready(_message(K.TP6_QUOTE_FOLLOWUP, lead=lead))
+
+
+def quote_followup_skipped_lead_booked() -> TouchPoint:
+    return _quote_followup_after(status=Lead.Status.BOOKED)
+
+
+def quote_followup_skipped_lead_engaged() -> TouchPoint:
+    return _quote_followup_after(status=Lead.Status.ENGAGED)
+
+
+def quote_followup_skipped_lead_lost() -> TouchPoint:
+    return _quote_followup_after(status=Lead.Status.LOST)
+
+
+def quote_followup_skipped_deposit_taken() -> TouchPoint:
+    lead = _quoted()
+    advance(SETUP + timedelta(hours=1))
+    PaymentPlan.objects.filter(lead=lead).update(
+        deposit_status=PaymentPlan.DepositStatus.AUTHORIZED
+    )
+    return ready(_message(K.TP6_QUOTE_FOLLOWUP, lead=lead))
+
+
+def thank_you_wedding_name_only() -> TouchPoint:
+    """A plain trip on an order with a wedding name: the wedding thank-you."""
+    lead, _ = _plain_booked()
+    _force(lead, wedding_name="Morgan & Okafor Wedding")
+    _finished(lead, PLAIN_DAY)
+    return ready(_message(K.THANK_YOU, lead=lead))
+
+
+def cancelled_sibling_dropped_from_grouped_sheet() -> TouchPoint:
+    """Dana's 4 PM trip is cancelled: the 10 AM notice lists only the 10 AM trip."""
+    morning, afternoon = _two_orders_same_day()
+    advance(SETUP + timedelta(days=1))
+    set_trip_status(afternoon, Reservation.TripStatus.CANCELLED)
+    return ready(_message(K.TRIP_CONFIRM_CUSTOMER, trip=morning))
+
+
 def build() -> dict[str, Callable[[], TouchPoint]]:
     """Every scenario by name. Names are the keys of expected.json."""
     return {
@@ -664,5 +931,26 @@ def build() -> dict[str, Callable[[], TouchPoint]]:
             driver_released_pacific_trip,
             payment_reminder_account_order,
             review_request_held_by_complaint,
+            wedding_confirm_72h_company_billing_contact,
+            wedding_confirm_72h_no_billing_contact,
+            legacy_wedding_leg_confirm_72h,
+            legacy_wedding_leg_thank_you,
+            wedding_confirm_48h_confirmed_fees_owed,
+            wedding_confirm_48h_confirmed_fees_acknowledged,
+            gnet_assignment_no_affiliate_confirmation,
+            in_house_assignment_no_affiliate_confirmation,
+            farm_in_confirm_72h,
+            utc_boundary_pair_one_message,
+            tp1_welcome_pacific,
+            tp5_viewed_email_pacific,
+            review_request_held_by_low_rating,
+            review_request_no_phone,
+            trip_confirm_customer_phone_only,
+            quote_followup_skipped_lead_booked,
+            quote_followup_skipped_lead_engaged,
+            quote_followup_skipped_lead_lost,
+            quote_followup_skipped_deposit_taken,
+            thank_you_wedding_name_only,
+            cancelled_sibling_dropped_from_grouped_sheet,
         )
     }

@@ -15,11 +15,13 @@ Record (once only): GOLDEN_RECORD=1 pytest apps/messaging/tests/test_golden.py
 import json
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from django.core import mail
+from django.db import transaction
 
 from apps.messaging.models import TouchPoint
 from apps.messaging.tests.golden import scenarios
@@ -42,13 +44,17 @@ def _live(settings):
     settings.COMPANY_NAME = "All Pro Charter"
     settings.COMPANY_PHONE = "(703) 555-0100"
     settings.COMPANY_EMAIL = "reservations@allprocharter.com"
+    settings.BALANCE_CHARGE_DAYS_BEFORE = 30
+    settings.QUOTE_EXPIRY_DAYS_BEFORE_PICKUP = 14
 
 
 def capture(tp: TouchPoint) -> list[dict]:
     """Run the cron once at the scenario's moment; every send it makes, in order."""
     calls: list[dict] = []
 
-    def send(*, identifier, body, channel_type="phone", **_):
+    def send(*, identifier, body, channel_type="phone", internal=False, **_):
+        # Customer and affiliate sends stay behind the go-live switch; never "internal".
+        assert not internal, f"{identifier} sent as internal"
         calls.append({"channel_type": channel_type, "identifier": identifier, "body": body})
         return {"uid": f"golden-{len(calls)}"}
 
@@ -70,18 +76,24 @@ def _normalised(call: dict) -> dict:
     return {k: scenarios.normalise(v) if isinstance(v, str) else v for k, v in call.items()}
 
 
-def _outcome(name: str) -> dict:
+@contextmanager
+def _setup_sends():
+    """Sends made while a scenario plays its clock forward are setup, not the golden."""
     with (
-        scenarios.frozen(),
-        # Sends made while a scenario plays its clock forward are setup, not the golden.
         patch(SEND, return_value={"uid": "setup"}),
         patch(INVITE, return_value={"url": REVIEW_LINK, "uid": "setup"}),
     ):
+        yield
+
+
+def _outcome(name: str) -> dict:
+    """The golden contract: the calls (normalised), the TouchPoint's final status and error.
+    The kind is deliberately not part of it (the wedding thank-you gets its own row)."""
+    with scenarios.frozen(), _setup_sends():
         tp = scenarios.build()[name]()
         calls = capture(tp)
     tp.refresh_from_db()
     return {
-        "kind": tp.kind,
         "status": tp.status,
         "error": tp.error,
         # Order across channels/recipients within one run carries no meaning.
@@ -98,27 +110,33 @@ def _expected() -> dict:
 @pytest.mark.parametrize("name", sorted(scenarios.build()))
 def test_golden(name):
     got = _outcome(name)
-    if RECORD:
-        recorded = _expected()
+    recorded = _expected()
+    if RECORD and name not in recorded:
+        # Recording only ever adds a new scenario; an existing entry is never rewritten.
         recorded[name] = got
         EXPECTED.write_text(
             json.dumps(recorded, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
         )
         return
-    want = _expected()[name]
+    want = recorded[name]
     assert got["calls"] == want["calls"]
-    assert (got["kind"], got["status"], got["error"]) == (
-        want["kind"],
-        want["status"],
-        want["error"],
-    )
+    assert (got["status"], got["error"]) == (want["status"], want["error"])
 
 
 @pytest.mark.skipif(RECORD, reason="recording")
-def test_every_scenario_and_every_kind_is_recorded():
-    expected = _expected()
-    assert set(expected) == set(scenarios.build())
-    assert {s["kind"] for s in expected.values()} >= set(TouchPoint.Kind.values)
+def test_every_scenario_is_recorded():
+    assert set(_expected()) == set(scenarios.build())
+
+
+@pytest.mark.skipif(not RECORD, reason="checked when recording only")
+def test_every_kind_has_a_scenario():
+    """Read at record time: every kind the engine has today is exercised by some scenario."""
+    kinds = set()
+    for build in scenarios.build().values():
+        with transaction.atomic(), scenarios.frozen(), _setup_sends():
+            kinds.add(build().kind)
+            transaction.set_rollback(True)
+    assert kinds >= set(TouchPoint.Kind.values)
 
 
 @pytest.mark.skipif(RECORD, reason="recording")
