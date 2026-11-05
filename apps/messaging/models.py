@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import time, timedelta
 
 from django.conf import settings
 from django.db import models
@@ -196,6 +196,12 @@ class NotificationConfig(models.Model):
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     enabled = models.BooleanField(
         default=True, help_text="Master switch — turn every lifecycle message off at once."
+    )
+    quiet_start = models.TimeField(
+        default=time(21, 0), help_text="Texts to customers wait from this time (local)."
+    )
+    quiet_end = models.TimeField(
+        default=time(8, 0), help_text="...until this time. Same as the start means no quiet hours."
     )
 
     class Meta:

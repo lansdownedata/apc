@@ -1,6 +1,6 @@
 """Settings screens — owner-admin only."""
 
-from datetime import datetime
+from datetime import datetime, time
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -289,7 +289,8 @@ def _filter_url(filters: dict, **changes: str) -> str:
 @owner_admin_required
 def messages_list(request: HttpRequest) -> HttpResponse:
     """Every automated message in its section, problems first, filtered from the query string."""
-    master = NotificationConfig.load().enabled
+    config = NotificationConfig.load()
+    master = config.enabled
     filters = {key: request.GET.get(key, "").strip() for key in listing.FILTER_KEYS}
     rows = MessageTemplate.objects.live().prefetch_related("service_types")
     sections = listing.build_sections(rows, filters, master_on=master)
@@ -307,6 +308,9 @@ def messages_list(request: HttpRequest) -> HttpResponse:
             "page_title": "Messages",
             "sections": sections,
             "master_on": master,
+            "quiet_label": quiet_hours_label(config),
+            "quiet_start": config.quiet_start.strftime("%H:%M"),
+            "quiet_end": config.quiet_end.strftime("%H:%M"),
             "filters": filters,
             "filtering": filtering,
             "audience_options": MessageTemplate.Audience.choices,
@@ -330,11 +334,39 @@ def messages_list(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _clock(value: time) -> str:
+    """9 PM, 7:30 AM: the way the header and the picker read a time."""
+    text = value.strftime("%I:%M %p").lstrip("0")
+    return text.replace(":00", "")
+
+
+def quiet_hours_label(config: NotificationConfig) -> str:
+    """The Messages header text for the saved window; equal ends mean it is off."""
+    if config.quiet_start == config.quiet_end:
+        return "Quiet hours off"
+    return f"Quiet hours {_clock(config.quiet_start)} to {_clock(config.quiet_end)}"
+
+
+def _parse_clock(raw: str) -> time | None:
+    try:
+        return datetime.strptime(raw.strip(), "%H:%M").time()
+    except ValueError:
+        return None
+
+
 @login_required
 @owner_admin_required
-def messages_quiet_hours(request: HttpRequest) -> HttpResponse:
-    """Placeholder until quiet hours are editable (APC-114)."""
-    return HttpResponse("Quiet hours: coming soon.")
+@require_POST
+def messages_quiet_hours(request: HttpRequest) -> JsonResponse:
+    """Save the window customer texts wait out; start equal to end switches it off."""
+    start = _parse_clock(request.POST.get("start", ""))
+    end = _parse_clock(request.POST.get("end", ""))
+    if start is None or end is None:
+        return JsonResponse({"ok": False, "error": "Pick a start and an end time."}, status=400)
+    config = NotificationConfig.load()
+    config.quiet_start, config.quiet_end = start, end
+    config.save(update_fields=["quiet_start", "quiet_end"])
+    return JsonResponse({"ok": True, "label": quiet_hours_label(config)})
 
 
 # The section a new message starts in also picks its audience and a trigger that suits it.

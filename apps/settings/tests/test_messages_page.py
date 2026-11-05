@@ -24,7 +24,7 @@ def test_agent_is_forbidden(client):
     client.force_login(UserFactory())
     assert client.get(reverse("messages")).status_code == 403
     assert client.get(reverse("messages_new")).status_code == 403
-    assert client.get(reverse("messages_quiet_hours")).status_code == 403
+    assert client.post(reverse("messages_quiet_hours")).status_code == 403
 
 
 def test_sections_and_rows_render(client):
@@ -91,10 +91,9 @@ def test_filter_values_stay_selected(client):
     assert 'value="Off"' in html
 
 
-def test_new_and_quiet_hours_placeholders(client):
+def test_new_placeholder_and_quiet_hours_endpoint(client):
     _admin(client)
     assert client.get(reverse("messages_new")).status_code == 200
-    assert client.get(reverse("messages_quiet_hours")).status_code == 200
     html = _get(client)
     assert reverse("messages_new") in html
     assert reverse("messages_quiet_hours") in html

@@ -1,10 +1,38 @@
 {% extends "base.html" %}
+{% load json_filters %}
 {% block content %}
 <div class="max-w-4xl mx-auto px-4 sm:px-6 py-6">
   <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
 
   <div class="flex flex-wrap items-start justify-between gap-4 mb-4 px-1"
        x-data="{ on: {% if master_on %}true{% else %}false{% endif %}, busy: false,
+         quietLabel: {{ quiet_label|json_string }}, quietStart: '{{ quiet_start }}', quietEnd: '{{ quiet_end }}',
+         editQuiet() {
+           const field = (id, label, value) => `<label class='block text-left'><span class='block text-[11px] font-medium text-muted mb-1'>${label}</span><input type='text' id='${id}' data-flatpickr-time value='${value}' class='field w-full num'></label>`;
+           $store.modal.show({
+             title: 'Quiet hours',
+             message: 'Texts to customers wait until quiet hours end. Emails still go. Same start and end turns it off.',
+             html: `<div class='mt-3 grid grid-cols-2 gap-3'>${field('qh-start', 'Starts', this.quietStart)}${field('qh-end', 'Ends', this.quietEnd)}</div><p id='qh-error' role='alert' class='hidden mt-2 text-left text-[12px] text-rose-600'></p>`,
+             confirmText: 'Save',
+             variant: 'gold',
+             onConfirm: async () => {
+               const err = document.getElementById('qh-error');
+               err.classList.add('hidden');
+               const start = document.getElementById('qh-start').value;
+               const end = document.getElementById('qh-end').value;
+               const resp = await fetch('{% url 'messages_quiet_hours' %}', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ start, end }) });
+               const data = await resp.json().catch(() => ({}));
+               if (!resp.ok || !data.ok) {
+                 err.textContent = data.error || 'That did not save.';
+                 err.classList.remove('hidden');
+                 throw new Error('quiet hours');
+               }
+               this.quietLabel = data.label; this.quietStart = start; this.quietEnd = end;
+               $store.toast.push({ type: 'success', title: 'Quiet hours saved' });
+             }
+           });
+           setTimeout(() => window.initFlatpickr(document), 60);
+         },
          async flip() {
            if (this.busy) return;
            this.busy = true;
@@ -22,7 +50,7 @@
       <p class="text-[12.5px] text-muted">Every text and email the app sends. Open one to change who gets it, when, and what it says.</p>
     </div>
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0 pt-1">
-      <a href="{% url 'messages_quiet_hours' %}" class="text-[12.5px] text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">Quiet hours</a>
+      <button type="button" @click="editQuiet()" x-text="quietLabel" class="text-[12.5px] text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">{{ quiet_label }}</button>
       <span class="inline-flex items-center gap-2">
         <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'All messaging on' : 'All messaging off'">{% if master_on %}All messaging on{% else %}All messaging off{% endif %}</span>
         <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if master_on %}true{% else %}false{% endif %}" aria-label="Master messaging switch" @click="flip()" :disabled="busy"
