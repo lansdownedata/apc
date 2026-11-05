@@ -242,7 +242,7 @@ def _trips_done(lead: Lead) -> None:
 
 def _switch_on(kind: str) -> None:
     """The owner turns on a message that ships switched off."""
-    MessageTemplate.objects.update_or_create(kind=kind, defaults={"enabled": True})
+    MessageTemplate.objects.update_or_create(key=kind, defaults={"enabled": True})
 
 
 def _queue_status_dispatched(trip: Reservation) -> TouchPoint:

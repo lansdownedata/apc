@@ -59,7 +59,7 @@ def test_unknown_kind_404(client):
 
 def test_renders_current_text_and_chips(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(kind="driver_released", sms_body="Hi {first_name} {driver_name}")
+    MessageTemplate.objects.create(key="driver_released", sms_body="Hi {first_name} {driver_name}")
     html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
     assert "Hi {first_name} {driver_name}" in html
     assert "Driver cell" in html
@@ -87,7 +87,7 @@ def test_save_valid_redirects_with_toast(client):
     )
     assert resp.redirect_chain[-1][0] == reverse("messages")
     assert "Saved. Applies to messages not yet sent." in resp.content.decode()
-    row = MessageTemplate.objects.get(kind="tp1_welcome")
+    row = MessageTemplate.objects.get(key="tp1_welcome")
     assert row.sms_body == "Hello {first_name}"
     assert row.timing_amount == 5
 
@@ -103,7 +103,7 @@ def test_save_normalises_browser_newlines(client):
             email_body=default.email_body.replace("\n", "\r\n"),
         ),
     )
-    assert not MessageTemplate.objects.filter(kind="tp1_welcome").exists()
+    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
 
 
 def test_save_can_turn_the_message_off(client):
@@ -124,7 +124,7 @@ def test_save_invalid_shows_box_error_and_keeps_text(client):
     html = resp.content.decode()
     assert "Unknown field {nope}" in html
     assert "Hello {nope} there" in html
-    assert not MessageTemplate.objects.filter(kind="tp1_welcome").exists()
+    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
 
 
 def test_save_invalid_timing_shows_error(client):
@@ -158,7 +158,7 @@ def test_second_notice_editor_edits_wording_and_timing(client):
     del data["enabled"]
     assert client.post(url, data).status_code == 302
     assert overrides.timing_of("trip_confirm_customer_2") == (36, "hours")
-    row = MessageTemplate.objects.get(kind="trip_confirm_customer_2")
+    row = MessageTemplate.objects.get(key="trip_confirm_customer_2")
     assert row.sms_body.startswith("Please confirm")
 
 
@@ -255,16 +255,16 @@ def test_timing_preview(client):
 
 def test_reset_deletes_row(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(kind="tp1_welcome", sms_body="Hi {first_name}")
+    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {first_name}")
     resp = client.post(reverse("message_reset", args=["tp1_welcome"]))
     assert resp.status_code == 302
-    assert not MessageTemplate.objects.filter(kind="tp1_welcome").exists()
+    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
     assert client.get(reverse("message_reset", args=["tp1_welcome"])).status_code == 405
 
 
 def test_toggle_returns_400_when_the_saved_text_no_longer_validates(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(kind="tp1_welcome", sms_body="Hi {gone_field}")
+    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {gone_field}")
     resp = client.post(reverse("message_toggle", args=["tp1_welcome"]))
     assert resp.status_code == 400
     body = json.loads(resp.content)

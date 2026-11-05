@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -145,7 +147,15 @@ class TouchPoint(TimeStampedModel):
         blank=True,
         on_delete=models.CASCADE,
     )
-    kind = models.CharField(max_length=30, choices=Kind.choices)
+    message = models.ForeignKey(
+        "messaging.MessageTemplate",
+        related_name="touchpoints",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
+    # A copy of the message's key, kept for history and reporting.
+    kind = models.CharField(max_length=40)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
     scheduled_for = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
@@ -164,7 +174,8 @@ class TouchPoint(TimeStampedModel):
         )
 
     def __str__(self) -> str:
-        return f"{self.get_kind_display()} · {self.get_status_display()}"
+        name = self.message.name if self.message_id else self.get_kind_display()
+        return f"{name} · {self.get_status_display()}"
 
 
 class NotificationConfig(models.Model):
@@ -225,23 +236,106 @@ class Review(TimeStampedModel):
         return f"Review invite · {self.get_delivery_status_display()}"
 
 
+class MessageTemplateQuerySet(models.QuerySet):
+    def live(self):
+        """Rows that are not archived."""
+        return self.filter(archived_at__isnull=True)
+
+
 class MessageTemplate(TimeStampedModel):
-    """Owner edits to one automated message, layered over the code default.
+    """One automated message: its wording, trigger, timing, channels and recipients."""
 
-    A blank text field means "use the default"; timing applies only when both timing fields
-    are set. No row at all is the code default, so deleting a row restores it.
-    """
+    class Section(models.TextChoices):
+        LEADS_QUOTES = "leads_quotes", "Leads & quotes"
+        BOOKING_PAYMENTS = "booking_payments", "Booking & payments"
+        TRIP_DAY = "trip_day", "Trip day"
+        AFTER_TRIP = "after_trip", "After the trip"
+        AFFILIATES = "affiliates", "Affiliates"
+        PLANNERS = "planners", "Planners"
+        STAFF_REPORTS = "staff_reports", "Staff reports"
 
-    kind = models.CharField(max_length=40, unique=True)
+    class Audience(models.TextChoices):
+        CUSTOMER = "customer", "Customer"
+        AFFILIATE = "affiliate", "Affiliate"
+        PLANNER = "planner", "Planner"
+        STAFF = "staff", "Staff"
+
+    class Direction(models.TextChoices):
+        BEFORE = "before", "Before"
+        AFTER = "after", "After"
+
+    key = models.CharField(max_length=40, unique=True)
+    name = models.CharField(max_length=120, blank=True)
+    section = models.CharField(max_length=20, choices=Section.choices, blank=True)
+    audience = models.CharField(max_length=10, choices=Audience.choices, default=Audience.CUSTOMER)
+    trigger = models.CharField(max_length=40, blank=True)
+    # Null / blank until the seeding migration fills real values; spec B code reads a null
+    # timing as "use the code default".
+    timing_amount = models.PositiveIntegerField(null=True, blank=True)
+    timing_unit = models.CharField(max_length=10, blank=True)
+    timing_direction = models.CharField(
+        max_length=6, choices=Direction.choices, default=Direction.AFTER
+    )
+    send_sms = models.BooleanField(default=True)
+    send_email = models.BooleanField(default=True)
     subject = models.CharField(max_length=200, blank=True)
     email_body = models.TextField(blank=True)
     sms_body = models.TextField(blank=True)
-    timing_amount = models.PositiveIntegerField(null=True, blank=True)
-    timing_unit = models.CharField(max_length=10, blank=True)
+    recipients = models.JSONField(default=list, blank=True)
+    staff_emails = models.JSONField(default=list, blank=True)
+    service_types = models.ManyToManyField("leads.ServiceType", blank=True, related_name="+")
     enabled = models.BooleanField(default=True)
+    seeded = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
 
+    objects = MessageTemplateQuerySet.as_manager()
+
     def __str__(self) -> str:
-        return self.kind
+        return self.name or self.key
+
+    @property
+    def offset(self) -> timedelta:
+        """The send offset from the trigger, negative for "before"."""
+        span = timedelta(**{self.timing_unit or "minutes": self.timing_amount or 0})
+        return -span if self.timing_direction == self.Direction.BEFORE else span
+
+    @property
+    def channels(self) -> tuple[str, ...]:
+        return tuple(
+            channel for channel, on in (("sms", self.send_sms), ("email", self.send_email)) if on
+        )
+
+
+class Delivery(TimeStampedModel):
+    """One send of a TouchPoint to one recipient on one channel."""
+
+    class Channel(models.TextChoices):
+        SMS = "sms", "SMS"
+        EMAIL = "email", "Email"
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    touchpoint = models.ForeignKey(TouchPoint, related_name="deliveries", on_delete=models.CASCADE)
+    message = models.ForeignKey(
+        MessageTemplate, related_name="deliveries", on_delete=models.PROTECT
+    )
+    channel = models.CharField(max_length=5, choices=Channel.choices)
+    recipient_label = models.CharField(max_length=160, blank=True)
+    address = models.CharField(max_length=254)
+    combine_key = models.CharField(max_length=80, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    reason = models.CharField(max_length=255, blank=True)
+    provider_id = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["message", "address", "combine_key", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.channel} to {self.address} · {self.get_status_display()}"

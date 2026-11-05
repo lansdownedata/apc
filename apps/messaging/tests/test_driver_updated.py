@@ -122,7 +122,7 @@ def test_in_house_reassignment_updates():
 
 
 def test_update_switch_off():
-    MessageTemplate.objects.create(kind="driver_updated", enabled=False)
+    MessageTemplate.objects.create(key="driver_updated", enabled=False)
     res, a = _sent_trip()
     _new_cell(a)
     assert not _updates(res).exists()

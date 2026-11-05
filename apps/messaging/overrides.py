@@ -22,7 +22,7 @@ def default(kind: str) -> TouchPointTemplate:
 
 def load() -> dict[str, MessageTemplate]:
     """Every override row, keyed by kind, in one query."""
-    return {row.kind: row for row in MessageTemplate.objects.all()}
+    return {row.key: row for row in MessageTemplate.objects.all()}
 
 
 def _row_offset(row, base: TouchPointTemplate) -> timedelta | None:
@@ -185,10 +185,10 @@ def save(
     with transaction.atomic():
         old = _offset_of(kind)
         if not any(texts.values()) and amount is None and enabled == default_enabled:
-            MessageTemplate.objects.filter(kind=kind).delete()
+            MessageTemplate.objects.filter(key=kind).delete()
         else:
             MessageTemplate.objects.update_or_create(
-                kind=kind,
+                key=kind,
                 defaults={
                     **texts,
                     "timing_amount": amount,
@@ -205,7 +205,7 @@ def reset(kind: str) -> int:
     """Drop the owner's row for a kind; re-dates scheduled sends if its timing changed."""
     with transaction.atomic():
         old = _offset_of(kind)
-        MessageTemplate.objects.filter(kind=kind).delete()
+        MessageTemplate.objects.filter(key=kind).delete()
         new = _offset_of(kind)
     return _redate_all(kind, old, new)
 

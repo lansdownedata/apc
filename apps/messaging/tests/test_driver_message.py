@@ -182,7 +182,7 @@ def test_in_house_gets_message():
 
 def test_dispatched_status_message_retired():
     res = _trip()
-    MessageTemplate.objects.create(kind="status_dispatched", enabled=True)
+    MessageTemplate.objects.create(key="status_dispatched", enabled=True)
     set_trip_status(res, "dispatched")
     assert not TouchPoint.objects.filter(kind=K.STATUS_DISPATCHED).exists()
 
@@ -201,7 +201,7 @@ def test_sent_details_recorded():
 
 
 def test_editable_timing_applies():
-    MessageTemplate.objects.create(kind="driver_released", timing_amount=4, timing_unit="hours")
+    MessageTemplate.objects.create(key="driver_released", timing_amount=4, timing_unit="hours")
     res = _trip(hours=72)
     _confirmed(res)
     set_trip_status(res, "dispatched")

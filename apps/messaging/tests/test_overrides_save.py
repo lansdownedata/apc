@@ -32,21 +32,21 @@ def _save(kind="tp1_welcome", **over):
 
 def test_save_stores_only_differences():
     _save(sms_body="Hi {first_name}")
-    row = MessageTemplate.objects.get(kind="tp1_welcome")
+    row = MessageTemplate.objects.get(key="tp1_welcome")
     assert row.subject == "" and row.email_body == ""
     assert row.sms_body == "Hi {first_name}"
     assert row.timing_amount is None
 
 
 def test_save_all_default_deletes_row():
-    MessageTemplate.objects.create(kind="tp1_welcome", sms_body="Hi {first_name}")
+    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {first_name}")
     _save()
-    assert not MessageTemplate.objects.filter(kind="tp1_welcome").exists()
+    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
 
 
 def test_save_keeps_row_when_only_enabled_differs():
     _save(enabled=False)
-    assert MessageTemplate.objects.get(kind="tp1_welcome").enabled is False
+    assert MessageTemplate.objects.get(key="tp1_welcome").enabled is False
 
 
 def test_save_refuses_invalid():
@@ -65,7 +65,7 @@ def test_timing_bounds(timing):
 
 def test_timing_equal_to_default_stored_null():
     _save("tp2_lead_followup", timing=(2, "hours"))
-    assert not MessageTemplate.objects.filter(kind="tp2_lead_followup").exists()
+    assert not MessageTemplate.objects.filter(key="tp2_lead_followup").exists()
 
 
 def test_triggered_kind_refuses_timing():
@@ -76,7 +76,7 @@ def test_triggered_kind_refuses_timing():
 
 
 def test_triggered_kind_ignores_stray_row_timing():
-    MessageTemplate.objects.create(kind="order_confirmed", timing_amount=5, timing_unit="hours")
+    MessageTemplate.objects.create(key="order_confirmed", timing_amount=5, timing_unit="hours")
     assert overrides.effective("order_confirmed").offset == timedelta(0)
 
 
@@ -116,7 +116,7 @@ def test_text_change_redates_nothing():
 
 
 def test_reset_redates():
-    MessageTemplate.objects.create(kind="tp2_lead_followup", timing_amount=5, timing_unit="hours")
+    MessageTemplate.objects.create(key="tp2_lead_followup", timing_amount=5, timing_unit="hours")
     t = _scheduled("tp2_lead_followup", NOW, timedelta(hours=5))
     assert overrides.reset("tp2_lead_followup") == 1
     t.refresh_from_db()
@@ -125,7 +125,7 @@ def test_reset_redates():
 
 
 def test_reset_without_timing_change_returns_zero():
-    MessageTemplate.objects.create(kind="tp2_lead_followup", sms_body="Hi {first_name}")
+    MessageTemplate.objects.create(key="tp2_lead_followup", sms_body="Hi {first_name}")
     _scheduled("tp2_lead_followup", NOW, timedelta(hours=2))
     assert overrides.reset("tp2_lead_followup") == 0
 
@@ -186,12 +186,12 @@ def test_zero_timing_is_valid_and_stored():
         == {}
     )
     _save("tp2_lead_followup", timing=(0, "hours"))
-    assert MessageTemplate.objects.get(kind="tp2_lead_followup").timing_amount == 0
+    assert MessageTemplate.objects.get(key="tp2_lead_followup").timing_amount == 0
     assert overrides.effective("tp2_lead_followup").offset == timedelta(0)
 
 
 def test_zero_row_overrides_default_offset():
-    MessageTemplate.objects.create(kind="tp2_lead_followup", timing_amount=0, timing_unit="hours")
+    MessageTemplate.objects.create(key="tp2_lead_followup", timing_amount=0, timing_unit="hours")
     assert overrides.effective("tp2_lead_followup").offset == timedelta(0)
 
 
