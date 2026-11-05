@@ -391,6 +391,9 @@ def test_two_trips_one_day_send_one_message_listing_both():
         NOV_14.isoformat()
     }
 
+    # Its own time comes (a bulk re-date, so the snapshot still matches): the claim only
+    # takes a due row.
+    TouchPoint.objects.filter(pk=second.pk).update(scheduled_for=timezone.now())
     with patch(SEND) as send:
         assert sender.deliver(second) is False
 

@@ -161,7 +161,7 @@ def matches(row: MessageTemplate, lead, reservation=None) -> bool:
     return any(_trip_matches(t, types) for t in trips)
 
 
-def _ready(reservation, waits_for: str) -> bool:
+def ready(reservation, waits_for: str) -> bool:
     """Whether a waiting row's condition holds now. A cancelled trip is never ready, and
     neither is a condition this module doesn't know."""
     from apps.dispatch.models import DispatchAlertConfig
@@ -388,7 +388,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         assignment = confirmed_assignment(res)
         if assignment is None or not assignment.vendor_id:
             return "wait", "no confirmed affiliate"
-    if waits_for and not _ready(res, waits_for):
+    if waits_for and not ready(res, waits_for):
         return "wait", "waiting for Dispatched with the driver's details"
     if _uses_site_link(row) and not settings.PUBLIC_BASE_URL:
         logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, row.key)

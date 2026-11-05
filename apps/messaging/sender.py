@@ -467,17 +467,21 @@ def _claim(tp: TouchPoint) -> bool:
     """Take the TouchPoint for this send, or learn someone else has it.
 
     One conditional update, so it holds on MySQL and Postgres alike: it succeeds only while
-    the row is still SCHEDULED and unchanged since this snapshot was read, and it leases the
-    row by moving `updated_at` a few minutes ahead. A stale snapshot (the cron's batch after
-    an inline send, or the reverse) fails the match; a fresh read during someone else's
-    send sees the lease. Every way out of `deliver` saves `updated_at` again, which ends
-    the lease; a sender that died leaves it to expire."""
+    the row is still SCHEDULED, still due, and unchanged since this snapshot was read, and it
+    leases the row by moving `updated_at` a few minutes ahead. A stale snapshot (the cron's
+    batch after an inline send, or the reverse) fails the match; a fresh read during someone
+    else's send sees the lease. A row re-dated in bulk (`events.redate`, which leaves
+    `updated_at` alone) since it was read is no longer due. Every way out of `deliver` saves
+    `updated_at` again, which ends the lease; a sender that died leaves it to expire."""
     now = timezone.now()
     snapshot = tp.updated_at
     if tp.status == TouchPoint.Status.SCHEDULED and snapshot is not None and snapshot <= now:
         lease = now + LEASE
         won = TouchPoint.objects.filter(
-            pk=tp.pk, status=TouchPoint.Status.SCHEDULED, updated_at=snapshot
+            pk=tp.pk,
+            status=TouchPoint.Status.SCHEDULED,
+            updated_at=snapshot,
+            scheduled_for__lte=now,
         ).update(updated_at=lease)
         if won:
             tp.updated_at = lease

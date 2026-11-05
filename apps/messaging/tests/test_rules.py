@@ -693,14 +693,14 @@ def test_affiliate_confirmation_skips_in_house_coverage():
 
 def test_unknown_wait_is_never_ready():
     trip = _dispatched_trip()
-    assert rules._ready(trip, "dispatched_with_driver")
-    assert not rules._ready(trip, "something_new")
+    assert rules.ready(trip, "dispatched_with_driver")
+    assert not rules.ready(trip, "something_new")
 
 
 def test_cancelled_trip_is_never_ready():
     trip = _dispatched_trip()
     _status(trip, Reservation.TripStatus.CANCELLED)
-    assert not rules._ready(trip, "dispatched_with_driver")
+    assert not rules.ready(trip, "dispatched_with_driver")
 
 
 def _dispatched_trip() -> Reservation:
