@@ -93,6 +93,7 @@ _DESCRIPTIONS: dict[str, list[str]] = {
         "One message per trip",
     ],
     "driver_updated": ["Waits for Dispatched with the driver's details"],
+    "status_dispatched": ["Retired: the driver details message covers dispatch"],
     "thank_you": [
         "Booked orders only",
         "Wedding orders get the wedding thank-you instead",

@@ -119,21 +119,36 @@ def _send_on_commit(tps: Iterable[TouchPoint]) -> None:
     now = timezone.now()
     ids = [tp.pk for tp in tps if tp.scheduled_for is not None and tp.scheduled_for <= now]
     if ids:
-        transaction.on_commit(lambda: sender.send_due(ids))
+        # Robust: whatever the send does, the caller's save has committed and stands.
+        transaction.on_commit(lambda: sender.send_due(ids), robust=True)
 
 
 # --- events ----------------------------------------------------------------------------
 
 
-def _already_thanked(row: MessageTemplate, lead) -> bool:
-    """The seeded wedding thank-you is the plain one in other words: a plain thank-you
-    already sent on this order (the old engine chose the wedding wording at send time, or
-    the wedding row was off when it went) means the customer has been thanked."""
-    return (
-        row.key == "thank_you_wedding"
-        and rules.has_built_ins(row)
-        and TouchPoint.objects.filter(lead=lead, kind="thank_you", status=_S.SENT).exists()
-    )
+# Seeded rows that are never queued while they stay on their own trigger. The Dispatched
+# status text is retired: the driver details message covers dispatch (today it is never
+# scheduled). A message an Admin adds on that trigger is queued as usual.
+_RETIRED = frozenset({"status_dispatched"})
+
+
+def _retired(row: MessageTemplate) -> bool:
+    return row.key in _RETIRED and rules.has_built_ins(row)
+
+
+def _thanked(lead) -> bool:
+    """A plain thank-you already sent on this order, or still queued from before this event
+    (the old engine's, which the sender sends in the wedding words on a wedding order).
+    Read before the event queues its own rows."""
+    return TouchPoint.objects.filter(
+        lead=lead, kind="thank_you", status__in=(_S.SENT, _S.SCHEDULED)
+    ).exists()
+
+
+def _is_wedding_thank_you(row: MessageTemplate) -> bool:
+    """The seeded wedding thank-you is the plain one in other words: once the customer has
+    been thanked, or a thank-you is on its way, it is not queued as well."""
+    return row.key == "thank_you_wedding" and rules.has_built_ins(row)
 
 
 def _moment(trigger_key: str, lead, now: datetime) -> datetime:
@@ -155,18 +170,21 @@ def emit(trigger_key: str, lead, reservation=None) -> list[TouchPoint]:
     trigger = catalog.get(trigger_key)
     if trigger.level == "trip" and reservation is None:
         raise ValueError(f"{trigger_key} is a trip event: pass the reservation")
+    if trigger_key == "quote_sent":
+        # Withdrawn even with the master switch off, as `touchpoints.schedule_quote_sent`.
+        cancel(lead, triggers=_QUOTE_PROGRAM)
     if not _master_on():
         return []
-    if trigger_key == "quote_sent":
-        cancel(lead, triggers=_QUOTE_PROGRAM)
     trip = reservation if trigger.level == "trip" else None
     rule = _REPEATS.get(trigger_key, ONCE)
     at = _moment(trigger_key, lead, timezone.now())
+    rows = [row for row in _rows_on([trigger_key]) if not _retired(row)]
+    thanked = any(_is_wedding_thank_you(r) for r in rows) and _thanked(lead)
     created = []
-    for row in _rows_on([trigger_key]):
+    for row in rows:
         if not rules.matches(row, lead, trip):
             continue
-        if _blocked(row, lead, trip, rule) or _already_thanked(row, lead):
+        if _blocked(row, lead, trip, rule) or (thanked and _is_wedding_thank_you(row)):
             continue
         created.append(_create(row, lead, trip, at + row.offset))
     if trigger_key == "quote_sent":

@@ -1245,3 +1245,94 @@ def test_a_row_redated_in_bulk_after_it_was_read_is_not_sent_early(live):
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == S.SCHEDULED
+
+
+# --- fix round 1 ---------------------------------------------------------------------------
+
+
+def test_the_seeded_dispatched_status_message_is_retired(clock):
+    """It is never queued while it stays on its own trigger, exactly as today; a message an
+    Admin adds on that trigger is."""
+    _switch_on("status_dispatched")
+    added = _added(trigger="status_dispatched")
+    lead = _lead()
+    trip = _trip(lead)
+
+    made = events.emit("status_dispatched", lead, trip)
+
+    assert [tp.message for tp in made] == [added]
+    assert not _tps(lead, kind=K.STATUS_DISPATCHED).exists()
+
+
+def test_the_seeded_dispatched_message_moved_to_another_trigger_queues_there(clock):
+    MessageTemplate.objects.filter(key="status_dispatched").update(
+        trigger="status_on_the_way", enabled=True
+    )
+    lead = _lead()
+    trip = _trip(lead)
+
+    events.emit("status_on_the_way", lead, trip)
+
+    assert _tps(lead, kind=K.STATUS_DISPATCHED, reservation=trip).count() == 1
+
+
+def test_the_retired_dispatched_message_says_so_in_the_editor():
+    from apps.messaging import rules
+
+    assert any("Retired" in line for line in rules.built_in_descriptions("status_dispatched"))
+
+
+def test_parity_quote_resent_with_the_master_switch_off(clock):
+    """A re-sent quote withdraws the old program even while nothing new may be queued."""
+    lead = _lead(Lead.Status.QUOTED, quote_sent_at=NOW, quote_expires_at=NOW + timedelta(days=3))
+    touchpoints.schedule_quote_sent(lead)
+    touchpoints.schedule_quote_viewed(lead)
+    NotificationConfig.objects.update_or_create(pk=1, defaults={"enabled": False})
+
+    old, new = _parity(lead, touchpoints.schedule_quote_sent, _quote_sent_new)
+
+    assert old == new
+    assert {status for *_, status in new} == {S.CANCELLED}
+
+
+@pytest.mark.parametrize(
+    "message", [None, "thank_you"], ids=["legacy-no-pointer", "seeded-pointer"]
+)
+def test_a_thank_you_still_queued_from_before_the_cut_over_blocks_the_wedding_one(clock, message):
+    """At the cut-over a wedding order may hold the old engine's queued `thank_you`, which
+    the sender will send in the wedding words: a repeated event must not add a second."""
+    lead = _lead()
+    _trip(lead, hours=-30, wedding=True, trip_status=Reservation.TripStatus.DONE)
+    TouchPointFactory(
+        lead=lead,
+        kind=K.THANK_YOU,
+        message=_row(message) if message else None,
+        scheduled_for=NOW + timedelta(hours=1),
+    )
+
+    events.emit("all_trips_done", lead)
+
+    assert not _tps(lead, kind="thank_you_wedding").exists()
+    assert _tps(lead, kind=K.THANK_YOU).count() == 1
+
+
+def test_send_due_never_raises(live, caplog):
+    with patch.object(sender, "_send_batch", side_effect=RuntimeError("boom")):
+        sender.send_due([1, 2])
+
+    assert "boom" in caplog.text
+
+
+def test_a_failing_on_commit_send_never_reaches_the_caller(
+    live, django_capture_on_commit_callbacks
+):
+    _added(trigger="deposit_paid")
+    lead = _lead()
+
+    with (
+        patch.object(sender, "send_due", side_effect=RuntimeError("boom")) as send_due,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        (tp,) = events.emit("deposit_paid", lead)
+
+    send_due.assert_called_once_with([tp.pk])

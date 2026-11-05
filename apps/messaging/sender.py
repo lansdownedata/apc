@@ -601,8 +601,12 @@ def run_touchpoints() -> int:
 
 def send_due(touchpoint_ids: Iterable[int]) -> None:
     """Send the given TouchPoints that are due now, as the cron would (an event's sends,
-    after its transaction commits). Not-yet-due rows wait for the cron."""
-    ids = list(touchpoint_ids)
-    if not ids or not settings.TOUCHPOINTS_ENABLED:
-        return
-    _send_batch(_due().filter(pk__in=ids))
+    after its transaction commits). Not-yet-due rows wait for the cron. Never raises: it
+    runs after someone else's save, and whatever is left unsent the cron picks up."""
+    try:
+        ids = list(touchpoint_ids)
+        if not ids or not settings.TOUCHPOINTS_ENABLED:
+            return
+        _send_batch(_due().filter(pk__in=ids))
+    except Exception:  # noqa: BLE001 - an inline send must never break the caller
+        logger.exception("inline send of touch-points %s failed", touchpoint_ids)
