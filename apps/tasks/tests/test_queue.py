@@ -5,6 +5,7 @@ here so the template is the only thing left.
 """
 
 from datetime import datetime, time, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -102,17 +103,21 @@ def test_assignee_filters_unassigned_anyone_and_a_named_user():
 
 
 def test_due_window_filters():
-    me = UserFactory()
-    overdue = _task(assignee=me, due=_now() - timedelta(hours=1))
-    today = _task(assignee=me, due=timezone.localtime().replace(hour=23, minute=0))
-    week = _task(assignee=me, due=_now() + timedelta(days=5))
-    far = _task(assignee=me, due=_now() + timedelta(days=30))
+    """The clock is pinned at noon so "later today" is in the future whenever the suite runs
+    (APC-125: a real 11 PM run made the 11 PM task overdue)."""
+    noon = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
+    with patch("django.utils.timezone.now", return_value=noon):
+        me = UserFactory()
+        overdue = _task(assignee=me, due=noon - timedelta(hours=1))
+        today = _task(assignee=me, due=noon.replace(hour=23))
+        week = _task(assignee=me, due=noon + timedelta(days=5))
+        far = _task(assignee=me, due=noon + timedelta(days=30))
 
-    assert list(queue.queue_for(me, queue.QueueFilters(due="overdue"))) == [overdue]
-    assert today in queue.queue_for(me, queue.QueueFilters(due="today"))
-    assert far not in queue.queue_for(me, queue.QueueFilters(due="today"))
-    in_week = set(queue.queue_for(me, queue.QueueFilters(due="week")))
-    assert week in in_week and far not in in_week
+        assert list(queue.queue_for(me, queue.QueueFilters(due="overdue"))) == [overdue]
+        assert today in queue.queue_for(me, queue.QueueFilters(due="today"))
+        assert far not in queue.queue_for(me, queue.QueueFilters(due="today"))
+        in_week = set(queue.queue_for(me, queue.QueueFilters(due="week")))
+        assert week in in_week and far not in in_week
 
 
 def test_kind_filter():
