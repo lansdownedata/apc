@@ -5,19 +5,23 @@ send time, and makes one `Delivery` per person per channel: sent, failed with th
 error, or skipped with the reason ("No mobile on file", "Already sent for Nov 14"). The
 TouchPoint keeps today's status and error strings, which the order's history and the golden
 recording read. `run_touchpoints` is the `run-touchpoints` cron job; `send_due` is the same
-batch for rows an event queued, called once its transaction commits.
+batch for rows an event queued, called once its transaction commits. `send_now` is the same
+path for a staff click, an invite or a report, sent inside the request (spec C section 8).
 
 Transport is today's: texts and customer/affiliate email through Podium, planner and staff
-email (and any trigger whose email goes by Postmark) through our own mail. The review request
-keeps Podium's review invite. `OUTBOUND_ENABLED` is enforced inside both send primitives;
-`TOUCHPOINTS_ENABLED` and the master switch gate the batch as they always have.
+email (and any trigger whose email goes by Postmark) through our own mail, in the branded
+layout (`rendering`). The review request keeps Podium's review invite. `OUTBOUND_ENABLED` is
+enforced inside both send primitives; `TOUCHPOINTS_ENABLED` and the master switch gate the
+batch as they always have, and never a click.
 """
 
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import time, timedelta
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.core import outbound
@@ -26,9 +30,10 @@ from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.notifications import email as mail
 
-from . import fields, recipients, rules, triggers
+from . import fields, recipients, rendering, rules, triggers
 from .models import Delivery, MessageTemplate, NotificationConfig, Review, TouchPoint
 from .recipients import Recipient
+from .rendering import Block
 from .touchpoint_templates import build_context, render
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,10 @@ NO_RECIPIENT = "No recipient"
 # Today's TouchPoint error when the people it resolved have no address it can use.
 NO_CHANNEL = "recipient has no usable channel"
 MISSING = {"sms": "No mobile on file", "email": "No email on file"}
+# Why the cron closed a staff click's or report's TouchPoint that its own send never finished.
+INTERRUPTED = "send interrupted"
+# Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
+_SENT_NOW = frozenset({"staff_click", "schedule"})
 
 _A = MessageTemplate.Audience
 _POSTMARK_AUDIENCES = frozenset({_A.PLANNER, _A.STAFF})
@@ -53,7 +62,28 @@ class _NotSent(Exception):
     """Our own mail refused or failed a send (it never raises; it answers None)."""
 
 
-_SEND_ERRORS = (PodiumAPIError, PodiumNotConnected, _NotSent)
+_SEND_ERRORS = (PodiumAPIError, PodiumNotConnected, _NotSent, mail.EmailNotSent)
+
+
+@dataclass(frozen=True)
+class _Click:
+    """What a `send_now` caller hands the sender for this one send."""
+
+    to: list[Recipient] | None = None
+    extra_ctx: dict = field(default_factory=dict)
+    blocks: dict[str, Block] = field(default_factory=dict)
+    channels: frozenset[str] | None = None
+
+
+@dataclass
+class SendResult:
+    """A `send_now`: whether it reached anyone, its Deliveries, and why not if it didn't
+    (each failed Delivery's error, else the TouchPoint's reason)."""
+
+    sent: bool
+    deliveries: list[Delivery]
+    errors: list[str]
+
 
 _SELECT = (
     "lead",
@@ -235,17 +265,31 @@ def _trip_sheet(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> str 
     return "\n\n".join(trip_sheet_text(t) for t in trips)
 
 
-def context(tp: TouchPoint, row: MessageTemplate, recipient: Recipient) -> dict[str, str]:
+def context(
+    tp: TouchPoint, row: MessageTemplate, recipient: Recipient, extra: dict | None = None
+) -> dict[str, str]:
     """Everything a row's wording can use for this recipient. A customer or planner message
     greets the person who receives it, not the booker; an affiliate's keeps the customer's
-    fields. A combining row's trip sheet lists the person's whole day."""
-    ctx = build_context(tp.lead, tp.reservation)
+    fields. A combining row's trip sheet lists the person's whole day. A send with no order
+    (an invite, a report) knows only the company and what its caller hands over in
+    ``extra``, which has the last word (a staff click's links are built from its request)."""
+    if tp.lead_id is None:
+        ctx = {
+            "first_name": "there",
+            "company_name": settings.COMPANY_NAME,
+            "company_phone": settings.COMPANY_PHONE,
+            "company_email": settings.COMPANY_EMAIL,
+        }
+    else:
+        ctx = build_context(tp.lead, tp.reservation)
     if row.audience in (_A.CUSTOMER, _A.PLANNER):
         ctx["first_name"] = (recipient.name or "").split(" ")[0] or "there"
-    sheet = _trip_sheet(tp, row, recipient)
-    if sheet is not None:
-        ctx["trip_sheet"] = sheet
-    rules.fill_links(tp, row, ctx, settings.PUBLIC_BASE_URL or "")
+    if tp.lead_id is not None:
+        sheet = _trip_sheet(tp, row, recipient)
+        if sheet is not None:
+            ctx["trip_sheet"] = sheet
+        rules.fill_links(tp, row, ctx, settings.PUBLIC_BASE_URL or "")
+    ctx.update(extra or {})
     return ctx
 
 
@@ -264,26 +308,45 @@ def _address(person: Recipient, channel: str) -> str:
     return person.phone if channel == "sms" else person.email.strip()
 
 
-def _transport(row: MessageTemplate, channel: str, address: str, ctx: dict) -> str:
-    """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`."""
+def _transport(
+    row: MessageTemplate,
+    channel: str,
+    address: str,
+    ctx: dict,
+    blocks: dict[str, Block] | None = None,
+) -> str:
+    """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`.
+
+    Our own mail goes out in the branded layout, the blocks' HTML in place
+    (`rendering`); texts and Podium email carry the blocks' plain text."""
+    blocks = blocks or {}
+    texts = rendering.texts(ctx, blocks)
     if channel == "sms":
         resp = podium.send_message(
-            identifier=address, channel_type=PODIUM_CHANNEL["sms"], body=render(row.sms_body, ctx)
+            identifier=address,
+            channel_type=PODIUM_CHANNEL["sms"],
+            body=render(row.sms_body, texts),
         )
         return resp.get("uid") or resp.get("data", {}).get("uid", "")
-    subject = render(row.subject, ctx) if row.subject else ""
-    body = render(row.email_body, ctx) if row.email_body else ""
     if _via_postmark(row):
+        logo = rendering.logo_path()
+        subject, layout = rendering.layout_context(
+            row, ctx, blocks, logo_cid="logo" if logo else ""
+        )
         provider_id = mail.deliver_html_email(
             to=address,
             subject=subject,
             template="message",
-            context={"subject": subject, "body": body},
+            context=layout,
+            inline_images={"logo": logo} if logo else None,
             internal=row.audience == _A.STAFF,
+            raise_errors=True,
         )
         if provider_id is None:
             raise _NotSent("Email not sent")
         return provider_id
+    subject = render(row.subject, texts) if row.subject else ""
+    body = render(row.email_body, texts) if row.email_body else ""
     resp = podium.send_message(
         identifier=address,
         channel_type=PODIUM_CHANNEL["email"],
@@ -393,7 +456,9 @@ def _finish(
     return False
 
 
-def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool:
+def _send(
+    tp: TouchPoint, row: MessageTemplate, people: list[Recipient], click: _Click | None = None
+) -> bool:
     key = rules.combine_key(tp, row)
     done, elsewhere = _deliveries(tp, row, key)
     sent_here = {(d.channel, d.address.lower()) for d in done if d.status == Delivery.Status.SENT}
@@ -401,7 +466,10 @@ def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool
     everyone_covered = _old_engine_covered(tp, row)
     plan: list[tuple[str, Recipient, str]] = []
     covered = 0
-    for channel in row.channels:
+    channels = row.channels
+    if click is not None and click.channels is not None:
+        channels = tuple(c for c in channels if c in click.channels)
+    for channel in channels:
         for person in people:
             if channel in person.channels and not _address(person, channel):
                 if (channel, person.label[:160]) not in reported:
@@ -421,14 +489,16 @@ def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool
     # Every wording is rendered before the first send, so a bad one stops the TouchPoint
     # before anyone has heard from it.
     contexts: dict[Recipient, dict] = {}
+    extra = click.extra_ctx if click is not None else None
+    blocks = click.blocks if click is not None else None
     for _, person, _ in plan:
         if person not in contexts:
-            contexts[person] = context(tp, row, person)
+            contexts[person] = context(tp, row, person, extra)
     sent_now: list[Delivery] = []
     errors: list[str] = []
     for channel, person, address in plan:
         try:
-            provider_id = _transport(row, channel, address, contexts[person])
+            provider_id = _transport(row, channel, address, contexts[person], blocks)
         except _SEND_ERRORS as exc:
             errors.append(f"{channel}: {exc}")
             _record(tp, row, channel, person, address, key, "failed", str(exc))
@@ -522,20 +592,32 @@ def deliver(
     the message rows once."""
     if not _claim(tp):
         return False
+    return _claimed(tp, master=master, rows=rows)
+
+
+def _claimed(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bool:
     tp.send_cache = {}  # read by `rules.confirm_group`, for this send only
     try:
-        return _deliver(tp, master=master, rows=rows)
+        return _deliver(tp, master=master, rows=rows, click=click)
     finally:
         tp.__dict__.pop("send_cache", None)
 
 
-def _deliver(tp: TouchPoint, *, master, rows) -> bool:
+def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bool:
     pointed = tp.message_id is None
     row = _row_for(tp, rows)
     if row is None:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=rules.DISABLED)
         return False
+    trigger = triggers.CATALOG.get(row.trigger)
+    if click is None and trigger is not None and trigger.kind in _SENT_NOW:
+        # Only `send_now` sends these, with what its caller handed over; one left behind
+        # by an interrupted click is closed rather than sent without it.
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error=INTERRUPTED)
+        return False
     verdict, reason = rules.check(tp, row, master=master)
+    if verdict == "wait" and click is not None:
+        verdict = "skip"  # a click can't wait: it sends now or says why not
     if verdict == "wait":
         tp.error = reason[:255]
         tp.save(update_fields=["error", "updated_at"])  # also ends the lease
@@ -546,13 +628,18 @@ def _deliver(tp: TouchPoint, *, master, rows) -> bool:
         return False
     if pointed:
         TouchPoint.objects.filter(pk=tp.pk).update(message=row)
-    people = rules.recipients_for(tp, row, recipients.resolve(row, tp.lead, tp.reservation))
+    if click is not None and click.to is not None:
+        people = list(click.to)
+    elif tp.lead_id is None and row.audience != _A.STAFF:
+        people = []  # nobody to resolve from without an order
+    else:
+        people = rules.recipients_for(tp, row, recipients.resolve(row, tp.lead, tp.reservation))
     if not people:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=NO_RECIPIENT)
         return False
     if row.key == "review_request" and rules.has_built_ins(row):
         return _review(tp, row, people)
-    return _send(tp, row, people)
+    return _send(tp, row, people, click)
 
 
 def _settle_after_error(tp: TouchPoint) -> None:
@@ -626,3 +713,69 @@ def send_due(touchpoint_ids: Iterable[int]) -> None:
         _send_batch(_due().filter(pk__in=ids))
     except Exception:  # noqa: BLE001 - an inline send must never break the caller
         logger.exception("inline send of touch-points %s failed", touchpoint_ids)
+
+
+# --- staff clicks, invites and reports -------------------------------------------------
+
+
+def send_now(
+    key: str,
+    lead=None,
+    reservation=None,
+    *,
+    to: list[Recipient] | None = None,
+    extra_ctx: dict | None = None,
+    blocks: dict[str, Block] | None = None,
+    channels: set[str] | None = None,
+) -> SendResult:
+    """Send the row ``key`` now, inside the click: a staff-click send, an invite or password
+    reset, or a staff report (spec C sections 3 and 8). Never raises for a send.
+
+    It leaves the same trail as every other send: a TouchPoint (no ``lead`` for an invite or
+    a report) and a Delivery per person per channel, through the same deliver path. ``to``
+    replaces the row's recipients; ``extra_ctx`` adds or overrides placeholder values (the
+    caller's links, built from its request); ``blocks`` fills the generated parts;
+    ``channels`` narrows the row's channels to the ones the user picked.
+
+    Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
+    which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the
+    master switch do not (they govern the messages nobody clicked).
+    """
+    row = MessageTemplate.objects.prefetch_related("service_types").get(key=key)
+    click = _Click(
+        to=None if to is None else list(to),
+        extra_ctx=dict(extra_ctx or {}),
+        blocks=dict(blocks or {}),
+        channels=None if channels is None else frozenset(channels),
+    )
+    now = timezone.now()
+    with transaction.atomic():
+        tp = TouchPoint.objects.create(
+            lead=lead,
+            reservation=reservation,
+            message=row,
+            kind=row.key,
+            status=TouchPoint.Status.SCHEDULED,
+            scheduled_for=now,
+        )
+        # Leased from birth (see `_claim`): the cron's batch, which takes any due SCHEDULED
+        # row, never sends this one without the click's recipients, values and blocks.
+        tp.updated_at = now + LEASE
+        TouchPoint.objects.filter(pk=tp.pk).update(updated_at=tp.updated_at)
+
+    if row.audience != _A.STAFF and not outbound.enabled():
+        logger.info("outbound off: %s not sent", row.key)
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error=OUTBOUND_OFF)
+        return SendResult(sent=False, deliveries=[], errors=[outbound.OFF_MESSAGE])
+
+    try:
+        sent = _claimed(tp, master=True, rows=None, click=click)
+    except Exception:  # noqa: BLE001 - a send must never break the click
+        logger.exception("send of %s (touch-point %s) failed", row.key, tp.pk)
+        _settle_after_error(tp)
+        sent = tp.status == TouchPoint.Status.SENT
+    deliveries = list(Delivery.objects.filter(touchpoint=tp).order_by("pk"))
+    errors = [d.reason for d in deliveries if d.status == Delivery.Status.FAILED]
+    if not sent and not errors and tp.error:
+        errors = [tp.error]
+    return SendResult(sent=sent, deliveries=deliveries, errors=errors)

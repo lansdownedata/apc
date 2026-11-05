@@ -1,0 +1,9 @@
+{% autoescape off %}  {% if is_refund %}AMOUNT REFUNDED{% else %}AMOUNT CHARGED{% endif %}  ${{ amount }}
+  {% if method_label %}Paid back {% if method_label == "Other" %}directly{% else %}by {{ method_label }}{% endif %}{% if reference %} {{ reference }}{% endif %}{% else %}{{ cards|join:", " }}{% endif %}{% if cards or method_label %} · {% endif %}{{ when }} · Receipt {{ number }}
+
+FOR
+  Trip #{{ trip_ref }} · {{ trip_kind }} · {{ trip_date_short }}
+{% if route %}  {{ route }}
+{% endif %}
+{% for label, value in lines %}  {{ label }}: {{ value }}
+{% endfor %}  {% if is_refund %}Total refunded{% else %}Total{% endif %}: ${{ amount }}{% endautoescape %}

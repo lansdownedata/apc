@@ -1,0 +1,5 @@
+{% autoescape off %}{% for r in rows %}
+  {{ r.customer }} · {{ r.email|default:"no email" }} · {{ r.phone|default:"no phone" }}
+{% for t in r.trips %}    {{ t.when }} · {{ t.quote_no }} — {{ t.route }}
+{% endfor %}    {{ r.url }}
+{% endfor %}{% endautoescape %}

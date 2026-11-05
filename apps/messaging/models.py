@@ -137,7 +137,15 @@ class TouchPoint(TimeStampedModel):
         CANCELLED = "cancelled", "Cancelled"
         FAILED = "failed", "Failed"
 
-    lead = models.ForeignKey("leads.Lead", related_name="touchpoints", on_delete=models.CASCADE)
+    # Null only for a send with no order behind it: a staff invite, a planner invite or
+    # password reset, a staff report (`sender.send_now`).
+    lead = models.ForeignKey(
+        "leads.Lead",
+        related_name="touchpoints",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
     # Set only by the reservation-anchored kinds (APC-18-22); null for every lead-level
     # kind (TP1-8, review, payment reminder), which behave exactly as before.
     reservation = models.ForeignKey(

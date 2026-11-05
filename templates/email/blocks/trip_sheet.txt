@@ -1,0 +1,7 @@
+{% load time_filters %}{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+Vehicle: {{ trip.vehicle.name|default:"—" }}
+Passengers: {{ trip.passengers }}
+
+Routing:
+{% for stop in stops %}  {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}{% if stop.flight_label %} - flight {{ stop.flight_label }}{% if stop.flight_id and stop.flight.scheduled_at %} {% if stop.flight_direction == 'departure' %}dep{% else %}arr{% endif %} {{ stop.flight.time_local }} {{ stop.flight.tz_abbr }}{% if stop.flight.terminal %}, Terminal {{ stop.flight.terminal }}{% endif %}{% endif %}{% endif %}
+{% endfor %}

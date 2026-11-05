@@ -1,0 +1,19 @@
+{% load time_filters %}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td style="padding:22px 26px 8px;">
+    <div class="dm-ink" style="font-size:16px;font-weight:bold;color:#17191D;">
+      {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+    </div>
+    <div class="dm-muted" style="font-size:14px;color:#4b5563;padding-top:4px;">
+      {{ trip.vehicle.name|default:"—" }} &middot; {{ trip.passengers }} passenger{{ trip.passengers|pluralize }}
+    </div>
+  </td></tr>
+  {% for stop in stops %}
+  <tr><td style="padding:{% if forloop.first %}10{% else %}4{% endif %}px 26px 0;">
+    <div class="dm-muted" style="font-size:14px;color:#4b5563;line-height:1.5;">
+      {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} <span class="dm-soft" style="color:#a59e90;">({{ stop.name }})</span>{% endif %}
+    </div>
+  </td></tr>
+  {% endfor %}
+  <tr><td style="padding:22px 26px 24px;"></td></tr>
+</table>

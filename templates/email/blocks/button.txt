@@ -1,0 +1,2 @@
+{% autoescape off %}{{ label }}:
+{{ url }}{% endautoescape %}

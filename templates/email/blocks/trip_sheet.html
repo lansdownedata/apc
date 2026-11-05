@@ -1,0 +1,11 @@
+{% load time_filters %}<table cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;margin-bottom:16px">
+  <tr><td style="padding:4px 0;color:#6b7280">Date</td><td style="padding:4px 0">{{ trip.pickup_date|date:"l, F j, Y" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Pickup</td><td style="padding:4px 0">{{ trip|pickup_clock }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Vehicle</td><td style="padding:4px 0">{{ trip.vehicle.name|default:"—" }}</td></tr>
+  <tr><td style="padding:4px 0;color:#6b7280">Passengers</td><td style="padding:4px 0">{{ trip.passengers }}</td></tr>
+</table>
+
+<p style="margin:0 0 6px;font-weight:600">Routing</p>
+<ol style="margin:0 0 16px;padding-left:20px">
+  {% for stop in stops %}<li style="padding:2px 0">{{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}{% if stop.flight_label %} · ✈ {{ stop.flight_label }}{% if stop.flight_id and stop.flight.scheduled_at %} · {% if stop.flight_direction == 'departure' %}dep{% else %}arr{% endif %} {{ stop.flight.time_local }} {{ stop.flight.tz_abbr }}{% if stop.flight.terminal %} · Terminal {{ stop.flight.terminal }}{% endif %}{% endif %}{% endif %}</li>{% endfor %}
+</ol>

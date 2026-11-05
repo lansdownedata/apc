@@ -19,6 +19,13 @@ from apps.core import outbound
 
 logger = logging.getLogger(__name__)
 
+NO_RECIPIENT = "No email on file"
+
+
+class EmailNotSent(Exception):
+    """Why a `deliver_html_email(..., raise_errors=True)` send did not go: the provider's
+    error text, the go-live switch's refusal, or no recipient."""
+
 
 def send_html_email(
     *,
@@ -52,6 +59,7 @@ def deliver_html_email(
     context: dict,
     inline_images: dict[str, str] | None = None,
     internal: bool = False,
+    raise_errors: bool = False,
 ) -> str | None:
     """Render `templates/email/{template}.txt` + `.html` and send both parts.
 
@@ -64,12 +72,20 @@ def deliver_html_email(
 
     Nothing is sent while the go-live switch is off (APC-90) unless `internal` says the
     recipient is one of our own staff.
+
+    `raise_errors` is for the shared sender (`messaging.sender`), which records why a send
+    failed on its Delivery: instead of None it raises `EmailNotSent` carrying the provider's
+    error text (or the refusal). Every other caller keeps the default and today's behaviour.
     """
     recipient = (to or "").strip()
     if not recipient:
         logger.warning("email %r not sent: no recipient", template)
+        if raise_errors:
+            raise EmailNotSent(NO_RECIPIENT)
         return None
     if not outbound.allowed(kind=f"email {template!r}", recipient=recipient, internal=internal):
+        if raise_errors:
+            raise EmailNotSent(outbound.OFF_MESSAGE)
         return None
 
     try:
@@ -89,8 +105,10 @@ def deliver_html_email(
             img.add_header("Content-Disposition", "inline", filename=Path(path).name)
             message.attach(img)
         message.send()
-    except Exception:
+    except Exception as exc:
         logger.exception("email %r to %s failed", template, recipient)
+        if raise_errors:
+            raise EmailNotSent(str(exc) or type(exc).__name__) from exc
         return None
     status = getattr(message, "anymail_status", None)
     return str(getattr(status, "message_id", "") or "")

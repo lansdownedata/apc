@@ -1,0 +1,9 @@
+{% extends "email/base_email.html" %}
+{% comment %}
+The layout every message row's email goes out in (spec C section 8): the row's wording,
+already rendered into paragraphs and generated blocks by apps/messaging/rendering.py.
+{% endcomment %}
+{% block subject %}{{ subject }}{% endblock %}
+{% block content %}
+{{ body_html }}
+{% endblock %}

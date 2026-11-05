@@ -6,7 +6,8 @@ from unittest.mock import patch
 import pytest
 from django.core import mail
 
-from apps.notifications.email import send_html_email
+from apps.core import outbound
+from apps.notifications.email import EmailNotSent, deliver_html_email, send_html_email
 
 pytestmark = pytest.mark.django_db
 
@@ -180,3 +181,55 @@ def test_unknown_template_returns_false_and_does_not_raise():
     """A typo'd template name (Task 7's likeliest failure mode) must never raise."""
     assert _send(template="does_not_exist") is False
     assert mail.outbox == []
+
+
+# --- raise_errors: the shared sender records why a send failed --------------------------
+
+
+def _deliver(**overrides):
+    kwargs = {
+        "to": "customer@example.com",
+        "subject": "Your All Pro Charter quote APC-100041",
+        "template": "quote_sent",
+        "context": BASE_CONTEXT,
+        "raise_errors": True,
+    }
+    kwargs.update(overrides)
+    return deliver_html_email(**kwargs)
+
+
+def test_raise_errors_hands_back_the_provider_error_text():
+    with (
+        patch(
+            "apps.notifications.email.EmailMultiAlternatives.send",
+            side_effect=OSError("422 Inactive recipient"),
+        ),
+        pytest.raises(EmailNotSent, match="^422 Inactive recipient$"),
+    ):
+        _deliver()
+
+
+def test_raise_errors_says_when_outbound_is_off(settings):
+    settings.OUTBOUND_ENABLED = False
+    with pytest.raises(EmailNotSent, match=outbound.OFF_MESSAGE):
+        _deliver()
+    assert mail.outbox == []
+
+
+def test_raise_errors_says_when_there_is_no_recipient():
+    with pytest.raises(EmailNotSent, match="^No email on file$"):
+        _deliver(to=" ")
+
+
+def test_raise_errors_still_returns_the_message_id_when_it_goes():
+    assert _deliver() == ""
+    assert len(mail.outbox) == 1
+
+
+def test_without_raise_errors_a_provider_failure_is_still_none():
+    """Every existing caller keeps today's behaviour: logged, None, never raised."""
+    with patch(
+        "apps.notifications.email.EmailMultiAlternatives.send",
+        side_effect=OSError("422 Inactive recipient"),
+    ):
+        assert _deliver(raise_errors=False) is None

@@ -6,13 +6,7 @@ so no further action is required on your side.
 
 We appreciate your time and look forward to working with you again soon.
 
-{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
-Vehicle: {{ trip.vehicle.name|default:"—" }}
-Passengers: {{ trip.passengers }}
-
-Routing:
-{% for stop in stops %}  {{ forloop.counter }}. {{ stop.address }}{% if stop.name %} ({{ stop.name }}){% endif %}
-{% endfor %}
+{% include "email/blocks/cancelled_trip_sheet.txt" %}
 Questions? Reply to this email{% if company_phone %} or call {{ company_phone }}{% endif %}.
 
 --

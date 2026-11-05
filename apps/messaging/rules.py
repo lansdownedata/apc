@@ -366,6 +366,9 @@ def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
 def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -> Check:
     """Whether `tp` may go out now. Skips and cancels are final; a wait leaves it SCHEDULED.
 
+    A send with no order (an invite, a staff report) and a staff click answer only to the
+    row's own switch, and a staff click to its service types.
+
     ``master`` is the master switch, so a batch reads `NotificationConfig` once. A held
     review request also brings its complaint follow-up task up to date (`tasks.sync`).
     """
@@ -377,6 +380,16 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         master = NotificationConfig.load().enabled
     if not master or not row.enabled or row.archived_at is not None:
         return "skip", DISABLED
+    if tp.lead_id is None:
+        # An invite or a staff report: there is no order to be lost, cancelled or run.
+        return SEND
+    if trigger is not None and trigger.kind == "staff_click":
+        # A staff click keeps the checks its own service makes today (a refund receipt goes
+        # out on a cancelled order, an affiliate hears a trip was released); the order's
+        # rules are for the messages nobody clicked. Its links come from the caller.
+        if not matches(row, lead, res):
+            return "skip", "service type no longer matches"
+        return SEND
     # A cancellation message exists because the order is lost: the order's own, or a
     # trip's when the whole order was cancelled (spec section 3, "unless the trigger is the
     # cancellation itself").

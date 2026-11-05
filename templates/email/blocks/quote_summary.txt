@@ -1,0 +1,5 @@
+{% autoescape off %}  QUOTE NO.       {{ quote_no }}
+  PREPARED FOR    {{ contact_name }}
+  ESTIMATED TOTAL ${{ quote_total }}
+
+{% if on_account %}This booking is billed to your account. No payment is taken now.{% else %}A {{ deposit_pct }}% deposit of ${{ deposit_amount }} reserves your booking.{% endif %}{% endautoescape %}

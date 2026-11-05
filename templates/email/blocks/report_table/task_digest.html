@@ -1,0 +1,22 @@
+{% for department, lines in groups %}
+<p style="margin:16px 0 6px;font-size:14px;font-weight:600;color:#17191D;" class="dm-ink">{{ department }}</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;border-collapse:collapse;">
+  {% for l in lines %}
+  <tr>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;">
+      <div style="font-weight:600;color:#17191D;" class="dm-ink">{{ l.label }}</div>
+      <div style="color:#6b7280;" class="dm-muted">{{ l.quote_no }} · {{ l.customer }}{% if l.trip_id %} · trip #{{ l.trip_id }}{% endif %}</div>
+    </td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;color:#b91c1c;white-space:nowrap;">
+      {{ l.due|default:"—" }}
+    </td>
+    <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;" class="dm-muted">
+      {% if l.assignee %}{{ l.assignee.get_full_name|default:l.assignee.username }}{% else %}Unassigned{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endfor %}
+{% if queue_url %}
+<p style="margin:20px 0 0;font-size:13px;"><a href="{{ queue_url }}" style="color:#8A6D1F;font-weight:600;">Open the task queue →</a></p>
+{% endif %}
