@@ -15,7 +15,7 @@ keeps Podium's review invite. `OUTBOUND_ENABLED` is enforced inside both send pr
 
 import logging
 from collections.abc import Iterable
-from datetime import time
+from datetime import time, timedelta
 
 from django.conf import settings
 from django.utils import timezone
@@ -68,8 +68,10 @@ _SELECT = (
     "reservation__service_type",
     "message",
 )
+# Long enough to cover one TouchPoint's sends; a row whose sender died is free again after.
+LEASE = timedelta(minutes=5)
+
 _PREFETCH = (
-    "reservation__stops",
     "reservation__named_passengers",
     "reservation__assignments__vendor",
     "reservation__assignments__driver",
@@ -79,8 +81,26 @@ _PREFETCH = (
     "lead__reservations__vehicle",
     "lead__reservations__service_type",
     "message__service_types",
-    "deliveries",
 )
+# What a combining row reads off its same-day siblings: their key, recipients and sheet.
+_SIBLING_SELECT = (
+    "lead__contact__company__billing_contact",
+    "lead__billing_contact",
+    "reservation__lead",
+    "reservation__vehicle",
+    "reservation__service_type",
+)
+_SIBLING_PREFETCH = (
+    "reservation__named_passengers",
+    "reservation__assignments__vendor",
+    "lead__people__contact__planner_account",
+)
+
+
+def _stops(lookup: str):
+    from apps.reservations.services import sheet_stops
+
+    return sheet_stops(lookup)
 
 
 # --- the row ---------------------------------------------------------------------------
@@ -93,7 +113,9 @@ def _row_for(tp: TouchPoint, rows: dict[str, MessageTemplate] | None) -> Message
     The old scheduler queues one `thank_you` for every finished order and picked the wedding
     wording at send time; such a TouchPoint on a wedding order is pointed at the wedding
     row while that row is on, on its own trigger and matches the order. Its kind stays
-    `thank_you`, which `schedule_post_trip` keys "already queued" on."""
+    `thank_you`, which `schedule_post_trip` keys "already queued" on. The pointer is set in
+    memory only; `deliver` saves it once the TouchPoint actually sends, so a later run
+    resolves it again."""
     if tp.message_id is not None:
         return tp.message
 
@@ -116,7 +138,6 @@ def _row_for(tp: TouchPoint, rows: dict[str, MessageTemplate] | None) -> Message
         ):
             row = wedding
     tp.message = row
-    TouchPoint.objects.filter(pk=tp.pk).update(message=row)
     return row
 
 
@@ -150,14 +171,14 @@ def _reach(person: Recipient) -> set[str]:
 
 def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Recipient) -> list:
     """Every trip this person gets this message for on the combine key's day, in pickup
-    order. A seeded confirmation keeps today's group (`rules._confirm_group`); any other
+    order. A seeded confirmation keeps today's group (`rules.confirm_group`); any other
     combining row looks at its other queued sends that day and keeps the trips whose
     recipients include this person."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
 
-    if rules.has_built_ins(row) and row.key in rules._CONFIRMS:
-        return rules._confirm_group(tp)
+    if rules.has_built_ins(row) and row.key in rules.CONFIRMS:
+        return rules.confirm_group(tp)
     res = tp.reservation
     mine = _reach(person)
     trips = [res]
@@ -170,8 +191,8 @@ def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Reci
         )
         .exclude(pk=tp.pk)
         .exclude(reservation__trip_status__in=CANCELLED_STATUSES)
-        .select_related(*_SELECT)
-        .prefetch_related(*_PREFETCH)
+        .select_related(*_SIBLING_SELECT)
+        .prefetch_related(*_SIBLING_PREFETCH, _stops("reservation__stops"))
     )
     for sibling in siblings:
         if rules.combine_key(sibling, row) != key:
@@ -272,19 +293,45 @@ def _record(tp, row, channel, person, address, key, status, reason="", provider_
     )
 
 
-def _sent_elsewhere(tp: TouchPoint, row: MessageTemplate, key: str) -> set[str]:
-    """The addresses (lowercased) a send of this row reached for this combine key on
-    another TouchPoint. One that was cancelled since (a pickup moved, so a fresh notice was
-    queued) no longer stands in for anything."""
-    if not key:
-        return set()
-    sent = (
-        Delivery.objects.filter(message=row, combine_key=key, status=Delivery.Status.SENT)
-        .exclude(touchpoint=tp)
-        .exclude(touchpoint__status=TouchPoint.Status.CANCELLED)
-        .values_list("address", flat=True)
+def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[Delivery], set[str]]:
+    """This TouchPoint's Deliveries as the database has them now (never a batch's prefetch:
+    they are what makes a re-run send only what is missing), and the addresses (lowercased)
+    a send of this row reached for this combine key on another TouchPoint. One that was
+    cancelled since (a pickup moved, so a fresh notice was queued) no longer stands in for
+    anything. One query."""
+    from django.db.models import Q
+
+    wanted = Q(touchpoint=tp)
+    if key:
+        wanted |= Q(message=row, combine_key=key, status=Delivery.Status.SENT)
+    mine, elsewhere = [], set()
+    for d in Delivery.objects.filter(wanted).select_related("touchpoint"):
+        if d.touchpoint_id == tp.pk:
+            mine.append(d)
+        elif d.touchpoint.status != TouchPoint.Status.CANCELLED:
+            elsewhere.add(d.address.lower())
+    return mine, elsewhere
+
+
+def _old_engine_covered(tp: TouchPoint, row: MessageTemplate) -> bool:
+    """For a seeded confirmation: the old engine already sent this wave for the day.
+
+    Its sends left no Deliveries, so at the cut-over today's rule (`touchpoints.
+    _already_covered`) still decides for them: a SENT TouchPoint of the same kind on a trip
+    in the same confirm group covers everyone. It ages out with the last of those sends."""
+    if not (rules.has_built_ins(row) and row.key in rules.CONFIRMS):
+        return False
+    group = [t.pk for t in rules.confirm_group(tp)]
+    return (
+        TouchPoint.objects.filter(
+            kind=row.key,
+            status=TouchPoint.Status.SENT,
+            reservation__in=group,
+            deliveries__isnull=True,
+        )
+        .exclude(pk=tp.pk)
+        .exists()
     )
-    return {address.lower() for address in sent}
 
 
 def _day_label(tp: TouchPoint) -> str:
@@ -315,7 +362,7 @@ def _finish(
                 tp.podium_message_uid = next((d.provider_id for d in sent_now), "")
                 fields_.append("podium_message_uid")
             if row.trigger in _DRIVER_TRIGGERS and tp.reservation is not None:
-                assignment = rules._confirmed_assignment(tp.reservation)
+                assignment = rules.confirmed_assignment(tp.reservation)
                 if assignment is not None:
                     tp.driver_details = assignment.driver_info
                     fields_.append("driver_details")
@@ -332,13 +379,11 @@ def _finish(
 
 def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool:
     key = rules.combine_key(tp, row)
-    done = list(tp.deliveries.all())
+    done, elsewhere = _deliveries(tp, row, key)
     sent_here = {(d.channel, d.address.lower()) for d in done if d.status == Delivery.Status.SENT}
     reported = {(d.channel, d.recipient_label) for d in done if d.status == Delivery.Status.SKIPPED}
-    elsewhere = _sent_elsewhere(tp, row, key)
-    contexts: dict[Recipient, dict] = {}
-    sent_now: list[Delivery] = []
-    errors: list[str] = []
+    everyone_covered = _old_engine_covered(tp, row)
+    plan: list[tuple[str, Recipient, str]] = []
     covered = 0
     for channel in row.channels:
         for person in people:
@@ -350,32 +395,40 @@ def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool
             address = _address(person, channel)
             if (channel, normalised) in sent_here:
                 continue
-            if normalised in elsewhere:
+            if everyone_covered or normalised in elsewhere:
                 covered += 1
                 reason = f"Already sent for {_day_label(tp)}"
                 _record(tp, row, channel, person, address, key, "skipped", reason)
                 continue
-            if person not in contexts:
-                contexts[person] = context(tp, row, person)
-            try:
-                provider_id = _transport(row, channel, address, contexts[person])
-            except _SEND_ERRORS as exc:
-                errors.append(f"{channel}: {exc}")
-                _record(tp, row, channel, person, address, key, "failed", str(exc))
-            else:
-                sent_now.append(
-                    _record(tp, row, channel, person, address, key, "sent", "", provider_id)
-                )
-    sent_before = bool(sent_here)
+            plan.append((channel, person, address))
+
+    # Every wording is rendered before the first send, so a bad one stops the TouchPoint
+    # before anyone has heard from it.
+    contexts: dict[Recipient, dict] = {}
+    for _, person, _ in plan:
+        if person not in contexts:
+            contexts[person] = context(tp, row, person)
+    sent_now: list[Delivery] = []
+    errors: list[str] = []
+    for channel, person, address in plan:
+        try:
+            provider_id = _transport(row, channel, address, contexts[person])
+        except _SEND_ERRORS as exc:
+            errors.append(f"{channel}: {exc}")
+            _record(tp, row, channel, person, address, key, "failed", str(exc))
+        else:
+            sent_now.append(
+                _record(tp, row, channel, person, address, key, "sent", "", provider_id)
+            )
     return _finish(
-        tp, row, sent_now=sent_now, sent_before=sent_before, errors=errors, covered=covered
+        tp, row, sent_now=sent_now, sent_before=bool(sent_here), errors=errors, covered=covered
     )
 
 
 def _review(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool:
     """The seeded review request: Podium's review invite and a `Review` row per phone, then
     the text carrying the invite's link (as `touchpoints._send_review_invite`)."""
-    done = list(tp.deliveries.all())
+    done, _ = _deliveries(tp, row, "")
     sent_here = {d.address for d in done if d.status == Delivery.Status.SENT and d.channel == "sms"}
     sent_now: list[Delivery] = []
     errors: list[str] = []
@@ -410,32 +463,69 @@ def _review(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bo
     )
 
 
+def _claim(tp: TouchPoint) -> bool:
+    """Take the TouchPoint for this send, or learn someone else has it.
+
+    One conditional update, so it holds on MySQL and Postgres alike: it succeeds only while
+    the row is still SCHEDULED and unchanged since this snapshot was read, and it leases the
+    row by moving `updated_at` a few minutes ahead. A stale snapshot (the cron's batch after
+    an inline send, or the reverse) fails the match; a fresh read during someone else's
+    send sees the lease. Every way out of `deliver` saves `updated_at` again, which ends
+    the lease; a sender that died leaves it to expire."""
+    now = timezone.now()
+    snapshot = tp.updated_at
+    if tp.status == TouchPoint.Status.SCHEDULED and snapshot is not None and snapshot <= now:
+        lease = now + LEASE
+        won = TouchPoint.objects.filter(
+            pk=tp.pk, status=TouchPoint.Status.SCHEDULED, updated_at=snapshot
+        ).update(updated_at=lease)
+        if won:
+            tp.updated_at = lease
+            return True
+    tp.refresh_from_db()
+    return False
+
+
 def deliver(
     tp: TouchPoint,
     *,
     master: bool | None = None,
     rows: dict[str, MessageTemplate] | None = None,
 ) -> bool:
-    """Send one TouchPoint now if its checks allow; True iff a Delivery was sent by this call.
+    """Send one SCHEDULED TouchPoint now if its checks allow; True iff a Delivery was sent
+    by this call. A TouchPoint another call is sending, or that changed since `tp` was read,
+    is left to that call.
 
     A wait leaves it SCHEDULED with the reason in `error`; a skip or cancel closes it with
     the reason. Addresses this TouchPoint already reached are never sent again, so a re-run
     only sends what is missing. ``master`` and ``rows`` let a batch read the master switch and
     the message rows once."""
+    if not _claim(tp):
+        return False
+    tp.send_cache = {}  # read by `rules.confirm_group`, for this send only
+    try:
+        return _deliver(tp, master=master, rows=rows)
+    finally:
+        tp.__dict__.pop("send_cache", None)
+
+
+def _deliver(tp: TouchPoint, *, master, rows) -> bool:
+    pointed = tp.message_id is None
     row = _row_for(tp, rows)
     if row is None:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=rules.DISABLED)
         return False
     verdict, reason = rules.check(tp, row, master=master)
     if verdict == "wait":
-        if tp.error != reason[:255]:
-            tp.error = reason[:255]
-            tp.save(update_fields=["error", "updated_at"])
+        tp.error = reason[:255]
+        tp.save(update_fields=["error", "updated_at"])  # also ends the lease
         return False
     if verdict != "send":
         status = TouchPoint.Status.CANCELLED if verdict == "cancel" else TouchPoint.Status.SKIPPED
         _mark(tp, status=status, error=reason)
         return False
+    if pointed:
+        TouchPoint.objects.filter(pk=tp.pk).update(message=row)
     people = rules.recipients_for(tp, row, recipients.resolve(row, tp.lead, tp.reservation))
     if not people:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=NO_RECIPIENT)
@@ -443,6 +533,17 @@ def deliver(
     if row.key == "review_request" and rules.has_built_ins(row):
         return _review(tp, row, people)
     return _send(tp, row, people)
+
+
+def _settle_after_error(tp: TouchPoint) -> None:
+    """A send that blew up part-way: SENT if anyone was reached, else today's FAILED."""
+    if Delivery.objects.filter(touchpoint=tp, status=Delivery.Status.SENT).exists():
+        tp.status = TouchPoint.Status.SENT
+        tp.error = ""
+        tp.sent_at = tp.sent_at or timezone.now()
+        tp.save(update_fields=["status", "error", "sent_at", "updated_at"])
+    else:
+        _mark(tp, status=TouchPoint.Status.FAILED, error="unexpected error")
 
 
 # --- batches ---------------------------------------------------------------------------
@@ -472,7 +573,9 @@ def _send_batch(due) -> int:
     rows = {r.key: r for r in MessageTemplate.objects.prefetch_related("service_types")}
     sent = 0
     batch = (
-        due.select_related(*_SELECT).prefetch_related(*_PREFETCH).order_by("scheduled_for", "pk")
+        due.select_related(*_SELECT)
+        .prefetch_related(*_PREFETCH, _stops("reservation__stops"))
+        .order_by("scheduled_for", "pk")
     )
     for tp in batch:
         try:
@@ -480,7 +583,7 @@ def _send_batch(due) -> int:
                 sent += 1
         except Exception:  # noqa: BLE001 - one bad row must not kill the run
             logger.exception("touch-point %s failed to send", tp.pk)
-            _mark(tp, status=TouchPoint.Status.FAILED, error="unexpected error")
+            _settle_after_error(tp)
     return sent
 
 

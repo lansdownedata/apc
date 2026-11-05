@@ -721,22 +721,198 @@ def test_send_due_survives_a_bad_row():
     assert (tp.status, tp.error) == (TouchPoint.Status.FAILED, "unexpected error")
 
 
-def test_run_query_count_is_bounded(django_assert_max_num_queries):
-    """Ten due confirmations on ten orders, half queued by the old scheduler."""
+def _confirmations(n: int, *, first: int = 0) -> None:
+    """`n` due 72h confirmations on `n` orders, every other one queued by the old scheduler."""
     row = _row("trip_confirm_customer")
-    for i in range(10):
+    for i in range(first, first + n):
         lead = _booked(name=f"Person {i}", phone=f"+1202555{i:04d}", email=f"p{i}@example.com")
-        trip = _trip(lead, at=time(8 + i, 0))
+        trip = _trip(lead, at=time(8 + i % 12, 0))
         PassengerFactory(reservation=trip, name=f"Pax {i}", mobile="", is_lead=False)
         AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
         _tp(row, lead, trip, legacy=i % 2 == 0)
+
+
+def test_run_query_count_is_bounded(django_assert_max_num_queries):
+    _confirmations(10)
 
     with patch(SEND, side_effect=_ok), django_assert_max_num_queries(QUERY_BUDGET):
         assert sender.run_touchpoints() == 10
 
 
-# Measured at 122: a handful for the batch, then about twelve per row. Each row sends two
-# Deliveries (two inserts) and saves its TouchPoint; the confirmation's day group is read by
-# the check and again for the trip sheet, and each trip sheet reads its stops' flights; half
-# the rows are pointed at their message first. Nothing grows with the number of rows.
-QUERY_BUDGET = 130
+def test_run_cost_per_row_is_constant():
+    """One row, then ten: the extra cost of each further row stays under a fixed bound."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _confirmations(1)
+    with patch(SEND, side_effect=_ok), CaptureQueriesContext(connection) as one:
+        assert sender.run_touchpoints() == 1
+    _confirmations(10, first=1)
+    with patch(SEND, side_effect=_ok), CaptureQueriesContext(connection) as ten:
+        assert sender.run_touchpoints() == 10
+
+    assert (len(ten) - len(one)) / 9 <= PER_ROW
+
+
+# Measured at 101 for ten rows, about nine each: claim it; one read of its own and its day's
+# Deliveries; the confirmation's day group (read once per send) with its stops; the old
+# engine's sends that day; two Delivery inserts; the TouchPoint save; and for half the rows
+# the message pointer. The batch itself costs about ten.
+PER_ROW = 9
+QUERY_BUDGET = 10 * PER_ROW + 15
+
+
+# --- fix round 1 ---------------------------------------------------------------------
+
+
+def test_an_old_engine_send_covers_the_rest_of_the_day():
+    """At cut-over: the old engine sent trip A's confirmation (no Deliveries); trip B's,
+    still queued, stands down as it does today."""
+    lead = _booked()
+    morning, afternoon = _trip(lead, at=time(10, 0)), _trip(lead, at=time(16, 0))
+    row = _row("trip_confirm_customer")
+    TouchPointFactory(
+        lead=lead,
+        reservation=morning,
+        kind=row.key,
+        status=TouchPoint.Status.SENT,
+        scheduled_for=timezone.now() - timedelta(hours=1),
+    )
+    tp = _tp(row, lead, afternoon, legacy=True)
+
+    with patch(SEND) as send:
+        assert sender.deliver(tp) is False
+
+    send.assert_not_called()
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, rules.COVERED)
+    assert {(d[3], d[4]) for d in _deliveries(tp)} == {("skipped", "Already sent for Nov 14")}
+
+
+def test_an_old_engine_send_on_another_day_does_not_cover():
+    lead = _booked()
+    other_day = _trip(lead, day=NOV_14 + timedelta(days=1))
+    trip = _trip(lead)
+    row = _row("trip_confirm_customer")
+    TouchPointFactory(lead=lead, reservation=other_day, kind=row.key, status=TouchPoint.Status.SENT)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(_tp(row, lead, trip)) is True
+    assert send.call_count == 2
+
+
+def test_two_deliver_calls_on_one_snapshot_send_once():
+    lead = _booked()
+    tp = _tp(_added(), lead)
+    # As a batch loads it: deliveries prefetched (none yet) before the other send ran.
+    stale = TouchPoint.objects.prefetch_related("deliveries").get(pk=tp.pk)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(tp) is True
+        assert sender.deliver(stale) is False
+
+    assert send.call_count == 2  # one text, one email: the first call only
+    stale.refresh_from_db()
+    assert stale.status == TouchPoint.Status.SENT
+
+
+def test_a_row_being_sent_is_not_sent_again_by_a_fresh_read():
+    """The cron loads the row while an inline send is still talking to Podium."""
+    lead = _booked()
+    tp = _tp(_added(send_email=False), lead)
+    nested = []
+
+    def send(**_):
+        if not nested:
+            nested.append(sender.deliver(TouchPoint.objects.get(pk=tp.pk)))
+        return {"uid": "m-1"}
+
+    with patch(SEND, side_effect=send) as podium_send:
+        assert sender.deliver(tp) is True
+
+    assert nested == [False]
+    assert podium_send.call_count == 1
+
+
+def test_a_rerun_reads_its_deliveries_fresh():
+    lead = _booked()
+    row = _added(send_email=False)
+    tp = TouchPoint.objects.prefetch_related("deliveries").get(pk=_tp(row, lead).pk)
+    list(tp.deliveries.all())  # an empty prefetch, now stale
+    DeliveryFactory(
+        touchpoint=tp, message=row, channel="sms", address="+12025550100", status="sent"
+    )
+
+    with patch(SEND) as send:
+        sender.deliver(tp)
+    send.assert_not_called()
+
+
+def test_a_crash_after_a_send_leaves_it_sent():
+    lead = _booked()
+    tp = _tp(_added(), lead)
+    calls = []
+
+    def flaky(**kw):
+        calls.append(kw)
+        if len(calls) > 1:
+            raise RuntimeError("socket closed")
+        return {"uid": "m-1"}
+
+    with patch(SEND, side_effect=flaky):
+        sender.run_touchpoints()
+
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SENT and tp.error == ""
+
+
+def test_contexts_are_built_before_anything_is_sent():
+    lead = _booked()
+    couple = ContactFactory(name="Cal Couple", phone="+12025550111", email="cal@example.com")
+    LeadContact.objects.create(lead=lead, contact=couple, role=LeadContact.Role.COUPLE)
+    tp = _tp(_added(recipients=["booking_contact", "role:couple"]), lead)
+    real = sender.context
+    built = []
+
+    def context(*args):
+        built.append(args)
+        if len(built) > 1:
+            raise RuntimeError("bad wording")
+        return real(*args)
+
+    with (
+        patch(SEND, side_effect=_ok) as send,
+        patch.object(sender, "context", side_effect=context),
+        pytest.raises(RuntimeError),
+    ):
+        sender.deliver(tp)
+    send.assert_not_called()
+
+
+def test_an_old_thank_you_is_pointed_at_its_message_only_when_it_sends(settings):
+    settings.PUBLIC_BASE_URL = ""
+    lead = _booked()
+    _trip(lead, day=timezone.localdate() - timedelta(days=1), wedding=True)
+    tp = _tp(_row("thank_you"), lead, legacy=True)
+
+    with patch(SEND) as send:
+        assert sender.deliver(tp) is False
+
+    send.assert_not_called()
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SCHEDULED and tp.message_id is None
+
+
+def test_a_row_changed_since_it_was_read_is_left_alone():
+    """Re-dated after the batch loaded it: the stale copy must not send it early."""
+    lead = _booked()
+    tp = _tp(_added(), lead)
+    fresh = TouchPoint.objects.get(pk=tp.pk)
+    fresh.scheduled_for = timezone.now() + timedelta(days=2)
+    fresh.save(update_fields=["scheduled_for", "updated_at"])
+
+    with patch(SEND) as send:
+        assert sender.deliver(tp) is False
+
+    send.assert_not_called()
+    assert tp.scheduled_for > timezone.now()  # refreshed

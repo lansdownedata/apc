@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import F
+from django.db.models import F, Prefetch
 from django.utils import timezone as dj_timezone
 
 from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent, round_to_dime
@@ -94,6 +94,18 @@ def flight_line(stop: Stop) -> str:
     return " · ".join(parts)
 
 
+# What a trip sheet reads off each stop (`Reservation.ordered_stops`' joins).
+_SHEET_STOP_JOINS = ("airline", "airport", "flight", "flight__airport", "flight__airline")
+
+
+def sheet_stops(lookup: str = "stops") -> Prefetch:
+    """Prefetch a trip's stops with everything its trip sheet reads, so
+    `trip_sheet_context` renders a batch of trips without a query per trip."""
+    return Prefetch(
+        lookup, queryset=Stop.objects.select_related(*_SHEET_STOP_JOINS).order_by("sequence")
+    )
+
+
 def wedding_day_group(lead, day) -> list[Reservation]:
     """A wedding order's live trips on one local pickup date, in running order (APC-94).
     The wedding's confirmation covers only its own order; `trip_day_group` covers the rest
@@ -105,7 +117,7 @@ def wedding_day_group(lead, day) -> list[Reservation]:
         Reservation.objects.filter(lead=lead, lead__status=Lead.Status.BOOKED, pickup_date=day)
         .exclude(trip_status__in=CANCELLED_STATUSES)
         .select_related("lead", "lead__contact", "vehicle", "service_type")
-        .prefetch_related("stops")
+        .prefetch_related(sheet_stops())
         .order_by(F("pickup_time").asc(nulls_first=True), "pk")
     )
 
@@ -126,7 +138,7 @@ def trip_day_group(contact, day) -> list[Reservation]:
         )
         .exclude(trip_status__in=CANCELLED_STATUSES)
         .select_related("lead", "lead__contact", "vehicle", "service_type")
-        .prefetch_related("stops")
+        .prefetch_related(sheet_stops())
         .order_by(F("pickup_time").asc(nulls_first=True), "pk")
     )
 
@@ -150,7 +162,12 @@ def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> 
     abbreviation (CLAUDE.md rules), never the viewer's. ``affiliate`` adds the payout row.
     """
     pickup_at = reservation.pickup_at
-    stops = list(reservation.ordered_stops)
+    # A caller that prefetched `sheet_stops()` pays no query here; anyone else gets the
+    # same joined, ordered read.
+    if "stops" in getattr(reservation, "_prefetched_objects_cache", {}):
+        stops = list(reservation.stops.all())
+    else:
+        stops = list(reservation.ordered_stops)
     lead = reservation.lead
     ctx: dict = {
         "quote_no": lead.quote_no,

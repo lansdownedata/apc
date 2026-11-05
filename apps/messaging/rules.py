@@ -46,7 +46,7 @@ _QUOTE_PROGRAM = frozenset(
     }
 )
 _DEPOSIT_STOPS = _QUOTE_PROGRAM - {"tp1_welcome", "tp2_lead_followup"}
-_CONFIRMS = frozenset({"trip_confirm_customer", "trip_confirm_customer_2"})
+CONFIRMS = frozenset({"trip_confirm_customer", "trip_confirm_customer_2"})
 _THANK_YOUS = frozenset({"thank_you", "thank_you_wedding"})
 # Seeded rows on a combining trigger that today send one message per trip, each with its
 # own trip's link or details.
@@ -80,7 +80,7 @@ _DESCRIPTIONS: dict[str, list[str]] = {
             "A wedding's notice never stands in for the booker's other trips that day",
             "Skips a day already confirmed (for a wedding, once the fees are acknowledged too)",
         ]
-        for key in _CONFIRMS
+        for key in CONFIRMS
     },
     "wed_final_details": ["Links to the wedding details form", "One message per trip"],
     "trip_confirm_affiliate": [
@@ -125,10 +125,11 @@ def _is_wedding(reservation) -> bool:
     return is_wedding_trip(reservation)
 
 
-def _confirmed_assignment(reservation):
-    from apps.dispatch.selectors import confirmed_assignment
+def confirmed_assignment(reservation):
+    """The trip's active coverage (`dispatch.selectors.confirmed_assignment`)."""
+    from apps.dispatch import selectors
 
-    return confirmed_assignment(reservation)
+    return selectors.confirmed_assignment(reservation)
 
 
 def _trip_matches(trip, types) -> bool:
@@ -171,7 +172,7 @@ def _ready(reservation, waits_for: str) -> bool:
         return False
     if reservation.trip_status not in DRIVER_MESSAGE_STATUSES:
         return False
-    assignment = _confirmed_assignment(reservation)
+    assignment = confirmed_assignment(reservation)
     return assignment is not None and driver_details_ready(assignment, DispatchAlertConfig.load())
 
 
@@ -206,20 +207,30 @@ def _review_hold_reason(lead) -> str:
     return ""
 
 
-def _confirm_group(tp: TouchPoint) -> list:
+def confirm_group(tp: TouchPoint) -> list:
     """The trips one customer confirmation covers. A wedding's covers its own order that
     day; any other covers the rest of the booker's day, wedding trips left out, so the two
-    never stand in for each other."""
+    never stand in for each other.
+
+    Read once per send: the sender gives the TouchPoint a `send_cache` dict for the length
+    of one `deliver`, which this fills; without one it is read fresh every time."""
     from apps.reservations.services import trip_day_group, wedding_day_group
 
+    cache = getattr(tp, "send_cache", None)
+    if cache is not None and "confirm_group" in cache:
+        return cache["confirm_group"]
     day = tp.reservation.pickup_date
     if _is_wedding(tp.reservation):
-        return wedding_day_group(tp.lead, day)
-    return [t for t in trip_day_group(tp.lead.contact, day) if not _is_wedding(t)]
+        group = wedding_day_group(tp.lead, day)
+    else:
+        group = [t for t in trip_day_group(tp.lead.contact, day) if not _is_wedding(t)]
+    if cache is not None:
+        cache["confirm_group"] = group
+    return group
 
 
 def _day_confirmed(tp: TouchPoint) -> bool:
-    group = _confirm_group(tp)
+    group = confirm_group(tp)
     fees_owed = _is_wedding(tp.reservation) and tp.lead.fees_acknowledged_at is None
     return bool(group) and all(t.customer_confirmed_at is not None for t in group) and not fees_owed
 
@@ -262,7 +273,7 @@ def _affiliate_coverage_skip(reservation) -> str:
     acceptance is its acknowledgement, and in-house coverage has no affiliate."""
     from apps.dispatch.models import Assignment
 
-    assignment = _confirmed_assignment(reservation)
+    assignment = confirmed_assignment(reservation)
     if assignment is None:
         return ""
     if assignment.is_in_house:
@@ -296,7 +307,7 @@ def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
             return "deposit already taken"
     elif key == "payment_reminder":
         return _payment_reminder_reason(lead)
-    elif key in _CONFIRMS:
+    elif key in CONFIRMS:
         if _day_confirmed(tp):
             return "day already confirmed"
     elif key in _THANK_YOUS:
@@ -374,7 +385,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
             return "skip", reason
 
     if built_in and row.key == "trip_confirm_affiliate":
-        assignment = _confirmed_assignment(res)
+        assignment = confirmed_assignment(res)
         if assignment is None or not assignment.vendor_id:
             return "wait", "no confirmed affiliate"
     if waits_for and not _ready(res, waits_for):
@@ -396,7 +407,7 @@ def recipients_for(
     """
     if (
         has_built_ins(row)
-        and row.key in _CONFIRMS
+        and row.key in CONFIRMS
         and tp.reservation is not None
         and _is_wedding(tp.reservation)
         and not tp.lead.is_farm_in
@@ -415,7 +426,7 @@ def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
         return ""
     day = res.pickup_date.isoformat()
     if has_built_ins(row):
-        if row.key in _CONFIRMS and _is_wedding(res):
+        if row.key in CONFIRMS and _is_wedding(res):
             return f"{day}:wedding:{tp.lead_id}"
         if row.key in _PER_TRIP:
             return f"{day}:trip:{res.pk}"
@@ -448,10 +459,10 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
     if key == "wed_final_details":
         ctx["confirm_link"] = wedding_details_url(res, base_url=base_url)
     elif key == "trip_confirm_affiliate":
-        assignment = _confirmed_assignment(res)
+        assignment = confirmed_assignment(res)
         if assignment is not None:
             ctx["ack_link"] = affiliate_ack_url(assignment, base_url=base_url)
-    elif key in _CONFIRMS and _is_wedding(res):
+    elif key in CONFIRMS and _is_wedding(res):
         ctx["confirm_link"] = wedding_day_ack_url(lead, res.pickup_date, base_url=base_url)
     elif row.audience != row.Audience.AFFILIATE:
         ctx["confirm_link"] = trip_day_ack_url(lead.contact, res.pickup_date, base_url=base_url)
