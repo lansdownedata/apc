@@ -708,3 +708,57 @@ def test_a_timing_change_redates_a_held_text_from_its_event_not_the_hold(clock):
 
     tp.refresh_from_db()
     assert tp.scheduled_for == datetime(YEAR, 1, 10, 22, 30, tzinfo=ET)
+
+
+def test_a_driver_change_overnight_corrects_the_email_without_a_second_text(
+    clock, django_capture_on_commit_callbacks
+):
+    """Dispatched at 11 PM for a 10 AM pickup: the driver email goes now with driver A and
+    the text waits for 8 AM. The driver changes at midnight. The email's reader is told the
+    new driver now; the phone gets one text in the morning, naming the new driver."""
+    from apps.dispatch import services as dispatch_services
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+    from apps.reservations.services import set_trip_status
+
+    _window()
+    clock.now = datetime(YEAR, 1, 10, 23, 0, tzinfo=ET)
+    lead = _booked()
+    trip = _trip(lead, datetime(YEAR, 1, 11, 10, 0, tzinfo=ET))
+    a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+
+    def driver(name, cell):
+        dispatch_services.set_driver_info(
+            a, name=name, cell=cell, vehicle_desc="Suburban", vehicle_number="9"
+        )
+
+    driver("Sam Rivera", "+15715551212")
+    with (
+        patch(SEND, side_effect=_ok) as send,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        set_trip_status(trip, "dispatched")
+    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
+    assert "Sam Rivera" in send.call_args.kwargs["body"]
+    original = TouchPoint.objects.get(reservation=trip, kind="driver_released")
+    assert original.status == TouchPoint.Status.SCHEDULED
+    assert original.driver_details["name"] == "Sam Rivera"
+
+    clock.now = datetime(YEAR, 1, 11, 0, 30, tzinfo=ET)
+    with (
+        patch(SEND, side_effect=_ok) as send,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        driver("Kim Lane", "+15715553434")
+    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
+    assert "Kim Lane" in send.call_args.kwargs["body"]
+    update = TouchPoint.objects.get(reservation=trip, kind="driver_updated")
+    assert ("sms", "+12025550100", "skipped") in [d[:3] for d in _deliveries(update)]
+
+    clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok) as send:
+        sender.run_touchpoints()
+    (text,) = [c.kwargs for c in send.call_args_list]
+    assert text["identifier"] == "+12025550100" and "Kim Lane" in text["body"]
+    original.refresh_from_db()
+    assert original.status == TouchPoint.Status.SENT

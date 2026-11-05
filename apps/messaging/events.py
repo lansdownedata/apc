@@ -392,14 +392,17 @@ _DRIVER_KINDS = ("driver_released", "driver_updated")
 def _maybe_driver_changed(lead, reservation) -> None:
     """The driver details on file differ from the last ones the customer was sent: emit
     `driver_changed` (as the old `_maybe_update`). A send made before details were
-    recorded is unknown and never counts as a change."""
+    recorded is unknown and never counts as a change. A send that reached anyone counts,
+    even one still holding its texts for quiet hours: its email went with the details it
+    carries."""
     if not rules.ready(reservation, "dispatched_with_driver"):
         return
     rows = MessageTemplate.objects.filter(trigger__in=_DRIVER_TRIGGERS)
-    sent = TouchPoint.objects.filter(
+    reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
+    sent = TouchPoint.objects.annotate(partly=Exists(reached)).filter(
         Q(message__in=rows) | Q(message__isnull=True, kind__in=_DRIVER_KINDS),
+        Q(status=_S.SENT) | Q(status=_S.SCHEDULED, partly=True),
         reservation=reservation,
-        status=_S.SENT,
     )
     newest = max(sent, key=lambda tp: (tp.sent_at or tp.created_at, tp.pk), default=None)
     if newest is None or newest.driver_details is None:
@@ -474,6 +477,11 @@ def sync_waiting(
             if existing is not None and existing.status == _S.SENT:
                 any_sent = True
                 continue
+            if existing is not None and existing.status == _S.SCHEDULED:
+                # Partly sent: its email went while quiet hours hold its texts.
+                any_sent = (
+                    any_sent or existing.deliveries.filter(status=Delivery.Status.SENT).exists()
+                )
             if existing is not None and existing.status != _S.SCHEDULED:
                 continue
             at = max(now, pickup + row.offset)

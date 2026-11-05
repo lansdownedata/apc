@@ -24,6 +24,7 @@ from datetime import time, timedelta
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core import outbound
@@ -51,6 +52,9 @@ MISSING = {"sms": "No mobile on file", "email": "No email on file"}
 # Why a text held for quiet hours was closed unsent: by morning the address it was held for
 # was no longer among the message's recipients.
 NO_LONGER = "No longer a recipient"
+# Why a driver-change notice skipped someone: the driver message's text to them is held for
+# quiet hours and goes in the morning with the new details.
+WITH_HELD = "New details go with the held driver message"
 # Why the cron closed a staff click's or report's TouchPoint that its own send never finished.
 INTERRUPTED = "send interrupted"
 # Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
@@ -424,15 +428,48 @@ def _waiting(done: list[Delivery], channel: str | None = None) -> dict[tuple[str
     }
 
 
-def _hold(tp: TouchPoint, until, waiting: dict[tuple[str, str], Delivery]) -> None:
+def _hold(
+    tp: TouchPoint, until, waiting: dict[tuple[str, str], Delivery], *, also: tuple = ()
+) -> None:
     """Leave the TouchPoint SCHEDULED until quiet hours end, so the run then sends the texts
     held; saving `updated_at` ends the lease. The reason is on each held line, not the
     TouchPoint (a pickup move that cancels it must not read "Quiet hours"). Lines still
-    waiting were held for someone who is no longer a recipient."""
+    waiting were held for someone who is no longer a recipient. ``also`` names other fields
+    the caller set to save with it."""
     _close(waiting)
     tp.scheduled_for = until
     tp.error = ""
-    tp.save(update_fields=["scheduled_for", "error", "updated_at"])
+    tp.save(update_fields=["scheduled_for", "error", "updated_at", *also])
+
+
+def _stamp_driver(tp: TouchPoint, row: MessageTemplate) -> bool:
+    """Put the driver details a driver message carried on the TouchPoint, so a later change
+    is compared against what its readers were told (`events._maybe_driver_changed`). True
+    when it did."""
+    if row.trigger not in _DRIVER_TRIGGERS or tp.reservation is None:
+        return False
+    assignment = rules.confirmed_assignment(tp.reservation)
+    if assignment is None:
+        return False
+    tp.driver_details = assignment.driver_info
+    return True
+
+
+def _held_original(tp: TouchPoint, row: MessageTemplate) -> set[tuple[str, str]]:
+    """For a driver-change notice: the (channel, address) the trip's driver message is still
+    holding a text for (quiet hours). That text goes in the morning with the details on file
+    then, so the notice is not sent to them as well."""
+    if row.trigger != "driver_changed" or tp.reservation_id is None:
+        return set()
+    held = Delivery.objects.filter(
+        touchpoint__reservation_id=tp.reservation_id,
+        touchpoint__status=TouchPoint.Status.SCHEDULED,
+        status=Delivery.Status.QUEUED,
+    ).filter(
+        Q(touchpoint__message__trigger="pickup_dispatched")
+        | Q(touchpoint__message__isnull=True, touchpoint__kind="driver_released")
+    )
+    return {(d.channel, d.address.lower()) for d in held}
 
 
 def _close(waiting: dict[tuple[str, str], Delivery]) -> None:
@@ -450,8 +487,6 @@ def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[De
     a send of this row reached for this combine key on another TouchPoint. One that was
     cancelled since (a pickup moved, so a fresh notice was queued) no longer stands in for
     anything. One query."""
-    from django.db.models import Q
-
     wanted = Q(touchpoint=tp)
     if key:
         wanted |= Q(message=row, combine_key=key, status=Delivery.Status.SENT)
@@ -512,11 +547,8 @@ def _finish(
             if not tp.podium_message_uid:
                 tp.podium_message_uid = next((d.provider_id for d in sent_now), "")
                 fields_.append("podium_message_uid")
-            if row.trigger in _DRIVER_TRIGGERS and tp.reservation is not None:
-                assignment = rules.confirmed_assignment(tp.reservation)
-                if assignment is not None:
-                    tp.driver_details = assignment.driver_info
-                    fields_.append("driver_details")
+            if _stamp_driver(tp, row):
+                fields_.append("driver_details")
         tp.save(update_fields=fields_)
         return bool(sent_now)
     if errors:
@@ -554,6 +586,7 @@ def _send(
         f"{d.channel}: {d.reason}" for d in tried.values() if d.status == Delivery.Status.FAILED
     ]
     everyone_covered = _old_engine_covered(tp, row)
+    held_original = _held_original(tp, row)
     plan: list[tuple[str, Recipient, str, Delivery | None]] = []
     covered = 0
     channels = row.channels
@@ -581,6 +614,10 @@ def _send(
             if everyone_covered or normalised in elsewhere:
                 covered += 1
                 reason = f"Already sent for {_day_label(tp)}"
+                _record(tp, row, channel, person, address, key, "skipped", reason, line=line)
+                continue
+            if (channel, normalised) in held_original:
+                reason = WITH_HELD
                 _record(tp, row, channel, person, address, key, "skipped", reason, line=line)
                 continue
             if channel == "sms" and until is not None:
@@ -622,7 +659,9 @@ def _send(
                 _record(tp, row, channel, person, address, key, "sent", "", provider_id, line=line)
             )
     if held:
-        _hold(tp, until, waiting)
+        # The email part went now: its readers were told these driver details.
+        stamped = bool(sent_now) and _stamp_driver(tp, row)
+        _hold(tp, until, waiting, also=("driver_details",) if stamped else ())
         return bool(sent_now)
     _close(waiting)
     return _finish(
