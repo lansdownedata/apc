@@ -676,3 +676,35 @@ def test_a_queued_line_on_a_closed_touchpoint_shows_its_status():
     rows = {r.name: (r.status, r.reason) for r in history.for_lead(lead)}
 
     assert rows == {"cancelled": ("Cancelled", ""), "skipped": ("Skipped", "lead LOST")}
+
+
+def test_a_timing_change_redates_a_held_text_from_its_event_not_the_hold(clock):
+    """The deposit came in at 9:30 PM; its message (30 minutes after) was due at 10 PM, so
+    its text was held to 8 AM. The Admin then makes it 1 hour after: it is due at 10:30
+    PM (and held again then), not 8 AM - 30 min + 1 hour."""
+    _window()
+    lead = _booked()
+    row = MessageRowFactory(
+        trigger="deposit_paid",
+        section=MessageTemplate.Section.BOOKING_PAYMENTS,
+        recipients=["booking_contact"],
+        subject="Thanks",
+        email_body="Got it",
+        sms_body="Got it",
+        timing_amount=30,
+    )
+    clock.now = datetime(YEAR, 1, 10, 21, 30, tzinfo=ET)
+    (tp,) = events.emit("deposit_paid", lead)
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok):
+        sender.deliver(TouchPoint.objects.get(pk=tp.pk))
+    tp.refresh_from_db()
+    assert tp.scheduled_for == datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)  # held
+
+    old = row.offset
+    row.timing_amount, row.timing_unit = 1, "hours"
+    row.save()
+    assert events.redate(row, old_offset=old) == 1
+
+    tp.refresh_from_db()
+    assert tp.scheduled_for == datetime(YEAR, 1, 10, 22, 30, tzinfo=ET)

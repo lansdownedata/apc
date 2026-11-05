@@ -283,3 +283,30 @@ def test_held_row_follows_a_pickup_move():
     events.sync_waiting(res)
     tp.refresh_from_db()
     assert tp.scheduled_for == res.pickup_at - timedelta(hours=12)
+
+
+def test_sync_waiting_never_breaks_a_live_lease(django_capture_on_commit_callbacks):
+    """A sender holds the driver message's lease (`sender._claim`) while Podium answers;
+    a dispatcher's save lands meanwhile. The re-date must not end the lease, or the inline
+    send it queues claims the row again and the customer gets the text twice."""
+    res = _trip(hours=6)
+    _confirmed(res)
+    set_trip_status(res, "dispatched")
+    (tp,) = _rows(res)
+    earlier = timezone.now() - timedelta(minutes=1)
+    lease = timezone.now() + sender.LEASE
+    TouchPoint.objects.filter(pk=tp.pk).update(scheduled_for=earlier, updated_at=lease)
+
+    with (
+        patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        events.sync_waiting(res)
+
+    send.assert_not_called()
+    tp.refresh_from_db()
+    assert (tp.status, tp.updated_at, tp.scheduled_for) == (
+        TouchPoint.Status.SCHEDULED,
+        lease,
+        earlier,
+    )

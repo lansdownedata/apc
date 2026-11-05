@@ -61,6 +61,9 @@ _THANK_YOUS = frozenset({"thank_you", "thank_you_wedding"})
 # Seeded rows on a combining trigger that today send one message per trip, each with its
 # own trip's link or details.
 _PER_TRIP = frozenset({"wed_final_details", "trip_confirm_affiliate", "driver_released"})
+# The placeholder a combining send fills with every trip the person has that day
+# (`sender._trip_sheet`).
+DAY_LIST = "trip_sheet"
 # Seeded rows that wait for a condition their trigger doesn't carry.
 _WAITS = {"driver_updated": "dispatched_with_driver"}
 _CANCELLATIONS = frozenset({"trip_cancelled", "order_cancelled"})
@@ -129,6 +132,42 @@ def combines_per_trip(key: str) -> bool:
     """True for a built-in message whose own rule is one message per trip (on its original
     trigger), overriding the trigger's per-day combining."""
     return key in _PER_TRIP
+
+
+def uses_field(row: MessageTemplate, name: str) -> bool:
+    """Whether the wording of any channel the row sends on uses the placeholder ``name``."""
+    texts = []
+    if row.send_email:
+        texts += [row.subject, row.email_body]
+    if row.send_sms:
+        texts.append(row.sms_body)
+    for text in texts:
+        try:
+            if name in fields._names(text or ""):
+                return True
+        except ValueError:  # unbalanced braces: the editor refuses these
+            continue
+    return False
+
+
+def combines_per_day(row: MessageTemplate) -> bool:
+    """Whether a row on a combining trigger sends one message per person per day (spec
+    section 5): the first send lists the person's trips that day, and a later trip's send
+    to them is skipped as already sent.
+
+    A built-in on its own trigger keeps its own rule: the confirmations combine, the
+    per-trip messages do not. Any other row combines only when its wording lists the day
+    (`DAY_LIST`): without the list, skipping a later trip would drop that trip's details.
+    A row that waits for dispatch carries one trip's driver and an affiliate's sheet is one
+    trip's, so those never combine."""
+    trigger = triggers.CATALOG.get(row.trigger)
+    if trigger is None or not trigger.combine:
+        return False
+    if has_built_ins(row):
+        return row.key not in _PER_TRIP
+    if trigger.waits_for or row.audience == MessageTemplate.Audience.AFFILIATE:
+        return False
+    return uses_field(row, DAY_LIST)
 
 
 def built_in_descriptions(key: str) -> list[str]:
@@ -472,19 +511,19 @@ def recipients_for(
 
 
 def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
-    """What a combining send is keyed on per address: the trip's local pickup date; a
-    wedding's confirmation adds its order, and today's per-trip messages their trip. Empty
-    for a row whose trigger doesn't combine."""
+    """What a send on a combining trigger is keyed on per address: the trip's local pickup
+    date for a row that combines (`combines_per_day`), a wedding's confirmation adding its
+    order; the trip as well for one that sends per trip. Empty for a row whose trigger
+    doesn't combine."""
     trigger = triggers.CATALOG.get(row.trigger)
     res = tp.reservation
     if trigger is None or not trigger.combine or res is None or res.pickup_date is None:
         return ""
     day = res.pickup_date.isoformat()
-    if has_built_ins(row):
-        if row.key in CONFIRMS and _is_wedding(res):
-            return f"{day}:wedding:{tp.lead_id}"
-        if row.key in _PER_TRIP:
-            return f"{day}:trip:{res.pk}"
+    if not combines_per_day(row):
+        return f"{day}:trip:{res.pk}"
+    if has_built_ins(row) and row.key in CONFIRMS and _is_wedding(res):
+        return f"{day}:wedding:{tp.lead_id}"
     return day
 
 

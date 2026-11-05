@@ -25,12 +25,12 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from . import rules, sender
 from . import triggers as catalog
-from .models import MessageTemplate, NotificationConfig, TouchPoint
+from .models import Delivery, MessageTemplate, NotificationConfig, TouchPoint
 
 _S = TouchPoint.Status
 
@@ -328,13 +328,15 @@ def schedule_dates(
     *,
     only: MessageTemplate | None = None,
     master: bool | None = None,
+    send_inline: bool = True,
 ) -> None:
     """(Re)ensure every date row's TouchPoint from its anchor. Idempotent.
 
     Trip-level rows for every trip of a booked order (only `reservation`, when given); the
     order's expiry and balance-due rows when no trip is given. Rows already due go out on
-    commit. ``only`` limits it to that one row (the editor queueing the row it saved), and
-    ``master`` is the master switch already read, so a loop over orders reads it once.
+    commit, unless ``send_inline`` is False (the editor: the cron sends them). ``only``
+    limits it to that one row (the editor queueing the row it saved), and ``master`` is the
+    master switch already read, so a loop over orders reads it once.
     """
     if not (_master_on() if master is None else master):
         return
@@ -345,7 +347,8 @@ def schedule_dates(
     if lead.status == lead.Status.BOOKED:
         trips = [reservation] if reservation is not None else list(lead.reservations.all())
         created += _pickup_rows(lead, trips, only=only)
-    _send_on_commit(created)
+    if send_inline:
+        _send_on_commit(created)
 
 
 def reschedule_trip(reservation) -> None:
@@ -407,7 +410,11 @@ def _maybe_driver_changed(lead, reservation) -> None:
 
 
 def sync_waiting(
-    reservation, *, only: MessageTemplate | None = None, master: bool | None = None
+    reservation,
+    *,
+    only: MessageTemplate | None = None,
+    master: bool | None = None,
+    send_inline: bool = True,
 ) -> None:
     """Queue, or re-date, every row that waits for the trip to be Dispatched with its
     driver's details (as the old `sync_driver_message`).
@@ -418,7 +425,7 @@ def sync_waiting(
     held; a sent one is left alone, and a change of driver after it emits `driver_changed`.
     Nothing happens once the pickup has passed. ``only`` limits it to that one row and skips
     the driver-change check (the editor queueing the row it saved); ``master`` is the master
-    switch already read.
+    switch already read; ``send_inline`` False leaves what is due to the cron (the editor).
     """
     from apps.reservations.models import Reservation
 
@@ -471,9 +478,19 @@ def sync_waiting(
                 continue
             at = max(now, pickup + row.offset)
             if existing is not None:
+                if existing.updated_at > timezone.now():
+                    # A sender holds its lease (`sender._claim`) and is sending it right
+                    # now: leave it to that send. Saving it would end the lease and let a
+                    # second claim send it again.
+                    continue
                 if existing.scheduled_for != at:
+                    # One conditional update that leaves `updated_at` alone, so a lease
+                    # taken since the read above still stands.
+                    if not TouchPoint.objects.filter(
+                        pk=existing.pk, status=_S.SCHEDULED, updated_at__lte=timezone.now()
+                    ).update(scheduled_for=at):
+                        continue  # claimed since: that send has it
                     existing.scheduled_for = at
-                    existing.save(update_fields=["scheduled_for", "updated_at"])
                 if ready(row):  # a held row that is ready now: catch up on commit
                     queued_now.append(existing)
                 continue
@@ -485,7 +502,8 @@ def sync_waiting(
             queued_now.append(_create(row, lead, locked, at))
         if only is None and any_sent and locked.trip_status in rules.DRIVER_MESSAGE_STATUSES:
             _maybe_driver_changed(lead, locked)
-    _send_on_commit(queued_now)
+    if send_inline:
+        _send_on_commit(queued_now)
 
 
 # --- withdrawing and re-timing ---------------------------------------------------------
@@ -533,13 +551,16 @@ def redate(row: MessageTemplate, *, old_offset: timedelta) -> int:
 
     Trip date rows are recomputed from the trip's pickup (a row that waits never lands in
     the past); everything else moves by the change, its anchor being `scheduled_for -
-    old_offset` (as spec B's re-dating did). Staff clicks and schedules have no queued
-    sends."""
+    old_offset` (as spec B's re-dating did). A send whose texts are held for quiet hours
+    (`sender._hold` moved its `scheduled_for` to the window's end) counts from its real
+    anchor instead: the order's date, or the moment its event happened. Staff clicks and
+    schedules have no queued sends."""
     trigger = catalog.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind in ("staff_click", "schedule"):
         return 0
     new = row.offset
     qs = TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED, scheduled_for__isnull=False)
+    held = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.QUEUED)
     changed = []
     if trigger.kind == "date" and trigger.level == "trip":
         now = timezone.now()
@@ -551,8 +572,16 @@ def redate(row: MessageTemplate, *, old_offset: timedelta) -> int:
             tp.scheduled_for = max(now, at) if trigger.waits_for else at
             changed.append(tp)
     else:
-        for tp in qs:
-            tp.scheduled_for = tp.scheduled_for - old_offset + new
+        for tp in qs.annotate(held=Exists(held)).select_related("lead__payment"):
+            if not tp.held:
+                tp.scheduled_for = tp.scheduled_for - old_offset + new
+            elif trigger.anchor is not None:
+                anchor = trigger.anchor(tp.lead, None)
+                if anchor is None:
+                    continue
+                tp.scheduled_for = anchor + new
+            else:
+                tp.scheduled_for = _moment(trigger.key, tp.lead, tp.created_at) + new
             changed.append(tp)
     TouchPoint.objects.bulk_update(changed, ["scheduled_for"])
     return len(changed)

@@ -32,7 +32,7 @@ from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.notifications import email as mail
 
-from . import fields, quiet, recipients, rendering, rules, triggers
+from . import quiet, recipients, rendering, rules, triggers
 from .models import Delivery, MessageTemplate, NotificationConfig, Review, TouchPoint
 from .recipients import Recipient
 from .rendering import Block
@@ -206,21 +206,6 @@ def _mark(tp: TouchPoint, *, status: str, error: str = "") -> None:
 # --- context ---------------------------------------------------------------------------
 
 
-def _uses(row: MessageTemplate, name: str) -> bool:
-    texts = []
-    if row.send_email:
-        texts += [row.subject, row.email_body]
-    if row.send_sms:
-        texts.append(row.sms_body)
-    for text in texts:
-        try:
-            if name in fields._names(text or ""):
-                return True
-        except ValueError:  # unbalanced braces: the editor refuses these
-            continue
-    return False
-
-
 def _reach(person: Recipient) -> set[str]:
     return {a for a in (person.phone, person.email.strip().lower()) if a}
 
@@ -262,12 +247,12 @@ def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Reci
 
 
 def _trip_sheet(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> str | None:
-    """The combined trip sheet, or None to keep the trip's own sheet. Per-trip keys (a
-    seeded message sent once per trip) never combine."""
+    """The combined trip sheet, or None to keep the trip's own sheet. A row that sends per
+    trip (`rules.combines_per_day`) never combines."""
     from apps.reservations.services import trip_sheet_text
 
     key = rules.combine_key(tp, row)
-    if not key or ":trip:" in key or not _uses(row, "trip_sheet"):
+    if not key or not rules.combines_per_day(row) or not rules.uses_field(row, rules.DAY_LIST):
         return None
     trips = _combined_trips(tp, row, key, person)
     if not trips:

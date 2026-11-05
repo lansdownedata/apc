@@ -758,10 +758,31 @@ def test_added_order_row_gets_quote_and_pay_links_only():
 
 
 def test_added_pickup_row_combines_on_the_local_day():
-    row = MessageRowFactory(trigger="pickup", timing_direction="before", sms_body="Soon")
+    row = MessageRowFactory(
+        trigger="pickup", timing_direction="before", sms_body="Soon:\n{trip_sheet}"
+    )
     lead = _booked()
     trip = _trip(lead, at=time(23, 30))
     assert rules.combine_key(_tp(row, lead, trip), row) == trip.pickup_date.isoformat()
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"trigger": "pickup", "sms_body": "Soon, {first_name}"},
+        {"trigger": "pickup", "sms_body": "{trip_sheet}", "audience": "affiliate"},
+        {"trigger": "pickup_dispatched", "sms_body": "{driver_name}\n{trip_sheet}"},
+        # The list on a channel the row doesn't send on lists nothing.
+        {"trigger": "pickup", "sms_body": "{trip_sheet}", "send_sms": False},
+    ],
+)
+def test_added_combining_row_keys_per_trip_unless_it_lists_the_day(kw):
+    row = MessageRowFactory(timing_direction="before", email_body="Hi", **kw)
+    lead = _booked()
+    trip = _trip(lead)
+    assert not rules.combines_per_day(row)
+    key = f"{trip.pickup_date.isoformat()}:trip:{trip.pk}"
+    assert rules.combine_key(_tp(row, lead, trip), row) == key
 
 
 # --- editor text ----------------------------------------------------------------------

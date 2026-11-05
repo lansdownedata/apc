@@ -11,6 +11,7 @@ import pytest
 from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
+from apps.contacts.models import Contact
 from apps.core import cron
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.factories import AssignmentFactory
@@ -469,6 +470,110 @@ def test_a_cancelled_touchpoints_send_does_not_cover_its_replacement():
     assert send.call_count == 2
 
 
+def _coordinated(lead) -> Contact:
+    coordinator = ContactFactory(name="Dee Coordinator", phone="+12025550144", email="dee@x.com")
+    LeadContact.objects.create(
+        lead=lead, contact=coordinator, role=LeadContact.Role.DAY_OF_COORDINATOR
+    )
+    return coordinator
+
+
+def _dispatched_with(trip, name: str, cell: str) -> Reservation:
+    a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    dispatch_services.set_driver_info(
+        a, name=name, cell=cell, vehicle_desc="Suburban", vehicle_number="9"
+    )
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.DISPATCHED)
+    return Reservation.objects.get(pk=trip.pk)
+
+
+def test_an_added_driver_row_sends_each_trip_its_own_driver():
+    """A coordinator with two dispatched cars that day hears about both drivers: a row on
+    the dispatched pickup trigger never stands in for another trip."""
+    lead = _booked()
+    _coordinated(lead)
+    morning = _dispatched_with(_trip(lead, at=time(10, 0)), "Sam Rivera", "+15715551212")
+    afternoon = _dispatched_with(_trip(lead, at=time(16, 0)), "Kim Lane", "+15715553434")
+    row = _added(
+        trigger="pickup_dispatched",
+        section=MessageTemplate.Section.TRIP_DAY,
+        recipients=["role:day_of_coordinator"],
+        send_email=False,
+        sms_body="Your driver is {driver_name}, {driver_cell}",
+        timing_amount=12,
+        timing_unit="hours",
+        timing_direction=MessageTemplate.Direction.BEFORE,
+    )
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(_tp(row, lead, morning)) is True
+        assert sender.deliver(_tp(row, lead, afternoon)) is True
+
+    bodies = [c.kwargs["body"] for c in send.call_args_list]
+    assert len(bodies) == 2
+    assert "Sam Rivera" in bodies[0] and "Kim Lane" in bodies[1]
+
+
+def test_an_added_pickup_row_listing_the_day_sends_one_message():
+    lead = _booked()
+    _coordinated(lead)
+    morning, afternoon = _trip(lead, at=time(10, 0)), _trip(lead, at=time(16, 0))
+    row = _pickup_row(recipients=["role:day_of_coordinator"], send_email=False)
+
+    first, later = _tp(row, lead, morning), _tp(row, lead, afternoon, due=False)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(first) is True
+        TouchPoint.objects.filter(pk=later.pk).update(scheduled_for=timezone.now())
+        assert sender.deliver(later) is False
+
+    (body,) = [c.kwargs["body"] for c in send.call_args_list]
+    assert body.index("10:00 AM") < body.index("4:00 PM")
+    assert {(d[3], d[4]) for d in _deliveries(later)} == {("skipped", "Already sent for Nov 14")}
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"sms_body": "Pickup {trip_pickup_time}", "email_body": "Pickup {trip_pickup_time}"},
+        {
+            "audience": MessageTemplate.Audience.AFFILIATE,
+            "recipients": ["company"],
+            "sms_body": "Your trips:\n{trip_sheet}",
+            "email_body": "{trip_sheet}",
+        },
+    ],
+    ids=["no-trip-list", "affiliate"],
+)
+def test_an_added_pickup_row_without_the_day_list_sends_per_trip(kw):
+    """Only a wording that lists the person's whole day (`{trip_sheet}`) can stand in for
+    the other trips that day; an affiliate's sheet is always per trip."""
+    lead = _booked()
+    morning, afternoon = _trip(lead, at=time(10, 0)), _trip(lead, at=time(16, 0))
+    if kw.get("recipients") == ["company"]:
+        vendor = AssignmentFactory(reservation=morning, status=Assignment.Status.CONFIRMED).vendor
+        AssignmentFactory(reservation=afternoon, vendor=vendor, status=Assignment.Status.CONFIRMED)
+    row = _added(
+        trigger="pickup",
+        section=MessageTemplate.Section.TRIP_DAY,
+        timing_amount=72,
+        timing_unit="hours",
+        timing_direction=MessageTemplate.Direction.BEFORE,
+        **kw,
+    )
+    first, later = _tp(row, lead, morning), _tp(row, lead, afternoon, due=False)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(first) is True
+        TouchPoint.objects.filter(pk=later.pk).update(scheduled_for=timezone.now())
+        assert sender.deliver(later) is True
+
+    sms = [c.kwargs["body"] for c in send.call_args_list if c.kwargs["channel_type"] == "phone"]
+    assert len(sms) == 2
+    assert "10:00 AM" in sms[0] and "4:00 PM" in sms[1]
+    assert "4:00 PM" not in sms[0]
+
+
 def test_per_trip_events_never_combine():
     lead = _booked()
     a, b = _trip(lead, at=time(10, 0)), _trip(lead, at=time(16, 0))
@@ -919,3 +1024,48 @@ def test_a_row_changed_since_it_was_read_is_left_alone():
 
     send.assert_not_called()
     assert tp.scheduled_for > timezone.now()  # refreshed
+
+
+# --- day-one routing (the client-approved routing table) ------------------------------
+
+
+def test_day_one_routing_of_the_wedding_details_and_driver_messages():
+    """Pinned from the routing table the client approved: the wedding details request goes
+    to the booking contact, the couple and the lead planner; the driver message to the
+    booking contact, the day-of coordinator and the transportation contact. One copy per
+    address: the booker who is also one of the couple hears once."""
+    lead = _booked()
+    people = {
+        LeadContact.Role.COUPLE: ("Cal Couple", "+12025550111", "cal@example.com"),
+        LeadContact.Role.LEAD_PLANNER: ("Pia Planner", "+12025550122", "pia@example.com"),
+        LeadContact.Role.DAY_OF_COORDINATOR: ("Dee Day", "+12025550133", "dee@example.com"),
+        LeadContact.Role.TRANSPORTATION: ("Tom Trans", "+12025550144", "tom@example.com"),
+        LeadContact.Role.EMERGENCY: ("Eve Emergency", "+12025550155", "eve@example.com"),
+    }
+    for role, (name, phone, email) in people.items():
+        contact = ContactFactory(name=name, phone=phone, email=email)
+        LeadContact.objects.create(lead=lead, contact=contact, role=role)
+    LeadContact.objects.create(lead=lead, contact=lead.contact, role=LeadContact.Role.COUPLE)
+    trip = _dispatched_with(_trip(lead, wedding=True), "Sam Rivera", "+15715551212")
+
+    def reached(key: str) -> list[tuple[str, str]]:
+        with patch(SEND, side_effect=_ok) as send:
+            assert sender.deliver(_tp(_row(key), lead, trip)) is True
+        return _calls(send)
+
+    assert reached("wed_final_details") == [
+        ("email", "bea.booker@example.com"),
+        ("email", "cal@example.com"),
+        ("email", "pia@example.com"),
+        ("phone", "+12025550100"),
+        ("phone", "+12025550111"),
+        ("phone", "+12025550122"),
+    ]
+    assert reached("driver_released") == [
+        ("email", "bea.booker@example.com"),
+        ("email", "dee@example.com"),
+        ("email", "tom@example.com"),
+        ("phone", "+12025550100"),
+        ("phone", "+12025550133"),
+        ("phone", "+12025550144"),
+    ]
