@@ -1,0 +1,90 @@
+{
+  "planner_invite": [
+    {
+      "body": "Hi Dana Planner, All Pro Charter has set up a page for the weddings you're planning with us: every pickup, vehicle and, closer to the day, every driver, in one place. Create your account here: https://example.test/planner/register/<UID Dana Planner>/<TOKEN invite>/ This link works once and expires in 7 days. If it lapses, ask your coordinator to send a new one. If you weren't expecting this, you can ignore this email. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana@example.com"
+      ],
+      "subject": "Your wedding transportation with All Pro Charter"
+    }
+  ],
+  "planner_invite_then_resend": [
+    {
+      "body": "Hi Dana Planner, All Pro Charter has set up a page for the weddings you're planning with us: every pickup, vehicle and, closer to the day, every driver, in one place. Create your account here: https://example.test/planner/register/<UID Dana Planner>/<TOKEN dead>/ This link works once and expires in 7 days. If it lapses, ask your coordinator to send a new one. If you weren't expecting this, you can ignore this email. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana@example.com"
+      ],
+      "subject": "Your wedding transportation with All Pro Charter"
+    },
+    {
+      "body": "Hi Dana Planner, All Pro Charter has set up a page for the weddings you're planning with us: every pickup, vehicle and, closer to the day, every driver, in one place. Create your account here: https://example.test/planner/register/<UID Dana Planner>/<TOKEN invite>/ This link works once and expires in 7 days. If it lapses, ask your coordinator to send a new one. If you weren't expecting this, you can ignore this email. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana@example.com"
+      ],
+      "subject": "Your wedding transportation with All Pro Charter"
+    }
+  ],
+  "planner_invite_without_a_name": [
+    {
+      "body": "Hi there, All Pro Charter has set up a page for the weddings you're planning with us: every pickup, vehicle and, closer to the day, every driver, in one place. Create your account here: https://example.test/planner/register/<UID dana@example.com>/<TOKEN invite>/ This link works once and expires in 7 days. If it lapses, ask your coordinator to send a new one. If you weren't expecting this, you can ignore this email. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana@example.com"
+      ],
+      "subject": "Your wedding transportation with All Pro Charter"
+    }
+  ],
+  "planner_password_reset": [
+    {
+      "body": "Hi Dana Planner, Someone asked to reset the password for your All Pro Charter planner account. Choose a new one here: https://example.test/planner/password/<UID Dana Planner>/<TOKEN reset>/ This link works once and expires in 7 days. If you didn't ask for this, you can ignore this email; your password stays as it is. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana@example.com"
+      ],
+      "subject": "Reset your All Pro Charter planner password"
+    }
+  ],
+  "user_invite": [
+    {
+      "body": "Hi New, You've been added to the All Pro Charter Lead Manager as Agent. Set your password to activate your account: https://example.test/invite/<UID New Hire>/<TOKEN invite>/ This link expires in 7 days. If it lapses, ask an admin to resend your invite. If you weren't expecting this, you can ignore this email — the account stays locked until someone uses the link above. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "new.hire@allprocharter.com"
+      ],
+      "subject": "You've been invited to the All Pro Charter Lead Manager"
+    }
+  ],
+  "user_invite_admin_without_a_first_name": [
+    {
+      "body": "Hi there, You've been added to the All Pro Charter Lead Manager as Admin. Set your password to activate your account: https://example.test/invite/<UID Hire>/<TOKEN invite>/ This link expires in 7 days. If it lapses, ask an admin to resend your invite. If you weren't expecting this, you can ignore this email — the account stays locked until someone uses the link above. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "new.hire@allprocharter.com"
+      ],
+      "subject": "You've been invited to the All Pro Charter Lead Manager"
+    }
+  ],
+  "user_invite_resend": [
+    {
+      "body": "Hi New, You've been added to the All Pro Charter Lead Manager as Agent. Set your password to activate your account: https://example.test/invite/<UID New Hire>/<TOKEN invite>/ This link expires in 7 days. If it lapses, ask an admin to resend your invite. If you weren't expecting this, you can ignore this email — the account stays locked until someone uses the link above. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "new.hire@allprocharter.com"
+      ],
+      "subject": "You've been invited to the All Pro Charter Lead Manager"
+    }
+  ],
+  "wedding_details": [
+    {
+      "body": "Hi Jane Rider, Thank you — we have your wedding details, and one of our wedding professionals is building your day from them: every pickup, every vehicle. You'll have it, with a full quote, within one business day. No deposit, nothing locked in. REFERENCE <Q1> DATE Wedding date: Saturday, September 18, 2027 VENUE & CEREMONY Reception venue: The Oak Barn at Loyalty Ceremony at the same place?: No — two locations Ceremony location: St. John's Church WHO'S RIDING Who needs a ride?: Our guests, The wedding party Guests riding the shuttle: 105 Wedding party: 14 HOTELS Where is everyone staying?: Hampton Inn Leesburg; Lansdowne Resort TIMES Ceremony starts: 4:00 PM Venue requires everyone out by: 11:00 PM ANYTHING ELSE Anything else we should know?: Bridesmaids get ready at an Airbnb in Purcellville & need 2 cars. Plans still firming up? Open your details and change the guest count, the hotels or the times — we'll build from whatever is current: https://example.test/weddings/plan/<TOKEN lead=Jane Rider>/ Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "jane.rider@example.com"
+      ],
+      "subject": "We have your wedding details · <Q1>"
+    }
+  ],
+  "wedding_details_updated_from_the_resume_link": [
+    {
+      "body": "Hi Jane Rider, Thank you — we have your wedding details, and one of our wedding professionals is building your day from them: every pickup, every vehicle. You'll have it, with a full quote, within one business day. No deposit, nothing locked in. REFERENCE <Q1> DATE Wedding date: Saturday, September 18, 2027 VENUE & CEREMONY Reception venue: The Oak Barn at Loyalty Ceremony at the same place?: No — two locations Ceremony location: St. John's Church WHO'S RIDING Who needs a ride?: Our guests, The wedding party Guests riding the shuttle: 120 Wedding party: 14 HOTELS Where is everyone staying?: Not booked yet TIMES Ceremony starts: 4:00 PM Venue requires everyone out by: 11:00 PM ANYTHING ELSE Anything else we should know?: Bridesmaids get ready at an Airbnb in Purcellville & need 2 cars. Plans still firming up? Open your details and change the guest count, the hotels or the times — we'll build from whatever is current: https://example.test/weddings/plan/<TOKEN lead=Jane Rider>/ Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "jane.rider@example.com"
+      ],
+      "subject": "We have your wedding details · <Q1>"
+    }
+  ]
+}
