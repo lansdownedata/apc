@@ -1,0 +1,154 @@
+{
+  "complaint_report_empty": [],
+  "complaint_report_one": [
+    {
+      "body": "1 new customer complaint since Sun Feb 28, 10:00 AM <Q1> · Dana Reyes · High Trip Mar 1, 10:00 AM EST · Not covered \"Driver was rude\" Logged by Moe A https://example.test/portal/processing/?trip=<PK> Incidents since the last report: Vehicle 0, Driver 0, Service 0, Customer complaint 1 Open now: 1 issue, 1 of them complaint Complaints in the last 30 days: 1 -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "1 new customer complaint"
+    }
+  ],
+  "complaint_report_two": [
+    {
+      "body": "2 new customer complaints since Sun Feb 28, 10:00 AM <Q1> · Dana Reyes · High Trip Mar 1, 10:00 AM EST · Metro Limo \"Driver was 40 minutes late\" Logged by Moe A https://example.test/portal/processing/?trip=<PK> <Q2> · Sam Ortiz · High Trip Mar 1, 10:00 AM EST · Not covered \"Wrong pickup spot\" https://example.test/portal/processing/?trip=<PK> Incidents since the last report: Vehicle 1, Driver 0, Service 0, Customer complaint 2 Open now: 3 issues, 2 of them complaints Complaints in the last 30 days: 2 -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "2 new customer complaints"
+    }
+  ],
+  "deposit_report_empty": [],
+  "deposit_report_one_order": [
+    {
+      "body": "Unpaid deposits — Monday, March 1, 2027 1 booked order with a trip inside 30 days and no deposit collected: <Q1> · Ada Kavanagh 1 trip · first pickup Mon Mar 1 (today) total $400.00 · collected $0.00 ada@example.com · +12025550143 https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "ops@allprocharter.com"
+      ],
+      "subject": "Unpaid deposits — 1 order with a trip inside 30 days"
+    },
+    {
+      "body": "Unpaid deposits — Monday, March 1, 2027 1 booked order with a trip inside 30 days and no deposit collected: <Q1> · Ada Kavanagh 1 trip · first pickup Mon Mar 1 (today) total $400.00 · collected $0.00 ada@example.com · +12025550143 https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "Unpaid deposits — 1 order with a trip inside 30 days"
+    }
+  ],
+  "deposit_report_two_orders": [
+    {
+      "body": "Unpaid deposits — Monday, March 1, 2027 2 booked orders with a trip inside 30 days and no deposit collected: <Q1> · Ben Ortiz 1 trip · first pickup Sat Feb 27 (2 days overdue) total $400.00 · collected $0.00 no email · no phone https://example.test/portal/leads/<PK>/ <Q2> · Ada Kavanagh 2 trips · first pickup Sat Mar 6 (in 5 days) total $800.00 · collected $0.00 ada@example.com · +12025550143 https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "ops@allprocharter.com"
+      ],
+      "subject": "Unpaid deposits — 2 orders with a trip inside 30 days"
+    },
+    {
+      "body": "Unpaid deposits — Monday, March 1, 2027 2 booked orders with a trip inside 30 days and no deposit collected: <Q1> · Ben Ortiz 1 trip · first pickup Sat Feb 27 (2 days overdue) total $400.00 · collected $0.00 no email · no phone https://example.test/portal/leads/<PK>/ <Q2> · Ada Kavanagh 2 trips · first pickup Sat Mar 6 (in 5 days) total $800.00 · collected $0.00 ada@example.com · +12025550143 https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "Unpaid deposits — 2 orders with a trip inside 30 days"
+    }
+  ],
+  "dispatch_alert_critical": [
+    {
+      "body": "APC dispatch: 1 CRITICAL exception(s). • #<PK> No coverage — Dana Reyes",
+      "channel_type": "phone",
+      "identifier": "+15715550100"
+    },
+    {
+      "body": "APC dispatch: 1 CRITICAL exception(s). • #<PK> No coverage — Dana Reyes",
+      "channel_type": "phone",
+      "identifier": "+15715550101"
+    },
+    {
+      "body": "Dispatch exceptions — Mon Mar 1, 10:00 AM 2 exceptions need attention (1 CRITICAL). [CRITICAL] No coverage — <Q1> · Dana Reyes Trip #<PK> · pickup Mon Mar 1, 1:00 PM [WARNING] No coverage — <Q2> · Sam Ortiz Trip #<PK> · pickup Tue Mar 2, 6:00 AM Dispatch board: https://example.test/portal/dispatch/ -- All Pro Charter",
+      "email_to": [
+        "dispatch@allprocharter.com"
+      ],
+      "subject": "CRITICAL — 2 dispatch exceptions need attention"
+    },
+    {
+      "body": "Dispatch exceptions — Mon Mar 1, 10:00 AM 2 exceptions need attention (1 CRITICAL). [CRITICAL] No coverage — <Q1> · Dana Reyes Trip #<PK> · pickup Mon Mar 1, 1:00 PM [WARNING] No coverage — <Q2> · Sam Ortiz Trip #<PK> · pickup Tue Mar 2, 6:00 AM Dispatch board: https://example.test/portal/dispatch/ -- All Pro Charter",
+      "email_to": [
+        "night@allprocharter.com"
+      ],
+      "subject": "CRITICAL — 2 dispatch exceptions need attention"
+    }
+  ],
+  "dispatch_alert_nothing": [],
+  "dispatch_alert_warning_only": [
+    {
+      "body": "Dispatch exceptions — Mon Mar 1, 10:00 AM 1 exception need attention. [WARNING] No coverage — <Q1> · Sam Ortiz Trip #<PK> · pickup Tue Mar 2, 6:00 AM Dispatch board: https://example.test/portal/dispatch/ -- All Pro Charter",
+      "email_to": [
+        "dispatch@allprocharter.com"
+      ],
+      "subject": "1 dispatch exception needs attention"
+    },
+    {
+      "body": "Dispatch exceptions — Mon Mar 1, 10:00 AM 1 exception need attention. [WARNING] No coverage — <Q1> · Sam Ortiz Trip #<PK> · pickup Tue Mar 2, 6:00 AM Dispatch board: https://example.test/portal/dispatch/ -- All Pro Charter",
+      "email_to": [
+        "night@allprocharter.com"
+      ],
+      "subject": "1 dispatch exception needs attention"
+    }
+  ],
+  "review_report": [
+    {
+      "body": "Customer reviews, Jan 29 to Mar 1, 2027 3 orders finished. 1 asked for a review, 0 held, 1 left a review. 2 rated the trip on their trip page, averaging 3.5 out of 5. Low ratings (1 or 2 stars): <Q1> · Unhappy Customer · 2 of 5 \"Bus was dirty\" https://example.test/portal/orders/<PK>/ Every order: <Q2> · Happy Customer · finished Feb 25 EST · 1 trip Review request: Asked · 5-star review on Google · Trip page rating: none <Q1> · Unhappy Customer · finished Feb 26 EST · 1 trip Review request: Not asked · No review · Trip page rating: 2 of 5 <Q3> · Quiet Customer · finished Feb 27 EST · 1 trip Review request: Not asked · No review · Trip page rating: 5 of 5 -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "Customer reviews: 3 orders finished, 1 reviewed"
+    }
+  ],
+  "review_report_empty": [],
+  "review_report_no_ratings": [
+    {
+      "body": "Customer reviews, Jan 29 to Mar 1, 2027 1 order finished. 0 asked for a review, 0 held, 0 left a review. 0 rated the trip on their trip page. Every order: <Q1> · Dana Reyes · finished Feb 26 EST · 1 trip Review request: Not asked · No review · Trip page rating: none -- All Pro Charter",
+      "email_to": [
+        "owner@allprocharter.com"
+      ],
+      "subject": "Customer reviews: 1 order finished, 0 reviewed"
+    }
+  ],
+  "task_digest_nothing_overdue": [],
+  "task_digest_one_task": [
+    {
+      "body": "Overdue tasks — Mon Mar 1 1 task past due, oldest first. Customer Service Final itinerary received — <Q1> · Dana Reyes due Mar 1, 7:00 AM EST · unassigned Task queue: https://example.test/portal/tasks/ -- All Pro Charter",
+      "email_to": [
+        "ops@allprocharter.com"
+      ],
+      "subject": "1 overdue task"
+    }
+  ],
+  "task_digest_two_departments": [
+    {
+      "body": "Overdue tasks — Mon Mar 1 2 tasks past due, oldest first. Operations Details finalized — <Q1> · Dana Reyes · trip #<PK> due Mar 1, 7:00 AM EST · unassigned Customer Service Final itinerary received — <Q1> · Dana Reyes due Feb 28, 4:00 AM EST · Jordan Ellis Task queue: https://example.test/portal/tasks/ -- All Pro Charter",
+      "email_to": [
+        "ops@allprocharter.com"
+      ],
+      "subject": "2 overdue tasks"
+    }
+  ],
+  "unconfirmed_empty": [],
+  "unconfirmed_one_trip": [
+    {
+      "body": "Unconfirmed trips — Monday, March 1, 2027 1 trip across 1 customer go out tomorrow without a customer acknowledgement. They've had the T-72h and T-48h notices — confirm these by phone. Ada Kavanagh · ada@example.com · no phone 9:30 AM · <Q1> — 1 Main St, Washington, DC → Dulles (IAD) https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "reservations@allprocharter.com"
+      ],
+      "subject": "Unconfirmed trips tomorrow — 1 customer, 1 trips"
+    }
+  ],
+  "unconfirmed_two_customers": [
+    {
+      "body": "Unconfirmed trips — Monday, March 1, 2027 3 trips across 2 customers go out tomorrow without a customer acknowledgement. They've had the T-72h and T-48h notices — confirm these by phone. Ada Kavanagh · ada@example.com · +12025550143 9:30 AM · <Q1> — 1 Main St, Washington, DC → Dulles (IAD) 5:00 PM · <Q2> — Dulles (IAD) → The Hay-Adams https://example.test/portal/leads/<PK>/ Ben Ortiz · no email · +12025550144 11:15 AM · <Q3> — 1 Main St, Washington, DC → Dulles (IAD) https://example.test/portal/leads/<PK>/ -- All Pro Charter",
+      "email_to": [
+        "reservations@allprocharter.com"
+      ],
+      "subject": "Unconfirmed trips tomorrow — 2 customers, 3 trips"
+    }
+  ]
+}
