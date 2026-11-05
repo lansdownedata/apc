@@ -1,0 +1,117 @@
+{
+  "affiliate_cancel": [
+    {
+      "body": "Capital Coach Lines — trip cancelled Thank you for covering this trip. Our plans have changed and we have released it, so no further action is required on your side. We appreciate your time and look forward to working with you again soon. Tuesday, April 20, 2027 at 2:00 PM Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew&#x27;s Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter",
+      "email_to": [
+        "dispatch@capitalcoach.example.com"
+      ],
+      "subject": "Trip cancelled — Apr 20"
+    }
+  ],
+  "affiliate_offer": [
+    {
+      "body": "Capital Coach Lines — trip offer from All Pro Charter Tuesday, April 20, 2027 at 2:00 PM Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew&#x27;s Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Payout offered: $1,200.00 Reply to this email or call the office to accept.",
+      "email_to": [
+        "dispatch@capitalcoach.example.com"
+      ],
+      "subject": "Trip offer — Apr 20"
+    }
+  ],
+  "pay_link_by_email": [
+    {
+      "body": "Here's a secure link to pay for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/pay/",
+      "channel_type": "email",
+      "identifier": "dana.whitfield@example.com"
+    }
+  ],
+  "pay_link_by_text": [
+    {
+      "body": "Here's a secure link to pay for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/pay/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ],
+  "pay_link_for_a_trip": [
+    {
+      "body": "Here's a secure link to pay for trip <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/pay/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ],
+  "receipt_for_an_added_charge_paid_by_link": [
+    {
+      "body": "Hi Dana, Thank you for your payment for your trip on Tuesday, April 20. Here are the details. AMOUNT CHARGED $80.00 Amex ••1005 · Mar 1, 2027 · Receipt <RECEIPT> FOR Trip #<Q1> · Transfer · Tue Apr 20 1600 Pennsylvania Ave NW → Washington Dulles International Airport (IAD) Cleaning: $100.00 Credit applied: −$20.00 Total: $80.00 This charge was added to your trip after it ended: Cleaning. Questions about this charge? Reply to this email or call (703) 555-0100. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Your All Pro Charter receipt <RECEIPT>"
+    }
+  ],
+  "receipt_for_overtime": [
+    {
+      "body": "Hi Dana, We charged your card for your trip on Tuesday, April 20. Here are the details. AMOUNT CHARGED $185.00 Visa ••4242 · Mar 1, 2027 · Receipt <RECEIPT> FOR Trip #<Q1> · Transfer · Tue Apr 20 1600 Pennsylvania Ave NW → Washington Dulles International Airport (IAD) Overtime (1 hr): $185.00 Total: $185.00 Your trip ran past its scheduled end, and time beyond the grace period bills by the hour, as in your booking terms. Questions about this charge? Reply to this email or call (703) 555-0100. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Your All Pro Charter receipt <RECEIPT>"
+    }
+  ],
+  "refund_receipt_by_check_to_the_billing_contact": [
+    {
+      "body": "Hi Pat, We've refunded you for your trip on Tuesday, April 20. Here are the details. AMOUNT REFUNDED $40.00 Paid back by Check 1042 · Mar 1, 2027 · Receipt <RECEIPT> FOR Trip #<Q1> · Transfer · Tue Apr 20 1600 Pennsylvania Ave NW → Washington Dulles International Airport (IAD) Refund: Late pickup: $40.00 Total refunded: $40.00 We sent this refund by check, reference 1042. Questions about this refund? Reply to this email or call (703) 555-0100. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "pat.okafor@example.com"
+      ],
+      "subject": "Your All Pro Charter refund <RECEIPT>"
+    }
+  ],
+  "send_quote": [
+    {
+      "body": "Hi Dana Whitfield, Your quote is ready. Review the full itinerary and reserve your date below. QUOTE NO. <Q1> PREPARED FOR Dana Whitfield ESTIMATED TOTAL $370.00 A 50% deposit of $185.00 reserves your booking. View your quote & reserve: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/ This quote is valid through April 6, 2027. Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Your All Pro Charter quote <Q1>"
+    },
+    {
+      "body": "Hi Dana Whitfield, here's your All Pro Charter quote <Q1> for $370.00. To confirm, pay your 50% deposit of $185.00 here: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ],
+  "send_quote_by_text_only": [
+    {
+      "body": "Hi Dana Whitfield, here's your All Pro Charter quote <Q1> for $370.00. To confirm, pay your 50% deposit of $185.00 here: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ],
+  "send_quote_on_account": [
+    {
+      "body": "Hi Dana Whitfield, Your quote is ready. Review the full itinerary and reserve your date below. QUOTE NO. <Q1> PREPARED FOR Dana Whitfield ESTIMATED TOTAL $370.00 This booking is billed to your account. No payment is taken now. View your quote & reserve: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/ This quote is valid through April 6, 2027. Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter Luxury charter & chauffeur service reservations@allprocharter.com · (703) 555-0100",
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Your All Pro Charter quote <Q1>"
+    },
+    {
+      "body": "Hi Dana Whitfield, here's your All Pro Charter quote <Q1> for $370.00, billed to your account. Review and book here: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ],
+  "terms_link_by_email": [
+    {
+      "body": "Please review and accept the terms for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/terms/",
+      "channel_type": "email",
+      "identifier": "dana.whitfield@example.com"
+    }
+  ],
+  "terms_link_by_text": [
+    {
+      "body": "Please review and accept the terms for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/terms/",
+      "channel_type": "phone",
+      "identifier": "+12025550101"
+    }
+  ]
+}
