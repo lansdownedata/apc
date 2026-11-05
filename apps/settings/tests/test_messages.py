@@ -2,6 +2,7 @@ import json
 
 import pytest
 from django.urls import NoReverseMatch, reverse
+from django.utils.html import escape
 
 from apps.accounts.factories import UserFactory
 from apps.messaging import overrides
@@ -24,13 +25,14 @@ def test_lists_groups_and_rows(client):
     html = client.get(reverse("messages")).content.decode()
     for spec in overrides.MESSAGES:
         assert spec.label in html
-    assert "Before the trip" in html
-    assert "12 hours before pickup, once Dispatched" in html
-    assert "30 min after the lead comes in" in html
-    assert "2 hours after the lead comes in" in html
-    assert "1 day before the quote expires" in html
-    assert "When it happens" in html
-    assert "Uses the Thank-you switch" not in html
+    labels = [escape(label) for label in MessageTemplate.Section.labels]
+    positions = [html.index(label) for label in labels]
+    assert positions == sorted(positions)
+    welcome = html.index("Welcome message")
+    assert positions[0] < welcome < positions[1]
+    assert "30 minutes after lead comes in · Text and Email · Booking contact" in html
+    assert "12 hours before pickup, once dispatched" in html
+    assert "1 day after all trips done · Text · Booking contact" in html
     assert "Thank-you (wedding) switch" in html
 
 
@@ -52,7 +54,10 @@ def test_edited_badge(client):
 def test_timing_reflects_an_override(client):
     client.force_login(_owner_admin())
     MessageTemplate.objects.filter(key="tp1_welcome").update(timing_amount=5, timing_unit="minutes")
-    assert "5 min after the lead comes in" in client.get(reverse("messages")).content.decode()
+    assert (
+        "5 minutes after lead comes in · Text and Email"
+        in client.get(reverse("messages")).content.decode()
+    )
 
 
 def test_toggle_flips_and_persists(client):
@@ -111,10 +116,15 @@ def test_index_card_links_to_messages(client):
 
 def test_rows_show_their_channels(client):
     client.force_login(_owner_admin())
+    MessageTemplate.objects.filter(key="tp1_welcome").update(send_sms=True, send_email=False)
     html = client.get(reverse("messages")).content.decode()
-    assert "Email &amp; SMS" in html
-    assert ">Email<" in html
-    assert ">SMS<" in html
+    assert "30 minutes after lead comes in · Text · " in html
+    MessageTemplate.objects.filter(key="tp1_welcome").update(send_sms=False, send_email=True)
+    html = client.get(reverse("messages")).content.decode()
+    assert "30 minutes after lead comes in · Email · " in html
+    MessageTemplate.objects.filter(key="tp1_welcome").update(send_sms=True, send_email=True)
+    html = client.get(reverse("messages")).content.decode()
+    assert "30 minutes after lead comes in · Text and Email · " in html
 
 
 def test_second_notice_row_uses_the_confirmation_switch(client):

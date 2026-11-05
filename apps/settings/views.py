@@ -6,7 +6,9 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import owner_admin_required
@@ -15,8 +17,8 @@ from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import Lead, ServiceType, VehicleType
-from apps.messaging import fields, overrides
-from apps.messaging.models import NotificationConfig
+from apps.messaging import fields, listing, overrides, triggers
+from apps.messaging.models import MessageTemplate, NotificationConfig
 from apps.reservations.models import PricingConfig
 from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
@@ -274,37 +276,83 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("renewal_type_list")
 
 
-def _channels_text(rows: dict, kind: str) -> str:
-    names = {"email": "Email", "sms": "SMS"}
-    channels = overrides.effective(kind, rows).channels
-    return " & ".join(names[c] for c in ("email", "sms") if c in channels)
+_SEGMENTS = (("", "All"), ("on", "On"), ("off", "Off"))
+
+
+def _filter_url(filters: dict, **changes: str) -> str:
+    merged = {**filters, **changes}
+    query = urlencode({k: v for k, v in merged.items() if v})
+    return f"{reverse('messages')}?{query}" if query else reverse("messages")
 
 
 @login_required
 @owner_admin_required
 def messages_list(request: HttpRequest) -> HttpResponse:
-    """Every automated message, grouped, with its timing and its own on/off switch."""
-    rows = overrides.load()
+    """Every automated message in its section, problems first, filtered from the query string."""
     master = NotificationConfig.load().enabled
-    groups: list[dict] = []
-    for spec in overrides.MESSAGES:
-        if not groups or groups[-1]["name"] != spec.group:
-            groups.append({"name": spec.group, "items": []})
-        groups[-1]["items"].append(
-            {
-                "kind": spec.kind,
-                "label": spec.label,
-                "timing": overrides.timing_phrase(spec.kind, rows),
-                "edited": spec.kind in rows,
-                "enabled": overrides.is_enabled(spec.kind, rows, master=True),
-                "channels": _channels_text(rows, spec.kind),
-            }
-        )
+    filters = {key: request.GET.get(key, "").strip() for key in listing.FILTER_KEYS}
+    rows = MessageTemplate.objects.live().prefetch_related("service_types")
+    sections = listing.build_sections(rows, filters, master_on=master)
+    filtering = any(filters.values())
+    triggers_by_group = sorted(
+        triggers.CATALOG.values(), key=lambda t: (list(triggers.GROUP_LABEL).index(t.kind), t.label)
+    )
     return render(
         request,
         "settings/messages.html",
-        {"nav": "settings", "page_title": "Messages", "groups": groups, "master_on": master},
+        {
+            "nav": "settings",
+            "page_title": "Messages",
+            "sections": sections,
+            "master_on": master,
+            "filters": filters,
+            "filtering": filtering,
+            "audience_options": MessageTemplate.Audience.choices,
+            "channel_options": [("sms", "Text"), ("email", "Email"), ("both", "Text and Email")],
+            "trigger_options": [
+                (t.key, f"{triggers.GROUP_LABEL[t.kind]}: {t.label}") for t in triggers_by_group
+            ],
+            "service_options": list(ServiceType.objects.order_by("name").values_list("pk", "name")),
+            "origin_options": [("seeded", "Built-in"), ("added", "Added")],
+            "segments": [
+                {
+                    "label": label,
+                    "active": filters["state"] == value,
+                    "url": _filter_url(filters, state=value),
+                }
+                for value, label in _SEGMENTS
+            ],
+            "clear_url": reverse("messages"),
+        },
     )
+
+
+@login_required
+@owner_admin_required
+def messages_new(request: HttpRequest) -> HttpResponse:
+    """Placeholder until the editor builds new messages (APC-119 task 15)."""
+    return HttpResponse("New message: coming with the editor.")
+
+
+@login_required
+@owner_admin_required
+def messages_quiet_hours(request: HttpRequest) -> HttpResponse:
+    """Placeholder until quiet hours are editable (APC-114)."""
+    return HttpResponse("Quiet hours: coming soon.")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def message_archive(request: HttpRequest, key: str) -> HttpResponse:
+    """Archive an added message. Built-in messages are never archived, only reset."""
+    row = get_object_or_404(MessageTemplate.objects.live(), key=key)
+    if row.seeded:
+        return HttpResponse("Built-in messages can't be archived.", status=400)
+    row.archived_at = timezone.now()
+    row.save(update_fields=["archived_at", "updated_at"])
+    messages.success(request, f"{row.name} archived.")
+    return redirect("messages")
 
 
 @login_required
@@ -313,7 +361,10 @@ def messages_list(request: HttpRequest) -> HttpResponse:
 def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
     """Flip one message's switch, leaving its text and timing as they are."""
     if kind not in {m.kind for m in overrides.MESSAGES}:
-        raise Http404
+        row = get_object_or_404(MessageTemplate.objects.live(), key=kind)
+        row.enabled = not row.enabled
+        row.save(update_fields=["enabled", "updated_at"])
+        return JsonResponse({"ok": True, "enabled": row.enabled})
     rows = overrides.load()
     enabled = not overrides.is_enabled(kind, rows, master=True)
     current = overrides.effective(kind, rows)
