@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib import admin
 
-from .models import AffiliatePayable, Charge, JournalEntry, JournalLine, PaymentPlan
+from .models import AffiliatePayable, Charge, JournalEntry, JournalLine, PaymentPlan, StripeEvent
 
 
 class ChargeInline(admin.TabularInline):
@@ -137,3 +137,11 @@ class AffiliatePayableAdmin(admin.ModelAdmin):
         "qbo_payment_sync_error",
         "qbo_payment_synced_at",
     )
+
+
+@admin.register(StripeEvent)
+class StripeEventAdmin(admin.ModelAdmin):
+    list_display = ("event_id", "event_type", "processed", "created_at")
+    list_filter = ("event_type", "processed")
+    search_fields = ("event_id",)
+    readonly_fields = ("event_id", "event_type", "payload", "processed", "created_at", "updated_at")

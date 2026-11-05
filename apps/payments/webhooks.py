@@ -2,10 +2,12 @@
 
 import logging
 
+from django.db import IntegrityError, transaction
+
 from apps.notifications.models import Notification
 
 from . import services
-from .models import Charge, PaymentPlan
+from .models import Charge, PaymentPlan, StripeEvent
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,29 @@ _SUCCESS_KINDS = {
     "final": Charge.Kind.FINAL,
     "trip": Charge.Kind.TRIP,
 }
+
+
+def handle_delivery(event) -> None:
+    """One webhook delivery, handled once (APC-126).
+
+    Stripe retries an event until it sees a 200, and retries can overlap, so the unique
+    `StripeEvent.event_id` is the gate: the insert that wins handles the event, and every
+    later delivery of the same id is acknowledged without reaching the handler. A payload
+    with no id (a hand-built one in a test) is handled but not recorded.
+    """
+    event_id = event.get("id")
+    if not event_id:
+        process_stripe_event(event)
+        return
+    try:
+        with transaction.atomic():
+            logged = StripeEvent.objects.create(
+                event_id=event_id, event_type=event["type"], payload=dict(event)
+            )
+    except IntegrityError:
+        return
+    process_stripe_event(event)
+    logged.mark_processed()
 
 
 def process_stripe_event(event) -> None:
@@ -62,9 +87,9 @@ def _payment_succeeded(intent) -> None:
     if plan is None:
         return
 
-    # `charge_balance` / `charge_saved_card` confirm off-session and post their own ledger
-    # entry inline, but their success event still arrives here. Also absorbs a duplicate
-    # delivery, independently of the ledger's idempotency key.
+    # `charge_balance` / `charge_saved_card` / `charge_trip` confirm off-session and settle
+    # inline, but their success event still arrives here. A cheap exit for the common
+    # case; the one that raced them is settled under `record_payment`'s row lock.
     if plan.charges.filter(
         stripe_payment_intent_id=intent["id"], status=Charge.Status.SUCCEEDED
     ).exists():

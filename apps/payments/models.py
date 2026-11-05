@@ -453,3 +453,25 @@ class SavedCard(TimeStampedModel):
     def expires_soon(self) -> bool:
         """Expires this month or next — worth replacing before a balance charge needs it."""
         return 0 <= self._months_left() <= 1
+
+
+class StripeEvent(TimeStampedModel):
+    """Inbound Stripe webhook log, one row per event id (APC-126).
+
+    Stripe retries an event until it sees a 200, and retries can overlap, so the unique
+    `event_id` is the gate: the insert that wins handles the event, every later delivery of
+    the same id is acknowledged and goes no further. The payload is kept so a disputed
+    payment can be traced to exactly what Stripe told us.
+    """
+
+    event_id = models.CharField(max_length=64, unique=True)
+    event_type = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+    processed = models.BooleanField(default=False)
+
+    def mark_processed(self) -> None:
+        self.processed = True
+        self.save(update_fields=["processed", "updated_at"])
+
+    def __str__(self) -> str:
+        return f"{self.event_type} · {'processed' if self.processed else 'pending'}"

@@ -229,6 +229,32 @@ def test_view_returns_200_on_valid_signature(client):
     assert resp.status_code == 200
 
 
+def test_a_redelivered_event_is_handled_once(client):
+    """APC-126: Stripe retries until it sees a 200, and retries can overlap. The event id is
+    the key: the first delivery is recorded and handled, a second with the same id is
+    acknowledged and never reaches the handler."""
+    from apps.payments.models import StripeEvent
+
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    event = {"id": "evt_1", **_pi_event(plan.lead_id)}
+    with (
+        patch("apps.payments.views.stripe.Webhook.construct_event", return_value=event),
+        patch("apps.payments.views.webhooks.process_stripe_event") as handle,
+    ):
+        for _ in range(2):
+            resp = client.post(
+                "/webhooks/stripe/",
+                data=b"{}",
+                content_type="application/json",
+                HTTP_STRIPE_SIGNATURE="t=1,v1=abc",
+            )
+            assert resp.status_code == 200
+    handle.assert_called_once()
+    (logged,) = StripeEvent.objects.filter(event_id="evt_1")
+    assert logged.event_type == "payment_intent.succeeded"
+    assert logged.processed is True
+
+
 def test_la_push_crash_never_breaks_stripe_200(client):
     plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
     with (

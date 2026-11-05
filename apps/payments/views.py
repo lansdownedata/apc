@@ -37,7 +37,7 @@ def stripe_webhook(request):
         event = stripe.Webhook.construct_event(request.body, sig, settings.STRIPE_WEBHOOK_SECRET)
     except (ValueError, stripe.error.SignatureVerificationError):
         return HttpResponseBadRequest("Invalid signature.")
-    webhooks.process_stripe_event(event)
+    webhooks.handle_delivery(event)
     return HttpResponse(status=200)
 
 
