@@ -446,7 +446,7 @@ INVITES: dict[str, MessageDefault] = {
             subject="You've been invited to the {company_name} Lead Manager",
             email_body=(
                 "Hi {account_first_name},\n\n"
-                "You've been added to the {company_name} Lead Manager as {role_label}.\n\n"
+                "You've been added to the {company_name} Lead Manager as {role_label}.\n"
                 "{access_level}\n\n"
                 "Set your password to activate your account:\n"
                 "{account_button}\n\n"

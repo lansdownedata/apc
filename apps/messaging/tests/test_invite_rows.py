@@ -480,3 +480,128 @@ def test_the_other_html_parts_keep_their_generated_parts(send, parts):
     html = _html(mail.outbox[-1])
     for part in parts:
         assert part in html, part
+
+
+# --- fix round 1: offer only what the send fills; the reset decoy never fails ---------------
+
+_AUDIENCE = {
+    "planner_invite": "planner",
+    "planner_password_reset": "planner",
+    "user_invite": "staff",
+    "wedding_details_received": "customer",
+}
+
+
+def _offered_for(key: str) -> list[str]:
+    return [f.key for f in fields.fields_for(key, _AUDIENCE[key], key)]
+
+
+def _use_every_offered_field(key: str) -> None:
+    every = " ".join("{" + name + "}" for name in _offered_for(key))
+    row = _row(key)
+    row.email_body = f"{row.email_body}\n\n{every}"
+    assert fields.validate(listing.row_data(row)) == {}, key
+    row.save()
+
+
+def test_the_invite_triggers_offer_exactly_what_their_callers_fill():
+    assert set(_offered_for("planner_invite")) == {
+        "account_name",
+        "account_button",
+        "company_name",
+        "company_phone",
+        "company_email",
+    }
+    assert set(_offered_for("planner_password_reset")) == set(_offered_for("planner_invite"))
+    assert set(_offered_for("user_invite")) == {
+        "account_first_name",
+        "account_button",
+        "role_label",
+        "access_level",
+        "company_name",
+        "company_phone",
+        "company_email",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("planner_invite", "quote_link"),
+        ("planner_invite", "account_first_name"),
+        ("planner_password_reset", "pay_link"),
+        ("planner_password_reset", "first_name"),
+        ("user_invite", "account_name"),
+        ("user_invite", "quote_link"),
+    ],
+)
+def test_a_field_the_send_cannot_fill_is_refused(key, field):
+    data = listing.row_data(_row(key)) | {"subject": "Hi {" + field + "}"}
+    assert field in fields.validate(data)["subject"]
+
+
+def _send(key: str):
+    if key == "planner_invite":
+        _invite_planner()
+    elif key == "planner_password_reset":
+        _registered()
+        mail.outbox.clear()
+        assert planner_services.send_password_reset("dana@example.com") is True
+    elif key == "user_invite":
+        _invite_user()
+    else:
+        assert public_services.send_wedding_confirmation(_wedding_lead(), base_url=BASE_URL)
+
+
+@pytest.mark.parametrize("key", KEYS)
+def test_every_offered_field_renders_through_a_real_send(key):
+    _use_every_offered_field(key)
+    _send(key)
+    tp = TouchPoint.objects.filter(kind=key).latest("pk")
+    assert tp.status == TouchPoint.Status.SENT, tp.error
+    assert not re.search(r"\{\w+\}", mail.outbox[-1].body)
+
+
+def test_every_offered_field_renders_through_the_reset_decoy(caplog):
+    _use_every_offered_field("planner_password_reset")
+    seen: list = []
+    with patch.object(loader, "get_template", side_effect=_recording(seen)):
+        assert planner_services.send_password_reset("nobody@example.com") is False
+    assert "email/message.html" in seen
+    assert "decoy" not in caplog.text
+
+
+def test_a_decoy_that_cannot_render_never_breaks_the_page(client, caplog):
+    with patch("apps.messaging.rendering.render_email", side_effect=KeyError("unknown_field")):
+        assert planner_services.send_password_reset("nobody@example.com") is False
+    assert "decoy" in caplog.text
+
+
+def test_the_reset_page_answers_the_same_for_a_known_and_an_unknown_email(client):
+    _registered()
+    _use_every_offered_field("planner_password_reset")
+    url = reverse("planners:password_reset")
+    known = client.post(url, {"email": "dana@example.com"})
+    unknown = client.post(url, {"email": "nobody@example.com"})
+    assert known.status_code == unknown.status_code == 200
+    assert known.content == unknown.content
+    assert TouchPoint.objects.get(kind="planner_password_reset").status == "sent"
+
+
+def test_the_staff_invite_text_keeps_one_blank_line_before_the_button():
+    _invite_user()
+    (message,) = mail.outbox
+    assert (
+        "You've been added to the All Pro Charter Lead Manager as Agent.\n\n"
+        "Set your password to activate your account:\n"
+    ) in message.body
+
+
+def test_each_invite_preview_links_to_its_own_page():
+    pages = {
+        "planner_invite": "/planner/register/sample/",
+        "planner_password_reset": "/planner/password/sample/",
+        "user_invite": "/invite/sample/",
+    }
+    for key, page in pages.items():
+        assert page in editor.preview(_row(key), None)["email"], key

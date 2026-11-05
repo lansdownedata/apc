@@ -232,7 +232,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {PLANNER},
-        {"Links", "Company", "Account"},
+        {"Company", "Account", "Planner account"},
         email_via="postmark",
     ),
     _t(
@@ -241,7 +241,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {PLANNER},
-        {"Links", "Company", "Account"},
+        {"Company", "Account", "Planner account"},
         email_via="postmark",
     ),
     _t(
@@ -250,7 +250,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {STAFF},
-        {"Links", "Company", "Account", "Staff access"},
+        {"Company", "Account", "Staff access"},
         email_via="postmark",
     ),
     # Schedules

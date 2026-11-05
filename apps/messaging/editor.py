@@ -534,8 +534,17 @@ def preview_trip(trigger_key: str, lead, service_types=()):
     return trips[0] if trips else None
 
 
-def sample_context(base_url: str) -> dict[str, str]:
-    """Plausible values for every field, for previewing without an order."""
+# The page each account email's button opens, for its preview.
+_ACCOUNT_PAGES = {
+    "planner_invite": "/planner/register/sample/",
+    "planner_password_reset": "/planner/password/sample/",
+    "user_invite": "/invite/sample/",
+}
+
+
+def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
+    """Plausible values for every field, for previewing without an order. An account
+    email's button opens its own page (``trigger_key``)."""
     from apps.tasks import schedule
 
     pickup = schedule.sample_pickup()
@@ -616,7 +625,8 @@ def sample_context(base_url: str) -> dict[str, str]:
             ),
             "account_name": "Sample Planner",
             "account_first_name": "Sample",
-            "account_button": f"{base_url}/planner/register/sample/",
+            "account_button": base_url
+            + _ACCOUNT_PAGES.get(trigger_key, _ACCOUNT_PAGES["planner_invite"]),
             "role_label": "Agent",
             "form_name": "Sample Customer",
             "wedding_details": (
@@ -693,7 +703,7 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
     base_url = settings.PUBLIC_BASE_URL or "https://example.com"
     on = row.channels
     if lead is None:
-        ctx = sample_context(base_url)
+        ctx = sample_context(base_url, row.trigger)
         contexts = {c: ctx for c in on}
         heads = {c: "" for c in on}
         lines = _sample_lines(row)
@@ -703,7 +713,7 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
         people = rules.recipients_for(tp, row, recipients.resolve(row, lead, trip))
         lines = _to_lines(row, people)
         contexts, heads = {}, {}
-        samples = sample_context(base_url)
+        samples = sample_context(base_url, row.trigger)
         for channel in on:
             claimed = _claimed(people, channel)
             first = next((p for p in people if id(p) in claimed), None)

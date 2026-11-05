@@ -70,19 +70,24 @@ def _mail(message: tuple[str, str], name: str, url: str) -> dict:
     }
 
 
-def _send(message: tuple[str, str], account: PlannerAccount, url: str) -> bool:
-    from apps.messaging import sender
+def _planner(name: str, email: str, contact_id: int | None):
     from apps.messaging.recipients import Recipient
 
-    name = account.contact.name
-    person = Recipient(
+    return Recipient(
         name=name,
-        label=f"{name or account.email} (planner)",
+        label=f"{name or email} (planner)",
         phone="",
-        email=account.email,
-        contact_id=account.contact_id,
+        email=email,
+        contact_id=contact_id,
         channels=("email",),
     )
+
+
+def _send(message: tuple[str, str], account: PlannerAccount, url: str) -> bool:
+    from apps.messaging import sender
+
+    name = account.contact.name
+    person = _planner(name, account.email, account.contact_id)
     return sender.send_now(message[0], to=[person], **_mail(message, name, url)).sent
 
 
@@ -248,18 +253,20 @@ def send_password_reset(email: str) -> bool:
 
 
 def _render_reset_for_no_one() -> None:
-    from apps.messaging import rendering
-    from apps.messaging.models import MessageTemplate
+    """Render the reset's message row as a real reset renders it (`sender.context`, the
+    same values, button and preview line), sending nothing. Never raises: the page must
+    answer an address with no account exactly as it answers one with an account."""
+    from apps.messaging import rendering, sender
+    from apps.messaging.models import MessageTemplate, TouchPoint
 
-    mail = _mail(_RESET, "", "")
-    row = MessageTemplate.objects.get(key=_RESET[0])
-    context = {
-        "company_name": settings.COMPANY_NAME,
-        "company_email": settings.COMPANY_EMAIL,
-        "company_phone": settings.COMPANY_PHONE,
-        **mail["extra_ctx"],
-    }
-    rendering.render_email(row, context, mail["blocks"], preheader=mail["preheader"])
+    try:
+        mail = _mail(_RESET, "", "")
+        row = MessageTemplate.objects.get(key=_RESET[0])
+        tp = TouchPoint(message=row, kind=row.key)
+        context = sender.context(tp, row, _planner("", "", None), mail["extra_ctx"])
+        rendering.render_email(row, context, mail["blocks"], preheader=mail["preheader"])
+    except Exception:  # noqa: BLE001 - a failed decoy must never show on the page
+        logger.exception("planner reset decoy failed to render")
 
 
 # --- what a planner sees ----------------------------------------------------------------

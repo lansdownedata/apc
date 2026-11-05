@@ -89,15 +89,18 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
     ],
     "Affiliate click": [("trip_day", "Pickup day")],
     "Cancellation": [("cancelled_trip_sheet", "Trip details (no money)")],
-    # The invites and the planner password reset: the person the account is for, and the
-    # button that sets its password (in plain text, the link itself).
-    "Account": [
-        ("account_name", "Full name"),
-        ("account_first_name", "First name"),
-        ("account_button", "Set-password button"),
-    ],
+    # The invites and the planner password reset have no order: each trigger offers only
+    # what its caller fills (`sender.context` adds the company). Every one has the button
+    # that sets the password (in plain text, the link itself); a planner email greets by
+    # full name, a staff invite by first name and says the access level.
+    "Account": [("account_button", "Set-password button")],
+    "Planner account": [("account_name", "Full name")],
     # The access-level panel is HTML only (the plain-text part says it in the sentence).
-    "Staff access": [("role_label", "Access level"), ("access_level", "Access level panel")],
+    "Staff access": [
+        ("account_first_name", "First name"),
+        ("role_label", "Access level"),
+        ("access_level", "Access level panel"),
+    ],
     # The email a couple gets when they send their wedding details (`public.services`).
     "Wedding details": [
         ("form_name", "Name on the form"),
@@ -115,6 +118,7 @@ _CLICK_GROUPS = (
     "Affiliate click",
     "Cancellation",
     "Account",
+    "Planner account",
     "Staff access",
     "Wedding details",
 )
