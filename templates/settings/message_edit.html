@@ -12,7 +12,6 @@
         <p class="text-[12.5px] text-muted">{{ spec.group }}</p>
       </div>
       <div class="flex items-center gap-3 shrink-0 pt-1">
-        {% if form.has_switch %}
         <div class="flex items-center gap-2" x-data="{ on: {% if form.enabled.value %}true{% else %}false{% endif %} }">
           <input type="hidden" name="enabled" value="{% if form.enabled.value %}on{% endif %}" :value="on ? 'on' : ''">
           <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'On' : 'Off'">{% if form.enabled.value %}On{% else %}Off{% endif %}</span>
@@ -22,9 +21,6 @@
             <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
           </button>
         </div>
-        {% else %}
-        <span class="text-[11.5px] text-muted">Uses the {{ switch_label }} switch</span>
-        {% endif %}
         <button type="button" @click="confirmReset()" {% if not edited %}disabled{% endif %}
                 class="text-[12.5px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Reset to default</button>
       </div>
@@ -46,8 +42,6 @@
             <p class="text-[11.5px] text-muted mt-1.5" data-example="timing">{{ timing_example }}</p>
             {% for error in form.timing_amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
           </div>
-          {% elif timed_by %}
-          <p class="text-[13px] text-ink mb-5">{{ timed_by }}</p>
           {% else %}
           <p class="text-[13px] text-ink mb-5">Sent when it happens</p>
           {% endif %}

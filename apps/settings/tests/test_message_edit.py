@@ -152,7 +152,8 @@ def test_second_notice_editor_edits_wording_and_timing(client):
     url = reverse("message_edit", args=["trip_confirm_customer_2"])
     html = client.get(url).content.decode()
     assert 'name="timing_amount"' in html
-    assert "Uses the Trip confirmation switch" in html
+    assert "Uses the Trip confirmation switch" not in html
+    assert 'aria-label="Trip confirmation — second notice switch"' in html
     data = _post_data(
         "trip_confirm_customer_2",
         sms_body="Please confirm {trip_pickup_when} {confirm_link}",
@@ -166,11 +167,16 @@ def test_second_notice_editor_edits_wording_and_timing(client):
     assert row.sms_body.startswith("Please confirm")
 
 
-def test_wedding_thank_you_editor_has_no_timing_inputs(client):
+def test_wedding_thank_you_editor_has_its_own_timing_inputs(client):
     client.force_login(_owner_admin())
-    html = client.get(reverse("message_edit", args=["thank_you_wedding"])).content.decode()
-    assert "Sent with the Thank-you timing" in html
-    assert 'name="timing_amount"' not in html
+    url = reverse("message_edit", args=["thank_you_wedding"])
+    html = client.get(url).content.decode()
+    assert "Sent with the Thank-you timing" not in html
+    assert 'name="timing_amount"' in html
+    data = _post_data("thank_you_wedding", timing_amount="5", timing_unit="hours")
+    assert client.post(url, data).status_code == 302
+    assert overrides.timing_of("thank_you_wedding") == (5, "hours")
+    assert overrides.timing_of("thank_you") == (2, "hours")
 
 
 def test_subject_over_200_characters_is_refused(client):

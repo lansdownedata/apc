@@ -3,7 +3,7 @@
 import string
 from dataclasses import dataclass
 
-from . import overrides
+from . import defaults
 
 
 @dataclass(frozen=True)
@@ -138,11 +138,8 @@ def _has_formatting(text: str) -> bool:
 
 
 def _default_texts(kind: str) -> tuple[str, ...]:
-    try:
-        t = overrides.default(kind)
-    except KeyError:
-        return ()
-    return (t.subject, t.email_body, t.sms_body)
+    d = defaults.DEFAULTS.get(kind)
+    return (d.subject, d.email_body, d.sms_body) if d else ()
 
 
 def required_for(kind: str) -> frozenset[str]:
@@ -154,10 +151,8 @@ def required_for(kind: str) -> frozenset[str]:
 
 
 def _channels(kind: str) -> tuple[str, ...]:
-    try:
-        return overrides.default(kind).channels
-    except KeyError:
-        return ("email", "sms")
+    d = defaults.DEFAULTS.get(kind)
+    return ("email", "sms") if d is None else d.channels
 
 
 _PURPOSE = {

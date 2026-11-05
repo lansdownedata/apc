@@ -1,11 +1,13 @@
 """The message rows (spec C section 2) as the rest of the app reads them: all of them in
 one query, one by key, and a row's timing as the (amount, unit) a person would say it."""
 
+from datetime import timedelta
+
 from . import triggers
 from .defaults import TIMING_UNITS
 from .models import MessageTemplate
 
-_UNIT_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
+UNIT_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
 
 
 def load() -> dict[str, MessageTemplate]:
@@ -27,8 +29,13 @@ def timing_of(key: str, rows: dict[str, MessageTemplate] | None = None) -> tuple
     trigger = triggers.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind in ("staff_click", "schedule"):
         return None
-    seconds = abs(int(row.offset.total_seconds()))
+    return in_largest_unit(row.offset)
+
+
+def in_largest_unit(offset: timedelta) -> tuple[int, str]:
+    """A span as the (amount, unit) a person would say it: 720 minutes is (12, "hours")."""
+    seconds = abs(int(offset.total_seconds()))
     for unit in reversed(TIMING_UNITS):
-        if seconds and seconds % _UNIT_SECONDS[unit] == 0:
-            return seconds // _UNIT_SECONDS[unit], unit
+        if seconds and seconds % UNIT_SECONDS[unit] == 0:
+            return seconds // UNIT_SECONDS[unit], unit
     return seconds // 60, "minutes"

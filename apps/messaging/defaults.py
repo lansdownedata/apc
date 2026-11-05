@@ -41,6 +41,13 @@ class MessageDefault:
     enabled: bool
     service_type_names: tuple[str, ...] = ()
 
+    @property
+    def channels(self) -> tuple[str, ...]:
+        """The channels it sends on, in the order the original lists them (the first is the
+        one a missing link is reported against)."""
+        on = {"sms": self.send_sms, "email": self.send_email}
+        return tuple(c for c in _template(self.key).channels if on[c])
+
 
 _BOOKING = ("booking_contact",)
 _DRIVER_PEOPLE = ("booking_contact", "role:day_of_coordinator", "role:transportation")

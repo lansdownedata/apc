@@ -44,9 +44,6 @@ def _fleet_attention_count() -> int:
     return sum(1 for s in subjects if s.needs_attention)
 
 
-_SHARED_SWITCH = frozenset({"thank_you_wedding", "trip_confirm_customer_2"})
-
-
 @login_required
 @owner_admin_required
 def settings_index(request: HttpRequest) -> HttpResponse:
@@ -277,12 +274,6 @@ def renewal_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("renewal_type_list")
 
 
-def _switch_label(kind: str) -> str:
-    """The label of the message whose switch `kind` follows, or "" when it has its own."""
-    owner = overrides.switch_owner(kind)
-    return next(m.label for m in overrides.MESSAGES if m.kind == owner) if owner else ""
-
-
 def _channels_text(rows: dict, kind: str) -> str:
     names = {"email": "Email", "sms": "SMS"}
     channels = overrides.effective(kind, rows).channels
@@ -306,7 +297,6 @@ def messages_list(request: HttpRequest) -> HttpResponse:
                 "timing": overrides.timing_phrase(spec.kind, rows),
                 "edited": spec.kind in rows,
                 "enabled": overrides.is_enabled(spec.kind, rows, master=True),
-                "shared_switch": _switch_label(spec.kind),
                 "channels": _channels_text(rows, spec.kind),
             }
         )
@@ -322,7 +312,7 @@ def messages_list(request: HttpRequest) -> HttpResponse:
 @require_POST
 def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
     """Flip one message's switch, leaving its text and timing as they are."""
-    if kind not in {m.kind for m in overrides.MESSAGES} or kind in _SHARED_SWITCH:
+    if kind not in {m.kind for m in overrides.MESSAGES}:
         raise Http404
     rows = overrides.load()
     enabled = not overrides.is_enabled(kind, rows, master=True)
@@ -371,7 +361,7 @@ def _order_label(lead) -> str:
 def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
     """One message: wording per channel, timing and switch, with field chips and a live preview."""
     spec = _message_spec(kind)
-    form = MessageTemplateForm(kind, request.POST or None, has_switch=kind not in _SHARED_SWITCH)
+    form = MessageTemplateForm(kind, request.POST or None)
     if request.method == "POST" and form.is_valid():
         count = form.save(request.user)
         note = f" {count} scheduled message{'s' if count != 1 else ''} re-dated." if count else ""
@@ -400,10 +390,6 @@ def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
             "anchor_phrase": overrides.timing_anchor_phrase(kind) if form.has_timing else "",
             "edited": kind in overrides.load(),
             "timing_example": _timing_example(kind, form),
-            "timed_by": ""
-            if form.has_timing or overrides.default(kind).anchor == "triggered"
-            else overrides.timing_phrase(kind),
-            "switch_label": _switch_label(kind),
         },
     )
 

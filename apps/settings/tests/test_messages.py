@@ -30,7 +30,8 @@ def test_lists_groups_and_rows(client):
     assert "2 hours after the lead comes in" in html
     assert "1 day before the quote expires" in html
     assert "When it happens" in html
-    assert "Uses the Thank-you switch" in html
+    assert "Uses the Thank-you switch" not in html
+    assert "Thank-you (wedding) switch" in html
 
 
 def test_catalogue_kinds_are_known_and_unique():
@@ -77,7 +78,6 @@ def test_toggle_keeps_edited_text(client):
 def test_toggle_unknown_kind_404(client):
     client.force_login(_owner_admin())
     assert client.post(reverse("message_toggle", args=["nope"])).status_code == 404
-    assert client.post(reverse("message_toggle", args=["thank_you_wedding"])).status_code == 404
 
 
 def test_toggle_requires_owner_admin_and_post(client):
@@ -122,8 +122,11 @@ def test_second_notice_row_uses_the_confirmation_switch(client):
     html = client.get(reverse("messages")).content.decode()
     assert "Trip confirmation — second notice" in html
     assert "(also sent as the second notice)" not in html
-    assert "Uses the Trip confirmation switch" in html
-    assert "Sent with the Thank-you timing" in html
-    assert (
-        client.post(reverse("message_toggle", args=["trip_confirm_customer_2"])).status_code == 404
-    )
+    assert "Uses the Trip confirmation switch" not in html
+    assert "Trip confirmation — second notice switch" in html
+    assert "Sent with the Thank-you timing" not in html
+    for kind in ("trip_confirm_customer_2", "thank_you_wedding"):
+        assert client.post(reverse("message_toggle", args=[kind])).status_code == 200
+        assert MessageTemplate.objects.get(key=kind).enabled is False
+    assert MessageTemplate.objects.get(key="trip_confirm_customer").enabled is True
+    assert MessageTemplate.objects.get(key="thank_you").enabled is True

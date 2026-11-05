@@ -423,10 +423,9 @@ class MessageTemplateForm(forms.Form):
 
     TEXTS = ("subject", "email_body", "sms_body")
 
-    def __init__(self, kind: str, data=None, *, has_switch: bool = True):
+    def __init__(self, kind: str, data=None):
         super().__init__(data)
         self.kind = kind
-        self.has_switch = has_switch
         rows = overrides.load()
         base = overrides.default(kind)
         current = overrides.effective(kind, rows)
@@ -453,8 +452,7 @@ class MessageTemplateForm(forms.Form):
         self.has_timing = overrides.has_timing(kind)
         if self.has_timing:
             self._add_timing("timing", overrides.timing_of(kind, rows))
-        if has_switch:
-            self.fields["enabled"] = forms.BooleanField(required=False, initial=self._enabled)
+        self.fields["enabled"] = forms.BooleanField(required=False, initial=self._enabled)
 
     def _add_timing(self, prefix: str, timing: tuple[int, str] | None) -> None:
         amount, unit = timing or (None, "")
@@ -502,12 +500,11 @@ class MessageTemplateForm(forms.Form):
     def save(self, user) -> int:
         """Store the message; returns how many scheduled sends were re-dated."""
         cleaned = self.cleaned_data
-        enabled = cleaned["enabled"] if self.has_switch else self._enabled
         count = overrides.save(
             self.kind,
             **self.texts,
             timing=(cleaned["timing_amount"], cleaned["timing_unit"]) if self.has_timing else None,
-            enabled=enabled,
+            enabled=cleaned["enabled"],
             user=user,
         )
         return count

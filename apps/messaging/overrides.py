@@ -7,12 +7,13 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from . import defaults, fields
+from . import defaults, events, fields
+from . import rows as message_rows
 from .models import MessageTemplate, NotificationConfig, TouchPoint
 from .touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING, TouchPointTemplate
 
 TIMING_UNITS = ("minutes", "hours", "days")
-_UNIT_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
+_UNIT_SECONDS = message_rows.UNIT_SECONDS
 MAX_TIMING = {"minutes": 1440, "hours": 720, "days": 60}
 
 
@@ -67,43 +68,22 @@ def _is_override(row: MessageTemplate) -> bool:
         offset = _row_offset(row, base)
         if offset is not None and offset != base.offset:
             return True
-    return kind not in _SWITCH_OF and row.enabled != (kind not in DEFAULT_OFF)
-
-
-# Kinds whose send time is another kind's: the wedding thank-you is scheduled by the
-# `thank_you` row, so it has no timing of its own.
-_TIMED_BY = {"thank_you_wedding": "thank_you"}
+    return row.enabled != defaults.DEFAULTS[kind].enabled
 
 
 def has_timing(kind: str) -> bool:
-    return default(kind).anchor != "triggered" and kind not in _TIMED_BY
+    return default(kind).anchor != "triggered"
 
 
 def timing_of(kind: str, rows: dict | None = None) -> tuple[int, str] | None:
     """The effective (amount, unit) for a kind that has a timing, else None."""
     if not has_timing(kind):
         return None
-    seconds = abs(int(effective(kind, rows).offset.total_seconds()))
-    for unit in reversed(TIMING_UNITS):
-        if seconds and seconds % _UNIT_SECONDS[unit] == 0:
-            return seconds // _UNIT_SECONDS[unit], unit
-    return seconds // 60, "minutes"
-
-
-# Off until the owner turns them on: the client may not want all three live day one.
-DEFAULT_OFF = frozenset({"status_on_the_way", "status_arrived", "status_dispatched"})
-
-# Kinds that have no switch of their own and follow another kind's.
-_SWITCH_OF = {"trip_confirm_customer_2": "trip_confirm_customer", "thank_you_wedding": "thank_you"}
-
-
-def switch_owner(kind: str) -> str | None:
-    """The kind whose on/off switch `kind` follows, or None when it has its own."""
-    return _SWITCH_OF.get(kind)
+    return message_rows.in_largest_unit(effective(kind, rows).offset)
 
 
 def is_enabled(kind: str, rows: dict | None = None, *, master: bool | None = None) -> bool:
-    """Whether a message may go out: the master switch, then the kind's row, then the default.
+    """Whether a message may go out: the master switch, then the kind's own row switch.
 
     ``master`` lets a batch read the `NotificationConfig` singleton once.
     """
@@ -111,12 +91,9 @@ def is_enabled(kind: str, rows: dict | None = None, *, master: bool | None = Non
         master = NotificationConfig.load().enabled
     if not master:
         return False
-    switch = _SWITCH_OF.get(kind, kind)
     rows = load() if rows is None else rows
-    row = rows.get(switch)
-    if row is not None:
-        return row.enabled
-    return switch not in DEFAULT_OFF
+    row = rows.get(kind)
+    return row.enabled if row is not None else defaults.DEFAULTS[kind].enabled
 
 
 class SaveError(Exception):
@@ -146,9 +123,7 @@ def check(
     errors = fields.validate(kind, subject=subject, email_body=email_body, sms_body=sms_body)
     if timing is not None:
         amount, unit = timing
-        if kind in _TIMED_BY:
-            errors["timing"] = "This message is sent with the Thank-you timing."
-        elif default(kind).anchor == "triggered":
+        if default(kind).anchor == "triggered":
             errors["timing"] = "This message sends when it happens; it has no timing."
         elif unit not in TIMING_UNITS:
             errors["timing"] = "Pick minutes, hours or days."
@@ -185,19 +160,6 @@ def _row(kind: str) -> MessageTemplate:
     return row
 
 
-def _sync_followers(kind: str) -> None:
-    """Copy a shared switch (and the Thank-you timing) onto the rows that follow it, so each
-    row holds what is sent today."""
-    for child, parent in _SWITCH_OF.items():
-        if kind not in (child, parent):
-            continue
-        source = MessageTemplate.objects.get(key=parent)
-        changes = {"enabled": source.enabled}
-        if _TIMED_BY.get(child) == parent:
-            changes |= {"timing_amount": source.timing_amount, "timing_unit": source.timing_unit}
-        MessageTemplate.objects.filter(key=child).update(**changes)
-
-
 def save(
     kind: str,
     *,
@@ -222,13 +184,11 @@ def save(
         row = _row(kind)
         row.subject, row.email_body, row.sms_body = subject, email_body, sms_body
         row.timing_amount, row.timing_unit = amount, unit
-        if kind not in _SWITCH_OF:
-            row.enabled = enabled
+        row.enabled = enabled
         row.updated_by = user
         row.save()
-        _sync_followers(kind)
         new = _offset_of(kind)
-    return _redate_all(kind, old, new)
+    return _redate_all(row, old, new)
 
 
 def reset(kind: str) -> int:
@@ -237,18 +197,16 @@ def reset(kind: str) -> int:
     with transaction.atomic():
         old = _offset_of(kind)
         row = defaults.reset(_row(kind))
-        if kind not in _SWITCH_OF:
-            row.enabled = kind not in DEFAULT_OFF
-            row.save(update_fields=["enabled", "updated_at"])
-        _sync_followers(kind)
+        row.enabled = defaults.DEFAULTS[kind].enabled
+        row.save(update_fields=["enabled", "updated_at"])
         new = _offset_of(kind)
-    return _redate_all(kind, old, new)
+    return _redate_all(row, old, new)
 
 
-def _redate_all(kind: str, old: timedelta, new: timedelta) -> int:
+def _redate_all(row: MessageTemplate, old: timedelta, new: timedelta) -> int:
     """Re-date after the row change has committed, so a failure here cannot poison it."""
-    count = redate(kind, from_offset=old) if new != old else 0
-    return count + _redate_checklist(kind, changed=new != old)
+    count = events.redate(row, old_offset=old) if new != old else 0
+    return count + _redate_checklist(row.key, changed=new != old)
 
 
 def _redate_checklist(kind: str, *, changed: bool) -> int:
@@ -409,7 +367,6 @@ _TIMING_WHAT = {
     "trips_done": "the trips are done",
     "balance_due": "the balance is due",
 }
-_TIMED_BY_LABEL = "Thank-you"
 _UNIT_WORD = {"minutes": ("min", "min"), "hours": ("hour", "hours"), "days": ("day", "days")}
 
 
@@ -417,8 +374,6 @@ def timing_phrase(kind: str, rows: dict | None = None) -> str:
     """The row's timing in words, e.g. "2 hours after the lead comes in"."""
     timing = timing_of(kind, rows)
     if timing is None:
-        if kind in _TIMED_BY:
-            return f"Sent with the {_TIMED_BY_LABEL} timing"
         return "When it happens"
     amount, unit = timing
     word = _UNIT_WORD[unit][0 if amount == 1 else 1]

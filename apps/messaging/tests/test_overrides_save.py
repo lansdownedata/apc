@@ -17,7 +17,7 @@ NOW = datetime(2026, 11, 9, 14, 0, tzinfo=UTC)  # Mon 9:00 AM EST
 
 
 def _save(kind="tp1_welcome", **over):
-    base = TEMPLATES[kind]
+    base = overrides.default(kind)
     args = dict(
         subject=base.subject,
         email_body=base.email_body,
@@ -261,17 +261,22 @@ def test_trip_confirm_customer_redated_from_pickup():
     assert tp.scheduled_for == pickup - timedelta(days=4)
 
 
-def test_wedding_thank_you_has_no_timing():
-    assert overrides.timing_of("thank_you_wedding") is None
-    errors = overrides.check(
-        "thank_you_wedding",
-        subject="s",
-        email_body="{confirm_link}",
-        sms_body="m",
-        timing=(1, "days"),
+def test_wedding_thank_you_has_its_own_timing():
+    assert overrides.timing_of("thank_you_wedding") == (2, "hours")
+    assert (
+        overrides.check(
+            "thank_you_wedding",
+            subject="s",
+            email_body="{confirm_link}",
+            sms_body="m",
+            timing=(1, "days"),
+        )
+        == {}
     )
-    assert errors["timing"] == "This message is sent with the Thank-you timing."
-    assert overrides.timing_phrase("thank_you_wedding") == "Sent with the Thank-you timing"
+    assert overrides.timing_phrase("thank_you_wedding") == "2 hours after the trips are done"
+    _save("thank_you_wedding", timing=(1, "days"))
+    assert overrides.timing_of("thank_you_wedding") == (1, "days")
+    assert overrides.timing_of("thank_you") == (2, "hours")
 
 
 def test_second_notice_timing_is_its_own():
@@ -316,12 +321,12 @@ def test_save_and_reset_redate_after_the_transaction_commits(monkeypatch):
         "_redate_checklist",
         lambda kind, changed: depth.append(len(connection.savepoint_ids)) or 0,
     )
-    real = overrides.redate
+    real = overrides.events.redate
     monkeypatch.setattr(
-        overrides,
+        overrides.events,
         "redate",
-        lambda kind, from_offset: (
-            depth.append(len(connection.savepoint_ids)) or real(kind, from_offset=from_offset)
+        lambda row, old_offset: (
+            depth.append(len(connection.savepoint_ids)) or real(row, old_offset=old_offset)
         ),
     )
     _save("tp2_lead_followup", timing=(5, "hours"))
@@ -354,28 +359,32 @@ def test_reset_turns_a_status_message_back_off():
     assert row.sms_body == TEMPLATES["status_arrived"].sms_body
 
 
-def test_the_second_notice_row_follows_the_first_notice_switch():
+def test_the_second_notice_row_is_untouched_by_the_first_notice():
     _save("trip_confirm_customer", enabled=False)
-    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is False
+    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is True
     overrides.reset("trip_confirm_customer")
+    assert MessageTemplate.objects.get(key="trip_confirm_customer").enabled is True
     assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is True
 
 
-def test_saving_the_second_notice_keeps_the_shared_switch():
+def test_saving_the_second_notice_changes_only_its_own_row():
     _save("trip_confirm_customer", enabled=False)
+    _save("trip_confirm_customer_2", enabled=False)
+    assert MessageTemplate.objects.get(key="trip_confirm_customer").enabled is False
     _save("trip_confirm_customer_2", enabled=True)
-    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is False
-    assert overrides.is_enabled("trip_confirm_customer_2") is False
+    assert MessageTemplate.objects.get(key="trip_confirm_customer").enabled is False
+    assert overrides.is_enabled("trip_confirm_customer_2") is True
 
 
-def test_the_wedding_thank_you_row_follows_the_thank_you_switch_and_timing():
+def test_the_wedding_thank_you_row_is_untouched_by_the_thank_you():
     _save("thank_you", timing=(4, "hours"), enabled=False)
     row = MessageTemplate.objects.get(key="thank_you_wedding")
-    assert (row.enabled, row.timing_amount, row.timing_unit) == (False, 4, "hours")
-    overrides.reset("thank_you_wedding")
-    row.refresh_from_db()
-    assert (row.enabled, row.timing_amount, row.timing_unit) == (False, 4, "hours")
+    assert (row.enabled, row.timing_amount, row.timing_unit) == (True, 2, "hours")
+    _save("thank_you_wedding", timing=(6, "hours"), enabled=False)
     overrides.reset("thank_you")
+    row.refresh_from_db()
+    assert (row.enabled, row.timing_amount, row.timing_unit) == (False, 6, "hours")
+    overrides.reset("thank_you_wedding")
     row.refresh_from_db()
     assert (row.enabled, row.timing_amount, row.timing_unit) == (True, 2, "hours")
 

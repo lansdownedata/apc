@@ -32,13 +32,21 @@ def test_master_switch_off_disables_all():
         assert overrides.is_enabled(kind) is False
 
 
-def test_second_wave_follows_first():
+def test_second_wave_has_its_own_switch():
     MessageTemplate.objects.filter(key="trip_confirm_customer").update(enabled=False)
+    assert overrides.is_enabled("trip_confirm_customer_2") is True
+    MessageTemplate.objects.filter(key="trip_confirm_customer").update(enabled=True)
+    MessageTemplate.objects.filter(key="trip_confirm_customer_2").update(enabled=False)
+    assert overrides.is_enabled("trip_confirm_customer") is True
     assert overrides.is_enabled("trip_confirm_customer_2") is False
 
 
-def test_wedding_thank_you_shares_the_thank_you_switch():
+def test_wedding_thank_you_has_its_own_switch():
     MessageTemplate.objects.filter(key="thank_you").update(enabled=False)
+    assert overrides.is_enabled("thank_you_wedding") is True
+    MessageTemplate.objects.filter(key="thank_you").update(enabled=True)
+    MessageTemplate.objects.filter(key="thank_you_wedding").update(enabled=False)
+    assert overrides.is_enabled("thank_you") is True
     assert overrides.is_enabled("thank_you_wedding") is False
 
 
