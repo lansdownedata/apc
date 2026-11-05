@@ -1,7 +1,7 @@
 import pytest
 
 from apps.leads.factories import LeadFactory
-from apps.messaging import fields, overrides
+from apps.messaging import fields
 from apps.messaging.defaults import DEFAULTS
 from apps.messaging.touchpoint_templates import TEMPLATES, build_context
 from apps.reservations.factories import ReservationFactory
@@ -11,7 +11,7 @@ KINDS = [*TEMPLATES, "thank_you_wedding"]
 
 
 def _defaults(kind):
-    t = overrides.default(kind)
+    t = DEFAULTS[kind]
     return {"subject": t.subject, "email_body": t.email_body, "sms_body": t.sms_body}
 
 

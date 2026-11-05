@@ -181,8 +181,8 @@ class TouchPoint(TimeStampedModel):
 class NotificationConfig(models.Model):
     """Singleton — the master switch for automated messaging.
 
-    One row (pk=1). Each message's own on/off lives on its `MessageTemplate` row; see
-    `overrides.is_enabled`.
+    One row (pk=1). Each message's own on/off lives on its `MessageTemplate` row; the sender
+    checks both (`rules.check`).
     """
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)

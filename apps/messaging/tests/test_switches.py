@@ -5,49 +5,57 @@ import pytest
 from django.utils import timezone
 
 from apps.leads.factories import LeadFactory
-from apps.messaging import events, overrides, sender
+from apps.messaging import events, rules, sender
 from apps.messaging.models import MessageTemplate, NotificationConfig, TouchPoint
 
 pytestmark = pytest.mark.django_db
 
 
+def enabled(key: str) -> bool:
+    """Whether a message may go out at all: the sender's first gate (`rules.check`), the
+    master switch and then the row's own switch. Spec B asked `overrides.is_enabled`."""
+    row = MessageTemplate.objects.get(key=key)
+    tp = TouchPoint(lead=LeadFactory(), kind=key, message=row)
+    return rules.check(tp, row) != ("skip", rules.DISABLED)
+
+
 def test_defaults_match_today():
     for kind in ("tp1_welcome", "driver_released", "order_confirmed", "thank_you", "tp8_expired"):
-        assert overrides.is_enabled(kind) is True
+        assert enabled(kind) is True
     for kind in ("status_on_the_way", "status_arrived", "status_dispatched"):
-        assert overrides.is_enabled(kind) is False
+        assert enabled(kind) is False
 
 
 def test_row_switch_wins():
     MessageTemplate.objects.filter(key="status_arrived").update(enabled=True)
     MessageTemplate.objects.filter(key="tp1_welcome").update(enabled=False)
-    assert overrides.is_enabled("status_arrived") is True
-    assert overrides.is_enabled("tp1_welcome") is False
+    assert enabled("status_arrived") is True
+    assert enabled("tp1_welcome") is False
 
 
 def test_master_switch_off_disables_all():
     NotificationConfig.objects.update_or_create(pk=1, defaults={"enabled": False})
     MessageTemplate.objects.filter(key="status_arrived").update(enabled=True)
     for kind in ("tp1_welcome", "driver_released", "status_arrived", "thank_you"):
-        assert overrides.is_enabled(kind) is False
+        assert enabled(kind) is False
 
 
 def test_second_wave_has_its_own_switch():
     MessageTemplate.objects.filter(key="trip_confirm_customer").update(enabled=False)
-    assert overrides.is_enabled("trip_confirm_customer_2") is True
+    assert enabled("trip_confirm_customer_2") is True
     MessageTemplate.objects.filter(key="trip_confirm_customer").update(enabled=True)
     MessageTemplate.objects.filter(key="trip_confirm_customer_2").update(enabled=False)
-    assert overrides.is_enabled("trip_confirm_customer") is True
-    assert overrides.is_enabled("trip_confirm_customer_2") is False
+    assert enabled("trip_confirm_customer") is True
+    assert enabled("trip_confirm_customer_2") is False
 
 
 def test_wedding_thank_you_has_its_own_switch():
     MessageTemplate.objects.filter(key="thank_you").update(enabled=False)
-    assert overrides.is_enabled("thank_you_wedding") is True
+    assert enabled("thank_you_wedding") is True
     MessageTemplate.objects.filter(key="thank_you").update(enabled=True)
     MessageTemplate.objects.filter(key="thank_you_wedding").update(enabled=False)
-    assert overrides.is_enabled("thank_you") is True
-    assert overrides.is_enabled("thank_you_wedding") is False
+    assert enabled("thank_you") is True
+    assert enabled("thank_you_wedding") is False
 
 
 def test_disabled_kind_skips_at_send(settings):

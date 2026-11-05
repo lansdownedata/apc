@@ -10,8 +10,8 @@ TouchPoints, one per row on it that is on and whose service types match
 - `reschedule_trip(reservation)`: a trip's pickup moved; its pickup rows start over.
 - `sync_waiting(reservation)`: rows that wait for a condition (Dispatched with driver
   details) are queued or re-dated once it holds.
-- `cancel(lead, ...)` and `redate(row, old_offset=...)`: queued sends are withdrawn or
-  re-timed.
+- `cancel(lead, ...)`, `withdraw(row)` and `redate(row, old_offset=...)`: queued sends
+  are withdrawn (for an order, or for a row everywhere) or re-timed.
 
 Whether a row "already has" its TouchPoint follows the old scheduler (the
 `touchpoints.schedule_*` functions this replaced) rule by rule: one per order for
@@ -482,12 +482,19 @@ def cancel(
     return qs.update(status=_S.CANCELLED)
 
 
+def withdraw(row: MessageTemplate) -> int:
+    """Cancel every queued send of a row, on every order: it was switched off, archived or
+    moved to another trigger (spec section 9). Returns how many."""
+    return TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED).update(status=_S.CANCELLED)
+
+
 def redate(row: MessageTemplate, *, old_offset: timedelta) -> int:
     """Re-time every queued send of a row after its timing changed; returns the count.
 
     Trip date rows are recomputed from the trip's pickup (a row that waits never lands in
     the past); everything else moves by the change, its anchor being `scheduled_for -
-    old_offset` (as `overrides.redate`). Staff clicks and schedules have no queued sends."""
+    old_offset` (as spec B's re-dating did). Staff clicks and schedules have no queued
+    sends."""
     trigger = catalog.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind in ("staff_click", "schedule"):
         return 0

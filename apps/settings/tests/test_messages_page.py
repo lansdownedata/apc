@@ -109,7 +109,8 @@ def test_archive_added_row_only(client):
     assert client.post(reverse("message_archive", args=[added.key])).status_code == 302
     added.refresh_from_db()
     assert added.archived_at is not None
-    assert client.post(reverse("message_archive", args=[seeded.key])).status_code == 400
+    # Built-in messages are reset, never archived: there is no archive for them (404).
+    assert client.post(reverse("message_archive", args=[seeded.key])).status_code == 404
     seeded.refresh_from_db()
     assert seeded.archived_at is None
     assert ">Mine<" not in _get(client)

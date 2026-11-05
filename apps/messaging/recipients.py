@@ -20,6 +20,38 @@ _TEXT = ("sms",)
 _EMAIL = ("email",)
 
 
+# What the editor offers per audience, grouped as the page shows them (spec section 6).
+CHOICES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
+    "customer": [
+        (
+            "On the order",
+            [
+                ("passengers", "Passengers"),
+                ("booking_contact", "Booking contact"),
+                ("billing_contact", "Billing contact"),
+            ],
+        ),
+        (
+            "Wedding contacts",
+            [(f"role:{value}", label) for value, label in LeadContact.Role.choices],
+        ),
+    ],
+    "affiliate": [("Affiliate", [("company", "Company"), ("driver", "Driver")])],
+    "planner": [("Planner", [("planner", "Planner on the order")])],
+    "staff": [],
+}
+LABELS: dict[str, str] = {
+    key: label for groups in CHOICES.values() for _, items in groups for key, label in items
+}
+# Recipients reached by text only; the editor hides them while a message is email-only.
+TEXT_ONLY = frozenset({"passengers", "driver"})
+
+
+def keys_for(audience: str) -> list[str]:
+    """The recipient keys an audience may tick."""
+    return [key for _, items in CHOICES.get(audience, []) for key, _ in items]
+
+
 @dataclass(frozen=True)
 class Recipient:
     name: str

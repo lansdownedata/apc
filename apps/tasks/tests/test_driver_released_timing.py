@@ -12,7 +12,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import overrides
+from apps.messaging import editor
 from apps.messaging.models import MessageTemplate
 from apps.reservations.factories import ReservationFactory
 from apps.tasks import schedule, services
@@ -77,19 +77,12 @@ def test_schedule_row_is_ignored():
 
 def test_saving_message_timing_redates_open_tasks():
     lead, trip = _order()
-    base = overrides.default("driver_released")
-    count = overrides.save(
-        "driver_released",
-        subject=base.subject,
-        email_body=base.email_body,
-        sms_body=base.sms_body,
-        timing=(4, "hours"),
-        enabled=True,
-        user=UserFactory(),
-    )
+    row = MessageTemplate.objects.get(key="driver_released")
+    row.timing_amount, row.timing_unit = 4, "hours"
+    count = editor.save(row, user=UserFactory())
     assert count >= 1
     assert _task(lead).due_at == trip.pickup_at - timedelta(hours=3)
-    overrides.reset("driver_released")
+    editor.reset(MessageTemplate.objects.get(key="driver_released"))
     assert _task(lead).due_at == trip.pickup_at - timedelta(hours=11)
 
 

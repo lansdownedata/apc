@@ -4,13 +4,58 @@ on the same order and compare what each queues. Nothing in the app imports it; i
 half is gone (`messaging.sender` replaced it).
 """
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from types import SimpleNamespace
 
 from django.utils import timezone
 
-from apps.messaging import overrides
-from apps.messaging.models import TouchPoint
+from apps.messaging.defaults import DEFAULTS, TIMING_UNITS
+from apps.messaging.models import MessageTemplate, NotificationConfig, TouchPoint
 from apps.messaging.rules import DRIVER_MESSAGE_STATUSES
+from apps.messaging.touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING
+
+# --- spec B's override reads, frozen with the scheduler -----------------------------------
+# The old scheduler read each message's switch and timing through `messaging.overrides`
+# (deleted with spec B's editor, APC-119). These are the minimal equivalents over the message
+# rows, so the oracle stays self-contained: the row's switch under the master switch, and its
+# timing signed like the code default (a message that sends when it happens keeps the
+# default offset).
+
+
+def _load() -> dict[str, MessageTemplate]:
+    return {row.key: row for row in MessageTemplate.objects.all()}
+
+
+def _default(kind: str):
+    return THANK_YOU_WEDDING if kind == "thank_you_wedding" else TEMPLATES[kind]
+
+
+def _is_enabled(kind: str, rows: dict | None = None) -> bool:
+    if not NotificationConfig.load().enabled:
+        return False
+    row = (_load() if rows is None else rows).get(kind)
+    return row.enabled if row is not None else DEFAULTS[kind].enabled
+
+
+def _offset(kind: str, rows: dict | None = None) -> timedelta:
+    base = _default(kind)
+    row = (_load() if rows is None else rows).get(kind)
+    if (
+        base.anchor == "triggered"
+        or row is None
+        or row.timing_amount is None
+        or row.timing_unit not in TIMING_UNITS
+    ):
+        return base.offset
+    span = timedelta(**{row.timing_unit: row.timing_amount})
+    return -span if base.offset < timedelta(0) else span
+
+
+overrides = SimpleNamespace(
+    load=_load,
+    is_enabled=_is_enabled,
+    effective=lambda kind, rows=None: SimpleNamespace(offset=_offset(kind, rows)),
+)
 
 _QUOTE_KINDS = (
     TouchPoint.Kind.TP3_QUOTE_SENT_SMS,
@@ -429,3 +474,48 @@ def _confirmed_assignment(reservation):
     from apps.dispatch.selectors import confirmed_assignment
 
     return confirmed_assignment(reservation)
+
+
+# --- spec B's re-dating, the parity reference for `events.redate` -----------------------
+
+_REDATE_RESERVATION_KINDS = frozenset(
+    {
+        "wed_final_details",
+        "trip_confirm_customer",
+        "trip_confirm_customer_2",
+        "trip_confirm_affiliate",
+        "driver_released",
+    }
+)
+
+
+def redate(kind: str, *, from_offset: timedelta) -> int:
+    """Re-date every SCHEDULED send of a kind to its anchor plus the effective offset (spec
+    B's `overrides.redate`, frozen).
+
+    Reservation-anchored kinds are recomputed from the trip's pickup (rows may have been
+    scheduled "now", so their date is not anchor + offset); driver_released never lands in
+    the past. Lead-level kinds recover the anchor as `scheduled_for - from_offset`, the
+    offset they were scheduled with. Returns the count."""
+    if _default(kind).anchor == "triggered":
+        return 0
+    new = _offset(kind)
+    qs = TouchPoint.objects.filter(
+        kind=kind, status=TouchPoint.Status.SCHEDULED, scheduled_for__isnull=False
+    )
+    rows = []
+    if kind in _REDATE_RESERVATION_KINDS:
+        now = timezone.now()
+        for row in qs.select_related("reservation"):
+            pickup = row.reservation.pickup_at if row.reservation else None
+            if pickup is None:
+                continue
+            at = pickup + new
+            row.scheduled_for = max(now, at) if kind == "driver_released" else at
+            rows.append(row)
+    else:
+        for row in qs:
+            row.scheduled_for = row.scheduled_for - from_offset + new
+            rows.append(row)
+    TouchPoint.objects.bulk_update(rows, ["scheduled_for"])
+    return len(rows)

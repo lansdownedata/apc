@@ -4,7 +4,7 @@ import pytest
 
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import ServiceType
-from apps.messaging import defaults, overrides
+from apps.messaging import defaults
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.messaging.touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING
 from apps.public.services import WEDDING_SERVICE_NAME
@@ -191,9 +191,37 @@ def test_default_wording_and_timing_come_from_the_templates(key):
     assert _span(d.timing_amount, d.timing_unit, d.timing_direction) == base.offset
 
 
+# Spec B's Messages page labels (`overrides.MESSAGES`, removed with that page).
+SPEC_B_LABELS = {
+    "tp1_welcome": "Welcome message",
+    "tp2_lead_followup": "Lead follow-up",
+    "tp3_quote_sent_sms": "Quote sent",
+    "tp4_viewed_sms": "Quote viewed (text)",
+    "tp5_viewed_email": "Quote viewed (email)",
+    "tp6_quote_followup": "Quote follow-up",
+    "tp7_expiring": "Quote expiring",
+    "tp8_expired": "Quote expired",
+    "order_confirmed": "Order confirmed",
+    "order_cancelled": "Order cancelled",
+    "order_auth_expired": "Deposit hold released",
+    "payment_reminder": "Payment reminder",
+    "wed_final_details": "Wedding details request",
+    "trip_confirm_customer": "Trip confirmation",
+    "trip_confirm_customer_2": "Trip confirmation — second notice",
+    "trip_confirm_affiliate": "Affiliate trip confirmation",
+    "driver_released": "Driver details",
+    "driver_updated": "Driver details updated",
+    "status_on_the_way": "On the way",
+    "status_arrived": "Arrived",
+    "thank_you": "Thank-you",
+    "thank_you_wedding": "Thank-you (wedding)",
+    "review_request": "Review request",
+}
+
+
 def test_names_are_todays_labels():
-    for spec in overrides.MESSAGES:
-        assert defaults.DEFAULTS[spec.kind].name == spec.label
+    for kind, label in SPEC_B_LABELS.items():
+        assert defaults.DEFAULTS[kind].name == label
     # Not in today's catalogue; named like its siblings ("On the way", "Arrived").
     assert defaults.DEFAULTS["status_dispatched"].name == "Dispatched"
 

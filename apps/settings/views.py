@@ -4,7 +4,7 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -17,7 +17,7 @@ from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
 from apps.leads.models import Lead, ServiceType, VehicleType
-from apps.messaging import fields, listing, overrides, triggers
+from apps.messaging import defaults, editor, fields, listing, recipients, rules, triggers
 from apps.messaging.models import MessageTemplate, NotificationConfig
 from apps.reservations.models import PricingConfig
 from apps.tasks import schedule
@@ -28,7 +28,7 @@ from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
     DispatchAlertConfigForm,
-    MessageTemplateForm,
+    MessageForm,
     PricingConfigForm,
     ServiceTypeForm,
     TaskConfigForm,
@@ -332,28 +332,234 @@ def messages_list(request: HttpRequest) -> HttpResponse:
 
 @login_required
 @owner_admin_required
-def messages_new(request: HttpRequest) -> HttpResponse:
-    """Placeholder until the editor builds new messages (APC-119 task 15)."""
-    return HttpResponse("New message: coming with the editor.")
+def messages_quiet_hours(request: HttpRequest) -> HttpResponse:
+    """Placeholder until quiet hours are editable (APC-114)."""
+    return HttpResponse("Quiet hours: coming soon.")
+
+
+# The section a new message starts in also picks its audience and a trigger that suits it.
+_NEW_IN_SECTION = {
+    "leads_quotes": ("customer", "lead_created"),
+    "booking_payments": ("customer", "order_confirmed"),
+    "trip_day": ("customer", "pickup"),
+    "after_trip": ("customer", "all_trips_done"),
+    "affiliates": ("affiliate", "affiliate_accepted"),
+    "planners": ("planner", "send_quote"),
+    "staff_reports": ("staff", "deposit_report"),
+}
+
+
+def _live_row(key: str) -> MessageTemplate:
+    return get_object_or_404(
+        MessageTemplate.objects.live().prefetch_related("service_types"), key=key
+    )
 
 
 @login_required
 @owner_admin_required
-def messages_quiet_hours(request: HttpRequest) -> HttpResponse:
-    """Placeholder until quiet hours are editable (APC-114)."""
-    return HttpResponse("Quiet hours: coming soon.")
+def messages_new(request: HttpRequest) -> HttpResponse:
+    """The editor for a message an Admin adds; its section (and so its audience and a
+    fitting trigger) preset from `?section=`."""
+    section = request.GET.get("section", "")
+    if section not in _NEW_IN_SECTION:
+        section = MessageTemplate.Section.LEADS_QUOTES
+    audience, trigger = _NEW_IN_SECTION[section]
+    row = MessageTemplate(
+        section=section,
+        audience=audience,
+        trigger=trigger,
+        send_sms=audience != MessageTemplate.Audience.STAFF,
+        recipients=["booking_contact"] if audience == MessageTemplate.Audience.CUSTOMER else [],
+        seeded=False,
+        enabled=True,
+    )
+    return _editor(request, row)
+
+
+@login_required
+@owner_admin_required
+def message_edit(request: HttpRequest, key: str) -> HttpResponse:
+    """One message: who gets it, when, for which service types and what it says, with a live
+    preview against a real order."""
+    return _editor(request, _live_row(key))
+
+
+def _editor(request: HttpRequest, row: MessageTemplate) -> HttpResponse:
+    new = row.pk is None
+    title = row.name
+    form = MessageForm(request.POST or None, instance=row)
+    if request.method == "POST" and form.is_valid():
+        count = form.save(request.user)
+        if new:
+            messages.success(request, f"{row.name} added.")
+        else:
+            plural = "s" if count != 1 else ""
+            note = f" {count} scheduled message{plural} re-dated." if count else ""
+            messages.success(request, f"Saved. Applies to messages not yet sent.{note}")
+        return redirect("messages")
+    return render(request, "settings/message_edit.html", _editor_context(form, row, title, new))
+
+
+def _order_label(lead) -> str:
+    pickups = [r.pickup_date for r in lead.reservations.all() if r.pickup_date]
+    first = f"{min(pickups):%b %-d, %Y}" if pickups else "no date"
+    return f"{lead.quote_no} · {lead.contact.name} · {first}"
+
+
+def _chips(trigger_key: str, audience: str, row: MessageTemplate) -> list[dict]:
+    if trigger_key not in triggers.CATALOG:
+        return []
+    key = row.key if row.seeded else ""
+    return [
+        {"key": f.key, "label": f.label, "group": f.group}
+        for f in fields.fields_for(trigger_key, audience or "customer", key)
+    ]
+
+
+def _trigger_meta() -> dict:
+    """What the page needs to know about each trigger to react as the dropdown changes."""
+    return {
+        t.key: {
+            "label": t.label,
+            "kind": t.kind,
+            "date": t.kind == "date",
+            "timing": editor.has_timing(t.key),
+            "click": t.kind == "staff_click",
+            "audiences": [a for a in MessageTemplate.Audience.values if a in t.audiences],
+            "anchor": editor.anchor_noun(t.key),
+            "behaviour": editor.behaviour(t.key),
+            "untimed": _untimed_text(t.key),
+        }
+        for t in triggers.CATALOG.values()
+    }
+
+
+def _untimed_text(trigger_key: str) -> str:
+    trigger = triggers.CATALOG.get(trigger_key)
+    if trigger is None or editor.has_timing(trigger_key):
+        return ""
+    if trigger.kind == "staff_click":
+        return f"Sent when staff click {trigger.label}"
+    return f"Sent on its schedule ({trigger.label.lower()})"
+
+
+def _trigger_options() -> list[dict]:
+    group_order = {kind: i for i, kind in enumerate(triggers.GROUP_LABEL)}
+    ordered = sorted(
+        triggers.CATALOG.values(),
+        key=lambda t: (group_order.get(t.kind, len(group_order)), t.label),
+    )
+    return [
+        {"value": t.key, "label": t.label, "badge": triggers.GROUP_LABEL.get(t.kind, t.kind)}
+        for t in ordered
+    ]
+
+
+def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bool) -> dict:
+    trigger_key = form["trigger"].value() or ""
+    audience = form["audience"].value() or ""
+    trigger = triggers.CATALOG.get(trigger_key)
+    default = defaults.DEFAULTS.get(row.key) if row.seeded else None
+    original = default.trigger if default else ""
+    stored = MessageTemplate.objects.prefetch_related("service_types").filter(pk=row.pk).first()
+    types = list(stored.service_types.all()) if stored else []
+    orders = editor.preview_orders(trigger_key, types) if trigger else []
+    picked = [str(v) for v in form["recipients"].value() or []]
+    services = [str(v) for v in form["service_types"].value() or []]
+    timing_amount = form["timing_amount"].value()
+    try:
+        example = editor.timing_example(
+            trigger_key,
+            int(timing_amount),
+            form["timing_unit"].value() or "",
+            form["timing_direction"].value() or "after",
+            now=_now(),
+        )
+    except (TypeError, ValueError):
+        example = ""
+    state = {
+        "trigger": trigger_key,
+        "audience": audience,
+        "direction": form["timing_direction"].value() or "after",
+        "sms": bool(form["send_sms"].value()),
+        "email": bool(form["send_email"].value()),
+        "enabled": bool(form["enabled"].value()),
+        "picked": picked,
+        "services": services,
+        "originalTrigger": original,
+        "triggers": _trigger_meta(),
+        "labels": recipients.LABELS,
+        "audienceKeys": {a: recipients.keys_for(a) for a in MessageTemplate.Audience.values},
+        "textOnly": sorted(recipients.TEXT_ONLY),
+        "staffEmails": list(form["staff_emails"].value() or []),
+        "chips": _chips(trigger_key, audience, row),
+        "previewUrl": reverse("message_preview", args=[row.key])
+        if not new
+        else reverse("messages_new_preview"),
+        "timingUrl": reverse("message_timing_preview", args=[row.key])
+        if not new
+        else reverse("messages_new_timing"),
+    }
+    built_ins = rules.built_in_descriptions(row.key) if row.seeded else []
+    changed = bool(original and trigger_key != original)
+    state["builtIns"] = built_ins
+    direction = state["direction"]
+    section = form["section"].value() or row.section
+    errors = {name: form.errors[name][0] for name in form.errors}
+    return {
+        "nav": "settings",
+        "page_title": title or "New message",
+        "title": title or "New message",
+        "new": new,
+        "row": row,
+        "form": form,
+        "errors": errors,
+        "state": state,
+        "tag": listing.tag(stored) if stored else "",
+        "section_label": (
+            MessageTemplate.Section(section).label
+            if section in MessageTemplate.Section.values
+            else ""
+        ),
+        "section_options": MessageTemplate.Section.choices,
+        "trigger_options": _trigger_options(),
+        "unit_options": [(u, u) for u in editor.TIMING_UNITS],
+        "audience_options": MessageTemplate.Audience.choices,
+        "recipient_groups": [
+            (audience_key, groups) for audience_key, groups in recipients.CHOICES.items() if groups
+        ],
+        "text_only": recipients.TEXT_ONLY,
+        "service_options": list(form.fields["service_types"].queryset),
+        "picked": picked,
+        "services": services,
+        "has_timing": editor.has_timing(trigger_key),
+        "is_date": bool(trigger and trigger.kind == "date"),
+        "is_click": bool(trigger and trigger.kind == "staff_click"),
+        "click_label": trigger.label if trigger and trigger.kind == "staff_click" else "",
+        "anchor_word": (
+            f"{direction} {editor.anchor_noun(trigger_key)}"
+            if trigger and trigger.kind == "date"
+            else "after it happens"
+        ),
+        "no_timing_text": _untimed_text(trigger_key),
+        "direction_options": MessageTemplate.Direction.choices,
+        "rule_lines": editor.behaviour(trigger_key) + ([] if changed else built_ins),
+        "built_ins": built_ins,
+        "trigger_changed": changed,
+        "timing_example": example,
+        "orders": [(lead.pk, _order_label(lead)) for lead in orders],
+        "default_order": orders[0].pk if orders else "",
+    }
 
 
 @login_required
 @owner_admin_required
 @require_POST
 def message_archive(request: HttpRequest, key: str) -> HttpResponse:
-    """Archive an added message. Built-in messages are never archived, only reset."""
-    row = get_object_or_404(MessageTemplate.objects.live(), key=key)
-    if row.seeded:
-        return HttpResponse("Built-in messages can't be archived.", status=400)
-    row.archived_at = timezone.now()
-    row.save(update_fields=["archived_at", "updated_at"])
+    """Archive an added message. Built-in messages are never archived (only reset), so
+    there is no archive for them."""
+    row = get_object_or_404(MessageTemplate.objects.live(), key=key, seeded=False)
+    editor.archive(row, user=request.user)
     messages.success(request, f"{row.name} archived.")
     return redirect("messages")
 
@@ -361,31 +567,36 @@ def message_archive(request: HttpRequest, key: str) -> HttpResponse:
 @login_required
 @owner_admin_required
 @require_POST
-def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
-    """Flip one message's switch, leaving its text and timing as they are."""
-    if kind not in {m.kind for m in overrides.MESSAGES}:
-        row = get_object_or_404(MessageTemplate.objects.live(), key=kind)
-        if listing.is_staff_click(row):
-            return JsonResponse({"ok": False, "error": "This one has no switch."}, status=400)
-        row.enabled = not row.enabled
-        row.save(update_fields=["enabled", "updated_at"])
-        return JsonResponse({"ok": True, "enabled": row.enabled})
-    rows = overrides.load()
-    enabled = not overrides.is_enabled(kind, rows, master=True)
-    current = overrides.effective(kind, rows)
-    try:
-        overrides.save(
-            kind,
-            subject=current.subject,
-            email_body=current.email_body,
-            sms_body=current.sms_body,
-            timing=overrides.timing_of(kind, rows),
-            enabled=enabled,
-            user=request.user,
-        )
-    except overrides.SaveError as exc:
-        return JsonResponse({"ok": False, "error": next(iter(exc.errors.values()))}, status=400)
-    return JsonResponse({"ok": True, "enabled": enabled})
+def message_reset(request: HttpRequest, key: str) -> HttpResponse:
+    """Put a built-in message back to its original wording, timing, people and switch."""
+    row = get_object_or_404(MessageTemplate.objects.live(), key=key, seeded=True)
+    editor.reset(row, user=request.user)
+    messages.success(request, "Reset to the original.")
+    return redirect("message_edit", key=key)
+
+
+# Wording errors that leave a message unable to render (an unknown field, a stray brace).
+_UNRENDERABLE = ("Unknown field", "Unmatched", "Formatting")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def message_toggle(request: HttpRequest, key: str) -> JsonResponse:
+    """Flip one message's switch, leaving the rest as it is. Staff clicks have no switch, and
+    a message whose wording can't render is fixed in the editor first."""
+    row = _live_row(key)
+    if editor.is_staff_click(row.trigger):
+        return JsonResponse({"ok": False, "error": "This one has no switch."}, status=400)
+    broken = [
+        message
+        for message in listing.validation_errors(row).values()
+        if message.startswith(_UNRENDERABLE)
+    ]
+    if broken:
+        return JsonResponse({"ok": False, "error": broken[0]}, status=400)
+    editor.set_enabled(row, not row.enabled, user=request.user)
+    return JsonResponse({"ok": True, "enabled": row.enabled})
 
 
 @login_required
@@ -399,122 +610,63 @@ def messages_master(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "enabled": config.enabled})
 
 
-def _message_spec(kind: str):
-    spec = next((m for m in overrides.MESSAGES if m.kind == kind), None)
-    if spec is None:
-        raise Http404
-    return spec
-
-
-def _order_label(lead) -> str:
-    pickups = [r.pickup_date for r in lead.reservations.all() if r.pickup_date]
-    first = f"{min(pickups):%b %-d, %Y}" if pickups else "no date"
-    return f"{lead.quote_no} · {lead.contact.name} · {first}"
-
-
-@login_required
-@owner_admin_required
-def message_edit(request: HttpRequest, kind: str) -> HttpResponse:
-    """One message: wording per channel, timing and switch, with field chips and a live preview."""
-    spec = _message_spec(kind)
-    form = MessageTemplateForm(kind, request.POST or None)
-    if request.method == "POST" and form.is_valid():
-        count = form.save(request.user)
-        note = f" {count} scheduled message{'s' if count != 1 else ''} re-dated." if count else ""
-        messages.success(request, f"Saved. Applies to messages not yet sent.{note}")
-        return redirect("messages")
-    orders = overrides.preview_orders(kind)
-    box_errors = {name: form.errors[name][0] for name in form.TEXTS if name in form.errors}
-    first_error = next((n for n in form.TEXTS if n in box_errors), None)
-    tab = "sms" if first_error == "sms_body" else "email" if first_error else ""
-    channels = [{"key": c, "label": "Email" if c == "email" else "SMS"} for c in form.channels]
-    chips = [
-        {"key": f.key, "label": f.label, "group": f.group} for f in fields.fields_for_kind(kind)
-    ]
-    return render(
-        request,
-        "settings/message_edit.html",
-        {
-            "nav": "settings",
-            "page_title": spec.label,
-            "spec": spec,
-            "form": form,
-            "channels": channels,
-            "tab": tab or channels[0]["key"],
-            "box_errors": box_errors,
-            "chips": chips,
-            "orders": [(lead.pk, _order_label(lead)) for lead in orders],
-            "default_order": orders[0].pk if orders else "",
-            "anchor_phrase": overrides.timing_anchor_phrase(kind) if form.has_timing else "",
-            "edited": kind in overrides.load(),
-            "timing_example": _timing_example(kind, form),
-        },
+def _preview_lead(pk: str):
+    if not pk.isdigit():
+        return None
+    return (
+        Lead.objects.select_related("contact")
+        .prefetch_related(
+            "reservations__stops",
+            "reservations__vehicle",
+            "reservations__service_type",
+            "reservations__assignments__driver",
+            "reservations__assignments__vendor",
+        )
+        .filter(pk=int(pk))
+        .first()
     )
 
 
-def _timing_example(kind: str, form) -> str:
-    if not form.has_timing:
-        return ""
-    amount = form["timing_amount"].value()
-    unit = form["timing_unit"].value()
-    try:
-        return overrides.timing_example(kind, int(amount), unit, now=_now())
-    except (TypeError, ValueError):
-        return ""
-
-
 @login_required
 @owner_admin_required
 @require_POST
-def message_reset(request: HttpRequest, kind: str) -> HttpResponse:
-    """Drop the owner's wording, timing and switch for a message."""
-    _message_spec(kind)
-    overrides.reset(kind)
-    messages.success(request, "Reset to the default.")
-    return redirect("message_edit", kind=kind)
-
-
-@login_required
-@owner_admin_required
-@require_POST
-def message_preview(request: HttpRequest, kind: str) -> JsonResponse:
-    """A draft rendered by the real renderer against an order, or a built-in sample."""
-    _message_spec(kind)
-    texts = {
-        name: request.POST.get(name, "").replace("\r\n", "\n").replace("\r", "\n")
-        for name in MessageTemplateForm.TEXTS
-    }
-    errors = fields.validate(kind, **texts)
+def message_preview(request: HttpRequest, key: str | None = None) -> JsonResponse:
+    """The draft as posted (the whole editor form), rendered by the real renderer against an
+    order or a built-in sample, with whom it would reach and the fields its trigger can fill.
+    Sends nothing."""
+    row = _live_row(key) if key else MessageTemplate(seeded=False)
+    stored_types = list(row.service_types.all()) if row.pk else []
+    form = MessageForm(request.POST, instance=row)
+    form.is_valid()
+    draft = form.instance
+    chips = _chips(draft.trigger, draft.audience, row)
+    errors = {n: form.errors[n][0] for n in MessageForm.TEXTS if n in form.errors}
     if errors:
-        return JsonResponse({"ok": False, "errors": errors}, status=400)
-    lead = None
-    pk = request.POST.get("lead", "")
-    if pk.isdigit():
-        lead = (
-            Lead.objects.select_related("contact")
-            .prefetch_related(
-                "reservations__stops",
-                "reservations__vehicle",
-                "reservations__service_type",
-                "reservations__assignments__driver",
-                "reservations__assignments__vendor",
-            )
-            .filter(pk=int(pk))
-            .first()
-        )
-    rendered = overrides.preview(kind, lead, **texts)
+        return JsonResponse({"ok": False, "errors": errors, "fields": chips}, status=400)
+    if draft.trigger not in triggers.CATALOG:
+        return JsonResponse({"ok": False, "errors": {"trigger": "Pick a trigger."}}, status=400)
+    types = form.cleaned_data.get("service_types", stored_types)
+    lead = _preview_lead(request.POST.get("lead", ""))
+    rendered = editor.preview(draft, lead, service_types=types)
     source = lead.quote_no if lead else "Sample order"
-    return JsonResponse({"ok": True, "source": source, **rendered})
+    return JsonResponse({"ok": True, "source": source, "fields": chips, **rendered})
 
 
 @login_required
 @owner_admin_required
-def message_timing_preview(request: HttpRequest, kind: str) -> JsonResponse:
-    """The worked example for a timing being typed."""
-    _message_spec(kind)
+def message_timing_preview(request: HttpRequest, key: str | None = None) -> JsonResponse:
+    """The worked example for a timing being typed (trigger and direction default to the
+    row's)."""
+    row = _live_row(key) if key else None
+    trigger = request.GET.get("trigger") or (row.trigger if row else "")
+    direction = request.GET.get("direction") or (row.timing_direction if row else "after")
     try:
-        text = overrides.timing_example(
-            kind, int(request.GET.get("amount", "")), request.GET.get("unit", ""), now=_now()
+        text = editor.timing_example(
+            trigger,
+            int(request.GET.get("amount", "")),
+            request.GET.get("unit", ""),
+            direction,
+            now=_now(),
         )
     except ValueError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)

@@ -143,7 +143,8 @@ def confirmed_assignment(reservation):
     return selectors.confirmed_assignment(reservation)
 
 
-def _trip_matches(trip, types) -> bool:
+def trip_matches(trip, types) -> bool:
+    """Whether a trip is of one of these service types (Wedding counts legacy wedding legs)."""
     for st in types:
         if st.name.strip().lower() == defaults.WEDDING_SERVICE_NAME.lower():
             if _is_wedding(trip):  # legacy wedding-builder legs count too
@@ -169,7 +170,7 @@ def matches(row: MessageTemplate, lead, reservation=None) -> bool:
         trips = [reservation]
     else:
         trips = [r for r in lead.reservations.all() if r.trip_status not in CANCELLED_STATUSES]
-    return any(_trip_matches(t, types) for t in trips)
+    return any(trip_matches(t, types) for t in trips)
 
 
 def ready(reservation, waits_for: str) -> bool:

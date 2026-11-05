@@ -5,8 +5,9 @@ from django.urls import NoReverseMatch, reverse
 from django.utils.html import escape
 
 from apps.accounts.factories import UserFactory
-from apps.messaging import overrides
+from apps.messaging import defaults
 from apps.messaging.models import MessageTemplate, NotificationConfig
+from apps.messaging.tests.test_switches import enabled
 
 pytestmark = pytest.mark.django_db
 
@@ -23,8 +24,8 @@ def test_requires_owner_admin(client):
 def test_lists_groups_and_rows(client):
     client.force_login(_owner_admin())
     html = client.get(reverse("messages")).content.decode()
-    for spec in overrides.MESSAGES:
-        assert spec.label in html
+    for default in defaults.DEFAULTS.values():
+        assert default.name in html
     labels = [escape(label) for label in MessageTemplate.Section.labels]
     positions = [html.index(label) for label in labels]
     assert positions == sorted(positions)
@@ -38,11 +39,11 @@ def test_lists_groups_and_rows(client):
 
 
 def test_catalogue_kinds_are_known_and_unique():
-    kinds = [m.kind for m in overrides.MESSAGES]
+    kinds = list(defaults.DEFAULTS)
     assert len(kinds) == len(set(kinds))
     assert kinds.index("trip_confirm_customer_2") == kinds.index("trip_confirm_customer") + 1
     for kind in kinds:
-        overrides.default(kind)
+        defaults.DEFAULTS[kind]
 
 
 def test_edited_badge(client):
@@ -66,10 +67,10 @@ def test_toggle_flips_and_persists(client):
     resp = client.post(reverse("message_toggle", args=["tp1_welcome"]))
     assert resp.status_code == 200
     assert json.loads(resp.content) == {"ok": True, "enabled": False}
-    assert overrides.is_enabled("tp1_welcome") is False
+    assert enabled("tp1_welcome") is False
     resp = client.post(reverse("message_toggle", args=["tp1_welcome"]))
     assert json.loads(resp.content) == {"ok": True, "enabled": True}
-    assert overrides.is_enabled("tp1_welcome") is True
+    assert enabled("tp1_welcome") is True
 
 
 def test_toggle_keeps_edited_text(client):

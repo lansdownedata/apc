@@ -237,32 +237,16 @@ def test_held_when_cancelled_then_sends_when_reinstated():
 
 @pytest.mark.parametrize("timing", [(0, "hours"), (59, "minutes"), (0, "days"), (0, "minutes")])
 def test_driver_message_needs_at_least_an_hour(timing):
-    from apps.messaging import overrides
-    from apps.messaging.touchpoint_templates import TEMPLATES
+    from apps.messaging import editor
 
-    t = TEMPLATES["driver_released"]
-    errors = overrides.check(
-        "driver_released",
-        subject=t.subject,
-        email_body=t.email_body,
-        sms_body=t.sms_body,
-        timing=timing,
-    )
+    errors = editor.check_timing("driver_released", "pickup_dispatched", timing)
     assert errors["timing"] == "The driver message must go out at least 1 hour before pickup."
 
 
 def test_driver_message_one_hour_is_allowed():
-    from apps.messaging import overrides
-    from apps.messaging.touchpoint_templates import TEMPLATES
+    from apps.messaging import editor
 
-    t = TEMPLATES["driver_released"]
-    assert not overrides.check(
-        "driver_released",
-        subject=t.subject,
-        email_body=t.email_body,
-        sms_body=t.sms_body,
-        timing=(1, "hours"),
-    )
+    assert not editor.check_timing("driver_released", "pickup_dispatched", (1, "hours"))
 
 
 def test_two_syncs_make_one_row():

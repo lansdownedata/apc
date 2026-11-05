@@ -1,10 +1,15 @@
 """Model forms for the Settings screens."""
 
+import re
+
 from django import forms
+from django.core.validators import validate_email
+from django.db.models import Q
 
 from apps.addresses.models import Venue
 from apps.leads.models import ServiceType, VehicleType
-from apps.messaging import overrides
+from apps.messaging import editor, fields, recipients, triggers
+from apps.messaging.models import MessageTemplate
 from apps.tasks import schedule
 from apps.vendors.models import AffiliateDocumentType
 
@@ -417,94 +422,195 @@ class AffiliateDocumentTypeForm(forms.ModelForm):
                 self.fields[field].disabled = True
 
 
-class MessageTemplateForm(forms.Form):
-    """One message's editor: the text of each channel it sends on, its timing and its switch.
-    Validation is `overrides.check`; its per-box errors land on the matching field."""
+class _EmailListInput(forms.MultipleHiddenInput):
+    """Every posted value; never "omitted", so an empty list is saved as empty."""
 
-    TEXTS = ("subject", "email_body", "sms_body")
+    def value_omitted_from_data(self, data, files, name):
+        return False
 
-    def __init__(self, kind: str, data=None):
-        super().__init__(data)
-        self.kind = kind
-        rows = overrides.load()
-        base = overrides.default(kind)
-        current = overrides.effective(kind, rows)
-        self.channels = base.channels
-        self._current = current
-        self._enabled = overrides.is_enabled(kind, rows, master=True)
-        area = lambda: forms.Textarea(attrs={"class": "field", "rows": 8})  # noqa: E731
-        if "email" in base.channels:
-            self.fields["subject"] = forms.CharField(
-                required=False,
-                strip=False,
-                max_length=200,
-                error_messages={"max_length": "Keep the subject under 200 characters."},
-                initial=current.subject,
-                widget=forms.TextInput(attrs={"class": "field", "aria-label": "Subject"}),
-            )
-            self.fields["email_body"] = forms.CharField(
-                required=False, strip=False, initial=current.email_body, widget=area()
-            )
-        if "sms" in base.channels:
-            self.fields["sms_body"] = forms.CharField(
-                required=False, strip=False, initial=current.sms_body, widget=area()
-            )
-        self.has_timing = overrides.has_timing(kind)
-        if self.has_timing:
-            self._add_timing("timing", overrides.timing_of(kind, rows))
-        self.fields["enabled"] = forms.BooleanField(required=False, initial=self._enabled)
 
-    def _add_timing(self, prefix: str, timing: tuple[int, str] | None) -> None:
-        amount, unit = timing or (None, "")
-        self.fields[f"{prefix}_amount"] = forms.IntegerField(
-            required=False,
-            initial=amount,
-            error_messages={"invalid": "Enter a whole number."},
-            widget=forms.NumberInput(attrs={"class": "field", "min": 0, "inputmode": "numeric"}),
-        )
-        self.fields[f"{prefix}_unit"] = forms.ChoiceField(
-            required=False,
-            initial=unit,
-            choices=[(u, u) for u in overrides.TIMING_UNITS],
-        )
+class EmailListField(forms.Field):
+    """Staff emails: any number of posted values, each possibly holding several addresses
+    split by commas or spaces; cleaned to a list without repeats."""
 
-    def _timing(self, cleaned: dict, prefix: str) -> tuple[int, str] | None:
-        amount = cleaned.get(f"{prefix}_amount")
-        if amount is None:
-            if f"{prefix}_amount" not in self.errors:
-                self.add_error(f"{prefix}_amount", "Enter a number.")
-            return None
-        return amount, cleaned.get(f"{prefix}_unit") or ""
+    widget = _EmailListInput
 
-    def _texts(self, cleaned: dict) -> dict[str, str]:
-        out = {}
-        for name in self.TEXTS:
-            if name in self.fields:
-                out[name] = (cleaned.get(name) or "").replace("\r\n", "\n").replace("\r", "\n")
-            else:
-                out[name] = getattr(self._current, name)
+    def to_python(self, value) -> list[str]:
+        chunks = [value] if isinstance(value, str) else list(value or [])
+        out: list[str] = []
+        for chunk in chunks:
+            for part in re.split(r"[\s,;]+", chunk or ""):
+                if part and part.lower() not in {e.lower() for e in out}:
+                    out.append(part)
         return out
+
+    def validate(self, value) -> None:
+        super().validate(value)
+        for email in value:
+            validate_email(email)
+
+
+AUDIENCE_ERROR = "This trigger can't send to that audience."
+RECIPIENT_ERROR = "Pick people this audience can reach."
+_TEXTS = ("subject", "email_body", "sms_body")
+_ALL_RECIPIENTS = list(recipients.LABELS.items())
+
+
+class MessageForm(forms.ModelForm):
+    """One message in the editor (spec C section 6). Every choice is checked here, not only
+    in the page: the audience must be one the trigger allows and each recipient one that
+    audience can reach. `clean` runs the timing rules (`editor.check_timing`) and the
+    save-time checks (`fields.validate`); `save` stores the row through `editor.save`."""
+
+    TEXTS = _TEXTS
+
+    trigger = forms.ChoiceField(
+        choices=[(t.key, t.label) for t in triggers.CATALOG.values()],
+        error_messages={
+            "required": "Pick when this message goes out.",
+            "invalid_choice": "Pick when this message goes out.",
+        },
+    )
+    audience = forms.ChoiceField(
+        choices=MessageTemplate.Audience.choices,
+        error_messages={"invalid_choice": AUDIENCE_ERROR},
+    )
+    recipients = forms.MultipleChoiceField(
+        required=False,
+        choices=_ALL_RECIPIENTS,
+        error_messages={"invalid_choice": RECIPIENT_ERROR},
+    )
+    staff_emails = EmailListField(required=False)
+    timing_amount = forms.IntegerField(
+        required=False, error_messages={"invalid": "Enter a whole number."}
+    )
+    timing_unit = forms.ChoiceField(required=False, choices=[(u, u) for u in editor.TIMING_UNITS])
+    timing_direction = forms.ChoiceField(required=False, choices=MessageTemplate.Direction.choices)
+    service_types = forms.ModelMultipleChoiceField(
+        required=False, queryset=ServiceType.objects.none()
+    )
+
+    class Meta:
+        model = MessageTemplate
+        fields = [
+            "name",
+            "section",
+            "audience",
+            "trigger",
+            "timing_amount",
+            "timing_unit",
+            "timing_direction",
+            "send_sms",
+            "send_email",
+            "subject",
+            "email_body",
+            "sms_body",
+            "recipients",
+            "staff_emails",
+            "service_types",
+            "enabled",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "field", "aria-label": "Name"}),
+            "subject": forms.TextInput(attrs={"class": "field", "aria-label": "Email subject"}),
+            "email_body": forms.Textarea(attrs={"class": "field", "rows": 7}),
+            "sms_body": forms.Textarea(attrs={"class": "field", "rows": 4}),
+        }
+        error_messages = {
+            "name": {"required": "Give the message a name."},
+            "subject": {"max_length": "Keep the subject under 200 characters."},
+        }
+
+    def __init__(self, data=None, *, instance: MessageTemplate):
+        super().__init__(data, instance=instance)
+        for name in _TEXTS:
+            self.fields[name].strip = False
+        trigger = triggers.CATALOG.get(self._current("trigger"))
+        allowed = trigger.audiences if trigger else set(MessageTemplate.Audience.values)
+        self.fields["audience"].choices = [
+            (value, label) for value, label in MessageTemplate.Audience.choices if value in allowed
+        ]
+        self.fields["recipients"].choices = [
+            (key, recipients.LABELS[key]) for key in recipients.keys_for(self._current("audience"))
+        ]
+        chosen = [st.pk for st in instance.service_types.all()] if instance.pk else []
+        self.fields["service_types"].queryset = ServiceType.objects.filter(
+            Q(active=True) | Q(pk__in=chosen)
+        ).order_by("sort_order", "name")
+
+    def _current(self, name: str) -> str:
+        """A field as posted, else as stored: what the choices of the next field depend on."""
+        if self.is_bound:
+            return self.data.get(name) or ""
+        return getattr(self.instance, name) or ""
 
     def clean(self):
         cleaned = super().clean()
-        texts = self._texts(cleaned)
-        timing = self._timing(cleaned, "timing") if self.has_timing else None
-        errors = overrides.check(self.kind, **texts, timing=timing)
-        for box, message in errors.items():
-            field = "timing_amount" if box == "timing" else box
-            if field in self.fields and field not in self.errors:
-                self.add_error(field, message)
-        self.texts = texts
+        for name in _TEXTS:
+            if name in cleaned:
+                cleaned[name] = (cleaned[name] or "").replace("\r\n", "\n").replace("\r", "\n")
+        trigger_key, audience = cleaned.get("trigger"), cleaned.get("audience")
+        if not trigger_key:
+            return cleaned
+        if audience and audience not in triggers.CATALOG[trigger_key].audiences:
+            self._error("audience", AUDIENCE_ERROR)
+        staff = audience == MessageTemplate.Audience.STAFF
+        picked = cleaned.get("recipients")
+        if picked is not None:
+            if staff:
+                picked = []
+            elif not cleaned.get("send_sms"):
+                # Passengers and drivers are texted only: off an email-only message.
+                picked = [key for key in picked if key not in recipients.TEXT_ONLY]
+            cleaned["recipients"] = picked
+        if audience and not staff and "staff_emails" in cleaned:
+            cleaned["staff_emails"] = []
+        self._clean_timing(cleaned, trigger_key)
+        errors = fields.validate(
+            {
+                "trigger": trigger_key,
+                "audience": audience or MessageTemplate.Audience.CUSTOMER,
+                "send_sms": cleaned.get("send_sms"),
+                "send_email": cleaned.get("send_email"),
+                "subject": cleaned.get("subject", ""),
+                "email_body": cleaned.get("email_body", ""),
+                "sms_body": cleaned.get("sms_body", ""),
+                "recipients": cleaned.get("recipients", self.instance.recipients),
+                "staff_emails": cleaned.get("staff_emails", self.instance.staff_emails),
+                "timing_direction": cleaned.get("timing_direction", ""),
+                "key": self.instance.key,
+                "seeded": self.instance.seeded,
+            }
+        )
+        for name, message in errors.items():
+            self._error("send_sms" if name == "channels" else name, message)
         return cleaned
 
-    def save(self, user) -> int:
-        """Store the message; returns how many scheduled sends were re-dated."""
-        cleaned = self.cleaned_data
-        count = overrides.save(
-            self.kind,
-            **self.texts,
-            timing=(cleaned["timing_amount"], cleaned["timing_unit"]) if self.has_timing else None,
-            enabled=cleaned["enabled"],
-            user=user,
+    def _clean_timing(self, cleaned: dict, trigger_key: str) -> None:
+        amount, unit = cleaned.get("timing_amount"), cleaned.get("timing_unit") or ""
+        key, seeded = self.instance.key, self.instance.seeded
+        if not editor.has_timing(trigger_key):
+            timing = (amount, unit or "minutes") if amount else None
+            cleaned["timing_amount"], cleaned["timing_unit"] = 0, "minutes"
+        elif amount is None:
+            self._error("timing_amount", "Enter a number.")
+            return
+        else:
+            timing = (amount, unit)
+        error = editor.check_timing(key, trigger_key, timing, seeded=seeded).get("timing")
+        if error:
+            self._error("timing_amount", error)
+        cleaned["timing_direction"] = (
+            cleaned.get("timing_direction") or MessageTemplate.Direction.AFTER
         )
-        return count
+
+    def _error(self, name: str, message: str) -> None:
+        """One error per field: the first reason is the one worth showing."""
+        if name not in self.errors:
+            self.add_error(name, message)
+
+    def save(self, user=None) -> int:
+        """Store the message; returns how many queued sends were re-dated."""
+        return editor.save(
+            self.instance, user=user, service_types=self.cleaned_data.get("service_types", [])
+        )

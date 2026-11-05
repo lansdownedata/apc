@@ -60,15 +60,18 @@
              x-data="{ open: true, key: 'msg-section-{{ section.key }}',
                init() { try { if (localStorage.getItem(this.key) === 'closed') this.open = false; } catch (e) {} },
                toggle() { this.open = !this.open; try { localStorage.setItem(this.key, this.open ? 'open' : 'closed'); } catch (e) {} } }">
-      <h2 class="m-0">
-        <button type="button" @click="toggle()" :aria-expanded="open.toString()" aria-expanded="true"
-                class="flex w-full items-center gap-2 text-left text-[12px] font-semibold uppercase tracking-wide text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">
-          <i class="ti text-[14px]" :class="open ? 'ti-chevron-down' : 'ti-chevron-right'"></i>
-          <span>{{ section.label }}</span>
-          <span class="font-medium normal-case tracking-normal">{{ section.count }}</span>
-          {% if section.attention %}<span class="ml-1.5 text-[11px] font-semibold normal-case tracking-normal text-amber-700">{{ section.attention }} needs attention</span>{% endif %}
-        </button>
-      </h2>
+      <div class="flex items-center gap-3">
+        <h2 class="m-0 flex-1 min-w-0">
+          <button type="button" @click="toggle()" :aria-expanded="open.toString()" aria-expanded="true"
+                  class="flex w-full items-center gap-2 text-left text-[12px] font-semibold uppercase tracking-wide text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">
+            <i class="ti text-[14px]" :class="open ? 'ti-chevron-down' : 'ti-chevron-right'"></i>
+            <span>{{ section.label }}</span>
+            <span class="font-medium normal-case tracking-normal">{{ section.count }}</span>
+            {% if section.attention %}<span class="ml-1.5 text-[11px] font-semibold normal-case tracking-normal text-amber-700">{{ section.attention }} needs attention</span>{% endif %}
+          </button>
+        </h2>
+        <a href="{% url 'messages_new' %}?section={{ section.key }}" aria-label="Add a message to {{ section.label }}" class="shrink-0 inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"><i class="ti ti-plus text-[13px]"></i> Add</a>
+      </div>
       <div x-show="open" class="mt-2 divide-y divide-line">
         {% for item in section.rows %}
         <div class="flex items-center justify-between gap-3 py-3 {% if item.problems %}bg-amber-50 -mx-3 px-3 rounded-lg{% endif %}"

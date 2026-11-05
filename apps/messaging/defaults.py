@@ -227,7 +227,7 @@ _RESET_FIELDS = tuple(
     f.name for f in fields(MessageDefault) if f.name not in ("key", "enabled", "service_type_names")
 )
 
-# Spec B's shared switches (`overrides._SWITCH_OF`): these rows follow another row's on/off
+# Spec B's shared switches (its `_SWITCH_OF`): these rows follow another row's on/off
 # today, and the wedding thank-you its timing too, so each seeds from that row.
 _SWITCH_OF = {"trip_confirm_customer_2": "trip_confirm_customer", "thank_you_wedding": "thank_you"}
 _TIMED_BY = {"thank_you_wedding": "thank_you"}

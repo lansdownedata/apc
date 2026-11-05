@@ -1,115 +1,267 @@
 {% extends "base.html" %}
+{% load json_filters %}
 {% block content %}
-<div class="max-w-[1040px] mx-auto px-4 sm:px-6 py-6"
-     x-data="messageEditor({ previewUrl: '{% url 'message_preview' spec.kind %}', timingUrl: '{% url 'message_timing_preview' spec.kind %}', tab: '{{ tab }}' })">
-  <a href="{% url 'messages' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Messages</a>
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6" x-data="messageEditor({{ state|json_attr }})">
+  <a href="{% url 'messages' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Messages</a>
 
-  <form id="message-form" method="post" @input="queue($event)" @change="queue($event)">
+  <form id="message-form" method="post" @input="queue($event)" @change="queue($event)" novalidate>
     {% csrf_token %}
-    <div class="flex items-start justify-between gap-4 mb-4 px-1">
+    <div class="flex flex-wrap items-start justify-between gap-4 mb-5 px-1">
       <div class="min-w-0">
-        <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">{{ spec.label }}</h1>
-        <p class="text-[12.5px] text-muted">{{ spec.group }}</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <h1 class="font-display text-[21px] font-semibold text-ink tracking-tight">{{ title }}</h1>
+          {% if row.seeded %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Built-in</span>{% elif not new %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Added</span>{% endif %}
+          {% if tag == "Edited" %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Edited</span>{% endif %}
+        </div>
+        <p class="text-[12.5px] text-muted mt-0.5">{{ section_label }}</p>
       </div>
       <div class="flex items-center gap-3 shrink-0 pt-1">
-        <div class="flex items-center gap-2" x-data="{ on: {% if form.enabled.value %}true{% else %}false{% endif %} }">
-          <input type="hidden" name="enabled" value="{% if form.enabled.value %}on{% endif %}" :value="on ? 'on' : ''">
-          <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'On' : 'Off'">{% if form.enabled.value %}On{% else %}Off{% endif %}</span>
-          <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if form.enabled.value %}true{% else %}false{% endif %}" aria-label="{{ spec.label }} switch" @click="on = !on"
+        <span class="text-[12.5px] text-muted" x-show="isClick"{% if not is_click %} style="display: none"{% endif %}>Sent when staff click <span x-text="clickLabel">{{ click_label }}</span></span>
+        <div class="flex items-center gap-2" x-show="!isClick"{% if is_click %} style="display: none"{% endif %}>
+          <input type="hidden" name="enabled" value="{% if state.enabled %}on{% endif %}" :value="enabled ? 'on' : ''">
+          <span class="text-[12.5px] font-semibold" :class="enabled ? 'text-ink' : 'text-rose-600'" x-text="enabled ? 'On' : 'Off'">{% if state.enabled %}On{% else %}Off{% endif %}</span>
+          <button type="button" role="switch" :aria-checked="enabled.toString()" aria-checked="{% if state.enabled %}true{% else %}false{% endif %}" aria-label="{{ title }} switch" @click="enabled = !enabled"
                   class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line"
-                  :class="on ? 'bg-emerald-600' : 'bg-slate-300'">
-            <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
+                  :class="enabled ? 'bg-emerald-600' : 'bg-slate-300'">
+            <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="enabled ? 'translate-x-4' : 'translate-x-0.5'"></span>
           </button>
         </div>
-        <button type="button" @click="confirmReset()" {% if not edited %}disabled{% endif %}
-                class="text-[12.5px] font-medium text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line rounded px-2 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Reset to default</button>
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)] gap-4 items-start">
-      <div class="space-y-4 min-w-0">
-        <div class="card p-5 sm:p-6">
-          {% if form.has_timing %}
-          <div class="mb-5" data-timing="timing">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-[13px] text-ink">Send</span>
-              <div class="w-20">{{ form.timing_amount }}</div>
-              <div class="w-32">
-                {% include "components/searchable_select.html" with name="timing_unit" field_id="id_timing_unit" options=form.timing_unit.field.choices selected=form.timing_unit.value search="off" aria_label="Timing unit" %}
-              </div>
-              <span class="text-[13px] text-ink">{{ anchor_phrase }}</span>
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 items-start">
+      <div class="min-w-0 space-y-4">
+        <div class="card p-5 sm:p-6 space-y-7">
+          <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_200px] gap-3">
+            <div>
+              <label for="id_name" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Name</label>
+              {{ form.name }}
+              {% if errors.name %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.name }}</p>{% endif %}
             </div>
-            <p class="text-[11.5px] text-muted mt-1.5" data-example="timing">{{ timing_example }}</p>
-            {% for error in form.timing_amount.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+            <div>
+              <label for="id_section" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Section</label>
+              {% include "components/searchable_select.html" with name="section" field_id="id_section" options=section_options selected=form.section.value search="off" aria_label="Section" %}
+            </div>
           </div>
-          {% else %}
-          <p class="text-[13px] text-ink mb-5">Sent when it happens</p>
-          {% endif %}
-          {% if channels|length > 1 %}
-          <div class="flex items-center gap-1 mb-4" role="tablist">
-            {% for channel in channels %}
-            <button type="button" role="tab" @click="tab = '{{ channel.key }}'" :aria-selected="(tab === '{{ channel.key }}').toString()"
-                    class="text-[12.5px] font-medium rounded-lg px-3 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line"
-                    :class="tab === '{{ channel.key }}' ? 'bg-slate-100 text-ink' : 'text-muted hover:text-ink'">{{ channel.label }}</button>
-            {% endfor %}
-          </div>
-          {% endif %}
 
-          {% for channel in channels %}
-          <div x-show="tab === '{{ channel.key }}'" {% if channel.key != tab %}style="display: none"{% endif %} @focusin="last = $event.target.name">
-            {% if channel.key == 'email' %}
-            <label for="id_subject" class="block text-[12px] font-semibold text-muted mb-1">Subject</label>
-            {{ form.subject }}
-            {% if box_errors.subject %}<p class="text-[11.5px] text-rose-600 mt-1">{{ box_errors.subject }}</p>{% endif %}
-            <label for="id_email_body" class="block text-[12px] font-semibold text-muted mt-4 mb-1">Message</label>
-            {{ form.email_body }}
-            {% if box_errors.email_body %}<p class="text-[11.5px] text-rose-600 mt-1">{{ box_errors.email_body }}</p>{% endif %}
-            {% else %}
-            <label for="id_sms_body" class="block text-[12px] font-semibold text-muted mb-1">Text message</label>
-            {{ form.sms_body }}
-            {% if box_errors.sms_body %}<p class="text-[11.5px] text-rose-600 mt-1">{{ box_errors.sms_body }}</p>{% endif %}
-            <p class="text-[11.5px] text-muted mt-1" data-counter></p>
-            {% endif %}
-          </div>
-          {% endfor %}
+          <section class="space-y-3">
+            <h2 class="text-[14px] font-semibold text-ink">Who gets it</h2>
+            <input type="hidden" name="audience" value="{{ state.audience }}" :value="audience">
+            <div role="radiogroup" aria-label="Audience" class="inline-flex flex-wrap gap-1 rounded-lg bg-slate-100 p-0.5">
+              {% for value, label in audience_options %}
+              <button type="button" role="radio" :aria-checked="(audience === '{{ value }}').toString()" aria-checked="{% if state.audience == value %}true{% else %}false{% endif %}"
+                      @click="setAudience('{{ value }}')" :disabled="!allowed('{{ value }}')"
+                      class="rounded-md px-3.5 py-1.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      :class="audience === '{{ value }}' ? 'bg-white font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
+              {% endfor %}
+            </div>
+            {% if errors.audience %}<p class="text-[11.5px] text-rose-600">{{ errors.audience }}</p>{% endif %}
 
-          <div class="mt-4">
-            <div class="text-[12px] font-semibold text-muted mb-2">Insert a field</div>
-            {% regroup chips by group as chip_groups %}
-            <div class="space-y-2">
-              {% for group in chip_groups %}
-              <div class="flex flex-wrap items-center gap-1.5">
-                <span class="text-[11.5px] text-muted w-16 shrink-0">{{ group.grouper }}</span>
-                {% for chip in group.list %}
-                <button type="button" data-key="{{ chip.key }}" @mousedown.prevent @click="insert($el.dataset.key)" aria-label="Insert {{ chip.label }}"
-                        class="text-[12px] font-medium text-ink px-2.5 py-1 rounded-full ring-1 ring-inset ring-line bg-surface hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed transition-colors">{{ chip.label }}</button>
-                {% endfor %}
+            <div x-show="audience === 'staff'"{% if state.audience != "staff" %} style="display: none"{% endif %}>
+              <label for="staff-email-input" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Staff emails</label>
+              <div class="field flex flex-wrap items-center gap-1.5">
+                <template x-for="(address, i) in staffEmails" :key="address">
+                  <span class="inline-flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-slate-100 text-ink">
+                    <span x-text="address"></span>
+                    <input type="hidden" name="staff_emails" :value="address" :disabled="audience !== 'staff'">
+                    <button type="button" @click="removeStaffEmail(i)" :aria-label="'Remove ' + address" class="text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line"><i class="ti ti-x text-[12px]"></i></button>
+                  </span>
+                </template>
+                <input id="staff-email-input" type="email" placeholder="Add an email…" x-ref="staffInput" @keydown.enter.prevent="addStaffEmail()" @keydown.comma.prevent="addStaffEmail()" @blur="addStaffEmail()"
+                       class="flex-1 min-w-[10rem] border-0 bg-transparent p-0 text-[13px] focus:outline-none focus:ring-0">
+              </div>
+              {% if errors.staff_emails %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.staff_emails }}</p>{% endif %}
+            </div>
+
+            {% for audience_key, groups in recipient_groups %}
+            <div class="space-y-3" x-show="audience === '{{ audience_key }}'"{% if state.audience != audience_key %} style="display: none"{% endif %}>
+              {% for group_title, items in groups %}
+              <div>
+                <div class="text-[11.5px] text-muted mb-1.5">{{ group_title }}</div>
+                <div class="flex flex-wrap gap-1.5">
+                  {% for key, label in items %}
+                  <label{% if key in text_only %} x-show="!emailOnly"{% endif %}>
+                    <input type="checkbox" name="recipients" value="{{ key }}" x-model="picked" class="peer sr-only"{% if key in picked %} checked{% endif %}{% if state.audience != audience_key %} disabled{% endif %}
+                           :disabled="audience !== '{{ audience_key }}'{% if key in text_only %} || emailOnly{% endif %}">
+                    <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-slate-50 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="picked.includes('{{ key }}')"{% if key not in picked %} style="display: none"{% endif %}></i>{{ label }}</span>
+                  </label>
+                  {% endfor %}
+                </div>
               </div>
               {% endfor %}
             </div>
-          </div>
+            {% endfor %}
+            {% if errors.recipients %}<p class="text-[11.5px] text-rose-600">{{ errors.recipients }}</p>{% endif %}
+            <p class="text-[11.5px] text-muted" x-show="hiddenNote" style="display: none" x-text="hiddenText"></p>
+            <div class="flex gap-2.5 items-start rounded-xl bg-slate-50 px-3.5 py-3">
+              <i class="ti ti-users text-[16px] text-amber-700 mt-px"></i>
+              <p class="text-[12.5px] leading-relaxed text-ink" x-text="whoLine"></p>
+            </div>
+          </section>
+
+          <section class="space-y-3">
+            <h2 class="text-[14px] font-semibold text-ink">When it goes out</h2>
+            <div @change="setTrigger($event.target.value)">
+              <label for="id_trigger" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Trigger</label>
+              {% include "components/searchable_select.html" with name="trigger" field_id="id_trigger" rich_options=trigger_options selected=state.trigger aria_label="Trigger" %}
+              {% if errors.trigger %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.trigger }}</p>{% endif %}
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-[13px] text-ink" x-show="hasTiming"{% if not has_timing %} style="display: none"{% endif %}>
+              <span>Send</span>
+              <div class="w-20">
+                <input type="number" min="0" inputmode="numeric" id="id_timing_amount" aria-label="Timing amount" class="field"{% if has_timing %} name="timing_amount"{% endif %} :name="hasTiming ? 'timing_amount' : null" value="{{ form.timing_amount.value|default_if_none:'' }}">
+              </div>
+              <div class="w-28">
+                {% include "components/searchable_select.html" with name="timing_unit" field_id="id_timing_unit" options=unit_options selected=form.timing_unit.value search="off" aria_label="Timing unit" %}
+              </div>
+              <input type="hidden" name="timing_direction" value="{{ state.direction }}" :value="direction">
+              <div class="inline-flex gap-0.5 rounded-lg bg-slate-100 p-0.5" role="radiogroup" aria-label="Before or after" x-show="isDate"{% if not is_date %} style="display: none"{% endif %}>
+                {% for value, label in direction_options %}
+                <button type="button" role="radio" :aria-checked="(direction === '{{ value }}').toString()" @click="setDirection('{{ value }}')"
+                        class="rounded-md px-2.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"
+                        :class="direction === '{{ value }}' ? 'bg-white font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
+                {% endfor %}
+              </div>
+              <span x-text="anchorWord">{{ anchor_word }}</span>
+            </div>
+            {% if errors.timing_amount %}<p class="text-[11.5px] text-rose-600">{{ errors.timing_amount }}</p>{% endif %}
+            {% if errors.timing_direction %}<p class="text-[11.5px] text-rose-600">{{ errors.timing_direction }}</p>{% endif %}
+            <p class="text-[13px] text-ink" x-show="!hasTiming" x-text="noTimingText"{% if has_timing %} style="display: none"{% endif %}>{{ no_timing_text }}</p>
+            <p class="text-[11.5px] text-muted" data-example x-show="hasTiming"{% if not has_timing %} style="display: none"{% endif %}>{{ timing_example }}</p>
+            <div x-show="ruleLines.length"{% if not rule_lines %} style="display: none"{% endif %}>
+              <div class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">How this trigger behaves</div>
+              <ul class="space-y-1">
+                <template x-for="line in ruleLines" :key="line">
+                  <li class="flex gap-2 text-[12.5px] text-ink"><span class="text-amber-700">•</span><span x-text="line"></span></li>
+                </template>
+              </ul>
+            </div>
+            {% if built_ins %}
+            <div class="flex gap-2.5 items-start rounded-xl bg-amber-50 ring-1 ring-inset ring-amber-300 px-3.5 py-3" x-show="triggerChanged"{% if not trigger_changed %} style="display: none"{% endif %}>
+              <i class="ti ti-alert-triangle text-[16px] text-amber-700 mt-px"></i>
+              <div>
+                <p class="text-[12.5px] font-semibold text-ink">This built-in message loses its built-in rules</p>
+                <ul class="mt-1 space-y-0.5">
+                  {% for rule in built_ins %}<li class="text-[12px] text-muted">{{ rule }}</li>{% endfor %}
+                </ul>
+                <p class="text-[12px] text-muted mt-1">Reset to original brings them back.</p>
+              </div>
+            </div>
+            {% endif %}
+          </section>
+
+          <section class="space-y-2.5">
+            <h2 class="text-[14px] font-semibold text-ink">Service types</h2>
+            <div class="flex flex-wrap gap-1.5">
+              {% for st in service_options %}
+              <label>
+                <input type="checkbox" name="service_types" value="{{ st.pk }}" x-model="services" class="peer sr-only"{% if st.pk|stringformat:"s" in services %} checked{% endif %}>
+                <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-slate-50 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="services.includes('{{ st.pk }}')"{% if st.pk|stringformat:"s" not in services %} style="display: none"{% endif %}></i>{{ st.name }}</span>
+              </label>
+              {% empty %}
+              <p class="text-[12.5px] text-muted">No service types yet. Add them in Settings.</p>
+              {% endfor %}
+            </div>
+            <p class="text-[11.5px] text-muted" x-text="serviceLine">{% if services %}Only for trips with one of these service types.{% else %}None picked, so it goes for every service type.{% endif %}</p>
+          </section>
+
+          <section class="space-y-3">
+            <div class="flex items-center gap-2.5">
+              <h2 class="text-[14px] font-semibold text-ink">Wording</h2>
+              <div class="ml-auto inline-flex gap-1.5">
+                <input type="hidden" name="send_sms" value="{% if state.sms %}on{% endif %}" :value="sms ? 'on' : ''">
+                <input type="hidden" name="send_email" value="{% if state.email %}on{% endif %}" :value="email ? 'on' : ''">
+                <button type="button" role="switch" :aria-checked="sms.toString()" aria-checked="{% if state.sms %}true{% else %}false{% endif %}" @click="sms = !sms; queuePreview()"
+                        class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] ring-1 ring-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"
+                        :class="sms ? 'bg-amber-50 ring-amber-400 text-amber-900 font-semibold' : 'bg-surface ring-line text-muted font-medium hover:text-ink'"><i class="ti ti-check text-[13px]" x-show="sms"></i>Text</button>
+                <button type="button" role="switch" :aria-checked="email.toString()" aria-checked="{% if state.email %}true{% else %}false{% endif %}" @click="email = !email; queuePreview()"
+                        class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] ring-1 ring-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"
+                        :class="email ? 'bg-amber-50 ring-amber-400 text-amber-900 font-semibold' : 'bg-surface ring-line text-muted font-medium hover:text-ink'"><i class="ti ti-check text-[13px]" x-show="email"></i>Email</button>
+              </div>
+            </div>
+            {% if errors.send_sms %}<p class="text-[12.5px] text-amber-700">{{ errors.send_sms }}</p>{% endif %}
+            <p class="text-[12.5px] text-amber-700" x-show="!sms && !email" style="display: none">Turn on Text or Email so this message has something to send.</p>
+
+            <div x-show="sms" @focusin="last = $event.target.name"{% if not state.sms %} style="display: none"{% endif %}>
+              <label for="id_sms_body" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Text message</label>
+              {{ form.sms_body }}
+              {% if errors.sms_body %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.sms_body }}</p>{% endif %}
+              <p class="text-[11.5px] text-muted mt-1" data-counter></p>
+            </div>
+            <div class="space-y-2" x-show="email" @focusin="last = $event.target.name"{% if not state.email %} style="display: none"{% endif %}>
+              <div>
+                <label for="id_subject" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Email subject</label>
+                {{ form.subject }}
+                {% if errors.subject %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.subject }}</p>{% endif %}
+              </div>
+              <div>
+                <label for="id_email_body" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Email</label>
+                {{ form.email_body }}
+                {% if errors.email_body %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.email_body }}</p>{% endif %}
+              </div>
+            </div>
+
+            <div>
+              <div class="text-[12px] font-semibold text-muted mb-2">Insert a field</div>
+              <div class="space-y-1.5">
+                <template x-for="group in chipGroups" :key="group.name">
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <span class="text-[11.5px] text-muted w-16 shrink-0" x-text="group.name"></span>
+                    <template x-for="chip in group.chips" :key="chip.key">
+                      <button type="button" @mousedown.prevent @click="insert(chip.key)" :aria-label="'Insert ' + chip.label" x-text="chip.label"
+                              class="text-[12px] font-medium text-ink px-2.5 py-1 rounded-full ring-1 ring-inset ring-line bg-surface hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"></button>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <p class="text-[11.5px] text-muted mt-2">Only the fields this trigger can fill are offered: driver fields show where a driver is set.</p>
+            </div>
+          </section>
         </div>
 
-        <div class="flex items-center justify-end gap-2.5 pt-2">
-          <a href="{% url 'messages' %}" class="text-[13px] font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
-          <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed"><i class="ti ti-check text-[15px]"></i> Save</button>
+        <div class="flex flex-wrap items-center gap-2.5 pt-1">
+          {% if row.seeded %}
+          <button type="button" @click="confirmReset()" class="text-[13px] font-medium text-muted hover:text-ink rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">Reset to original</button>
+          {% elif not new %}
+          <button type="button" @click="confirmArchive()" class="text-[13px] font-medium text-rose-600 hover:text-rose-700 rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">Archive</button>
+          {% endif %}
+          <a href="{% url 'messages' %}" class="ml-auto text-[13px] font-medium text-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
+          <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"><i class="ti ti-check text-[15px]"></i> {% if new %}Add message{% else %}Save{% endif %}</button>
         </div>
       </div>
 
-      <div class="card p-5 lg:sticky lg:top-4">
-        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Preview</div>
-        <div class="mb-3">
+      <aside class="card p-5 lg:sticky lg:top-4 space-y-3" aria-label="Preview">
+        <h2 class="text-[11px] font-semibold uppercase tracking-wide text-muted">Preview</h2>
+        <div @change="queuePreview()">
           {% include "components/searchable_select.html" with name="lead" field_id="id_lead" options=orders selected=default_order empty_label="Sample order" aria_label="Order to preview" %}
         </div>
-        <p class="text-[11.5px] text-muted mb-2 hidden" data-sample-label>Sample order</p>
+        <p class="text-[11.5px] text-muted hidden" data-sample-label>Sample order</p>
         <p class="text-[12.5px] text-rose-600 hidden" data-preview-error></p>
-        {% for channel in channels %}
-        <div class="text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="{{ channel.key }}" x-show="tab === '{{ channel.key }}'" {% if channel.key != tab %}style="display: none"{% endif %}></div>
-        {% endfor %}
-      </div>
+        <div class="space-y-1" x-show="sms"{% if not state.sms %} style="display: none"{% endif %}>
+          <p class="text-[11.5px] text-muted" x-text="smsTo ? 'Text to ' + smsTo : 'Text'">Text</p>
+          <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="sms"></div>
+        </div>
+        <div class="space-y-1" x-show="email"{% if not state.email %} style="display: none"{% endif %}>
+          <p class="text-[11.5px] text-muted" x-text="emailTo ? 'Email to ' + emailTo : 'Email'">Email</p>
+          <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="email"></div>
+        </div>
+        <div>
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">On this order it would go to</h3>
+          <ul class="space-y-1">
+            <template x-for="line in to" :key="line">
+              <li class="text-[12.5px] text-ink" x-text="line"></li>
+            </template>
+            <li class="text-[12.5px] text-muted" x-show="!to.length">Nobody</li>
+          </ul>
+        </div>
+      </aside>
     </div>
   </form>
 
-  <form id="message-reset-form" method="post" action="{% url 'message_reset' spec.kind %}" class="hidden">{% csrf_token %}</form>
+  {% if row.seeded %}
+  <form id="message-reset-form" method="post" action="{% url 'message_reset' row.key %}" class="hidden">{% csrf_token %}</form>
+  {% elif not new %}
+  <form id="message-archive-form" method="post" action="{% url 'message_archive' row.key %}" class="hidden">{% csrf_token %}</form>
+  {% endif %}
 </div>
 {% endblock %}

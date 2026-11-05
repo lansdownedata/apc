@@ -1,7 +1,8 @@
 """The fields an owner may put in a message, per trigger, and the save-time check on a draft.
 
-`fields_for` / `validate(row_data)` are the editor's (Task 15). The kind-based `fields_for_kind`
-and `validate(kind, ...)` serve spec B's settings page until the editor replaces it.
+`fields_for` / `validate(row_data)` are the editor's. The kind-based `fields_for_kind` and
+`validate(kind, ...)` served spec B's settings page (replaced by the editor, APC-119); only
+their tests still call them.
 """
 
 import string

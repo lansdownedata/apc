@@ -9,10 +9,10 @@ from django.utils import timezone
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.models import Assignment
 from apps.fleet.factories import DriverFactory
-from apps.messaging import events, fields, overrides, sender
+from apps.messaging import defaults, events, fields, sender
 from apps.messaging.models import MessageTemplate, TouchPoint
-from apps.messaging.overrides import MESSAGES
 from apps.messaging.tests.test_driver_message import INFO, _confirmed, _due, _rows, _trip
+from apps.messaging.touchpoint_templates import TEMPLATES
 from apps.reservations.services import set_trip_status
 
 pytestmark = pytest.mark.django_db
@@ -164,14 +164,15 @@ def test_update_skipped_when_pickup_passed():
 
 
 def test_update_is_editable():
-    t = overrides.default("driver_updated")
+    t = TEMPLATES["driver_updated"]
     assert (
         fields.validate(
             "driver_updated", subject=t.subject, email_body=t.email_body, sms_body=t.sms_body
         )
         == {}
     )
-    (spec,) = [m for m in MESSAGES if m.kind == "driver_updated"]
-    assert (spec.label, spec.group) == ("Driver details updated", "Trip day")
+    default = defaults.DEFAULTS["driver_updated"]
+    group = MessageTemplate.Section(default.section).label
+    assert (default.name, group) == ("Driver details updated", "Trip day")
     assert t.subject == "Updated driver details for {trip_pickup_date}"
     assert "Your driver details have changed:" in t.email_body

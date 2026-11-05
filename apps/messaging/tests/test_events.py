@@ -22,7 +22,7 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
-from apps.messaging import events, overrides, sender
+from apps.messaging import events, sender
 from apps.messaging.factories import MessageRowFactory, TouchPointFactory
 from apps.messaging.models import MessageTemplate, NotificationConfig, TouchPoint
 from apps.messaging.tests import legacy_scheduler as touchpoints
@@ -1200,7 +1200,7 @@ def test_parity_redate(clock, key, timing):
 
     def old(x):
         setup(x)
-        overrides.redate(key, from_offset=old_offset)
+        touchpoints.redate(key, from_offset=old_offset)
 
     def new(x):
         setup(x)
@@ -1338,3 +1338,19 @@ def test_a_failing_on_commit_send_never_reaches_the_caller(
         (tp,) = events.emit("deposit_paid", lead)
 
     send_due.assert_called_once_with([tp.pk])
+
+
+# --- moved from spec B's test_overrides.py (APC-119), unchanged -----------------------------
+
+
+def test_scheduling_uses_effective_offset():
+    MessageTemplate.objects.filter(key="tp2_lead_followup").update(
+        timing_amount=5, timing_unit="hours"
+    )
+    lead = LeadFactory()
+
+    events.emit("lead_created", lead)
+
+    tp = TouchPoint.objects.get(lead=lead, kind="tp2_lead_followup")
+    tp1 = TouchPoint.objects.get(lead=lead, kind="tp1_welcome")
+    assert tp.scheduled_for - tp1.scheduled_for == timedelta(hours=5) - timedelta(minutes=30)

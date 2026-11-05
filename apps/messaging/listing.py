@@ -115,6 +115,26 @@ def is_staff_click(row: MessageTemplate) -> bool:
     return trigger is not None and trigger.kind == "staff_click"
 
 
+def validation_errors(row: MessageTemplate) -> dict[str, str]:
+    """The editor's save-time checks (`fields.validate`) run on a stored row."""
+    return fields.validate(
+        {
+            "trigger": row.trigger,
+            "audience": row.audience,
+            "send_sms": row.send_sms,
+            "send_email": row.send_email,
+            "subject": row.subject,
+            "email_body": row.email_body,
+            "sms_body": row.sms_body,
+            "recipients": row.recipients,
+            "staff_emails": row.staff_emails,
+            "timing_direction": row.timing_direction,
+            "key": row.key,
+            "seeded": row.seeded,
+        }
+    )
+
+
 def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     """What stops a row working as it reads, in the order the page lists them."""
     found = []
@@ -122,22 +142,7 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     if not (row.staff_emails if staff else row.recipients):
         found.append(NO_RECIPIENTS)
     if row.trigger in triggers.CATALOG:
-        errors = fields.validate(
-            {
-                "trigger": row.trigger,
-                "audience": row.audience,
-                "send_sms": row.send_sms,
-                "send_email": row.send_email,
-                "subject": row.subject,
-                "email_body": row.email_body,
-                "sms_body": row.sms_body,
-                "recipients": row.recipients,
-                "staff_emails": row.staff_emails,
-                "timing_direction": row.timing_direction,
-                "key": row.key,
-                "seeded": row.seeded,
-            }
-        )
+        errors = validation_errors(row)
         if any(msg.startswith("Unknown field") for msg in errors.values()):
             found.append(BAD_FIELD)
     if row.enabled and not master_on and not is_staff_click(row):
@@ -145,7 +150,8 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     return found
 
 
-def _edited(row: MessageTemplate) -> bool:
+def edited(row: MessageTemplate) -> bool:
+    """A seeded row that differs from its original (its switch aside)."""
     default = defaults.DEFAULTS.get(row.key)
     if default is None:
         return False
@@ -159,10 +165,11 @@ def _edited(row: MessageTemplate) -> bool:
     return sorted(t.name for t in row.service_types.all()) != sorted(default.service_type_names)
 
 
-def _tag(row: MessageTemplate) -> str:
+def tag(row: MessageTemplate) -> str:
+    """ "Added" for an added row, "Edited" for a changed seeded one, else ""."""
     if not row.seeded:
         return "Added"
-    return "Edited" if _edited(row) else ""
+    return "Edited" if edited(row) else ""
 
 
 def _click_label(row: MessageTemplate) -> str:
@@ -205,7 +212,7 @@ def build_sections(rows, filters: dict, *, master_on: bool = True) -> list[Secti
             row=row,
             summary=summary(row),
             problems=problems(row, master_on=master_on),
-            tag=_tag(row),
+            tag=tag(row),
             click_label=_click_label(row),
         )
         if _matches(item, filters):

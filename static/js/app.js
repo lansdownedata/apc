@@ -1608,11 +1608,12 @@ function checklistSchedule(opts = {}) {
 window.checklistSchedule = checklistSchedule;
 
 /* -------------------------------------------------- messageEditor
- * Settings -> Messages -> one message. Field chips insert {key} at the caret; the preview and
- * the timing example are rendered server-side by the real renderer and only re-requested
- * (debounced 300 ms) as the owner types. Everything lands via textContent.
+ * Settings -> Messages -> one message (spec C section 6). Who gets it, the trigger and its
+ * timing, service types and wording all live in one form; the server renders the preview
+ * (with whom it would reach and the fields the trigger can fill) and the timing example, both
+ * re-requested (debounced 300 ms) as the Admin edits. Everything lands via textContent.
  */
-function messageEditor(opts = {}) {
+function messageEditor(state = {}) {
   const DEBOUNCE_MS = 300;
   const timers = {};
   let previewSeq = 0;
@@ -1620,21 +1621,144 @@ function messageEditor(opts = {}) {
     clearTimeout(timers[key]);
     timers[key] = setTimeout(fn, DEBOUNCE_MS);
   };
+  const PASSENGERS =
+    "the lead passenger if one is marked, else every passenger with a mobile, else the booking contact";
   return {
-    tab: opts.tab,
+    trigger: state.trigger,
+    audience: state.audience,
+    direction: state.direction || "after",
+    sms: !!state.sms,
+    email: !!state.email,
+    enabled: !!state.enabled,
+    picked: state.picked || [],
+    services: state.services || [],
+    staffEmails: state.staffEmails || [],
+    chips: state.chips || [],
+    to: [],
+    smsTo: "",
+    emailTo: "",
     last: "",
     smsText: null,
     init() {
       this.updateCounter();
       this.refreshPreview();
+      this.$watch("picked", () => this.queuePreview());
+      this.$watch("services", () => this.queuePreview());
+    },
+    get meta() {
+      return state.triggers[this.trigger] || { audiences: [], behaviour: [] };
+    },
+    get isClick() {
+      return !!this.meta.click;
+    },
+    get clickLabel() {
+      return this.meta.label || "";
+    },
+    get hasTiming() {
+      return !!this.meta.timing;
+    },
+    get isDate() {
+      return !!this.meta.date;
+    },
+    get anchorWord() {
+      return this.isDate ? `${this.direction} ${this.meta.anchor}` : "after it happens";
+    },
+    get noTimingText() {
+      return this.meta.untimed || "";
+    },
+    get triggerChanged() {
+      return !!state.originalTrigger && this.trigger !== state.originalTrigger;
+    },
+    get ruleLines() {
+      return (this.meta.behaviour || []).concat(this.triggerChanged ? [] : state.builtIns || []);
+    },
+    get emailOnly() {
+      return this.email && !this.sms;
+    },
+    get hiddenNote() {
+      return this.emailOnly && (this.audience === "customer" || this.audience === "affiliate");
+    },
+    get hiddenText() {
+      return "Passengers and drivers only get texts, so they're hidden while this message is email-only.";
+    },
+    get chosen() {
+      const textOnly = state.textOnly || [];
+      return this.picked.filter(
+        (key) => (state.audienceKeys[this.audience] || []).includes(key) && !(this.emailOnly && textOnly.includes(key)),
+      );
+    },
+    get whoLine() {
+      if (this.audience === "staff") {
+        return "Goes to the staff emails above. Staff messages are never held for quiet hours.";
+      }
+      if (!this.chosen.length) {
+        return "Nobody is ticked, so this message won't send. It shows as a problem on the Messages page.";
+      }
+      const parts = this.chosen.map((key) => {
+        if (key === "passengers") return PASSENGERS;
+        if (key === "driver") return "the driver's cell on the assignment";
+        if (key === "company") return "the affiliate company's phone and email";
+        return `the ${(state.labels[key] || key).toLowerCase()}`;
+      });
+      let line = `Goes to ${parts.join("; plus ")}.`;
+      if (this.audience === "customer") line += " Farmed-in orders send to the sending operator instead.";
+      return line;
+    },
+    get serviceLine() {
+      return this.services.length
+        ? "Only for trips with one of these service types."
+        : "None picked, so it goes for every service type.";
+    },
+    get chipGroups() {
+      const groups = [];
+      for (const chip of this.chips) {
+        let group = groups.find((g) => g.name === chip.group);
+        if (!group) groups.push((group = { name: chip.group, chips: [] }));
+        group.chips.push(chip);
+      }
+      return groups;
+    },
+    allowed(audience) {
+      return (this.meta.audiences || []).includes(audience);
+    },
+    setAudience(audience) {
+      if (!this.allowed(audience) || audience === this.audience) return;
+      this.audience = audience;
+      this.picked = audience === "planner" ? ["planner"] : [];
+      this.queuePreview();
+    },
+    setTrigger(key) {
+      if (!key || key === this.trigger || !state.triggers[key]) return;
+      this.trigger = key;
+      if (!this.allowed(this.audience)) this.setAudience(this.meta.audiences[0]);
+      if (!this.isDate) this.direction = "after";
+      this.queueTiming();
+      this.queuePreview();
+    },
+    setDirection(value) {
+      this.direction = value;
+      this.queueTiming();
+    },
+    addStaffEmail() {
+      const input = this.$refs.staffInput;
+      const value = (input.value || "").trim().replace(/,$/, "");
+      if (value && !this.staffEmails.includes(value)) this.staffEmails.push(value);
+      input.value = "";
+      this.queuePreview();
+    },
+    removeStaffEmail(index) {
+      this.staffEmails.splice(index, 1);
+      this.queuePreview();
     },
     box(name) {
       return this.$root.querySelector(`[name="${name}"]`);
     },
     target() {
-      const boxes = this.tab === "sms" ? ["sms_body"] : ["subject", "email_body"];
-      const name = boxes.includes(this.last) ? this.last : boxes[boxes.length - 1];
-      return this.box(name);
+      const boxes = [];
+      if (this.sms) boxes.push("sms_body");
+      if (this.email) boxes.push("subject", "email_body");
+      const name = boxes.includes(this.last) ? this.last : boxes[0];
+      return name ? this.box(name) : null;
     },
     insert(key) {
       const el = this.target();
@@ -1644,14 +1768,20 @@ function messageEditor(opts = {}) {
       el.dispatchEvent(new Event("input", { bubbles: true }));
     },
     queue(event) {
-      const timing = event.target.closest && event.target.closest("[data-timing]");
-      if (timing) {
-        later(`t-${timing.dataset.timing}`, () => this.refreshTiming(timing.dataset.timing));
+      const name = event.target.name;
+      if (name === "timing_amount" || name === "timing_unit") {
+        this.queueTiming();
         return;
       }
-      if (event.target.name === "sms_body") this.updateCounter();
-      if (event.target.name === "enabled") return;
+      if (name === "sms_body") this.updateCounter();
+      if (name === "enabled" || name === "trigger" || !name) return;
+      this.queuePreview();
+    },
+    queuePreview() {
       later("preview", () => this.refreshPreview());
+    },
+    queueTiming() {
+      later("timing", () => this.refreshTiming());
     },
     updateCounter() {
       const counter = this.$root.querySelector("[data-counter]");
@@ -1659,15 +1789,12 @@ function messageEditor(opts = {}) {
       if (!counter || !box) return;
       const text = this.smsText !== null ? this.smsText : box.value;
       const n = text.length;
-      const segments = n === 0 ? 0 : n <= 160 ? 1 : Math.ceil(n / 153);
-      counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${segments} segment${segments === 1 ? "" : "s"}`;
+      const texts = n === 0 ? 0 : n <= 160 ? 1 : Math.ceil(n / 153);
+      counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${texts} text${texts === 1 ? "" : "s"}`;
     },
     async refreshPreview() {
-      const body = new URLSearchParams();
-      for (const name of ["subject", "email_body", "sms_body", "lead"]) {
-        const el = this.box(name);
-        if (el) body.append(name, el.value);
-      }
+      const form = this.$root.querySelector("#message-form");
+      const body = new URLSearchParams(new FormData(form));
       const seq = ++previewSeq;
       const error = this.$root.querySelector("[data-preview-error]");
       const label = this.$root.querySelector("[data-sample-label]");
@@ -1678,50 +1805,55 @@ function messageEditor(opts = {}) {
         this.updateCounter();
       };
       try {
-        const res = await fetch(opts.previewUrl, {
+        const res = await fetch(state.previewUrl, {
           method: "POST",
           headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
           body,
         });
         const data = await res.json().catch(() => null);
         if (seq !== previewSeq) return;
+        if (data && data.fields) this.chips = data.fields;
         if (!data || (!data.ok && !data.errors)) {
           fail("Preview unavailable. Check the text and try again.");
           return;
         }
-        if (data.ok) {
-          error.classList.add("hidden");
-          error.textContent = "";
-          label.classList.toggle("hidden", data.source !== "Sample order");
-          for (const channel of ["email", "sms"]) {
-            const pane = this.$root.querySelector(`[data-preview="${channel}"]`);
-            if (pane) pane.textContent = data[channel];
-          }
-          this.smsText = data.sms;
-        } else {
+        if (!data.ok) {
           fail(Object.values(data.errors)[0] || "");
           return;
         }
+        error.classList.add("hidden");
+        error.textContent = "";
+        label.classList.toggle("hidden", data.source !== "Sample order");
+        for (const channel of ["email", "sms"]) {
+          const pane = this.$root.querySelector(`[data-preview="${channel}"]`);
+          if (pane) pane.textContent = data[channel];
+        }
+        this.to = data.to || [];
+        this.smsTo = data.sms_to || "";
+        this.emailTo = data.email_to || "";
+        this.smsText = data.sms;
       } catch (e) {
         if (seq === previewSeq) fail("Preview unavailable. Check the text and try again.");
         return;
       }
       this.updateCounter();
     },
-    async refreshTiming(prefix) {
-      const row = this.$root.querySelector(`[data-timing="${prefix}"]`);
-      const example = row.querySelector("[data-example]");
-      const amount = row.querySelector(`[name="${prefix}_amount"]`).value;
-      const unit = row.querySelector(`[name="${prefix}_unit"]`).value;
-      if (amount === "") {
+    async refreshTiming() {
+      const example = this.$root.querySelector("[data-example]");
+      const amount = this.box("timing_amount");
+      const unit = this.box("timing_unit");
+      if (!this.hasTiming || !amount || amount.value === "") {
         example.textContent = "";
         return;
       }
-      const url = opts.timingUrl;
+      const qs = new URLSearchParams({
+        trigger: this.trigger,
+        direction: this.direction,
+        amount: amount.value,
+        unit: unit ? unit.value : "",
+      });
       try {
-        const res = await fetch(`${url}?${new URLSearchParams({ amount, unit })}`, {
-          headers: { Accept: "application/json" },
-        });
+        const res = await fetch(`${state.timingUrl}?${qs}`, { headers: { Accept: "application/json" } });
         const data = await res.json();
         example.textContent = data.ok ? data.text : data.error;
       } catch (e) {
@@ -1730,11 +1862,20 @@ function messageEditor(opts = {}) {
     },
     confirmReset() {
       Alpine.store("modal").confirm({
-        title: "Reset this message?",
-        message: "Its wording, timing and switch go back to the defaults.",
+        title: "Reset to the original?",
+        message: "Its wording, people, timing, trigger, service types and switch go back to how the message came.",
         variant: "gold",
         confirmText: "Reset",
         onConfirm: () => document.getElementById("message-reset-form").submit(),
+      });
+    },
+    confirmArchive() {
+      Alpine.store("modal").confirm({
+        title: "Archive this message?",
+        message: "It stops sending and leaves the Messages page. Anything already sent keeps its history.",
+        variant: "danger",
+        confirmText: "Archive",
+        onConfirm: () => document.getElementById("message-archive-form").submit(),
       });
     },
   };
