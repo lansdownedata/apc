@@ -31,10 +31,30 @@ False everywhere else, and with it off every customer and affiliate send is refu
 is right for a portal that is not live, and wrong for a suite whose job is to prove what
 those sends say. The tests about the switch itself turn it back off via the `settings`
 fixture (see `apps/core/tests/test_outbound.py`).
+
+Autouse: quiet hours are off for the suite (APC-114). Their window defaults to 9 PM to 8 AM
+in the trip's zone and the clock is real, so without this every test that sends a text
+would pass by day and fail by night. Tests about quiet hours turn them back on with
+`@pytest.mark.quiet_hours` (see `apps/messaging/tests/test_quiet_hours.py`), and so does the
+golden recording (`apps/messaging/tests/test_golden.py`): its scenarios run on a frozen clock
+in the daytime, so a text held there means the hold logic is wrong.
 """
 
 import pytest
 from django.core.cache import cache
+
+# Modules that run with real quiet hours, as if each test carried the marker.
+_REAL_QUIET_HOURS = ("apps/messaging/tests/test_golden.py",)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "quiet_hours: run with real quiet hours (APC-114)")
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.nodeid.startswith(_REAL_QUIET_HOURS):
+            item.add_marker(pytest.mark.quiet_hours)
 
 
 @pytest.fixture(autouse=True)
@@ -57,3 +77,9 @@ def _empty_cache():
     cache.clear()
     yield
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _quiet_hours_off(request, monkeypatch):
+    if request.node.get_closest_marker("quiet_hours") is None:
+        monkeypatch.setattr("apps.messaging.quiet.hold_until", lambda *_, **__: None)

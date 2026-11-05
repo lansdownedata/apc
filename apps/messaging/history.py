@@ -91,7 +91,13 @@ def for_lead(lead) -> list[HistoryRow]:
             continue
         for d in deliveries:
             status = _DELIVERY_STATUS.get(d.status, d.get_status_display())
-            if d.status == Delivery.Status.SENT:
+            reason = d.reason
+            if d.status == Delivery.Status.QUEUED and tp.status != TouchPoint.Status.SCHEDULED:
+                # A text held for quiet hours whose send closed before it went (its pickup
+                # moved, the order was lost): the line says how it closed, not "Waiting".
+                status, reason = _tp_status(tp)
+                when = tp.updated_at
+            elif d.status == Delivery.Status.SENT:
                 when = tp.sent_at or d.updated_at
             elif d.status in (Delivery.Status.FAILED, Delivery.Status.SKIPPED):
                 when = d.updated_at
@@ -100,7 +106,7 @@ def for_lead(lead) -> list[HistoryRow]:
             who = d.recipient_label or d.get_channel_display()
             to = f"{who} · {d.get_channel_display()}" if d.recipient_label else who
             row = HistoryRow(
-                name, when, label, to, status, d.reason, _when_display(when, zone), _group(status)
+                name, when, label, to, status, reason, _when_display(when, zone), _group(status)
             )
             rows.append((when, row))
     # Problems and upcoming sends oldest first; sent, then cancelled, newest first.

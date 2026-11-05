@@ -7,7 +7,8 @@ TouchPoint keeps today's status and error strings, which the order's history and
 recording read. `run_touchpoints` is the `run-touchpoints` cron job; `send_due` is the same
 batch for rows an event queued, called once its transaction commits. `send_now` is the same
 path for a staff click, an invite or a report, sent inside the request (spec C section 8);
-`send_report` is a staff report's way in, from its cron job.
+`send_report` is a staff report's way in, from its cron job. Inside quiet hours (`quiet`) a
+due text is queued until the window ends while its email goes now; a click is never held.
 
 Transport is today's: texts and customer/affiliate email through Podium, planner and staff
 email (and any trigger whose email goes by Postmark) through our own mail, in the branded
@@ -31,7 +32,7 @@ from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.notifications import email as mail
 
-from . import fields, recipients, rendering, rules, triggers
+from . import fields, quiet, recipients, rendering, rules, triggers
 from .models import Delivery, MessageTemplate, NotificationConfig, Review, TouchPoint
 from .recipients import Recipient
 from .rendering import Block
@@ -47,6 +48,9 @@ NO_RECIPIENT = "No recipient"
 # Today's TouchPoint error when the people it resolved have no address it can use.
 NO_CHANNEL = "recipient has no usable channel"
 MISSING = {"sms": "No mobile on file", "email": "No email on file"}
+# Why a text held for quiet hours was closed unsent: by morning the address it was held for
+# was no longer among the message's recipients.
+NO_LONGER = "No longer a recipient"
 # Why the cron closed a staff click's or report's TouchPoint that its own send never finished.
 INTERRUPTED = "send interrupted"
 # Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
@@ -396,18 +400,53 @@ def _transport(
 # --- sending ---------------------------------------------------------------------------
 
 
-def _record(tp, row, channel, person, address, key, status, reason="", provider_id=""):
-    return Delivery.objects.create(
-        touchpoint=tp,
-        message=row,
-        channel=channel,
-        recipient_label=person.label[:160],
-        address=address,
-        combine_key=key,
-        status=status,
-        reason=reason[:255],
-        provider_id=(provider_id or "")[:64],
-    )
+def _record(
+    tp, row, channel, person, address, key, status, reason="", provider_id="", *, line=None
+):
+    """A Delivery for this send; ``line`` is the queued one an earlier run left for this
+    address (a text held for quiet hours), which this run settles rather than doubles, so
+    the order's history keeps one line per address."""
+    values = {
+        "recipient_label": person.label[:160],
+        "address": address,
+        "combine_key": key,
+        "status": status,
+        "reason": reason[:255],
+        "provider_id": (provider_id or "")[:64],
+    }
+    if line is None:
+        return Delivery.objects.create(touchpoint=tp, message=row, channel=channel, **values)
+    for name, value in values.items():
+        setattr(line, name, value)
+    line.save(update_fields=[*values, "updated_at"])
+    return line
+
+
+def _waiting(done: list[Delivery], channel: str | None = None) -> dict[tuple[str, str], Delivery]:
+    """The queued lines (texts held for quiet hours) by channel and lowercased address."""
+    return {
+        (d.channel, d.address.lower()): d
+        for d in done
+        if d.status == Delivery.Status.QUEUED and channel in (None, d.channel)
+    }
+
+
+def _hold(tp: TouchPoint, until, waiting: dict[tuple[str, str], Delivery]) -> None:
+    """Leave the TouchPoint SCHEDULED until quiet hours end, so the run then sends the texts
+    held; saving `updated_at` ends the lease. The reason is on each held line, not the
+    TouchPoint (a pickup move that cancels it must not read "Quiet hours"). Lines still
+    waiting were held for someone who is no longer a recipient."""
+    _close(waiting)
+    tp.scheduled_for = until
+    tp.error = ""
+    tp.save(update_fields=["scheduled_for", "error", "updated_at"])
+
+
+def _close(waiting: dict[tuple[str, str], Delivery]) -> None:
+    for line in waiting.values():
+        line.status = Delivery.Status.SKIPPED
+        line.reason = NO_LONGER
+        line.save(update_fields=["status", "reason", "updated_at"])
 
 
 def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[Delivery], set[str]]:
@@ -495,18 +534,38 @@ def _finish(
 
 
 def _send(
-    tp: TouchPoint, row: MessageTemplate, people: list[Recipient], click: _Click | None = None
+    tp: TouchPoint,
+    row: MessageTemplate,
+    people: list[Recipient],
+    click: _Click | None = None,
+    config: NotificationConfig | None = None,
 ) -> bool:
     key = rules.combine_key(tp, row)
     done, elsewhere = _deliveries(tp, row, key)
     sent_here = {(d.channel, d.address.lower()) for d in done if d.status == Delivery.Status.SENT}
     reported = {(d.channel, d.recipient_label) for d in done if d.status == Delivery.Status.SKIPPED}
+    # A run settling texts an earlier one held for quiet hours sends only what is missing:
+    # what that run tried, or found already sent for the day, stays as it was.
+    waiting = _waiting(done)
+    tried = {
+        (d.channel, d.address.lower()): d
+        for d in done
+        if waiting and d.address and d.status in (Delivery.Status.FAILED, Delivery.Status.SKIPPED)
+    }
+    errors = [
+        f"{d.channel}: {d.reason}" for d in tried.values() if d.status == Delivery.Status.FAILED
+    ]
     everyone_covered = _old_engine_covered(tp, row)
-    plan: list[tuple[str, Recipient, str]] = []
+    plan: list[tuple[str, Recipient, str, Delivery | None]] = []
     covered = 0
     channels = row.channels
     if click is not None and click.channels is not None:
         channels = tuple(c for c in channels if c in click.channels)
+    # Quiet hours hold texts, never a click's: the email part goes now (spec C section 5).
+    until = None
+    if click is None and "sms" in channels:
+        until = quiet.hold_until(tp, row, now=timezone.now(), config=config)
+    held = False
     for channel in channels:
         for person in people:
             if channel in person.channels and not _address(person, channel):
@@ -517,12 +576,21 @@ def _send(
             address = _address(person, channel)
             if (channel, normalised) in sent_here:
                 continue
+            if (channel, normalised) in tried:
+                covered += tried[channel, normalised].status == Delivery.Status.SKIPPED
+                continue
+            line = waiting.pop((channel, normalised), None)
             if everyone_covered or normalised in elsewhere:
                 covered += 1
                 reason = f"Already sent for {_day_label(tp)}"
-                _record(tp, row, channel, person, address, key, "skipped", reason)
+                _record(tp, row, channel, person, address, key, "skipped", reason, line=line)
                 continue
-            plan.append((channel, person, address))
+            if channel == "sms" and until is not None:
+                held = True
+                reason = quiet.reason(until)
+                _record(tp, row, channel, person, address, key, "queued", reason, line=line)
+                continue
+            plan.append((channel, person, address, line))
 
     # Every wording is rendered before the first send, so a bad one stops the TouchPoint
     # before anyone has heard from it.
@@ -532,12 +600,11 @@ def _send(
     logo = click.logo if click is not None else False
     tolerant = click is not None
     preheader = click.preheader if click is not None else ""
-    for _, person, _ in plan:
+    for _, person, _, _ in plan:
         if person not in contexts:
             contexts[person] = context(tp, row, person, extra)
     sent_now: list[Delivery] = []
-    errors: list[str] = []
-    for channel, person, address in plan:
+    for channel, person, address, line in plan:
         try:
             provider_id = _transport(
                 row,
@@ -551,32 +618,55 @@ def _send(
             )
         except _SEND_ERRORS as exc:
             errors.append(f"{channel}: {exc}")
-            _record(tp, row, channel, person, address, key, "failed", str(exc))
+            _record(tp, row, channel, person, address, key, "failed", str(exc), line=line)
         else:
             sent_now.append(
-                _record(tp, row, channel, person, address, key, "sent", "", provider_id)
+                _record(tp, row, channel, person, address, key, "sent", "", provider_id, line=line)
             )
+    if held:
+        _hold(tp, until, waiting)
+        return bool(sent_now)
+    _close(waiting)
     return _finish(
         tp, row, sent_now=sent_now, sent_before=bool(sent_here), errors=errors, covered=covered
     )
 
 
-def _review(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool:
+def _review(
+    tp: TouchPoint,
+    row: MessageTemplate,
+    people: list[Recipient],
+    config: NotificationConfig | None = None,
+) -> bool:
     """The seeded review request: Podium's review invite and a `Review` row per phone, then
-    the text carrying the invite's link (as the old `_send_review_invite`)."""
+    the text carrying the invite's link (as the old `_send_review_invite`). In quiet hours
+    neither goes: each phone waits for the morning, as any text does."""
     done, _ = _deliveries(tp, row, "")
     sent_here = {d.address for d in done if d.status == Delivery.Status.SENT and d.channel == "sms"}
+    waiting = _waiting(done, "sms")
+    until = quiet.hold_until(tp, row, now=timezone.now(), config=config)
+    if until is not None:
+        held = False
+        for person, phone in recipients.addresses(people, "sms"):
+            if phone not in sent_here:
+                held = True
+                line = waiting.pop(("sms", phone.lower()), None)
+                _record(tp, row, "sms", person, phone, "", "queued", quiet.reason(until), line=line)
+        if held:
+            _hold(tp, until, waiting)
+            return False
     sent_now: list[Delivery] = []
     errors: list[str] = []
     for person, phone in recipients.addresses(people, "sms"):
         if phone in sent_here:
             continue
+        line = waiting.pop(("sms", phone.lower()), None)
         first, last = _split_name(person.name)
         try:
             invite = podium.create_review_invitation(phone=phone, first_name=first, last_name=last)
         except (PodiumAPIError, PodiumNotConnected) as exc:
             errors.append(str(exc))
-            _record(tp, row, "sms", person, phone, "", "failed", str(exc))
+            _record(tp, row, "sms", person, phone, "", "failed", str(exc), line=line)
             continue
         Review.objects.create(
             lead=tp.lead,
@@ -591,9 +681,12 @@ def _review(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bo
             provider_id = _transport(row, "sms", phone, ctx)
         except (PodiumAPIError, PodiumNotConnected) as exc:
             errors.append(str(exc))
-            _record(tp, row, "sms", person, phone, "", "failed", str(exc))
+            _record(tp, row, "sms", person, phone, "", "failed", str(exc), line=line)
         else:
-            sent_now.append(_record(tp, row, "sms", person, phone, "", "sent", "", provider_id))
+            sent_now.append(
+                _record(tp, row, "sms", person, phone, "", "sent", "", provider_id, line=line)
+            )
+    _close(waiting)
     return _finish(
         tp, row, sent_now=sent_now, sent_before=bool(sent_here), errors=errors, covered=0
     )
@@ -631,6 +724,7 @@ def deliver(
     *,
     master: bool | None = None,
     rows: dict[str, MessageTemplate] | None = None,
+    config: NotificationConfig | None = None,
 ) -> bool:
     """Send one SCHEDULED TouchPoint now if its checks allow; True iff a Delivery was sent
     by this call. A TouchPoint another call is sending, or that changed since `tp` was read,
@@ -638,22 +732,24 @@ def deliver(
 
     A wait leaves it SCHEDULED with the reason in `error`; a skip or cancel closes it with
     the reason. Addresses this TouchPoint already reached are never sent again, so a re-run
-    only sends what is missing. ``master`` and ``rows`` let a batch read the master switch and
-    the message rows once."""
+    only sends what is missing. Inside quiet hours its texts are held to the window's end
+    (`quiet.hold_until`): the emails go, and the TouchPoint stays SCHEDULED until then.
+    ``master``, ``rows`` and ``config`` (the `NotificationConfig` row) let a batch read the
+    master switch, the message rows and the quiet hours once."""
     if not _claim(tp):
         return False
-    return _claimed(tp, master=master, rows=rows)
+    return _claimed(tp, master=master, rows=rows, config=config)
 
 
-def _claimed(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bool:
+def _claimed(tp: TouchPoint, *, master, rows, click: _Click | None = None, config=None) -> bool:
     tp.send_cache = {}  # read by `rules.confirm_group`, for this send only
     try:
-        return _deliver(tp, master=master, rows=rows, click=click)
+        return _deliver(tp, master=master, rows=rows, click=click, config=config)
     finally:
         tp.__dict__.pop("send_cache", None)
 
 
-def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bool:
+def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None, config=None) -> bool:
     pointed = tp.message_id is None
     row = _row_for(tp, rows)
     if row is None:
@@ -691,8 +787,8 @@ def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bo
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=NO_RECIPIENT)
         return False
     if row.key == "review_request" and rules.has_built_ins(row):
-        return _review(tp, row, people)
-    return _send(tp, row, people, click)
+        return _review(tp, row, people, config)
+    return _send(tp, row, people, click, config)
 
 
 def _settle_after_error(
@@ -733,7 +829,8 @@ def _send_batch(due) -> int:
             logger.info("outbound off: %d due touch-point(s) skipped, not sent", held)
         return 0
 
-    master = NotificationConfig.load().enabled
+    config = NotificationConfig.load()
+    master = config.enabled
     rows = Rows(MessageTemplate.objects.prefetch_related("service_types"))
     sent = 0
     batch = (
@@ -743,7 +840,7 @@ def _send_batch(due) -> int:
     )
     for tp in batch:
         try:
-            if deliver(tp, master=master, rows=rows):
+            if deliver(tp, master=master, rows=rows, config=config):
                 sent += 1
         except Exception:  # noqa: BLE001 - one bad row must not kill the run
             logger.exception("touch-point %s failed to send", tp.pk)
