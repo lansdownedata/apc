@@ -1,7 +1,0 @@
-{% autoescape off %}Dispatch exceptions — {{ now|date:"D M j, g:i A" }}
-
-{{ lines|length }} exception{{ lines|length|pluralize }} need attention{% if critical_count %} ({{ critical_count }} CRITICAL){% endif %}.
-{% include "email/blocks/report_table/dispatch_exceptions.txt" %}
---
-{{ company_name }}
-{% endautoescape %}

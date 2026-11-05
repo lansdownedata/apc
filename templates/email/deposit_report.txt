@@ -1,7 +1,0 @@
-{% autoescape off %}Unpaid deposits — {{ today|date:"l, F j, Y" }}
-
-{{ rows|length }} booked order{{ rows|length|pluralize }} with a trip inside {{ window_days }} days and no deposit collected:
-{% include "email/blocks/report_table/deposit_report.txt" %}
---
-{{ company_name }}
-{% endautoescape %}

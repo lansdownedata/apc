@@ -502,3 +502,92 @@ def test_no_other_row_can_move_onto_a_report_trigger(key):
     assert not editor.can_pick(_row("tp1_welcome"), key)
     assert editor.can_pick(_row(key), key)
     assert not editor.can_pick(_row(key), "quote_sent")
+
+
+class _Singletons:
+    """Stands in for a historical model's manager: `.filter(pk=1).first()`. The real
+    tables have lost these columns by now (tasks 0016, dispatch 0012), so the config the
+    migration read is faked at the registry; the rows themselves are the real model."""
+
+    def __init__(self, row):
+        self.objects = self
+        self.row = row
+
+    def filter(self, **_kw):
+        return self
+
+    def first(self):
+        return self.row
+
+
+class _Registry:
+    def __init__(self, tasks, alerts):
+        self.models = {("tasks", "taskconfig"): tasks, ("dispatch", "dispatchalertconfig"): alerts}
+
+    def get_model(self, app, name):
+        return (
+            self.models.get((app, name.lower()))
+            or {
+                "MessageTemplate": MessageTemplate,
+                "TouchPoint": TouchPoint,
+            }.get(name)
+            or _live(app, name)
+        )
+
+
+def _live(app, name):
+    from django.apps import apps as live
+
+    return live.get_model(app, name)
+
+
+def _unseeded(monkeypatch):
+    for var in ("DEPOSIT_REPORT_EMAILS", "TRIP_CONFIRM_REPORT_EMAILS"):
+        monkeypatch.delenv(var, raising=False)
+    MessageTemplate.objects.filter(key__in=KEYS).update(seeded=False, staff_emails=[])
+
+
+def test_the_migration_reads_the_tasks_and_dispatch_singletons(monkeypatch, settings):
+    """`seed_rows` fills each fresh report row from the Tasks and Dispatch alerts config
+    the way the screens read them (the branch a fresh test DB never reaches, with no
+    singletons yet)."""
+    from types import SimpleNamespace
+
+    seed = importlib.import_module(SEED)
+    settings.COMPANY_EMAIL = "office@apc.test"
+    _unseeded(monkeypatch)
+    registry = _Registry(
+        _Singletons(SimpleNamespace(digest_emails="a@apc.test\nb@apc.test", report_emails="")),
+        _Singletons(SimpleNamespace(alert_emails="c@apc.test; d@apc.test")),
+    )
+    seed.seed_rows(registry, None)
+    got = {key: _row(key).staff_emails for key in KEYS}
+    digest = ["a@apc.test", "b@apc.test"]
+    assert got == {
+        "task_digest": digest,
+        "review_report": digest,
+        "complaint_report": digest,
+        "dispatch_alert": ["c@apc.test", "d@apc.test"],
+        "deposit_report": ["office@apc.test"],
+        "unconfirmed_trips_report": ["office@apc.test"],
+    }
+
+
+def test_the_migration_uses_the_report_list_and_leaves_edited_rows_alone(monkeypatch, settings):
+    from types import SimpleNamespace
+
+    seed = importlib.import_module(SEED)
+    settings.COMPANY_EMAIL = "office@apc.test"
+    _unseeded(monkeypatch)
+    MessageTemplate.objects.filter(key="task_digest").update(
+        seeded=True, staff_emails=["edited@apc.test"]
+    )
+    registry = _Registry(
+        _Singletons(SimpleNamespace(digest_emails="a@apc.test", report_emails="r@apc.test")),
+        _Singletons(None),
+    )
+    seed.seed_rows(registry, None)
+    assert _row("review_report").staff_emails == ["r@apc.test"]
+    assert _row("complaint_report").staff_emails == ["r@apc.test"]
+    assert _row("dispatch_alert").staff_emails == ["office@apc.test"]
+    assert _row("task_digest").staff_emails == ["edited@apc.test"]

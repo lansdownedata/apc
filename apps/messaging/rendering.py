@@ -27,7 +27,7 @@ from django.utils.safestring import SafeString, mark_safe
 
 from .touchpoint_templates import render
 
-# The inline styles of templates/email/planner_invite.html: its greeting, then its body copy.
+# The inline styles of the old planner invite email: its greeting, then its body copy.
 _FIRST = '<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">'
 _BODY = '<p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">'
 _BLOCK = '<div style="margin:0 0 28px;">'

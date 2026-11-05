@@ -1,7 +1,0 @@
-{% autoescape off %}Overdue tasks — {{ now|date:"D M j" }}
-
-{{ count }} task{{ count|pluralize }} past due, oldest first.
-{% include "email/blocks/report_table/task_digest.txt" %}
---
-{{ company_name }}
-{% endautoescape %}

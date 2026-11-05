@@ -1,6 +1,0 @@
-{% autoescape off %}{{ rows|length }} new customer complaint{{ rows|length|pluralize }} since {{ since|date:"D M j, g:i A" }}
-{% include "email/blocks/report_table/complaint_report.txt" %}
-
---
-{{ company_name }}
-{% endautoescape %}
