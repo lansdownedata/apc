@@ -34,7 +34,7 @@ from apps.fleet.factories import DriverFactory
 from apps.leads import services as lead_services
 from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import events
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.payments import services as payments
 from apps.payments.models import Charge, PaymentPlan
@@ -221,7 +221,7 @@ def normalise(text: str) -> str:
 
 def _lead_came_in(lead: Lead) -> None:
     """What the New-lead form and the inbox's Create lead do."""
-    touchpoints.schedule_lead_created(lead)
+    events.emit("lead_created", lead)
 
 
 def _quote_viewed(lead: Lead) -> None:
@@ -229,7 +229,7 @@ def _quote_viewed(lead: Lead) -> None:
     lead.quote_viewed_at = lead.quote_last_viewed_at = clock.now
     lead.quote_view_count = 1
     lead.save(update_fields=["quote_viewed_at", "quote_last_viewed_at", "quote_view_count"])
-    touchpoints.schedule_quote_viewed(lead)
+    events.emit("quote_viewed", lead)
 
 
 def _trips_done(lead: Lead) -> None:
@@ -237,7 +237,7 @@ def _trips_done(lead: Lead) -> None:
     (what the task engine and the LimoAnywhere webhook both do; idempotent)."""
     for trip in lead.reservations.all():
         set_trip_status(trip, Reservation.TripStatus.DONE)
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
 
 
 def _switch_on(kind: str) -> None:
@@ -254,7 +254,14 @@ def _queue_status_dispatched(trip: Reservation) -> TouchPoint:
 
 
 def _message(kind: str, *, lead: Lead | None = None, trip: Reservation | None = None):
-    """The one live (not cancelled) row of `kind` for a lead or a trip."""
+    """The one live (not cancelled) row of `kind` for a lead or a trip. A wedding order's
+    thank-you is its own message (`thank_you_wedding`), queued beside the plain one, which
+    stands down for it: that is the one the customer gets."""
+    if (
+        kind == K.THANK_YOU
+        and TouchPoint.objects.filter(lead=lead, kind="thank_you_wedding").exists()
+    ):
+        kind = "thank_you_wedding"
     rows = TouchPoint.objects.filter(kind=kind).exclude(status=TouchPoint.Status.CANCELLED)
     rows = rows.filter(reservation=trip) if trip is not None else rows.filter(lead=lead)
     return rows.get()

@@ -33,7 +33,6 @@ POST_TRIP |= {"thank_you_sent"}
 def _quiet():
     with (
         patch("apps.integrations.la_sync.push_lead_bookings"),
-        patch("apps.messaging.touchpoints.notify_status_change"),
     ):
         yield
 
@@ -390,3 +389,40 @@ def test_an_order_whose_last_trip_ended_long_ago_never_enters():
     run_tasks()
 
     assert "ops_review" not in _kinds(old)
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("thank_you", "thank_you"),
+        ("thank_you_wedding", "thank_you_wedding"),
+        ("thank_you", "thank_you_wedding"),  # an old-engine row re-pointed at the cut-over
+    ],
+)
+def test_any_thank_you_sent_counts(kind, message):
+    """A wedding order is thanked by the wedding thank-you: that completes the task too."""
+    from apps.messaging.models import MessageTemplate, TouchPoint
+    from apps.tasks.facts import load_facts
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    TouchPoint.objects.create(
+        lead=lead,
+        kind=kind,
+        message=MessageTemplate.objects.get(key=message),
+        status=TouchPoint.Status.SENT,
+    )
+    assert load_facts([lead])[lead.pk].thank_you_sent is True
+
+
+def test_a_thank_you_not_yet_sent_does_not_count():
+    from apps.messaging.models import MessageTemplate, TouchPoint
+    from apps.tasks.facts import load_facts
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    TouchPoint.objects.create(
+        lead=lead,
+        kind="thank_you_wedding",
+        message=MessageTemplate.objects.get(key="thank_you_wedding"),
+        status=TouchPoint.Status.SCHEDULED,
+    )
+    assert load_facts([lead])[lead.pk].thank_you_sent is False

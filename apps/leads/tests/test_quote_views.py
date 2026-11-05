@@ -31,10 +31,11 @@ def test_every_open_increments_the_count(client, quoted_lead):
 
 def test_touchpoints_fire_only_on_the_first_open(client, quoted_lead):
     url = reverse("quote_page", args=[services.make_deposit_token(quoted_lead)])
-    with patch("apps.leads.views.touchpoints.schedule_quote_viewed") as scheduled:
+    with patch("apps.leads.views.events.emit") as scheduled:
         for _ in range(3):
             client.get(url)
     assert scheduled.call_count == 1
+    assert scheduled.call_args.args[0] == "quote_viewed"
 
 
 def test_first_viewed_at_is_stamped_once(client, quoted_lead):

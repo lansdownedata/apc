@@ -28,9 +28,9 @@ def _schedule_new_members(lead) -> None:
     booked or the new trips even have a pickup date yet.
     """
     if lead.status == lead.Status.BOOKED:
-        from apps.messaging import touchpoints
+        from apps.messaging import events
 
-        touchpoints.schedule_service_touchpoints(lead)
+        events.schedule_dates(lead)
 
 
 def _reschedule_if_pickup_moved(reservation, lead, prev_pickup: tuple) -> None:
@@ -45,10 +45,10 @@ def _reschedule_if_pickup_moved(reservation, lead, prev_pickup: tuple) -> None:
         reservation.pickup_date,
         reservation.pickup_time,
     ):
-        from apps.messaging import touchpoints
+        from apps.messaging import events
 
-        touchpoints.reschedule_service_touchpoints(reservation)
-        touchpoints.sync_driver_message(reservation)
+        events.reschedule_trip(reservation)
+        events.sync_waiting(reservation)
 
 
 # A wedding shuttle is the motivating case — four minibuses on one itinerary — but a

@@ -16,7 +16,7 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import events, sender
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.services import set_trip_status
@@ -41,7 +41,7 @@ def test_schedules_customer_confirmation_at_pickup_minus_72h():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future(), pickup_time=None)
 
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
 
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     assert tp.lead_id == lead.pk
@@ -53,7 +53,7 @@ def test_wedding_trip_also_schedules_the_t7d_message():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, service_type=wedding, pickup_date=_future())
 
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
 
     tp = TouchPoint.objects.get(reservation=res, kind=K.WED_FINAL_DETAILS)
     assert tp.scheduled_for == res.pickup_at - timedelta(days=7)
@@ -62,29 +62,29 @@ def test_wedding_trip_also_schedules_the_t7d_message():
 def test_non_wedding_trip_gets_no_wedding_message():
     lead = _booked_lead()
     ReservationFactory(lead=lead, pickup_date=_future())
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     assert not TouchPoint.objects.filter(kind=K.WED_FINAL_DETAILS).exists()
 
 
 def test_source_leg_id_marks_a_trip_as_a_wedding():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future(), source_leg_id="guests-in")
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     assert TouchPoint.objects.filter(reservation=res, kind=K.WED_FINAL_DETAILS).exists()
 
 
 def test_trip_without_a_pickup_date_is_skipped():
     lead = _booked_lead()
     ReservationFactory(lead=lead, pickup_date=None)
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     assert not TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_CUSTOMER).exists()
 
 
 def test_scheduling_is_idempotent():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future())
-    touchpoints.schedule_service_touchpoints(lead)
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
+    events.schedule_dates(lead)
     assert TouchPoint.objects.filter(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER).count() == 1
 
 
@@ -92,7 +92,7 @@ def test_a_past_anchor_is_still_scheduled():
     """A late booking (< 72h out) still deserves a confirmation."""
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=(timezone.now() + timedelta(hours=12)).date())
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     assert tp.scheduled_for < timezone.now()
 
@@ -113,7 +113,7 @@ def test_book_lead_schedules_the_service_touchpoints():
 def test_reservation_editor_reschedules_on_a_pickup_date_change():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future(10))
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     original = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
 
     from apps.reservations.drafts import save_reservation_from_draft
@@ -154,7 +154,7 @@ def test_reschedule_cancels_an_already_sent_confirmation_and_makes_a_fresh_one()
         sent_at=timezone.now() - timedelta(days=1),
     )
 
-    touchpoints.reschedule_service_touchpoints(res)
+    events.reschedule_trip(res)
 
     sent.refresh_from_db()
     assert sent.status == TouchPoint.Status.CANCELLED
@@ -171,7 +171,7 @@ def test_reschedule_clears_a_stale_customer_and_affiliate_acknowledgement():
         reservation=res, status=Assignment.Status.CONFIRMED, affiliate_confirmed_at=timezone.now()
     )
 
-    touchpoints.reschedule_service_touchpoints(res)
+    events.reschedule_trip(res)
 
     res.refresh_from_db()
     a.refresh_from_db()
@@ -284,15 +284,15 @@ def test_sync_driver_message_needs_confirmed_plus_driver_info():
         driver_name="",
         driver_cell="",
     )
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
     assert not TouchPoint.objects.filter(kind=K.DRIVER_RELEASED).exists()
 
     a.driver_name = "Sam Rivera"
     a.driver_cell = "+15715551212"
     a.save()
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
     assert TouchPoint.objects.filter(reservation=res, kind=K.DRIVER_RELEASED).count() == 1
-    touchpoints.sync_driver_message(res)  # once only
+    events.sync_waiting(res)  # once only
     assert TouchPoint.objects.filter(reservation=res, kind=K.DRIVER_RELEASED).count() == 1
 
 
@@ -311,12 +311,12 @@ def test_customer_confirmation_sends_for_a_booked_lead():
     lead.contact.email = "rider@example.com"
     lead.contact.save()
     res = ReservationFactory(lead=lead, pickup_date=_future())
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     _due(tp)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
     body = send.call_args.kwargs["body"]
     assert "https://apc.example.com/trip/" in body
 
@@ -328,7 +328,7 @@ def _wedding_confirm(lead):
     """A due 72h confirmation on a wedding trip of `lead`."""
     wedding = ServiceTypeFactory(name="Wedding Transportation")
     res = ReservationFactory(lead=lead, service_type=wedding, pickup_date=_future())
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     _due(tp)
     return tp
@@ -346,8 +346,8 @@ def test_a_wedding_confirmation_goes_to_the_billing_contact():
     payer = _contact("Pat Payer", "+15715550002")
     tp = _wedding_confirm(_booked_lead(contact=booker, billing_contact=payer))
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
 
     assert send.call_args.kwargs["identifier"] == "+15715550002"
     body = send.call_args.kwargs["body"]
@@ -365,13 +365,13 @@ def test_a_mixed_day_sends_both_the_plain_and_the_wedding_confirmation():
     day = wedding_tp.reservation.pickup_date
     plain_lead = _booked_lead(contact=booker)
     plain = ReservationFactory(lead=plain_lead, pickup_date=day)
-    touchpoints.schedule_service_touchpoints(plain_lead)
+    events.schedule_dates(plain_lead)
     plain_tp = TouchPoint.objects.get(reservation=plain, kind=K.TRIP_CONFIRM_CUSTOMER)
     _due(plain_tp)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(plain_tp) is True
-        assert touchpoints._process(wedding_tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(plain_tp) is True
+        assert sender.deliver(wedding_tp) is True
 
     sent_to = [c.kwargs["identifier"] for c in send.call_args_list]
     assert sent_to == ["+15715550001", "+15715550002"]
@@ -388,8 +388,8 @@ def test_the_second_wedding_notice_still_goes_while_the_fees_are_pending():
     second = TouchPoint.objects.get(reservation=first.reservation, kind=K.TRIP_CONFIRM_CUSTOMER_2)
     _due(second)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        assert touchpoints._process(second) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        assert sender.deliver(second) is True
 
 
 @override_settings(PUBLIC_BASE_URL="https://apc.example.com")
@@ -397,8 +397,8 @@ def test_a_wedding_confirmation_falls_back_to_the_booking_contact():
     booker = _contact("Casey Booker", "+15715550001")
     tp = _wedding_confirm(_booked_lead(contact=booker))
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
 
     assert send.call_args.kwargs["identifier"] == "+15715550001"
 
@@ -409,12 +409,12 @@ def test_a_non_wedding_confirmation_still_goes_to_the_booking_contact():
     payer = _contact("Pat Payer", "+15715550002")
     lead = _booked_lead(contact=booker, billing_contact=payer)
     res = ReservationFactory(lead=lead, pickup_date=_future())
-    touchpoints.schedule_service_touchpoints(lead)
+    events.schedule_dates(lead)
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     _due(tp)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
 
     assert send.call_args.kwargs["identifier"] == "+15715550001"
 
@@ -425,8 +425,8 @@ def test_a_wedding_whose_billing_contact_has_no_channel_is_skipped_not_rerouted(
     payer = _contact("Pat Payer", "")
     tp = _wedding_confirm(_booked_lead(contact=booker, billing_contact=payer))
 
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
 
     send.assert_not_called()
     tp.refresh_from_db()
@@ -442,8 +442,8 @@ def test_reservation_kind_skips_when_lead_not_booked():
         kind=K.TRIP_CONFIRM_CUSTOMER,
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
@@ -458,7 +458,7 @@ def test_reservation_kind_skips_a_cancelled_trip():
         kind=K.TRIP_CONFIRM_CUSTOMER,
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
-    assert touchpoints._process(tp) is False
+    assert sender.deliver(tp) is False
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
 
@@ -474,7 +474,7 @@ def test_reservation_kind_skips_when_the_message_is_disabled():
         kind=K.TRIP_CONFIRM_CUSTOMER,
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
-    assert touchpoints._process(tp) is False
+    assert sender.deliver(tp) is False
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
 
@@ -491,8 +491,8 @@ def test_affiliate_confirmation_goes_to_the_vendor_contact():
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_AFFILIATE)
     _due(tp)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
     assert send.call_args.kwargs["identifier"] == "dispatch@affiliate.test"
 
 
@@ -507,8 +507,8 @@ def test_affiliate_confirmation_skips_when_coverage_was_dropped():
     _due(tp)
     a.status = Assignment.Status.WITHDRAWN
     a.save(update_fields=["status"])
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
@@ -521,7 +521,7 @@ def test_lead_level_kind_still_skips_a_booked_lead():
         kind=K.TP1_WELCOME,
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
-    assert touchpoints._process(tp) is False
+    assert sender.deliver(tp) is False
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
 
@@ -582,7 +582,7 @@ def test_run_touchpoints_disabled_in_dev_is_a_noop():
         kind=K.TRIP_CONFIRM_CUSTOMER,
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
-    assert touchpoints.run_touchpoints() == 0
+    assert sender.run_touchpoints() == 0
 
 
 # --- grouped customer confirmation + second notice (APC-19) ---------------------------
@@ -591,7 +591,7 @@ def test_run_touchpoints_disabled_in_dev_is_a_noop():
 def _customer_trip(contact, day, **kw):
     """A booked trip for this customer with its service-date messages scheduled."""
     res = ReservationFactory(lead=_booked_lead(contact=contact), pickup_date=day, **kw)
-    touchpoints.schedule_service_touchpoints(res.lead)
+    events.schedule_dates(res.lead)
     return res
 
 
@@ -602,7 +602,7 @@ def _make_due(kind):
 def test_schedules_both_the_72h_and_48h_customer_notices():
     res = ReservationFactory(lead=_booked_lead(), pickup_date=_future())
 
-    touchpoints.schedule_service_touchpoints(res.lead)
+    events.schedule_dates(res.lead)
 
     kinds = set(TouchPoint.objects.filter(reservation=res).values_list("kind", flat=True))
     assert K.TRIP_CONFIRM_CUSTOMER in kinds
@@ -612,7 +612,7 @@ def test_schedules_both_the_72h_and_48h_customer_notices():
 def test_the_second_notice_lands_24h_after_the_first():
     res = ReservationFactory(lead=_booked_lead(), pickup_date=_future())
 
-    touchpoints.schedule_service_touchpoints(res.lead)
+    events.schedule_dates(res.lead)
 
     first = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
     second = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER_2)
@@ -632,8 +632,8 @@ def test_one_send_covers_every_trip_the_customer_has_that_day():
         _customer_trip(contact, day)
     _make_due(K.TRIP_CONFIRM_CUSTOMER)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}) as m:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}) as m:
+        sender.run_touchpoints()
 
     rows = TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_CUSTOMER)
     assert rows.filter(status=TouchPoint.Status.SENT).count() == 1
@@ -651,8 +651,8 @@ def test_trips_on_different_days_stay_separate_sends():
     _customer_trip(contact, _future(31))
     _make_due(K.TRIP_CONFIRM_CUSTOMER)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}):
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}):
+        sender.run_touchpoints()
 
     assert (
         TouchPoint.objects.filter(
@@ -672,8 +672,8 @@ def test_the_second_notice_is_skipped_once_the_day_is_confirmed():
     tp.scheduled_for = timezone.now() - timedelta(minutes=1)
     tp.save(update_fields=["scheduled_for"])
 
-    with patch("apps.messaging.touchpoints.podium.send_message") as m:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as m:
+        sender.run_touchpoints()
 
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
@@ -690,8 +690,8 @@ def test_the_grouped_body_lists_every_trip_in_the_day():
     _customer_trip(contact, day, stops=["The Willard", "Reagan National"])
     _make_due(K.TRIP_CONFIRM_CUSTOMER)
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m1"}) as m:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}) as m:
+        sender.run_touchpoints()
 
     email_body = next(
         c.kwargs["body"] for c in m.call_args_list if c.kwargs["channel_type"] == "email"

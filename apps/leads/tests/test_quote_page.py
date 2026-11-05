@@ -76,22 +76,22 @@ def test_quote_page_first_view_stamps_and_schedules(client):
     lead = _quoted_lead()
     assert lead.quote_viewed_at is None
     token = services.make_deposit_token(lead)
-    with patch.object(services.touchpoints, "schedule_quote_viewed") as scheduled:
+    with patch.object(services.events, "emit") as scheduled:
         client.get(reverse("quote_page", args=[token]))
     lead.refresh_from_db()
     assert lead.quote_viewed_at is not None
-    scheduled.assert_called_once_with(lead)
+    scheduled.assert_called_once_with("quote_viewed", lead)
 
 
 def test_quote_page_second_view_does_not_restamp(client):
     lead = _quoted_lead()
     token = services.make_deposit_token(lead)
-    with patch.object(services.touchpoints, "schedule_quote_viewed"):
+    with patch.object(services.events, "emit"):
         client.get(reverse("quote_page", args=[token]))
     lead.refresh_from_db()
     first_stamp = lead.quote_viewed_at
 
-    with patch.object(services.touchpoints, "schedule_quote_viewed") as scheduled:
+    with patch.object(services.events, "emit") as scheduled:
         client.get(reverse("quote_page", args=[token]))
     lead.refresh_from_db()
     assert lead.quote_viewed_at == first_stamp

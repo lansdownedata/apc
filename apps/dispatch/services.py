@@ -114,18 +114,26 @@ def _sync_tasks(reservation: Reservation) -> None:
 
 
 def _on_assignment_confirmed(assignment: Assignment) -> None:
-    """Schedule the T-48h affiliate confirmation for a newly-confirmed farm-out (APC-20)."""
-    from apps.messaging import touchpoints
+    """Queue the T-48h affiliate confirmation for a newly-confirmed farm-out (APC-20), and
+    the driver message if the trip is already dispatched with details on file."""
+    from apps.messaging import events
 
-    touchpoints.schedule_affiliate_confirmation(assignment)
-    touchpoints.sync_driver_message(assignment.reservation)
+    reservation = assignment.reservation
+    events.schedule_dates(reservation.lead, reservation)
+    events.sync_waiting(reservation)
 
 
 def _on_assignment_released(reservation: Reservation) -> None:
     """The affiliate no longer holds the trip — drop any pending T-48h confirmation."""
-    from apps.messaging import touchpoints
+    from apps.messaging import events
+    from apps.messaging.models import MessageTemplate
 
-    touchpoints.cancel_affiliate_confirmation(reservation)
+    events.cancel(
+        reservation.lead,
+        triggers=["pickup"],
+        reservation=reservation,
+        audience=MessageTemplate.Audience.AFFILIATE,
+    )
 
 
 def _offer_logo() -> str | None:
@@ -303,11 +311,16 @@ _IN_HOUSE_ONLY_UNASSIGN = "An in-house assignment can only be unassigned."
 
 def confirm(assignment: Assignment) -> Assignment:
     """The affiliate accepted."""
+    from apps.messaging import events
+
     if assignment.is_in_house:
         raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
     if assignment.status == Assignment.Status.CONFIRMED:
         return assignment
-    return _resolve(assignment, Assignment.Status.CONFIRMED)
+    confirmed = _resolve(assignment, Assignment.Status.CONFIRMED)
+    reservation = confirmed.reservation
+    events.emit("affiliate_accepted", reservation.lead, reservation)
+    return confirmed
 
 
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:
@@ -388,9 +401,9 @@ def set_driver_info(
     if assignment.stamp_driver_info(DispatchAlertConfig.load()):
         fields.append("driver_info_at")
     assignment.save(update_fields=fields)
-    from apps.messaging import touchpoints
+    from apps.messaging import events
 
-    touchpoints.sync_driver_message(assignment.reservation)
+    events.sync_waiting(assignment.reservation)
     _sync_tasks(assignment.reservation)
     return assignment
 

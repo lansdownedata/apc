@@ -431,13 +431,13 @@ def save_reservation_from_draft(
     # Keep the per-trip service-date messaging (APC-18-22) in step with a booked order:
     # a new trip gets its rows, a moved pickup reschedules them.
     if lead.status == lead.Status.BOOKED:
-        from apps.messaging import touchpoints
+        from apps.messaging import events
 
         if is_new:
-            touchpoints.schedule_service_touchpoints(lead)
+            events.schedule_dates(lead)
         elif prev_pickup != (instance.pickup_date, instance.pickup_time):
-            touchpoints.reschedule_service_touchpoints(instance)
-            touchpoints.sync_driver_message(instance)
+            events.reschedule_trip(instance)
+            events.sync_waiting(instance)
 
         from apps.tasks import services as tasks
 

@@ -23,11 +23,11 @@ from apps.integrations import podium
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.leads.models import Lead
 
-from . import services, touchpoints
+from . import events, services
 from .models import Conversation, Message, Review
-from .touchpoints import PODIUM_CHANNEL
+from .sender import PODIUM_CHANNEL
 
-# Podium calls the SMS channel "phone" — shared with apps.messaging.touchpoints so the
+# Podium calls the SMS channel "phone" — shared with apps.messaging.sender so the
 # mapping isn't duplicated (a divergent copy here is what caused SMS touch-points to be
 # silently rejected).
 CHANNEL_TYPE = PODIUM_CHANNEL
@@ -242,7 +242,7 @@ def conversation_create_lead(request: HttpRequest, pk: int) -> HttpResponse:
         assigned_agent=request.user,
         status=Lead.Status.NEW,
     )
-    touchpoints.schedule_lead_created(lead)
+    events.emit("lead_created", lead)
     return redirect("lead_detail", pk=lead.pk)
 
 

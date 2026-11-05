@@ -14,7 +14,7 @@ from .models import Reservation
 def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
     """Tomorrow's trips the customer has never acknowledged, one row per customer.
 
-    The T-72h and T-48h notices are the automated asks (`messaging.touchpoints`); this is
+    The T-72h and T-48h notices are the automated asks (`messaging.events`); this is
     the fallback the client asked for — at T-24h an unconfirmed day stops chasing itself
     and goes to the office to be confirmed by hand.
     """

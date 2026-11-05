@@ -110,7 +110,7 @@ def evaluate(trip: Reservation, cfg: DispatchAlertConfig, now) -> dict[str, str]
     # for a nudge, not an escalation), and — same reasoning as the two checks above —
     # gated on EN_ROUTE_OR_BEYOND rather than ARRIVED_OR_BEYOND: once the affiliate is
     # visibly underway the formal ack is moot. GNET is excluded: no email/ack-link flow
-    # ever schedules one for a GNet vendor (touchpoints.schedule_affiliate_confirmation),
+    # ever queues one for a GNet vendor (`messaging.events.schedule_dates`),
     # so affiliate_confirmed_at can never be set for one — this would otherwise flag
     # every GNet trip as unacknowledged forever with no way to clear it.
     if (

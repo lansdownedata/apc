@@ -5,7 +5,7 @@ import pytest
 from django.utils import timezone
 
 from apps.leads.factories import LeadFactory
-from apps.messaging import overrides, touchpoints
+from apps.messaging import events, overrides, sender
 from apps.messaging.models import MessageTemplate, NotificationConfig, TouchPoint
 
 pytestmark = pytest.mark.django_db
@@ -52,7 +52,7 @@ def test_disabled_kind_skips_at_send(settings):
     )
     MessageTemplate.objects.filter(key="tp1_welcome").update(enabled=False)
 
-    touchpoints.run_touchpoints()
+    sender.run_touchpoints()
 
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
@@ -63,7 +63,7 @@ def test_tp_program_now_switchable():
     MessageTemplate.objects.filter(key="tp1_welcome").update(enabled=False)
     lead = LeadFactory()
 
-    touchpoints.schedule_lead_created(lead)
+    events.emit("lead_created", lead)
 
     kinds = set(TouchPoint.objects.filter(lead=lead).values_list("kind", flat=True))
     assert "tp1_welcome" not in kinds

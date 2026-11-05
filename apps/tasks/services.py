@@ -217,9 +217,9 @@ def ensure_tasks(lead: Lead) -> list[Task]:
             payables.ensure_payables(lead)
             if not thanked:
                 # The customer's side of post-trip: thank-you, then the review request.
-                from apps.messaging import touchpoints
+                from apps.messaging import events
 
-                touchpoints.schedule_post_trip(facts.lead)
+                events.emit("all_trips_done", facts.lead)
                 thanked = True
         changed = _evaluate_many(Task.objects.filter(lead_id=lead.pk), {lead.pk: facts})
         if not any(t.kind in PREDECESSOR_KINDS and t.is_closed for t in changed):

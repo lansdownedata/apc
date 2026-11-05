@@ -197,7 +197,7 @@ def test_expiry_queues_the_customer_explanation():
 def test_the_explanation_is_never_sent_without_a_working_link(settings):
     """The whole message is the link back — with PUBLIC_BASE_URL unset `pay_link` renders
     as a bare path, and a SENT row would never be retried. Stay SCHEDULED instead."""
-    from apps.messaging import touchpoints as messaging_touchpoints
+    from apps.messaging import sender
 
     settings.PUBLIC_BASE_URL = ""
     plan, _ = _engaged(hours_left=-2)
@@ -205,8 +205,8 @@ def test_the_explanation_is_never_sent_without_a_working_link(settings):
         tasks.sweep_authorization_holds()
 
     tp = TouchPoint.objects.get(lead=plan.lead, kind=TouchPoint.Kind.ORDER_AUTH_EXPIRED)
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert messaging_touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED

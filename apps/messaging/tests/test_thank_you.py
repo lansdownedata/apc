@@ -14,7 +14,7 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
 from apps.leads.services import record_feedback
-from apps.messaging import touchpoints
+from apps.messaging import events, sender
 from apps.messaging.models import Review, TouchPoint
 from apps.messaging.touchpoint_templates import TEMPLATES
 from apps.public.services import WEDDING_SERVICE_NAME
@@ -29,8 +29,8 @@ from apps.tasks.models import Task
 pytestmark = pytest.mark.django_db
 
 _K = TouchPoint.Kind
-SEND = "apps.messaging.touchpoints.podium.send_message"
-INVITE = "apps.messaging.touchpoints.podium.create_review_invitation"
+SEND = "apps.messaging.sender.podium.send_message"
+INVITE = "apps.messaging.sender.podium.create_review_invitation"
 _n = count(1)
 
 
@@ -38,7 +38,6 @@ _n = count(1)
 def _quiet():
     with (
         patch("apps.integrations.la_sync.push_lead_bookings"),
-        patch("apps.messaging.touchpoints.notify_status_change"),
     ):
         yield
 
@@ -124,9 +123,9 @@ def test_nothing_is_scheduled_while_a_trip_is_still_to_run():
 
 def test_mark_lost_does_not_leave_a_thank_you_behind_but_a_rebuild_spares_it():
     lead = _order()
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
 
-    touchpoints.cancel_pending(lead)  # the quote-program rebuild
+    events.cancel(lead)  # the quote-program rebuild
 
     assert _tp(lead, _K.THANK_YOU).status == TouchPoint.Status.SCHEDULED
 
@@ -136,11 +135,11 @@ def test_mark_lost_does_not_leave_a_thank_you_behind_but_a_rebuild_spares_it():
 
 def test_the_thank_you_goes_out_by_text_and_email_with_the_rating_link(live):
     lead = _order()
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
     _make_due(lead, _K.THANK_YOU)
 
     with patch(SEND, return_value={"uid": "m-1"}) as send:
-        assert touchpoints.run_touchpoints() == 1
+        assert sender.run_touchpoints() == 1
 
     assert _tp(lead, _K.THANK_YOU).status == TouchPoint.Status.SENT
     bodies = _bodies(send)
@@ -157,11 +156,11 @@ def test_the_thank_you_goes_out_by_text_and_email_with_the_rating_link(live):
 
 def test_a_wedding_gets_the_wedding_wording(live):
     lead = _order(wedding=True)
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
     _make_due(lead, _K.THANK_YOU)
 
     with patch(SEND, return_value={"uid": "m-1"}) as send:
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     for body in _bodies(send).values():
         assert "Congratulations on the wedding" in body
@@ -171,11 +170,11 @@ def test_a_wedding_gets_the_wedding_wording(live):
 def test_it_waits_when_touchpoints_are_off(settings):
     settings.TOUCHPOINTS_ENABLED = False
     lead = _order()
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
     _make_due(lead, _K.THANK_YOU)
 
     with patch(SEND) as send:
-        assert touchpoints.run_touchpoints() == 0
+        assert sender.run_touchpoints() == 0
 
     send.assert_not_called()
     assert _tp(lead, _K.THANK_YOU).status == TouchPoint.Status.SCHEDULED
@@ -184,11 +183,11 @@ def test_it_waits_when_touchpoints_are_off(settings):
 def test_it_waits_for_a_public_base_url(live, settings):
     settings.PUBLIC_BASE_URL = ""
     lead = _order()
-    touchpoints.schedule_post_trip(lead)
+    events.emit("all_trips_done", lead)
     _make_due(lead, _K.THANK_YOU)
 
     with patch(SEND) as send:
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     send.assert_not_called()
     assert _tp(lead, _K.THANK_YOU).status == TouchPoint.Status.SCHEDULED
@@ -213,7 +212,7 @@ def test_a_complaint_holds_the_review_request_and_opens_a_follow_up(live):
     _make_due(lead, _K.REVIEW_REQUEST)
 
     with patch(SEND) as send, patch(INVITE) as invite:
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     invite.assert_not_called()
     send.assert_not_called()
@@ -233,7 +232,7 @@ def test_a_low_rating_holds_it_too(live):
     _make_due(lead, _K.REVIEW_REQUEST)
 
     with patch(SEND), patch(INVITE) as invite:
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     invite.assert_not_called()
     held = _tp(lead, _K.REVIEW_REQUEST)
@@ -251,7 +250,7 @@ def test_another_kind_of_issue_does_not_hold_it(live):
         patch(SEND, return_value={"uid": "m-1"}),
         patch(INVITE, return_value={"uid": "inv-1", "url": "https://podium.example/r/1"}),
     ):
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     assert _tp(lead, _K.REVIEW_REQUEST).status == TouchPoint.Status.SENT
     assert not Task.objects.filter(lead=lead, kind="complaint_followup").exists()
@@ -274,7 +273,7 @@ def test_the_task_closes_itself_once_the_message_has_gone(live):
     run_tasks()
     _make_due(lead, _K.THANK_YOU)
     with patch(SEND, return_value={"uid": "m-1"}):
-        touchpoints.run_touchpoints()
+        sender.run_touchpoints()
 
     task = _reach_stage_3(lead)
 

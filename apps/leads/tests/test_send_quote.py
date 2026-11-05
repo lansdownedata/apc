@@ -83,7 +83,7 @@ def test_send_quote_stamps_sent_and_expiry_and_schedules_touchpoints():
     lead = _quotable_lead()
     with (
         patch.object(services.podium, "send_message", return_value={}),
-        patch.object(services.touchpoints, "schedule_quote_sent") as scheduled,
+        patch.object(services.events, "emit") as scheduled,
     ):
         result = services.send_quote(lead, base_url=BASE_URL)
     assert result.ok
@@ -91,7 +91,7 @@ def test_send_quote_stamps_sent_and_expiry_and_schedules_touchpoints():
     assert lead.quote_sent_at is not None
     assert lead.quote_expires_at is not None
     assert lead.quote_viewed_at is None
-    scheduled.assert_called_once_with(lead)
+    scheduled.assert_called_once_with("quote_sent", lead)
 
 
 def test_send_quote_blocks_when_no_reservations():

@@ -214,6 +214,16 @@ def trip_sheet_text(reservation: Reservation) -> str:
     return "\n".join(lines)
 
 
+# Trip statuses that are message events of their own (`status_<status>`).
+_STATUS_EVENTS = frozenset(
+    {
+        Reservation.TripStatus.DISPATCHED,
+        Reservation.TripStatus.ON_THE_WAY,
+        Reservation.TripStatus.ARRIVED,
+    }
+)
+
+
 def set_trip_status(
     reservation: Reservation,
     status: str,
@@ -221,23 +231,33 @@ def set_trip_status(
     user=None,
     source: str = TripStatusEvent.Source.MANUAL,
 ) -> TripStatusEvent | None:
-    """Write a trip status, log the transition, and fire the customer notification hook.
+    """Write a trip status, log the transition, and fire its message events.
 
     The single seam every status change routes through (LA webhook + the dispatch drawer),
-    so the APC-22 message hook has one home. Returns the event, or None when the status is
+    so the trip's message events have one home: the status itself (Dispatched, On the way,
+    Arrived), the trip entering a cancelled status, the trip done; then the rows that wait
+    for dispatch are brought up to date. Returns the event, or None when the status is
     unchanged.
     """
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.messaging import events
+
     if reservation.trip_status == status:
         return None
+    was_cancelled = reservation.trip_status in CANCELLED_STATUSES
     reservation.trip_status = status
     reservation.save(update_fields=["trip_status", "updated_at"])
     event = TripStatusEvent.objects.create(
         reservation=reservation, status=status, source=source, changed_by=user
     )
-    from apps.messaging.touchpoints import notify_status_change, sync_driver_message
-
-    notify_status_change(reservation, status)
-    sync_driver_message(reservation)
+    lead = reservation.lead
+    if status in _STATUS_EVENTS:
+        events.emit(f"status_{status}", lead, reservation)
+    if status in CANCELLED_STATUSES and not was_cancelled:
+        events.emit("trip_cancelled", lead, reservation)
+    if status == Reservation.TripStatus.DONE:
+        events.emit("trip_done", lead, reservation)
+    events.sync_waiting(reservation)
     if status == Reservation.TripStatus.DONE:
         # APC-58: a Done trip enters the post-trip workflow now, not on the next tick.
         from apps.tasks.services import sync

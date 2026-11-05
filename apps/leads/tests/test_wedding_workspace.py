@@ -70,7 +70,7 @@ def test_new_wedding_schedules_no_touch_points(client, agent, monkeypatch):
     """The website-worded TP1/TP2 copy is wrong for a wedding taken by phone."""
     called = []
     monkeypatch.setattr(
-        "apps.leads.views.touchpoints.schedule_lead_created", lambda lead: called.append(lead)
+        "apps.leads.views.events.emit", lambda trigger, lead: called.append((trigger, lead))
     )
     client.post(
         reverse("lead_create"),
@@ -87,7 +87,7 @@ def test_new_wedding_schedules_no_touch_points(client, agent, monkeypatch):
 def test_an_ordinary_new_lead_still_schedules_touch_points(client, agent, monkeypatch):
     called = []
     monkeypatch.setattr(
-        "apps.leads.views.touchpoints.schedule_lead_created", lambda lead: called.append(lead)
+        "apps.leads.views.events.emit", lambda trigger, lead: called.append((trigger, lead))
     )
     client.post(
         reverse("lead_create"),

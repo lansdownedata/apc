@@ -1,8 +1,9 @@
 """Queueing messages (spec C sections 3, 5 and 9): events, date rows, waiting rows.
 
-The parity tests run the old scheduler (`touchpoints`) and `events` on the same order, each
-inside a rolled-back savepoint on a frozen clock, and compare the TouchPoints each leaves:
-(kind, trip, scheduled_for, status). Task 11 swaps the callers on the strength of these.
+The parity tests run the old scheduler (frozen in `legacy_scheduler`) and `events` on the
+same order, each inside a rolled-back savepoint on a frozen clock, and compare the
+TouchPoints each leaves: (kind, trip, scheduled_for, status). Task 11 swapped the callers
+on the strength of these.
 """
 
 import itertools
@@ -21,9 +22,10 @@ from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
-from apps.messaging import events, overrides, sender, touchpoints
+from apps.messaging import events, overrides, sender
 from apps.messaging.factories import MessageRowFactory, TouchPointFactory
 from apps.messaging.models import MessageTemplate, NotificationConfig, TouchPoint
+from apps.messaging.tests import legacy_scheduler as touchpoints
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import PaymentPlan
 from apps.public.services import WEDDING_SERVICE_NAME

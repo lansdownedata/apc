@@ -24,7 +24,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.core import outbound
 from apps.integrations import podium
-from apps.messaging import touchpoints
+from apps.messaging import events
 from apps.notifications.email import send_html_email
 from apps.payments.models import PaymentPlan
 
@@ -108,7 +108,7 @@ def reissue_quote(lead: Lead) -> datetime:
     lead.quote_expires_at = compute_quote_expiry(lead)
     lead.quote_viewed_at = None
     lead.save(update_fields=["quote_expires_at", "quote_viewed_at", "updated_at"])
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
     return lead.quote_expires_at
 
 
@@ -262,7 +262,7 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
     lead.quote_viewed_at = None
     lead.save(update_fields=["quote_sent_at", "quote_expires_at", "quote_viewed_at", "updated_at"])
     if lead.status != lead.Status.BOOKED:
-        touchpoints.schedule_quote_sent(lead)
+        events.emit("quote_sent", lead)
 
     # 6. deliver on each selected channel — best-effort, never rolls back the transition
     delivery: dict = {}
@@ -384,8 +384,7 @@ def book_lead(lead: Lead) -> Lead:
     if not already_booked:
         lead.status = lead.Status.BOOKED
         lead.save(update_fields=["status", "updated_at"])
-        touchpoints.cancel_pending(lead)
-        touchpoints.schedule_service_touchpoints(lead)
+        events.cancel(lead)
     # Freeze each trip's total as booked (spec 2026-10-25 §4.4). Blanks only, so the
     # balance payment re-entering here never re-freezes an edited trip.
     from apps.reservations import pricing
@@ -395,6 +394,10 @@ def book_lead(lead: Lead) -> Lead:
     plan, created = PaymentPlan.objects.get_or_create(lead=lead)
     if created or plan.quote_total == 0:
         plan.snapshot_total()
+    if not already_booked:
+        # After the totals are frozen and the plan exists: a confirmation already due goes
+        # out on commit, which outside a transaction is right here.
+        events.schedule_dates(lead)
 
     tasks.sync(lead)
     if already_booked:

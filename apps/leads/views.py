@@ -29,8 +29,7 @@ from apps.dispatch import selectors as dispatch_selectors
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
-from apps.messaging import touchpoints
-from apps.messaging.models import TouchPoint
+from apps.messaging import events
 from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import reports as payment_reports
@@ -438,7 +437,7 @@ def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead.status = Lead.Status.LOST
     lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
-    touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
+    events.cancel(lead, triggers=events.EVERY)
     if _wants_json(request):
         return JsonResponse({"ok": True, "status": lead.status})
     return redirect("lead_detail", pk=pk)
@@ -620,7 +619,7 @@ def quote_page(request, token: str) -> HttpResponse:
                 fields.append("quote_viewed_at")
             lead.save(update_fields=fields)
             if first_view:
-                touchpoints.schedule_quote_viewed(lead)
+                events.emit("quote_viewed", lead)
 
     return render(request, "public/quote.html", _quote_page_context(lead, token))
 
@@ -916,7 +915,7 @@ def lead_create(request) -> HttpResponse:
         return redirect(f"{reverse('lead_detail', args=[lead.pk])}?booking=1")
     if intent == "wedding":
         return redirect(f"{reverse('lead_detail', args=[lead.pk])}?wedding=1")
-    touchpoints.schedule_lead_created(lead)
+    events.emit("lead_created", lead)
     return redirect("lead_detail", pk=lead.pk)
 
 

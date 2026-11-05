@@ -36,7 +36,7 @@ from apps.integrations.factories import PodiumCredentialFactory
 from apps.leads import services as lead_services
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import sender
 from apps.messaging.factories import ConversationFactory, TouchPointFactory
 from apps.messaging.models import Message, TouchPoint
 from apps.notifications.models import Notification
@@ -287,11 +287,11 @@ def test_a_due_touchpoint_is_skipped_with_the_reason_not_sent_or_left_to_pile_up
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
 
-    assert touchpoints.run_touchpoints() == 0
+    assert sender.run_touchpoints() == 0
 
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
-    assert tp.error == touchpoints.OUTBOUND_OFF
+    assert tp.error == sender.OUTBOUND_OFF
     podium_http.assert_not_called()
 
 
@@ -299,7 +299,7 @@ def test_a_touchpoint_not_yet_due_stays_scheduled_for_after_go_live(settings):
     settings.TOUCHPOINTS_ENABLED = True
     tp = TouchPointFactory(scheduled_for=timezone.now() + timedelta(days=2))
 
-    touchpoints.run_touchpoints()
+    sender.run_touchpoints()
 
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
@@ -314,7 +314,7 @@ def test_a_review_invitation_is_never_created(settings, podium_http):
         scheduled_for=timezone.now() - timedelta(minutes=1),
     )
 
-    touchpoints.run_touchpoints()
+    sender.run_touchpoints()
 
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED

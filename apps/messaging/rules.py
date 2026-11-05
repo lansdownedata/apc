@@ -3,9 +3,8 @@
 `check` decides, when a queued TouchPoint comes due, whether it goes out: first the safety
 rules every row obeys, then the special cases a seeded message keeps while it stays on its
 original trigger. `recipients_for`, `combine_key` and `fill_links` carry the rest of those
-special cases for the sender. Everything here is ported from the old engine
-(`touchpoints._process`, `_fill_links`, `_recipient`, `_customer_confirm_group`,
-`_thank_you_template`) and keeps its reason strings word for word: the order's message
+special cases for the sender. Everything here was ported from the old
+engine's send-time code and keeps its reason strings word for word: the order's message
 history shows them, and the golden recording pins them.
 """
 
@@ -18,9 +17,20 @@ from django.utils import timezone
 from . import defaults, fields, triggers
 from .models import MessageTemplate, NotificationConfig, TouchPoint
 from .recipients import Recipient, _person, resolve
-from .touchpoints import DRIVER_MESSAGE_STATUSES
 
 logger = logging.getLogger(__name__)
+
+# Trip statuses at which the customer may be told who is driving: from Dispatched onward.
+DRIVER_MESSAGE_STATUSES = frozenset(
+    {
+        "dispatched",
+        "dispatched_non_la",
+        "on_the_way",
+        "circling",
+        "arrived",
+        "customer_in_car",
+    }
+)
 
 Verdict = Literal["send", "skip", "cancel", "wait"]
 # ("send", ""), ("skip", reason), ("cancel", reason), or ("wait", reason): leave it SCHEDULED.
@@ -84,7 +94,7 @@ _DESCRIPTIONS: dict[str, list[str]] = {
     },
     "wed_final_details": ["Links to the wedding details form", "One message per trip"],
     "trip_confirm_affiliate": [
-        "Waits for a confirmed affiliate; not sent for GNet or in-house coverage",
+        "Skips once the affiliate no longer holds the trip; not sent for GNet or in-house coverage",
         "Links to the affiliate's acknowledgment page",
         "One message per trip",
     ],
@@ -271,16 +281,20 @@ def _wedding_thank_you_instead(lead) -> bool:
 
 def _affiliate_coverage_skip(reservation) -> str:
     """Only a manual farm-out is confirmed by the affiliate (APC-20). A GNet vendor's
-    acceptance is its acknowledgement, and in-house coverage has no affiliate."""
+    acceptance is its acknowledgement, and in-house coverage has no affiliate. The row is
+    queued once a manual vendor confirms (a re-confirmation queues a fresh one), so
+    coverage gone by send time closes it, with today's reason."""
     from apps.dispatch.models import Assignment
 
     assignment = confirmed_assignment(reservation)
     if assignment is None:
-        return ""
+        return "no confirmed affiliate"
     if assignment.is_in_house:
         return "no affiliate confirmation for in-house coverage"
     if assignment.channel == Assignment.Channel.GNET:
         return "no affiliate confirmation for GNet coverage"
+    if not assignment.vendor_id:
+        return "no confirmed affiliate"
     return ""
 
 
@@ -385,10 +399,6 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         if reason:
             return "skip", reason
 
-    if built_in and row.key == "trip_confirm_affiliate":
-        assignment = confirmed_assignment(res)
-        if assignment is None or not assignment.vendor_id:
-            return "wait", "no confirmed affiliate"
     if waits_for and not ready(res, waits_for):
         return "wait", "waiting for Dispatched with the driver's details"
     if _uses_site_link(row) and not settings.PUBLIC_BASE_URL:

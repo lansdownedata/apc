@@ -13,11 +13,12 @@ TouchPoints, one per row on it that is on and whose service types match
 - `cancel(lead, ...)` and `redate(row, old_offset=...)`: queued sends are withdrawn or
   re-timed.
 
-Whether a row "already has" its TouchPoint follows the old scheduler
-(`touchpoints.schedule_*`) rule by rule: one per order for order-level rows, one per trip for
-trip-level rows, and a cancelled TouchPoint never counts. The exceptions are in
-`_REPEATS`. Anything due the moment it is queued goes out once the transaction commits
-(`sender.send_due`), not on the next cron run: that is the catch-up of spec section 5.
+Whether a row "already has" its TouchPoint follows the old scheduler (the
+`touchpoints.schedule_*` functions this replaced) rule by rule: one per order for
+order-level rows, one per trip for trip-level rows, and a cancelled TouchPoint never
+counts. The exceptions are in `_REPEATS`. Anything due the moment it is queued goes out
+once the transaction commits (`sender.send_due`), not on the next cron run: that is the
+catch-up of spec section 5.
 """
 
 from collections.abc import Iterable
@@ -36,7 +37,7 @@ _S = TouchPoint.Status
 # Every trigger, for a cancel that sweeps the whole order (a lost lead).
 EVERY = frozenset(catalog.CATALOG)
 # What `cancel` withdraws by default: the pre-booking program (welcome, quote and expiry
-# nudges) and the order outcome messages, as `touchpoints.cancel_pending` does. The
+# nudges) and the order outcome messages, as the old `cancel_pending` did. The
 # post-trip messages, the payment reminder and every trip-level message are spared, and so
 # is every event the old scheduler never queued (deposit paid, balance paid, wedding details
 # received): booking must not withdraw the message about the payment that booked it.
@@ -153,7 +154,7 @@ def _is_wedding_thank_you(row: MessageTemplate) -> bool:
 
 def _moment(trigger_key: str, lead, now: datetime) -> datetime:
     """When the event happened. A quote's follow-ups count from when it was sent, which a
-    reissued quote keeps (as `touchpoints.schedule_quote_sent`)."""
+    reissued quote keeps (as the old `schedule_quote_sent` did)."""
     if trigger_key == "quote_sent" and lead.quote_sent_at is not None:
         return lead.quote_sent_at
     return now
@@ -171,7 +172,7 @@ def emit(trigger_key: str, lead, reservation=None) -> list[TouchPoint]:
     if trigger.level == "trip" and reservation is None:
         raise ValueError(f"{trigger_key} is a trip event: pass the reservation")
     if trigger_key == "quote_sent":
-        # Withdrawn even with the master switch off, as `touchpoints.schedule_quote_sent`.
+        # Withdrawn even with the master switch off, as the old `schedule_quote_sent` did.
         cancel(lead, triggers=_QUOTE_PROGRAM)
     if not _master_on():
         return []
@@ -227,7 +228,7 @@ def _quote_expiry(lead) -> list[TouchPoint]:
 def _balance_due(lead) -> list[TouchPoint]:
     """The pre-charge notice: only for an order the balance cron will charge, so not one
     billed to an account, and only once its balance is scheduled on a card with a due date
-    (as `touchpoints.schedule_payment_reminder`, which runs when the balance becomes
+    (as the old `schedule_payment_reminder`, which ran when the balance became
     scheduled). One per order, ever."""
     from apps.payments.models import PaymentPlan
 
@@ -251,7 +252,7 @@ def _balance_due(lead) -> list[TouchPoint]:
 
 def _manual_farm_out(reservation) -> bool:
     """Confirmed coverage by an affiliate who acknowledges by link: not in-house, not GNet
-    (whose acceptance is its acknowledgement, `touchpoints.schedule_affiliate_confirmation`)."""
+    (whose acceptance is its acknowledgement, as the old `schedule_affiliate_confirmation`)."""
     from apps.dispatch.models import Assignment
 
     assignment = rules.confirmed_assignment(reservation)
@@ -321,7 +322,7 @@ def reschedule_trip(reservation) -> None:
     Its pickup rows are withdrawn, sent ones too, so a trip confirmed for the old date gets
     a fresh confirmation for the new one; the customer's and the affiliate's
     acknowledgements are for a date that no longer holds, so they are cleared; then the
-    order's trips are rebuilt (as `touchpoints.reschedule_service_touchpoints`). Rows that
+    order's trips are rebuilt (as the old `reschedule_service_touchpoints`). Rows that
     wait for dispatch are re-dated by `sync_waiting`, not here."""
     lead = reservation.lead
     rows = MessageTemplate.objects.filter(trigger__in=_PICKUP_TRIGGERS)
@@ -355,7 +356,7 @@ _DRIVER_KINDS = ("driver_released", "driver_updated")
 
 def _maybe_driver_changed(lead, reservation) -> None:
     """The driver details on file differ from the last ones the customer was sent: emit
-    `driver_changed` (as `touchpoints._maybe_update`). A send made before details were
+    `driver_changed` (as the old `_maybe_update`). A send made before details were
     recorded is unknown and never counts as a change."""
     if not rules.ready(reservation, "dispatched_with_driver"):
         return
@@ -375,7 +376,7 @@ def _maybe_driver_changed(lead, reservation) -> None:
 
 def sync_waiting(reservation) -> None:
     """Queue, or re-date, every row that waits for the trip to be Dispatched with its
-    driver's details (as `touchpoints.sync_driver_message`).
+    driver's details (as the old `sync_driver_message`).
 
     Called after anything that can change those facts: status, driver info, coverage,
     pickup. A row sends at `max(now, pickup + its timing)`: an early dispatch waits for the

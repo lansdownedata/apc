@@ -70,11 +70,11 @@ def test_reissue_reschedules_the_quote_touch_points():
     with pytest.MonkeyPatch().context() as mp:
         seen = []
         mp.setattr(
-            "apps.leads.services.touchpoints.schedule_quote_sent", lambda lead: seen.append(lead)
+            "apps.leads.services.events.emit", lambda trigger, lead: seen.append((trigger, lead))
         )
         services.reissue_quote(lead)
 
-    assert seen == [lead]
+    assert seen == [("quote_sent", lead)]
 
 
 def test_reissue_keeps_the_original_sent_timestamp():

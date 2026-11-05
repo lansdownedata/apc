@@ -67,6 +67,12 @@ def _url(la_customer):
     return f"/webhooks/limoanywhere/{token}/"
 
 
+def _post_trip(emit) -> list:
+    """The orders an `all_trips_done` event was emitted for (the trip's own status events
+    go through the same emitter)."""
+    return [c.args[1] for c in emit.call_args_list if c.args[0] == "all_trips_done"]
+
+
 def _post(client, url, payload):
     return client.post(url, data=json.dumps(payload), content_type="application/json")
 
@@ -76,12 +82,12 @@ def test_last_trip_done_schedules_review_request(client):
     lead = LeadFactory(contact=lac.contact)
     res = ReservationFactory(lead=lead, la_reservation_id="1")
 
-    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
+    with patch("apps.integrations.views.events.emit") as sched:
         _post(client, _url(lac), {"id": 1, "reservation_event": "reservation.completed"})
 
     res.refresh_from_db()
     assert res.trip_status == Reservation.TripStatus.DONE
-    sched.assert_called_once_with(lead)
+    assert _post_trip(sched) == [lead]
 
 
 def test_non_terminal_status_does_not_schedule(client):
@@ -89,10 +95,10 @@ def test_non_terminal_status_does_not_schedule(client):
     lead = LeadFactory(contact=lac.contact)
     ReservationFactory(lead=lead, la_reservation_id="2")
 
-    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
+    with patch("apps.integrations.views.events.emit") as sched:
         _post(client, _url(lac), {"id": 2, "reservation_event": "reservation.driver_was_assigned"})
 
-    sched.assert_not_called()
+    assert _post_trip(sched) == []
 
 
 def test_one_of_two_trips_done_does_not_schedule(client):
@@ -103,10 +109,10 @@ def test_one_of_two_trips_done_does_not_schedule(client):
         lead=lead, la_reservation_id="4", trip_status=Reservation.TripStatus.UNASSIGNED
     )
 
-    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
+    with patch("apps.integrations.views.events.emit") as sched:
         _post(client, _url(lac), {"id": 3, "reservation_event": "reservation.completed"})
 
-    sched.assert_not_called()
+    assert _post_trip(sched) == []
 
 
 def test_done_plus_cancelled_pair_schedules(client):
@@ -117,10 +123,10 @@ def test_done_plus_cancelled_pair_schedules(client):
     )
     ReservationFactory(lead=lead, la_reservation_id="6")
 
-    with patch("apps.integrations.views.touchpoints.schedule_post_trip") as sched:
+    with patch("apps.integrations.views.events.emit") as sched:
         _post(client, _url(lac), {"id": 6, "reservation_event": "reservation.completed"})
 
-    sched.assert_called_once_with(lead)
+    assert _post_trip(sched) == [lead]
 
 
 def test_replay_does_not_duplicate_touchpoint(client):

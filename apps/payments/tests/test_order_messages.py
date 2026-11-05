@@ -160,10 +160,10 @@ def test_a_lost_lead_still_sends_its_cancellation(settings):
         services.cancel_order(plan.lead, user=None, reason="x")
 
     tp = TouchPoint.objects.get(lead=plan.lead, kind=TouchPoint.Kind.ORDER_CANCELLED)
-    from apps.messaging import touchpoints
+    from apps.messaging import sender
 
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        assert touchpoints._process(tp) is True
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        assert sender.deliver(tp) is True
     send.assert_called()
 
 

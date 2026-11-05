@@ -8,7 +8,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import events
 from apps.messaging.factories import TouchPointFactory
 from apps.messaging.models import TouchPoint
 from apps.payments.factories import PaymentPlanFactory
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.django_db
 def test_schedule_lead_created_makes_tp1_and_tp2():
     lead = LeadFactory()
     before = timezone.now()
-    touchpoints.schedule_lead_created(lead)
+    events.emit("lead_created", lead)
     after = timezone.now()
 
     tp1 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
@@ -35,7 +35,7 @@ def test_schedule_quote_sent_makes_tp3_tp6_tp7_tp8():
     expires = sent + timedelta(days=3)
     lead = LeadFactory(quote_sent_at=sent, quote_expires_at=expires)
 
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
 
     tp3 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
     tp6 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP6_QUOTE_FOLLOWUP)
@@ -53,7 +53,7 @@ def test_schedule_quote_sent_resend_cancels_old_and_recreates():
     expires = sent + timedelta(days=3)
     lead = LeadFactory(quote_sent_at=sent, quote_expires_at=expires)
 
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
     old_tp3 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP3_QUOTE_SENT_SMS)
 
     new_sent = sent + timedelta(hours=1)
@@ -62,7 +62,7 @@ def test_schedule_quote_sent_resend_cancels_old_and_recreates():
     lead.quote_expires_at = new_expires
     lead.save(update_fields=["quote_sent_at", "quote_expires_at"])
 
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
 
     old_tp3.refresh_from_db()
     assert old_tp3.status == TouchPoint.Status.CANCELLED
@@ -82,7 +82,7 @@ def test_schedule_quote_sent_skips_tp7_when_expiry_already_within_24h():
     expires = timezone.now() + timedelta(hours=1)  # expires - 24h is in the past
     lead = LeadFactory(quote_sent_at=sent, quote_expires_at=expires)
 
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
 
     assert not TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP7_EXPIRING).exists()
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP8_EXPIRED).exists()
@@ -90,29 +90,29 @@ def test_schedule_quote_sent_skips_tp7_when_expiry_already_within_24h():
 
 def test_schedule_quote_viewed_creates_tp4_tp5_once():
     lead = LeadFactory()
-    touchpoints.schedule_quote_viewed(lead)
+    events.emit("quote_viewed", lead)
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP4_VIEWED_SMS).count() == 1
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL).count() == 1
 
-    touchpoints.schedule_quote_viewed(lead)
+    events.emit("quote_viewed", lead)
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP4_VIEWED_SMS).count() == 1
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL).count() == 1
 
 
 def test_schedule_quote_viewed_reschedules_after_cancellation():
     lead = LeadFactory()
-    touchpoints.schedule_quote_viewed(lead)
+    events.emit("quote_viewed", lead)
     old_tp4 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP4_VIEWED_SMS)
     old_tp5 = TouchPoint.objects.get(lead=lead, kind=TouchPoint.Kind.TP5_VIEWED_EMAIL)
 
     # A quote re-send cancels the pending viewed nudges (among others).
-    touchpoints.schedule_quote_sent(lead)
+    events.emit("quote_sent", lead)
     old_tp4.refresh_from_db()
     old_tp5.refresh_from_db()
     assert old_tp4.status == TouchPoint.Status.CANCELLED
     assert old_tp5.status == TouchPoint.Status.CANCELLED
 
-    touchpoints.schedule_quote_viewed(lead)
+    events.emit("quote_viewed", lead)
 
     fresh_tp4 = (
         TouchPoint.objects.filter(
@@ -133,10 +133,10 @@ def test_schedule_quote_viewed_reschedules_after_cancellation():
 
 def test_schedule_review_request_idempotent():
     lead = LeadFactory()
-    touchpoints.schedule_review_request(lead)
+    events.emit("all_trips_done", lead)
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST).count() == 1
 
-    touchpoints.schedule_review_request(lead)
+    events.emit("all_trips_done", lead)
     assert TouchPoint.objects.filter(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST).count() == 1
 
 
@@ -152,7 +152,7 @@ def test_cancel_pending_only_cancels_scheduled_and_spares_review_request_by_defa
         lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST, status=TouchPoint.Status.SCHEDULED
     )
 
-    touchpoints.cancel_pending(lead)
+    events.cancel(lead)
 
     scheduled.refresh_from_db()
     sent.refresh_from_db()
@@ -168,7 +168,7 @@ def test_cancel_pending_with_explicit_kinds_including_review_request():
         lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST, status=TouchPoint.Status.SCHEDULED
     )
 
-    touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
+    events.cancel(lead, triggers=events.EVERY)
 
     review.refresh_from_db()
     assert review.status == TouchPoint.Status.CANCELLED
@@ -219,7 +219,7 @@ def test_deposit_webhook_cancels_pending_touchpoints():
 
     with (
         patch("apps.payments.services.stripe.PaymentIntent.retrieve", return_value=_intent()),
-        patch("apps.leads.services.touchpoints.cancel_pending") as cancel_pending,
+        patch("apps.leads.services.events.cancel") as cancel_pending,
     ):
         process_stripe_event(_pi_event(plan.lead_id))
 

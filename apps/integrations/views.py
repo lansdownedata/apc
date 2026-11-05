@@ -21,7 +21,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.accounts.permissions import owner_admin_required
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
-from apps.messaging import touchpoints
+from apps.messaging import events
 from apps.notifications.models import Notification
 from apps.reservations import services as reservations_services
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation, TripStatusEvent
@@ -250,7 +250,7 @@ def la_webhook(request, token: str):
         if new_status in EARNED_TERMINAL_STATUSES:
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
-                touchpoints.schedule_post_trip(lead)
+                events.emit("all_trips_done", lead)
     if event_name == "reservation.cancelled":
         # LimoAnywhere is the system of record, so a cancellation there ends the trip —
         # and an affiliate holding it has to be let go. Without this the assignment stays

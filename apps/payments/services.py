@@ -13,8 +13,7 @@ from django.utils import timezone
 
 from apps.core import outbound
 from apps.core.choices import Account
-from apps.messaging import touchpoints
-from apps.messaging.models import TouchPoint
+from apps.messaging import events
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 
@@ -563,9 +562,7 @@ def sync_plan_from_collected(plan: PaymentPlan) -> None:
     plan.save(update_fields=fields)
 
     if plan.balance_status == PaymentPlan.BalanceStatus.SCHEDULED:
-        from apps.messaging.touchpoints import schedule_payment_reminder
-
-        schedule_payment_reminder(plan.lead)
+        events.schedule_dates(plan.lead)
     if plan.lead.has_alert and plan.balance_status != PaymentPlan.BalanceStatus.FAILED:
         plan.lead.has_alert = False
         plan.lead.save(update_fields=["has_alert", "updated_at"])
@@ -635,6 +632,10 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
     return plan
 
 
+# A charge of these kinds newly succeeding is a message event (spec C section 3).
+_PAID_EVENTS = {Charge.Kind.DEPOSIT: "deposit_paid", Charge.Kind.BALANCE: "balance_paid"}
+
+
 def record_payment(
     plan: PaymentPlan, payment_intent_id: str, *, kind: str = Charge.Kind.BALANCE
 ) -> Charge:
@@ -652,6 +653,7 @@ def record_payment(
     balance SCHEDULED once collected covers the deposit, so a deposit needs no special case.
     """
     receipt_now = False
+    paid_event = None  # the message event a newly succeeded deposit or balance fires
     from apps.leads.models import Lead
     from apps.leads.services import book_lead
 
@@ -680,6 +682,7 @@ def record_payment(
     elif charge.status != Charge.Status.SUCCEEDED:
         is_deposit = charge.kind == Charge.Kind.DEPOSIT
         is_trip = charge.kind == Charge.Kind.TRIP
+        paid_event = _PAID_EVENTS.get(charge.kind)
         charge.status = Charge.Status.SUCCEEDED
         # A trip charge is processing's money: its receipt is due from now (APC-103).
         if is_trip and charge.reservation_id and charge.receipt_due_at is None:
@@ -725,6 +728,10 @@ def record_payment(
         from apps.tasks import services as tasks
 
         tasks.sync(plan.lead)
+    if paid_event:
+        # After the booking and the plan's flags: a message due now goes out on commit,
+        # which outside a transaction is right here, and must read the order as it stands.
+        events.emit(paid_event, plan.lead)
     if receipt_now:
         # Last, so the card `_store_card` just wrote is on the row the receipt reads.
         from . import receipts
@@ -785,7 +792,7 @@ def record_authorization(plan: PaymentPlan, payment_intent_id: str) -> Charge:
         lead.status = Lead.Status.ENGAGED
         lead.save(update_fields=["status", "updated_at"])
         # The customer has done their part — stop the quote-chasing program.
-        touchpoints.cancel_pending(lead)
+        events.cancel(lead)
     return charge
 
 
@@ -822,9 +829,9 @@ def confirm_order(lead, *, user=None) -> Charge:
     charge.status = Charge.Status.PENDING
     charge.save(update_fields=["status", "updated_at"])
     captured = record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
-    # After book_lead, so the confirmation isn't swept up by its cancel_pending.
+    # After book_lead, so the confirmation isn't swept up by its cancel.
     lead.refresh_from_db()
-    touchpoints.trigger_order_decided(lead, confirmed=True)
+    events.emit("order_confirmed", lead)
     return captured
 
 
@@ -854,10 +861,10 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     lead.status = Lead.Status.LOST
     lead.lost_reason = (reason or "Could not confirm availability")[:255]
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
-    touchpoints.cancel_pending(lead, kinds=list(TouchPoint.Kind.values))
-    # Queued *after* the sweep above, which cancels every pending kind — the message
+    events.cancel(lead, triggers=events.EVERY)
+    # Queued *after* the sweep above, which cancels every pending message — the message
     # explaining the cancellation must not be cancelled by the cancellation.
-    touchpoints.trigger_order_decided(lead, confirmed=False)
+    events.emit("order_cancelled", lead)
     return charge
 
 
@@ -867,7 +874,7 @@ def expire_authorization(charge: Charge) -> Charge:
     Nobody is at fault and no money moved, so this is a *reversal of state, not of money*:
     no ledger entry, no refund. The order stops being engaged and becomes a live quote
     again, because the one thing the customer needs is a working way to book it a second
-    time — with an explanation, which `trigger_auth_expired` carries.
+    time — with an explanation, which the deposit-hold-released message carries.
     """
     from apps.leads.models import Lead
     from apps.leads.services import compute_quote_expiry
@@ -897,7 +904,7 @@ def expire_authorization(charge: Charge) -> Charge:
         # they did their part. Give it a fresh window to act in.
         lead.quote_expires_at = compute_quote_expiry(lead)
         lead.save(update_fields=["status", "quote_expires_at", "updated_at"])
-        touchpoints.trigger_auth_expired(lead)
+        events.emit("deposit_hold_released", lead)
 
     Notification.notify(
         lead,

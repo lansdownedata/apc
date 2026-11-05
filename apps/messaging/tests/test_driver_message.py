@@ -12,7 +12,7 @@ from apps.dispatch.models import Assignment
 from apps.fleet.factories import DriverFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import events, sender
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.services import set_trip_status
@@ -110,8 +110,8 @@ def test_held_when_details_cleared_at_send():
     (tp,) = _rows(res)
     _due(tp)
     Assignment.objects.filter(pk=a.pk).update(driver_cell="")
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
     send.assert_not_called()
@@ -124,8 +124,8 @@ def test_held_when_status_drops():
     (tp,) = _rows(res)
     _due(tp)
     set_trip_status(res, "assigned")
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
     send.assert_not_called()
@@ -141,8 +141,8 @@ def test_pickup_passed_skips():
     res.pickup_date, res.pickup_time = past.date(), past.time()
     res.pickup_timezone = "UTC"
     res.save()
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
     tp.refresh_from_db()
     assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, "pickup passed")
     send.assert_not_called()
@@ -155,7 +155,7 @@ def test_pickup_moved_redates_scheduled():
     (tp,) = _rows(res)
     res.pickup_date = res.pickup_date - timedelta(days=1)
     res.save()
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
     (again,) = _rows(res)
     assert again.pk == tp.pk
     assert again.scheduled_for == res.pickup_at - timedelta(hours=12)
@@ -169,7 +169,7 @@ def test_sent_not_resent_on_pickup_move():
     TouchPoint.objects.filter(pk=tp.pk).update(status=TouchPoint.Status.SENT)
     res.pickup_date = res.pickup_date - timedelta(days=1)
     res.save()
-    assert touchpoints.sync_driver_message(res) is None
+    assert events.sync_waiting(res) is None
     assert _rows(res).count() == 1
 
 
@@ -193,8 +193,8 @@ def test_sent_details_recorded():
     set_trip_status(res, "dispatched")
     (tp,) = _rows(res)
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        assert touchpoints.run_touchpoints() == 1
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        assert sender.run_touchpoints() == 1
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SENT
     assert tp.driver_details == INFO
@@ -218,15 +218,15 @@ def test_held_when_cancelled_then_sends_when_reinstated():
     (tp,) = _rows(res)
     _due(tp)
     set_trip_status(res, "cancelled")
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}) as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        sender.run_touchpoints()
         tp.refresh_from_db()
         assert tp.status == TouchPoint.Status.SCHEDULED
         send.assert_not_called()
         set_trip_status(res, "dispatched")
         tp.refresh_from_db()
         _due(tp)  # reinstating re-dates the row to its window; make it due again
-        assert touchpoints.run_touchpoints() == 1
+        assert sender.run_touchpoints() == 1
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SENT
 
@@ -265,8 +265,8 @@ def test_two_syncs_make_one_row():
     res = _trip()
     _confirmed(res)
     set_trip_status(res, "dispatched")
-    touchpoints.sync_driver_message(res)
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
+    events.sync_waiting(res)
     assert _rows(res).count() == 1
 
 
@@ -278,7 +278,7 @@ def test_non_dispatch_status_costs_no_override_queries():
     _confirmed(res)
     set_trip_status(res, "assigned")
     with CaptureQueriesContext(connection) as ctx:
-        touchpoints.sync_driver_message(res)
+        events.sync_waiting(res)
     sql = " ".join(q["sql"] for q in ctx.captured_queries)
     assert "messaging_messagetemplate" not in sql
     assert "messaging_notificationconfig" not in sql
@@ -292,6 +292,6 @@ def test_held_row_follows_a_pickup_move():
     Assignment.objects.filter(pk=a.pk).update(driver_cell="")
     res.pickup_date = res.pickup_date + timedelta(days=1)
     res.save()
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
     tp.refresh_from_db()
     assert tp.scheduled_for == res.pickup_at - timedelta(hours=12)

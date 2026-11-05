@@ -55,7 +55,6 @@ def test_post_saves_and_reports_redated(client):
     _owner(client)
     with (
         patch("apps.integrations.la_sync.push_lead_bookings"),
-        patch("apps.messaging.touchpoints.notify_status_change"),
     ):
         lead = LeadFactory(status=Lead.Status.BOOKED)
         ReservationFactory(

@@ -14,13 +14,16 @@ from dataclasses import dataclass, field
 from apps.contacts.models import Contact
 from apps.dispatch.models import Assignment, DispatchAlertConfig
 from apps.leads.models import CustomerFeedback, Lead, LeadContact
-from apps.messaging import overrides
+from apps.messaging import rows
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
 from apps.reservations.models import Reservation, TripIssue, TripReview
 from apps.reservations.services import is_wedding_trip
 
 from . import schedule
+
+# A sent thank-you of either wording thanks the order: a wedding order gets the wedding one.
+THANK_YOU_KINDS = ("thank_you", "thank_you_wedding")
 
 
 @dataclass
@@ -50,7 +53,7 @@ class LeadFacts:
     # Settings overrides of due timing, (kind, variant) -> (amount, unit). Order-independent,
     # but carried here so every `effective_kind` caller already has it.
     schedules: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict)
-    # The messages' Settings rows (for "Driver info released", due with the driver message).
+    # The message rows (for "Driver info released", due with the driver message).
     message_rows: dict = field(default_factory=dict)
     # What "driver details complete" means (Settings → Dispatch alerts).
     dispatch_config: DispatchAlertConfig | None = None
@@ -98,7 +101,7 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     ids = list(facts)
 
     schedules = schedule.load()
-    message_rows = overrides.load()
+    message_rows = rows.load()
     dispatch_config = DispatchAlertConfig.load()
     for f in facts.values():
         f.schedules = schedules
@@ -129,11 +132,11 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
     released: dict[int, set[int]] = defaultdict(set)
     sent = TouchPoint.objects.filter(
         lead_id__in=ids,
-        kind__in=(TouchPoint.Kind.DRIVER_RELEASED, TouchPoint.Kind.THANK_YOU),
+        kind__in=(TouchPoint.Kind.DRIVER_RELEASED, *THANK_YOU_KINDS),
         status=TouchPoint.Status.SENT,
     ).values_list("lead_id", "reservation_id", "kind")
     for lead_id, reservation_id, kind in sent:
-        if kind == TouchPoint.Kind.THANK_YOU:
+        if kind in THANK_YOU_KINDS:
             facts[lead_id].thank_you_sent = True
         elif reservation_id is not None:
             released[lead_id].add(reservation_id)

@@ -39,7 +39,6 @@ Unit = TaskSchedule.Unit
 def _quiet():
     with (
         patch("apps.integrations.la_sync.push_lead_bookings"),
-        patch("apps.messaging.touchpoints.notify_status_change"),
     ):
         yield
 

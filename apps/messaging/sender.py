@@ -45,7 +45,7 @@ MISSING = {"sms": "No mobile on file", "email": "No email on file"}
 _A = MessageTemplate.Audience
 _POSTMARK_AUDIENCES = frozenset({_A.PLANNER, _A.STAFF})
 # Triggers whose send records the driver details it carried, so a later change can be
-# compared against what the customer was told (`touchpoints._maybe_update`).
+# compared against what the customer was told (`events.sync_waiting`).
 _DRIVER_TRIGGERS = frozenset({"pickup_dispatched", "driver_changed"})
 
 
@@ -66,7 +66,6 @@ _SELECT = (
     "reservation__lead__contact",
     "reservation__vehicle",
     "reservation__service_type",
-    "message",
 )
 # Long enough to cover one TouchPoint's sends; a row whose sender died is free again after.
 LEASE = timedelta(minutes=5)
@@ -80,7 +79,6 @@ _PREFETCH = (
     "lead__reservations__stops",
     "lead__reservations__vehicle",
     "lead__reservations__service_type",
-    "message__service_types",
 )
 # What a combining row reads off its same-day siblings: their key, recipients and sheet.
 _SIBLING_SELECT = (
@@ -110,14 +108,22 @@ def _row_for(tp: TouchPoint, rows: dict[str, MessageTemplate] | None) -> Message
     """The message row a TouchPoint sends, pointing a TouchPoint the old scheduler queued
     (no message yet) at the row for its kind.
 
-    The old scheduler queues one `thank_you` for every finished order and picked the wedding
+    The old scheduler queued one `thank_you` for every finished order and picked the wedding
     wording at send time; such a TouchPoint on a wedding order is pointed at the wedding
-    row while that row is on, on its own trigger and matches the order. Its kind stays
-    `thank_you`, which `schedule_post_trip` keys "already queued" on. The pointer is set in
+    row while that row is on, on its own trigger and matches the order (migration 0024 did
+    the same for those already pointing at the plain row). Its kind stays `thank_you`,
+    which `events.emit` keys "already thanked" on. The pointer is set in
     memory only; `deliver` saves it once the TouchPoint actually sends, so a later run
     resolves it again."""
     if tp.message_id is not None:
-        return tp.message
+        if rows is None:
+            return tp.message
+        # The batch's rows, service types already loaded: no join, no query per TouchPoint.
+        row = next((r for r in rows.values() if r.pk == tp.message_id), None)
+        if row is None:
+            return tp.message
+        tp.message = row
+        return row
 
     def lookup(key: str) -> MessageTemplate | None:
         if rows is not None:
@@ -316,8 +322,8 @@ def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[De
 def _old_engine_covered(tp: TouchPoint, row: MessageTemplate) -> bool:
     """For a seeded confirmation: the old engine already sent this wave for the day.
 
-    Its sends left no Deliveries, so at the cut-over today's rule (`touchpoints.
-    _already_covered`) still decides for them: a SENT TouchPoint of the same kind on a trip
+    Its sends left no Deliveries, so at the cut-over its rule (the old `_already_covered`)
+    still decides for them: a SENT TouchPoint of the same kind on a trip
     in the same confirm group covers everyone. It ages out with the last of those sends."""
     if not (rules.has_built_ins(row) and row.key in rules.CONFIRMS):
         return False
@@ -427,7 +433,7 @@ def _send(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool
 
 def _review(tp: TouchPoint, row: MessageTemplate, people: list[Recipient]) -> bool:
     """The seeded review request: Podium's review invite and a `Review` row per phone, then
-    the text carrying the invite's link (as `touchpoints._send_review_invite`)."""
+    the text carrying the invite's link (as the old `_send_review_invite`)."""
     done, _ = _deliveries(tp, row, "")
     sent_here = {d.address for d in done if d.status == Delivery.Status.SENT and d.channel == "sms"}
     sent_now: list[Delivery] = []

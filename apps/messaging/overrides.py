@@ -567,8 +567,8 @@ def preview(kind: str, lead, *, subject: str, email_body: str, sms_body: str) ->
 
     With no lead a built-in sample order is used. Returns {"email", "sms"}; the email is the
     subject line, a blank line and the body."""
+    from .rules import fill_links
     from .touchpoint_templates import build_context, render
-    from .touchpoints import _fill_links
 
     base_url = settings.PUBLIC_BASE_URL or "https://example.com"
     if lead is None:
@@ -576,7 +576,8 @@ def preview(kind: str, lead, *, subject: str, email_body: str, sms_body: str) ->
     else:
         trip = preview_trip(kind, lead)
         ctx = build_context(lead, trip)
-        _fill_links(TouchPoint(lead=lead, reservation=trip, kind=kind), ctx, base_url)
+        row = MessageTemplate.objects.filter(key=kind).first() or MessageTemplate(key=kind)
+        fill_links(TouchPoint(lead=lead, reservation=trip, kind=kind), row, ctx, base_url)
     body = render(email_body, ctx) if email_body.strip() else ""
     head = render(subject, ctx) if subject.strip() else ""
     email = f"{head}\n\n{body}" if head and body else head or body

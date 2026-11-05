@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.models import Assignment
 from apps.fleet.factories import DriverFactory
-from apps.messaging import fields, touchpoints
+from apps.messaging import events, fields, overrides, sender
 from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.messaging.overrides import MESSAGES
 from apps.messaging.tests.test_driver_message import INFO, _confirmed, _due, _rows, _trip
@@ -38,8 +38,8 @@ def _sent_trip(hours=72):
     set_trip_status(res, "dispatched")
     (tp,) = _rows(res)
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        assert touchpoints.run_touchpoints() == 1
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        assert sender.run_touchpoints() == 1
     return res, a
 
 
@@ -69,8 +69,8 @@ def test_change_before_sent_no_update():
     assert not _updates(res).exists()
     (tp,) = _rows(res)
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        sender.run_touchpoints()
     tp.refresh_from_db()
     assert tp.driver_details["cell"] == "+15715559999"
 
@@ -81,8 +81,8 @@ def test_two_changes_before_update_sends_one():
     _new_cell(a, "+15715557777")
     (up,) = _updates(res)
     _due(up)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        sender.run_touchpoints()
     up.refresh_from_db()
     assert up.status == TouchPoint.Status.SENT
     assert up.driver_details["cell"] == "+15715557777"
@@ -94,8 +94,8 @@ def test_change_after_update_sent_queues_another():
     _new_cell(a, "+15715558888")
     (up,) = _updates(res)
     _due(up)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        sender.run_touchpoints()
     _new_cell(a, "+15715557777")
     assert _updates(res).count() == 2
     assert _updates(res).filter(status=TouchPoint.Status.SCHEDULED).count() == 1
@@ -104,7 +104,7 @@ def test_change_after_update_sent_queues_another():
 def test_same_details_resaved_no_update():
     res, a = _sent_trip()
     _new_cell(a, INFO["cell"])
-    touchpoints.sync_driver_message(res)
+    events.sync_waiting(res)
     assert not _updates(res).exists()
 
 
@@ -114,8 +114,8 @@ def test_in_house_reassignment_updates():
     set_trip_status(res, "dispatched")
     (tp,) = _rows(res)
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message", return_value={"uid": "m"}):
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        sender.run_touchpoints()
     dispatch_services.withdraw(first)
     dispatch_services.assign_in_house(res, DriverFactory(phone="+15715550202"))
     assert _updates(res).count() == 1
@@ -141,8 +141,8 @@ def test_update_held_when_details_cleared_at_send():
     (up,) = _updates(res)
     _due(up)
     Assignment.objects.filter(pk=a.pk).update(driver_cell="")
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
     up.refresh_from_db()
     assert up.status == TouchPoint.Status.SCHEDULED
     send.assert_not_called()
@@ -156,15 +156,15 @@ def test_update_skipped_when_pickup_passed():
     past = timezone.now() - timedelta(hours=1)
     res.pickup_date, res.pickup_time, res.pickup_timezone = past.date(), past.time(), "UTC"
     res.save()
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        touchpoints.run_touchpoints()
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
     up.refresh_from_db()
     assert (up.status, up.error) == (TouchPoint.Status.SKIPPED, "pickup passed")
     send.assert_not_called()
 
 
 def test_update_is_editable():
-    t = touchpoints.overrides.default("driver_updated")
+    t = overrides.default("driver_updated")
     assert (
         fields.validate(
             "driver_updated", subject=t.subject, email_body=t.email_body, sms_body=t.sms_body

@@ -649,13 +649,15 @@ def test_affiliate_confirmation_links_to_the_ack_page_per_trip():
     assert rules.combine_key(tp, row) == f"{trip.pickup_date.isoformat()}:trip:{trip.pk}"
 
 
-def test_affiliate_confirmation_waits_for_a_confirmed_affiliate():
+def test_affiliate_confirmation_skips_without_a_confirmed_affiliate():
+    """Today's rule: the row is only queued once a manual vendor confirms (re-confirming
+    queues a fresh one), so coverage gone by send time closes it."""
     row = _row("trip_confirm_affiliate")
     lead = _booked()
     trip = _trip(lead)
-    assert rules.check(_tp(row, lead, trip), row) == ("wait", "no confirmed affiliate")
+    assert rules.check(_tp(row, lead, trip), row) == ("skip", "no confirmed affiliate")
     AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
-    assert rules.check(_tp(row, lead, trip), row) == ("wait", "no confirmed affiliate")
+    assert rules.check(_tp(row, lead, trip), row) == ("skip", "no confirmed affiliate")
 
 
 def test_affiliate_confirmation_sends_for_a_manual_farm_out():

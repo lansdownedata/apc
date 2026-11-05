@@ -257,9 +257,9 @@ def sample_pickup(now: datetime | None = None) -> datetime:
 
 def driver_released_example(*, now: datetime | None = None) -> str:
     """The worked example for the message-driven row, from the Driver details message timing."""
-    from apps.messaging import overrides
+    from apps.messaging import rows
 
-    amount, unit = overrides.timing_of("driver_released") or (12, "hours")
+    amount, unit = rows.timing_of("driver_released") or (12, "hours")
     pickup = sample_pickup(now)
     at = driver_message_due(amount, unit).resolve(pickup)
     zone = timezone.get_current_timezone()

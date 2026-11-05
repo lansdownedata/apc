@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import touchpoints
+from apps.messaging import events, sender
 from apps.messaging.models import TouchPoint
 from apps.payments import services
 from apps.payments.factories import PaymentPlanFactory
@@ -53,20 +53,20 @@ def _reminder(lead):
 # --- scheduling -----------------------------------------------------------
 def test_scheduled_when_the_balance_flips_to_scheduled():
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     assert _reminder(plan.lead).count() == 1
 
 
 def test_scheduling_is_idempotent():
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
+    events.schedule_dates(plan.lead)
     assert _reminder(plan.lead).count() == 1
 
 
 def test_anchor_is_72_hours_before_the_balance_due_date():
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     expected = timezone.make_aware(
         datetime.combine(PICKUP - timedelta(days=30), time.min),
@@ -77,7 +77,7 @@ def test_anchor_is_72_hours_before_the_balance_due_date():
 
 def test_not_scheduled_for_a_card_less_booking():
     plan = _plan(stripe_payment_method_id="", card_last4="")
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     assert not _reminder(plan.lead).exists()
 
 
@@ -90,7 +90,7 @@ def test_not_scheduled_without_a_dated_trip():
         balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
     )
     ReservationFactory(lead=lead, pickup_date=None)
-    touchpoints.schedule_payment_reminder(lead)
+    events.schedule_dates(lead)
     assert not _reminder(lead).exists()
 
 
@@ -122,12 +122,12 @@ def test_sends_for_a_booked_lead_with_a_card_and_the_balance_scheduled(settings)
     plan = _plan()
     plan.lead.contact.phone = "+15715551212"
     plan.lead.contact.save()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     _due(tp)
-    send_path = "apps.messaging.touchpoints.podium.send_message"
+    send_path = "apps.messaging.sender.podium.send_message"
     with patch(send_path, return_value={"uid": "m1"}) as send:
-        assert touchpoints._process(tp) is True
+        assert sender.deliver(tp) is True
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SENT
     body = send.call_args.kwargs["body"]
@@ -149,12 +149,12 @@ def test_sends_for_a_booked_lead_with_a_card_and_the_balance_scheduled(settings)
 def test_skips(settings, mutate, reason):
     settings.PUBLIC_BASE_URL = "https://pay.example.com"
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     _due(tp)
     mutate(plan)
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SKIPPED
@@ -172,22 +172,22 @@ def test_skips_when_nothing_is_owed(settings):
         kind=JournalEntry.Kind.BALANCE_CAPTURED,
         idempotency_key="seed-full",
     )
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
 
 
 def test_left_scheduled_when_public_base_url_is_unset(settings):
     settings.PUBLIC_BASE_URL = ""
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     _due(tp)
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
@@ -196,8 +196,8 @@ def test_left_scheduled_when_public_base_url_is_unset(settings):
 # --- cancel_pending leaves it alone ------------------------------------------
 def test_cancel_pending_default_does_not_cancel_the_reminder():
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
-    touchpoints.cancel_pending(plan.lead)
+    events.schedule_dates(plan.lead)
+    events.cancel(plan.lead)
     tp = _reminder(plan.lead).get()
     assert tp.status == TouchPoint.Status.SCHEDULED
 
@@ -218,19 +218,19 @@ def _on_account(lead):
 def test_not_scheduled_for_an_order_billed_to_an_account():
     plan = _plan()
     _on_account(plan.lead)
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     assert not _reminder(plan.lead).exists()
 
 
 def test_a_queued_reminder_skips_once_the_order_is_billed_to_an_account(settings):
     settings.PUBLIC_BASE_URL = "https://pay.example.com"
     plan = _plan()
-    touchpoints.schedule_payment_reminder(plan.lead)
+    events.schedule_dates(plan.lead)
     tp = _reminder(plan.lead).get()
     _due(tp)
     _on_account(plan.lead)
-    with patch("apps.messaging.touchpoints.podium.send_message") as send:
-        assert touchpoints._process(tp) is False
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        assert sender.deliver(tp) is False
     send.assert_not_called()
     tp.refresh_from_db()
     assert (tp.status, tp.error) == (TouchPoint.Status.SKIPPED, "billed to an account")

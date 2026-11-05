@@ -598,9 +598,9 @@ def driver_message_due(amount: int, unit: str) -> BeforePickup:
 def _follow_driver_message(kind: TaskKind, facts: LeadFacts) -> TaskKind:
     """ "Driver info released" is due an hour after the Driver details message goes out: the
     message's own timing (Settings -> Messages) plus a grace hour, never a schedule row."""
-    from apps.messaging import overrides
+    from apps.messaging import rows
 
-    timing = overrides.timing_of("driver_released", facts.message_rows)
+    timing = rows.timing_of("driver_released", facts.message_rows)
     if timing is None:
         return kind
     return replace(kind, due=driver_message_due(*timing))

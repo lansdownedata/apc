@@ -59,3 +59,46 @@ def test_touchpoint_message_is_protected():
 
     with pytest.raises(ProtectedError):
         row.delete()
+
+
+# --- rows: the rows as the rest of the app reads them ---------------------------------------
+
+
+def test_rows_load_every_row_by_key():
+    from apps.messaging import rows
+
+    loaded = rows.load()
+    assert set(loaded) == set(MessageTemplate.objects.values_list("key", flat=True))
+    assert rows.get("driver_released") == loaded["driver_released"]
+    assert rows.get("no_such_message") is None
+
+
+def test_timing_of_says_the_largest_whole_unit():
+    from apps.messaging import rows
+
+    assert rows.timing_of("driver_released") == (12, "hours")
+    MessageTemplate.objects.filter(key="driver_released").update(
+        timing_amount=90, timing_unit="minutes"
+    )
+    assert rows.timing_of("driver_released") == (90, "minutes")
+    MessageTemplate.objects.filter(key="driver_released").update(
+        timing_amount=2880, timing_unit="minutes"
+    )
+    assert rows.timing_of("driver_released") == (2, "days")
+
+
+def test_timing_of_reads_a_loaded_set_without_a_query(django_assert_num_queries):
+    from apps.messaging import rows
+
+    loaded = rows.load()
+    with django_assert_num_queries(0):
+        assert rows.timing_of("driver_released", loaded) == (12, "hours")
+        assert rows.timing_of("no_such_message", loaded) is None
+
+
+def test_timing_of_is_none_without_a_timing():
+    from apps.messaging import rows
+
+    MessageRowFactory(key="clicked", trigger="send_quote", timing_amount=5)
+    assert rows.timing_of("clicked") is None
+    assert rows.timing_of("no_such_message") is None
