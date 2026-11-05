@@ -71,3 +71,16 @@ def test_charge_balance_card_error_fails_and_alerts():
     assert Notification.objects.filter(
         lead=plan.lead, kind=Notification.Kind.BALANCE_FAILED
     ).exists()
+
+
+def test_a_blank_secret_key_refuses_before_the_request_leaves(settings):
+    """APC-121: stripe-python sends a request with `api_key=""` and only Stripe's 401 stops
+    it. A blank key becomes None, which the library refuses locally."""
+    settings.STRIPE_SECRET_KEY = ""
+    client = services._stripe()
+
+    with patch.object(stripe._http_client.HTTPClient, "request_with_retries") as sent:
+        with pytest.raises(stripe.AuthenticationError, match="No API key provided"):
+            client.Customer.create(name="x", idempotency_key="k")
+
+    sent.assert_not_called()

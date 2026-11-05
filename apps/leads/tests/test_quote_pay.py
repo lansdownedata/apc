@@ -23,6 +23,14 @@ from apps.reservations.factories import TransferReservationFactory
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _stripe_customer():
+    """Paying makes the contact's Stripe customer first. Stubbed so no test here reaches
+    Stripe (APC-121)."""
+    with patch("apps.payments.cards.contact_customer", return_value="cus_test"):
+        yield
+
+
 def _lead(**kwargs):
     kwargs.setdefault("status", Lead.Status.QUOTED)
     if "contact" not in kwargs:

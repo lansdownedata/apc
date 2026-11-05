@@ -20,6 +20,12 @@ autocomplete()` returns [] on a blank key before it builds a request, so this is
 guard. Tests that want LocationIQ rows monkeypatch the client (which bypasses the key check
 entirely) or set a key via the `settings` fixture.
 
+Autouse: the same guard for Stripe (APC-121). `.env` holds a real test-mode secret key, so
+an unmocked call created real objects in the Stripe test account, and a fresh test database
+reused contact pks that earlier runs had already sent under the same idempotency key, which
+Stripe refused. With the key blank, an unmocked call fails with an `AuthenticationError`
+before it leaves the machine. Tests mock the Stripe client they use.
+
 Autouse: an empty cache per test. The default cache is LocMemCache, which lives for the
 whole pytest process, so the public site's per-IP throttle counters leak from one test
 into the next — a test that POSTs a few bookings silently spends another file's budget,
@@ -65,6 +71,11 @@ def _blank_aviationstack_key(settings):
 @pytest.fixture(autouse=True)
 def _blank_locationiq_key(settings):
     settings.LOCATIONIQ_API_KEY = ""
+
+
+@pytest.fixture(autouse=True)
+def _blank_stripe_key(settings):
+    settings.STRIPE_SECRET_KEY = ""
 
 
 @pytest.fixture(autouse=True)

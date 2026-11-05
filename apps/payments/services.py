@@ -80,7 +80,8 @@ def close_open_intents(lead) -> int:
 
 
 def _stripe():
-    stripe.api_key = settings.STRIPE_SECRET_KEY
+    # None, not "": stripe-python sends a request with an empty key and lets the 401 refuse it.
+    stripe.api_key = settings.STRIPE_SECRET_KEY or None
     return stripe
 
 
