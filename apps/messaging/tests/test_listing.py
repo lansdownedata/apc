@@ -172,3 +172,14 @@ def test_tags_added_and_edited():
     assert rows[MessageTemplate.objects.get(key=key).name].tag == "Edited"
     untouched = [r for r in rows.values() if r.tag == ""]
     assert untouched
+
+
+def test_wording_that_cannot_render_is_a_problem():
+    """Structured, as the list switch checks it (`fields.wording_errors`): a stray brace
+    leaves the wording unable to render as surely as an unknown field."""
+    row = MessageRowFactory(
+        recipients=["booking_contact"], send_email=False, sms_body="Hi {first_name"
+    )
+    assert listing.BAD_FIELD in listing.problems(row)
+    row.sms_body = "Hi {first_name}"
+    assert listing.BAD_FIELD not in listing.problems(row)

@@ -139,10 +139,8 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     staff = row.audience == MessageTemplate.Audience.STAFF
     if not (row.staff_emails if staff else row.recipients):
         found.append(NO_RECIPIENTS)
-    if row.trigger in triggers.CATALOG:
-        errors = fields.validate(row_data(row))
-        if any(msg.startswith("Unknown field") for msg in errors.values()):
-            found.append(BAD_FIELD)
+    if fields.wording_errors(row_data(row)):
+        found.append(BAD_FIELD)
     if row.enabled and not master_on and not is_staff_click(row):
         found.append(MASTER_OFF)
     return found

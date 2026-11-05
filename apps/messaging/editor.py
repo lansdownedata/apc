@@ -199,13 +199,12 @@ def _follow(row: MessageTemplate, was: _Was | None) -> int:
 
 
 def _queue_dates(row: MessageTemplate) -> None:
-    """Queue a row on a date trigger, and only that row, for every booked order with a live
-    trip ahead: `events.schedule_dates` per trip for a trip date, per order otherwise;
-    `events.sync_waiting` for a row that waits for dispatch. The master switch and the row
-    are read once, not per order."""
-    from apps.dispatch.selectors import CANCELLED_STATUSES
-    from apps.leads.models import Lead
-
+    """Queue a row on a date trigger, and only that row, where its trigger can still send:
+    a pickup date for every booked order with a live trip ahead (`events.schedule_dates`
+    per trip, or `events.sync_waiting` for a row that waits for dispatch); a quote expiry
+    for every open quote whose send time is still ahead; a balance due date for every
+    order whose balance is scheduled on a card with the due date ahead. The master switch
+    and the row are read once, not per order."""
     trigger = triggers.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind != "date":
         return
@@ -213,6 +212,24 @@ def _queue_dates(row: MessageTemplate) -> None:
     if not master:
         return
     only = MessageTemplate.objects.prefetch_related("service_types").get(pk=row.pk)
+    if trigger.level == "trip":
+        for lead, trips in _booked_with_trips_ahead():
+            for trip in trips:
+                if trigger.waits_for:
+                    events.sync_waiting(trip, only=only, master=master)
+                else:
+                    events.schedule_dates(lead, trip, only=only, master=master)
+        return
+    leads = _open_quotes(only) if trigger.key == "quote_expiry" else _balances_scheduled()
+    for lead in leads:
+        events.schedule_dates(lead, only=only, master=master)
+
+
+def _booked_with_trips_ahead():
+    """(lead, its live trips with the pickup ahead) for every booked order that has any."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.leads.models import Lead
+
     now = timezone.now()
     leads = (
         Lead.objects.filter(
@@ -229,16 +246,40 @@ def _queue_dates(row: MessageTemplate) -> None:
             for r in lead.reservations.all()
             if r.trip_status not in CANCELLED_STATUSES and r.pickup_at and r.pickup_at > now
         ]
-        if not trips:
-            continue
-        if trigger.level == "order":
-            events.schedule_dates(lead, only=only, master=master)
-            continue
-        for trip in trips:
-            if trigger.waits_for:
-                events.sync_waiting(trip, only=only, master=master)
-            else:
-                events.schedule_dates(lead, trip, only=only, master=master)
+        if trips:
+            yield lead, trips
+
+
+def _open_quotes(row: MessageTemplate):
+    """New or quoted orders whose expiry nudge from this row would still be ahead (the gate
+    of `events._quote_expiry`; a long-lapsed quote is not nudged late)."""
+    from apps.leads.models import Lead
+
+    return Lead.objects.filter(
+        status__in=(Lead.Status.NEW, Lead.Status.QUOTED),
+        quote_expires_at__gt=timezone.now() - row.offset,
+    ).select_related("payment")
+
+
+def _balances_scheduled() -> list:
+    """Orders whose balance is scheduled on a card with the due date ahead, whatever their
+    status (the gate of `events._balance_due`, which also skips orders billed to an
+    account)."""
+    from apps.leads.models import Lead
+    from apps.payments.models import PaymentPlan
+
+    today = timezone.localdate()
+    leads = (
+        Lead.objects.filter(payment__balance_status=PaymentPlan.BalanceStatus.SCHEDULED)
+        .exclude(payment__stripe_payment_method_id="")
+        .select_related("payment")
+        .prefetch_related("reservations")
+    )
+    return [
+        lead
+        for lead in leads
+        if lead.payment.balance_due_date is not None and lead.payment.balance_due_date >= today
+    ]
 
 
 def _redate_checklist(key: str, *, changed: bool) -> int:

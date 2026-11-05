@@ -890,13 +890,107 @@ def _queue_queries(count):
 
 
 def test_queueing_reads_the_switch_and_rows_once():
-    one = _queue_queries(1)
-    four = _queue_queries(4)
+    one = _queue_queries(1)  # 1 booked order
+    five = _queue_queries(4)  # the first order plus 4 more: 5 booked orders
 
     def reads(sqls, table):
         return sum(1 for sql in sqls if sql.startswith("SELECT") and f"FROM `{table}`" in sql)
 
     for table in ("messaging_notificationconfig", "messaging_messagetemplate"):
-        assert reads(four, table) == reads(one, table)
-    assert reads(four, "messaging_notificationconfig") <= 1
-    assert (len(four) - len(one)) / 3 <= 8  # per booked order, not per row or per trip read
+        assert reads(five, table) == reads(one, table)
+    assert reads(five, "messaging_notificationconfig") <= 1
+    # 4 more orders cost at most 8 queries each: per order, never per row or switch read.
+    assert (len(five) - len(one)) / 4 <= 8
+
+
+# --- fix round 2: quote nudges and balance-due notices outside booked trips ------------------
+
+
+def _open_quote(status=Lead.Status.QUOTED, days=3):
+    lead = LeadFactory(status=status, quote_expires_at=timezone.now() + timedelta(days=days))
+    events.schedule_dates(lead)
+    return lead
+
+
+def test_switching_a_quote_nudge_back_on_queues_it_again(client):
+    client.force_login(_owner_admin())
+    row = _row("tp7_expiring")
+    lead = _open_quote()
+    gone = LeadFactory(
+        status=Lead.Status.QUOTED, quote_expires_at=timezone.now() - timedelta(days=30)
+    )
+    queued = TouchPoint.objects.filter(message=row, lead=lead, status="scheduled")
+    assert queued.count() == 1
+    url = reverse("message_toggle", args=[row.key])
+    client.post(url)
+    assert queued.count() == 0
+    client.post(url)
+    assert queued.count() == 1
+    assert queued.get().scheduled_for == lead.quote_expires_at - timedelta(hours=24)
+    assert not TouchPoint.objects.filter(message=row, lead=gone).exists()
+
+
+def test_moving_a_row_onto_quote_expiry_queues_it_for_open_quotes(client):
+    client.force_login(_owner_admin())
+    quoted, new = _open_quote(), _open_quote(Lead.Status.NEW, days=5)
+    booked = LeadFactory(
+        status=Lead.Status.BOOKED, quote_expires_at=timezone.now() + timedelta(days=3)
+    )
+    lapsed = LeadFactory(
+        status=Lead.Status.QUOTED, quote_expires_at=timezone.now() - timedelta(days=30)
+    )
+    row = MessageRowFactory(
+        name="Last call",
+        trigger="quote_sent",
+        recipients=["booking_contact"],
+        send_email=False,
+        sms_body="Hi",
+    )
+    resp = client.post(
+        reverse("message_edit", args=[row.key]),
+        post_data(row, trigger="quote_expiry", timing=(2, "days"), timing_direction="before"),
+    )
+    assert resp.status_code == 302
+    made = TouchPoint.objects.filter(message=row, status="scheduled")
+    assert {tp.lead_id: tp.scheduled_for for tp in made} == {
+        quoted.pk: quoted.quote_expires_at - timedelta(days=2),
+        new.pk: new.quote_expires_at - timedelta(days=2),
+    }
+    assert not TouchPoint.objects.filter(message=row, lead__in=[booked, lapsed]).exists()
+
+
+def test_moving_a_row_onto_balance_due_follows_the_balance_gate(client):
+    """Not only booked orders with a trip ahead: any order whose balance is scheduled on a
+    card with its due date ahead (the pre-charge notice's own gate)."""
+    from apps.payments.factories import PaymentPlanFactory
+    from apps.payments.models import PaymentPlan
+
+    client.force_login(_owner_admin())
+    engaged = LeadFactory(status=Lead.Status.ENGAGED)
+    _upcoming(engaged, days=60)
+    PaymentPlanFactory(
+        lead=engaged,
+        quote_total="1000.00",
+        stripe_payment_method_id="pm_1",
+        balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
+    )
+    no_card = LeadFactory(status=Lead.Status.BOOKED)
+    _upcoming(no_card, days=60)
+    PaymentPlanFactory(
+        lead=no_card, quote_total="1000.00", balance_status=PaymentPlan.BalanceStatus.SCHEDULED
+    )
+    row = MessageRowFactory(
+        name="Heads-up",
+        trigger="quote_sent",
+        recipients=["booking_contact"],
+        send_email=False,
+        sms_body="Hi",
+    )
+    resp = client.post(
+        reverse("message_edit", args=[row.key]),
+        post_data(row, trigger="balance_due", timing=(3, "days"), timing_direction="before"),
+    )
+    assert resp.status_code == 302
+    assert list(
+        TouchPoint.objects.filter(message=row, status="scheduled").values_list("lead", flat=True)
+    ) == [engaged.pk]

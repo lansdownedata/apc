@@ -60,7 +60,7 @@
             <div x-show="audience === 'staff'"{% if state.audience != "staff" %} style="display: none"{% endif %}>
               <label for="staff-email-input" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Staff emails</label>
               <div class="field flex flex-wrap items-center gap-1.5">
-                <template x-for="(address, i) in staffEmails" :key="address">
+                <template x-for="(address, i) in staffEmails" :key="i">
                   <span class="inline-flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-slate-100 text-ink">
                     <span x-text="address"></span>
                     <input type="hidden" name="staff_emails" :value="address" :disabled="audience !== 'staff'">
