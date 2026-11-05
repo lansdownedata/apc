@@ -89,17 +89,51 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
     ],
     "Affiliate click": [("trip_day", "Pickup day")],
     "Cancellation": [("cancelled_trip_sheet", "Trip details (no money)")],
+    # The invites and the planner password reset: the person the account is for, and the
+    # button that sets its password (in plain text, the link itself).
+    "Account": [
+        ("account_name", "Full name"),
+        ("account_first_name", "First name"),
+        ("account_button", "Set-password button"),
+    ],
+    # The access-level panel is HTML only (the plain-text part says it in the sentence).
+    "Staff access": [("role_label", "Access level"), ("access_level", "Access level panel")],
+    # The email a couple gets when they send their wedding details (`public.services`).
+    "Wedding details": [
+        ("form_name", "Name on the form"),
+        ("wedding_details", "Every answer they gave"),
+        ("resume_button", "Update-details button"),
+    ],
 }
 
-# The groups a staff click's caller fills; nothing else does.
-_CLICK_GROUPS = ("Quote", "Payment link", "Terms", "Receipt", "Affiliate click", "Cancellation")
+# The groups a staff click's (or another `send_now`) caller fills; nothing else does.
+_CLICK_GROUPS = (
+    "Quote",
+    "Payment link",
+    "Terms",
+    "Receipt",
+    "Affiliate click",
+    "Cancellation",
+    "Account",
+    "Staff access",
+    "Wedding details",
+)
 CLICK_FIELDS = frozenset(key for group in _CLICK_GROUPS for key, _ in _GROUPS[group])
 
 FIELDS: dict[str, Field] = {
     key: Field(key, label, group) for group, items in _GROUPS.items() for key, label in items
 }
 
-_LINKS = ("quote_link", "pay_link", "confirm_link", "ack_link", "review_link", "terms_link")
+_LINKS = (
+    "quote_link",
+    "pay_link",
+    "confirm_link",
+    "ack_link",
+    "review_link",
+    "terms_link",
+    "account_button",
+    "resume_button",
+)
 # Links the sender fills only in particular cases; `fields_for` adds each where it can.
 _SENDER_LINKS = ("confirm_link", "ack_link", "review_link")
 _TRIP_KINDS = frozenset(
@@ -220,12 +254,14 @@ def _channels(kind: str) -> tuple[str, ...]:
 
 
 _PURPOSE = {
-    "pay_link": "pays",
-    "confirm_link": "confirms",
-    "ack_link": "acknowledges",
-    "quote_link": "opens the quote",
-    "review_link": "leaves a review",
-    "terms_link": "accepts the terms",
+    "pay_link": "the customer pays",
+    "confirm_link": "the customer confirms",
+    "ack_link": "the customer acknowledges",
+    "quote_link": "the customer opens the quote",
+    "review_link": "the customer leaves a review",
+    "terms_link": "the customer accepts the terms",
+    "account_button": "they set their password",
+    "resume_button": "the couple updates their details",
 }
 _CHANNEL_NAME = {"email": "email", "sms": "SMS"}
 
@@ -259,7 +295,7 @@ def _missing_link(
     first = next((b for b in ("email_body", "sms_body") if _BOX_CHANNEL[b] in order[:1]), "")
     if missing and first and first not in errors:
         key = missing[0]
-        errors[first] = f"This message needs {{{key}}} — it's how the customer {_PURPOSE[key]}."
+        errors[first] = f"This message needs {{{key}}} — it's how {_PURPOSE[key]}."
 
 
 _BOX_CHANNEL = {"subject": "email", "email_body": "email", "sms_body": "sms"}
@@ -292,6 +328,9 @@ def validate(data, **texts: str) -> dict[str, str]:
             errors["staff_emails"] = "Add at least one email."
     elif not data.get("recipients"):
         errors["recipients"] = "Tick at least one person."
+    if builtin and set_by_caller(key):
+        errors.pop("recipients", None)
+        errors.pop("staff_emails", None)
     if data.get("timing_direction") == "before" and trigger.kind != "date":
         errors["timing_direction"] = "Before only works with a date."
 
@@ -311,6 +350,12 @@ def validate(data, **texts: str) -> dict[str, str]:
             name = _CHANNEL_NAME[_BOX_CHANNEL[box]]
             box_errors[box] = f"Can't be empty — this message sends by {name}."
     return errors | box_errors
+
+
+def set_by_caller(key: str) -> bool:
+    """A seeded invite or password reset: its caller names the person (the account holder),
+    so the row lists no one of its own."""
+    return key in defaults.INVITES and not defaults.INVITES[key].recipients
 
 
 def wording_errors(data: dict) -> dict[str, str]:

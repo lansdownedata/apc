@@ -6,6 +6,7 @@ from django.contrib.auth.tokens import default_token_generator
 from apps.accounts import services
 from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
+from apps.messaging.models import TouchPoint
 
 pytestmark = pytest.mark.django_db
 
@@ -27,7 +28,7 @@ def _invite(admin, email="new.hire@allprocharter.com", role=User.Role.AGENT):
 
 
 def test_invite_creates_user_with_email_as_username_and_no_usable_password(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, sent = _invite(admin)
     assert sent is True
     assert user.username == "new.hire@allprocharter.com"
@@ -40,31 +41,34 @@ def test_invite_creates_user_with_email_as_username_and_no_usable_password(admin
 
 
 def test_invite_normalises_the_email_to_lowercase(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, _ = _invite(admin, email="New.Hire@AllProCharter.com")
     assert user.email == "new.hire@allprocharter.com"
     assert user.username == "new.hire@allprocharter.com"
 
 
 def test_invite_sends_one_email_to_the_invitee(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True) as send:
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send:
         _invite(admin)
     send.assert_called_once()
     assert send.call_args.kwargs["to"] == "new.hire@allprocharter.com"
-    assert send.call_args.kwargs["template"] == "user_invite"
-    assert "invite_url" in send.call_args.kwargs["context"]
+    assert send.call_args.kwargs["template"] == "message"
+    assert TouchPoint.objects.get(kind="user_invite").deliveries.get().address == (
+        "new.hire@allprocharter.com"
+    )
+    assert "/invite/" in send.call_args.kwargs["context"]["body"]
 
 
 def test_invite_reports_a_failed_send_but_keeps_the_user(admin):
     """A swallowed failure would tell the admin someone was emailed when they weren't."""
-    with patch("apps.accounts.services.send_html_email", return_value=False):
+    with patch("apps.notifications.email.deliver_html_email", return_value=None):
         user, sent = _invite(admin)
     assert sent is False
     assert User.objects.filter(pk=user.pk).exists()
 
 
 def test_invite_link_carries_a_valid_token(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, _ = _invite(admin)
     link = services.build_invite_link(user)
     token = link.rstrip("/").rsplit("/", 1)[-1]
@@ -77,10 +81,10 @@ def test_invite_rejects_an_unknown_role(admin):
 
 
 def test_resend_restamps_invited_at_and_sends_again(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, _ = _invite(admin)
     first = user.invited_at
-    with patch("apps.accounts.services.send_html_email", return_value=True) as send:
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send:
         assert services.resend_invite(target=user) is True
     user.refresh_from_db()
     assert user.invited_at > first
@@ -94,7 +98,7 @@ def test_resend_is_refused_for_an_accepted_user(admin):
 
 
 def test_revoke_deletes_a_pending_user(admin):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, _ = _invite(admin)
     pk = user.pk
     services.revoke_invite(target=user)

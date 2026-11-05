@@ -1,9 +1,10 @@
 """Every planner-account write, and the one rule for which weddings a planner sees (APC-66).
 
-Invites and password-reset links are customer mail: they go through `send_html_email`
-without `internal=True`, so the go-live switch (APC-90) gates them like any other send.
-Invite and Resend are refused outright while the switch is off — with the same sentence
-every other agent send uses — rather than creating an account nobody was told about.
+Invites and password-reset links are customer mail: they send their message rows
+(`planner_invite`, `planner_password_reset`) through the shared sender as planner mail, not
+staff mail, so the go-live switch (APC-90) gates them like any other send. Invite and Resend
+are refused outright while the switch is off — with the same sentence every other agent send
+uses — rather than creating an account nobody was told about.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
-from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -27,7 +27,6 @@ from django.utils.http import urlsafe_base64_encode
 from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.leads.models import Lead
-from apps.notifications.email import send_html_email
 
 from .models import PlannerAccount
 from .tokens import planner_reset_token, planner_token
@@ -53,25 +52,42 @@ def _link(name: str, account: PlannerAccount, generator=planner_token) -> str:
     return urljoin(settings.PUBLIC_BASE_URL, path)
 
 
-def _mail_context_defaults() -> dict:
+# Each message row, the label on its gold button, and its inbox preview line.
+_INVITE = ("planner_invite", "Create your account")
+_RESET = ("planner_password_reset", "Choose a new password")
+
+
+def _mail(message: tuple[str, str], name: str, url: str) -> dict:
+    """What a planner email's row is sent with: the greeting's name, the button, the
+    preheader."""
+    from apps.messaging import rendering
+
+    key, label = message
     return {
-        "company_name": settings.COMPANY_NAME,
-        "company_email": settings.COMPANY_EMAIL,
-        "company_phone": settings.COMPANY_PHONE,
+        "extra_ctx": {"account_name": name or "there"},
+        "blocks": {"account_button": rendering.block("link_button", {"label": label, "url": url})},
+        "preheader": rendering.preheader(key, {}),
     }
 
 
-def _mail_context(account: PlannerAccount) -> dict:
-    return {"name": account.contact.name, **_mail_context_defaults()}
+def _send(message: tuple[str, str], account: PlannerAccount, url: str) -> bool:
+    from apps.messaging import sender
+    from apps.messaging.recipients import Recipient
+
+    name = account.contact.name
+    person = Recipient(
+        name=name,
+        label=f"{name or account.email} (planner)",
+        phone="",
+        email=account.email,
+        contact_id=account.contact_id,
+        channels=("email",),
+    )
+    return sender.send_now(message[0], to=[person], **_mail(message, name, url)).sent
 
 
 def _send_invite(account: PlannerAccount) -> bool:
-    return send_html_email(
-        to=account.email,
-        subject=f"Your wedding transportation with {settings.COMPANY_NAME}",
-        template="planner_invite",
-        context={**_mail_context(account), "register_url": _link("planners:register", account)},
-    )
+    return _send(_INVITE, account, _link("planners:register", account))
 
 
 def _assert_outbound() -> None:
@@ -198,7 +214,6 @@ def authenticate(email: str, password: str) -> PlannerAccount | None:
 
 RESET_PER_EMAIL = 3  # reset mails per address per hour, refused silently past it
 RESET_EMAIL_WINDOW = 60 * 60
-_RESET_SUBJECT = "Reset your {} planner password"
 
 
 def _reset_allowed(email: str) -> bool:
@@ -213,9 +228,10 @@ def send_password_reset(email: str) -> bool:
     says the same thing either way, so it never confirms who has an account. A pending
     invite gets nothing (the page tells them to ask for their invitation again).
 
-    Timing: an address with no account still renders the same two email templates a real
-    reset renders, so the template work matches. What can't be matched cheaply is the mail
-    provider's own latency on a real send; the per-IP and per-address caps are what keep
+    Timing: an address with no account still renders the reset's message row, its button
+    and its preview line, the same templates a real reset renders, so the template work
+    matches. What can't be matched cheaply is the mail provider's own latency on a real
+    send (and the send's own trail rows); the per-IP and per-address caps are what keep
     that from being worth probing.
     """
     email = (email or "").strip().lower()
@@ -223,22 +239,27 @@ def send_password_reset(email: str) -> bool:
         return False
     account = PlannerAccount.objects.select_related("contact").filter(email=email).first()
     if account is None or not account.can_sign_in:
-        context = {"name": "", "reset_url": "", **_mail_context_defaults()}
-        render_to_string("email/planner_password_reset.txt", context)
-        render_to_string("email/planner_password_reset.html", context)
+        _render_reset_for_no_one()
         return False
     if not settings.PUBLIC_BASE_URL:
         logger.warning("planner reset for %s not sent: PUBLIC_BASE_URL is blank", email)
         return False
-    return send_html_email(
-        to=account.email,
-        subject=_RESET_SUBJECT.format(settings.COMPANY_NAME),
-        template="planner_password_reset",
-        context={
-            **_mail_context(account),
-            "reset_url": _link("planners:set_password", account, planner_reset_token),
-        },
-    )
+    return _send(_RESET, account, _link("planners:set_password", account, planner_reset_token))
+
+
+def _render_reset_for_no_one() -> None:
+    from apps.messaging import rendering
+    from apps.messaging.models import MessageTemplate
+
+    mail = _mail(_RESET, "", "")
+    row = MessageTemplate.objects.get(key=_RESET[0])
+    context = {
+        "company_name": settings.COMPANY_NAME,
+        "company_email": settings.COMPANY_EMAIL,
+        "company_phone": settings.COMPANY_PHONE,
+        **mail["extra_ctx"],
+    }
+    rendering.render_email(row, context, mail["blocks"], preheader=mail["preheader"])
 
 
 # --- what a planner sees ----------------------------------------------------------------

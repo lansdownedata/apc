@@ -1,9 +1,11 @@
 """Review fixes: password reset — timing, per-email cap, its own 3-day links (APC-66)."""
 
+import re
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.template import loader
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -15,14 +17,14 @@ from apps.planners.tokens import planner_reset_token, planner_token
 
 pytestmark = pytest.mark.django_db
 
-SEND = "apps.planners.services.send_html_email"
+SEND = "apps.notifications.email.deliver_html_email"
 PASSWORD = "a-long-pass-phrase-77"
 
 
 @pytest.fixture
 def registered():
     contact = ContactFactory(name="Dana Planner", email="dana@example.com")
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return services.register(account, PASSWORD)
 
@@ -32,9 +34,9 @@ def _post(client, email):
 
 
 def test_reset_mail_carries_a_reset_link_not_an_invite_link(registered):
-    with patch(SEND, return_value=True) as send:
+    with patch(SEND, return_value="pm-1") as send:
         services.send_password_reset("dana@example.com")
-    url = send.call_args.kwargs["context"]["reset_url"]
+    url = re.search(r"\S+/planner/password/\S+", send.call_args.kwargs["context"]["body"]).group(0)
     token = url.rstrip("/").split("/")[-1]
     assert planner_reset_token.check_token(registered, token)
     assert not planner_token.check_token(registered, token)
@@ -59,14 +61,22 @@ def test_the_reset_page_refuses_an_expired_reset_link(client, registered):
 
 
 def test_an_unknown_email_does_the_same_template_work(registered):
-    with patch(SEND) as send, patch("apps.planners.services.render_to_string") as render:
+    real_get = loader.get_template
+    with patch(SEND) as send, patch.object(loader, "get_template", wraps=real_get) as render:
         services.send_password_reset("nobody@example.com")
     send.assert_not_called()
-    assert render.call_count == 2  # the .txt and .html a real reset renders
+    # the templates a real reset renders: its button, its preview line, the .txt and .html
+    assert sorted(c.args[0] for c in render.call_args_list) == [
+        "email/blocks/link_button.html",
+        "email/blocks/link_button.txt",
+        "email/message.html",
+        "email/message.txt",
+        "email/preheaders/planner_password_reset.html",
+    ]
 
 
 def test_a_per_email_cap_applies_silently(client, registered):
-    with patch(SEND, return_value=True) as send:
+    with patch(SEND, return_value="pm-1") as send:
         for i in range(services.RESET_PER_EMAIL + 2):
             # a fresh IP each time, so only the per-email cap can bite
             client.post(
@@ -79,7 +89,7 @@ def test_a_per_email_cap_applies_silently(client, registered):
 
 def test_an_invited_planner_gets_no_mail_and_the_page_says_what_to_do(client):
     contact = ContactFactory(email="ivy@example.com")
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
     with patch(SEND) as send:
         html = _post(client, "ivy@example.com").content.decode()

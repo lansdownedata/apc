@@ -14,6 +14,7 @@ from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead, LeadContact
+from apps.messaging.models import TouchPoint
 from apps.planners import services
 from apps.planners.auth import SESSION_KEY
 from apps.planners.models import PlannerAccount
@@ -30,7 +31,7 @@ PASSWORD = "a-long-pass-phrase-77"
 @pytest.fixture
 def account():
     contact = ContactFactory(name="Dana Planner", email="dana@example.com")
-    with patch("apps.planners.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return account
 
@@ -197,12 +198,15 @@ def test_page_views_are_logged(planner_client, registered):
 
 
 def test_password_reset_sends_a_link_only_to_someone_who_can_sign_in(client, registered):
-    with patch("apps.planners.services.send_html_email", return_value=True) as send:
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send:
         page = client.post(reverse("planners:password_reset"), {"email": "dana@example.com"})
         client.post(reverse("planners:password_reset"), {"email": "nobody@example.com"})
     assert page.status_code == 200
     assert send.call_count == 1
-    assert send.call_args.kwargs["template"] == "planner_password_reset"
+    assert send.call_args.kwargs["template"] == "message"
+    assert TouchPoint.objects.get(kind="planner_password_reset").deliveries.get().address == (
+        "dana@example.com"
+    )
     assert send.call_args.kwargs.get("internal", False) is False
 
 

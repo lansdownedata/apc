@@ -50,7 +50,7 @@ def _invite_payload(**overrides):
 
 
 def _make_pending(admin, email="new.hire@allprocharter.com"):
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         user, _ = services.invite_user(
             first_name="New",
             last_name="Hire",
@@ -79,7 +79,7 @@ def test_invite_is_owner_admin_only(client):
 
 def test_invite_creates_a_pending_user(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    with patch("apps.accounts.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         resp = client.post(reverse("user_invite"), _invite_payload())
     assert resp.status_code in (200, 302)
     assert User.objects.get(email="new.hire@allprocharter.com").status == User.Status.PENDING
@@ -87,7 +87,7 @@ def test_invite_creates_a_pending_user(client):
 
 def test_invite_reports_a_failed_email_without_losing_the_user(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    with patch("apps.accounts.services.send_html_email", return_value=False):
+    with patch("apps.notifications.email.deliver_html_email", return_value=None):
         client.post(reverse("user_invite"), _invite_payload(), follow=True)
     assert User.objects.filter(email="new.hire@allprocharter.com").exists()
 
@@ -140,7 +140,7 @@ def test_resend_invite_sends_again(client):
     admin = UserFactory(role=User.Role.OWNER_ADMIN)
     client.force_login(admin)
     user = _make_pending(admin)
-    with patch("apps.accounts.services.send_html_email", return_value=True) as send:
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as send:
         client.post(reverse("user_resend_invite", args=[user.pk]), follow=True)
     send.assert_called_once()
 

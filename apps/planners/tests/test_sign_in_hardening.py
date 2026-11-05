@@ -22,7 +22,7 @@ PASSWORD = "a-long-pass-phrase-77"
 @pytest.fixture
 def registered():
     contact = ContactFactory(name="Dana Planner", email="dana@example.com")
-    with patch("apps.planners.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return services.register(account, PASSWORD)
 
@@ -30,7 +30,7 @@ def registered():
 @pytest.fixture
 def invited():
     contact = ContactFactory(name="Ivy Invited", email="ivy@example.com")
-    with patch("apps.planners.services.send_html_email", return_value=True):
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return account
 

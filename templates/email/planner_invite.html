@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}Your wedding transportation with {{ company_name }}{% endblock %}
-{% block preheader %}Create your account to see every pickup, vehicle and driver in one place.{% endblock %}
+{% block preheader %}{% include "email/preheaders/planner_invite.html" %}{% endblock %}
 {% block content %}
 <p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ name|default:"there" }},</p>
 <p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">

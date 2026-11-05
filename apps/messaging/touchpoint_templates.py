@@ -699,6 +699,14 @@ _CLICK_KEYS = (
     "receipt_kind",
     "trip_day",
     "cancelled_trip_sheet",
+    "account_name",
+    "account_first_name",
+    "account_button",
+    "role_label",
+    "access_level",
+    "form_name",
+    "wedding_details",
+    "resume_button",
 )
 
 

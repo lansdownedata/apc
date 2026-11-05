@@ -1,0 +1,5 @@
+{% autoescape off %}  REFERENCE   {{ lead.quote_no }}
+{% for category in answers %}
+  {{ category.title|upper }}{% for question, answer in category.rows %}
+    {{ question }}: {{ answer }}{% endfor %}
+{% endfor %}{% endautoescape %}

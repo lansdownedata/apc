@@ -42,6 +42,11 @@ class Trigger:
     email_via: Literal["podium", "postmark"] = "podium"
     # Date triggers only: the instant the timing counts from, or None when there is none yet.
     anchor: Callable[..., datetime | None] | None = None
+    # An event its own service sends at once through `sender.send_now`, with what it hands
+    # over (the wedding-details email): nothing queues it, so like a staff click it has no
+    # timing, no other row moves onto it, and the order's rules and the master switch don't
+    # hold it back.
+    caller_sends: bool = False
 
 
 def _pickup(lead, reservation) -> datetime | None:
@@ -125,8 +130,9 @@ _ALL: tuple[Trigger, ...] = (
         "event",
         "order",
         _PEOPLE,
-        _ORDER_FIELDS,
+        _ORDER_FIELDS | {"Wedding details"},
         email_via="postmark",
+        caller_sends=True,
     ),
     _t("quote_sent", "Quote sent", "event", "order", _PEOPLE, _ORDER_FIELDS),
     _t("quote_viewed", "Quote viewed", "event", "order", _PEOPLE, _ORDER_FIELDS),
@@ -226,7 +232,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {PLANNER},
-        {"Links", "Company"},
+        {"Links", "Company", "Account"},
         email_via="postmark",
     ),
     _t(
@@ -235,7 +241,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {PLANNER},
-        {"Links", "Company"},
+        {"Links", "Company", "Account"},
         email_via="postmark",
     ),
     _t(
@@ -244,7 +250,7 @@ _ALL: tuple[Trigger, ...] = (
         "staff_click",
         "order",
         {STAFF},
-        {"Links", "Company"},
+        {"Links", "Company", "Account", "Staff access"},
         email_via="postmark",
     ),
     # Schedules

@@ -32,7 +32,7 @@ _UNTIMED = ("staff_click", "schedule")
 
 def has_timing(trigger_key: str) -> bool:
     trigger = triggers.CATALOG.get(trigger_key)
-    return trigger is not None and trigger.kind not in _UNTIMED
+    return trigger is not None and trigger.kind not in _UNTIMED and not trigger.caller_sends
 
 
 def is_staff_click(trigger_key: str) -> bool:
@@ -68,6 +68,25 @@ CLICK_WHO = {
     "affiliate_offer": "Goes to the affiliate company by email — set by the button.",
     "affiliate_cancel": "Goes to the affiliate company by email — set by the button.",
 }
+# The invites, the reset and the wedding-details email: their caller names the person.
+INVITE_WHO = {
+    "planner_invite": (
+        "Goes to the planner by email when staff click Invite or Resend — set by the button."
+    ),
+    "planner_password_reset": (
+        "Goes to the planner who asked for a new password, by email — set by the button "
+        "on the sign-in page."
+    ),
+    "user_invite": (
+        "Goes to the new user by email when an admin clicks Invite or Resend — set by the button."
+    ),
+    "wedding_details_received": (
+        "Goes to the person who sent the wedding details form, by email, the moment they "
+        "send it — set by the form."
+    ),
+}
+# Who every locked row goes to, by key.
+WHO = {**CLICK_WHO, **INVITE_WHO}
 # Nothing sends any other row on these: a staff click is sent by its button, a schedule by
 # its job, each by its own seeded key.
 _NOT_ADDABLE = ("staff_click", "schedule")
@@ -75,8 +94,9 @@ NOT_ADDABLE = "Staff clicks and schedules are sent by the app's own messages. Pi
 
 
 def is_locked(row: MessageTemplate) -> bool:
-    """A seeded staff-click row: its button, not the row, sets who, how and when."""
-    return bool(row.seeded and row.key in defaults.CLICKS)
+    """A seeded staff-click, invite or wedding-details row: its button (or form), not the
+    row, sets who, how and when."""
+    return bool(row.seeded and (row.key in defaults.CLICKS or row.key in defaults.INVITES))
 
 
 def can_pick(row: MessageTemplate, trigger_key: str) -> bool:
@@ -87,9 +107,15 @@ def can_pick(row: MessageTemplate, trigger_key: str) -> bool:
     if trigger is None:
         return False
     original = defaults.ORIGINALS.get(row.key) if row.seeded else None
-    if original is not None and triggers.get(original.trigger).kind in _NOT_ADDABLE:
+    if original is not None and _own_sends_only(triggers.get(original.trigger)):
         return trigger_key == original.trigger
-    return trigger.kind not in _NOT_ADDABLE
+    return not _own_sends_only(trigger)
+
+
+def _own_sends_only(trigger: triggers.Trigger) -> bool:
+    """A trigger only the app's own seeded message is sent on: a staff click, a schedule, or
+    an event its service sends itself (the wedding-details email)."""
+    return trigger.kind in _NOT_ADDABLE or trigger.caller_sends
 
 
 def _builtin(key: str, trigger_key: str, seeded: bool) -> bool:
@@ -159,7 +185,7 @@ def _normalise(row: MessageTemplate) -> None:
     and a staff click is always on. A seeded row timed the same as its original keeps the
     original's units (72 hours stays 72 hours, not 3 days)."""
     trigger = triggers.CATALOG.get(row.trigger)
-    if trigger is not None and trigger.kind in _UNTIMED:
+    if trigger is not None and not has_timing(row.trigger):
         row.timing_amount, row.timing_unit = 0, "minutes"
     if trigger is not None and trigger.kind != "date":
         row.timing_direction = MessageTemplate.Direction.AFTER
@@ -588,6 +614,16 @@ def sample_context(base_url: str) -> dict[str, str]:
                 "Routing:\n  1. 1 Main St, Washington, DC\n"
                 "  2. Dulles International Airport (IAD)"
             ),
+            "account_name": "Sample Planner",
+            "account_first_name": "Sample",
+            "account_button": f"{base_url}/planner/register/sample/",
+            "role_label": "Agent",
+            "form_name": "Sample Customer",
+            "wedding_details": (
+                f"  REFERENCE   Q-1042\n\n  DATE\n    Wedding date: {pickup:%A, %B %-d, %Y}\n\n"
+                "  VENUE & CEREMONY\n    Reception venue: The Oak Barn at Loyalty"
+            ),
+            "resume_button": f"{base_url}/weddings/plan/sample/",
         }
     )
     return ctx
@@ -683,7 +719,7 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
             contexts[channel] = ctx
             heads[channel] = _label(row, first) if first is not None else ""
     if is_locked(row):
-        lines = [CLICK_WHO[row.key]]
+        lines = [WHO[row.key]]
     email = ""
     if "email" in contexts:
         head = _render(row.subject, contexts["email"])

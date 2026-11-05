@@ -2,7 +2,6 @@
 
 from dataclasses import asdict
 
-from django.conf import settings
 from django.core import signing
 from django.urls import reverse
 from django.utils import timezone
@@ -10,7 +9,6 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, ServiceType
-from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Reservation, Stop
@@ -227,23 +225,33 @@ def send_wedding_confirmation(lead: Lead, *, base_url: str) -> bool:
     email = (lead.contact.email or "").strip()
     if not email or not base_url:
         return False
+    from apps.messaging import rendering, sender
+    from apps.messaging.recipients import Recipient
+
     resume_url = (
         f"{base_url.rstrip('/')}{reverse('public:wedding_resume', args=[make_wedding_token(lead)])}"
     )
-    return send_html_email(
-        to=email,
-        subject=f"We have your wedding details · {lead.quote_no}",
-        template="wedding_request",
-        context={
-            "lead": lead,
-            "contact": lead.contact,
-            "answers": wedding_answers(lead.intake_payload),
-            "resume_url": resume_url,
-            "company_name": settings.COMPANY_NAME,
-            "company_phone": settings.COMPANY_PHONE,
-            "company_email": settings.COMPANY_EMAIL,
-        },
+    contact = lead.contact
+    person = Recipient(
+        name=contact.name,
+        label=f"{contact.name} (booking contact)",
+        phone="",
+        email=email,
+        contact_id=contact.pk,
+        channels=("email",),
     )
+    details = {"lead": lead, "answers": wedding_answers(lead.intake_payload)}
+    return sender.send_now(
+        "wedding_details_received",
+        lead,
+        to=[person],
+        extra_ctx={"form_name": contact.name or "there"},
+        blocks={
+            "wedding_details": rendering.block("wedding_details", details),
+            "resume_button": rendering.block("resume_button", {"url": resume_url}),
+        },
+        preheader=rendering.preheader("wedding_request", {}),
+    ).sent
 
 
 _BOOKING_SALT = "public.schedule.booking"

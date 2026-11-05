@@ -442,6 +442,8 @@ def _untimed_text(trigger_key: str) -> str:
         return ""
     if trigger.kind == "staff_click":
         return f"Sent when staff click {trigger.label}"
+    if trigger.caller_sends:
+        return f"Sent the moment it happens ({trigger.label.lower()})"
     return f"Sent on its schedule ({trigger.label.lower()})"
 
 
@@ -541,7 +543,7 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         "section_options": MessageTemplate.Section.choices,
         "trigger_options": _trigger_options(row, trigger_key),
         "locked": editor.is_locked(row),
-        "click_who": editor.CLICK_WHO.get(row.key, "") if editor.is_locked(row) else "",
+        "click_who": editor.WHO.get(row.key, "") if editor.is_locked(row) else "",
         "locked_error": next(
             (
                 form.errors[name][0]

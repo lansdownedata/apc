@@ -15,7 +15,7 @@ from apps.planners.models import PlannerAccount
 
 pytestmark = pytest.mark.django_db
 
-SEND = "apps.planners.services.send_html_email"
+SEND = "apps.notifications.email.deliver_html_email"
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ def test_without_an_email_the_invite_is_explained_not_offered(staff):
 
 
 def test_invite_from_the_profile(staff, contact):
-    with patch(SEND, return_value=True) as send:
+    with patch(SEND, return_value="pm-1") as send:
         response = staff.post(reverse("planner_invite", args=[contact.pk]))
     assert response.status_code == 302
     assert response.url == reverse("contact_detail", args=[contact.pk])
@@ -66,7 +66,7 @@ def test_invite_from_the_profile(staff, contact):
 def test_invite_is_refused_while_outbound_is_off_and_the_state_still_shows(
     staff, contact, settings
 ):
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
     other = ContactFactory(email="second@example.com")
     settings.OUTBOUND_ENABLED = False
@@ -80,7 +80,7 @@ def test_invite_is_refused_while_outbound_is_off_and_the_state_still_shows(
 
 
 def test_resend_and_revoke(staff, contact):
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
         assert staff.post(reverse("planner_resend", args=[contact.pk])).status_code == 302
     staff.post(reverse("planner_revoke", args=[contact.pk]))
@@ -92,7 +92,7 @@ def test_resend_and_revoke(staff, contact):
 
 
 def test_revoke_confirms_through_the_app_modal(staff, contact):
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
     html = _profile(staff, contact)
     assert "$store.modal.confirm" in html
@@ -100,7 +100,7 @@ def test_revoke_confirms_through_the_app_modal(staff, contact):
 
 
 def test_registered_state_names_when_and_how_many_weddings(staff, contact):
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     services.register(account, "a-long-pass-phrase-77")
     lead = LeadFactory(status=Lead.Status.BOOKED)

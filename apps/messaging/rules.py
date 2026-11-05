@@ -383,10 +383,12 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
     if tp.lead_id is None:
         # An invite or a staff report: there is no order to be lost, cancelled or run.
         return SEND
-    if trigger is not None and trigger.kind == "staff_click":
+    if trigger is not None and (trigger.kind == "staff_click" or trigger.caller_sends):
         # A staff click keeps the checks its own service makes today (a refund receipt goes
         # out on a cancelled order, an affiliate hears a trip was released); the order's
-        # rules are for the messages nobody clicked. Its links come from the caller.
+        # rules are for the messages nobody clicked. Its links come from the caller. So does
+        # an event its service sends itself (a couple on a lost order who send their
+        # wedding details again still get them back).
         if not matches(row, lead, res):
             return "skip", "service type no longer matches"
         return SEND

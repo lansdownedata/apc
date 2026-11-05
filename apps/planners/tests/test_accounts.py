@@ -9,13 +9,14 @@ from apps.contacts.factories import ContactFactory
 from apps.core import outbound
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead, LeadContact
+from apps.messaging.models import TouchPoint
 from apps.planners import services
 from apps.planners.models import PlannerAccount
 from apps.planners.tokens import planner_token
 
 pytestmark = pytest.mark.django_db
 
-SEND = "apps.planners.services.send_html_email"
+SEND = "apps.notifications.email.deliver_html_email"
 
 
 @pytest.fixture
@@ -29,7 +30,7 @@ def planner():
 
 
 def _invite(contact, agent):
-    with patch(SEND, return_value=True) as send:
+    with patch(SEND, return_value="pm-1") as send:
         account, sent = services.invite(contact, actor=agent)
     return account, sent, send
 
@@ -45,8 +46,11 @@ def test_invite_creates_a_pending_account_and_emails_a_registration_link(planner
     send.assert_called_once()
     kwargs = send.call_args.kwargs
     assert kwargs["to"] == "dana@example.com"
-    assert kwargs["template"] == "planner_invite"
-    assert "/planner/register/" in kwargs["context"]["register_url"]
+    assert kwargs["template"] == "message"
+    assert TouchPoint.objects.get(kind="planner_invite").deliveries.get().address == (
+        "dana@example.com"
+    )
+    assert "/planner/register/" in kwargs["context"]["body"]
     # A planner is a customer: the go-live switch applies.
     assert kwargs.get("internal", False) is False
 
@@ -93,7 +97,7 @@ def test_the_registration_link_dies_once_used(planner, agent):
 def test_resend_kills_the_previous_link(planner, agent):
     account, _, _ = _invite(planner, agent)
     old = planner_token.make_token(account)
-    with patch(SEND, return_value=True):
+    with patch(SEND, return_value="pm-1"):
         services.resend(account)
     account.refresh_from_db()
     assert planner_token.check_token(account, old) is False

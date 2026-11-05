@@ -85,6 +85,8 @@ def _timing(row: MessageTemplate) -> str:
 
 
 def _recipients(row: MessageTemplate) -> str:
+    if row.seeded and fields.set_by_caller(row.key):
+        return "The account holder"
     if row.audience == MessageTemplate.Audience.STAFF:
         count = len(row.staff_emails or [])
         return f"{count} staff email{'' if count == 1 else 's'}" if count else "No staff emails"
@@ -115,6 +117,11 @@ def is_staff_click(row: MessageTemplate) -> bool:
     return trigger is not None and trigger.kind == "staff_click"
 
 
+def _caller_sends(row: MessageTemplate) -> bool:
+    trigger = triggers.CATALOG.get(row.trigger)
+    return trigger is not None and trigger.caller_sends
+
+
 def row_data(row: MessageTemplate) -> dict:
     """A stored row as `fields.validate` / `fields.wording_errors` read it."""
     return {
@@ -137,11 +144,12 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
     """What stops a row working as it reads, in the order the page lists them."""
     found = []
     staff = row.audience == MessageTemplate.Audience.STAFF
-    if not (row.staff_emails if staff else row.recipients):
+    named = row.seeded and fields.set_by_caller(row.key)
+    if not (row.staff_emails if staff else row.recipients) and not named:
         found.append(NO_RECIPIENTS)
     if fields.wording_errors(row_data(row)):
         found.append(BAD_FIELD)
-    if row.enabled and not master_on and not is_staff_click(row):
+    if row.enabled and not master_on and not is_staff_click(row) and not _caller_sends(row):
         found.append(MASTER_OFF)
     return found
 

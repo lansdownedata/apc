@@ -659,7 +659,8 @@ def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None) -> bo
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=rules.DISABLED)
         return False
     trigger = triggers.CATALOG.get(row.trigger)
-    if click is None and trigger is not None and trigger.kind in _SENT_NOW:
+    sent_now = trigger is not None and (trigger.kind in _SENT_NOW or trigger.caller_sends)
+    if click is None and sent_now:
         # Only `send_now` sends these, with what its caller handed over; one left behind
         # by an interrupted click is settled rather than sent without it: SENT if it had
         # reached anyone, else closed. Only the cron gets here, so with TOUCHPOINTS_ENABLED
@@ -798,7 +799,8 @@ def send_now(
 
     Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
     which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the
-    master switch do not (they govern the messages nobody clicked).
+    master switch do not (they govern the messages nobody clicked). An event row its service
+    sends itself (`Trigger.caller_sends`, the wedding-details email) is sent the same way.
     """
     row = MessageTemplate.objects.prefetch_related("service_types").get(key=key)
     click = _Click(

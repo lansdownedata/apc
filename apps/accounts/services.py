@@ -15,8 +15,6 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from apps.notifications.email import send_html_email
-
 from .models import Department, User, UserDepartment
 
 
@@ -88,20 +86,35 @@ def build_invite_link(user: User) -> str:
 
 
 def _send_invite_email(user: User) -> bool:
-    return send_html_email(
-        to=user.email,
-        subject=f"You've been invited to the {settings.COMPANY_NAME} Lead Manager",
-        template="user_invite",
-        context={
-            "first_name": user.first_name,
-            "invite_url": build_invite_link(user),
-            "role_label": user.get_role_display(),
-            "company_name": settings.COMPANY_NAME,
-            "company_email": settings.COMPANY_EMAIL,
-            "company_phone": settings.COMPANY_PHONE,
-        },
-        internal=True,
+    """The `user_invite` message row, to the new user. Staff mail: it goes while the go-live
+    switch is off."""
+    from apps.messaging import rendering, sender
+    from apps.messaging.recipients import Recipient
+
+    name = user.get_full_name()
+    person = Recipient(
+        name=name,
+        label=f"{name or user.email} (new user)",
+        phone="",
+        email=user.email,
+        contact_id=None,
+        channels=("email",),
     )
+    button = {"label": "Set your password", "url": build_invite_link(user)}
+    role = user.get_role_display()
+    return sender.send_now(
+        "user_invite",
+        to=[person],
+        extra_ctx={
+            "account_first_name": user.first_name or "there",
+            "role_label": role,
+        },
+        blocks={
+            "access_level": rendering.block("access_level", {"role_label": role}),
+            "account_button": rendering.block("link_button", button),
+        },
+        preheader=rendering.preheader("user_invite", {}),
+    ).sent
 
 
 def invite_user(

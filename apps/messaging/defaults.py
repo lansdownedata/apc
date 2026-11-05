@@ -4,8 +4,10 @@
 the client copy in `touchpoint_templates`. `CLICKS` are the staff-click sends (spec C section
 8): their wording is today's button text, kept here, with the parts the caller generates
 (the quote summary, the receipt lines, a trip sheet, a button) as block placeholders.
-`ORIGINALS` is both. `seed` creates the rows that are missing (folding in what spec B saved
-for a key) and never overwrites a seeded row; `reset` copies an original back over its row.
+`INVITES` are the invites, the planner password reset and the wedding-details email, the
+same way. `ORIGINALS` is all three. `seed` creates the rows that are missing (folding in
+what spec B saved for a key) and never overwrites a seeded row; `reset` copies an original
+back over its row.
 
 `seed` runs inside migrations with the historical app registry, so this module must not import
 live models at load time.
@@ -383,8 +385,102 @@ CLICKS: dict[str, MessageDefault] = {
     )
 }
 
+# --- invites, the planner password reset, the wedding-details email -----------------------
+#
+# Today's emails, word for word (`test_invites_golden` holds them). Each caller names the
+# person and hands over the link button (`{account_button}`, `{resume_button}`: in plain
+# text the link itself) and, for the wedding email, every answer the couple gave
+# (`{wedding_details}`). The invites and the reset name no one of their own: they go to the
+# account holder (`fields.set_by_caller`).
+
+_SIGNATURE = "--\n{company_name}\n{company_email} · {company_phone}"
+_SIGNATURE_WITH_LINE = (
+    "--\n{company_name}\nLuxury charter & chauffeur service\n{company_email} · {company_phone}"
+)
+
+INVITES: dict[str, MessageDefault] = {
+    d.key: d
+    for d in (
+        _click(
+            "planner_invite",
+            "Planner invite",
+            "planners",
+            audience="planner",
+            channels=("email",),
+            subject="Your wedding transportation with {company_name}",
+            email_body=(
+                "Hi {account_name},\n\n"
+                "{company_name} has set up a page for the weddings you're planning with us: "
+                "every pickup, vehicle and, closer to the day, every driver, in one place.\n\n"
+                "Create your account here:\n"
+                "{account_button}\n\n"
+                "This link works once and expires in 7 days. If it lapses, ask your "
+                "coordinator to send a new one.\n\n"
+                "If you weren't expecting this, you can ignore this email.\n\n" + _SIGNATURE
+            ),
+            recipients=(),
+        ),
+        _click(
+            "planner_password_reset",
+            "Planner password reset",
+            "planners",
+            audience="planner",
+            channels=("email",),
+            subject="Reset your {company_name} planner password",
+            email_body=(
+                "Hi {account_name},\n\n"
+                "Someone asked to reset the password for your {company_name} planner account.\n"
+                "Choose a new one here:\n"
+                "{account_button}\n\n"
+                "This link works once and expires in 7 days. If you didn't ask for this, you "
+                "can ignore this email; your password stays as it is.\n\n" + _SIGNATURE
+            ),
+            recipients=(),
+        ),
+        _click(
+            "user_invite",
+            "Staff user invite",
+            "staff_reports",
+            audience="staff",
+            channels=("email",),
+            subject="You've been invited to the {company_name} Lead Manager",
+            email_body=(
+                "Hi {account_first_name},\n\n"
+                "You've been added to the {company_name} Lead Manager as {role_label}.\n\n"
+                "{access_level}\n\n"
+                "Set your password to activate your account:\n"
+                "{account_button}\n\n"
+                "This link expires in 7 days. If it lapses, ask an admin to resend your "
+                "invite.\n\n"
+                "If you weren't expecting this, you can ignore this email — the account stays "
+                "locked until someone uses the link above.\n\n" + _SIGNATURE_WITH_LINE
+            ),
+            recipients=(),
+        ),
+        _click(
+            "wedding_details_received",
+            "Wedding details received",
+            "leads_quotes",
+            channels=("email",),
+            subject="We have your wedding details · {quote_no}",
+            email_body=(
+                "Hi {form_name},\n\n"
+                "Thank you — we have your wedding details, and one of our wedding "
+                "professionals is building your day from them: every pickup, every vehicle. "
+                "You'll have it, with a full quote, within one business day. No deposit, "
+                "nothing locked in.\n\n"
+                "{wedding_details}\n\n"
+                "Plans still firming up? Open your details and change the guest count, the "
+                "hotels or the times — we'll build from whatever is current:\n"
+                "{resume_button}\n\n"
+                "Questions? Reply to this email or call {company_phone}.\n\n" + _SIGNATURE_WITH_LINE
+            ),
+        ),
+    )
+}
+
 # Every seeded message's original, by key.
-ORIGINALS: dict[str, MessageDefault] = {**DEFAULTS, **CLICKS}
+ORIGINALS: dict[str, MessageDefault] = {**DEFAULTS, **CLICKS, **INVITES}
 
 # The fields `reset` copies back. The on/off switch is not part of the original: resetting the
 # wording never turns a message on or off.
