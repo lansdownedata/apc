@@ -380,3 +380,47 @@ def test_reset_restores_the_wedding_filter():
     row.service_types.clear()
     defaults.reset(row)
     assert row.service_types.get().name.lower() == WEDDING_SERVICE_NAME.lower()
+
+
+# --- the frozen key list of migration 0022 --------------------------------------------------
+
+
+def _migration_0022():
+    from importlib import import_module
+
+    return import_module("apps.messaging.migrations.0022_seed_message_rows")
+
+
+def test_0022_seeds_a_frozen_list_of_todays_keys():
+    keys = _migration_0022().KEYS
+    assert isinstance(keys, tuple)
+    assert set(keys) == set(TouchPoint.Kind.values) | {"thank_you_wedding"}
+    assert len(keys) == len(set(keys)) == 24
+
+
+def test_seed_with_keys_writes_only_those_rows():
+    _before_seeding()
+    assert defaults.seed(keys=("tp1_welcome", "thank_you")) == 2
+    assert set(MessageTemplate.objects.values_list("key", flat=True)) == {
+        "tp1_welcome",
+        "thank_you",
+    }
+
+
+def test_seed_with_keys_links_only_those_touchpoints():
+    _before_seeding()
+    lead = LeadFactory()
+    welcome = TouchPoint.objects.create(lead=lead, kind="tp1_welcome")
+    thanks = TouchPoint.objects.create(lead=lead, kind="thank_you")
+    defaults.seed(keys=("tp1_welcome",))
+    welcome.refresh_from_db(), thanks.refresh_from_db()
+    assert welcome.message is not None
+    assert thanks.message is None
+
+
+def test_0022_passes_its_frozen_keys_to_seed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(defaults, "seed", lambda apps=None, keys=None: calls.append(keys) or 0)
+    migration = _migration_0022()
+    migration.seed_rows(apps="registry", schema_editor=None)
+    assert calls == [migration.KEYS]

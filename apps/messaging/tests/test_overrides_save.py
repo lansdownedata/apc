@@ -84,8 +84,9 @@ def test_triggered_kind_refuses_timing():
 
 def test_triggered_kind_ignores_stray_row_timing():
     MessageTemplate.objects.filter(key="order_confirmed").update(
-        timing_amount=5, timing_unit="hours"
+        timing_amount=5, timing_unit="hours", sms_body="Booked {quote_no}"
     )
+    assert "order_confirmed" in overrides.load()
     assert overrides.effective("order_confirmed").offset == timedelta(0)
 
 

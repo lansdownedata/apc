@@ -22,7 +22,9 @@ def test_no_row_is_code_default():
 
 
 def test_row_overrides_only_non_blank():
-    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi {first_name}")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(
+        subject="", email_body="", sms_body="Hi {first_name}"
+    )
     base = TEMPLATES["tp1_welcome"]
 
     got = overrides.effective("tp1_welcome")

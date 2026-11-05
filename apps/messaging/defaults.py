@@ -8,6 +8,7 @@ for a key) and never overwrites a seeded row; `reset` copies an original back ov
 live models at load time.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from datetime import timedelta
 
@@ -282,18 +283,21 @@ def _values(key: str, saved: dict) -> dict:
     return values
 
 
-def seed(apps=None) -> int:
+def seed(apps=None, keys: Iterable[str] | None = None) -> int:
     """Create every missing seeded row; returns how many were written.
 
     A row spec B saved for a key (not yet seeded) is completed in place: its non-blank
     wording, its timing and its switch win over the default. A seeded row is never touched.
     Then every TouchPoint without a message is pointed at the row for its kind.
-    ``apps`` is a migration's app registry; None uses the live models."""
+    ``apps`` is a migration's app registry; None uses the live models. ``keys`` limits the
+    run to those messages (a migration passes the frozen list it owns); None means all."""
     MessageTemplate, TouchPoint, ServiceType = _models(apps)
+    keys = tuple(DEFAULTS if keys is None else keys)
     existing = {row.key: row for row in MessageTemplate.objects.filter(key__in=DEFAULTS)}
     saved = {key: row for key, row in existing.items() if not row.seeded}
     written = 0
-    for key, default in DEFAULTS.items():
+    for key in keys:
+        default = DEFAULTS[key]
         row = existing.get(key)
         if row is not None and row.seeded:
             continue
@@ -305,7 +309,7 @@ def seed(apps=None) -> int:
         row.save()
         row.service_types.set(_service_types(ServiceType, default.service_type_names))
         written += 1
-    for row in MessageTemplate.objects.filter(key__in=DEFAULTS):
+    for row in MessageTemplate.objects.filter(key__in=keys):
         TouchPoint.objects.filter(kind=row.key, message__isnull=True).update(message=row)
     return written
 
