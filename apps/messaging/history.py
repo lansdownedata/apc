@@ -97,9 +97,13 @@ def for_lead(lead) -> list[HistoryRow]:
                 # moved, the order was lost): the line says how it closed, not "Waiting".
                 status, reason = _tp_status(tp)
                 when = tp.updated_at
-            elif d.status == Delivery.Status.SENT:
-                when = tp.sent_at or d.updated_at
-            elif d.status in (Delivery.Status.FAILED, Delivery.Status.SKIPPED):
+            elif d.status in (
+                Delivery.Status.SENT,
+                Delivery.Status.FAILED,
+                Delivery.Status.SKIPPED,
+            ):
+                # Its own time: an email that went at night keeps it after the text it was
+                # sent with waited for the morning.
                 when = d.updated_at
             else:
                 when = tp.scheduled_for or d.created_at

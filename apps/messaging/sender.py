@@ -422,12 +422,20 @@ def _record(
     return line
 
 
+def _reopenable(d: Delivery) -> bool:
+    """A held text's line: still queued, or closed because its address had left the
+    recipients (it may be back by morning)."""
+    return d.status == Delivery.Status.QUEUED or (
+        d.status == Delivery.Status.SKIPPED and d.reason == NO_LONGER
+    )
+
+
 def _waiting(done: list[Delivery], channel: str | None = None) -> dict[tuple[str, str], Delivery]:
-    """The queued lines (texts held for quiet hours) by channel and lowercased address."""
+    """The lines texts held for quiet hours left, by channel and lowercased address."""
     return {
         (d.channel, d.address.lower()): d
         for d in done
-        if d.status == Delivery.Status.QUEUED and channel in (None, d.channel)
+        if _reopenable(d) and channel in (None, d.channel)
     }
 
 
@@ -444,6 +452,8 @@ def _hold(tp: TouchPoint, until, waiting: dict[tuple[str, str], Delivery]) -> No
 
 def _close(waiting: dict[tuple[str, str], Delivery]) -> None:
     for line in waiting.values():
+        if line.status == Delivery.Status.SKIPPED:
+            continue  # closed by an earlier run
         line.status = Delivery.Status.SKIPPED
         line.reason = NO_LONGER
         line.save(update_fields=["status", "reason", "updated_at"])
@@ -550,7 +560,10 @@ def _send(
     tried = {
         (d.channel, d.address.lower()): d
         for d in done
-        if waiting and d.address and d.status in (Delivery.Status.FAILED, Delivery.Status.SKIPPED)
+        if waiting
+        and d.address
+        and d.status in (Delivery.Status.FAILED, Delivery.Status.SKIPPED)
+        and not _reopenable(d)
     }
     errors = [
         f"{d.channel}: {d.reason}" for d in tried.values() if d.status == Delivery.Status.FAILED
@@ -795,8 +808,13 @@ def _settle_after_error(
     tp: TouchPoint, *, status: str = TouchPoint.Status.FAILED, error: str = "unexpected error"
 ) -> None:
     """A send that blew up part-way: SENT if anyone was reached, else today's FAILED (or the
-    given status and reason)."""
-    if Delivery.objects.filter(touchpoint=tp, status=Delivery.Status.SENT).exists():
+    given status and reason). One holding texts for quiet hours stays SCHEDULED with only its
+    lease ended, so the next run sends what is missing and the held texts still go."""
+    statuses = set(Delivery.objects.filter(touchpoint=tp).values_list("status", flat=True))
+    if Delivery.Status.QUEUED in statuses:
+        tp.save(update_fields=["updated_at"])
+        return
+    if Delivery.Status.SENT in statuses:
         tp.status = TouchPoint.Status.SENT
         tp.error = ""
         tp.sent_at = tp.sent_at or timezone.now()

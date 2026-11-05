@@ -14,10 +14,11 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
+import requests
 
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
-from apps.leads.models import Lead
+from apps.leads.models import Lead, LeadContact
 from apps.messaging import events, history, quiet, rules, sender
 from apps.messaging.factories import DeliveryFactory, MessageRowFactory, TouchPointFactory
 from apps.messaging.models import Delivery, MessageTemplate, NotificationConfig, TouchPoint
@@ -85,13 +86,10 @@ def _pickup_row(**kw) -> MessageTemplate:
     kw.setdefault("subject", "Your trips")
     kw.setdefault("email_body", "{trip_sheet}")
     kw.setdefault("sms_body", "{first_name}, your trips:\n{trip_sheet}")
+    kw.setdefault("timing_amount", 72)
+    kw.setdefault("timing_direction", MessageTemplate.Direction.BEFORE)
     return MessageRowFactory(
-        trigger="pickup",
-        section=MessageTemplate.Section.TRIP_DAY,
-        timing_amount=72,
-        timing_unit="hours",
-        timing_direction=MessageTemplate.Direction.BEFORE,
-        **kw,
+        trigger="pickup", section=MessageTemplate.Section.TRIP_DAY, timing_unit="hours", **kw
     )
 
 
@@ -223,6 +221,41 @@ def test_staff_click_never_held(clock):
         result = sender.send_now(row.key, lead, extra_ctx={"quote_link": "https://q.test/1"})
 
     assert result.sent is True
+    assert _texts(send) == ["+12025550100"]
+
+
+def test_a_pickup_already_past_is_held():
+    """The exemption is for a pickup still ahead: an "after pickup" text, or a trip-done
+    text, for a trip that already ran waits for the morning like any other."""
+    _window()
+    lead = _booked()
+    trip = _trip(lead, datetime(YEAR, 1, 10, 14, 0, tzinfo=ET))
+    eleven_pm = datetime(YEAR, 1, 10, 23, 0, tzinfo=ET)
+    morning = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    after = _pickup_row(timing_direction=MessageTemplate.Direction.AFTER, timing_amount=9)
+    done = MessageRowFactory(trigger="trip_done", recipients=["booking_contact"])
+
+    assert quiet.hold_until(_tp(after, lead, trip), after, now=eleven_pm) == morning
+    assert quiet.hold_until(_tp(done, lead, trip), done, now=eleven_pm) == morning
+
+
+def test_live_trip_status_texts_always_send(clock):
+    """Dispatched, On the way and Arrived describe the car right now."""
+    _window()
+    lead = _booked()
+    trip = _trip(lead, datetime(YEAR, 1, 10, 23, 30, tzinfo=ET))
+    clock.now = datetime(YEAR, 1, 10, 23, 35, tzinfo=ET)
+    for key in ("status_dispatched", "status_on_the_way"):
+        row = MessageRowFactory(trigger=key, recipients=["booking_contact"])
+        assert quiet.hold_until(_tp(row, lead, trip), row, now=clock.now) is None
+    arrived = MessageRowFactory(
+        trigger="status_arrived", recipients=["booking_contact"], send_email=False
+    )
+    tp = _tp(arrived, lead, trip)
+    assert quiet.hold_until(tp, arrived, now=clock.now) is None
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(tp) is True
     assert _texts(send) == ["+12025550100"]
 
 
@@ -407,6 +440,92 @@ def test_a_recipient_gone_by_morning_closes_the_queued_line(clock):
         ("sms", "+12025550100", "skipped", sender.NO_LONGER),
         ("sms", "+12025550177", "sent", ""),
     ]
+
+
+def test_held_texts_survive_a_send_error(clock):
+    """An unexpected error on the second email (a timeout Podium's client doesn't wrap)
+    must not settle the row SENT and lose the texts already queued."""
+    _window()
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    lead = _booked()
+    couple = ContactFactory(name="Cal Couple", phone="+12025550111", email="cal@example.com")
+    LeadContact.objects.create(lead=lead, contact=couple, role=LeadContact.Role.COUPLE)
+    row = _pickup_row(recipients=["booking_contact", "role:couple"])
+    tp = _tp(row, lead, _trip(lead, datetime(YEAR, 1, 13, 14, 0, tzinfo=ET)))
+
+    def flaky(**kw):
+        if kw["identifier"] == "cal@example.com":
+            raise requests.Timeout("read timed out")
+        return _ok()
+
+    with patch(SEND, side_effect=flaky):
+        sender.run_touchpoints()
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SCHEDULED
+    assert tp.updated_at <= clock.now  # the lease is over
+
+    clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok) as send:
+        sender.run_touchpoints()
+
+    assert sorted(_texts(send)) == ["+12025550100", "+12025550111"]
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SENT
+    assert [d[:3] for d in _deliveries(tp)] == [
+        ("email", "bea.booker@example.com", "sent"),
+        ("email", "cal@example.com", "sent"),
+        ("sms", "+12025550100", "sent"),
+        ("sms", "+12025550111", "sent"),
+    ]
+
+
+def test_an_address_back_on_file_by_morning_still_gets_its_text(clock):
+    """A held mobile replaced overnight, then put back: the morning still texts it, on its
+    one line."""
+    _window()
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    lead = _booked()
+    tp = _tp(
+        _pickup_row(send_email=False), lead, _trip(lead, datetime(YEAR, 1, 13, 9, 0, tzinfo=ET))
+    )
+    with patch(SEND, side_effect=_ok):
+        sender.deliver(tp)
+
+    contact = lead.contact
+    for phone, at in (("+12025550177", 23), ("+12025550100", 23)):
+        contact.phone = phone
+        contact.save()
+        clock.now = datetime(YEAR, 1, 10, at, 30 if phone.endswith("100") else 0, tzinfo=ET)
+        TouchPoint.objects.filter(pk=tp.pk).update(scheduled_for=clock.now)
+        with patch(SEND, side_effect=_ok) as send:
+            sender.run_touchpoints()
+        send.assert_not_called()
+
+    clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.run_touchpoints() == 1
+
+    assert _texts(send) == ["+12025550100"]
+    assert _deliveries(tp) == [
+        ("sms", "+12025550100", "sent", ""),
+        ("sms", "+12025550177", "skipped", sender.NO_LONGER),
+    ]
+
+
+def test_a_text_sent_after_a_hold_keeps_the_emails_own_time_in_history(clock):
+    _window()
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    lead = _booked()
+    tp = _tp(_pickup_row(), lead, _trip(lead, datetime(YEAR, 1, 13, 14, 0, tzinfo=ET)))
+    with patch(SEND, side_effect=_ok):
+        sender.deliver(tp)
+    clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok):
+        sender.run_touchpoints()
+
+    rows = {r.to.rsplit(" · ", 1)[1]: r.when_display for r in history.for_lead(lead)}
+
+    assert rows == {"Email": "Jan 10, 10:00 PM EST", "SMS": "Jan 11, 8:00 AM EST"}
 
 
 def test_the_review_request_is_held_too(clock):
