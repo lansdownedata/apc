@@ -294,8 +294,10 @@ def messages_list(request: HttpRequest) -> HttpResponse:
     rows = MessageTemplate.objects.live().prefetch_related("service_types")
     sections = listing.build_sections(rows, filters, master_on=master)
     filtering = any(filters.values())
+    group_order = {kind: i for i, kind in enumerate(triggers.GROUP_LABEL)}
     triggers_by_group = sorted(
-        triggers.CATALOG.values(), key=lambda t: (list(triggers.GROUP_LABEL).index(t.kind), t.label)
+        triggers.CATALOG.values(),
+        key=lambda t: (group_order.get(t.kind, len(group_order)), t.label),
     )
     return render(
         request,
@@ -310,7 +312,8 @@ def messages_list(request: HttpRequest) -> HttpResponse:
             "audience_options": MessageTemplate.Audience.choices,
             "channel_options": [("sms", "Text"), ("email", "Email"), ("both", "Text and Email")],
             "trigger_options": [
-                (t.key, f"{triggers.GROUP_LABEL[t.kind]}: {t.label}") for t in triggers_by_group
+                (t.key, f"{triggers.GROUP_LABEL.get(t.kind, t.kind)}: {t.label}")
+                for t in triggers_by_group
             ],
             "service_options": list(ServiceType.objects.order_by("name").values_list("pk", "name")),
             "origin_options": [("seeded", "Built-in"), ("added", "Added")],
@@ -362,6 +365,8 @@ def message_toggle(request: HttpRequest, kind: str) -> JsonResponse:
     """Flip one message's switch, leaving its text and timing as they are."""
     if kind not in {m.kind for m in overrides.MESSAGES}:
         row = get_object_or_404(MessageTemplate.objects.live(), key=kind)
+        if listing.is_staff_click(row):
+            return JsonResponse({"ok": False, "error": "This one has no switch."}, status=400)
         row.enabled = not row.enabled
         row.save(update_fields=["enabled", "updated_at"])
         return JsonResponse({"ok": True, "enabled": row.enabled})

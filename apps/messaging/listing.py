@@ -110,7 +110,7 @@ def summary(row: MessageTemplate) -> str:
     return " · ".join(parts)
 
 
-def _is_staff_click(row: MessageTemplate) -> bool:
+def is_staff_click(row: MessageTemplate) -> bool:
     trigger = triggers.CATALOG.get(row.trigger)
     return trigger is not None and trigger.kind == "staff_click"
 
@@ -140,7 +140,7 @@ def problems(row: MessageTemplate, *, master_on: bool = True) -> list[str]:
         )
         if any(msg.startswith("Unknown field") for msg in errors.values()):
             found.append(BAD_FIELD)
-    if row.enabled and not master_on and not _is_staff_click(row):
+    if row.enabled and not master_on and not is_staff_click(row):
         found.append(MASTER_OFF)
     return found
 
@@ -166,7 +166,7 @@ def _tag(row: MessageTemplate) -> str:
 
 
 def _click_label(row: MessageTemplate) -> str:
-    return triggers.CATALOG[row.trigger].label if _is_staff_click(row) else ""
+    return triggers.CATALOG[row.trigger].label if is_staff_click(row) else ""
 
 
 def _matches(item: Item, filters: dict) -> bool:

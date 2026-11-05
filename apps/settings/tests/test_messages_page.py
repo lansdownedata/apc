@@ -135,3 +135,11 @@ def test_toggle_works_for_an_added_row(client):
     row.refresh_from_db()
     assert row.enabled is False
     assert client.post(reverse("message_toggle", args=["no-such-key"])).status_code == 404
+
+
+def test_toggle_refuses_a_staff_click_row(client):
+    _admin(client)
+    row = MessageRowFactory(name="Send quote", trigger="send_quote", enabled=True)
+    assert client.post(reverse("message_toggle", args=[row.key])).status_code == 400
+    row.refresh_from_db()
+    assert row.enabled is True

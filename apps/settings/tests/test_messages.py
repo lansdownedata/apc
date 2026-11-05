@@ -33,6 +33,7 @@ def test_lists_groups_and_rows(client):
     assert "30 minutes after lead comes in · Text and Email · Booking contact" in html
     assert "12 hours before pickup, once dispatched" in html
     assert "1 day after all trips done · Text · Booking contact" in html
+    assert "Uses the Thank-you switch" not in html
     assert "Thank-you (wedding) switch" in html
 
 
