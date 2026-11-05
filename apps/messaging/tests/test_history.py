@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.urls import reverse
@@ -124,3 +125,88 @@ def test_pages_show_an_empty_state(logged_in_client):
     lead = LeadFactory(status="booked")
     body = logged_in_client.get(reverse("order_detail", args=[lead.pk])).content.decode()
     assert "No messages sent or scheduled" in body
+
+
+def test_blank_trip_zone_still_shows_the_office_zone_abbreviation(settings):
+    lead = LeadFactory()
+    trip = ReservationFactory(lead=lead, pickup_timezone="")
+    at = datetime(2026, 11, 22, 13, 0, tzinfo=UTC)
+    _tp(lead, name="Trip", reservation=trip, scheduled_for=at)
+    _tp(lead, name="Order", scheduled_for=at)
+
+    rows = {r.name: r for r in history.for_lead(lead)}
+
+    abbreviation = at.astimezone(ZoneInfo(settings.TIME_ZONE)).tzname()
+    assert rows["Trip"].when_display.endswith(f" {abbreviation}")
+    assert rows["Order"].when_display.endswith(f" {abbreviation}")
+
+
+def test_cancelled_sends_sort_after_sent_ones_newest_cancelled_first():
+    lead = LeadFactory()
+    now = timezone.now()
+    sent = _tp(lead, name="Sent", status=TouchPoint.Status.SENT, sent_at=now - timedelta(days=9))
+    DeliveryFactory(touchpoint=sent, message=sent.message, status=Delivery.Status.SENT)
+    first = _tp(
+        lead, name="Cancelled early", status=TouchPoint.Status.CANCELLED,
+        scheduled_for=now + timedelta(days=30),
+    )  # fmt: skip
+    second = _tp(
+        lead, name="Cancelled late", status=TouchPoint.Status.CANCELLED,
+        scheduled_for=now + timedelta(days=1),
+    )  # fmt: skip
+    TouchPoint.objects.filter(pk=first.pk).update(updated_at=now - timedelta(hours=5))
+    TouchPoint.objects.filter(pk=second.pk).update(updated_at=now - timedelta(hours=1))
+
+    names = [r.name for r in history.for_lead(lead)]
+
+    assert names == ["Sent", "Cancelled late", "Cancelled early"]
+
+
+def test_failed_and_skipped_deliveries_are_dated_when_they_happened():
+    lead = LeadFactory()
+    due = datetime(2026, 12, 1, 16, 0, tzinfo=UTC)
+    happened = datetime(2026, 12, 1, 16, 5, tzinfo=UTC)
+    for name, status in (("Bad", Delivery.Status.FAILED), ("Skip", Delivery.Status.SKIPPED)):
+        tp = _tp(lead, name=name, scheduled_for=due)
+        d = DeliveryFactory(touchpoint=tp, message=tp.message, status=status)
+        Delivery.objects.filter(pk=d.pk).update(updated_at=happened)
+
+    rows = history.for_lead(lead)
+
+    assert {r.when for r in rows} == {happened}
+
+
+def test_unknown_delivery_status_does_not_break_the_history():
+    lead = LeadFactory()
+    tp = _tp(lead, name="Odd")
+    d = DeliveryFactory(touchpoint=tp, message=tp.message, status=Delivery.Status.SENT)
+    Delivery.objects.filter(pk=d.pk).update(status="mystery")
+
+    (row,) = history.for_lead(lead)
+
+    assert row.status == "mystery"
+
+
+def test_history_is_escaped(logged_in_client):
+    lead = LeadFactory(status="booked")
+    tp = _tp(lead, name="Driver details")
+    DeliveryFactory(
+        touchpoint=tp,
+        message=tp.message,
+        status=Delivery.Status.FAILED,
+        reason="<script>alert(1)</script>",
+        recipient_label="<b>Eve</b>",
+    )
+    body = logged_in_client.get(reverse("order_detail", args=[lead.pk])).content.decode()
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+    assert "<b>Eve</b>" not in body
+    assert "&lt;b&gt;Eve&lt;/b&gt;" in body
+
+
+@pytest.mark.parametrize("name", ["order_detail", "lead_detail"])
+def test_anonymous_is_redirected_from_the_history_pages(client, name):
+    lead = LeadFactory(status="booked")
+    response = client.get(reverse(name, args=[lead.pk]))
+    assert response.status_code == 302
+    assert "/login/" in response["Location"]

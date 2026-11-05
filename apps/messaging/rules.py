@@ -125,6 +125,12 @@ def has_built_ins(row: MessageTemplate) -> bool:
     return bool(row.seeded and default is not None and row.trigger == default.trigger)
 
 
+def combines_per_trip(key: str) -> bool:
+    """True for a built-in message whose own rule is one message per trip (on its original
+    trigger), overriding the trigger's per-day combining."""
+    return key in _PER_TRIP
+
+
 def built_in_descriptions(key: str) -> list[str]:
     """The built-in rules of a seeded message, as the editor lists them (read-only)."""
     return list(_DESCRIPTIONS.get(key, []))

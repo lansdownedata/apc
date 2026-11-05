@@ -352,8 +352,13 @@ def timing_example(
     return f"{phrase} → sends {schedule.stamp(sends.astimezone(anchor.tzinfo))}"
 
 
-def behaviour(trigger_key: str) -> list[str]:
-    """How the trigger behaves, as the editor lists it under the timing."""
+COMBINE_LINE = "One message per person per day, listing all their trips that day."
+
+
+def behaviour(trigger_key: str, *, per_trip: bool = False) -> list[str]:
+    """How the trigger behaves, as the editor lists it under the timing. `per_trip` is a
+    built-in row whose own rule sends one message per trip, so the trigger's per-day
+    combining does not apply and is left out."""
     trigger = triggers.CATALOG.get(trigger_key)
     if trigger is None:
         return []
@@ -365,7 +370,8 @@ def behaviour(trigger_key: str) -> list[str]:
             "still ahead.",
         ]
     if trigger.combine:
-        lines.append("One message per person per day, listing all their trips that day.")
+        if not per_trip:
+            lines.append(COMBINE_LINE)
     elif trigger.kind == "event" and trigger.level == "trip":
         lines.append("One message per trip.")
     if trigger.kind == "schedule":

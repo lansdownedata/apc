@@ -428,6 +428,7 @@ def _trigger_meta() -> dict:
             "audiences": [a for a in MessageTemplate.Audience.values if a in t.audiences],
             "anchor": editor.anchor_noun(t.key),
             "behaviour": editor.behaviour(t.key),
+            "combineLine": editor.COMBINE_LINE if t.combine else "",
             "untimed": _untimed_text(t.key),
         }
         for t in triggers.CATALOG.values()
@@ -450,7 +451,7 @@ def _trigger_options() -> list[dict]:
         key=lambda t: (group_order.get(t.kind, len(group_order)), t.label),
     )
     return [
-        {"value": t.key, "label": t.label, "badge": triggers.GROUP_LABEL.get(t.kind, t.kind)}
+        {"value": t.key, "label": f"{triggers.GROUP_LABEL.get(t.kind, t.kind)}: {t.label}"}
         for t in ordered
     ]
 
@@ -507,6 +508,7 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
     built_ins = rules.built_in_descriptions(row.key) if row.seeded else []
     changed = bool(original and trigger_key != original)
     state["builtIns"] = built_ins
+    state["perTrip"] = bool(row.seeded and rules.combines_per_trip(row.key))
     direction = state["direction"]
     section = form["section"].value() or row.section
     errors = {name: form.errors[name][0] for name in form.errors}
@@ -547,7 +549,8 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         ),
         "no_timing_text": _untimed_text(trigger_key),
         "direction_options": MessageTemplate.Direction.choices,
-        "rule_lines": editor.behaviour(trigger_key) + ([] if changed else built_ins),
+        "rule_lines": editor.behaviour(trigger_key, per_trip=state["perTrip"] and not changed)
+        + ([] if changed else built_ins),
         "built_ins": built_ins,
         "trigger_changed": changed,
         "timing_example": example,

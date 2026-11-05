@@ -20,7 +20,7 @@ from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead, LeadContact
-from apps.messaging import defaults, editor, events, listing, rules
+from apps.messaging import defaults, editor, events, listing, rules, triggers
 from apps.messaging import rows as message_rows
 from apps.messaging.factories import MessageRowFactory, TouchPointFactory
 from apps.messaging.models import MessageTemplate, TouchPoint
@@ -1043,3 +1043,50 @@ def test_payment_reminder_cancelled_otherwise_still_blocks(client):
     client.post(url)
     events.schedule_dates(lead)
     assert not TouchPoint.objects.filter(message=row, lead=lead, status="scheduled").exists()
+
+
+def _ctx_lines(client, key, **row_update):
+    if row_update:
+        MessageTemplate.objects.filter(key=key).update(**row_update)
+    response = client.get(reverse("message_edit", args=[key]))
+    return response.context["rule_lines"], response.context["state"], response.content.decode()
+
+
+def test_per_trip_built_in_drops_the_trigger_per_day_line(client):
+    client.force_login(_owner_admin())
+    for key in ("wed_final_details", "trip_confirm_affiliate", "driver_released"):
+        lines, state, _ = _ctx_lines(client, key)
+        assert editor.COMBINE_LINE not in lines, key
+        assert state["perTrip"] is True
+    assert any("per trip" in line.lower() for line in lines)
+
+
+def test_combine_line_shows_when_the_trigger_really_combines(client):
+    client.force_login(_owner_admin())
+    combining = next(t for t in triggers.CATALOG.values() if t.combine)
+    # An added row on a combining trigger keeps the line.
+    row = MessageRowFactory(name="Mine", trigger=combining.key, recipients=["booking_contact"])
+    lines, state, _ = _ctx_lines(client, row.key)
+    assert editor.COMBINE_LINE in lines
+    assert state["perTrip"] is False
+    # A per-trip built-in moved off its original trigger onto a combining one gets it back.
+    lines, _, _ = _ctx_lines(client, "driver_released", trigger=combining.key)
+    assert editor.COMBINE_LINE in lines
+    meta = _ctx_lines(client, "driver_released")[1]["triggers"][combining.key]
+    assert meta["combineLine"] == editor.COMBINE_LINE
+
+
+def test_trigger_options_are_grouped_by_label_prefix(client):
+    client.force_login(_owner_admin())
+    html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
+    for prefix in ("Dates: ", "Events: ", "Staff clicks: ", "Schedules: "):
+        assert f">{prefix}" in html
+    assert html.index(">Dates: ") < html.index(">Events: ") < html.index(">Staff clicks: ")
+    assert html.index(">Staff clicks: ") < html.index(">Schedules: ")
+
+
+def test_messages_and_editor_redirect_anonymous_users(client):
+    for url in (reverse("messages"), reverse("message_edit", args=["driver_released"])):
+        response = client.get(url)
+        assert response.status_code == 302
+        assert "/login/" in response["Location"]

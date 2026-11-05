@@ -1670,7 +1670,12 @@ function messageEditor(state = {}) {
       return !!state.originalTrigger && this.trigger !== state.originalTrigger;
     },
     get ruleLines() {
-      return (this.meta.behaviour || []).concat(this.triggerChanged ? [] : state.builtIns || []);
+      // A built-in that sends one message per trip overrides its trigger's per-day line.
+      const overridden = state.perTrip && !this.triggerChanged;
+      const own = (this.meta.behaviour || []).filter(
+        (line) => !(overridden && line === this.meta.combineLine),
+      );
+      return own.concat(this.triggerChanged ? [] : state.builtIns || []);
     },
     get emailOnly() {
       return this.email && !this.sms;
