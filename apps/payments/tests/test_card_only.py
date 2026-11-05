@@ -40,7 +40,9 @@ def test_admin_payment_intent_is_card_only():
 def test_balance_charge_is_card_only():
     plan = _plan(stripe_payment_method_id="pm_1")
     with patch.object(
-        services.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_1")
+        services.stripe.PaymentIntent,
+        "create",
+        return_value=MagicMock(id="pi_1", status="succeeded"),
     ) as create:
         services.charge_balance(plan)
     assert create.call_args.kwargs["payment_method_types"] == ["card"]

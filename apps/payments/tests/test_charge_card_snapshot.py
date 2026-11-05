@@ -106,9 +106,9 @@ def test_capturing_a_held_deposit_does_not_blank_it():
 
 def test_the_automatic_balance_charge_records_it():
     """`charge_balance` is the `charge-due-balances` cron — the most common balance charge
-    there is. It confirms off-session and posts its own ledger entry, so it never reaches
-    `record_payment`, and it charges `plan.stripe_payment_method_id` by definition: the
-    card on the plan at that moment *is* the card that paid, with no Stripe call needed.
+    there is. It confirms off-session and charges `plan.stripe_payment_method_id` by
+    definition: the card on the plan at that moment *is* the card that paid, with no Stripe
+    call needed to learn it.
     """
     plan = _plan(
         stripe_payment_method_id="pm_1",

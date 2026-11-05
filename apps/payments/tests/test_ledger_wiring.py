@@ -44,7 +44,11 @@ def test_balance_charge_posts_capture():
         stripe_payment_method_id="pm_1",
         balance_status=PaymentPlan.BalanceStatus.SCHEDULED,
     )
-    with patch.object(services.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_bal")):
+    with patch.object(
+        services.stripe.PaymentIntent,
+        "create",
+        return_value=MagicMock(id="pi_bal", status="succeeded"),
+    ):
         services.charge_balance(plan)
     bals = ledger.order_balances(plan.lead)
     assert bals["collected"] == Decimal("1335.00")

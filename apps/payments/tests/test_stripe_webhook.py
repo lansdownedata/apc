@@ -20,18 +20,22 @@ from apps.payments.models import Charge, JournalEntry, PaymentPlan
 pytestmark = pytest.mark.django_db
 
 
-def _pi_event(lead_id, *, kind="deposit", pi="pi_1"):
+def _pi_event(lead_id, *, kind="deposit", pi="pi_1", charge_id=None):
+    metadata = {"lead_id": str(lead_id), "kind": kind}
+    if charge_id is not None:
+        metadata["charge_id"] = str(charge_id)
     return {
         "type": "payment_intent.succeeded",
-        "data": {"object": {"id": pi, "metadata": {"lead_id": str(lead_id), "kind": kind}}},
+        "data": {"object": {"id": pi, "metadata": metadata}},
     }
 
 
-def _intent(pi="pi_1", amount=133500):
+def _intent(pi="pi_1", amount=133500, metadata=None):
     return MagicMock(
         id=pi,
         status="succeeded",
         amount=amount,
+        metadata=metadata or {},
         payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
     )
 
@@ -124,8 +128,8 @@ def test_a_missing_lead_id_is_a_no_op():
 
 
 def test_an_already_succeeded_charge_is_not_reconciled_twice():
-    """`charge_balance` / `charge_saved_card` confirm off-session and post their own ledger
-    entry inline — their success event still arrives here and must do nothing."""
+    """`charge_balance` / `charge_saved_card` confirm off-session and settle inline — their
+    success event still arrives here and must do nothing."""
     plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("500.00"))
     charge.stripe_payment_intent_id = "pi_inline"
@@ -144,6 +148,37 @@ def test_an_already_succeeded_charge_is_not_reconciled_twice():
         webhooks.process_stripe_event(_pi_event(plan.lead_id, kind="balance", pi="pi_inline"))
     retrieve.assert_not_called()
     assert ledger.order_balances(plan.lead)["collected"] == Decimal("500.00")
+
+
+def test_an_event_that_beats_the_inline_commit_finishes_that_charge():
+    """APC-126: every off-session charge creates its PENDING row, then confirms at Stripe,
+    then saves the intent id. Stripe can deliver `succeeded` inside that window. The event
+    carries our `charge_id`, so it must finish *that* row — not mint a second BALANCE charge
+    with a second ledger entry for the same money."""
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("500.00"))
+    assert charge.stripe_payment_intent_id == ""
+    with (
+        patch.object(
+            webhooks.services.stripe.PaymentIntent,
+            "retrieve",
+            return_value=_intent(
+                pi="pi_race", amount=50000, metadata={"charge_id": str(charge.pk)}
+            ),
+        ),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        webhooks.process_stripe_event(
+            _pi_event(plan.lead_id, kind="balance", pi="pi_race", charge_id=charge.pk)
+        )
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.SUCCEEDED
+    assert charge.stripe_payment_intent_id == "pi_race"
+    assert plan.charges.filter(kind=Charge.Kind.BALANCE).count() == 1
+    assert (
+        JournalEntry.objects.filter(lead=plan.lead, kind=JournalEntry.Kind.BALANCE_CAPTURED).count()
+        == 1
+    )
 
 
 # --- failure path (unchanged) ------------------------------------------------

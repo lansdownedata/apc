@@ -353,7 +353,11 @@ def test_the_balance_cron_path_closes_final_balance_paid():
         stripe_payment_method_id="pm_1",
     )
 
-    with patch.object(payments.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_1")):
+    with patch.object(
+        payments.stripe.PaymentIntent,
+        "create",
+        return_value=MagicMock(id="pi_1", status="succeeded"),
+    ):
         payments.charge_balance(plan)
 
     assert _task(lead, "final_balance_paid").status == Task.Status.DONE

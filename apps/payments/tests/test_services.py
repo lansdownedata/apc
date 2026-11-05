@@ -40,7 +40,9 @@ def test_charge_balance_success():
         quote_total=Decimal("2670.00"), stripe_customer_id="cus_1", stripe_payment_method_id="pm_1"
     )
     with patch.object(
-        services.stripe.PaymentIntent, "create", return_value=MagicMock(id="pi_1")
+        services.stripe.PaymentIntent,
+        "create",
+        return_value=MagicMock(id="pi_1", status="succeeded"),
     ) as create:
         charge = services.charge_balance(plan)
     assert charge.status == Charge.Status.SUCCEEDED
@@ -51,6 +53,59 @@ def test_charge_balance_success():
     assert kwargs["amount"] == 133500
     assert kwargs["off_session"] is True
     assert kwargs["idempotency_key"] == charge.idempotency_key
+
+
+def test_charge_balance_when_the_webhook_lands_mid_call_records_one_payment(settings):
+    """APC-126: Stripe can deliver `payment_intent.succeeded` before `PaymentIntent.create`
+    has even returned to us. Whichever side gets there first finishes the one row; the other
+    finds it done. One charge, one ledger entry, one balance-paid message."""
+    from apps.messaging.factories import MessageRowFactory
+    from apps.messaging.models import TouchPoint
+    from apps.payments import webhooks
+    from apps.payments.models import JournalEntry
+
+    settings.TOUCHPOINTS_ENABLED = True
+    plan = PaymentPlanFactory(
+        quote_total=Decimal("2670.00"), stripe_customer_id="cus_1", stripe_payment_method_id="pm_1"
+    )
+    row = MessageRowFactory(trigger="balance_paid", recipients=["booking_contact"])
+
+    def confirm_and_deliver_webhook(**kwargs):
+        metadata = {k: str(v) for k, v in kwargs["metadata"].items()}
+        intent = MagicMock(
+            id="pi_race",
+            status="succeeded",
+            amount=133500,
+            metadata=metadata,
+            payment_method=MagicMock(id="pm_1", card=MagicMock(brand="visa", last4="4242")),
+        )
+        event = {
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": "pi_race", "metadata": metadata}},
+        }
+        with patch.object(services.stripe.PaymentIntent, "retrieve", return_value=intent):
+            webhooks.process_stripe_event(event)
+        return intent
+
+    with (
+        patch.object(
+            services.stripe.PaymentIntent, "create", side_effect=confirm_and_deliver_webhook
+        ),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        charge = services.charge_balance(plan)
+
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.SUCCEEDED
+    assert charge.stripe_payment_intent_id == "pi_race"
+    assert plan.charges.filter(kind=Charge.Kind.BALANCE).count() == 1
+    assert (
+        JournalEntry.objects.filter(lead=plan.lead, kind=JournalEntry.Kind.BALANCE_CAPTURED).count()
+        == 1
+    )
+    assert TouchPoint.objects.filter(message=row, lead=plan.lead).count() == 1
+    plan.refresh_from_db()
+    assert plan.balance_status == PaymentPlan.BalanceStatus.PAID
 
 
 def test_charge_balance_card_error_fails_and_alerts():

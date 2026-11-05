@@ -196,9 +196,9 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             off_session=True,
             confirm=True,
             metadata={
-                "lead_id": plan.lead_id,
+                "lead_id": str(plan.lead_id),
                 "kind": Charge.Kind.BALANCE.value,
-                "charge_id": charge.id,
+                "charge_id": str(charge.pk),
             },
             idempotency_key=charge.idempotency_key,
         )
@@ -207,44 +207,11 @@ def charge_balance(plan: PaymentPlan) -> Charge:
         # office must see, not an unhandled error that leaves a PENDING row (APC-47).
         return _record_failure(plan, charge, exc)
 
-    with transaction.atomic():
-        charge.stripe_payment_intent_id = intent.id
-        charge.status = Charge.Status.SUCCEEDED
-        # This path confirms off-session and posts its own ledger entry, so it never
-        # reaches `record_payment` and the APC-40 snapshot there. It charges
-        # `plan.stripe_payment_method_id` by definition, so the card on the plan right now
-        # *is* the card that paid — no Stripe round-trip needed to learn it.
-        charge.card_brand = plan.card_brand
-        charge.card_last4 = plan.card_last4
-        charge.save(
-            update_fields=[
-                "stripe_payment_intent_id",
-                "status",
-                "card_brand",
-                "card_last4",
-                "updated_at",
-            ]
-        )
-        plan.balance_status = PaymentPlan.BalanceStatus.PAID
-        plan.save(update_fields=["balance_status", "updated_at"])
-        ledger.post_capture(
-            lead=plan.lead,
-            amount=amount,
-            kind=JournalEntry.Kind.BALANCE_CAPTURED,
-            idempotency_key=f"capture-charge{charge.pk}",
-            charge=charge,
-            stripe_ref=intent.id,
-            memo="Balance captured",
-        )
-    # Not through record_payment, so it needs its own hooks — or every cron-charged
-    # balance would leave "Final balance paid" open until the next run-tasks tick, and
-    # the balance-paid message would never be queued. The charge is new to this call and
-    # already SUCCEEDED, so the webhook's `record_payment` for it fires nothing again.
-    from apps.tasks import services as tasks
-
-    tasks.sync(plan.lead)
-    events.emit("balance_paid", plan.lead)
-    return charge
+    charge.stripe_payment_intent_id = intent.id
+    charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    # Settled through the one reconcile every path shares (APC-126): the webhook for this
+    # same intent may already have finished the row, and then this is a no-op.
+    return record_payment(plan, intent.id, intent=intent, balance_settled=True)
 
 
 # Newest money back first (Moe, 2026-10-24): the trip's own charges (APC-101), then a
@@ -616,6 +583,17 @@ def _store_card(plan: PaymentPlan, payment_method, charge: Charge | None = None)
     cards.remember_card(plan, payment_method)  # APC-47: a card paid with joins the vault
 
 
+def _snapshot_plan_card(plan: PaymentPlan, charge: Charge) -> None:
+    """An off-session charge paid with the card on the plan: that card is what paid it
+    (APC-40). Nothing is written when the plan knows no card, and a snapshot already on
+    the row — the webhook resolved it from Stripe first — is left alone."""
+    if charge.card_brand or charge.card_last4 or not (plan.card_brand or plan.card_last4):
+        return
+    charge.card_brand = plan.card_brand
+    charge.card_last4 = plan.card_last4
+    charge.save(update_fields=["card_brand", "card_last4", "updated_at"])
+
+
 def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
     """Create a PaymentIntent for the staff Payment Element. Returns (charge, client_secret).
 
@@ -640,81 +618,142 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
 _PAID_EVENTS = {Charge.Kind.DEPOSIT: "deposit_paid", Charge.Kind.BALANCE: "balance_paid"}
 
 
-def record_payment(
-    plan: PaymentPlan, payment_intent_id: str, *, kind: str = Charge.Kind.BALANCE
-) -> Charge:
-    """Reconcile a succeeded PaymentIntent: ledger, card, statuses, maybe book.
+def _metadata(intent) -> dict:
+    """Stripe objects are dict-like; a test double may not be."""
+    metadata = getattr(intent, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
 
-    The single reconcile for all three surfaces — the customer pay page, the staff Payment
-    Element, and the webhook. `kind` selects the Charge kind and the matching journal entry;
-    everything else is identical, which is the point.
 
-    The `expand=["payment_method"]` retrieve is load-bearing, not redundant: webhook payloads
-    carry `payment_method` as a bare ID (expanded payloads are opt-in and we don't use them),
-    so this is what resolves the card on every path.
+def _charge_for(plan: PaymentPlan, intent, payment_intent_id: str, kind: str) -> Charge:
+    """The Charge this intent pays, row-locked for the caller's transaction.
 
-    Plan flags are left to `sync_plan_from_collected` — it already sets deposit PAID +
-    balance SCHEDULED once collected covers the deposit, so a deposit needs no special case.
+    By intent id first. Failing that, by the `charge_id` every path of ours puts in the
+    intent's metadata — the only key that exists while an off-session charge is still
+    between Stripe's reply and its own save, which is exactly when Stripe can deliver
+    `succeeded` (APC-126). The lock is what makes the two writers take turns instead of
+    each finishing its own copy. A row is minted only for an intent that carries neither,
+    which nothing of ours creates today.
     """
-    receipt_now = False
-    paid_event = None  # the message event a newly succeeded deposit or balance fires
-    from apps.leads.models import Lead
-    from apps.leads.services import book_lead
-
-    intent = _stripe().PaymentIntent.retrieve(payment_intent_id, expand=["payment_method"])
-    if intent.status != "succeeded":
-        raise PaymentError(f"Payment has not succeeded ({intent.status}).")
-
-    charge = plan.charges.filter(stripe_payment_intent_id=payment_intent_id).first()
+    locked = plan.charges.select_for_update()
+    charge = locked.filter(stripe_payment_intent_id=payment_intent_id).first()
+    if charge is None:
+        charge_id = _metadata(intent).get("charge_id")
+        if charge_id:
+            charge = locked.filter(
+                pk=charge_id, stripe_payment_intent_id__in=("", payment_intent_id)
+            ).first()
     if charge is None:
         amount = (Decimal(intent.amount) / Decimal(100)).quantize(Decimal("0.01"))
-        metadata = getattr(intent, "metadata", None)
-        # Stripe objects are dict-like; a test double may not be.
-        reservation_id = metadata.get("reservation_id") if isinstance(metadata, dict) else None
+        reservation_id = _metadata(intent).get("reservation_id")
         charge = plan.record_charge(
             kind=kind,
             amount=amount,
             reservation_id=int(reservation_id) if reservation_id else None,
         )
+    if charge.stripe_payment_intent_id != payment_intent_id:
         charge.stripe_payment_intent_id = payment_intent_id
         charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    return charge
 
-    if charge.status != Charge.Status.SUCCEEDED and charge.kind == Charge.Kind.FINAL:
+
+def _settle(
+    plan: PaymentPlan, charge: Charge, payment_intent_id: str, *, memo: str | None = None
+) -> tuple[str | None, bool]:
+    """Flip a locked charge to SUCCEEDED and post its money, once. Returns the message event
+    a newly succeeded deposit or balance fires (else None) and whether a trip receipt is now
+    due. An already-succeeded row — the other writer got here first — changes nothing."""
+    if charge.status == Charge.Status.SUCCEEDED:
+        return None, False
+    if charge.kind == Charge.Kind.FINAL:
         charge.status = Charge.Status.SUCCEEDED
         charge.save(update_fields=["status", "updated_at"])
         _post_final(plan, charge, payment_intent_id)
-    elif charge.status != Charge.Status.SUCCEEDED:
-        is_deposit = charge.kind == Charge.Kind.DEPOSIT
-        is_trip = charge.kind == Charge.Kind.TRIP
-        paid_event = _PAID_EVENTS.get(charge.kind)
-        charge.status = Charge.Status.SUCCEEDED
-        # A trip charge is processing's money: its receipt is due from now (APC-103).
-        if is_trip and charge.reservation_id and charge.receipt_due_at is None:
-            charge.receipt_due_at = timezone.now()
-            receipt_now = True
-        charge.save(update_fields=["status", "receipt_due_at", "updated_at"])
-        ledger.post_capture(
-            lead=plan.lead,
-            amount=charge.amount,
-            kind=(
-                JournalEntry.Kind.DEPOSIT_CAPTURED
-                if is_deposit
-                else JournalEntry.Kind.BALANCE_CAPTURED
-            ),
-            idempotency_key=f"capture-charge{charge.pk}",
-            charge=charge,
-            stripe_ref=payment_intent_id,
-            memo=(
-                "Deposit captured"
-                if is_deposit
-                else f"Trip charge ({charge.reservation})"
-                if is_trip
-                else "Card payment"
-            ),
-            reservation=charge.reservation if is_trip else None,
-        )
+        return None, False
+    is_deposit = charge.kind == Charge.Kind.DEPOSIT
+    is_trip = charge.kind == Charge.Kind.TRIP
+    receipt_now = False
+    charge.status = Charge.Status.SUCCEEDED
+    # A trip charge is processing's money: its receipt is due from now (APC-103).
+    if is_trip and charge.reservation_id and charge.receipt_due_at is None:
+        charge.receipt_due_at = timezone.now()
+        receipt_now = True
+    charge.save(update_fields=["status", "receipt_due_at", "updated_at"])
+    ledger.post_capture(
+        lead=plan.lead,
+        amount=charge.amount,
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED
+        if is_deposit
+        else JournalEntry.Kind.BALANCE_CAPTURED,
+        idempotency_key=f"capture-charge{charge.pk}",
+        charge=charge,
+        stripe_ref=payment_intent_id,
+        memo=memo
+        or (
+            "Deposit captured"
+            if is_deposit
+            else f"Trip charge ({charge.reservation})"
+            if is_trip
+            else "Card payment"
+        ),
+        reservation=charge.reservation if is_trip else None,
+    )
+    return _PAID_EVENTS.get(charge.kind), receipt_now
 
-    _store_card(plan, getattr(intent, "payment_method", None), charge)
+
+def record_payment(
+    plan: PaymentPlan,
+    payment_intent_id: str,
+    *,
+    kind: str = Charge.Kind.BALANCE,
+    intent=None,
+    balance_settled: bool = False,
+) -> Charge:
+    """Reconcile a succeeded PaymentIntent: ledger, card, statuses, maybe book.
+
+    The single reconcile for every surface — the customer pay page, the staff Payment
+    Element, the webhook, the reconcile sweep and the off-session charges. `kind` selects
+    the Charge kind and the matching journal entry; everything else is identical, which is
+    the point. The row is found and settled under a lock (`_charge_for`, `_settle`), so two
+    of these for one intent — the inline caller and the webhook — take turns, and the
+    second changes nothing (APC-126).
+
+    The `expand=["payment_method"]` retrieve is load-bearing, not redundant: webhook payloads
+    carry `payment_method` as a bare ID (expanded payloads are opt-in and we don't use them),
+    so this is what resolves the card on every path. An off-session caller passes the
+    `intent` it confirmed instead: it charged the card on the plan by definition, so that
+    card is snapshotted onto the charge with no Stripe round-trip. `balance_settled` is
+    the balance cron's contract: its amount was clamped to what is still owed, so the plan's
+    balance is PAID even when the live total has drifted under the snapshot
+    `sync_plan_from_collected` measures against — and it is set before the tasks and the
+    balance-paid message read the order.
+
+    Plan flags are left to `sync_plan_from_collected` — it already sets deposit PAID +
+    balance SCHEDULED once collected covers the deposit, so a deposit needs no special case.
+    """
+    from apps.leads.models import Lead
+    from apps.leads.services import book_lead
+
+    if intent is None:
+        intent = _stripe().PaymentIntent.retrieve(payment_intent_id, expand=["payment_method"])
+        payment_method = getattr(intent, "payment_method", None)
+    else:
+        payment_method = None
+    if intent.status != "succeeded":
+        raise PaymentError(f"Payment has not succeeded ({intent.status}).")
+
+    with transaction.atomic():
+        charge = _charge_for(plan, intent, payment_intent_id, kind)
+        paid_event, receipt_now = _settle(
+            plan, charge, payment_intent_id, memo="Balance captured" if balance_settled else None
+        )
+        if balance_settled and plan.balance_status != PaymentPlan.BalanceStatus.PAID:
+            plan.balance_status = PaymentPlan.BalanceStatus.PAID
+            plan.save(update_fields=["balance_status", "updated_at"])
+
+    if payment_method is not None:
+        _store_card(plan, payment_method, charge)
+    else:
+        _snapshot_plan_card(plan, charge)
     sync_plan_from_collected(plan)
     if charge.kind == Charge.Kind.FINAL:
         _close_overtime_invoiced(plan.lead)
