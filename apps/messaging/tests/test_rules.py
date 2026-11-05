@@ -501,15 +501,46 @@ def test_thank_you_stands_down_for_the_wedding_thank_you(by):
     _trip(lead, days=-1, wedding=by == "wedding_trip")
     if by == "wedding_name":
         Lead.objects.filter(pk=lead.pk).update(wedding_name="Morgan & Okafor Wedding")
+    _tp(_row("thank_you_wedding"), lead)
     assert rules.check(_tp(row, lead), row) == ("skip", "wedding thank-you sends instead")
 
 
 def test_thank_you_sends_for_a_wedding_when_the_wedding_thank_you_is_off():
+    row = _row("thank_you")
+    lead = _booked()
+    _trip(lead, days=-1, wedding=True)
+    _tp(_row("thank_you_wedding"), lead)
     MessageTemplate.objects.filter(key="thank_you_wedding").update(enabled=False)
+    assert rules.check(_tp(row, lead), row) == SEND
+
+
+def test_thank_you_sends_when_no_wedding_thank_you_was_queued():
+    """The wedding row is on, but nothing was queued for this lead (queued before the
+    cut-over, or the row was switched on after all trips were done)."""
     row = _row("thank_you")
     lead = _booked()
     _trip(lead, days=-1, wedding=True)
     assert rules.check(_tp(row, lead), row) == SEND
+
+
+@pytest.mark.parametrize("status", [TouchPoint.Status.SKIPPED, TouchPoint.Status.CANCELLED])
+def test_thank_you_sends_when_the_wedding_thank_you_stood_down(status):
+    row = _row("thank_you")
+    lead = _booked()
+    _trip(lead, days=-1, wedding=True)
+    TouchPoint.objects.filter(pk=_tp(_row("thank_you_wedding"), lead).pk).update(status=status)
+    assert rules.check(_tp(row, lead), row) == SEND
+
+
+def test_thank_you_stands_down_once_the_wedding_thank_you_went_out():
+    """Sent is final: switching the wedding row off afterwards doesn't send a second one."""
+    row = _row("thank_you")
+    lead = _booked()
+    _trip(lead, days=-1, wedding=True)
+    sent = _tp(_row("thank_you_wedding"), lead)
+    TouchPoint.objects.filter(pk=sent.pk).update(status=TouchPoint.Status.SENT)
+    MessageTemplate.objects.filter(key="thank_you_wedding").update(enabled=False)
+    assert rules.check(_tp(row, lead), row) == ("skip", "wedding thank-you sends instead")
 
 
 def test_thank_you_needs_a_booked_order():
@@ -616,6 +647,66 @@ def test_affiliate_confirmation_links_to_the_ack_page_per_trip():
     assert ctx["ack_link"] == affiliate_ack_url(a, base_url=BASE)
     assert "confirm_link" not in ctx
     assert rules.combine_key(tp, row) == f"{trip.pickup_date.isoformat()}:trip:{trip.pk}"
+
+
+def test_affiliate_confirmation_waits_for_a_confirmed_affiliate():
+    row = _row("trip_confirm_affiliate")
+    lead = _booked()
+    trip = _trip(lead)
+    assert rules.check(_tp(row, lead, trip), row) == ("wait", "no confirmed affiliate")
+    AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
+    assert rules.check(_tp(row, lead, trip), row) == ("wait", "no confirmed affiliate")
+
+
+def test_affiliate_confirmation_sends_for_a_manual_farm_out():
+    row = _row("trip_confirm_affiliate")
+    lead = _booked()
+    trip = _trip(lead)
+    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    assert rules.check(_tp(row, lead, trip), row) == SEND
+
+
+def test_affiliate_confirmation_skips_gnet_coverage():
+    """GNet's acceptance is its acknowledgement (golden gnet_assignment_no_affiliate_*)."""
+    row = _row("trip_confirm_affiliate")
+    lead = _booked()
+    trip = _trip(lead)
+    AssignmentFactory(
+        reservation=trip, status=Assignment.Status.CONFIRMED, channel=Assignment.Channel.GNET
+    )
+    assert rules.check(_tp(row, lead, trip), row) == (
+        "skip",
+        "no affiliate confirmation for GNet coverage",
+    )
+
+
+def test_affiliate_confirmation_skips_in_house_coverage():
+    row = _row("trip_confirm_affiliate")
+    lead = _booked()
+    trip = _trip(lead)
+    AssignmentFactory(reservation=trip, in_house=True)
+    assert rules.check(_tp(row, lead, trip), row) == (
+        "skip",
+        "no affiliate confirmation for in-house coverage",
+    )
+
+
+def test_unknown_wait_is_never_ready():
+    trip = _dispatched_trip()
+    assert rules._ready(trip, "dispatched_with_driver")
+    assert not rules._ready(trip, "something_new")
+
+
+def test_cancelled_trip_is_never_ready():
+    trip = _dispatched_trip()
+    _status(trip, Reservation.TripStatus.CANCELLED)
+    assert not rules._ready(trip, "dispatched_with_driver")
+
+
+def _dispatched_trip() -> Reservation:
+    trip = _trip(_booked(), days=2)
+    _dispatched(trip)
+    return trip
 
 
 def test_driver_message_is_per_trip():

@@ -84,6 +84,7 @@ _DESCRIPTIONS: dict[str, list[str]] = {
     },
     "wed_final_details": ["Links to the wedding details form", "One message per trip"],
     "trip_confirm_affiliate": [
+        "Waits for a confirmed affiliate; not sent for GNet or in-house coverage",
         "Links to the affiliate's acknowledgment page",
         "One message per trip",
     ],
@@ -160,12 +161,14 @@ def matches(row: MessageTemplate, lead, reservation=None) -> bool:
 
 
 def _ready(reservation, waits_for: str) -> bool:
-    """Whether a waiting row's condition holds now."""
-    if waits_for != "dispatched_with_driver":
-        return True
+    """Whether a waiting row's condition holds now. A cancelled trip is never ready, and
+    neither is a condition this module doesn't know."""
     from apps.dispatch.models import DispatchAlertConfig
+    from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.dispatch.services import driver_details_ready
 
+    if waits_for != "dispatched_with_driver" or reservation.trip_status in CANCELLED_STATUSES:
+        return False
     if reservation.trip_status not in DRIVER_MESSAGE_STATUSES:
         return False
     assignment = _confirmed_assignment(reservation)
@@ -240,15 +243,33 @@ def _payment_reminder_reason(lead) -> str:
 
 
 def _wedding_thank_you_instead(lead) -> bool:
-    """The wedding thank-you will go out for this order, so the plain one stands down."""
-    row = MessageTemplate.objects.filter(key="thank_you_wedding").first()
-    return (
-        row is not None
-        and row.enabled
-        and row.archived_at is None
-        and has_built_ins(row)
-        and matches(row, lead)
+    """The wedding thank-you went out for this order, or is queued and still able to, so
+    the plain one stands down. Without a queued one (queued before the cut-over, or the row
+    switched on after the trips finished) the customer gets the plain thank-you."""
+    wedding = TouchPoint.objects.filter(lead=lead, kind="thank_you_wedding").exclude(
+        status__in=(TouchPoint.Status.CANCELLED, TouchPoint.Status.SKIPPED)
     )
+    if wedding.exclude(status=TouchPoint.Status.SCHEDULED).exists():
+        return True
+    if not wedding.exists():
+        return False
+    row = MessageTemplate.objects.filter(key="thank_you_wedding").first()
+    return row is not None and row.enabled and row.archived_at is None and matches(row, lead)
+
+
+def _affiliate_coverage_skip(reservation) -> str:
+    """Only a manual farm-out is confirmed by the affiliate (APC-20). A GNet vendor's
+    acceptance is its acknowledgement, and in-house coverage has no affiliate."""
+    from apps.dispatch.models import Assignment
+
+    assignment = _confirmed_assignment(reservation)
+    if assignment is None:
+        return ""
+    if assignment.is_in_house:
+        return "no affiliate confirmation for in-house coverage"
+    if assignment.channel == Assignment.Channel.GNET:
+        return "no affiliate confirmation for GNet coverage"
+    return ""
 
 
 def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
@@ -283,6 +304,8 @@ def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
             return "lead not booked"
         if key == "thank_you" and _wedding_thank_you_instead(lead):
             return "wedding thank-you sends instead"
+    elif key == "trip_confirm_affiliate":
+        return _affiliate_coverage_skip(tp.reservation)
     elif key == "review_request":
         if not any(r.phone for r in recipients_for(tp, row, resolve(row, lead))):
             return "no phone for review invite"
@@ -350,6 +373,10 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         if reason:
             return "skip", reason
 
+    if built_in and row.key == "trip_confirm_affiliate":
+        assignment = _confirmed_assignment(res)
+        if assignment is None or not assignment.vendor_id:
+            return "wait", "no confirmed affiliate"
     if waits_for and not _ready(res, waits_for):
         return "wait", "waiting for Dispatched with the driver's details"
     if _uses_site_link(row) and not settings.PUBLIC_BASE_URL:
