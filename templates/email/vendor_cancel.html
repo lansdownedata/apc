@@ -1,7 +1,7 @@
 {% extends "email/base_email.html" %}
 {% load time_filters %}
 {% block subject %}Trip cancelled — {{ trip.pickup_date|date:"M j" }}{% endblock %}
-{% block preheader %}We've released this trip — please take it out of your schedule.{% endblock %}
+{% block preheader %}{% include "email/preheaders/vendor_cancel.html" %}{% endblock %}
 {% block content %}
 {% comment %} The offer's counterpart. Carries the trip so they know WHICH one, and no
    money at all: an offer names what we pay, a cancellation has nothing to pay. {% endcomment %}

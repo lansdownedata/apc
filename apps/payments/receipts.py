@@ -255,13 +255,14 @@ def send_receipt(charge_id: int) -> bool:
             to=[_person(charge, to)],
             extra_ctx=message_values(context),
             blocks={"receipt_lines": rendering.block("receipt_lines", context)},
+            preheader=rendering.preheader("trip_receipt", context),
         )
         if not result.sent:
             return False
         message_id = next(
             (d.provider_id for d in result.deliveries if d.status == Delivery.Status.SENT), ""
         )
-        Charge.objects.filter(pk=charge_id).update(
+        Charge.objects.filter(pk=charge_id, receipt_sent_at__isnull=True).update(
             receipt_sent_at=timezone.now(),
             receipt_message_id=message_id[:120],
             updated_at=timezone.now(),
@@ -269,5 +270,7 @@ def send_receipt(charge_id: int) -> bool:
         return True
     except Exception:  # noqa: BLE001 - a receipt must never break the money path
         logger.exception("receipt for charge %s failed", charge_id)
-        Charge.objects.filter(pk=charge_id).update(receipt_attempted_at=timezone.now())
+        Charge.objects.filter(pk=charge_id, receipt_sent_at__isnull=True).update(
+            receipt_attempted_at=timezone.now()
+        )
         return False

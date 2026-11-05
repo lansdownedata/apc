@@ -344,8 +344,9 @@ _NEW_IN_SECTION = {
     "trip_day": ("customer", "pickup"),
     "after_trip": ("customer", "all_trips_done"),
     "affiliates": ("affiliate", "affiliate_accepted"),
-    "planners": ("planner", "send_quote"),
-    "staff_reports": ("staff", "deposit_report"),
+    # Not a staff click or a schedule: an added row can't be sent on those (`editor.can_pick`).
+    "planners": ("planner", "quote_sent"),
+    "staff_reports": ("staff", "lead_created"),
 }
 
 
@@ -444,10 +445,11 @@ def _untimed_text(trigger_key: str) -> str:
     return f"Sent on its schedule ({trigger.label.lower()})"
 
 
-def _trigger_options() -> list[dict]:
+def _trigger_options(row: MessageTemplate, current: str) -> list[dict]:
+    """The triggers this row may be put on (`editor.can_pick`), and the one it is on."""
     group_order = {kind: i for i, kind in enumerate(triggers.GROUP_LABEL)}
     ordered = sorted(
-        triggers.CATALOG.values(),
+        (t for t in triggers.CATALOG.values() if t.key == current or editor.can_pick(row, t.key)),
         key=lambda t: (group_order.get(t.kind, len(group_order)), t.label),
     )
     return [
@@ -505,6 +507,15 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         if not new
         else reverse("messages_new_timing"),
     }
+    if editor.is_locked(row):
+        # What the button sets, as stored: a refused change is never shown as if it stuck.
+        state |= {
+            "trigger": row.trigger,
+            "audience": row.audience,
+            "sms": row.send_sms,
+            "email": row.send_email,
+            "picked": list(row.recipients or []),
+        }
     built_ins = rules.built_in_descriptions(row.key) if row.seeded else []
     changed = bool(original and trigger_key != original)
     state["builtIns"] = built_ins
@@ -528,7 +539,19 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
             else ""
         ),
         "section_options": MessageTemplate.Section.choices,
-        "trigger_options": _trigger_options(),
+        "trigger_options": _trigger_options(row, trigger_key),
+        "locked": editor.is_locked(row),
+        "click_who": editor.CLICK_WHO.get(row.key, "") if editor.is_locked(row) else "",
+        "locked_error": next(
+            (
+                form.errors[name][0]
+                for name in (*editor.LOCKED, "service_types")
+                if name in form.errors and form.errors[name][0] == editor.SET_BY_BUTTON
+            ),
+            "",
+        ),
+        "stored_recipients": list(stored.recipients or []) if editor.is_locked(row) else [],
+        "stored_services": [st.pk for st in types] if editor.is_locked(row) else [],
         "unit_options": [(u, u) for u in editor.TIMING_UNITS],
         "audience_options": MessageTemplate.Audience.choices,
         "recipient_groups": [

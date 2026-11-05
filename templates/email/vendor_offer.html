@@ -1,7 +1,7 @@
 {% extends "email/base_email.html" %}
 {% load time_filters %}
 {% block subject %}Trip offer — {{ trip.pickup_date|date:"M j" }}{% endblock %}
-{% block preheader %}{{ trip.pickup_date|date:"M j" }} at {{ trip|pickup_clock }} — ${{ payout }} payout.{% endblock %}
+{% block preheader %}{% include "email/preheaders/vendor_offer.html" %}{% endblock %}
 {% block content %}
 <h1 style="font-size:20px;margin:0 0 12px">Trip offer</h1>
 <p style="margin:0 0 16px">{{ vendor.name }} — we have a trip we'd like you to cover.</p>

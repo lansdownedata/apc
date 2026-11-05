@@ -538,7 +538,8 @@ def test_staff_audience_saves_staff_emails(client):
         name="Report",
         section="staff_reports",
         audience="staff",
-        trigger="deposit_report",
+        # An added row can't be on a schedule (APC-120); any staff-audience trigger will do.
+        trigger="lead_created",
         send_sms=False,
         subject="Deposits",
         email_body="Body",
@@ -739,14 +740,8 @@ def test_reset_restores_switch_recipients_and_withdraws(client):
 
 def test_staff_click_row_has_no_switch_and_stays_on(client):
     client.force_login(_owner_admin())
-    row = MessageRowFactory(
-        name="Quote email",
-        trigger="send_quote",
-        recipients=["booking_contact"],
-        subject="Your quote",
-        email_body="{quote_link}",
-        send_sms=False,
-    )
+    # Only the seeded click rows sit on a staff-click trigger (APC-120).
+    row = _row("send_quote")
     html = client.get(reverse("message_edit", args=[row.key])).content.decode()
     assert "Sent when staff click Send quote" in html
     assert 'x-show="!isClick" style="display: none"' in html

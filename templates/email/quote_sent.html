@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}Your {{ company_name }} quote {{ quote_no }}{% endblock %}
-{% block preheader %}Quote {{ quote_no }} — ${{ quote_total }} total, {% if on_account %}billed to your account{% else %}{{ deposit_pct }}% deposit to reserve your date{% endif %}.{% endblock %}
+{% block preheader %}{% include "email/preheaders/quote_sent.html" %}{% endblock %}
 {% block content %}
 <p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ contact_name }},</p>
 <p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">

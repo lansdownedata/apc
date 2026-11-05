@@ -552,6 +552,10 @@ class MessageForm(forms.ModelForm):
         trigger_key, audience = cleaned.get("trigger"), cleaned.get("audience")
         if not trigger_key:
             return cleaned
+        if editor.is_locked(self.instance):
+            self._clean_locked(cleaned)
+        elif not editor.can_pick(self.instance, trigger_key):
+            self._error("trigger", editor.NOT_ADDABLE)
         if audience and audience not in triggers.CATALOG[trigger_key].audiences:
             self._error("audience", AUDIENCE_ERROR)
         staff = audience == MessageTemplate.Audience.STAFF
@@ -585,6 +589,23 @@ class MessageForm(forms.ModelForm):
         for name, message in errors.items():
             self._error("send_sms" if name == "channels" else name, message)
         return cleaned
+
+    def _clean_locked(self, cleaned: dict) -> None:
+        """A seeded staff-click row: its button sets who, how and when (`editor.LOCKED`, and
+        the service types). A change to any of them is refused, not saved."""
+        stored = MessageTemplate.objects.prefetch_related("service_types").get(pk=self.instance.pk)
+        for name in editor.LOCKED:
+            if name not in cleaned:
+                continue
+            was, now = getattr(stored, name), cleaned[name]
+            if isinstance(was, list):
+                was, now = sorted(was), sorted(now or [])
+            if was != now:
+                self._error("send_sms" if name == "send_email" else name, editor.SET_BY_BUTTON)
+        if "service_types" in cleaned:
+            was = {st.pk for st in stored.service_types.all()}
+            if {st.pk for st in cleaned["service_types"]} != was:
+                self._error("service_types", editor.SET_BY_BUTTON)
 
     def _clean_timing(self, cleaned: dict, trigger_key: str) -> None:
         amount, unit = cleaned.get("timing_amount"), cleaned.get("timing_unit") or ""

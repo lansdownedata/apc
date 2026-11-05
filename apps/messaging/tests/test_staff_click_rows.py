@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 from django.core import mail
 from django.utils import timezone
+from django.utils.html import escape
 
 from apps.contacts.factories import ContactFactory
 from apps.dispatch import services as dispatch_services
@@ -388,3 +389,236 @@ def test_the_messages_page_lists_the_clicks_with_no_switch(client):
     for label in ("Send quote", "Send payment link", "Send terms link", "Payment receipt"):
         assert f"Sent when staff click {label}" in html
     assert "needs attention" not in html
+
+
+# --- fix round 1: the button sets who, how and when -------------------------------------
+
+
+def _owner(client):
+    from apps.accounts.factories import UserFactory
+    from apps.accounts.models import User
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+
+def _edit(client, key, **over):
+    from django.urls import reverse
+
+    from apps.settings.tests.test_message_editor import post_data
+
+    return client.post(reverse("message_edit", args=[key]), post_data(_row(key), **over))
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"send_sms": None},
+        {"send_email": None},
+        {"recipients": ["billing_contact"]},
+        {"trigger": "quote_sent"},
+        {"audience": "planner", "recipients": ["planner"]},
+    ],
+    ids=["sms-off", "email-off", "recipients", "trigger", "audience"],
+)
+def test_the_button_fields_of_a_click_row_cannot_be_changed(client, over):
+    _owner(client)
+    before = listing.row_data(_row("send_pay_link"))
+
+    resp = _edit(client, "send_pay_link", **over)
+
+    assert resp.status_code == 200  # the form comes back with the reason
+    assert escape(editor.SET_BY_BUTTON) in resp.content.decode()
+    assert listing.row_data(_row("send_pay_link")) == before
+
+
+def test_service_types_on_a_click_row_cannot_be_changed(client):
+    from apps.leads.factories import ServiceTypeFactory
+
+    _owner(client)
+    resp = _edit(client, "payment_receipt", service_types=[ServiceTypeFactory().pk])
+
+    assert resp.status_code == 200
+    assert not _row("payment_receipt").service_types.exists()
+
+
+def test_a_click_rows_wording_subject_and_name_stay_editable(client):
+    _owner(client)
+    resp = _edit(client, "send_quote", name="Quote email", subject="Quote {quote_no} is ready")
+
+    assert resp.status_code == 302
+    row = _row("send_quote")
+    assert (row.name, row.subject) == ("Quote email", "Quote {quote_no} is ready")
+
+
+def test_an_sms_off_attempt_leaves_the_pay_link_routing_alone(client):
+    _owner(client)
+    _edit(client, "send_pay_link", send_sms=None)
+    by_text, _ = _booked()
+    by_email, _ = _booked(phone="", email="pat@example.com")
+
+    with patch(SEND, return_value={"uid": "p"}) as send:
+        assert payments.send_pay_link(by_text, base_url=BASE_URL, sender_name="Sam") == "sms"
+        assert payments.send_pay_link(by_email, base_url=BASE_URL, sender_name="Sam") == "email"
+    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone", "email"]
+
+
+def test_the_editor_shows_who_the_button_sends_to_not_checkboxes(client):
+    from django.urls import reverse
+
+    _owner(client)
+    html = client.get(reverse("message_edit", args=["send_pay_link"])).content.decode()
+
+    assert escape(editor.CLICK_WHO["send_pay_link"]) in html
+    assert 'type="checkbox" name="recipients"' not in html
+    assert 'name="trigger" value="send_pay_link"' in html  # posted as is, not picked
+    assert 'id="id_trigger"' not in html
+    assert '@click="sms = !sms' not in html
+
+
+def test_the_preview_says_who_the_button_sends_to():
+    lead = _quotable()
+    assert editor.preview(_row("send_pay_link"), lead)["to"] == [editor.CLICK_WHO["send_pay_link"]]
+
+
+def test_every_click_row_says_who_the_button_sends_to():
+    assert set(editor.CLICK_WHO) == set(CLICK_KEYS)
+
+
+@pytest.mark.parametrize("trigger", ["send_quote", "deposit_report"])
+def test_an_added_row_cannot_pick_a_click_or_schedule_trigger(client, trigger):
+    from django.urls import reverse
+
+    from apps.messaging.factories import MessageRowFactory
+    from apps.settings.tests.test_message_editor import post_data
+
+    _owner(client)
+    blank = MessageRowFactory.build(
+        trigger=trigger,
+        recipients=["booking_contact"],
+        send_sms=True,
+        sms_body="Hi {first_name}",
+        audience="staff" if trigger == "deposit_report" else "customer",
+        staff_emails=["ops@apc.test"],
+    )
+    count = MessageTemplate.objects.count()
+
+    resp = client.post(reverse("messages_new"), post_data(blank, timing=(0, "minutes")))
+
+    assert resp.status_code == 200
+    assert escape(editor.NOT_ADDABLE) in resp.content.decode()
+    assert MessageTemplate.objects.count() == count
+
+
+def test_the_trigger_choices_for_an_added_row_leave_out_clicks_and_schedules(client):
+    from django.urls import reverse
+
+    _owner(client)
+    html = client.get(reverse("messages_new")).content.decode()
+    assert "Staff clicks: Send quote" not in html
+    assert "Schedules: Deposit report" not in html
+    assert "Events: Quote sent" in html
+
+
+# --- fix round 1: blocks inside the best-effort net, preheaders, the stamp ----------------
+
+
+def test_a_failing_block_never_breaks_send_quote():
+    lead = _quotable()
+    with (
+        patch("apps.messaging.rendering.block", side_effect=RuntimeError("bad block")),
+        patch(SEND, return_value={"uid": "q"}),
+    ):
+        result = lead_services.send_quote(lead, base_url=BASE_URL)
+
+    assert result.ok
+    assert result.delivery["email"] == {
+        "sent": False,
+        "recipient": "dana@example.com",
+        "error": "bad block",
+    }
+    assert result.delivery["sms"]["sent"] is False
+
+
+def test_a_failing_block_keeps_the_offer_and_raises_the_alert():
+    from apps.notifications.models import Notification
+
+    _, trip = _booked()
+    vendor = VendorFactory(email="ops@capital.example")
+    with patch("apps.messaging.rendering.block", side_effect=RuntimeError("bad block")):
+        assignment = dispatch_services.send_offer(trip, vendor, payout=Decimal("215.00"))
+
+    assert assignment.status == Assignment.Status.OFFERED
+    assert Notification.objects.filter(lead=trip.lead).exists()
+
+
+def test_a_failing_block_makes_the_cancellation_a_no():
+    _, trip = _booked()
+    assignment = AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(email="ops@reston.example"),
+        status=Assignment.Status.CONFIRMED,
+    )
+    with patch("apps.messaging.rendering.block", side_effect=RuntimeError("bad block")):
+        assert dispatch_services.send_cancellation(assignment) is False
+
+
+def _preheader(html: str) -> str:
+    import re
+
+    return re.search(r'<div style="display:none;[^"]*">(.*?)</div>', html, re.S).group(1)
+
+
+def _todays(template: str, context: dict) -> str:
+    from django.template.loader import render_to_string
+
+    return _preheader(render_to_string(f"email/{template}.html", context))
+
+
+def test_each_email_keeps_todays_preheader():
+    lead = _quotable()
+    with patch(SEND, return_value={"uid": "q"}):
+        lead_services.send_quote(lead, base_url=BASE_URL)
+    lead.refresh_from_db()
+    quote = _todays(
+        "quote_sent", lead_services._quote_email_context(lead, lead.payment, "https://x.test")
+    )
+    assert quote.startswith(f"Quote {lead.quote_no} — $185.00 total, 50% deposit")
+    assert _preheader(mail.outbox[-1].alternatives[0][0]) == quote
+
+    booked, trip = _booked(email="pat@example.com")
+    charge = _receipt(booked, trip)
+    receipts.send_receipt(charge.pk)
+    receipt = _todays("trip_receipt", receipts.receipt_context(charge))
+    assert receipt == f"$20.00 for your trip · Receipt R-{charge.pk}"
+    assert _preheader(mail.outbox[-1].alternatives[0][0]) == receipt
+
+    vendor = VendorFactory(email="ops@capital.example")
+    offer = dispatch_services.send_offer(trip, vendor, payout=Decimal("215.00"))
+    expected = _todays("vendor_offer", dispatch_services.offer_email_context(offer))
+    assert expected.endswith("— $215.00 payout.")
+    assert _preheader(mail.outbox[-1].alternatives[0][0]) == expected
+
+    assert dispatch_services.send_cancellation(offer) is True
+    cancel = _todays(
+        "vendor_cancel", {"vendor": vendor, "trip": trip, "stops": list(trip.ordered_stops)}
+    )
+    assert "released this trip" in cancel
+    assert _preheader(mail.outbox[-1].alternatives[0][0]) == cancel
+
+
+def test_the_receipt_stamp_never_overwrites_an_earlier_send():
+    lead, trip = _booked()
+    charge = _receipt(lead, trip)
+    earlier = timezone.now() - timedelta(minutes=1)
+
+    def sent_meanwhile(*args, **kwargs):
+        Charge.objects.filter(pk=charge.pk).update(
+            receipt_sent_at=earlier, receipt_message_id="first"
+        )
+        return sender.SendResult(sent=True, deliveries=[], errors=[])
+
+    with patch.object(sender, "send_now", side_effect=sent_meanwhile):
+        receipts.send_receipt(charge.pk)
+
+    charge.refresh_from_db()
+    assert (charge.receipt_sent_at, charge.receipt_message_id) == (earlier, "first")

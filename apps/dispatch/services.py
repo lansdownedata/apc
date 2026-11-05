@@ -215,19 +215,25 @@ def send_offer(
 
     from apps.messaging import rendering, sender
 
-    sent = sender.send_now(
-        "affiliate_offer",
-        reservation.lead,
-        reservation,
-        to=[_affiliate(vendor)],
-        extra_ctx={
-            **_affiliate_values(vendor, reservation),
-            "payout": f"${assignment.payout:,.2f}",
-        },
-        blocks={"trip_sheet": rendering.block("trip_sheet", offer_email_context(assignment))},
-        logo=True,
-    )
-    if sent.sent:
+    try:
+        sheet = offer_email_context(assignment)
+        sent = sender.send_now(
+            "affiliate_offer",
+            reservation.lead,
+            reservation,
+            to=[_affiliate(vendor)],
+            extra_ctx={
+                **_affiliate_values(vendor, reservation),
+                "payout": f"${assignment.payout:,.2f}",
+            },
+            blocks={"trip_sheet": rendering.block("trip_sheet", sheet)},
+            logo=True,
+            preheader=rendering.preheader("vendor_offer", sheet),
+        ).sent
+    except Exception:  # noqa: BLE001 — the offer is recorded; the alert says to phone
+        logger.exception("offer email for assignment %s failed", assignment.pk)
+        sent = False
+    if sent:
         return assignment
 
     Notification.notify(
@@ -258,18 +264,23 @@ def send_cancellation(assignment: Assignment) -> bool:
     from apps.messaging import rendering, sender
 
     trip = assignment.reservation
-    # No payout, no total, no money of any kind — see the sheet.
-    sheet = rendering.block(
-        "cancelled_trip_sheet", {"trip": trip, "stops": list(trip.ordered_stops)}
-    )
-    return sender.send_now(
-        "affiliate_cancel",
-        trip.lead,
-        trip,
-        to=[_affiliate(vendor)],
-        extra_ctx=_affiliate_values(vendor, trip),
-        blocks={"cancelled_trip_sheet": sheet},
-    ).sent
+    try:
+        # No payout, no total, no money of any kind — see the sheet.
+        sheet = rendering.block(
+            "cancelled_trip_sheet", {"trip": trip, "stops": list(trip.ordered_stops)}
+        )
+        return sender.send_now(
+            "affiliate_cancel",
+            trip.lead,
+            trip,
+            to=[_affiliate(vendor)],
+            extra_ctx=_affiliate_values(vendor, trip),
+            blocks={"cancelled_trip_sheet": sheet},
+            preheader=rendering.preheader("vendor_cancel", {}),
+        ).sent
+    except Exception:  # noqa: BLE001 — best effort, like the offer
+        logger.exception("cancellation email for assignment %s failed", assignment.pk)
+        return False
 
 
 def assign_direct(

@@ -46,6 +46,16 @@
 
           <section class="space-y-3">
             <h2 class="text-[14px] font-semibold text-ink">Who gets it</h2>
+            {% if locked %}
+            <input type="hidden" name="audience" value="{{ row.audience }}">
+            {% for key in stored_recipients %}<input type="hidden" name="recipients" value="{{ key }}">
+            {% endfor %}
+            <div class="flex gap-2.5 items-start rounded-xl bg-slate-50 px-3.5 py-3">
+              <i class="ti ti-lock text-[16px] text-amber-700 mt-px"></i>
+              <p class="text-[12.5px] leading-relaxed text-ink">{{ click_who }}</p>
+            </div>
+            {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
+            {% else %}
             <input type="hidden" name="audience" value="{{ state.audience }}" :value="audience">
             <div role="radiogroup" aria-label="Audience" class="inline-flex flex-wrap gap-1 rounded-lg bg-slate-100 p-0.5">
               {% for value, label in audience_options %}
@@ -97,15 +107,20 @@
               <i class="ti ti-users text-[16px] text-amber-700 mt-px"></i>
               <p class="text-[12.5px] leading-relaxed text-ink" x-text="whoLine"></p>
             </div>
+            {% endif %}
           </section>
 
           <section class="space-y-3">
             <h2 class="text-[14px] font-semibold text-ink">When it goes out</h2>
+            {% if locked %}
+            <input type="hidden" name="trigger" value="{{ row.trigger }}">
+            {% else %}
             <div @change="setTrigger($event.target.value)">
               <label for="id_trigger" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Trigger</label>
               {% include "components/searchable_select.html" with name="trigger" field_id="id_trigger" rich_options=trigger_options selected=state.trigger aria_label="Trigger" %}
               {% if errors.trigger %}<p class="text-[11.5px] text-rose-600 mt-1">{{ errors.trigger }}</p>{% endif %}
             </div>
+            {% endif %}
             <div class="flex flex-wrap items-center gap-2 text-[13px] text-ink" x-show="hasTiming"{% if not has_timing %} style="display: none"{% endif %}>
               <span>Send</span>
               <div class="w-20">
@@ -150,6 +165,10 @@
             {% endif %}
           </section>
 
+          {% if locked %}
+          {% for pk in stored_services %}<input type="hidden" name="service_types" value="{{ pk }}">
+          {% endfor %}
+          {% else %}
           <section class="space-y-2.5">
             <h2 class="text-[14px] font-semibold text-ink">Service types</h2>
             <div class="flex flex-wrap gap-1.5">
@@ -164,11 +183,18 @@
             </div>
             <p class="text-[11.5px] text-muted" x-text="serviceLine">{% if services %}Only for trips with one of these service types.{% else %}None picked, so it goes for every service type.{% endif %}</p>
           </section>
+          {% endif %}
 
           <section class="space-y-3">
             <div class="flex items-center gap-2.5">
               <h2 class="text-[14px] font-semibold text-ink">Wording</h2>
               <div class="ml-auto inline-flex gap-1.5">
+                {% if locked %}
+                <input type="hidden" name="send_sms" value="{% if row.send_sms %}on{% endif %}">
+                <input type="hidden" name="send_email" value="{% if row.send_email %}on{% endif %}">
+                {% if row.send_sms %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-slate-100 text-ink"><i class="ti ti-lock text-[13px]"></i>Text</span>{% endif %}
+                {% if row.send_email %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-slate-100 text-ink"><i class="ti ti-lock text-[13px]"></i>Email</span>{% endif %}
+                {% else %}
                 <input type="hidden" name="send_sms" value="{% if state.sms %}on{% endif %}" :value="sms ? 'on' : ''">
                 <input type="hidden" name="send_email" value="{% if state.email %}on{% endif %}" :value="email ? 'on' : ''">
                 <button type="button" role="switch" :aria-checked="sms.toString()" aria-checked="{% if state.sms %}true{% else %}false{% endif %}" @click="sms = !sms; queuePreview()"
@@ -177,6 +203,7 @@
                 <button type="button" role="switch" :aria-checked="email.toString()" aria-checked="{% if state.email %}true{% else %}false{% endif %}" @click="email = !email; queuePreview()"
                         class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] ring-1 ring-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"
                         :class="email ? 'bg-amber-50 ring-amber-400 text-amber-900 font-semibold' : 'bg-surface ring-line text-muted font-medium hover:text-ink'"><i class="ti ti-check text-[13px]" x-show="email"></i>Email</button>
+                {% endif %}
               </div>
             </div>
             {% if errors.send_sms %}<p class="text-[12.5px] text-amber-700">{{ errors.send_sms }}</p>{% endif %}

@@ -76,6 +76,8 @@ class _Click:
     # The masthead logo, attached inline: only where today's email has it (the quote, the
     # affiliate offer). A caller flag, not a list of triggers: Admins add rows on any trigger.
     logo: bool = False
+    # The email's hidden inbox preview line (`rendering.preheader`).
+    preheader: str = ""
 
 
 @dataclass
@@ -351,6 +353,7 @@ def _transport(
     *,
     logo: bool = False,
     tolerant: bool = False,
+    preheader: str = "",
 ) -> str:
     """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`.
 
@@ -362,7 +365,7 @@ def _transport(
     if channel == "email" and _via_postmark(row):
         logo = rendering.logo_path() if logo else None
         subject, layout = rendering.layout_context(
-            row, ctx, blocks, logo_cid="logo" if logo else ""
+            row, ctx, blocks, logo_cid="logo" if logo else "", preheader=preheader
         )
         provider_id = _call(
             mail.deliver_html_email,
@@ -527,6 +530,7 @@ def _send(
     blocks = click.blocks if click is not None else None
     logo = click.logo if click is not None else False
     tolerant = click is not None
+    preheader = click.preheader if click is not None else ""
     for _, person, _ in plan:
         if person not in contexts:
             contexts[person] = context(tp, row, person, extra)
@@ -535,7 +539,14 @@ def _send(
     for channel, person, address in plan:
         try:
             provider_id = _transport(
-                row, channel, address, contexts[person], blocks, logo=logo, tolerant=tolerant
+                row,
+                channel,
+                address,
+                contexts[person],
+                blocks,
+                logo=logo,
+                tolerant=tolerant,
+                preheader=preheader,
             )
         except _SEND_ERRORS as exc:
             errors.append(f"{channel}: {exc}")
@@ -772,6 +783,7 @@ def send_now(
     blocks: dict[str, Block] | None = None,
     channels: set[str] | None = None,
     logo: bool = False,
+    preheader: str = "",
 ) -> SendResult:
     """Send the row ``key`` now, inside the click: a staff-click send, an invite or password
     reset, or a staff report (spec C sections 3 and 8). Never raises for a send.
@@ -781,7 +793,8 @@ def send_now(
     replaces the row's recipients; ``extra_ctx`` adds or overrides placeholder values (the
     caller's links, built from its request); ``blocks`` fills the generated parts;
     ``channels`` narrows the row's channels to the ones the user picked; ``logo`` attaches
-    the masthead logo (only the quote and the affiliate offer carry it today).
+    the masthead logo (only the quote and the affiliate offer carry it today); ``preheader``
+    is the email's inbox preview line.
 
     Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
     which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the
@@ -794,6 +807,7 @@ def send_now(
         blocks=dict(blocks or {}),
         channels=None if channels is None else frozenset(channels),
         logo=logo,
+        preheader=preheader,
     )
     now = timezone.now()
     with transaction.atomic():

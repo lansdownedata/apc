@@ -41,6 +41,56 @@ def is_staff_click(trigger_key: str) -> bool:
     return trigger is not None and trigger.kind == "staff_click"
 
 
+# A seeded staff-click row's button decides who gets it, on which channel and when; the row
+# holds the wording (APC-129 tracks making the buttons row-driven). Its trigger, audience,
+# recipients, channels and service types are fixed, and the editor says this instead.
+LOCKED = ("trigger", "audience", "recipients", "staff_emails", "send_sms", "send_email")
+SET_BY_BUTTON = "Set by the button; it can't be changed here."
+CLICK_WHO = {
+    "send_quote": (
+        "Goes to the booking contact by text and email, as staff choose when they click "
+        "Send quote — set by the button."
+    ),
+    "send_quote_on_account": (
+        "Goes to the booking contact by text and email, as staff choose when they click "
+        "Send quote on an order billed to an account — set by the button."
+    ),
+    "send_pay_link": (
+        "Goes to the booking contact by text, or email when there's no mobile — set by the button."
+    ),
+    "send_terms_link": (
+        "Goes to the booking contact by text, or email when there's no mobile — set by the button."
+    ),
+    "payment_receipt": (
+        "Goes to the billing contact by email, or the booking contact when the billing "
+        "contact has no email — set by the button."
+    ),
+    "affiliate_offer": "Goes to the affiliate company by email — set by the button.",
+    "affiliate_cancel": "Goes to the affiliate company by email — set by the button.",
+}
+# Nothing sends an added row on these: a staff click is sent by its button, a schedule by
+# its job, each by its own seeded key.
+_NOT_ADDABLE = ("staff_click", "schedule")
+NOT_ADDABLE = "Staff clicks and schedules are sent by the app's own messages. Pick another trigger."
+
+
+def is_locked(row: MessageTemplate) -> bool:
+    """A seeded staff-click row: its button, not the row, sets who, how and when."""
+    return bool(row.seeded and row.key in defaults.CLICKS)
+
+
+def can_pick(row: MessageTemplate, trigger_key: str) -> bool:
+    """Whether ``row`` may be put on ``trigger_key``. A locked row keeps its own; an added
+    row may take any trigger but a staff click or a schedule (APC-129 tracks button sends
+    that read their rows)."""
+    trigger = triggers.CATALOG.get(trigger_key)
+    if trigger is None:
+        return False
+    if is_locked(row):
+        return trigger_key == defaults.CLICKS[row.key].trigger
+    return bool(row.seeded) or trigger.kind not in _NOT_ADDABLE
+
+
 def _builtin(key: str, trigger_key: str, seeded: bool) -> bool:
     default = defaults.ORIGINALS.get(key)
     return bool(seeded and default is not None and default.trigger == trigger_key)
@@ -631,6 +681,8 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
             rules.fill_links(tp, row, ctx, base_url)
             contexts[channel] = ctx
             heads[channel] = _label(row, first) if first is not None else ""
+    if is_locked(row):
+        lines = [CLICK_WHO[row.key]]
     email = ""
     if "email" in contexts:
         head = _render(row.subject, contexts["email"])

@@ -54,6 +54,13 @@ def block(name: str, context: dict) -> Block:
     )
 
 
+def preheader(name: str, context: dict) -> SafeString:
+    """An email's inbox preview line (`templates/email/preheaders/<name>.html`, which the
+    original templates include too), rendered and escaped once."""
+    # Rendered (and so escaped) by the template; strip() would drop its safe mark.
+    return mark_safe(render_to_string(f"email/preheaders/{name}.html", context).strip())
+
+
 def button(label: str, url: str) -> Block:
     """The gold call-to-action button; in plain text, the label and the link."""
     return block("button", {"label": label, "url": url})
@@ -114,10 +121,16 @@ def _body_html(email_body: str, ctx: dict[str, str], blocks: dict[str, Block]) -
 
 
 def layout_context(
-    row, ctx: dict[str, str], blocks: dict[str, Block], *, logo_cid: str = ""
+    row,
+    ctx: dict[str, str],
+    blocks: dict[str, Block],
+    *,
+    logo_cid: str = "",
+    preheader: str = "",
 ) -> tuple[str, dict]:
     """The subject, and the context `email/message.{txt,html}` render the row's email from:
-    `body` (the text part) and `body_html` (the HTML part's paragraphs and blocks)."""
+    `body` (the text part), `body_html` (the HTML part's paragraphs and blocks) and the
+    hidden inbox `preheader` (escaped by the layout unless it is already safe)."""
     plain = texts(ctx, blocks)
     subject = render(row.subject, plain) if row.subject else ""
     email_body = row.email_body or ""
@@ -126,6 +139,7 @@ def layout_context(
         "body": render(email_body, plain),
         "body_html": _body_html(email_body, ctx, blocks),
         "logo_cid": logo_cid,
+        "preheader": preheader,
         "company_name": ctx.get("company_name", settings.COMPANY_NAME),
         "company_phone": ctx.get("company_phone", settings.COMPANY_PHONE),
         "company_email": ctx.get("company_email", settings.COMPANY_EMAIL),
@@ -133,10 +147,15 @@ def layout_context(
 
 
 def render_email(
-    row, ctx: dict[str, str], blocks: dict[str, Block], *, logo_cid: str = ""
+    row,
+    ctx: dict[str, str],
+    blocks: dict[str, Block],
+    *,
+    logo_cid: str = "",
+    preheader: str = "",
 ) -> tuple[str, str, str]:
     """(subject, text, html) of the row's email for this context."""
-    subject, layout = layout_context(row, ctx, blocks, logo_cid=logo_cid)
+    subject, layout = layout_context(row, ctx, blocks, logo_cid=logo_cid, preheader=preheader)
     return (
         subject,
         render_to_string("email/message.txt", layout),

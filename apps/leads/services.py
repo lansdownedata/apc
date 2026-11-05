@@ -258,20 +258,24 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         email=email,
         contact_id=contact.pk,
     )
-    sent = sender.send_now(
-        "send_quote_on_account" if lead.on_account else "send_quote",
-        lead,
-        to=[person],
-        extra_ctx=_quote_values(lead, plan, link),
-        blocks={
-            "quote_summary": rendering.block(
-                "quote_summary", _quote_email_context(lead, plan, link)
-            ),
-            "button": rendering.button("View your quote & reserve", link),
-        },
-        channels=selected,
-        logo=True,
-    )
+    try:
+        summary = _quote_email_context(lead, plan, link)
+        sent = sender.send_now(
+            "send_quote_on_account" if lead.on_account else "send_quote",
+            lead,
+            to=[person],
+            extra_ctx=_quote_values(lead, plan, link),
+            blocks={
+                "quote_summary": rendering.block("quote_summary", summary),
+                "button": rendering.button("View your quote & reserve", link),
+            },
+            channels=selected,
+            logo=True,
+            preheader=rendering.preheader("quote_sent", summary),
+        )
+    except Exception as exc:  # noqa: BLE001 — delivery must never break the send
+        logger.exception("quote %s: building its message failed", lead.pk)
+        sent = sender.SendResult(sent=False, deliveries=[], errors=[str(exc)])
     delivery: dict = {}
     for channel, address in (("email", email), ("sms", phone)):
         if channel not in selected:

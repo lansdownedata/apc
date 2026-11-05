@@ -6,7 +6,7 @@
   this same template.
 {% endcomment %}
 {% block subject %}Your {{ company_name }} {% if is_refund %}refund{% else %}receipt{% endif %} {{ number }}{% endblock %}
-{% block preheader %}{% if is_refund %}Refund of ${{ amount }}{% else %}${{ amount }} for your trip{% endif %} · Receipt {{ number }}{% endblock %}
+{% block preheader %}{% include "email/preheaders/trip_receipt.html" %}{% endblock %}
 {% block content %}
 <p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ first_name|default:"there" }},</p>
 <p class="dm-muted" style="margin:0 0 24px;font-size:16px;color:#4b5563;line-height:1.6;">
