@@ -200,12 +200,24 @@ def service_type_edit(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def service_type_delete(request: HttpRequest, pk: int) -> HttpResponse:
     """Deactivate when trips reference this type — SET_NULL means a hard delete would
-    silently blank the service on historical quotes."""
+    silently blank the service on historical quotes. Refused while a message names it:
+    dropped from the message's service types, the message would go for every trip."""
     target = get_object_or_404(ServiceType, pk=pk)
+    using = list(
+        MessageTemplate.objects.filter(service_types=target)
+        .order_by("name")
+        .values_list("name", flat=True)
+    )
     if target.reservation_set.exists():
         target.active = False
         target.save(update_fields=["active", "updated_at"])
         messages.success(request, f"{target.name} deactivated (it's used by existing trips).")
+    elif using:
+        messages.error(
+            request,
+            f"{target.name} can't be deleted while messages use it: {', '.join(using)}. "
+            "Take it off those messages first.",
+        )
     else:
         name = target.name
         target.delete()
@@ -556,6 +568,21 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
     changed = bool(original and trigger_key != original)
     state["builtIns"] = built_ins
     state["perTrip"] = bool(row.seeded and rules.combines_per_trip(row.key))
+    # Whether the draft sends one message per person per day (its wording decides, for a
+    # row without built-in rules); the page updates it from each preview.
+    state["combines"] = rules.combines_per_day(
+        MessageTemplate(
+            key=row.key,
+            seeded=row.seeded,
+            trigger=trigger_key,
+            audience=audience,
+            send_sms=state["sms"],
+            send_email=state["email"],
+            subject=form["subject"].value() or "",
+            email_body=form["email_body"].value() or "",
+            sms_body=form["sms_body"].value() or "",
+        )
+    )
     direction = state["direction"]
     section = form["section"].value() or row.section
     errors = {name: form.errors[name][0] for name in form.errors}
@@ -609,7 +636,7 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         ),
         "no_timing_text": _untimed_text(trigger_key),
         "direction_options": MessageTemplate.Direction.choices,
-        "rule_lines": editor.behaviour(trigger_key, per_trip=state["perTrip"] and not changed)
+        "rule_lines": editor.behaviour(trigger_key, combines=state["combines"])
         + ([] if changed else built_ins),
         "built_ins": built_ins,
         "trigger_changed": changed,
@@ -708,7 +735,15 @@ def message_preview(request: HttpRequest, key: str | None = None) -> JsonRespons
     lead = _preview_lead(request.POST.get("lead", ""))
     rendered = editor.preview(draft, lead, service_types=types)
     source = lead.quote_no if lead else "Sample order"
-    return JsonResponse({"ok": True, "source": source, "fields": chips, **rendered})
+    return JsonResponse(
+        {
+            "ok": True,
+            "source": source,
+            "fields": chips,
+            "combines": rules.combines_per_day(draft),
+            **rendered,
+        }
+    )
 
 
 @login_required

@@ -47,4 +47,5 @@ class MessageTemplateAdmin(admin.ModelAdmin):
 class DeliveryAdmin(admin.ModelAdmin):
     list_display = ("touchpoint", "message", "channel", "address", "status", "created_at")
     list_filter = ("channel", "status")
+    list_select_related = ("touchpoint__message", "message")
     search_fields = ("address",)

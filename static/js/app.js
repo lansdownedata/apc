@@ -1634,6 +1634,7 @@ function messageEditor(state = {}) {
     services: state.services || [],
     staffEmails: state.staffEmails || [],
     chips: state.chips || [],
+    combines: !!state.combines,
     to: [],
     smsTo: "",
     emailTo: "",
@@ -1670,10 +1671,10 @@ function messageEditor(state = {}) {
       return !!state.originalTrigger && this.trigger !== state.originalTrigger;
     },
     get ruleLines() {
-      // A built-in that sends one message per trip overrides its trigger's per-day line.
-      const overridden = state.perTrip && !this.triggerChanged;
+      // The trigger's per-day line only while the draft really combines (the server says,
+      // from its wording, audience and built-in rules, with each preview).
       const own = (this.meta.behaviour || []).filter(
-        (line) => !(overridden && line === this.meta.combineLine),
+        (line) => this.combines || line !== this.meta.combineLine,
       );
       return own.concat(this.triggerChanged ? [] : state.builtIns || []);
     },
@@ -1833,6 +1834,7 @@ function messageEditor(state = {}) {
           const pane = this.$root.querySelector(`[data-preview="${channel}"]`);
           if (pane) pane.textContent = data[channel];
         }
+        this.combines = !!data.combines;
         this.to = data.to || [];
         this.smsTo = data.sms_to || "";
         this.emailTo = data.email_to || "";

@@ -1059,13 +1059,20 @@ def test_per_trip_built_in_drops_the_trigger_per_day_line(client):
 def test_combine_line_shows_when_the_trigger_really_combines(client):
     client.force_login(_owner_admin())
     combining = next(t for t in triggers.CATALOG.values() if t.combine)
-    # An added row on a combining trigger keeps the line.
-    row = MessageRowFactory(name="Mine", trigger=combining.key, recipients=["booking_contact"])
+    # An added row on a combining trigger that lists the day keeps the line.
+    row = MessageRowFactory(
+        name="Mine",
+        trigger=combining.key,
+        recipients=["booking_contact"],
+        sms_body="Your trips:\n{trip_sheet}",
+    )
     lines, state, _ = _ctx_lines(client, row.key)
     assert editor.COMBINE_LINE in lines
     assert state["perTrip"] is False
     # A per-trip built-in moved off its original trigger onto a combining one gets it back.
-    lines, _, _ = _ctx_lines(client, "driver_released", trigger=combining.key)
+    lines, _, _ = _ctx_lines(
+        client, "driver_released", trigger=combining.key, sms_body="Your trips:\n{trip_sheet}"
+    )
     assert editor.COMBINE_LINE in lines
     meta = _ctx_lines(client, "driver_released")[1]["triggers"][combining.key]
     assert meta["combineLine"] == editor.COMBINE_LINE
@@ -1087,3 +1094,99 @@ def test_messages_and_editor_redirect_anonymous_users(client):
         response = client.get(url)
         assert response.status_code == 302
         assert "/login/" in response["Location"]
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"trigger": "pickup", "sms_body": "Pickup at {trip_pickup_time}"},
+        {"trigger": "pickup", "sms_body": "{trip_sheet}", "audience": "affiliate"},
+        {"trigger": "pickup_dispatched", "sms_body": "{driver_name}\n{trip_sheet}"},
+    ],
+)
+def test_combine_line_only_where_the_row_really_combines(client, kw):
+    """An added row combines only when its wording lists the day; otherwise it sends per
+    trip, and the editor must not promise one message per day."""
+    client.force_login(_owner_admin())
+    row = MessageRowFactory(name="Mine", recipients=["booking_contact"], send_email=False, **kw)
+    lines, state, _ = _ctx_lines(client, row.key)
+    assert editor.COMBINE_LINE not in lines
+    assert state["combines"] is False
+
+
+def test_preview_says_whether_the_draft_combines(client):
+    client.force_login(_owner_admin())
+    row = MessageRowFactory(
+        name="Mine",
+        trigger="pickup",
+        timing_direction="before",
+        recipients=["booking_contact"],
+        send_email=False,
+        sms_body="Pickup at {trip_pickup_time}",
+    )
+    url = reverse("message_preview", args=[row.key])
+    plain = post_data(row, sms_body="Pickup at {trip_pickup_time}", enabled="on")
+    listed = post_data(row, sms_body="Your trips:\n{trip_sheet}", enabled="on")
+    assert json.loads(client.post(url, plain).content)["combines"] is False
+    assert json.loads(client.post(url, listed).content)["combines"] is True
+
+
+@pytest.mark.parametrize("trigger", ["pickup", "pickup_dispatched"])
+def test_an_editor_save_queues_due_sends_for_the_cron(
+    settings, trigger, django_capture_on_commit_callbacks
+):
+    """A save in the Admin's request makes no provider call: rows already due when it
+    queues them wait for the cron (a send per trip inside one request would outlive the
+    worker and come back as a duplicate)."""
+    from apps.dispatch import services as dispatch_services
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+    from apps.reservations.models import Reservation
+
+    settings.TOUCHPOINTS_ENABLED = True
+    settings.OUTBOUND_ENABLED = True
+    trip = _upcoming(LeadFactory(status=Lead.Status.BOOKED), days=1)
+    a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    dispatch_services.set_driver_info(
+        a, name="Sam Rivera", cell="+15715551212", vehicle_desc="Suburban", vehicle_number="9"
+    )
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.DISPATCHED)
+    row = MessageRowFactory(
+        trigger="quote_sent", recipients=["booking_contact"], send_email=False, sms_body="Hi"
+    )
+    row.trigger, row.timing_amount, row.timing_unit = trigger, 3, "days"
+    row.timing_direction = "before"
+
+    with (
+        mock.patch(TRANSPORTS[0]) as send,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        editor.save(row)
+
+    send.assert_not_called()
+    tp = TouchPoint.objects.get(message=row, reservation=trip)
+    assert tp.status == TouchPoint.Status.SCHEDULED and tp.is_due
+
+
+def test_widening_a_date_rows_service_types_queues_the_newly_matching_trips():
+    wedding_type = ServiceTypeFactory(name=WEDDING_SERVICE_NAME)
+    row = MessageRowFactory(
+        name="Heads-up",
+        section="trip_day",
+        trigger="pickup",
+        timing_amount=2,
+        timing_unit="days",
+        timing_direction="before",
+        recipients=["booking_contact"],
+        send_email=False,
+        sms_body="See you {pickup_date}",
+    )
+    row.service_types.set([wedding_type])
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    plain = _upcoming(lead)
+    events.schedule_dates(lead)
+    assert not _scheduled(row, plain).exists()
+
+    editor.save(row, service_types=[])
+
+    assert _scheduled(row, plain).get().scheduled_for == plain.pickup_at - timedelta(days=2)

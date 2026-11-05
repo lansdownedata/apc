@@ -186,6 +186,11 @@ class _Was:
     trigger: str
     offset: timedelta
     enabled: bool
+    service_types: frozenset[int]
+
+
+def _type_ids(row: MessageTemplate) -> frozenset[int]:
+    return frozenset(row.service_types.values_list("pk", flat=True))
 
 
 def _lock(row: MessageTemplate) -> _Was | None:
@@ -193,7 +198,7 @@ def _lock(row: MessageTemplate) -> _Was | None:
     if row.pk is None:
         return None
     stored = MessageTemplate.objects.select_for_update().get(pk=row.pk)
-    return _Was(stored.trigger, stored.offset, stored.enabled)
+    return _Was(stored.trigger, stored.offset, stored.enabled, _type_ids(stored))
 
 
 def _offset(amount: int, unit: str, direction: str) -> timedelta:
@@ -279,11 +284,13 @@ def _follow(row: MessageTemplate, was: _Was | None) -> int:
     """After a row change has committed (so a failure here cannot poison it): switched off
     withdraws its queued sends; a new trigger withdraws them and queues the row on a date
     trigger for the booked orders; switched back on queues a date row again (an event row's
-    withdrawn sends stay withdrawn: the event has happened); a new timing re-dates them.
-    Only this row's sends are touched. Returns the re-dated count, the Driver details
-    checklist tasks included."""
+    withdrawn sends stay withdrawn: the event has happened); new service types queue a date
+    row for the orders it now matches (the sender re-checks the types of those already
+    queued); a new timing re-dates them. Only this row's sends are touched. Returns the
+    re-dated count, the Driver details checklist tasks included."""
     moved = was is None or row.trigger != was.trigger
     switched_on = was is not None and row.enabled and not was.enabled
+    retyped = was is not None and _type_ids(row) != was.service_types
     count = 0
     if was is not None:
         if not row.enabled:
@@ -292,7 +299,7 @@ def _follow(row: MessageTemplate, was: _Was | None) -> int:
             events.withdraw(row)
         elif row.offset != was.offset:
             count = events.redate(row, old_offset=was.offset)
-    if row.enabled and (moved or switched_on):
+    if row.enabled and (moved or switched_on or retyped):
         _queue_dates(row)
     changed = was is not None and (moved or row.offset != was.offset)
     return count + _redate_checklist(row.key, changed=changed)
@@ -304,7 +311,9 @@ def _queue_dates(row: MessageTemplate) -> None:
     per trip, or `events.sync_waiting` for a row that waits for dispatch); a quote expiry
     for every open quote whose send time is still ahead; a balance due date for every
     order whose balance is scheduled on a card with the due date ahead. The master switch
-    and the row are read once, not per order."""
+    and the row are read once, not per order. Nothing is sent here: inside the Admin's
+    request a send per order could outlast the worker, so what is already due waits for the
+    cron (`run-touchpoints`), minutes away."""
     trigger = triggers.CATALOG.get(row.trigger)
     if trigger is None or trigger.kind != "date":
         return
@@ -316,13 +325,13 @@ def _queue_dates(row: MessageTemplate) -> None:
         for lead, trips in _booked_with_trips_ahead():
             for trip in trips:
                 if trigger.waits_for:
-                    events.sync_waiting(trip, only=only, master=master)
+                    events.sync_waiting(trip, only=only, master=master, send_inline=False)
                 else:
-                    events.schedule_dates(lead, trip, only=only, master=master)
+                    events.schedule_dates(lead, trip, only=only, master=master, send_inline=False)
         return
     leads = _open_quotes(only) if trigger.key == "quote_expiry" else _balances_scheduled()
     for lead in leads:
-        events.schedule_dates(lead, only=only, master=master)
+        events.schedule_dates(lead, only=only, master=master, send_inline=False)
 
 
 def _booked_with_trips_ahead():
@@ -453,10 +462,10 @@ def timing_example(
 COMBINE_LINE = "One message per person per day, listing all their trips that day."
 
 
-def behaviour(trigger_key: str, *, per_trip: bool = False) -> list[str]:
-    """How the trigger behaves, as the editor lists it under the timing. `per_trip` is a
-    built-in row whose own rule sends one message per trip, so the trigger's per-day
-    combining does not apply and is left out."""
+def behaviour(trigger_key: str, *, combines: bool = True) -> list[str]:
+    """How the trigger behaves, as the editor lists it under the timing. ``combines`` is
+    False for a row on a combining trigger that sends per trip (`rules.combines_per_day`),
+    so the trigger's per-day line is left out."""
     trigger = triggers.CATALOG.get(trigger_key)
     if trigger is None:
         return []
@@ -468,7 +477,7 @@ def behaviour(trigger_key: str, *, per_trip: bool = False) -> list[str]:
             "still ahead.",
         ]
     if trigger.combine:
-        if not per_trip:
+        if combines:
             lines.append(COMBINE_LINE)
     elif trigger.kind == "event" and trigger.level == "trip":
         lines.append("One message per trip.")

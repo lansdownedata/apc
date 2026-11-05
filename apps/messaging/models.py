@@ -182,7 +182,7 @@ class TouchPoint(TimeStampedModel):
         )
 
     def __str__(self) -> str:
-        name = self.message.name if self.message_id else self.get_kind_display()
+        name = self.message.name if self.message_id else self.kind
         return f"{name} · {self.get_status_display()}"
 
 

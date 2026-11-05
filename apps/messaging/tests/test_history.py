@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
 from apps.leads.factories import LeadFactory
-from apps.messaging import history
+from apps.messaging import history, rules, sender
 from apps.messaging.factories import DeliveryFactory, MessageRowFactory, TouchPointFactory
 from apps.messaging.models import Delivery, TouchPoint
 from apps.reservations.factories import ReservationFactory
@@ -210,3 +210,57 @@ def test_anonymous_is_redirected_from_the_history_pages(client, name):
     response = client.get(reverse(name, args=[lead.pk]))
     assert response.status_code == 302
     assert "/login/" in response["Location"]
+
+
+def test_an_old_kind_with_no_message_shows_its_kind():
+    """A TouchPoint from before the rows (no message) whose kind no row carries any more:
+    the history and the admin name it by its kind rather than crash."""
+    lead = LeadFactory()
+    tp = TouchPointFactory(lead=lead, message=None, kind="greeting")
+
+    (row,) = history.for_lead(lead)
+
+    assert row.name == "greeting"
+    assert str(tp) == "greeting · Scheduled"
+
+
+def test_the_delivery_admin_reads_each_touchpoint_with_its_row():
+    from django.contrib import admin
+
+    from apps.messaging.models import Delivery as D
+
+    related = admin.site._registry[D].list_select_related
+    assert any(path.split("__")[0] == "touchpoint" for path in related)
+
+
+@pytest.mark.parametrize(
+    "reason,problem",
+    [
+        (sender.NO_RECIPIENT, True),
+        (sender.MISSING["sms"], True),
+        (sender.MISSING["email"], True),
+        ("Already sent for Nov 14", False),
+        ("day already confirmed", False),
+        (rules.COVERED, False),
+        (sender.OUTBOUND_OFF, False),
+        ("Switched off", False),
+    ],
+)
+def test_only_a_skip_someone_should_fix_is_a_problem(reason, problem):
+    lead = LeadFactory()
+    now = timezone.now()
+    sent = _tp(lead, name="Sent", status=TouchPoint.Status.SENT, sent_at=now - timedelta(days=1))
+    DeliveryFactory(touchpoint=sent, message=sent.message, status=Delivery.Status.SENT)
+    _tp(lead, name="Soon", scheduled_for=now + timedelta(hours=1))
+    skipped = _tp(lead, name="Skipped", status=TouchPoint.Status.SKIPPED, error=reason)
+    DeliveryFactory(
+        touchpoint=skipped, message=skipped.message, status=Delivery.Status.SKIPPED, reason=reason
+    )
+    _tp(lead, name="Bare skip", status=TouchPoint.Status.SKIPPED, error=reason)
+
+    names = [r.name for r in history.for_lead(lead)]
+
+    if problem:
+        assert names[:2] == ["Skipped", "Bare skip"] and names[2] == "Soon"
+    else:
+        assert names[0] == "Soon" and set(names[1:]) == {"Sent", "Skipped", "Bare skip"}

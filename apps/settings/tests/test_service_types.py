@@ -81,3 +81,21 @@ def test_settings_index_counts_and_links_them(client):
     resp = client.get(reverse("settings_index"))
     assert resp.context["service_type_count"] == ServiceType.objects.filter(active=True).count()
     assert b"Service types" in resp.content
+
+
+def test_delete_is_refused_while_a_message_uses_it(client):
+    """Deleting it would drop it from the message's service types, which then matches every
+    trip: the message would start going to orders it was never meant for."""
+    from apps.messaging.factories import MessageRowFactory
+
+    _owner(client)
+    st = ServiceTypeFactory(name="Wine Tour")
+    row = MessageRowFactory(name="Tasting reminder")
+    row.service_types.set([st])
+
+    resp = client.post(reverse("service_type_delete", args=[st.pk]), follow=True)
+
+    st.refresh_from_db()
+    assert st.active is True
+    assert list(row.service_types.all()) == [st]
+    assert "Tasting reminder" in resp.content.decode()

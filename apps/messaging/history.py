@@ -11,8 +11,12 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 
 from .models import Delivery, TouchPoint
+from .sender import MISSING, NO_RECIPIENT
 
 _PROBLEM, _UPCOMING, _DONE, _CANCELLED = 0, 1, 2, 3
+# A skip someone has to fix (nobody to send to, an address missing). Every other skip is the
+# rules working ("Already sent for Nov 14", "day already confirmed", "Switched off").
+_PROBLEM_SKIPS = frozenset({NO_RECIPIENT, *MISSING.values()})
 
 _DELIVERY_STATUS = {
     Delivery.Status.SENT: "Sent",
@@ -47,8 +51,8 @@ def _trip_label(res) -> str:
     return f"{res.service_label} · {day}" if day else res.service_label
 
 
-def _group(status: str) -> int:
-    if status in ("Failed", "Waiting", "Skipped"):
+def _group(status: str, reason: str) -> int:
+    if status in ("Failed", "Waiting") or (status == "Skipped" and reason in _PROBLEM_SKIPS):
         return _PROBLEM
     if status == "Cancelled":
         return _CANCELLED
@@ -77,14 +81,15 @@ def for_lead(lead) -> list[HistoryRow]:
     for tp in touchpoints:
         res = tp.reservation
         zone = res.pickup_timezone if res is not None else ""
-        name = tp.message.name if tp.message_id else tp.get_kind_display()
+        name = tp.message.name if tp.message_id else tp.kind
         label = _trip_label(res)
         deliveries = list(tp.deliveries.all())
         if not deliveries:
             status, reason = _tp_status(tp)
             when = tp.sent_at or tp.scheduled_for or tp.created_at
+            group = _group(status, reason)
             row = HistoryRow(
-                name, when, label, "", status, reason, _when_display(when, zone), _group(status)
+                name, when, label, "", status, reason, _when_display(when, zone), group
             )
             # A cancelled send sorts by when it was cancelled, not by the time it was due.
             rows.append((tp.updated_at if status == "Cancelled" else when, row))
@@ -109,8 +114,9 @@ def for_lead(lead) -> list[HistoryRow]:
                 when = tp.scheduled_for or d.created_at
             who = d.recipient_label or d.get_channel_display()
             to = f"{who} · {d.get_channel_display()}" if d.recipient_label else who
+            group = _group(status, reason)
             row = HistoryRow(
-                name, when, label, to, status, reason, _when_display(when, zone), _group(status)
+                name, when, label, to, status, reason, _when_display(when, zone), group
             )
             rows.append((when, row))
     # Problems and upcoming sends oldest first; sent, then cancelled, newest first.
