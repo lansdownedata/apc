@@ -107,6 +107,68 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("wedding_details", "Every answer they gave"),
         ("resume_button", "Update-details button"),
     ],
+    # A staff report's numbers and dates, and its table, from the report's job. Each report
+    # fills only its own (`REPORT_FIELDS`); a count comes with its noun ("2 orders").
+    "Report": [
+        ("report_date", "Report date"),
+        ("report_time", "Report time"),
+        ("period_start", "Period start"),
+        ("period_end", "Period end"),
+        ("orders", "Orders listed"),
+        ("booked_orders", "Booked orders listed"),
+        ("window_days", "Days to pickup"),
+        ("customers", "Customers listed"),
+        ("trips", "Trips listed"),
+        ("trip_count", "Number of trips"),
+        ("asked_count", "Asked for a review"),
+        ("held_count", "Review requests held"),
+        ("reviewed_count", "Left a review"),
+        ("trip_page_ratings", "Trip-page ratings sentence"),
+        ("new_complaints", "New complaints"),
+        ("overdue_tasks", "Overdue tasks"),
+        ("tasks", "Tasks listed"),
+        ("critical_mark", "CRITICAL mark (when any is critical)"),
+        ("alert_summary", "Exceptions needing attention"),
+        ("exceptions", "Exceptions listed"),
+        ("critical_note", "Critical count (when any)"),
+        ("report_table", "Report table"),
+    ],
+}
+
+# What each staff report's job fills, on its own seeded row. Only that row is ever sent on
+# its schedule trigger (`editor.can_pick`), so the values belong to the report, not the
+# trigger.
+REPORT_FIELDS: dict[str, frozenset[str]] = {
+    "deposit_report": frozenset(
+        {"report_date", "orders", "booked_orders", "window_days", "report_table"}
+    ),
+    "unconfirmed_trips_report": frozenset(
+        {"report_date", "customers", "trips", "trip_count", "report_table"}
+    ),
+    "review_report": frozenset(
+        {
+            "period_start",
+            "period_end",
+            "orders",
+            "asked_count",
+            "held_count",
+            "reviewed_count",
+            "trip_page_ratings",
+            "report_table",
+        }
+    ),
+    "complaint_report": frozenset({"new_complaints", "period_start", "report_table"}),
+    "task_digest": frozenset({"report_date", "overdue_tasks", "tasks", "report_table"}),
+    "dispatch_alert": frozenset(
+        {
+            "report_time",
+            "critical_mark",
+            "alert_summary",
+            "exceptions",
+            "critical_note",
+            "report_table",
+        }
+    ),
 }
 
 # The groups a staff click's (or another `send_now`) caller fills; nothing else does.
@@ -121,6 +183,7 @@ _CLICK_GROUPS = (
     "Planner account",
     "Staff access",
     "Wedding details",
+    "Report",
 )
 CLICK_FIELDS = frozenset(key for group in _CLICK_GROUPS for key, _ in _GROUPS[group])
 
@@ -137,6 +200,7 @@ _LINKS = (
     "terms_link",
     "account_button",
     "resume_button",
+    "report_table",
 )
 # Links the sender fills only in particular cases; `fields_for` adds each where it can.
 _SENDER_LINKS = ("confirm_link", "ack_link", "review_link")
@@ -194,9 +258,9 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
     """The fields a message on this trigger and audience may use, in registry order.
 
     Only what the sender fills: the Affiliate group is for the affiliate audience; `confirm_link`
-    only on trip-level triggers for a non-affiliate audience (`rules.fill_links`); `ack_link` and
-    `review_link` only for the seeded message that carries them, while it stays on its trigger
-    (`key` names that seeded message).
+    only on trip-level triggers for a non-affiliate audience (`rules.fill_links`); `ack_link`,
+    `review_link` and a staff report's values only for the seeded message that carries them,
+    while it stays on its trigger (`key` names that seeded message).
     """
     trigger = triggers.get(trigger_key)
     groups = set(trigger.field_groups)
@@ -209,7 +273,7 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
         if trigger.level == "trip" and audience != "affiliate":
             keys.add("confirm_link")
     if _original_trigger(key, trigger_key):
-        keys |= required_for(key)
+        keys |= required_for(key) | REPORT_FIELDS.get(key, frozenset())
     return [f for k, f in FIELDS.items() if k in keys]
 
 
@@ -266,6 +330,7 @@ _PURPOSE = {
     "terms_link": "the customer accepts the terms",
     "account_button": "they set their password",
     "resume_button": "the couple updates their details",
+    "report_table": "staff see what's in the report",
 }
 _CHANNEL_NAME = {"email": "email", "sms": "SMS"}
 

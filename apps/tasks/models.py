@@ -10,7 +10,6 @@ from django.utils import dateformat, timezone
 from apps.accounts.models import Department
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
-from apps.dispatch.models import _split_list
 
 
 def format_local(moment: datetime | None, fmt: str = "M j, g:i A") -> str:
@@ -32,8 +31,9 @@ def _owner(label: str) -> models.ForeignKey:
 
 
 class TaskConfig(models.Model):
-    """Singleton — who owns each department's work by default, when overdue work escalates,
-    and who gets the daily digest (APC-49). Mirrors `DispatchAlertConfig`.
+    """Singleton — who owns each department's work by default and when overdue work
+    escalates (APC-49). Mirrors `DispatchAlertConfig`. Who gets the digest and the reports is
+    on their message rows (APC-120).
     """
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
@@ -100,16 +100,6 @@ class TaskConfig(models.Model):
         help_text="Charged when a vehicle needs more than normal cleaning after a trip. Shown "
         "to wedding customers on the 72-hour confirmation; 0 hides it.",
     )
-    digest_emails = models.TextField(
-        blank=True,
-        help_text="Who gets the daily overdue-task digest. One per line or comma-separated. "
-        "Blank falls back to the company email.",
-    )
-    report_emails = models.TextField(
-        blank=True,
-        help_text="Who gets the customer review report and the daily complaint report. One "
-        "per line or comma-separated. Blank uses the digest recipients above.",
-    )
     # When each post-trip report last ran. The complaint report covers what was logged
     # since its stamp; the review report shows its stamp as the period start (which orders
     # it has covered is tracked per order, in `ReportedOrder`).
@@ -143,15 +133,6 @@ class TaskConfig(models.Model):
     def owner_for(self, department: str):
         """The department's default owner, or None."""
         return getattr(self, self.OWNER_FIELDS[department])
-
-    @property
-    def digest_list(self) -> list[str]:
-        chosen = _split_list(self.digest_emails)
-        return chosen or ([settings.COMPANY_EMAIL] if settings.COMPANY_EMAIL else [])
-
-    @property
-    def report_list(self) -> list[str]:
-        return _split_list(self.report_emails) or self.digest_list
 
 
 class TaskQuerySet(models.QuerySet):

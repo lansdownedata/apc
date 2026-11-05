@@ -6,7 +6,8 @@ error, or skipped with the reason ("No mobile on file", "Already sent for Nov 14
 TouchPoint keeps today's status and error strings, which the order's history and the golden
 recording read. `run_touchpoints` is the `run-touchpoints` cron job; `send_due` is the same
 batch for rows an event queued, called once its transaction commits. `send_now` is the same
-path for a staff click, an invite or a report, sent inside the request (spec C section 8).
+path for a staff click, an invite or a report, sent inside the request (spec C section 8);
+`send_report` is a staff report's way in, from its cron job.
 
 Transport is today's: texts and customer/affiliate email through Podium, planner and staff
 email (and any trigger whose email goes by Postmark) through our own mail, in the branded
@@ -842,6 +843,27 @@ def send_now(
     if not sent and not errors and tp.error:
         errors = [tp.error]
     return SendResult(sent=sent, deliveries=deliveries, errors=errors)
+
+
+def send_report(key: str, table: str, context: dict, values: dict[str, str]) -> SendResult:
+    """A staff report from its job (spec C sections 3 and 8): the row ``key``'s wording, with
+    the job's ``values`` and its table as the `{report_table}` block
+    (`templates/email/blocks/report_table/<table>`, rendered from ``context``, as is the inbox
+    preview line `templates/email/preheaders/<table>.html`), to the row's staff emails. The
+    job keeps its schedule and sends nothing on an empty day. Logs each failed delivery, and
+    why when it reached no one."""
+    result = send_now(
+        key,
+        extra_ctx=values,
+        blocks={"report_table": rendering.block(f"report_table/{table}", context)},
+        preheader=rendering.preheader(table, context),
+    )
+    failed = [d for d in result.deliveries if d.status == Delivery.Status.FAILED]
+    for d in failed:
+        logger.warning("%s: delivery to %s failed: %s", key, d.address, d.reason)
+    if not result.sent and not failed:
+        logger.warning("%s: not sent: %s", key, "; ".join(result.errors))
+    return result
 
 
 def podium_text(

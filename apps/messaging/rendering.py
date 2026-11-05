@@ -15,10 +15,13 @@ already carries the company's name and contacts.
 
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from django.conf import settings
 from django.contrib.staticfiles import finders
+from django.template import defaultfilters
 from django.template.loader import render_to_string
+from django.utils import timezone
 from django.utils.html import escape
 from django.utils.safestring import SafeString, mark_safe
 
@@ -59,6 +62,20 @@ def preheader(name: str, context: dict) -> SafeString:
     original templates include too), rendered and escaped once."""
     # Rendered (and so escaped) by the template; strip() would drop its safe mark.
     return mark_safe(render_to_string(f"email/preheaders/{name}.html", context).strip())
+
+
+def counted(n: int, noun: str) -> str:
+    """ "1 order", "2 orders": a number and its noun, plural as the `pluralize` filter has it
+    (a value the reports hand their rows)."""
+    return f"{n} {noun}{defaultfilters.pluralize(n)}"
+
+
+def format_date(value: date | datetime, fmt: str) -> str:
+    """A date or a moment as a template's `date` filter shows it: a moment in the current
+    time zone."""
+    if isinstance(value, datetime) and timezone.is_aware(value):
+        value = timezone.localtime(value)
+    return defaultfilters.date(value, fmt)
 
 
 def button(label: str, url: str) -> Block:

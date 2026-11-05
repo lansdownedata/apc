@@ -115,7 +115,12 @@ def test_the_migration_seeded_every_invite_row_from_its_original():
 def test_the_invite_originals_sit_beside_the_others():
     assert set(defaults.INVITES) == set(KEYS)
     assert not set(defaults.INVITES) & (set(defaults.DEFAULTS) | set(defaults.CLICKS))
-    assert defaults.ORIGINALS == {**defaults.DEFAULTS, **defaults.CLICKS, **defaults.INVITES}
+    assert defaults.ORIGINALS == {
+        **defaults.DEFAULTS,
+        **defaults.CLICKS,
+        **defaults.INVITES,
+        **defaults.REPORTS,
+    }
 
 
 def test_each_row_sends_on_its_own_trigger_to_its_audience():

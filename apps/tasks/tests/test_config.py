@@ -1,9 +1,9 @@
 """APC-49 — the TaskConfig singleton and its settings screen."""
 
+import importlib
 from decimal import Decimal
 
 import pytest
-from django.test import override_settings
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
@@ -23,14 +23,25 @@ def test_load_is_idempotent():
     assert first.overdue_grace_hours == 24
 
 
-@override_settings(COMPANY_EMAIL="office@allprocharter.com")
 def test_digest_list_falls_back_to_company_email():
-    cfg = TaskConfig.load()
+    """The digest list now lives on its message row; migration 0028 filled it this way."""
+    seed = importlib.import_module("apps.messaging.migrations.0028_seed_report_rows")
 
-    assert cfg.digest_list == ["office@allprocharter.com"]
+    def digest_list(digest_emails):
+        return seed.staff_lists(
+            {},
+            digest_emails=digest_emails,
+            report_emails="",
+            alert_emails="",
+            company_email="office@allprocharter.com",
+        )["task_digest"]
 
-    cfg.digest_emails = "a@allprocharter.com,\nb@allprocharter.com"
-    assert cfg.digest_list == ["a@allprocharter.com", "b@allprocharter.com"]
+    assert digest_list("") == ["office@allprocharter.com"]
+
+    assert digest_list("a@allprocharter.com,\nb@allprocharter.com") == [
+        "a@allprocharter.com",
+        "b@allprocharter.com",
+    ]
 
 
 def test_owner_for_reads_the_department_owner():
@@ -111,7 +122,6 @@ def test_owner_admin_can_save(client):
             "airport_international_grace_minutes": 45,
             "overtime_block_minutes": 30,
             "cleaning_fee": "250.00",
-            "digest_emails": "ops@allprocharter.com",
         },
     )
 

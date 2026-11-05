@@ -8,12 +8,12 @@ from datetime import timedelta
 
 import pytest
 from django.core import mail
-from django.test import override_settings
 from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
+from apps.messaging.models import MessageTemplate
 from apps.reservations import reports, tasks
 from apps.reservations.factories import ReservationFactory
 
@@ -69,7 +69,6 @@ def test_a_customer_with_several_trips_is_one_row():
     assert [t["reservation"] for t in rows[0]["trips"]] == [first, second]
 
 
-@override_settings(TRIP_CONFIRM_REPORT_EMAILS=["reservations@allprocharter.com"])
 def test_a_wedding_row_names_the_billing_contact_who_was_asked():
     from apps.leads.factories import ServiceTypeFactory
 
@@ -92,8 +91,10 @@ def test_report_emails_the_office():
     assert mail.outbox[0].to == ["reservations@allprocharter.com"]
 
 
-@override_settings(TRIP_CONFIRM_REPORT_EMAILS=["reservations@allprocharter.com"])
 def test_nothing_goes_out_on_a_quiet_day():
+    MessageTemplate.objects.filter(key="unconfirmed_trips_report").update(
+        staff_emails=["reservations@allprocharter.com"]
+    )
     assert tasks.send_unconfirmed_trip_report() == 0
     assert mail.outbox == []
 

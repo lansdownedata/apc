@@ -64,9 +64,10 @@ def test_the_unpaid_deposit_report_leaves_out_an_account_order():
 
 
 def test_a_day_with_only_account_orders_sends_no_deposit_report(mailoutbox, settings):
+    from apps.messaging.models import MessageTemplate
     from apps.payments.tasks import send_unpaid_deposit_report
 
-    settings.DEPOSIT_REPORT_EMAILS = ["office@example.com"]
+    MessageTemplate.objects.filter(key="deposit_report").update(staff_emails=["office@example.com"])
     on_account(_due_order()[0])
 
     assert send_unpaid_deposit_report() == 0

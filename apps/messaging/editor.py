@@ -93,10 +93,31 @@ _NOT_ADDABLE = ("staff_click", "schedule")
 NOT_ADDABLE = "Staff clicks and schedules are sent by the app's own messages. Pick another trigger."
 
 
+# A seeded staff report: its job decides when it goes, to staff, by email, for no order (so
+# no service types); the row holds the wording around the table and who gets it.
+REPORT_LOCKED = ("trigger", "audience", "send_sms", "send_email")
+SET_BY_REPORT = "Set by the report; it can't be changed here."
+
+
 def is_locked(row: MessageTemplate) -> bool:
     """A seeded staff-click, invite or wedding-details row: its button (or form), not the
     row, sets who, how and when."""
     return bool(row.seeded and (row.key in defaults.CLICKS or row.key in defaults.INVITES))
+
+
+def is_report(row: MessageTemplate) -> bool:
+    """A seeded staff report: its job sets how and when; who gets it is the row's."""
+    return bool(row.seeded and row.key in defaults.REPORTS)
+
+
+def locked_fields(row: MessageTemplate) -> tuple[tuple[str, ...], str]:
+    """The fields a seeded row's sender fixes (service types aside: any locked row keeps
+    them) and why, or ((), "") for a row the editor fully owns."""
+    if is_locked(row):
+        return LOCKED, SET_BY_BUTTON
+    if is_report(row):
+        return REPORT_LOCKED, SET_BY_REPORT
+    return (), ""
 
 
 def can_pick(row: MessageTemplate, trigger_key: str) -> bool:
@@ -634,6 +655,32 @@ def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
                 "  VENUE & CEREMONY\n    Reception venue: The Oak Barn at Loyalty"
             ),
             "resume_button": f"{base_url}/weddings/plan/sample/",
+            # What a staff report's job hands over.
+            "report_date": f"{pickup:%A, %B %-d, %Y}",
+            "report_time": f"{pickup:%a %b %-d}, {time_text}",
+            "period_start": f"{pickup - timedelta(days=30):%b %-d}",
+            "period_end": f"{pickup:%b %-d, %Y}",
+            "orders": "2 orders",
+            "booked_orders": "2 booked orders",
+            "window_days": "30",
+            "customers": "2 customers",
+            "trips": "3 trips",
+            "trip_count": "3",
+            "asked_count": "2",
+            "held_count": "0",
+            "reviewed_count": "1",
+            "trip_page_ratings": "2 rated the trip on their trip page, averaging 4.5 out of 5.",
+            "new_complaints": "1 new customer complaint",
+            "overdue_tasks": "2 overdue tasks",
+            "tasks": "2 tasks",
+            "critical_mark": "CRITICAL — ",
+            "alert_summary": "2 dispatch exceptions need attention",
+            "exceptions": "2 exceptions",
+            "critical_note": " (1 CRITICAL)",
+            "report_table": (
+                f"  Q-1042 · Sample Customer\n    1 trip · {date_text}\n"
+                f"    {base_url}/portal/orders/1042/"
+            ),
         }
     )
     return ctx

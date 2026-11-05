@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}Customer reviews: {{ orders }} order{{ orders|pluralize }} finished{% endblock %}
-{% block preheader %}{{ reviewed }} of {{ orders }} left a review. {{ low_rows|length }} low rating{{ low_rows|length|pluralize }}.{% endblock %}
+{% block preheader %}{% include "email/preheaders/review_report.html" %}{% endblock %}
 {% block content %}
 <p style="margin:0 0 6px;font-size:17px;color:#17191D;">Customer reviews, {{ since|date:"M j" }} to {{ until|date:"M j, Y" }}</p>
 <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">

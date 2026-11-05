@@ -1,5 +1,6 @@
 """APC-23 — dispatch exception monitoring."""
 
+import importlib
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ from apps.dispatch import monitoring, services
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
+from apps.messaging.models import MessageTemplate
 from apps.notifications.models import Notification
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
@@ -72,13 +74,22 @@ def test_config_is_a_singleton():
     assert DispatchAlertConfig.objects.count() == 1
 
 
-def test_email_list_parses_commas_and_newlines_and_falls_back(settings):
-    settings.COMPANY_EMAIL = "ops@allprocharter.com"
-    cfg = DispatchAlertConfig.load()
-    assert cfg.email_list == ["ops@allprocharter.com"]
+def test_email_list_parses_commas_and_newlines_and_falls_back():
+    """The alert's list now lives on its message row; migration 0028 filled it this way."""
+    seed = importlib.import_module("apps.messaging.migrations.0028_seed_report_rows")
 
-    cfg.alert_emails = "a@x.com, b@x.com\nc@x.com"
-    assert cfg.email_list == ["a@x.com", "b@x.com", "c@x.com"]
+    def email_list(alert_emails):
+        return seed.staff_lists(
+            {},
+            digest_emails="",
+            report_emails="",
+            alert_emails=alert_emails,
+            company_email="ops@allprocharter.com",
+        )["dispatch_alert"]
+
+    assert email_list("") == ["ops@allprocharter.com"]
+
+    assert email_list("a@x.com, b@x.com\nc@x.com") == ["a@x.com", "b@x.com", "c@x.com"]
 
 
 def test_sms_list_is_empty_by_default():
@@ -396,7 +407,10 @@ def test_a_resolved_exception_reopens_if_it_breaches_again():
 
 
 def test_new_exceptions_email_the_configured_recipients():
-    _cfg(alert_emails="ops@allprocharter.com\nnight@allprocharter.com")
+    _cfg()
+    MessageTemplate.objects.filter(key="dispatch_alert").update(
+        staff_emails=["ops@allprocharter.com", "night@allprocharter.com"]
+    )
     _trip(timedelta(hours=3))
     mail.outbox.clear()
 

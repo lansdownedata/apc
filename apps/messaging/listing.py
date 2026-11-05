@@ -118,8 +118,10 @@ def is_staff_click(row: MessageTemplate) -> bool:
 
 
 def _caller_sends(row: MessageTemplate) -> bool:
+    """Sent by its own caller, past the master switch: an event its service sends itself
+    (the wedding-details email) or a staff report from its job."""
     trigger = triggers.CATALOG.get(row.trigger)
-    return trigger is not None and trigger.caller_sends
+    return trigger is not None and (trigger.caller_sends or trigger.kind == "schedule")
 
 
 def row_data(row: MessageTemplate) -> dict:
@@ -164,7 +166,10 @@ def edited(row: MessageTemplate) -> bool:
         return True
     if sorted(row.recipients or []) != sorted(default.recipients):
         return True
-    if sorted(row.staff_emails or []) != sorted(default.staff_emails):
+    # A staff report's list was never part of its original (`defaults.reset` keeps it).
+    if row.key not in defaults.REPORTS and sorted(row.staff_emails or []) != sorted(
+        default.staff_emails
+    ):
         return True
     return sorted(t.name for t in row.service_types.all()) != sorted(default.service_type_names)
 

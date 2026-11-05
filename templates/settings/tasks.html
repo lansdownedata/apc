@@ -43,8 +43,7 @@
         </div>
       </div>
       {% include "components/form_field.html" with field=form.cleaning_fee %}
-      {% include "components/form_field.html" with field=form.digest_emails %}
-      {% include "components/form_field.html" with field=form.report_emails %}
+      <p class="text-[11.5px] text-muted">Who gets the <a href="{% url 'message_edit' 'task_digest' %}" class="font-semibold text-goldd hover:underline focus-gold">overdue task digest</a>, the <a href="{% url 'message_edit' 'review_report' %}" class="font-semibold text-goldd hover:underline focus-gold">customer review report</a> and the <a href="{% url 'message_edit' 'complaint_report' %}" class="font-semibold text-goldd hover:underline focus-gold">complaint report</a> is set on each message.</p>
 
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
       <div class="flex items-center justify-end gap-2.5 pt-2">

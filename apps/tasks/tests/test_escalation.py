@@ -14,6 +14,7 @@ from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
+from apps.messaging.models import MessageTemplate
 from apps.notifications.models import Notification
 from apps.reservations.factories import ReservationFactory
 from apps.tasks import escalation, services
@@ -35,8 +36,8 @@ def _at(moment):
 def config():
     cfg = TaskConfig.load()
     cfg.overdue_grace_hours = 24
-    cfg.digest_emails = "ops@allprocharter.com"
     cfg.save()
+    MessageTemplate.objects.filter(key="task_digest").update(staff_emails=["ops@allprocharter.com"])
     return cfg
 
 

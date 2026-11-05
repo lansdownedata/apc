@@ -57,6 +57,9 @@
             {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
             {% else %}
             <input type="hidden" name="audience" value="{{ state.audience }}" :value="audience">
+            {% if report_row %}
+            {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
+            {% else %}
             <div role="radiogroup" aria-label="Audience" class="inline-flex flex-wrap gap-1 rounded-lg bg-slate-100 p-0.5">
               {% for value, label in audience_options %}
               <button type="button" role="radio" :aria-checked="(audience === '{{ value }}').toString()" aria-checked="{% if state.audience == value %}true{% else %}false{% endif %}"
@@ -66,6 +69,7 @@
               {% endfor %}
             </div>
             {% if errors.audience %}<p class="text-[11.5px] text-rose-600">{{ errors.audience }}</p>{% endif %}
+            {% endif %}
 
             <div x-show="audience === 'staff'"{% if state.audience != "staff" %} style="display: none"{% endif %}>
               <label for="staff-email-input" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Staff emails</label>
@@ -112,7 +116,7 @@
 
           <section class="space-y-3">
             <h2 class="text-[14px] font-semibold text-ink">When it goes out</h2>
-            {% if locked %}
+            {% if locked or report_row %}
             <input type="hidden" name="trigger" value="{{ row.trigger }}">
             {% else %}
             <div @change="setTrigger($event.target.value)">
@@ -165,7 +169,7 @@
             {% endif %}
           </section>
 
-          {% if locked %}
+          {% if locked or report_row %}
           {% for pk in stored_services %}<input type="hidden" name="service_types" value="{{ pk }}">
           {% endfor %}
           {% else %}
@@ -189,7 +193,7 @@
             <div class="flex items-center gap-2.5">
               <h2 class="text-[14px] font-semibold text-ink">Wording</h2>
               <div class="ml-auto inline-flex gap-1.5">
-                {% if locked %}
+                {% if locked or report_row %}
                 <input type="hidden" name="send_sms" value="{% if row.send_sms %}on{% endif %}">
                 <input type="hidden" name="send_email" value="{% if row.send_email %}on{% endif %}">
                 {% if row.send_sms %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-slate-100 text-ink"><i class="ti ti-lock text-[13px]"></i>Text</span>{% endif %}

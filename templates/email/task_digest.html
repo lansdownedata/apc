@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}{{ count }} overdue task{{ count|pluralize }}{% endblock %}
-{% block preheader %}{{ count }} task{{ count|pluralize }} past due, grouped by department.{% endblock %}
+{% block preheader %}{% include "email/preheaders/task_digest.html" %}{% endblock %}
 {% block content %}
 <p style="margin:0 0 6px;font-size:17px;color:#17191D;" class="dm-ink">Overdue tasks — {{ now|date:"l, F j" }}</p>
 <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;" class="dm-muted">

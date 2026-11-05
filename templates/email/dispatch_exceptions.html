@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}{% if critical_count %}CRITICAL — {% endif %}{{ lines|length }} dispatch exception{{ lines|length|pluralize }}{% endblock %}
-{% block preheader %}{{ lines|length }} dispatch exception{{ lines|length|pluralize }} need attention{% if critical_count %} — {{ critical_count }} critical{% endif %}.{% endblock %}
+{% block preheader %}{% include "email/preheaders/dispatch_exceptions.html" %}{% endblock %}
 {% block content %}
 <p style="margin:0 0 6px;font-size:17px;color:#17191D;" class="dm-ink">Dispatch exceptions — {{ now|date:"l, F j, g:i A" }}</p>
 <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;" class="dm-muted">

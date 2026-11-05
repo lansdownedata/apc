@@ -131,7 +131,6 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "require_driver_cell",
             "require_vehicle_desc",
             "require_vehicle_number",
-            "alert_emails",
             "critical_sms",
         ]
         widgets = {
@@ -147,7 +146,6 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "driver_info_warn_hours": forms.NumberInput(attrs=_NUM),
             "driver_info_critical_hours": forms.NumberInput(attrs=_NUM),
             "affiliate_unacked_warn_hours": forms.NumberInput(attrs=_NUM),
-            "alert_emails": forms.Textarea(attrs=_AREA),
             "critical_sms": forms.Textarea(attrs=_AREA),
         }
 
@@ -178,8 +176,6 @@ class TaskConfigForm(forms.ModelForm):
             "airport_international_grace_minutes",
             "overtime_block_minutes",
             "cleaning_fee",
-            "digest_emails",
-            "report_emails",
         ]
         widgets = {
             "sales_owner": forms.Select(attrs=_OWNER),
@@ -196,8 +192,6 @@ class TaskConfigForm(forms.ModelForm):
             "airport_international_grace_minutes": forms.NumberInput(attrs=_NUM),
             "overtime_block_minutes": forms.NumberInput(attrs=_NUM),
             "cleaning_fee": forms.NumberInput(attrs={**_NUM, "step": "0.01"}),
-            "digest_emails": forms.Textarea(attrs=_AREA),
-            "report_emails": forms.Textarea(attrs=_AREA),
         }
 
     def __init__(self, *args, **kwargs):
@@ -552,7 +546,7 @@ class MessageForm(forms.ModelForm):
         trigger_key, audience = cleaned.get("trigger"), cleaned.get("audience")
         if not trigger_key:
             return cleaned
-        if editor.is_locked(self.instance):
+        if editor.locked_fields(self.instance)[0]:
             self._clean_locked(cleaned)
         elif not editor.can_pick(self.instance, trigger_key):
             self._error("trigger", editor.NOT_ADDABLE)
@@ -591,21 +585,27 @@ class MessageForm(forms.ModelForm):
         return cleaned
 
     def _clean_locked(self, cleaned: dict) -> None:
-        """A seeded staff-click row: its button sets who, how and when (`editor.LOCKED`, and
-        the service types). A change to any of them is refused, not saved."""
+        """A seeded staff-click row: its button sets who, how and when (`editor.LOCKED`); a
+        seeded staff report: its job sets how and when (`editor.REPORT_LOCKED`). Both keep
+        their service types. A change to any of them is refused, not saved."""
+        locked, why = editor.locked_fields(self.instance)
         stored = MessageTemplate.objects.prefetch_related("service_types").get(pk=self.instance.pk)
-        for name in editor.LOCKED:
+        for name in locked:
             if name not in cleaned:
+                if name in self.errors and self.data.get(name) != getattr(stored, name):
+                    # A choice this row can't have (another audience): the reason is the lock.
+                    self.errors.pop(name)
+                    self._error(name, why)
                 continue
             was, now = getattr(stored, name), cleaned[name]
             if isinstance(was, list):
                 was, now = sorted(was), sorted(now or [])
             if was != now:
-                self._error("send_sms" if name == "send_email" else name, editor.SET_BY_BUTTON)
+                self._error("send_sms" if name == "send_email" else name, why)
         if "service_types" in cleaned:
             was = {st.pk for st in stored.service_types.all()}
             if {st.pk for st in cleaned["service_types"]} != was:
-                self._error("service_types", editor.SET_BY_BUTTON)
+                self._error("service_types", why)
 
     def _clean_timing(self, cleaned: dict, trigger_key: str) -> None:
         amount, unit = cleaned.get("timing_amount"), cleaned.get("timing_unit") or ""

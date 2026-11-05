@@ -1,7 +1,8 @@
 """Overdue-task escalation (APC-52) — called from `run-tasks` every tick.
 
 Reuses the APC-23 delivery: tray `Notification` rows plus an HTML digest email through
-`send_html_email`. No second channel, and no SMS (dispatch keeps its own SMS tier).
+its message row ("Overdue task digest"). No second channel, and no SMS (dispatch keeps its
+own SMS tier).
 
 - **Tier 1**, once overdue: the assignee — or the department's default owner when
   unassigned, or every admin when there's no owner either.
@@ -11,7 +12,7 @@ Reuses the APC-23 delivery: tray `Notification` rows plus an HTML digest email t
   `DispatchException.notified_tier` trick). A task re-dated out of overdue keeps its tier.
 - Kinds with `escalates=False` — the checkpoints `monitor-dispatch` already alerts on —
   never escalate here (decision D2). They still show as tasks.
-- **Digest**: once per business day, from `DIGEST_HOUR` local, to the configured list.
+- **Digest**: once per business day, from `DIGEST_HOUR` local, to the row's staff emails.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from django.utils import timezone
 
 from apps.accounts.models import Department, User
 from apps.leads.models import Lead
-from apps.notifications.email import send_html_email
+from apps.messaging import rendering, sender
 from apps.notifications.models import Notification
 from apps.vendors.models import Vendor
 
@@ -142,15 +143,16 @@ def _maybe_send_digest(config: TaskConfig, tasks: list[Task], now) -> bool:
         if settings.PUBLIC_BASE_URL
         else "",
     }
-    subject = f"{n} overdue task{'s' if n != 1 else ''}"
-    for recipient in config.digest_list:
-        send_html_email(
-            to=recipient,
-            subject=subject,
-            template="task_digest",
-            context=context,
-            internal=True,
-        )
+    sender.send_report(
+        "task_digest",
+        "task_digest",
+        context,
+        {
+            "report_date": rendering.format_date(local_now, "D M j"),
+            "overdue_tasks": rendering.counted(n, "overdue task"),
+            "tasks": rendering.counted(n, "task"),
+        },
+    )
     TaskConfig.objects.filter(pk=config.pk).update(digest_sent_on=today)
     config.digest_sent_on = today
     log.info("task digest: %d overdue task(s) sent for %s", n, today)

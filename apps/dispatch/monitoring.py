@@ -24,7 +24,6 @@ from django.db.models import Prefetch
 from django.utils import timezone
 
 from apps.leads.models import Lead
-from apps.notifications.email import send_html_email
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 
@@ -232,12 +231,11 @@ def _raise_alerts(cfg: DispatchAlertConfig, excs: list[DispatchException], now) 
             ),
         )
 
-    # (b) email digest
+    # (b) email digest, through the "Dispatch exceptions alert" message row
+    from apps.messaging import rendering, sender
+
     lines = [_line(e) for e in excs]
     n = len(excs)
-    subject = f"{n} dispatch exception{'s' if n != 1 else ''} need{'' if n != 1 else 's'} attention"
-    if critical:
-        subject = f"CRITICAL — {subject}"
     context = {
         "lines": lines,
         "critical_count": len(critical),
@@ -247,14 +245,21 @@ def _raise_alerts(cfg: DispatchAlertConfig, excs: list[DispatchException], now) 
         if settings.PUBLIC_BASE_URL
         else "",
     }
-    for recipient in cfg.email_list:
-        send_html_email(
-            to=recipient,
-            subject=subject,
-            template="dispatch_exceptions",
-            context=context,
-            internal=True,
-        )
+    sender.send_report(
+        "dispatch_alert",
+        "dispatch_exceptions",
+        context,
+        {
+            "report_time": rendering.format_date(now, "D M j, g:i A"),
+            "critical_mark": "CRITICAL — " if critical else "",
+            "alert_summary": (
+                f"{n} dispatch exception{'s' if n != 1 else ''} "
+                f"need{'' if n != 1 else 's'} attention"
+            ),
+            "exceptions": rendering.counted(n, "exception"),
+            "critical_note": f" ({len(critical)} CRITICAL)" if critical else "",
+        },
+    )
 
     # (c) SMS — critical tier only
     if critical and cfg.sms_list:

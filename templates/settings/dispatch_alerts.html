@@ -63,7 +63,7 @@
         <p class="text-[11.5px] text-muted mt-2">Takes effect the next time driver details are saved for a trip.</p>
       </div>
 
-      {% include "components/form_field.html" with field=form.alert_emails %}
+      <p class="text-[11.5px] text-muted">Who gets the exception email is set on the <a href="{% url 'message_edit' 'dispatch_alert' %}" class="font-semibold text-goldd hover:underline focus-gold">dispatch exceptions alert</a> message.</p>
       {% include "components/form_field.html" with field=form.critical_sms %}
 
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}

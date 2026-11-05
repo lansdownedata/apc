@@ -5,7 +5,6 @@ from django.conf import settings
 from django.db.models import F
 from django.utils import timezone
 
-from apps.notifications.email import send_html_email
 from apps.reservations.models import EARNED_TERMINAL_STATUSES, Reservation
 
 from . import ledger, reports, services
@@ -256,33 +255,32 @@ def reconcile_open_charges(now=None) -> int:
 
 def send_unpaid_deposit_report(today=None) -> int:
     """Email the office every booked order with an unpaid deposit and a trip inside the
-    balance window. Nothing goes out on an empty day. Returns the number of orders listed."""
+    balance window, through the "Unpaid deposits report" message row (its wording, its staff
+    emails, its switch). Nothing goes out on an empty day. Returns the number of orders
+    listed."""
+    from apps.messaging import rendering, sender
+
     rows = reports.unpaid_deposit_rows(today=today)
     if not rows:
         return 0
     window = settings.BALANCE_CHARGE_DAYS_BEFORE
     count = len(rows)
+    today = today or timezone.localdate()
     context = {
         "rows": rows,
-        "today": today or timezone.localdate(),
+        "today": today,
         "window_days": window,
         "company_name": settings.COMPANY_NAME,
     }
-    plural = "s" if count != 1 else ""
-    subject = f"Unpaid deposits — {count} order{plural} with a trip inside {window} days"
-    if not settings.DEPOSIT_REPORT_EMAILS:
-        logger.warning(
-            "deposit report: %d order(s) listed but DEPOSIT_REPORT_EMAILS is empty — nothing sent",
-            count,
-        )
-    for recipient in settings.DEPOSIT_REPORT_EMAILS:
-        sent = send_html_email(
-            to=recipient,
-            subject=subject,
-            template="deposit_report",
-            context=context,
-            internal=True,
-        )
-        if not sent:
-            logger.warning("deposit report: delivery to %s failed", recipient)
+    sender.send_report(
+        "deposit_report",
+        "deposit_report",
+        context,
+        {
+            "report_date": rendering.format_date(today, "l, F j, Y"),
+            "orders": rendering.counted(count, "order"),
+            "booked_orders": rendering.counted(count, "booked order"),
+            "window_days": str(window),
+        },
+    )
     return count

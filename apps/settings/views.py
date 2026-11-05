@@ -509,8 +509,10 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         if not new
         else reverse("messages_new_timing"),
     }
-    if editor.is_locked(row):
-        # What the button sets, as stored: a refused change is never shown as if it stuck.
+    locked, why = editor.locked_fields(row)
+    if locked:
+        # What the button or report sets, as stored: a refused change is never shown as if
+        # it stuck.
         state |= {
             "trigger": row.trigger,
             "audience": row.audience,
@@ -543,17 +545,18 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         "section_options": MessageTemplate.Section.choices,
         "trigger_options": _trigger_options(row, trigger_key),
         "locked": editor.is_locked(row),
+        "report_row": editor.is_report(row),
         "click_who": editor.WHO.get(row.key, "") if editor.is_locked(row) else "",
         "locked_error": next(
             (
                 form.errors[name][0]
-                for name in (*editor.LOCKED, "service_types")
-                if name in form.errors and form.errors[name][0] == editor.SET_BY_BUTTON
+                for name in (*locked, "service_types")
+                if name in form.errors and form.errors[name][0] == why
             ),
             "",
         ),
         "stored_recipients": list(stored.recipients or []) if editor.is_locked(row) else [],
-        "stored_services": [st.pk for st in types] if editor.is_locked(row) else [],
+        "stored_services": [st.pk for st in types] if locked else [],
         "unit_options": [(u, u) for u in editor.TIMING_UNITS],
         "audience_options": MessageTemplate.Audience.choices,
         "recipient_groups": [

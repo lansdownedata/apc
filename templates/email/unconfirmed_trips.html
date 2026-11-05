@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}Unconfirmed trips tomorrow — {{ rows|length }} customer{{ rows|length|pluralize }}{% endblock %}
-{% block preheader %}{{ trip_count }} trip{{ trip_count|pluralize }} for tomorrow the customer hasn't acknowledged. Confirm these by phone.{% endblock %}
+{% block preheader %}{% include "email/preheaders/unconfirmed_trips.html" %}{% endblock %}
 {% block content %}
 <p style="margin:0 0 6px;font-size:17px;color:#17191D;">Unconfirmed trips — {{ today|date:"l, F j, Y" }}</p>
 <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">

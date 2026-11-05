@@ -38,7 +38,7 @@ from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging import sender
 from apps.messaging.factories import ConversationFactory, TouchPointFactory
-from apps.messaging.models import Message, TouchPoint
+from apps.messaging.models import Message, MessageTemplate, TouchPoint
 from apps.notifications.models import Notification
 from apps.payments import services as payment_services
 from apps.payments.factories import PaymentPlanFactory
@@ -49,7 +49,7 @@ from apps.reservations.factories import ReservationFactory, TransferReservationF
 from apps.tasks import escalation
 from apps.tasks import services as task_services
 from apps.tasks.jobs import run_tasks
-from apps.tasks.models import Task, TaskConfig
+from apps.tasks.models import Task
 from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
@@ -84,8 +84,12 @@ def _booked_trip(**kw):
 # === our own staff: still sent =======================================================
 
 
+def _report_to(key: str, email: str) -> None:
+    MessageTemplate.objects.filter(key=key).update(staff_emails=[email])
+
+
 def test_the_unpaid_deposit_report_still_reaches_the_office(settings):
-    settings.DEPOSIT_REPORT_EMAILS = ["office@allprocharter.com"]
+    _report_to("deposit_report", "office@allprocharter.com")
     today = date(2026, 9, 1)
     lead = LeadFactory(status=Lead.Status.BOOKED)
     TransferReservationFactory(
@@ -99,7 +103,7 @@ def test_the_unpaid_deposit_report_still_reaches_the_office(settings):
 
 
 def test_the_unconfirmed_trips_report_still_reaches_the_office(settings):
-    settings.TRIP_CONFIRM_REPORT_EMAILS = ["office@allprocharter.com"]
+    _report_to("unconfirmed_trips_report", "office@allprocharter.com")
     _booked_trip(pickup_date=timezone.localdate() + timedelta(days=1))
 
     reservation_tasks.send_unconfirmed_trip_report()
@@ -108,9 +112,7 @@ def test_the_unconfirmed_trips_report_still_reaches_the_office(settings):
 
 
 def test_the_overdue_task_digest_still_reaches_the_office():
-    cfg = TaskConfig.load()
-    cfg.digest_emails = "ops@allprocharter.com"
-    cfg.save()
+    _report_to("task_digest", "ops@allprocharter.com")
     UserFactory(role=User.Role.OWNER_ADMIN)
     lead = LeadFactory(status=Lead.Status.BOOKED)
     ReservationFactory(
@@ -145,9 +147,7 @@ def _uncovered_trip_three_hours_out():
 
 
 def test_dispatch_exception_emails_still_reach_the_dispatchers():
-    cfg = DispatchAlertConfig.load()
-    cfg.alert_emails = "ops@allprocharter.com"
-    cfg.save()
+    _report_to("dispatch_alert", "ops@allprocharter.com")
     _uncovered_trip_three_hours_out()
 
     monitoring.run_dispatch_monitor()

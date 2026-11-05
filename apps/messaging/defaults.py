@@ -5,7 +5,8 @@ the client copy in `touchpoint_templates`. `CLICKS` are the staff-click sends (s
 8): their wording is today's button text, kept here, with the parts the caller generates
 (the quote summary, the receipt lines, a trip sheet, a button) as block placeholders.
 `INVITES` are the invites, the planner password reset and the wedding-details email, the
-same way. `ORIGINALS` is all three. `seed` creates the rows that are missing (folding in
+same way, and `REPORTS` the staff reports, their tables as block placeholders. `ORIGINALS`
+is all four. `seed` creates the rows that are missing (folding in
 what spec B saved for a key) and never overwrites a seeded row; `reset` copies an original
 back over its row.
 
@@ -479,8 +480,100 @@ INVITES: dict[str, MessageDefault] = {
     )
 }
 
+# --- staff reports ---------------------------------------------------------------------
+#
+# Today's report emails, word for word (`test_reports_golden` holds them). Each report's job
+# hands over its numbers and dates as values and its table as the `{report_table}` block
+# (`fields.REPORT_FIELDS`). Who gets each is the row's staff emails, filled from where the
+# list used to live by migration 0028 and edited on the row; `reset` keeps them.
+
+_REPORT_SIGNATURE = "--\n{company_name}"
+
+
+def _report(key: str, name: str, *, subject: str, email_body: str) -> MessageDefault:
+    return _click(
+        key,
+        name,
+        "staff_reports",
+        audience="staff",
+        channels=("email",),
+        subject=subject,
+        email_body=email_body,
+        recipients=(),
+    )
+
+
+REPORTS: dict[str, MessageDefault] = {
+    d.key: d
+    for d in (
+        _report(
+            "deposit_report",
+            "Unpaid deposits report",
+            subject="Unpaid deposits — {orders} with a trip inside {window_days} days",
+            email_body=(
+                "Unpaid deposits — {report_date}\n\n"
+                "{booked_orders} with a trip inside {window_days} days and no deposit "
+                "collected:\n"
+                "{report_table}\n" + _REPORT_SIGNATURE
+            ),
+        ),
+        _report(
+            "unconfirmed_trips_report",
+            "Unconfirmed trips report",
+            subject="Unconfirmed trips tomorrow — {customers}, {trip_count} trips",
+            email_body=(
+                "Unconfirmed trips — {report_date}\n\n"
+                "{trips} across {customers} go out tomorrow without a customer "
+                "acknowledgement.\n"
+                "They've had the T-72h and T-48h notices — confirm these by phone.\n"
+                "{report_table}\n" + _REPORT_SIGNATURE
+            ),
+        ),
+        _report(
+            "review_report",
+            "Customer review report",
+            subject="Customer reviews: {orders} finished, {reviewed_count} reviewed",
+            email_body=(
+                "Customer reviews, {period_start} to {period_end}\n\n"
+                "{orders} finished. {asked_count} asked for a review, {held_count} held, "
+                "{reviewed_count} left a review.\n"
+                "{trip_page_ratings}\n"
+                "{report_table}\n" + _REPORT_SIGNATURE
+            ),
+        ),
+        _report(
+            "complaint_report",
+            "Complaint report",
+            subject="{new_complaints}",
+            email_body=(
+                "{new_complaints} since {period_start}\n{report_table}\n\n" + _REPORT_SIGNATURE
+            ),
+        ),
+        _report(
+            "task_digest",
+            "Overdue task digest",
+            subject="{overdue_tasks}",
+            email_body=(
+                "Overdue tasks — {report_date}\n\n"
+                "{tasks} past due, oldest first.\n"
+                "{report_table}\n" + _REPORT_SIGNATURE
+            ),
+        ),
+        _report(
+            "dispatch_alert",
+            "Dispatch exceptions alert",
+            subject="{critical_mark}{alert_summary}",
+            email_body=(
+                "Dispatch exceptions — {report_time}\n\n"
+                "{exceptions} need attention{critical_note}.\n"
+                "{report_table}\n" + _REPORT_SIGNATURE
+            ),
+        ),
+    )
+}
+
 # Every seeded message's original, by key.
-ORIGINALS: dict[str, MessageDefault] = {**DEFAULTS, **CLICKS, **INVITES}
+ORIGINALS: dict[str, MessageDefault] = {**DEFAULTS, **CLICKS, **INVITES, **REPORTS}
 
 # The fields `reset` copies back. The on/off switch is not part of the original: resetting the
 # wording never turns a message on or off.
@@ -586,12 +679,14 @@ def seed(apps=None, keys: Iterable[str] | None = None) -> int:
 
 
 def reset(row):
-    """Copy the original back over a seeded row (all but its on/off switch); returns it."""
+    """Copy the original back over a seeded row (all but its on/off switch); returns it.
+    A staff report keeps its staff emails: they were never part of its original."""
     default = ORIGINALS[row.key]
+    kept = list(row.staff_emails or []) if row.key in REPORTS else None
     for name in _RESET_FIELDS:
         setattr(row, name, getattr(default, name))
     row.recipients = list(default.recipients)
-    row.staff_emails = list(default.staff_emails)
+    row.staff_emails = list(default.staff_emails) if kept is None else kept
     row.save()
     _, _, ServiceType = _models(None)
     row.service_types.set(_service_types(ServiceType, default.service_type_names))

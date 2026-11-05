@@ -71,7 +71,7 @@
         <h2 class="font-display text-[15px] font-semibold text-ink">Dispatch alerts</h2>
       </div>
       <p class="text-[12.5px] text-muted mt-1">
-        Thresholds and recipients for missed-milestone alerts — no driver assigned, not en route, not arrived.
+        Thresholds and text numbers for missed-milestone alerts — no driver assigned, not en route, not arrived.
       </p>
       <p class="text-[12.5px] text-muted mt-2">
         {% if dispatch_monitor_on %}Monitor on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Monitor off</span>{% endif %}{% if open_dispatch_exceptions %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ open_dispatch_exceptions }} open</span>{% endif %}
@@ -107,7 +107,7 @@
         <h2 class="font-display text-[15px] font-semibold text-ink">Tasks</h2>
       </div>
       <p class="text-[12.5px] text-muted mt-1">
-        Who owns each department's work, when overdue tasks escalate, and who gets the daily digest.
+        Who owns each department's work and when overdue tasks escalate.
       </p>
       <p class="text-[12.5px] text-muted mt-2">
         {% if tasks_on %}Tasks on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Tasks off</span>{% endif %}

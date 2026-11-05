@@ -1,5 +1,6 @@
 """The two post-trip email reports: customer reviews (monthly) and new complaints (daily)."""
 
+import importlib
 from datetime import time, timedelta
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory
 from apps.leads.models import CustomerFeedback, Lead
 from apps.messaging.factories import ReviewFactory, TouchPointFactory
-from apps.messaging.models import TouchPoint
+from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations import reviews
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripIssue
@@ -32,9 +33,10 @@ _K = TouchPoint.Kind
 @pytest.fixture(autouse=True)
 def _setup(settings):
     settings.PUBLIC_BASE_URL = "https://apc.example"
-    cfg = TaskConfig.load()
-    cfg.report_emails = "owner@allprocharter.com"
-    cfg.save()
+    TaskConfig.load()
+    MessageTemplate.objects.filter(key__in=("review_report", "complaint_report")).update(
+        staff_emails=["owner@allprocharter.com"]
+    )
     with (
         patch("apps.integrations.la_sync.push_lead_bookings"),
     ):
@@ -238,10 +240,18 @@ def test_a_complaint_is_reported_once():
 
 
 def test_reports_fall_back_to_the_digest_recipients():
-    cfg = TaskConfig.load()
-    cfg.report_emails = ""
-    cfg.digest_emails = "ops@allprocharter.com"
-    cfg.save()
+    """The fallback now happens once, when migration 0028 fills the report rows."""
+    seed = importlib.import_module("apps.messaging.migrations.0028_seed_report_rows")
+    lists = seed.staff_lists(
+        {},
+        digest_emails="ops@allprocharter.com",
+        report_emails="",
+        alert_emails="",
+        company_email="office@allprocharter.com",
+    )
+    MessageTemplate.objects.filter(key="complaint_report").update(
+        staff_emails=lists["complaint_report"]
+    )
     _, trip = _order()
     _complain(trip)
 

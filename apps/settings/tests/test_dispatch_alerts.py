@@ -47,15 +47,14 @@ def test_saving_updates_the_singleton(client):
             "driver_info_warn_hours": 24,
             "driver_info_critical_hours": 6,
             "affiliate_unacked_warn_hours": 24,
-            "alert_emails": "ops@allprocharter.com",
-            "critical_sms": "",
+            "critical_sms": "+15715550100",
         },
     )
 
     assert resp.status_code == 302
     cfg = DispatchAlertConfig.load()
     assert cfg.unassigned_warn_hours == 36
-    assert cfg.alert_emails == "ops@allprocharter.com"
+    assert cfg.critical_sms == "+15715550100"
     assert DispatchAlertConfig.objects.count() == 1
 
 

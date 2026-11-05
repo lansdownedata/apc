@@ -11,6 +11,7 @@ from django.urls import reverse
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
+from apps.messaging.models import MessageTemplate
 from apps.payments import reports
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import PaymentPlan
@@ -88,7 +89,9 @@ def test_nothing_is_sent_on_an_empty_day(mailoutbox):
 
 
 def test_one_email_per_recipient_with_the_orders(mailoutbox, settings):
-    settings.DEPOSIT_REPORT_EMAILS = ["ops@example.com", "owner@example.com"]
+    MessageTemplate.objects.filter(key="deposit_report").update(
+        staff_emails=["ops@example.com", "owner@example.com"]
+    )
     lead = _order(4, contact=ContactFactory(name="Ada Kavanagh", email="ada@example.com"))
     assert send_unpaid_deposit_report(today=TODAY) == 1
     assert sorted(m.to[0] for m in mailoutbox) == ["ops@example.com", "owner@example.com"]
@@ -99,9 +102,9 @@ def test_one_email_per_recipient_with_the_orders(mailoutbox, settings):
 
 
 def test_empty_recipient_list_sends_nothing_and_warns(mailoutbox, settings, caplog):
-    settings.DEPOSIT_REPORT_EMAILS = []
+    MessageTemplate.objects.filter(key="deposit_report").update(staff_emails=[])
     _order(4)
     with caplog.at_level("WARNING"):
         assert send_unpaid_deposit_report(today=TODAY) == 1
     assert mailoutbox == []
-    assert "DEPOSIT_REPORT_EMAILS is empty" in caplog.text
+    assert "deposit_report: not sent: No recipient" in caplog.text

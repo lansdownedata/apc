@@ -1,6 +1,6 @@
 {% extends "email/base_email.html" %}
 {% block subject %}{{ rows|length }} new customer complaint{{ rows|length|pluralize }}{% endblock %}
-{% block preheader %}Logged in trip reviews since {{ since|date:"D M j, g:i A" }}.{% endblock %}
+{% block preheader %}{% include "email/preheaders/complaint_report.html" %}{% endblock %}
 {% block content %}
 <p style="margin:0 0 6px;font-size:17px;color:#17191D;">{{ rows|length }} new customer complaint{{ rows|length|pluralize }}</p>
 <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">Logged in trip reviews since {{ since|date:"D M j, g:i A" }}. Oldest first.</p>

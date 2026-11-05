@@ -8,30 +8,29 @@
   logged in a trip review since the last report, with the incident numbers around it.
 
 Both measure "since the last report" from a stamp on `TaskConfig`, so nothing is missed or
-repeated if a run is late or the schedule changes.
+repeated if a run is late or the schedule changes. Each goes out through its message row
+(wording, staff emails, switch), its table as one block.
 """
 
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db.models import Count, Q
+from django.template.defaultfilters import floatformat
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.leads.models import CustomerFeedback, Lead
+from apps.messaging import rendering, sender
 from apps.messaging.models import Review, TouchPoint
-from apps.notifications.email import send_html_email
 from apps.reservations.models import Reservation, TripIssue
 
 from . import post_trip
 from .models import ReportedOrder, TaskConfig, format_local
-
-logger = logging.getLogger(__name__)
 
 # How far back the review report looks for finished orders it hasn't listed yet.
 REVIEW_LOOKBACK = timedelta(days=31)
@@ -40,20 +39,6 @@ FIRST_COMPLAINT_WINDOW = timedelta(days=1)
 
 def _url(name: str, *args) -> str:
     return f"{settings.PUBLIC_BASE_URL.rstrip('/')}{reverse(name, args=args)}"
-
-
-def _send(template: str, subject: str, context: dict, config: TaskConfig) -> None:
-    recipients = config.report_list
-    if not recipients:
-        logger.warning(
-            "%s: nobody to send to — set report recipients in Settings → Tasks", template
-        )
-    for recipient in recipients:
-        sent = send_html_email(
-            to=recipient, subject=subject, template=template, context=context, internal=True
-        )
-        if not sent:
-            logger.warning("%s: delivery to %s failed", template, recipient)
 
 
 # --- customer review report -------------------------------------------------------------
@@ -163,11 +148,24 @@ def send_review_report(now=None) -> int:
             "average": sum(rated) / len(rated) if rated else None,
             "company_name": settings.COMPANY_NAME,
         }
-        plural = "" if len(rows) == 1 else "s"
-        subject = (
-            f"Customer reviews: {len(rows)} order{plural} finished, {context['reviewed']} reviewed"
+        average = context["average"]
+        averaging = f", averaging {floatformat(average, 1)} out of 5" if average else ""
+        sender.send_report(
+            "review_report",
+            "review_report",
+            context,
+            {
+                "period_start": rendering.format_date(context["since"], "M j"),
+                "period_end": rendering.format_date(context["until"], "M j, Y"),
+                "orders": rendering.counted(len(rows), "order"),
+                "asked_count": str(context["asked"]),
+                "held_count": str(context["held"]),
+                "reviewed_count": str(context["reviewed"]),
+                "trip_page_ratings": (
+                    f"{context['rated']} rated the trip on their trip page{averaging}."
+                ),
+            },
         )
-        _send("review_report", subject, context, config)
         ReportedOrder.objects.bulk_create(
             [ReportedOrder(lead_id=r["lead_id"], reported_at=now) for r in rows],
             ignore_conflicts=True,
@@ -253,7 +251,14 @@ def send_complaint_report(now=None) -> int:
             "until": timezone.localtime(now),
             "company_name": settings.COMPANY_NAME,
         }
-        plural = "" if len(rows) == 1 else "s"
-        _send("complaint_report", f"{len(rows)} new customer complaint{plural}", context, config)
+        sender.send_report(
+            "complaint_report",
+            "complaint_report",
+            context,
+            {
+                "new_complaints": rendering.counted(len(rows), "new customer complaint"),
+                "period_start": rendering.format_date(context["since"], "D M j, g:i A"),
+            },
+        )
     TaskConfig.objects.filter(pk=config.pk).update(complaint_report_through=now)
     return len(rows)

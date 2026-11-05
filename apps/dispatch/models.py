@@ -223,7 +223,8 @@ def _split_list(raw: str) -> list[str]:
 
 
 class DispatchAlertConfig(models.Model):
-    """Singleton — the thresholds and recipients for the dispatch exception monitor (APC-23).
+    """Singleton — the thresholds and critical-text numbers for the dispatch exception
+    monitor (APC-23). Who gets the alert email is on its message row (APC-120).
 
     One row (pk=1). Edited on the Settings screen; read by `monitoring.run_dispatch_monitor`
     every cron tick. Defaults match the client-agreed table (2026-09-03).
@@ -259,11 +260,6 @@ class DispatchAlertConfig(models.Model):
     require_vehicle_desc = models.BooleanField(default=False)
     require_vehicle_number = models.BooleanField(default=False)
 
-    alert_emails = models.TextField(
-        blank=True,
-        help_text="Who gets the exception digest email. One per line or comma-separated. "
-        "Blank falls back to the company email.",
-    )
     critical_sms = models.TextField(
         blank=True,
         help_text="Phone numbers texted for critical-tier exceptions only. One per line or "
@@ -290,13 +286,6 @@ class DispatchAlertConfig(models.Model):
         if self.require_vehicle_number:
             keys.append("vehicle_number")
         return tuple(keys)
-
-    @property
-    def email_list(self) -> list[str]:
-        from django.conf import settings
-
-        chosen = _split_list(self.alert_emails)
-        return chosen or ([settings.COMPANY_EMAIL] if settings.COMPANY_EMAIL else [])
 
     @property
     def sms_list(self) -> list[str]:

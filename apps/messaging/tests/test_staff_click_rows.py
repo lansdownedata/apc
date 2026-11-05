@@ -101,7 +101,12 @@ def test_the_migration_seeded_every_click_row_from_its_original():
 def test_the_click_originals_sit_beside_the_touch_point_defaults():
     assert set(defaults.CLICKS) == set(CLICK_KEYS)
     assert not set(defaults.CLICKS) & set(defaults.DEFAULTS)
-    assert defaults.ORIGINALS == {**defaults.DEFAULTS, **defaults.CLICKS, **defaults.INVITES}
+    assert defaults.ORIGINALS == {
+        **defaults.DEFAULTS,
+        **defaults.CLICKS,
+        **defaults.INVITES,
+        **defaults.REPORTS,
+    }
 
 
 def test_each_click_sends_on_its_own_trigger():
