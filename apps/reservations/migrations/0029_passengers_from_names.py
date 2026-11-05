@@ -1,7 +1,12 @@
+import re
+
 from django.db import migrations
 from django.db.models import F
 
-from apps.reservations.passengers import split_names
+
+def _split_names(text: str) -> list[str]:
+    """`passengers.split_names` as it stood: split on commas, semicolons and newlines."""
+    return [part.strip()[:120] for part in re.split(r"[,;\n]+", text or "") if part.strip()]
 
 
 def names_to_passengers(apps, schema_editor):
@@ -10,7 +15,7 @@ def names_to_passengers(apps, schema_editor):
     Reservation = apps.get_model("reservations", "Reservation")
     Passenger = apps.get_model("reservations", "Passenger")
     for lead in Lead.objects.exclude(passenger_names="").iterator():
-        names = split_names(lead.passenger_names)
+        names = _split_names(lead.passenger_names)
         if not names:
             continue
         first = (

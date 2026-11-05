@@ -121,3 +121,24 @@ def test_data_migration_copies_names_to_first_trip(capsys):
     ]
     assert not first.named_passengers.exists()
     assert f"passenger_names dropped for lead {empty.pk}: no trips" in capsys.readouterr().out
+
+
+def test_data_migration_is_frozen_and_splits_like_split_names():
+    """A migration must not import live app code (a later change to `split_names` would
+    rewrite history); its own copy splits the same way."""
+    import inspect
+    from importlib import import_module
+
+    migration = import_module("apps.reservations.migrations.0029_passengers_from_names")
+    assert "apps.reservations" not in inspect.getsource(migration)
+    text = "Shane Thomas, Ana Ruiz\nLee;;" + "x" * 200
+    assert migration._split_names(text) == split_names(text)
+
+
+def test_summary_names_a_nameless_lead_by_mobile():
+    """As the message history labels them (`recipients._passengers`): never " · lead"."""
+    res = ReservationFactory()
+    PassengerFactory(reservation=res, name="", mobile="+12025550147", is_lead=True, sort=0)
+    assert res.passenger_summary == "+12025550147 · lead"
+    PassengerFactory(reservation=res, name="Priya Shah", sort=1)
+    assert res.passenger_summary == "+12025550147 · lead, +1 named"

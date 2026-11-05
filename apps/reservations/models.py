@@ -617,7 +617,8 @@ class Reservation(TimeStampedModel):
         lead = next((p for p in named if p.is_lead), None)
         if lead is None:
             return f"{len(named)} named"
-        text = f"{lead.name} · lead"
+        # A lead has a mobile; without a name it is shown by it, as its messages label it.
+        text = f"{lead.name or lead.mobile or 'Lead passenger'} · lead"
         others = len(named) - 1
         return f"{text}, +{others} named" if others else text
 
