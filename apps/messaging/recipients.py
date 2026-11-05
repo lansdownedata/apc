@@ -9,13 +9,15 @@ How a caller tells the two empty cases apart: `resolve(...) == []` means nobody 
 resolved but none has an address on that channel ("No mobile on file").
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from apps.core.phone import to_e164
 from apps.leads.models import LeadContact
 
 # Keys that name a customer-side person; on a farmed-in order they collapse to the operator.
 _CUSTOMER_KEYS = frozenset({"passengers", "booking_contact", "billing_contact", "planner"})
+_TEXT = ("sms",)
+_EMAIL = ("email",)
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,9 @@ class Recipient:
     phone: str  # E.164 where parseable, else as typed; "" when none
     email: str
     contact_id: int | None
+    # The channels this person can be reached on at all: passengers and drivers are texted
+    # only, planners and staff emailed only. A missing address on one of these is reported.
+    channels: tuple[str, ...] = ("sms", "email")
 
 
 def _phone(raw: str | None) -> str:
@@ -47,7 +52,8 @@ def _passengers(lead, reservation) -> list[Recipient]:
     lead_passenger = next((p for p in people if p.is_lead), None)
     chosen = [lead_passenger] if lead_passenger else [p for p in people if p.mobile]
     if not chosen:
-        return [_person(lead.contact, "booking contact")]
+        # Still a passengers send, so still texts only.
+        return [replace(_person(lead.contact, "booking contact"), email="", channels=_TEXT)]
     return [
         Recipient(
             name=p.name,
@@ -55,6 +61,7 @@ def _passengers(lead, reservation) -> list[Recipient]:
             phone=_phone(p.mobile),
             email="",
             contact_id=None,
+            channels=_TEXT,
         )
         for p in chosen
     ]
@@ -75,6 +82,7 @@ def _planners(lead) -> list[Recipient]:
                 phone="",
                 email=account.email.strip(),
                 contact_id=link.contact_id,
+                channels=_EMAIL,
             )
         )
     return found
@@ -116,6 +124,7 @@ def _driver(reservation) -> list[Recipient]:
             phone=_phone(info.get("cell")),
             email="",
             contact_id=None,
+            channels=_TEXT,
         )
     ]
 
@@ -127,7 +136,9 @@ def _role(lead, role: str) -> list[Recipient]:
 
 def _staff(row) -> list[Recipient]:
     return [
-        Recipient(name=e, label="Staff", phone="", email=e.strip(), contact_id=None)
+        Recipient(
+            name=e, label="Staff", phone="", email=e.strip(), contact_id=None, channels=_EMAIL
+        )
         for e in row.staff_emails or []
         if e and e.strip()
     ]

@@ -15,7 +15,7 @@ from django.views.decorators.http import require_POST
 
 from apps.dispatch import monitoring
 from apps.integrations import la_sync
-from apps.messaging import touchpoints
+from apps.messaging import sender
 from apps.payments import qbo_bills, tasks
 from apps.reservations import tasks as reservation_tasks
 from apps.tasks import jobs as task_jobs
@@ -28,7 +28,7 @@ JOBS: dict[str, Callable[[], int]] = {
     # APC-42 / APC-74: push billing accounts and groups, then vendors, affiliate bills and bill
     # payments to QuickBooks (hourly; needs a cron-job.org entry).
     "retry-qbo-sync": qbo_bills.run_hourly,
-    "run-touchpoints": touchpoints.run_touchpoints,
+    "run-touchpoints": sender.run_touchpoints,
     "deposit-report": tasks.send_unpaid_deposit_report,
     "reconcile-payments": tasks.reconcile_payments,
     "monitor-dispatch": monitoring.run_dispatch_monitor,

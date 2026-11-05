@@ -228,3 +228,27 @@ def test_farm_in_leaves_vendor_and_driver_alone(operator_lead):
 def test_farm_in_staff_rows_unchanged(operator_lead):
     got = resolve(_row(audience="staff", staff_emails=["a@b.test"]), operator_lead, None)
     assert [r.email for r in got] == ["a@b.test"]
+
+
+def test_each_recipient_says_which_channels_it_can_take(lead, trip):
+    """Passengers and the driver are texted only; a planner and staff are emailed only, so
+    the sender never reports "No email on file" for a passenger."""
+    PassengerFactory(reservation=trip, name="A", mobile="+12025550133", is_lead=True)
+    AssignmentFactory(
+        reservation=trip,
+        status=Assignment.Status.CONFIRMED,
+        driver_name="Dave Driver",
+        driver_cell="(202) 555-0166",
+    )
+    planner = ContactFactory(name="Wendy Planner")
+    PlannerAccount.objects.create(contact=planner, email="wendy@plans.test")
+    LeadContact.objects.create(lead=lead, contact=planner, role="lead_planner")
+    got = resolve(_row("booking_contact", "passengers", "driver", "planner"), lead, trip)
+    assert [r.channels for r in got] == [("sms", "email"), ("sms",), ("sms",), ("email",)]
+    [staff] = resolve(_row(audience="staff", staff_emails=["ops@apc.test"]), lead, trip)
+    assert staff.channels == ("email",)
+
+
+def test_passengers_falling_back_to_the_booker_are_still_texts_only(lead, trip):
+    [r] = resolve(_row("passengers"), lead, trip)
+    assert (r.contact_id, r.email, r.channels) == (lead.contact_id, "", ("sms",))
