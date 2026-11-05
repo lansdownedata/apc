@@ -1069,3 +1069,113 @@ def test_day_one_routing_of_the_wedding_details_and_driver_messages():
         ("phone", "+12025550133"),
         ("phone", "+12025550144"),
     ]
+
+
+# --- wording follows the trips and the person it reaches (APC-122, APC-123) -----------
+
+
+def _bodies(send, channel_type: str) -> list[str]:
+    calls = send.call_args_list
+    return [c.kwargs["body"] for c in calls if c.kwargs["channel_type"] == channel_type]
+
+
+def _casey_books_pat_pays():
+    casey = ContactFactory(name="Casey Morgan", phone="+12025550102", email="casey@example.com")
+    pat = ContactFactory(name="Pat Okafor", phone="+12025550103", email="pat@example.com")
+    return LeadFactory(status=Lead.Status.BOOKED, contact=casey, billing_contact=pat)
+
+
+def test_a_wedding_confirmation_to_the_billing_contact_reaches_them_at_their_own_number():
+    lead = _casey_books_pat_pays()
+    trip = _trip(lead, wedding=True)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip)) is True
+
+    (email,) = _bodies(send, "email")
+    assert "We'll reach you at: Pat Okafor · +12025550103" in email
+    assert "Casey" not in email
+
+
+def test_the_bookers_confirmation_still_reaches_the_booker():
+    lead = _booked()
+    trip = _trip(lead)
+
+    with patch(SEND, side_effect=_ok) as send:
+        sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip))
+
+    (email,) = _bodies(send, "email")
+    assert "We'll reach you at: Bea Booker · +12025550100" in email
+
+
+def test_one_trip_keeps_the_singular_confirmation_text():
+    lead = _booked()
+    trip = _trip(lead, at=time(10, 0))
+
+    with patch(SEND, side_effect=_ok) as send:
+        sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip))
+
+    (sms,) = _bodies(send, "phone")
+    assert f"Your trip on {NOV_14:%b %d, %Y} at 10:00 AM is coming up. Please" in sms
+
+
+def test_two_trips_one_day_confirmation_text_names_both_times():
+    lead = _booked()
+    morning = _trip(lead, at=time(10, 0))
+    _trip(lead, at=time(16, 0))
+
+    with patch(SEND, side_effect=_ok) as send:
+        sender.deliver(_tp(_row("trip_confirm_customer"), lead, morning))
+
+    (sms,) = _bodies(send, "phone")
+    assert (
+        f"Your trips on {NOV_14:%b %d, %Y} at 10:00 AM and 4:00 PM are coming up. Please"
+    ) in sms
+
+
+def test_two_trips_one_day_second_notice_names_both_times_in_the_trips_zone():
+    lead = _booked()
+    morning, _ = (
+        ReservationFactory(
+            lead=lead, pickup_date=NOV_14, pickup_time=at, pickup_timezone="America/Los_Angeles"
+        )
+        for at in (time(10, 0), time(16, 0))
+    )
+
+    with patch(SEND, side_effect=_ok) as send:
+        sender.deliver(_tp(_row("trip_confirm_customer_2"), lead, morning))
+
+    (sms,) = _bodies(send, "phone")
+    assert f"travel on {NOV_14:%b %d, %Y} at 10:00 AM PST and 4:00 PM PST." in sms
+
+
+# --- the wedding details request goes once per order (APC-124) ------------------------
+
+
+def test_a_two_leg_wedding_gets_one_details_request_even_on_different_days():
+    lead = _booked()
+    first = _trip(lead, wedding=True)
+    second = _trip(lead, day=NOV_14 + timedelta(days=1), wedding=True)
+    row = _row("wed_final_details")
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(_tp(row, lead, first)) is True
+        later = _tp(row, lead, second)
+        assert sender.deliver(later) is False
+
+    assert _calls(send) == [("email", "bea.booker@example.com"), ("phone", "+12025550100")]
+    later.refresh_from_db()
+    assert (later.status, later.error) == (TouchPoint.Status.SKIPPED, rules.COVERED)
+    assert {(d[3], d[4]) for d in _deliveries(later)} == {
+        ("skipped", "Already sent for this order")
+    }
+
+
+def test_the_wedding_details_request_still_goes_to_another_order():
+    first_lead = _booked()
+    second_lead = _booked(name="Ola Other", phone="+12025550199", email="ola@example.com")
+    row = _row("wed_final_details")
+
+    with patch(SEND, side_effect=_ok):
+        assert sender.deliver(_tp(row, first_lead, _trip(first_lead, wedding=True))) is True
+        assert sender.deliver(_tp(row, second_lead, _trip(second_lead, wedding=True))) is True

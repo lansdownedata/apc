@@ -641,7 +641,7 @@ def test_review_request_sends():
 # --- wed_final_details / trip_confirm_affiliate ---------------------------------------
 
 
-def test_wedding_details_request_links_to_the_details_form_per_trip():
+def test_wedding_details_request_links_to_the_details_form_once_per_order():
     row = _row("wed_final_details")
     lead = _booked()
     trip = _trip(lead, days=10, wedding=True)
@@ -649,7 +649,8 @@ def test_wedding_details_request_links_to_the_details_form_per_trip():
     ctx = {}
     rules.fill_links(tp, row, ctx, BASE)
     assert ctx["confirm_link"] == wedding_details_url(trip, base_url=BASE)
-    assert rules.combine_key(tp, row) == f"{trip.pickup_date.isoformat()}:trip:{trip.pk}"
+    # Its answers belong to the order, so one send covers every leg (APC-124).
+    assert rules.combine_key(tp, row) == f"order:{lead.pk}"
 
 
 def test_affiliate_confirmation_links_to_the_ack_page_per_trip():

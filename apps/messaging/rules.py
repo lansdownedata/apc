@@ -62,8 +62,10 @@ _THANK_YOUS = frozenset({"thank_you", "thank_you_wedding"})
 # own trip's link or details.
 _PER_TRIP = frozenset({"wed_final_details", "trip_confirm_affiliate", "driver_released"})
 # The placeholder a combining send fills with every trip the person has that day
-# (`sender._trip_sheet`).
+# (`sender.context`).
 DAY_LIST = "trip_sheet"
+# How a combine key covering a whole order starts (`combine_key`).
+ORDER_KEY = "order:"
 # Seeded rows that wait for a condition their trigger doesn't carry.
 _WAITS = {"driver_updated": "dispatched_with_driver"}
 _CANCELLATIONS = frozenset({"trip_cancelled", "order_cancelled"})
@@ -95,7 +97,7 @@ _DESCRIPTIONS: dict[str, list[str]] = {
         ]
         for key in CONFIRMS
     },
-    "wed_final_details": ["Links to the wedding details form", "One message per trip"],
+    "wed_final_details": ["Links to the wedding details form", "One message per order"],
     "trip_confirm_affiliate": [
         "Skips once the affiliate no longer holds the trip; not sent for GNet or in-house coverage",
         "Links to the affiliate's acknowledgment page",
@@ -513,12 +515,16 @@ def recipients_for(
 def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
     """What a send on a combining trigger is keyed on per address: the trip's local pickup
     date for a row that combines (`combines_per_day`), a wedding's confirmation adding its
-    order; the trip as well for one that sends per trip. Empty for a row whose trigger
+    order; the trip as well for one that sends per trip. The wedding details request is
+    keyed on its order alone: its answers belong to the order, so the first leg's send
+    covers every leg, whatever day each is on (APC-124). Empty for a row whose trigger
     doesn't combine."""
     trigger = triggers.CATALOG.get(row.trigger)
     res = tp.reservation
     if trigger is None or not trigger.combine or res is None or res.pickup_date is None:
         return ""
+    if has_built_ins(row) and row.key == "wed_final_details":
+        return f"{ORDER_KEY}{tp.lead_id}"
     day = res.pickup_date.isoformat()
     if not combines_per_day(row):
         return f"{day}:trip:{res.pk}"

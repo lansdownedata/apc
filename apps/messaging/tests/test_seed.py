@@ -452,3 +452,36 @@ def test_0022_passes_its_frozen_keys_to_seed(monkeypatch):
     migration = _migration_0022()
     migration.seed_rows(apps="registry", schema_editor=None)
     assert calls == [migration.KEYS]
+
+
+def _migration_0030():
+    from importlib import import_module
+
+    return import_module("apps.messaging.migrations.0030_confirmation_names_every_trip")
+
+
+def test_0030_moves_untouched_confirmation_text_to_the_trip_count_sentence():
+    """APC-123: the seeded confirmation text says "trip" or "trips" from the day's count."""
+    from django.apps import apps as registry
+
+    row = MessageTemplate.objects.get(key="trip_confirm_customer")
+    row.sms_body = _migration_0030().OLD
+    row.save(update_fields=["sms_body"])
+
+    _migration_0030().forwards(registry, None)
+
+    row.refresh_from_db()
+    assert row.sms_body == _migration_0030().NEW == defaults.ORIGINALS[row.key].sms_body
+
+
+def test_0030_leaves_an_edited_confirmation_alone():
+    from django.apps import apps as registry
+
+    row = MessageTemplate.objects.get(key="trip_confirm_customer")
+    row.sms_body = "Our own words for {trip_pickup_when}"
+    row.save(update_fields=["sms_body"])
+
+    _migration_0030().forwards(registry, None)
+
+    row.refresh_from_db()
+    assert row.sms_body == "Our own words for {trip_pickup_when}"

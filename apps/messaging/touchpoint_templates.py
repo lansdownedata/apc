@@ -281,8 +281,8 @@ TEMPLATES: dict[str, TouchPointTemplate] = {
             "{company_name}"
         ),
         sms_body=(
-            "{first_name}, it's {company_name}. Your trip on {trip_pickup_when} is coming "
-            "up. Please confirm the details and let us know of any changes: {confirm_link}"
+            "{first_name}, it's {company_name}. {trips_coming_up}. Please confirm the "
+            "details and let us know of any changes: {confirm_link}"
         ),
     ),
     # Second wave of the same acknowledgement. Sent only when the day is still
@@ -524,6 +524,39 @@ THANK_YOU_WEDDING = TouchPointTemplate(
 )
 
 
+def _clock(reservation) -> str:
+    """The trip's pickup time with its zone's abbreviation, per CLAUDE.md: a customer or
+    affiliate outside the trip's own zone must never see a bare clock time and have to guess
+    which zone it's in. Blank without a pickup time."""
+    pickup_at = reservation.pickup_at
+    if pickup_at is None or reservation.pickup_time is None:
+        return ""
+    return f"{pickup_at:%-I:%M %p} {reservation.pickup_tz_abbrev}".strip()
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def day_when(trips: list) -> dict[str, str]:
+    """`trip_pickup_when` and `trips_coming_up` for the trips one message covers, all on one
+    day (a combined send lists the person's whole day, APC-123): every pickup time, each in
+    its own trip's zone, and the sentence in the singular or plural to match. A trip with no
+    time drops the "at" clause rather than leave it dangling."""
+    first = trips[0].pickup_at if trips else None
+    if first is None:
+        return {"trip_pickup_when": "", "trips_coming_up": "Your trip is coming up"}
+    when = f"{first:%b %d, %Y}"
+    clocks = [c for c in (_clock(t) for t in trips) if c]
+    if clocks:
+        when = f"{when} at {_and(clocks)}"
+    if len(trips) == 1:
+        coming_up = f"Your trip on {when} is coming up"
+    else:
+        coming_up = f"Your trips on {when} are coming up"
+    return {"trip_pickup_when": when, "trips_coming_up": coming_up}
+
+
 def _trip_context(reservation) -> dict[str, str]:
     """Per-trip vars for the reservation-anchored kinds (APC-18-22).
 
@@ -536,6 +569,7 @@ def _trip_context(reservation) -> dict[str, str]:
         "trip_pickup_time",
         "trip_pickup_tz",
         "trip_pickup_when",
+        "trips_coming_up",
         "trip_routing",
         "trip_passengers",
         "trip_passenger_names",
@@ -557,17 +591,9 @@ def _trip_context(reservation) -> dict[str, str]:
     if pickup_at is not None:
         ctx["trip_pickup_date"] = f"{pickup_at:%b %d, %Y}"
         if reservation.pickup_time is not None:
-            # Include the abbreviation on every rendered time, per CLAUDE.md — a
-            # customer or affiliate outside the trip's own zone must never see a bare
-            # clock time and have to guess which zone it's in.
-            tz = reservation.pickup_tz_abbrev
-            ctx["trip_pickup_tz"] = tz
-            ctx["trip_pickup_time"] = f"{pickup_at:%-I:%M %p} {tz}".strip()
-            ctx["trip_pickup_when"] = f"{ctx['trip_pickup_date']} at {ctx['trip_pickup_time']}"
-        else:
-            # No pickup time on the trip — "{date} at {time}" would render a dangling
-            # "at " with nothing after it, so the combined var drops the "at" clause too.
-            ctx["trip_pickup_when"] = ctx["trip_pickup_date"]
+            ctx["trip_pickup_tz"] = reservation.pickup_tz_abbrev
+            ctx["trip_pickup_time"] = _clock(reservation)
+    ctx.update(day_when([reservation]))
 
     # `.stops.all()` (not `.ordered_stops`, which always re-queries — see the repo's
     # `pickup`/`dropoff` gotcha) so a caller that prefetched "reservation__stops" (e.g.

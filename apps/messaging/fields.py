@@ -39,6 +39,7 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("trip_pickup_time", "Pickup time"),
         ("trip_pickup_tz", "Time zone"),
         ("trip_pickup_when", "Pickup date & time"),
+        ("trips_coming_up", "Trip(s) coming up, as a sentence"),
         ("trip_routing", "Route"),
         ("trip_passengers", "Number of passengers"),
         ("trip_passenger_names", "Passengers"),

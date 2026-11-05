@@ -600,6 +600,7 @@ def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
             "trip_pickup_time": time_text,
             "trip_pickup_tz": f"{pickup:%Z}",
             "trip_pickup_when": f"{date_text} at {time_text}",
+            "trips_coming_up": f"Your trip on {date_text} at {time_text} is coming up",
             "trip_routing": "1 Main St, Washington, DC → Dulles International Airport (IAD)",
             "trip_passengers": "4",
             "trip_passenger_names": "Dana Whitfield, Sam Lee",

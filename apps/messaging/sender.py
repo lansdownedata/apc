@@ -37,7 +37,7 @@ from . import quiet, recipients, rendering, rules, triggers
 from .models import Delivery, MessageTemplate, NotificationConfig, Review, TouchPoint
 from .recipients import Recipient
 from .rendering import Block
-from .touchpoint_templates import build_context, render
+from .touchpoint_templates import build_context, day_when, render
 
 logger = logging.getLogger(__name__)
 
@@ -250,28 +250,33 @@ def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Reci
     return sorted(trips, key=lambda t: (t.pickup_time is not None, t.pickup_time or time.min, t.pk))
 
 
-def _trip_sheet(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> str | None:
-    """The combined trip sheet, or None to keep the trip's own sheet. A row that sends per
-    trip (`rules.combines_per_day`) never combines."""
-    from apps.reservations.services import trip_sheet_text
-
+def _day_trips(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> list:
+    """The trips this send covers for the person: their whole day for a row that combines
+    per day, else none (the trip's own fields stand). A row that sends per trip
+    (`rules.combines_per_day`) never combines."""
     key = rules.combine_key(tp, row)
-    if not key or not rules.combines_per_day(row) or not rules.uses_field(row, rules.DAY_LIST):
-        return None
-    trips = _combined_trips(tp, row, key, person)
-    if not trips:
-        return None
-    return "\n\n".join(trip_sheet_text(t) for t in trips)
+    if not key or not rules.combines_per_day(row):
+        return []
+    return _combined_trips(tp, row, key, person)
+
+
+def _on_file(person: Recipient) -> str:
+    """Who the message tells "we'll reach you at": the person it reaches, never the booker
+    on their behalf (APC-122)."""
+    return f"{person.name} · {person.phone}".strip(" ·") if person.name else person.phone
 
 
 def context(
     tp: TouchPoint, row: MessageTemplate, recipient: Recipient, extra: dict | None = None
 ) -> dict[str, str]:
     """Everything a row's wording can use for this recipient. A customer or planner message
-    greets the person who receives it, not the booker; an affiliate's keeps the customer's
-    fields. A combining row's trip sheet lists the person's whole day. A send with no order
-    (an invite, a report) knows only the company and what its caller hands over in
-    ``extra``, which has the last word (a staff click's links are built from its request)."""
+    greets the person who receives it and gives their own number on file, not the booker's;
+    an affiliate's keeps the customer's fields. A combining row's trip sheet and pickup times
+    cover the person's whole day. A send with no order (an invite, a report) knows only the
+    company and what its caller hands over in ``extra``, which has the last word (a staff
+    click's links are built from its request)."""
+    from apps.reservations.services import trip_sheet_text
+
     if tp.lead_id is None:
         ctx = {
             "first_name": "there",
@@ -283,10 +288,14 @@ def context(
         ctx = build_context(tp.lead, tp.reservation)
     if row.audience in (_A.CUSTOMER, _A.PLANNER):
         ctx["first_name"] = (recipient.name or "").split(" ")[0] or "there"
+        if tp.reservation_id is not None:
+            ctx["contact_on_file"] = _on_file(recipient)
     if tp.lead_id is not None:
-        sheet = _trip_sheet(tp, row, recipient)
-        if sheet is not None:
-            ctx["trip_sheet"] = sheet
+        trips = _day_trips(tp, row, recipient)
+        if trips:
+            ctx.update(day_when(trips))
+            if rules.uses_field(row, rules.DAY_LIST):
+                ctx["trip_sheet"] = "\n\n".join(trip_sheet_text(t) for t in trips)
         rules.fill_links(tp, row, ctx, settings.PUBLIC_BASE_URL or "")
     ctx.update(extra or {})
     return ctx
@@ -520,7 +529,10 @@ def _old_engine_covered(tp: TouchPoint, row: MessageTemplate) -> bool:
     )
 
 
-def _day_label(tp: TouchPoint) -> str:
+def _covered_by(tp: TouchPoint, key: str) -> str:
+    """What an earlier send covered, for the skip reason: the order or the pickup day."""
+    if key.startswith(rules.ORDER_KEY):
+        return "this order"
     day = tp.reservation.pickup_date
     return f"{day:%b} {day.day}"
 
@@ -613,7 +625,7 @@ def _send(
             line = waiting.pop((channel, normalised), None)
             if everyone_covered or normalised in elsewhere:
                 covered += 1
-                reason = f"Already sent for {_day_label(tp)}"
+                reason = f"Already sent for {_covered_by(tp, key)}"
                 _record(tp, row, channel, person, address, key, "skipped", reason, line=line)
                 continue
             if (channel, normalised) in held_original:

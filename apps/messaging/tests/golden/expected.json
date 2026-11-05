@@ -114,12 +114,12 @@
   "legacy_wedding_leg_confirm_72h": {
     "calls": [
       {
-        "body": "Pat, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Pat, it's All Pro Charter. Your trips on Apr 24, 2027 at 2:00 PM and 6:00 PM are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550103"
       },
       {
-        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
@@ -520,7 +520,7 @@
   "two_trips_same_day_one_message": {
     "calls": [
       {
-        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 10:00 AM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/",
+        "body": "Dana, it's All Pro Charter. Your trips on Apr 20, 2027 at 10:00 AM and 4:00 PM are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/",
         "channel_type": "phone",
         "identifier": "+12025550101"
       },
@@ -541,7 +541,7 @@
   "utc_boundary_pair_one_message": {
     "calls": [
       {
-        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 10:00 AM PDT is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/",
+        "body": "Dana, it's All Pro Charter. Your trips on Apr 20, 2027 at 10:00 AM PDT and 8:30 PM PDT are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/",
         "channel_type": "phone",
         "identifier": "+12025550101"
       },
@@ -588,7 +588,7 @@
         "identifier": "casey.morgan@example.com"
       },
       {
-        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
@@ -604,12 +604,12 @@
   "wedding_confirm_48h_confirmed_fees_owed": {
     "calls": [
       {
-        "body": "Pat, it's All Pro Charter. We still need your confirmation for your travel on Apr 24, 2027 at 2:00 PM. Please take a look: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Pat, it's All Pro Charter. We still need your confirmation for your travel on Apr 24, 2027 at 2:00 PM and 6:00 PM. Please take a look: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550103"
       },
       {
-        "body": "Still need your confirmation — All Pro Charter <Q1>\n\nPat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Still need your confirmation — All Pro Charter <Q1>\n\nPat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
@@ -620,12 +620,12 @@
   "wedding_confirm_48h_to_billing_contact": {
     "calls": [
       {
-        "body": "Pat, it's All Pro Charter. We still need your confirmation for your travel on Apr 24, 2027 at 2:00 PM. Please take a look: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Pat, it's All Pro Charter. We still need your confirmation for your travel on Apr 24, 2027 at 2:00 PM and 6:00 PM. Please take a look: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550103"
       },
       {
-        "body": "Still need your confirmation — All Pro Charter <Q1>\n\nPat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Still need your confirmation — All Pro Charter <Q1>\n\nPat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
@@ -636,12 +636,12 @@
   "wedding_confirm_72h_company_billing_contact": {
     "calls": [
       {
-        "body": "Pat, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Pat, it's All Pro Charter. Your trips on Apr 24, 2027 at 2:00 PM and 6:00 PM are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550103"
       },
       {
-        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
@@ -652,7 +652,7 @@
   "wedding_confirm_72h_no_billing_contact": {
     "calls": [
       {
-        "body": "Casey, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Casey, it's All Pro Charter. Your trips on Apr 24, 2027 at 2:00 PM and 6:00 PM are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550102"
       },
@@ -668,12 +668,12 @@
   "wedding_confirm_72h_to_billing_contact": {
     "calls": [
       {
-        "body": "Pat, it's All Pro Charter. Your trip on Apr 24, 2027 at 2:00 PM is coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
+        "body": "Pat, it's All Pro Charter. Your trips on Apr 24, 2027 at 2:00 PM and 6:00 PM are coming up. Please confirm the details and let us know of any changes: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/",
         "channel_type": "phone",
         "identifier": "+12025550103"
       },
       {
-        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Please confirm your trip — All Pro Charter <Q1>\n\nPat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/w/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "channel_type": "email",
         "identifier": "pat.okafor@example.com"
       }
