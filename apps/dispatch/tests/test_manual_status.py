@@ -79,7 +79,7 @@ def test_set_status_refuses_a_status_outside_the_curated_set(logged_in_client):
 
 
 def test_set_status_fires_the_configured_customer_notification(logged_in_client):
-    MessageTemplate.objects.create(key="status_on_the_way", enabled=True)
+    MessageTemplate.objects.filter(key="status_on_the_way").update(enabled=True)
     trip = _trip()
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
 

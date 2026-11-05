@@ -55,13 +55,17 @@ def test_task_due_follows_message_default():
 
 
 def test_task_due_follows_message_row():
-    MessageTemplate.objects.create(key="driver_released", timing_amount=6, timing_unit="hours")
+    MessageTemplate.objects.filter(key="driver_released").update(
+        timing_amount=6, timing_unit="hours"
+    )
     lead, trip = _order()
     assert _task(lead).due_at == trip.pickup_at - timedelta(hours=5)
 
 
 def test_task_due_follows_message_row_in_minutes():
-    MessageTemplate.objects.create(key="driver_released", timing_amount=90, timing_unit="minutes")
+    MessageTemplate.objects.filter(key="driver_released").update(
+        timing_amount=90, timing_unit="minutes"
+    )
     lead, trip = _order()
     assert _task(lead).due_at == trip.pickup_at - timedelta(minutes=30)
 

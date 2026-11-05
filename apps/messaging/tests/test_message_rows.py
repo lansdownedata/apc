@@ -26,6 +26,7 @@ def test_channels_in_sms_email_order():
 
 
 def test_live_excludes_archived():
+    MessageTemplate.objects.all().delete()  # only this test's rows, not the seeded ones
     live = MessageRowFactory()
     MessageRowFactory(archived_at=timezone.now())
     assert list(MessageTemplate.objects.live()) == [live]

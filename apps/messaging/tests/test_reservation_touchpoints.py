@@ -268,7 +268,7 @@ def test_status_change_creates_a_message_only_when_enabled():
     set_trip_status(res, "on_the_way")
     assert not TouchPoint.objects.filter(kind=K.STATUS_ON_THE_WAY).exists()
 
-    MessageTemplate.objects.create(key="status_on_the_way", enabled=True)
+    MessageTemplate.objects.filter(key="status_on_the_way").update(enabled=True)
     set_trip_status(res, "arrived")  # change again so the event fires
     set_trip_status(res, "on_the_way")
     tp = TouchPoint.objects.get(reservation=res, kind=K.STATUS_ON_THE_WAY)
@@ -465,7 +465,7 @@ def test_reservation_kind_skips_a_cancelled_trip():
 
 @override_settings(PUBLIC_BASE_URL="https://apc.example.com")
 def test_reservation_kind_skips_when_the_message_is_disabled():
-    MessageTemplate.objects.create(key="trip_confirm_customer", enabled=False)
+    MessageTemplate.objects.filter(key="trip_confirm_customer").update(enabled=False)
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future())
     tp = TouchPoint.objects.create(

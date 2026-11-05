@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from . import fields
+from . import defaults, fields
 from .models import MessageTemplate, NotificationConfig, TouchPoint
 from .touchpoint_templates import TEMPLATES, THANK_YOU_WEDDING, TouchPointTemplate
 
@@ -21,8 +21,10 @@ def default(kind: str) -> TouchPointTemplate:
 
 
 def load() -> dict[str, MessageTemplate]:
-    """Every override row, keyed by kind, in one query."""
-    return {row.key: row for row in MessageTemplate.objects.all()}
+    """Every row that overrides its default, keyed by kind, in one query.
+
+    Every message has a row (seeded in full); one still at its default is no override."""
+    return {row.key: row for row in MessageTemplate.objects.all() if _is_override(row)}
 
 
 def _row_offset(row, base: TouchPointTemplate) -> timedelta | None:
@@ -48,6 +50,24 @@ def effective(kind: str, rows: dict | None = None) -> TouchPointTemplate:
     if offset is not None:
         changes["offset"] = offset
     return replace(base, **changes)
+
+
+_TEXTS = ("subject", "email_body", "sms_body")
+
+
+def _is_override(row: MessageTemplate) -> bool:
+    """Whether a row's wording, timing or switch differs from the code default."""
+    kind = row.key
+    if kind != "thank_you_wedding" and kind not in TEMPLATES:
+        return False
+    base = default(kind)
+    if any(getattr(row, f) and getattr(row, f) != getattr(base, f) for f in _TEXTS):
+        return True
+    if has_timing(kind):
+        offset = _row_offset(row, base)
+        if offset is not None and offset != base.offset:
+            return True
+    return kind not in _SWITCH_OF and row.enabled != (kind not in DEFAULT_OFF)
 
 
 # Kinds whose send time is another kind's: the wedding thank-you is scheduled by the
@@ -156,6 +176,28 @@ def _signed(base: TouchPointTemplate, timing: tuple[int, str]) -> timedelta:
     return -span if base.offset < timedelta(0) else span
 
 
+def _row(kind: str) -> MessageTemplate:
+    """The kind's row, locked for update; seeds it first if it is missing."""
+    row = MessageTemplate.objects.select_for_update().filter(key=kind).first()
+    if row is None:
+        defaults.seed()
+        row = MessageTemplate.objects.select_for_update().get(key=kind)
+    return row
+
+
+def _sync_followers(kind: str) -> None:
+    """Copy a shared switch (and the Thank-you timing) onto the rows that follow it, so each
+    row holds what is sent today."""
+    for child, parent in _SWITCH_OF.items():
+        if kind not in (child, parent):
+            continue
+        source = MessageTemplate.objects.get(key=parent)
+        changes = {"enabled": source.enabled}
+        if _TIMED_BY.get(child) == parent:
+            changes |= {"timing_amount": source.timing_amount, "timing_unit": source.timing_unit}
+        MessageTemplate.objects.filter(key=child).update(**changes)
+
+
 def save(
     kind: str,
     *,
@@ -166,46 +208,39 @@ def save(
     enabled: bool,
     user,
 ) -> int:
-    """Store a message's differences from its default; returns how many sends were re-dated."""
+    """Write a message's wording, timing and switch onto its row; returns how many sends were
+    re-dated. No timing means the default timing."""
     errors = check(kind, subject=subject, email_body=email_body, sms_body=sms_body, timing=timing)
     if errors:
         raise SaveError(errors)
-    base = default(kind)
-    texts = {
-        "subject": "" if subject == base.subject else subject,
-        "email_body": "" if email_body == base.email_body else email_body,
-        "sms_body": "" if sms_body == base.sms_body else sms_body,
-    }
-    amount, unit = timing if timing is not None else (None, "")
-    if timing is not None and _signed(base, timing) == base.offset:
-        amount, unit = None, ""
-    default_enabled = _SWITCH_OF.get(kind, kind) not in DEFAULT_OFF
-    if kind in _SWITCH_OF:
-        enabled = default_enabled
+    base, original = default(kind), defaults.DEFAULTS[kind]
+    amount, unit = original.timing_amount, original.timing_unit
+    if timing is not None and _signed(base, timing) != base.offset:
+        amount, unit = timing
     with transaction.atomic():
         old = _offset_of(kind)
-        if not any(texts.values()) and amount is None and enabled == default_enabled:
-            MessageTemplate.objects.filter(key=kind).delete()
-        else:
-            MessageTemplate.objects.update_or_create(
-                key=kind,
-                defaults={
-                    **texts,
-                    "timing_amount": amount,
-                    "timing_unit": unit,
-                    "enabled": enabled,
-                    "updated_by": user,
-                },
-            )
+        row = _row(kind)
+        row.subject, row.email_body, row.sms_body = subject, email_body, sms_body
+        row.timing_amount, row.timing_unit = amount, unit
+        if kind not in _SWITCH_OF:
+            row.enabled = enabled
+        row.updated_by = user
+        row.save()
+        _sync_followers(kind)
         new = _offset_of(kind)
     return _redate_all(kind, old, new)
 
 
 def reset(kind: str) -> int:
-    """Drop the owner's row for a kind; re-dates scheduled sends if its timing changed."""
+    """Put a message back to its default wording, timing and switch; re-dates scheduled sends
+    if its timing changed."""
     with transaction.atomic():
         old = _offset_of(kind)
-        MessageTemplate.objects.filter(key=kind).delete()
+        row = defaults.reset(_row(kind))
+        if kind not in _SWITCH_OF:
+            row.enabled = kind not in DEFAULT_OFF
+            row.save(update_fields=["enabled", "updated_at"])
+        _sync_followers(kind)
         new = _offset_of(kind)
     return _redate_all(kind, old, new)
 

@@ -59,7 +59,9 @@ def test_unknown_kind_404(client):
 
 def test_renders_current_text_and_chips(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(key="driver_released", sms_body="Hi {first_name} {driver_name}")
+    MessageTemplate.objects.filter(key="driver_released").update(
+        sms_body="Hi {first_name} {driver_name}"
+    )
     html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
     assert "Hi {first_name} {driver_name}" in html
     assert "Driver cell" in html
@@ -103,7 +105,8 @@ def test_save_normalises_browser_newlines(client):
             email_body=default.email_body.replace("\n", "\r\n"),
         ),
     )
-    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
+    assert "tp1_welcome" not in overrides.load()
+    assert MessageTemplate.objects.get(key="tp1_welcome").sms_body == default.sms_body
 
 
 def test_save_can_turn_the_message_off(client):
@@ -116,6 +119,7 @@ def test_save_can_turn_the_message_off(client):
 
 def test_save_invalid_shows_box_error_and_keeps_text(client):
     client.force_login(_owner_admin())
+    MessageTemplate.objects.filter(key="tp1_welcome").delete()  # an invalid save writes nothing
     resp = client.post(
         reverse("message_edit", args=["tp1_welcome"]),
         _post_data("tp1_welcome", sms_body="Hello {nope} there"),
@@ -253,18 +257,20 @@ def test_timing_preview(client):
     assert json.loads(resp.content)["ok"] is False
 
 
-def test_reset_deletes_row(client):
+def test_reset_restores_the_default(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {first_name}")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi {first_name}")
     resp = client.post(reverse("message_reset", args=["tp1_welcome"]))
     assert resp.status_code == 302
-    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
+    assert "tp1_welcome" not in overrides.load()
+    row = MessageTemplate.objects.get(key="tp1_welcome")
+    assert row.sms_body == overrides.default("tp1_welcome").sms_body
     assert client.get(reverse("message_reset", args=["tp1_welcome"])).status_code == 405
 
 
 def test_toggle_returns_400_when_the_saved_text_no_longer_validates(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {gone_field}")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi {gone_field}")
     resp = client.post(reverse("message_toggle", args=["tp1_welcome"]))
     assert resp.status_code == 400
     body = json.loads(resp.content)

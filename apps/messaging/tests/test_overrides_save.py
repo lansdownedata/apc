@@ -30,18 +30,22 @@ def _save(kind="tp1_welcome", **over):
     return overrides.save(kind, **args)
 
 
-def test_save_stores_only_differences():
+def test_save_stores_the_full_row():
     _save(sms_body="Hi {first_name}")
     row = MessageTemplate.objects.get(key="tp1_welcome")
-    assert row.subject == "" and row.email_body == ""
+    base = TEMPLATES["tp1_welcome"]
+    assert (row.subject, row.email_body) == (base.subject, base.email_body)
     assert row.sms_body == "Hi {first_name}"
-    assert row.timing_amount is None
+    assert (row.timing_amount, row.timing_unit) == (30, "minutes")
 
 
-def test_save_all_default_deletes_row():
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {first_name}")
+def test_save_all_default_leaves_no_override():
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi {first_name}")
     _save()
-    assert not MessageTemplate.objects.filter(key="tp1_welcome").exists()
+    assert "tp1_welcome" not in overrides.load()
+    assert (
+        MessageTemplate.objects.get(key="tp1_welcome").sms_body == TEMPLATES["tp1_welcome"].sms_body
+    )
 
 
 def test_save_keeps_row_when_only_enabled_differs():
@@ -50,6 +54,7 @@ def test_save_keeps_row_when_only_enabled_differs():
 
 
 def test_save_refuses_invalid():
+    MessageTemplate.objects.all().delete()  # start from an empty table: nothing gets written
     with pytest.raises(overrides.SaveError) as exc:
         _save(sms_body="Hi {nope}")
     assert "sms_body" in exc.value.errors
@@ -63,9 +68,11 @@ def test_timing_bounds(timing):
     assert "timing" in exc.value.errors
 
 
-def test_timing_equal_to_default_stored_null():
+def test_timing_equal_to_default_is_no_override():
     _save("tp2_lead_followup", timing=(2, "hours"))
-    assert not MessageTemplate.objects.filter(key="tp2_lead_followup").exists()
+    assert "tp2_lead_followup" not in overrides.load()
+    row = MessageTemplate.objects.get(key="tp2_lead_followup")
+    assert (row.timing_amount, row.timing_unit) == (2, "hours")
 
 
 def test_triggered_kind_refuses_timing():
@@ -76,7 +83,9 @@ def test_triggered_kind_refuses_timing():
 
 
 def test_triggered_kind_ignores_stray_row_timing():
-    MessageTemplate.objects.create(key="order_confirmed", timing_amount=5, timing_unit="hours")
+    MessageTemplate.objects.filter(key="order_confirmed").update(
+        timing_amount=5, timing_unit="hours"
+    )
     assert overrides.effective("order_confirmed").offset == timedelta(0)
 
 
@@ -116,16 +125,18 @@ def test_text_change_redates_nothing():
 
 
 def test_reset_redates():
-    MessageTemplate.objects.create(key="tp2_lead_followup", timing_amount=5, timing_unit="hours")
+    MessageTemplate.objects.filter(key="tp2_lead_followup").update(
+        timing_amount=5, timing_unit="hours"
+    )
     t = _scheduled("tp2_lead_followup", NOW, timedelta(hours=5))
     assert overrides.reset("tp2_lead_followup") == 1
     t.refresh_from_db()
     assert t.scheduled_for == NOW + timedelta(hours=2)
-    assert not MessageTemplate.objects.exists()
+    assert not overrides.load()
 
 
 def test_reset_without_timing_change_returns_zero():
-    MessageTemplate.objects.create(key="tp2_lead_followup", sms_body="Hi {first_name}")
+    MessageTemplate.objects.filter(key="tp2_lead_followup").update(sms_body="Hi {first_name}")
     _scheduled("tp2_lead_followup", NOW, timedelta(hours=2))
     assert overrides.reset("tp2_lead_followup") == 0
 
@@ -191,7 +202,9 @@ def test_zero_timing_is_valid_and_stored():
 
 
 def test_zero_row_overrides_default_offset():
-    MessageTemplate.objects.create(key="tp2_lead_followup", timing_amount=0, timing_unit="hours")
+    MessageTemplate.objects.filter(key="tp2_lead_followup").update(
+        timing_amount=0, timing_unit="hours"
+    )
     assert overrides.effective("tp2_lead_followup").offset == timedelta(0)
 
 
@@ -313,3 +326,61 @@ def test_save_and_reset_redate_after_the_transaction_commits(monkeypatch):
     _save("tp2_lead_followup", timing=(5, "hours"))
     overrides.reset("tp2_lead_followup")
     assert depth == [0, 0, 0, 0]
+
+
+# --- spec B over seeded rows (APC-118) -----------------------------------------------------
+
+
+def test_a_freshly_seeded_table_has_no_overrides():
+    assert MessageTemplate.objects.count() >= len(overrides.MESSAGES)
+    assert overrides.load() == {}
+
+
+def test_save_and_reset_never_delete_the_row():
+    count = MessageTemplate.objects.count()
+    _save()
+    overrides.reset("tp1_welcome")
+    assert MessageTemplate.objects.count() == count
+
+
+def test_reset_turns_a_status_message_back_off():
+    MessageTemplate.objects.filter(key="status_arrived").update(
+        enabled=True, sms_body="Hi {first_name}"
+    )
+    overrides.reset("status_arrived")
+    row = MessageTemplate.objects.get(key="status_arrived")
+    assert row.enabled is False
+    assert row.sms_body == TEMPLATES["status_arrived"].sms_body
+
+
+def test_the_second_notice_row_follows_the_first_notice_switch():
+    _save("trip_confirm_customer", enabled=False)
+    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is False
+    overrides.reset("trip_confirm_customer")
+    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is True
+
+
+def test_saving_the_second_notice_keeps_the_shared_switch():
+    _save("trip_confirm_customer", enabled=False)
+    _save("trip_confirm_customer_2", enabled=True)
+    assert MessageTemplate.objects.get(key="trip_confirm_customer_2").enabled is False
+    assert overrides.is_enabled("trip_confirm_customer_2") is False
+
+
+def test_the_wedding_thank_you_row_follows_the_thank_you_switch_and_timing():
+    _save("thank_you", timing=(4, "hours"), enabled=False)
+    row = MessageTemplate.objects.get(key="thank_you_wedding")
+    assert (row.enabled, row.timing_amount, row.timing_unit) == (False, 4, "hours")
+    overrides.reset("thank_you_wedding")
+    row.refresh_from_db()
+    assert (row.enabled, row.timing_amount, row.timing_unit) == (False, 4, "hours")
+    overrides.reset("thank_you")
+    row.refresh_from_db()
+    assert (row.enabled, row.timing_amount, row.timing_unit) == (True, 2, "hours")
+
+
+def test_save_keeps_the_default_timing_units_when_only_the_units_differ():
+    _save("trip_confirm_customer", timing=(3, "days"))
+    row = MessageTemplate.objects.get(key="trip_confirm_customer")
+    assert (row.timing_amount, row.timing_unit) == (72, "hours")
+    assert "trip_confirm_customer" not in overrides.load()

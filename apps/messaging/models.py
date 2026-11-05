@@ -265,14 +265,12 @@ class MessageTemplate(TimeStampedModel):
         AFTER = "after", "After"
 
     key = models.CharField(max_length=40, unique=True)
-    name = models.CharField(max_length=120, blank=True)
-    section = models.CharField(max_length=20, choices=Section.choices, blank=True)
+    name = models.CharField(max_length=120)
+    section = models.CharField(max_length=20, choices=Section.choices)
     audience = models.CharField(max_length=10, choices=Audience.choices, default=Audience.CUSTOMER)
-    trigger = models.CharField(max_length=40, blank=True)
-    # Null / blank until the seeding migration fills real values; spec B code reads a null
-    # timing as "use the code default".
-    timing_amount = models.PositiveIntegerField(null=True, blank=True)
-    timing_unit = models.CharField(max_length=10, blank=True)
+    trigger = models.CharField(max_length=40)
+    timing_amount = models.PositiveIntegerField(default=0)
+    timing_unit = models.CharField(max_length=10, default="minutes")
     timing_direction = models.CharField(
         max_length=6, choices=Direction.choices, default=Direction.AFTER
     )

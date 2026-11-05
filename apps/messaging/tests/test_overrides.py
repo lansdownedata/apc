@@ -22,7 +22,7 @@ def test_no_row_is_code_default():
 
 
 def test_row_overrides_only_non_blank():
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi {first_name}")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi {first_name}")
     base = TEMPLATES["tp1_welcome"]
 
     got = overrides.effective("tp1_welcome")
@@ -34,8 +34,10 @@ def test_row_overrides_only_non_blank():
 
 
 def test_timing_row_keeps_sign():
-    MessageTemplate.objects.create(key="tp7_expiring", timing_amount=2, timing_unit="days")
-    MessageTemplate.objects.create(key="tp1_welcome", timing_amount=45, timing_unit="minutes")
+    MessageTemplate.objects.filter(key="tp7_expiring").update(timing_amount=2, timing_unit="days")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(
+        timing_amount=45, timing_unit="minutes"
+    )
 
     assert overrides.effective("tp7_expiring").offset == -timedelta(days=2)
     assert overrides.effective("tp1_welcome").offset == timedelta(minutes=45)
@@ -51,12 +53,12 @@ def test_timing_of_defaults():
 
 
 def test_timing_of_uses_row():
-    MessageTemplate.objects.create(key="tp1_welcome", timing_amount=2, timing_unit="hours")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(timing_amount=2, timing_unit="hours")
     assert overrides.timing_of("tp1_welcome") == (2, "hours")
 
 
 def test_wedding_thank_you_is_its_own_row():
-    MessageTemplate.objects.create(key="thank_you_wedding", email_body="WEDDING BODY")
+    MessageTemplate.objects.filter(key="thank_you_wedding").update(email_body="WEDDING BODY")
     wedding = LeadFactory(wedding_name="Smith")
     plain = LeadFactory(wedding_name="")
 
@@ -65,7 +67,9 @@ def test_wedding_thank_you_is_its_own_row():
 
 
 def test_scheduling_uses_effective_offset():
-    MessageTemplate.objects.create(key="tp2_lead_followup", timing_amount=5, timing_unit="hours")
+    MessageTemplate.objects.filter(key="tp2_lead_followup").update(
+        timing_amount=5, timing_unit="hours"
+    )
     lead = LeadFactory()
 
     touchpoints.schedule_lead_created(lead)
@@ -77,7 +81,7 @@ def test_scheduling_uses_effective_offset():
 
 def test_send_uses_edited_text(settings):
     settings.TOUCHPOINTS_ENABLED = True
-    MessageTemplate.objects.create(key="order_confirmed", sms_body="Booked {quote_no}")
+    MessageTemplate.objects.filter(key="order_confirmed").update(sms_body="Booked {quote_no}")
     lead = LeadFactory(contact=ContactFactory(email="", phone="5551234567"))
     TouchPointFactory(
         lead=lead,

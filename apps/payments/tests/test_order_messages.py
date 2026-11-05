@@ -168,8 +168,8 @@ def test_a_lost_lead_still_sends_its_cancellation(settings):
 
 
 def test_both_messages_can_be_switched_off():
-    MessageTemplate.objects.create(key="order_confirmed", enabled=False)
-    MessageTemplate.objects.create(key="order_cancelled", enabled=False)
+    MessageTemplate.objects.filter(key="order_confirmed").update(enabled=False)
+    MessageTemplate.objects.filter(key="order_cancelled").update(enabled=False)
     plan = _engaged()
 
     with patch.object(services.stripe.PaymentIntent, "cancel"):

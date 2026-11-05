@@ -44,13 +44,13 @@ def test_catalogue_kinds_are_known_and_unique():
 def test_edited_badge(client):
     client.force_login(_owner_admin())
     assert "Edited" not in client.get(reverse("messages")).content.decode()
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hi")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hi")
     assert "Edited" in client.get(reverse("messages")).content.decode()
 
 
 def test_timing_reflects_an_override(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(key="tp1_welcome", timing_amount=5, timing_unit="minutes")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(timing_amount=5, timing_unit="minutes")
     assert "5 min after the lead comes in" in client.get(reverse("messages")).content.decode()
 
 
@@ -67,7 +67,7 @@ def test_toggle_flips_and_persists(client):
 
 def test_toggle_keeps_edited_text(client):
     client.force_login(_owner_admin())
-    MessageTemplate.objects.create(key="tp1_welcome", sms_body="Hello {first_name}")
+    MessageTemplate.objects.filter(key="tp1_welcome").update(sms_body="Hello {first_name}")
     client.post(reverse("message_toggle", args=["tp1_welcome"]))
     row = MessageTemplate.objects.get(key="tp1_welcome")
     assert row.sms_body == "Hello {first_name}"
