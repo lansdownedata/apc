@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.addresses.models import Airport
 from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.dispatch.models import FarmInRequest
@@ -34,6 +35,7 @@ ALERT_TZ_ASSUMED = "Time zone assumed from company default"
 ALERT_UPDATED = "Updated by requester"
 ALERT_CANCELED = "Requester canceled"
 ALERT_UPDATED_AFTER_ACCEPT = "Updated by requester after accept, review the order"
+ALERT_CANCEL_AS_NEW = "Cancel received as a new delivery, review"
 
 GNET_CANCEL = "CANCEL"
 _CLOSED = (
@@ -81,11 +83,24 @@ def _parse_pickup(raw, tz_name: str) -> datetime | None:
     """UTC pickup instant. Aware values convert; naive values are read in ``tz_name``."""
     try:
         parsed = datetime.fromisoformat(str(raw))
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
+        return parsed.astimezone(UTC)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
-    return parsed.astimezone(UTC)
+
+
+def _airport_timezone(location: dict) -> str | None:
+    """IANA zone of an airport pickup named only by its IATA code, or None.
+
+    Applies when the location says it is an airport or its address is a bare 3-letter code.
+    """
+    code = str(location.get("address") or "").strip().upper()
+    is_airport = str(location.get("locationType") or "").lower() == "airport"
+    if not code or not (is_airport or (len(code) == 3 and code.isalpha())):
+        return None
+    zones = Airport.objects.filter(iata=code).exclude(timezone="")
+    return zones.values_list("timezone", flat=True).first()
 
 
 def summarize(payload: dict) -> Summary:
@@ -101,6 +116,8 @@ def summarize(payload: dict) -> Summary:
         alerts.append(ALERT_UNMAPPED.format(code=code))
 
     tz_name = timezones.timezone_at(pickup.get("lat"), pickup.get("lon"))
+    if tz_name is None:
+        tz_name = _airport_timezone(pickup)
     assumed = tz_name is None
     if assumed:
         tz_name = settings.TIME_ZONE
@@ -289,7 +306,8 @@ def _insert_new(payload: dict, *, transaction_id: str, delivery_id: str) -> Farm
 def handle_new(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
     """Store a new farm-in request once per transaction id and answer with its token.
 
-    A re-delivery replays the stored response without re-pricing. Concurrent first
+    A re-delivery replays the stored response without re-pricing; one that says CANCEL is
+    not applied but flags the row for review (cancels belong on `farm_in.update`). Concurrent first
     deliveries are settled by unique indexes: the savepoint covers the requester company and
     the request insert, so a loser rolls back only its savepoint. If it collided on its own
     transaction id, the winner's row is that request and is replayed. If it collided on the
@@ -300,12 +318,29 @@ def handle_new(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
     """
     existing = FarmInRequest.objects.filter(transaction_id=transaction_id).first()
     if existing:
+        if _is_cancel(payload) and existing.status != FarmInRequest.Status.CANCELED:
+            _flag_cancel_as_new(existing, transaction_id)
         return stored_response(existing)
     try:
         req = _insert_or_replay(payload, transaction_id=transaction_id, delivery_id=delivery_id)
     except _RequesterRejected as exc:
         return {"error": str(exc)}
     return stored_response(req)
+
+
+def _is_cancel(payload: dict) -> bool:
+    """Whether any of the payload's status fields says CANCEL (any case)."""
+    affiliate = _dict(payload.get("affiliateReservation"))
+    values = (payload.get("status"), affiliate.get("action"), affiliate.get("status"))
+    return any(str(v or "").strip().upper() == GNET_CANCEL for v in values)
+
+
+def _flag_cancel_as_new(req: FarmInRequest, transaction_id: str) -> None:
+    """A cancel sent as `farm_in.new` is not applied; the desk is asked to review the row."""
+    req.alert = ALERT_CANCEL_AS_NEW
+    req.last_event_at = timezone.now()
+    req.save(update_fields=["alert", "last_event_at"])
+    logger.warning("farm-in: cancel received as a new delivery for transaction %s", transaction_id)
 
 
 def _insert_or_replay(
@@ -388,9 +423,9 @@ def handle_update(payload: dict, *, transaction_id: str, delivery_id: str) -> di
         return stored_response(req)
 
 
-def receive(event: str, payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
+def receive(event: str, payload: dict, *, transaction_id: str | int, delivery_id: str) -> dict:
     """Route one gateway delivery to its handler and return the body GNet gets back."""
-    transaction_id = (transaction_id or "").strip()
+    transaction_id = str(transaction_id or "").strip()
     if event not in (EVENT_QUOTE, EVENT_NEW, EVENT_UPDATE):
         return {"error": f"unsupported event {event}"}
     if not transaction_id:

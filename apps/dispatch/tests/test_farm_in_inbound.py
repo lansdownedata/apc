@@ -56,6 +56,38 @@ def test_summarize_missing_coordinates_assumes_default_zone(settings):
     assert farm_in.ALERT_TZ_ASSUMED in s.alerts
 
 
+@pytest.mark.parametrize(
+    "pickup",
+    [
+        {"locationType": "airport", "address": "LAX", "time": "2024-08-03T10:27:22"},
+        {"address": " lax ", "time": "2024-08-03T10:27:22"},
+    ],
+)
+def test_summarize_airport_pickup_uses_airport_zone(settings, pickup):
+    settings.TIME_ZONE = "America/New_York"
+    p = sample_payload()
+    p["locations"]["pickup"] = pickup
+    s = farm_in.summarize(p)
+    assert s.timezone == "America/Los_Angeles" and s.timezone_assumed is False
+    assert s.pickup_at == datetime(2024, 8, 3, 17, 27, 22, tzinfo=UTC)
+    assert farm_in.ALERT_TZ_ASSUMED not in s.alerts
+
+
+def test_summarize_unknown_airport_code_assumes_default_zone(settings):
+    settings.TIME_ZONE = "America/New_York"
+    p = sample_payload()
+    p["locations"]["pickup"] = {"locationType": "airport", "address": "QQQ", "time": "x"}
+    s = farm_in.summarize(p)
+    assert s.timezone == "America/New_York" and s.timezone_assumed is True
+
+
+def test_summarize_pickup_time_out_of_range():
+    p = sample_payload()
+    p["locations"]["pickup"]["time"] = "9999-12-31T23:59:59"
+    s = farm_in.summarize(p)
+    assert s.pickup_at is None and farm_in.ALERT_NO_PICKUP in s.alerts
+
+
 def test_summarize_missing_pickup_time():
     p = sample_payload()
     p["locations"]["pickup"].pop("time")

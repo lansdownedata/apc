@@ -1,4 +1,5 @@
 import threading
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -65,6 +66,31 @@ def test_new_replays_even_when_row_is_declined(sedan):
     assert _new() == first and FarmInRequest.objects.count() == 1
 
 
+@pytest.mark.parametrize(
+    "where", [("status",), ("affiliateReservation", "action"), ("affiliateReservation", "status")]
+)
+def test_cancel_arriving_as_new_is_flagged(sedan, where):
+    first = _new()
+    FarmInRequest.objects.update(last_event_at=datetime(2024, 1, 1, tzinfo=UTC))
+    p = sample_payload()
+    target = p if len(where) == 1 else p[where[0]]
+    target[where[-1]] = "cancel"
+    assert _new(p) == first
+    req = FarmInRequest.objects.get()
+    assert req.alert == "Cancel received as a new delivery, review"
+    assert req.last_event_at > datetime(2024, 1, 1, tzinfo=UTC)
+    assert req.status == FarmInRequest.Status.PENDING
+
+
+def test_cancel_as_new_on_canceled_row_changes_nothing(sedan):
+    first = _new()
+    FarmInRequest.objects.update(status=FarmInRequest.Status.CANCELED, alert="")
+    p = sample_payload()
+    p["status"] = "CANCEL"
+    assert _new(p) == first
+    assert FarmInRequest.objects.get().alert == ""
+
+
 def test_new_reuses_existing_company(sedan):
     from apps.contacts.factories import CompanyFactory
 
@@ -100,9 +126,11 @@ def restore_seeded_rows(django_db_blocker):
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_concurrent_new_produces_one_row(restore_seeded_rows, sedan):
     results, errors = [], []
+    barrier = threading.Barrier(2)
 
     def worker():
         try:
+            barrier.wait()
             results.append(_new())
         except Exception as exc:  # pragma: no cover - surfaced by the assert below
             errors.append(exc)
@@ -265,6 +293,14 @@ def test_update_on_closed_request(sedan, status):
     _new()
     FarmInRequest.objects.update(status=status)
     assert _update(sample_payload()) == {"error": f"request is {status}"}
+
+
+def test_receive_coerces_non_string_transaction_id(sedan):
+    body = farm_in.receive(
+        farm_in.EVENT_NEW, sample_payload(), transaction_id=12345, delivery_id="d"
+    )
+    assert body["reservationId"].startswith("FI-")
+    assert FarmInRequest.objects.get().transaction_id == "12345"
 
 
 def test_receive_dispatch():
