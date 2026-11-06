@@ -42,18 +42,18 @@ def test_reset_mail_carries_a_reset_link_not_an_invite_link(registered):
     assert not planner_token.check_token(registered, token)
 
 
-def test_reset_links_last_three_days_and_invite_links_seven(registered):
-    old = datetime.now() - timedelta(days=4)
-    with patch.object(planner_reset_token, "_now", return_value=old):
-        reset = planner_reset_token.make_token(registered)
-    with patch.object(planner_token, "_now", return_value=old):
-        invite = planner_token.make_token(registered)
-    assert planner_reset_token.check_token(registered, reset) is False
-    assert planner_token.check_token(registered, invite) is True
+def test_reset_links_last_seven_days_as_the_email_says(registered):
+    """APC-130: the reset email promises 7 days, so the link lives 7 days, like an invite."""
+    with patch.object(planner_reset_token, "_now", return_value=datetime.now() - timedelta(days=6)):
+        fresh = planner_reset_token.make_token(registered)
+    with patch.object(planner_reset_token, "_now", return_value=datetime.now() - timedelta(days=8)):
+        stale = planner_reset_token.make_token(registered)
+    assert planner_reset_token.check_token(registered, fresh) is True
+    assert planner_reset_token.check_token(registered, stale) is False
 
 
 def test_the_reset_page_refuses_an_expired_reset_link(client, registered):
-    with patch.object(planner_reset_token, "_now", return_value=datetime.now() - timedelta(days=4)):
+    with patch.object(planner_reset_token, "_now", return_value=datetime.now() - timedelta(days=8)):
         token = planner_reset_token.make_token(registered)
     uid = urlsafe_base64_encode(force_bytes(registered.pk))
     url = reverse("planners:set_password", kwargs={"uidb64": uid, "token": token})

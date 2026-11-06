@@ -4,8 +4,8 @@ Django's reset-token machinery over a `PlannerAccount`. The hash covers the pass
 link dies once a password is set), the last sign-in, when the invite was sent (so Resend
 kills the previous link) and the revocation stamp (so Revoke kills every outstanding one).
 Invite links live `PASSWORD_RESET_TIMEOUT` (7 days, the same as the staff invite);
-password-reset links have their own salt and a shorter life, so one can never stand in
-for the other.
+password-reset links have their own salt, so one can never stand in for the other, and
+their own life: 7 days, as the reset email promises (APC-130).
 """
 
 from datetime import timedelta
@@ -29,10 +29,11 @@ class PlannerTokenGenerator(PasswordResetTokenGenerator):
 
 class PlannerResetTokenGenerator(PlannerTokenGenerator):
     key_salt = "apps.planners.tokens.PlannerResetTokenGenerator"
-    timeout = timedelta(days=3)
+    timeout = timedelta(days=7)
 
     def check_token(self, account, token) -> bool:
-        """The base check (signature, and the 7-day setting), then this link's own life."""
+        """The base check (signature, and the `PASSWORD_RESET_TIMEOUT` setting), then this
+        link's own life, so the email's promise holds whatever the setting says."""
         if not super().check_token(account, token):
             return False
         try:
