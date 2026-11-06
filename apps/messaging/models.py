@@ -342,6 +342,9 @@ class Delivery(TimeStampedModel):
     recipient_label = models.CharField(max_length=160, blank=True)
     address = models.CharField(max_length=254)
     combine_key = models.CharField(max_length=80, blank=True)
+    # The trips a combined send listed for this person (reservation pks), so a trip that
+    # joined the day later, or was dispatched later, still gets its own send (APC-131).
+    covers = models.JSONField(default=list, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
     reason = models.CharField(max_length=255, blank=True)
     provider_id = models.CharField(max_length=64, blank=True)

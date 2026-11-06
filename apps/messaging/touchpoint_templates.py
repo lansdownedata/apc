@@ -575,6 +575,7 @@ def _trip_context(reservation) -> dict[str, str]:
         "trip_passenger_names",
         "trip_vehicle",
         "trip_sheet",
+        "trip_sheet_drivers",
         "contact_on_file",
         "vendor_name",
         "payout",
@@ -628,7 +629,10 @@ def _trip_context(reservation) -> dict[str, str]:
 
     from apps.reservations.services import trip_sheet_text
 
+    from . import rules
+
     ctx["trip_sheet"] = trip_sheet_text(reservation)
+    ctx["trip_sheet_drivers"] = rules.driver_sheet(reservation)
     return ctx
 
 

@@ -609,6 +609,11 @@ def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
                 f"Trip Q-1042\n{date_text} at {time_text}\n"
                 "1 Main St, Washington, DC → Dulles International Airport (IAD)"
             ),
+            "trip_sheet_drivers": (
+                f"Trip Q-1042\n{date_text} at {time_text}\n"
+                "1 Main St, Washington, DC → Dulles International Airport (IAD)\n"
+                "  Driver: Sam Driver · (555) 010-0199"
+            ),
             "contact_on_file": "Sample Customer · (555) 010-0100",
             "driver_name": "Sam Driver",
             "driver_cell": "(555) 010-0199",

@@ -339,3 +339,11 @@ def test_wording_errors_are_only_the_ones_that_stop_rendering():
     assert set(fields.wording_errors(data)) == {"email_body", "sms_body"}
     fine = data | {"email_body": "", "sms_body": "Hi {first_name}"}
     assert fields.wording_errors(fine) == {}
+
+
+def test_the_day_list_with_drivers_is_offered_where_a_driver_exists():
+    """APC-131: `{trip_sheet_drivers}` goes with the Driver group, so a message on a
+    dispatched trigger may list the day's trips with their drivers; a plain pickup can't."""
+    assert "trip_sheet_drivers" in _offered("pickup_dispatched")
+    assert "trip_sheet_drivers" in _offered("status_dispatched")
+    assert "trip_sheet_drivers" not in _offered("pickup")

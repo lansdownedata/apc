@@ -514,6 +514,93 @@ def test_an_added_driver_row_sends_each_trip_its_own_driver():
     assert "Sam Rivera" in bodies[0] and "Kim Lane" in bodies[1]
 
 
+def _driver_day_row(**kw) -> MessageTemplate:
+    """An added driver-details message that lists the person's whole day (APC-131)."""
+    return _added(
+        trigger="pickup_dispatched",
+        section=MessageTemplate.Section.TRIP_DAY,
+        recipients=["role:day_of_coordinator"],
+        send_email=False,
+        sms_body="{first_name}, your drivers:\n{trip_sheet_drivers}",
+        timing_amount=3,
+        timing_unit="hours",
+        timing_direction=MessageTemplate.Direction.BEFORE,
+        **kw,
+    )
+
+
+def test_an_added_driver_row_listing_the_day_sends_every_driver_once():
+    """Spec C's success case (APC-131): the coordinator gets one text listing each
+    dispatched trip that day with its driver, and the second trip's send stands down."""
+    lead = _booked()
+    _coordinated(lead)
+    morning = _dispatched_with(_trip(lead, at=time(10, 0)), "Sam Rivera", "+15715551212")
+    afternoon = _dispatched_with(_trip(lead, at=time(16, 0)), "Kim Lane", "+15715553434")
+    row = _driver_day_row()
+    first, later = _tp(row, lead, morning), _tp(row, lead, afternoon, due=False)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(first) is True
+        TouchPoint.objects.filter(pk=later.pk).update(scheduled_for=timezone.now())
+        assert sender.deliver(later) is False
+
+    (body,) = [c.kwargs["body"] for c in send.call_args_list]
+    assert body.index("10:00 AM") < body.index("Sam Rivera") < body.index("4:00 PM")
+    assert "+15715551212" in body and "Kim Lane" in body and "+15715553434" in body
+    assert {(d[3], d[4]) for d in _deliveries(later)} == {("skipped", "Already sent for Nov 14")}
+
+
+def test_a_trip_dispatched_after_the_days_driver_message_gets_its_own_follow_up():
+    """Option A (Moe, APC-131): the day's message lists what is dispatched; a trip
+    dispatched later is a follow-up for that trip only, never a repeat of the day."""
+    lead = _booked()
+    _coordinated(lead)
+    morning = _dispatched_with(_trip(lead, at=time(10, 0)), "Sam Rivera", "+15715551212")
+    afternoon = _trip(lead, at=time(16, 0))
+    row = _driver_day_row()
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(_tp(row, lead, morning)) is True
+        afternoon = _dispatched_with(afternoon, "Kim Lane", "+15715553434")
+        assert sender.deliver(_tp(row, lead, afternoon)) is True
+
+    first, follow_up = [c.kwargs["body"] for c in send.call_args_list]
+    assert "Sam Rivera" in first and "Kim Lane" not in first and "4:00 PM" not in first
+    assert "Kim Lane" in follow_up and "Sam Rivera" not in follow_up
+    assert "10:00 AM" not in follow_up
+
+
+def test_a_dispatched_trip_without_driver_details_is_left_for_its_own_message():
+    lead = _booked()
+    _coordinated(lead)
+    morning = _dispatched_with(_trip(lead, at=time(10, 0)), "Sam Rivera", "+15715551212")
+    afternoon = _trip(lead, at=time(16, 0))
+    AssignmentFactory(reservation=afternoon, status=Assignment.Status.CONFIRMED)
+    Reservation.objects.filter(pk=afternoon.pk).update(
+        trip_status=Reservation.TripStatus.DISPATCHED
+    )
+    row = _driver_day_row()
+    first, later = _tp(row, lead, morning), _tp(row, lead, afternoon, due=False)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(first) is True
+    (body,) = [c.kwargs["body"] for c in send.call_args_list]
+    assert "4:00 PM" not in body
+    assert not Delivery.objects.filter(touchpoint=later).exists()
+
+
+def test_the_driver_sheet_says_when_a_drivers_details_are_still_to_come():
+    lead = _booked()
+    trip = _trip(lead, at=time(10, 0))
+    row = _added(trigger="status_dispatched", sms_body="{trip_sheet_drivers}")
+    tp = _tp(row, lead, trip)
+    bea = Recipient("Bea Booker", "Bea Booker (booking contact)", "+12025550100", "", None)
+    assert "Driver: details to follow" in sender.context(tp, row, bea)["trip_sheet_drivers"]
+    trip = _dispatched_with(trip, "Sam Rivera", "+15715551212")
+    tp = _tp(row, lead, trip)
+    assert "Driver: Sam Rivera · +15715551212" in sender.context(tp, row, bea)["trip_sheet_drivers"]
+
+
 def test_an_added_pickup_row_listing_the_day_sends_one_message():
     lead = _booked()
     _coordinated(lead)

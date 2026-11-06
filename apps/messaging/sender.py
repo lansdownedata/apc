@@ -59,6 +59,9 @@ WITH_HELD = "New details go with the held driver message"
 INTERRUPTED = "send interrupted"
 # Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
 _SENT_NOW = frozenset({"staff_click", "schedule"})
+# The context's note of which trips a combined send lists for the person (reservation
+# pks), recorded on each Delivery as `covers`; never a placeholder (no wording can name it).
+COVERS = "_covers"
 
 _A = MessageTemplate.Audience
 _POSTMARK_AUDIENCES = frozenset({_A.PLANNER, _A.STAFF})
@@ -214,11 +217,27 @@ def _reach(person: Recipient) -> set[str]:
     return {a for a in (person.phone, person.email.strip().lower()) if a}
 
 
+def _told(row: MessageTemplate, key: str, person: Recipient) -> set[int]:
+    """The trips this person was already sent this row's message for on this combine key
+    (`Delivery.covers`), so a day's follow-up lists only what is new to them (APC-131)."""
+    addresses = {a.lower() for a in _reach(person)}
+    if not addresses:
+        return set()
+    told: set[int] = set()
+    for covers in Delivery.objects.filter(
+        message=row, combine_key=key, status=Delivery.Status.SENT, address__in=addresses
+    ).values_list("covers", flat=True):
+        told.update(covers or [])
+    return told
+
+
 def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Recipient) -> list:
     """Every trip this person gets this message for on the combine key's day, in pickup
     order. A seeded confirmation keeps today's group (`rules.confirm_group`); any other
     combining row looks at its other queued sends that day and keeps the trips whose
-    recipients include this person."""
+    recipients include this person. A row that waits for dispatch lists only the trips
+    that are ready, and none the person was already told about: a trip dispatched after
+    the day's message is a follow-up for that trip alone (APC-131, option A)."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
 
@@ -227,6 +246,8 @@ def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Reci
     res = tp.reservation
     mine = _reach(person)
     trips = [res]
+    waits_for = triggers.CATALOG[row.trigger].waits_for
+    told = _told(row, key, person) if waits_for else set()
     siblings = (
         TouchPoint.objects.filter(
             message=row,
@@ -241,6 +262,10 @@ def _combined_trips(tp: TouchPoint, row: MessageTemplate, key: str, person: Reci
     )
     for sibling in siblings:
         if rules.combine_key(sibling, row) != key:
+            continue
+        if waits_for and (
+            sibling.reservation_id in told or not rules.ready(sibling.reservation, waits_for)
+        ):
             continue
         theirs = rules.recipients_for(
             sibling, row, recipients.resolve(row, sibling.lead, sibling.reservation)
@@ -296,6 +321,9 @@ def context(
             ctx.update(day_when(trips))
             if rules.uses_field(row, rules.DAY_LIST):
                 ctx["trip_sheet"] = "\n\n".join(trip_sheet_text(t) for t in trips)
+            if rules.uses_field(row, rules.DRIVER_LIST):
+                ctx["trip_sheet_drivers"] = "\n\n".join(rules.driver_sheet(t) for t in trips)
+        ctx[COVERS] = [t.pk for t in trips]
         rules.fill_links(tp, row, ctx, settings.PUBLIC_BASE_URL or "")
     ctx.update(extra or {})
     return ctx
@@ -399,11 +427,23 @@ def _transport(
 
 
 def _record(
-    tp, row, channel, person, address, key, status, reason="", provider_id="", *, line=None
+    tp,
+    row,
+    channel,
+    person,
+    address,
+    key,
+    status,
+    reason="",
+    provider_id="",
+    *,
+    line=None,
+    covers=None,
 ):
     """A Delivery for this send; ``line`` is the queued one an earlier run left for this
     address (a text held for quiet hours), which this run settles rather than doubles, so
-    the order's history keeps one line per address."""
+    the order's history keeps one line per address. ``covers`` names the trips a sent
+    combined message listed (APC-131)."""
     values = {
         "recipient_label": person.label[:160],
         "address": address,
@@ -411,6 +451,7 @@ def _record(
         "status": status,
         "reason": reason[:255],
         "provider_id": (provider_id or "")[:64],
+        "covers": list(covers or []),
     }
     if line is None:
         return Delivery.objects.create(touchpoint=tp, message=row, channel=channel, **values)
@@ -499,11 +540,16 @@ def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[De
     wanted = Q(touchpoint=tp)
     if key:
         wanted |= Q(message=row, combine_key=key, status=Delivery.Status.SENT)
+    # A row that waits for dispatch tells each trip once: a send that didn't list this
+    # trip (it wasn't ready yet) doesn't stand in for it (APC-131).
+    per_trip = bool(triggers.CATALOG[row.trigger].waits_for)
     mine, elsewhere = [], set()
     for d in Delivery.objects.filter(wanted).select_related("touchpoint"):
         if d.touchpoint_id == tp.pk:
             mine.append(d)
         elif d.touchpoint.status != TouchPoint.Status.CANCELLED:
+            if per_trip and tp.reservation_id not in (d.covers or []):
+                continue
             elsewhere.add(d.address.lower())
     return mine, elsewhere
 
@@ -668,7 +714,19 @@ def _send(
             _record(tp, row, channel, person, address, key, "failed", str(exc), line=line)
         else:
             sent_now.append(
-                _record(tp, row, channel, person, address, key, "sent", "", provider_id, line=line)
+                _record(
+                    tp,
+                    row,
+                    channel,
+                    person,
+                    address,
+                    key,
+                    "sent",
+                    "",
+                    provider_id,
+                    line=line,
+                    covers=contexts[person].get(COVERS),
+                )
             )
     if held:
         # The email part went now: its readers were told these driver details.

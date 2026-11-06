@@ -52,6 +52,7 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("driver_cell", "Driver cell"),
         ("vehicle_description", "Vehicle"),
         ("vehicle_number", "Vehicle number"),
+        ("trip_sheet_drivers", "Trip details with drivers"),
     ],
     "Affiliate": [("vendor_name", "Affiliate name"), ("payout", "Payout")],
     "Links": [

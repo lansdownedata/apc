@@ -62,8 +62,12 @@ _THANK_YOUS = frozenset({"thank_you", "thank_you_wedding"})
 # own trip's link or details.
 _PER_TRIP = frozenset({"wed_final_details", "trip_confirm_affiliate", "driver_released"})
 # The placeholder a combining send fills with every trip the person has that day
-# (`sender.context`).
+# (`sender.context`), and the one that lists each trip with its driver (APC-131): the
+# only list a row that waits for dispatch may combine on, since it carries every trip's
+# driver. A trip's driver line is released once that trip is Dispatched with the details.
 DAY_LIST = "trip_sheet"
+DRIVER_LIST = "trip_sheet_drivers"
+DRIVER_TO_FOLLOW = "Driver: details to follow"
 # How a combine key covering a whole order starts (`combine_key`).
 ORDER_KEY = "order:"
 # Seeded rows that wait for a condition their trigger doesn't carry.
@@ -160,16 +164,32 @@ def combines_per_day(row: MessageTemplate) -> bool:
     A built-in on its own trigger keeps its own rule: the confirmations combine, the
     per-trip messages do not. Any other row combines only when its wording lists the day
     (`DAY_LIST`): without the list, skipping a later trip would drop that trip's details.
-    A row that waits for dispatch carries one trip's driver and an affiliate's sheet is one
-    trip's, so those never combine."""
+    A row that waits for dispatch combines only on the list that carries every trip's
+    driver (`DRIVER_LIST`, APC-131), and an affiliate's sheet is one trip's, so an
+    affiliate row never combines."""
     trigger = triggers.CATALOG.get(row.trigger)
     if trigger is None or not trigger.combine:
         return False
     if has_built_ins(row):
         return row.key not in _PER_TRIP
-    if trigger.waits_for or row.audience == MessageTemplate.Audience.AFFILIATE:
+    if row.audience == MessageTemplate.Audience.AFFILIATE:
         return False
+    if trigger.waits_for:
+        return uses_field(row, DRIVER_LIST)
     return uses_field(row, DAY_LIST)
+
+
+def driver_sheet(reservation) -> str:
+    """The trip's sheet with its driver's name and cell under it, once the trip is
+    Dispatched with the details on file; until then the sheet says they are to follow."""
+    from apps.reservations.services import trip_sheet_text
+
+    sheet = trip_sheet_text(reservation)
+    if not ready(reservation, "dispatched_with_driver"):
+        return f"{sheet}\n  {DRIVER_TO_FOLLOW}"
+    info = confirmed_assignment(reservation).driver_info or {}
+    who = " · ".join(part for part in (info.get("name", ""), info.get("cell", "")) if part)
+    return f"{sheet}\n  Driver: {who}"
 
 
 def built_in_descriptions(key: str) -> list[str]:

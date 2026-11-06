@@ -768,6 +768,28 @@ def test_added_pickup_row_combines_on_the_local_day():
 
 
 @pytest.mark.parametrize(
+    ("sms_body", "combines"),
+    [
+        ("Your drivers:\n{trip_sheet_drivers}", True),
+        ("Your trips:\n{trip_sheet}", False),
+        ("Your driver is {driver_name}", False),
+    ],
+    ids=["driver-list", "trip-list", "one-driver"],
+)
+def test_a_waiting_row_combines_only_when_it_lists_the_days_drivers(sms_body, combines):
+    """APC-131: a row that waits for dispatch can stand in for the day only with the
+    driver list, which carries every trip's driver; the plain trip list would drop one."""
+    row = MessageRowFactory(
+        trigger="pickup_dispatched",
+        section=MessageTemplate.Section.TRIP_DAY,
+        send_email=False,
+        sms_body=sms_body,
+        recipients=["booking_contact"],
+    )
+    assert rules.combines_per_day(row) is combines
+
+
+@pytest.mark.parametrize(
     "kw",
     [
         {"trigger": "pickup", "sms_body": "Soon, {first_name}"},

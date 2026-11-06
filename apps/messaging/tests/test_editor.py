@@ -488,3 +488,16 @@ def test_wedding_thank_you_is_its_own_row():
 
     assert _thank_you_row(wedding).email_body == "WEDDING BODY"
     assert _wording(_thank_you_row(plain)) == _wording(TEMPLATES["thank_you"])
+
+
+def test_the_sample_preview_fills_the_day_list_with_drivers():
+    """APC-131: previewing without an order shows a driver under the sample trip."""
+    row = MessageRowFactory(
+        trigger="pickup_dispatched",
+        section=MessageTemplate.Section.TRIP_DAY,
+        send_email=False,
+        sms_body="Your drivers:\n{trip_sheet_drivers}",
+        recipients=["booking_contact"],
+    )
+    sms = editor.preview(row, None)["sms"]
+    assert "Driver: Sam Driver" in sms and "{trip_sheet_drivers}" not in sms
