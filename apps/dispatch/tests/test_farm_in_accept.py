@@ -1,8 +1,10 @@
-from datetime import date
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AirlineFactory, AirportFactory
@@ -154,17 +156,18 @@ def test_accept_orders_middle_stops_by_stop_number(sedan, agent):
         {"address": "First stop", "stopNumber": "1"},
     ]
     payload["locations"]["pickup"]["meetAndGreet"] = "True"
+    payload["locations"]["pickup"]["specialInstructions"] = "Gate code 12"
     _, _, res = _accept(_req(payload), agent)
     stops = list(res.stops.order_by("sequence"))
     assert [s.address for s in stops[1:3]] == ["First stop", "Second stop"]
     assert stops[2].note == "Ring bell"
-    assert stops[0].note.endswith("Meet and greet")
+    assert stops[0].note == "- Carseat needed · Gate code 12 · Meet at curb · Meet and greet"
 
 
 def test_accept_pickup_is_local_time_in_trip_zone(req, agent):
     _, _, res = _accept(req, agent)
     assert res.pickup_date == date(2024, 8, 3)
-    assert res.pickup_time.strftime("%H:%M") == "10:27"
+    assert res.pickup_time == time(10, 27)
     assert res.pickup_timezone == "America/Los_Angeles"
 
 
@@ -247,3 +250,54 @@ def test_accept_rolls_back_order_when_booking_fails(req, agent):
     req.refresh_from_db()
     assert req.status == FarmInRequest.Status.PENDING and req.lead is None
     assert not FarmInStatusPush.objects.exists()
+
+
+def test_accept_residue_for_long_minimums_is_pushed_as_the_trip_total(sedan, agent):
+    VehicleType.objects.filter(pk=sedan.pk).update(transfer_min_hours=4)
+    req = _req()
+    farm_in_actions.price(req.pk, user=agent, amount=Decimal("100.02"))
+    _, _, res = _accept(req, agent)
+    assert res.rate == Decimal("25.01")
+    assert res.line_total == Decimal("100.04") and res.booked_total == Decimal("100.04")
+    push = FarmInStatusPush.objects.get(request=req, status="CONFIRMED")
+    assert push.total_amount == Decimal("100.04")
+
+
+def test_accept_keeps_a_blank_address_pickup_as_stop_zero(sedan, agent):
+    payload = sample_payload()
+    payload["locations"]["pickup"]["address"] = ""
+    _, _, res = _accept(_req(payload), agent)
+    stops = list(res.stops.select_related("airport").order_by("sequence"))
+    assert len(stops) == 3
+    assert stops[0].address == "" and stops[0].name == "Mr. Adam"
+    assert "Carseat needed" in stops[0].note and "Meet at curb" in stops[0].note
+    assert stops[0].flight_direction == ""
+    assert stops[-1].airport.iata == "LAX" and stops[-1].flight_direction == "departure"
+    assert res.pickup_timezone == "America/Los_Angeles"
+
+
+def test_accept_rederives_local_pickup_when_the_stop_resolves_another_zone(sedan, agent):
+    payload = sample_payload()
+    payload["locations"]["pickup"]["time"] = "2024-08-03T22:30:00"
+    req = _req(payload)
+    assert req.pickup_at == datetime(2024, 8, 4, 5, 30, tzinfo=UTC)
+    with patch("apps.reservations.timezones.resolve", return_value="America/New_York"):
+        _, _, res = _accept(req, agent)
+    assert res.pickup_timezone == "America/New_York"
+    assert res.pickup_date == date(2024, 8, 4) and res.pickup_time == time(1, 30)
+
+
+def test_accept_fetches_airports_and_airlines_once(sedan, agent):
+    payload = sample_payload()
+    payload["locations"]["pickup"] = {
+        "address": "LAX",
+        "locationType": "airport",
+        "time": "2024-08-03T10:27:22",
+        "flightInfo": {"flightNumber": "9", "airlineCode": "UA"},
+    }
+    req = _req(payload)
+    with CaptureQueriesContext(connection) as ctx:
+        farm_in_actions.accept(req.pk, user=agent)
+    sql = [q["sql"] for q in ctx.captured_queries]
+    assert sum("FROM `addresses_airport`" in q for q in sql) == 1
+    assert sum("FROM `addresses_airline`" in q for q in sql) == 1

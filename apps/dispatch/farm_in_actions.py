@@ -6,9 +6,11 @@ HTTP-ish `status`: 409 when someone already decided, 400 for any other refusal.
 """
 
 import logging
+from datetime import date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -233,13 +235,13 @@ def _build_order(req: FarmInRequest, *, user: User) -> tuple[Lead, Reservation]:
     billed = hours if hours > 0 else min_hours
     rate = (req.quoted_amount / billed).quantize(_CENT, ROUND_HALF_UP)
 
-    local = req.pickup_at.astimezone(ZoneInfo(req.timezone)) if req.pickup_at else None
+    pickup_date, pickup_time = _local_pickup(req.pickup_at, req.timezone)
     reservation = Reservation.objects.create(
         lead=lead,
         vehicle=vehicle,
         trip_type=Reservation.TripType.HOURLY if hourly else Reservation.TripType.TRANSFER,
-        pickup_date=local.date() if local else None,
-        pickup_time=local.time() if local else None,
+        pickup_date=pickup_date,
+        pickup_time=pickup_time,
         pickup_timezone=req.timezone,
         passengers=req.passenger_count or 1,
         rate=rate,
@@ -270,11 +272,7 @@ def _build_order(req: FarmInRequest, *, user: User) -> tuple[Lead, Reservation]:
         )
         for i, s in enumerate(stops)
     )
-    reservation.refresh_pickup_timezone()
-    if not reservation.pickup_timezone and req.timezone:
-        # No airport and no coordinate on the pickup: keep the zone the request resolved.
-        reservation.pickup_timezone = req.timezone
-        reservation.save(update_fields=["pickup_timezone"])
+    _settle_pickup_zone(reservation, req)
 
     Passenger.objects.bulk_create(
         Passenger(reservation=reservation, **row) for row in _passenger_rows(payload)
@@ -285,6 +283,30 @@ def _build_order(req: FarmInRequest, *, user: User) -> tuple[Lead, Reservation]:
     except BookLeadError as exc:
         raise FarmInActionError(str(exc)) from exc
     return lead, reservation
+
+
+def _local_pickup(at: datetime | None, zone: str) -> tuple[date | None, time | None]:
+    """The pickup instant as a local date and minute-precision time in `zone` (or the default)."""
+    if at is None:
+        return None, None
+    local = at.astimezone(ZoneInfo(zone or settings.TIME_ZONE))
+    return local.date(), local.time().replace(second=0, microsecond=0)
+
+
+def _settle_pickup_zone(reservation: Reservation, req: FarmInRequest) -> None:
+    """Let the saved pickup stop decide the trip's zone without moving the pickup instant.
+
+    A pickup with no airport and no coordinate resolves to "", which would blank the zone,
+    so the request's own zone stays. When the stop resolves a different zone, the local
+    date and time are re-derived from the same UTC instant in that zone.
+    """
+    reservation.refresh_pickup_timezone()
+    zone = reservation.pickup_timezone or req.timezone
+    if zone == req.timezone and reservation.pickup_timezone:
+        return
+    reservation.pickup_timezone = zone
+    reservation.pickup_date, reservation.pickup_time = _local_pickup(req.pickup_at, zone)
+    reservation.save(update_fields=["pickup_timezone", "pickup_date", "pickup_time"])
 
 
 def _lead_notes(payload: dict, res_no: str) -> str:
@@ -330,10 +352,12 @@ def _stop_number(location: dict, index: int) -> int:
 
 
 def _stop_dicts(payload: dict) -> list[dict]:
-    """Pickup, the middle stops (by `stopNumber`, else as listed), dropoff; blanks skipped.
+    """Pickup, the middle stops (by `stopNumber`, else as listed), dropoff.
 
-    An airport location named by IATA code resolves to our airport row and carries its
-    flight; the first stop with an airport is the arrival side, the last the departure.
+    The pickup is always stop 0, even with a blank address, so its sign, notes and zone are
+    never handed to the next stop; blank middle stops and a blank dropoff are skipped. An
+    airport location named by IATA code resolves to our airport row and carries its flight;
+    the first stop with an airport is the arrival side, the last the departure.
     """
     locations = farm_in._dict(payload.get("locations"))
     pickup = farm_in._dict(locations.get("pickup"))
@@ -342,22 +366,21 @@ def _stop_dicts(payload: dict) -> list[dict]:
     middle = [
         s for _, s in sorted(enumerate(middle), key=lambda p: (_stop_number(p[1], p[0]), p[0]))
     ]
+    rest = [*middle, farm_in._dict(locations.get("dropOff"))]
+    rest = [loc for loc in rest if str(loc.get("address") or "").strip()]
+    airports, airlines = _airport_lookups([pickup, *rest])
 
-    pickup_note = [str(payload.get("specialInstructions") or "").strip()]
-    pickup_note += _note_texts(payload, "DRIVER")
+    pickup_note = [
+        str(payload.get("specialInstructions") or "").strip(),
+        str(pickup.get("specialInstructions") or "").strip(),
+        *_note_texts(payload, "DRIVER"),
+    ]
     if str(pickup.get("meetAndGreet") or "").strip().lower() == "true":
         pickup_note.append("Meet and greet")
-    pickup_name = str(payload.get("namesignInstructions") or "").strip()[:160]
-
-    stops = []
-    for location in [pickup, *middle, farm_in._dict(locations.get("dropOff"))]:
-        stop = _stop_dict(location)
-        if stop is None:
-            continue
-        if location is pickup:
-            stop["name"] = pickup_name
-            stop["note"] = " · ".join(n for n in pickup_note if n)[:_TEXT_MAX]
-        stops.append(stop)
+    first = _stop_dict(pickup, airports, airlines)
+    first["name"] = str(payload.get("namesignInstructions") or "").strip()[:160]
+    first["note"] = " · ".join(n for n in pickup_note if n)[:_TEXT_MAX]
+    stops = [first, *(_stop_dict(loc, airports, airlines) for loc in rest)]
 
     last = len(stops) - 1
     for i, stop in enumerate(stops):
@@ -368,11 +391,35 @@ def _stop_dicts(payload: dict) -> list[dict]:
     return stops
 
 
-def _stop_dict(location: dict) -> dict | None:
-    """One GNet location as the stop dict `link_flights` reads; None when it has no address."""
+def _is_airport(location: dict) -> bool:
+    return str(location.get("locationType") or "").lower() == "airport"
+
+
+def _airport_lookups(locations: list[dict]) -> tuple[dict[str, Airport], dict[str, Airline]]:
+    """Every airport and airline the locations name, fetched in one query each.
+
+    Airports are keyed by IATA with the lowest pk winning, as `.first()` would pick.
+    """
+    airport_codes, airline_codes = set(), set()
+    for location in filter(_is_airport, locations):
+        airport_codes.add(str(location.get("address") or "").strip().upper())
+        flight = farm_in._dict(location.get("flightInfo"))
+        airline_codes.add(str(flight.get("airlineCode") or "").strip().upper())
+    airport_codes.discard("")
+    airline_codes.discard("")
+    airports: dict[str, Airport] = {}
+    if airport_codes:
+        for airport in Airport.objects.filter(iata__in=airport_codes).order_by("pk"):
+            airports.setdefault(airport.iata, airport)
+    airlines = (
+        {a.iata: a for a in Airline.objects.filter(iata__in=airline_codes)} if airline_codes else {}
+    )
+    return airports, airlines
+
+
+def _stop_dict(location: dict, airports: dict[str, Airport], airlines: dict[str, Airline]) -> dict:
+    """One GNet location as the stop dict `link_flights` reads."""
     address = str(location.get("address") or "").strip()
-    if not address:
-        return None
     stop = {
         "address": address[:_TEXT_MAX],
         "note": str(location.get("specialInstructions") or "").strip()[:_TEXT_MAX],
@@ -384,14 +431,11 @@ def _stop_dict(location: dict) -> dict | None:
         "flight_number": "",
         "flight_direction": "",
     }
-    if str(location.get("locationType") or "").lower() != "airport":
-        return stop
-    airport = Airport.objects.filter(iata=address.upper()).first()
+    airport = airports.get(address.upper()) if _is_airport(location) else None
     if airport is None:
         return stop
     flight = farm_in._dict(location.get("flightInfo"))
-    code = str(flight.get("airlineCode") or "").strip().upper()
-    airline = Airline.objects.filter(iata=code).first() if code else None
+    airline = airlines.get(str(flight.get("airlineCode") or "").strip().upper())
     stop.update(
         address=f"{airport.name} ({airport.iata})"[:_TEXT_MAX],
         airport_id=airport.pk,
