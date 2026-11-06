@@ -17,6 +17,7 @@ cancel_trip from a test — always mock `requests` at the boundary.
 from datetime import date as date_type
 from datetime import datetime
 from datetime import time as time_type
+from decimal import Decimal
 
 import requests
 from django.conf import settings
@@ -355,3 +356,11 @@ def cancel_trip(transaction_id: str) -> dict:
     just because this call raised.
     """
     return _request("DELETE", f"{API_PATH}/{transaction_id}")
+
+
+def push_status(transaction_id: str, status: str, total_amount: Decimal | None = None) -> dict:
+    """POST /trips/{transactionId}/status — report a decision; the amount is string-encoded."""
+    body: dict = {"status": status}
+    if total_amount is not None:
+        body["totalAmount"] = f"{total_amount:.2f}"
+    return _request("POST", f"{API_PATH}/{transaction_id}/status", json=body)

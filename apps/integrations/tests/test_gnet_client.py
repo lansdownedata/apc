@@ -420,6 +420,32 @@ def test_cancel_trip_error_raises_gnet_api_error():
     assert exc.value.status == 404
 
 
+def test_push_status_posts_status_and_string_amount():
+    with patch.object(gnet, "requests") as req:
+        req.request.return_value = _response(200, {"ok": True})
+        body = gnet.push_status("tx-1", "CONFIRMED", Decimal("165.50"))
+    assert body == {"ok": True}
+    args, kwargs = req.request.call_args
+    assert args == ("POST", "https://gateway.example.test/api/gateway/v1/trips/tx-1/status")
+    assert kwargs["json"] == {"status": "CONFIRMED", "totalAmount": "165.50"}
+    assert kwargs["headers"]["Authorization"] == "Bearer lds_testkey1234567890"
+
+
+def test_push_status_omits_amount_when_none():
+    with patch.object(gnet, "requests") as req:
+        req.request.return_value = _response(200, {})
+        gnet.push_status("tx-1", "CANCEL")
+    assert req.request.call_args.kwargs["json"] == {"status": "CANCEL"}
+
+
+def test_push_status_raises_gnet_error_with_status():
+    with patch.object(gnet, "requests") as req:
+        req.request.return_value = _response(422, text="bad status")
+        with pytest.raises(gnet.GnetAPIError) as exc:
+            gnet.push_status("tx-1", "BOGUS")
+    assert exc.value.status == 422
+
+
 # --- transport failures: a RequestException must become a GnetAPIError, not escape raw ---
 
 
