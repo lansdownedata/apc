@@ -148,3 +148,33 @@ def test_ensure_requester_blank_id():
     p["affiliateReservation"]["requesterId"] = ""
     with pytest.raises(ValueError):
         farm_in.ensure_requester(p)
+
+
+def test_ensure_requester_too_long():
+    p = sample_payload()
+    p["affiliateReservation"]["requesterId"] = "a" * 65
+    with pytest.raises(ValueError, match="too long"):
+        farm_in.ensure_requester(p)
+
+
+def test_ensure_requester_rejects_non_scalar():
+    p = sample_payload()
+    p["affiliateReservation"]["requesterId"] = ["a"]
+    with pytest.raises(ValueError):
+        farm_in.ensure_requester(p)
+
+
+def test_ensure_requester_int_id():
+    p = sample_payload()
+    p["affiliateReservation"]["requesterId"] = 42
+    with transaction.atomic():
+        company, created = farm_in.ensure_requester(p)
+    assert created and company.name == "42" and company.gnet_grid_id == "42"
+
+
+def test_ensure_requester_idempotent():
+    with transaction.atomic():
+        first, _ = farm_in.ensure_requester(sample_payload())
+        second, created = farm_in.ensure_requester(sample_payload())
+    assert first == second and not created
+    assert Company.objects.count() == 1 and Contact.objects.count() == 1

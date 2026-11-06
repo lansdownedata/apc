@@ -121,9 +121,14 @@ def price_request(vehicle: VehicleType | None, *, hourly: bool) -> Decimal | Non
 
 def ensure_requester(payload: dict) -> tuple[Company, bool]:
     """Find or create the requesting operator's Company; call inside transaction.atomic()."""
-    rid = str(_dict(payload.get("affiliateReservation")).get("requesterId") or "").strip()
+    raw = _dict(payload.get("affiliateReservation")).get("requesterId")
+    if isinstance(raw, bool) or not isinstance(raw, str | int):
+        raise ValueError("requesterId missing")
+    rid = str(raw).strip()
     if not rid:
         raise ValueError("requesterId missing")
+    if len(rid) > 64:
+        raise ValueError("requesterId too long")
     company = Company.objects.select_for_update().filter(gnet_grid_id=rid).first()
     if company:
         return company, False
