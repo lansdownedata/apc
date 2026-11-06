@@ -57,6 +57,37 @@ VEHICLE_TYPE_MAP: dict[str, str] = {
     "Stretch Limousine": "LIMO",
 }
 
+# Inbound direction (farm-in): GNet code -> VehicleType.name. The reverse of
+# VEHICLE_TYPE_MAP plus the family aliases in the farm-in spec §6.1, so a code we would
+# never send (SEDAN_CORP, VAN_12, ...) still lands on the right fleet vehicle.
+_INBOUND_ALIASES: dict[str, tuple[str, ...]] = {
+    "Luxury Sedan": ("SEDAN", "SEDAN_CORP", "SEDAN_LUX", "SEDAN_HYBRID", "SEDAN_ECONOMY"),
+    "Luxury SUV": ("SUV", "SUV_CORP", "SUV_LUX", "SUV_SPECIALTY"),
+    "Sprinter Van": (
+        "SPRINTER",
+        "VAN",
+        "VAN_MINI",
+        "VAN_MINI_ECONOMY",
+        "VAN_MINI_LUXURY",
+        "VAN_8",
+        "VAN_12",
+        "VAN_15",
+        "VAN_CORP",
+        "VAN_CORP_8",
+        "VAN_CORP_12",
+        "VAN_CORP_14",
+        "VAN_CARGO",
+        "VAN_SHARED_RIDE",
+    ),
+    "Mini Coach": ("BUS_MINI", "BUS_20_25", "BUS_26_31", "BUS_32_36"),
+    "Motor Coach": ("COACH", "BUS"),
+    "Stretch Limousine": ("LIMO",),
+}
+INBOUND_VEHICLE_TYPES: dict[str, str] = {
+    **{code: name for name, code in VEHICLE_TYPE_MAP.items()},
+    **{code: name for name, codes in _INBOUND_ALIASES.items() for code in codes},
+}
+
 
 class GnetAPIError(Exception):
     """A non-2xx response from the GNet gateway, OR a transport failure that never got
@@ -94,6 +125,18 @@ def vehicle_code(vehicle: VehicleType) -> str:
             f"No GNet vehicle-type mapping for {vehicle.name!r} — add it to "
             "VEHICLE_TYPE_MAP in apps/integrations/gnet.py before farming this out."
         ) from None
+
+
+def vehicle_type_for_code(code: str) -> VehicleType | None:
+    """Map an inbound GNet vehicle code to the active fleet VehicleType, else None.
+
+    None covers both an unknown code and a mapped name with no active row; the caller
+    treats either as "unmapped" and makes the dispatcher choose a vehicle.
+    """
+    name = INBOUND_VEHICLE_TYPES.get((code or "").strip().upper())
+    if name is None:
+        return None
+    return VehicleType.objects.filter(name=name, active=True).first()
 
 
 def _combine_iso(date_val: date_type | None, time_val: time_type | None) -> str | None:

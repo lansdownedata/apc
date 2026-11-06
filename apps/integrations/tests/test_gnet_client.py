@@ -17,6 +17,7 @@ import requests
 from apps.dispatch.factories import AssignmentFactory
 from apps.integrations import gnet
 from apps.leads.factories import VehicleTypeFactory
+from apps.leads.models import VehicleType
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Stop
 from apps.vendors.factories import VendorFactory
@@ -515,3 +516,33 @@ def test_airport_type_keeps_the_coordinates():
     pickup = gnet.build_send_payload(assignment)["locations"]["pickup"]
     assert pickup["lat"] == pytest.approx(38.953116)
     assert pickup["lon"] == pytest.approx(-77.456539)
+
+
+@pytest.mark.parametrize(
+    "code,name",
+    [
+        ("SEDAN", "Luxury Sedan"),
+        ("sedan_corp", "Luxury Sedan"),
+        ("SUV", "Luxury SUV"),
+        ("VAN_CORP_12", "Sprinter Van"),
+        ("SPRINTER", "Sprinter Van"),
+        ("BUS_26_31", "Mini Coach"),
+        ("COACH", "Motor Coach"),
+        ("LIMO", "Stretch Limousine"),
+    ],
+)
+def test_vehicle_type_for_code(code, name):
+    vt = VehicleTypeFactory(name=name)
+    assert gnet.vehicle_type_for_code(code) == vt
+
+
+def test_vehicle_type_for_unknown_or_inactive_code_is_none():
+    assert gnet.vehicle_type_for_code("GREETER") is None
+    # get_or_create may return a migration-seeded (active) row, so deactivate explicitly.
+    VehicleType.objects.filter(pk=VehicleTypeFactory(name="Luxury Sedan").pk).update(active=False)
+    assert gnet.vehicle_type_for_code("SEDAN") is None
+
+
+def test_every_outbound_code_maps_back_to_its_name():
+    for name, code in gnet.VEHICLE_TYPE_MAP.items():
+        assert gnet.INBOUND_VEHICLE_TYPES[code] == name
