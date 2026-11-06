@@ -61,6 +61,14 @@ class Company(TimeStampedModel):
         default=False,
         help_text="An operator that sends us trips. Its orders get the farm-in payment dates.",
     )
+    gnet_grid_id = models.CharField(
+        "GNet griddID",
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="The operator's GNet id. Trips they send us land under this company.",
+    )
 
     class Meta:
         constraints = [
@@ -70,6 +78,11 @@ class Company(TimeStampedModel):
 
     def __str__(self) -> str:
         return self.name
+
+    def save(self, *args, **kwargs) -> None:
+        """Blank griddID is NULL, so the unique index only constrains real ids."""
+        self.gnet_grid_id = (self.gnet_grid_id or "").strip() or None
+        super().save(*args, **kwargs)
 
 
 class ContactManager(models.Manager):

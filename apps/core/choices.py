@@ -8,6 +8,7 @@ class Channel(models.TextChoices):
     WEDDING_PRO = "wedding_pro", "Wedding Pro"
     PHONE = "phone", "Phone"
     API = "api", "API"
+    GNET = "gnet", "GNet"
 
 
 class Account(models.TextChoices):
