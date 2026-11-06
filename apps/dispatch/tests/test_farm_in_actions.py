@@ -45,6 +45,7 @@ def req():
 
 def test_price_sets_manual_amount_and_who(req, agent):
     out = farm_in_actions.price(req.pk, user=agent, amount=Decimal("210"), note="holiday")
+    out.refresh_from_db()
     assert out.quoted_amount == Decimal("210.00")
     assert out.pricing_source == FarmInRequest.PricingSource.MANUAL
     assert out.priced_by == agent and out.pricing_note == "holiday"
@@ -67,9 +68,18 @@ def test_set_vehicle_reprices_from_rate_card(req, agent, sedan):
     req.alert = farm_in.ALERT_UNMAPPED.format(code="SEDAN")
     req.save()
     out = farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
+    out.refresh_from_db()
     assert out.vehicle == sedan and out.quoted_amount == Decimal("165.00")
     assert out.pricing_source == FarmInRequest.PricingSource.RATE_CARD
     assert out.alert == ""
+
+
+def test_set_vehicle_clears_only_its_own_alert(req, agent, sedan):
+    req.alert = f"{farm_in.ALERT_TZ_ASSUMED} · {farm_in.ALERT_UNMAPPED.format(code='SEDAN')}"
+    req.save()
+    farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
+    req.refresh_from_db()
+    assert req.alert == farm_in.ALERT_TZ_ASSUMED
 
 
 def test_set_vehicle_keeps_manual_price(req, agent, sedan):
@@ -77,6 +87,7 @@ def test_set_vehicle_keeps_manual_price(req, agent, sedan):
     req.pricing_source = FarmInRequest.PricingSource.MANUAL
     req.save()
     out = farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
+    out.refresh_from_db()
     assert out.vehicle == sedan and out.quoted_amount == Decimal("200.00")
     assert out.pricing_source == FarmInRequest.PricingSource.MANUAL
 
@@ -97,6 +108,7 @@ def test_request_coverage_moves_desk_and_notifies_operations(
 ):
     with django_capture_on_commit_callbacks(execute=True):
         out = farm_in_actions.request_coverage(req.pk, user=agent)
+    out.refresh_from_db()
     assert out.desk == FarmInRequest.Desk.DISPATCH and out.desk_changed_by == agent
     assert out.desk_changed_at is not None
     notes = Notification.objects.filter(kind=Notification.Kind.FARM_IN_COVERAGE)
@@ -108,6 +120,17 @@ def test_request_coverage_moves_desk_and_notifies_operations(
 def test_request_coverage_falls_back_to_shared_notification(
     req, agent, django_capture_on_commit_callbacks
 ):
+    with django_capture_on_commit_callbacks(execute=True):
+        farm_in_actions.request_coverage(req.pk, user=agent)
+    note = Notification.objects.get(kind=Notification.Kind.FARM_IN_COVERAGE)
+    assert note.user is None
+
+
+def test_request_coverage_skips_inactive_operations_users(
+    req, agent, ops_user, django_capture_on_commit_callbacks
+):
+    ops_user.is_active = False
+    ops_user.save()
     with django_capture_on_commit_callbacks(execute=True):
         farm_in_actions.request_coverage(req.pk, user=agent)
     note = Notification.objects.get(kind=Notification.Kind.FARM_IN_COVERAGE)
@@ -128,11 +151,23 @@ def test_send_back_requires_note_and_notifies_requesting_user(
         farm_in_actions.send_back(req.pk, user=ops_user, note="  ")
     with django_capture_on_commit_callbacks(execute=True):
         out = farm_in_actions.send_back(req.pk, user=ops_user, note="No driver free")
+    out.refresh_from_db()
     assert out.desk == FarmInRequest.Desk.RESERVATIONS and out.desk_note == "No driver free"
     assert out.desk_changed_by == ops_user
     note = Notification.objects.get(kind=Notification.Kind.FARM_IN_SENT_BACK)
     assert note.user == agent and note.detail == "No driver free"
     assert note.title == f"Sent back: {req.company.name}"
+
+
+def test_send_back_to_inactive_requester_goes_shared(
+    req, agent, ops_user, django_capture_on_commit_callbacks
+):
+    farm_in_actions.request_coverage(req.pk, user=agent)
+    agent.is_active = False
+    agent.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        farm_in_actions.send_back(req.pk, user=ops_user, note="No driver free")
+    assert Notification.objects.get(kind=Notification.Kind.FARM_IN_SENT_BACK).user is None
 
 
 def test_send_back_refuses_from_reservations_desk(req, agent):
@@ -144,6 +179,7 @@ def test_decline_requires_reason_and_enqueues_reject(req, agent):
     with pytest.raises(FarmInActionError, match="Give the requester a reason"):
         farm_in_actions.decline(req.pk, user=agent, reason=" ")
     out = farm_in_actions.decline(req.pk, user=agent, reason="No cars")
+    out.refresh_from_db()
     assert out.status == FarmInRequest.Status.DECLINED and out.decline_reason == "No cars"
     assert out.decided_by == agent and out.decided_at is not None
     assert FarmInStatusPush.objects.filter(request=req, status="REJECT").count() == 1
@@ -207,6 +243,9 @@ def test_decide_race_second_actor_gets_409(restore_seeded_rows):
     assert len(wins) == 1 and len(errors) == 1
     assert isinstance(errors[0], FarmInActionError) and errors[0].status == 409
     assert FarmInStatusPush.objects.filter(request=target, status="REJECT").count() == 1
+    target.refresh_from_db()
+    assert target.status == FarmInRequest.Status.DECLINED
+    assert target.decided_by == user and target.decline_reason == "No cars"
 
 
 @pytest.mark.parametrize(

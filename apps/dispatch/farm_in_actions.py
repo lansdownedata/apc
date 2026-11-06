@@ -91,8 +91,8 @@ def set_vehicle(pk: int, *, user: User, vehicle_id: int) -> FarmInRequest:
             req.pricing_source = (
                 FarmInRequest.PricingSource.RATE_CARD if req.quoted_amount is not None else ""
             )
-        if req.alert == farm_in.ALERT_UNMAPPED.format(code=req.gnet_vehicle_type):
-            req.alert = ""
+        unmapped = farm_in.ALERT_UNMAPPED.format(code=req.gnet_vehicle_type)
+        req.alert = " · ".join(a for a in req.alert.split(" · ") if a and a != unmapped)
         req.save()
     return req
 
@@ -110,7 +110,8 @@ def request_coverage(pk: int, *, user: User) -> FarmInRequest:
         req.save()
         title = f"Coverage requested: {req.company.name}"
         detail = f"{req.pickup_summary} → {req.dropoff_summary}"
-        recipients = list(User.objects.in_department(Department.OPERATIONS)) or [None]
+        recipients = list(User.objects.in_department(Department.OPERATIONS).filter(is_active=True))
+        recipients = recipients or [None]
         for recipient in recipients:
             transaction.on_commit(
                 lambda r=recipient: _notify_quietly(
@@ -131,6 +132,8 @@ def send_back(pk: int, *, user: User, note: str) -> FarmInRequest:
         if not note:
             raise FarmInActionError("Say why it is going back")
         previous = req.desk_changed_by
+        if previous is not None and not previous.is_active:
+            previous = None
         req.desk = FarmInRequest.Desk.RESERVATIONS
         req.desk_note = note[:_TEXT_MAX]
         req.desk_changed_by = user
