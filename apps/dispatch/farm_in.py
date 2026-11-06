@@ -39,6 +39,20 @@ class Summary:
     alerts: list[str] = field(default_factory=list)
 
 
+def _dict(value) -> dict:
+    """``value`` when it is a dict, else an empty dict (payloads are untrusted)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _passenger_count(raw, fallback: int) -> int:
+    """Headcount from a GNet string; cosmetic, so junk falls back and the floor is 1."""
+    try:
+        count = int(str(raw).strip())
+    except ValueError:
+        count = fallback
+    return max(count, 1)
+
+
 def _parse_pickup(raw, tz_name: str) -> datetime | None:
     """UTC pickup instant. Aware values convert; naive values are read in ``tz_name``."""
     try:
@@ -53,9 +67,9 @@ def _parse_pickup(raw, tz_name: str) -> datetime | None:
 def summarize(payload: dict) -> Summary:
     """Interpret a farm-in payload; problems become alerts rather than errors."""
     alerts: list[str] = []
-    locations = payload.get("locations") or {}
-    pickup = locations.get("pickup") or {}
-    dropoff = locations.get("dropOff") or {}
+    locations = _dict(payload.get("locations"))
+    pickup = _dict(locations.get("pickup"))
+    dropoff = _dict(locations.get("dropOff"))
 
     code = str(payload.get("preferredVehicleType") or "")
     vehicle = gnet.vehicle_type_for_code(code)
@@ -73,8 +87,9 @@ def summarize(payload: dict) -> Summary:
     if assumed:
         alerts.append(ALERT_TZ_ASSUMED)
 
-    passengers = payload.get("passengers") or []
-    lead = passengers[0] if passengers else {}
+    passengers = payload.get("passengers")
+    passengers = passengers if isinstance(passengers, list) else []
+    lead = _dict(passengers[0]) if passengers else {}
     name = f"{lead.get('firstName') or ''} {lead.get('lastName') or ''}".strip()
 
     return Summary(
@@ -87,7 +102,7 @@ def summarize(payload: dict) -> Summary:
         pickup_summary=pickup.get("address") or "",
         dropoff_summary=dropoff.get("address") or "",
         passenger_name=name,
-        passenger_count=int(payload.get("passengerCount") or len(passengers) or 1),
+        passenger_count=_passenger_count(payload.get("passengerCount"), len(passengers) or 1),
         alerts=alerts,
     )
 

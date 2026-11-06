@@ -86,3 +86,30 @@ def test_price_request(rate, transfer_min, hourly_min, hourly, expected):
 
 def test_price_request_no_vehicle():
     assert farm_in.price_request(None, hourly=False) is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("two", 1), ("2.0", 1), ("2+1", 1), ("0", 1), ("-3", 1), ({"n": 2}, 1), ([2], 1), (" 3 ", 3)],
+)
+def test_passenger_count_is_tolerant(raw, expected):
+    p = sample_payload()
+    p["passengerCount"] = raw
+    assert farm_in.summarize(p).passenger_count == expected
+
+
+def test_malformed_locations_do_not_raise():
+    p = sample_payload()
+    p["locations"] = "somewhere"
+    s = farm_in.summarize(p)
+    assert s.pickup_at is None and farm_in.ALERT_NO_PICKUP in s.alerts
+    assert s.pickup_summary == "" and s.dropoff_summary == ""
+
+
+def test_malformed_passengers_do_not_raise():
+    p = sample_payload()
+    p["passengers"] = ["Alex"]
+    s = farm_in.summarize(p)
+    assert s.passenger_name == ""
+    p["passengers"] = "Alex"
+    assert farm_in.summarize(p).passenger_name == ""
