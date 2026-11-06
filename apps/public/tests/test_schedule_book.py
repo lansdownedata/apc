@@ -6,7 +6,7 @@ reschedule correlation, and it fires for an API booking exactly as for a UI one
 (probed 2026-08-31). Creating one here would race the webhook and duplicate.
 """
 
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -43,8 +43,20 @@ def _clear_cache():
     cache.clear()
 
 
+# The moment a test's slots are measured from, read once per test (APC-132): two posts in
+# one test must name the same slot even when the clock crosses a second between them.
+_NOW: dict[str, datetime] = {}
+
+
+@pytest.fixture(autouse=True)
+def _pin_now():
+    _NOW["now"] = timezone.now()
+    yield
+    _NOW.clear()
+
+
 def _start(days=3):
-    return (timezone.now() + timedelta(days=days)).replace(microsecond=0)
+    return (_NOW["now"] + timedelta(days=days)).replace(microsecond=0)
 
 
 def _iso(moment):
