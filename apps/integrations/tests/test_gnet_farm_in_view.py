@@ -120,3 +120,14 @@ def test_notification_failure_does_not_change_response(client, django_capture_on
 
 def test_put_not_allowed(client):
     assert client.put(reverse("gnet_farm_in")).status_code == 405
+
+
+def test_non_utf8_body(client):
+    r = _post(client, b"\xff\xfe\x00")
+    assert r.status_code == 200 and r.json() == {"error": "malformed payload"}
+
+
+def test_empty_tid_header_falls_back_to_body(client):
+    payload = sample_payload()
+    _post(client, payload, tid="")
+    assert FarmInRequest.objects.get().transaction_id == payload["transactionId"]

@@ -332,7 +332,7 @@ def gnet_farm_in(request):
         return HttpResponse(status=403)
     try:
         payload = json.loads(request.body or b"{}")
-    except json.JSONDecodeError:
+    except ValueError:
         return JsonResponse({"error": "malformed payload"})
     if not isinstance(payload, dict):
         return JsonResponse({"error": "malformed payload"})
@@ -347,7 +347,7 @@ def gnet_farm_in(request):
             delivery_id=delivery_id,
         )
     except Exception:
-        logger.exception("GNet farm-in failed", extra={"delivery_id": delivery_id})
+        logger.exception("GNet farm-in failed (delivery %s)", delivery_id)
         body = {"error": "internal error"}
     return JsonResponse(body)
 
