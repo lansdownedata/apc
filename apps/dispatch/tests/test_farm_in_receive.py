@@ -43,7 +43,8 @@ def test_new_creates_request_and_responds(sedan, django_capture_on_commit_callba
 
 
 def test_new_unpriced_omits_total_amount():
-    VehicleTypeFactory(name="Luxury Sedan", rate=0)
+    vt = VehicleTypeFactory(name="Luxury Sedan")
+    VehicleType.objects.filter(pk=vt.pk).update(rate=0)
     body = _new()
     assert "totalAmount" not in body and body["reservationId"].startswith("FI-")
     assert FarmInRequest.objects.get().quoted_amount is None
@@ -80,6 +81,8 @@ def test_new_rejects_overlong_requester_id(sedan):
     assert FarmInRequest.objects.count() == 0 and Company.objects.count() == 0
 
 
+# transaction=True flushes migration-seeded tables under --reuse-db; _test_serialized_contents
+# is Django-private (set when a collected test asks for serialized_rollback).
 @pytest.fixture(scope="module")
 def restore_seeded_rows(django_db_blocker):
     """Put the migration-seeded rows back after a transactional test's teardown flush.
@@ -115,6 +118,31 @@ def test_concurrent_new_produces_one_row(restore_seeded_rows, sedan):
     assert FarmInRequest.objects.count() == 1 and Company.objects.count() == 1
 
 
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_concurrent_new_different_transactions_same_unknown_requester(restore_seeded_rows, sedan):
+    results, errors = [], []
+    barrier = threading.Barrier(2)
+
+    def worker(tid):
+        try:
+            barrier.wait()
+            results.append(_new(tid=tid))
+        except Exception as exc:  # pragma: no cover - surfaced by the assert below
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=worker, args=(tid,)) for tid in ("tx-a", "tx-b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and len(results) == 2
+    assert all("error" not in body for body in results)
+    assert results[0]["reservationId"] != results[1]["reservationId"]
+    assert FarmInRequest.objects.count() == 2 and Company.objects.count() == 1
+
+
 def test_quote_priced_and_persists_nothing(sedan):
     body = farm_in.handle_quote(sample_payload(), transaction_id=TID)
     assert body == {"reservationId": TID, "totalAmount": "165.00"}
@@ -127,6 +155,8 @@ def test_quote_creates_no_company(sedan):
 
 
 def test_quote_unpriced():
+    vt = VehicleTypeFactory(name="Luxury Sedan")
+    VehicleType.objects.filter(pk=vt.pk).update(rate=0)
     body = farm_in.handle_quote(sample_payload(), transaction_id=TID)
     assert body == {"error": "No rate on file for SEDAN"}
 
@@ -208,6 +238,28 @@ def test_update_after_accept_stores_and_flags(sedan, django_capture_on_commit_ca
     assert n.farm_in_request_id == req.pk
 
 
+def test_update_cancel_on_declined_is_refused(sedan):
+    _new()
+    FarmInRequest.objects.update(status=FarmInRequest.Status.DECLINED)
+    p = sample_payload()
+    p["status"] = "CANCEL"
+    assert _update(p) == {"error": "request is declined"}
+    assert FarmInRequest.objects.get().status == FarmInRequest.Status.DECLINED
+
+
+def test_update_cancel_on_canceled_is_idempotent(sedan, django_capture_on_commit_callbacks):
+    _new()
+    FarmInRequest.objects.update(status=FarmInRequest.Status.CANCELED, updated_after_accept=True)
+    p = sample_payload()
+    p["status"] = "CANCEL"
+    with django_capture_on_commit_callbacks(execute=True):
+        body = _update(p)
+    req = FarmInRequest.objects.get()
+    assert body == {"reservationId": f"FI-{req.pk}"}
+    assert req.delivery_id == "d-1" and req.gnet_status == "BOOKING_REQUEST"
+    assert not Notification.objects.filter(kind=Notification.Kind.FARM_IN_UPDATED).exists()
+
+
 @pytest.mark.parametrize("status", ["declined", "canceled", "expired"])
 def test_update_on_closed_request(sedan, status):
     _new()
@@ -220,5 +272,8 @@ def test_receive_dispatch():
         "error": "unsupported event nope"
     }
     assert farm_in.receive(farm_in.EVENT_NEW, {}, transaction_id="", delivery_id="d") == {
+        "error": "transaction id missing"
+    }
+    assert farm_in.receive(farm_in.EVENT_NEW, {}, transaction_id="  ", delivery_id="d") == {
         "error": "transaction id missing"
     }

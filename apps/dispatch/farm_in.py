@@ -36,6 +36,11 @@ ALERT_CANCELED = "Requester canceled"
 ALERT_UPDATED_AFTER_ACCEPT = "Updated by requester after accept, review the order"
 
 GNET_CANCEL = "CANCEL"
+_CLOSED = (
+    FarmInRequest.Status.DECLINED,
+    FarmInRequest.Status.CANCELED,
+    FarmInRequest.Status.EXPIRED,
+)
 _MAX_SMALL_INT = 32767
 
 _CENT = Decimal("0.01")
@@ -250,45 +255,74 @@ def handle_quote(payload: dict, *, transaction_id: str) -> dict:
     return {"reservationId": transaction_id, "totalAmount": f"{amount:.2f}"}
 
 
+class _RequesterRejected(Exception):
+    """`ensure_requester` refused the payload; the message is GNet's error text."""
+
+
+def _insert_new(payload: dict, *, transaction_id: str, delivery_id: str) -> FarmInRequest:
+    """Create the requester (if new) and the request in one savepoint; may raise IntegrityError."""
+    with transaction.atomic():
+        try:
+            company, company_created = ensure_requester(payload)
+        except ValueError as exc:
+            raise _RequesterRejected(str(exc)) from exc
+        summary = summarize(payload)
+        amount = price_request(summary.vehicle, hourly=summary.hourly)
+        now = timezone.now()
+        req = FarmInRequest.objects.create(
+            transaction_id=transaction_id,
+            requester_grid_id=company.gnet_grid_id,
+            company=company,
+            company_created=company_created,
+            quoted_amount=amount,
+            pricing_source=FarmInRequest.PricingSource.RATE_CARD if amount is not None else "",
+            alert=_clip("alert", " · ".join(summary.alerts)),
+            received_at=now,
+            **_payload_fields(payload, delivery_id=delivery_id, now=now),
+            **_summary_fields(summary),
+        )
+        req_pk = req.pk
+        transaction.on_commit(lambda: _notify_new(req_pk))
+    return req
+
+
 def handle_new(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
     """Store a new farm-in request once per transaction id and answer with its token.
 
-    A re-delivery replays the stored response without re-pricing. Two concurrent first
-    deliveries are settled by the database: the savepoint covers both the requester company
-    and the request insert, so the loser hits a unique index (the company's griddID or the
-    request's transaction id), rolls back only its savepoint, and re-reads the winner's row.
-    `ensure_requester` runs first so that, when the company exists, its row lock queues the
-    pair and the loser's insert fails on `transaction_id` rather than racing it.
+    A re-delivery replays the stored response without re-pricing. Concurrent first
+    deliveries are settled by unique indexes: the savepoint covers the requester company and
+    the request insert, so a loser rolls back only its savepoint. If it collided on its own
+    transaction id, the winner's row is that request and is replayed. If it collided on the
+    company's griddID (a different transaction from the same never-seen requester), no row
+    exists for its id yet, so the savepoint runs once more: the company now exists and
+    `ensure_requester` finds it under lock. `ensure_requester` runs first so that, when the
+    company exists, its row lock queues same-requester deliveries.
     """
     existing = FarmInRequest.objects.filter(transaction_id=transaction_id).first()
     if existing:
         return stored_response(existing)
     try:
-        with transaction.atomic():
-            try:
-                company, company_created = ensure_requester(payload)
-            except ValueError as exc:
-                return {"error": str(exc)}
-            summary = summarize(payload)
-            amount = price_request(summary.vehicle, hourly=summary.hourly)
-            now = timezone.now()
-            req = FarmInRequest.objects.create(
-                transaction_id=transaction_id,
-                requester_grid_id=company.gnet_grid_id,
-                company=company,
-                company_created=company_created,
-                quoted_amount=amount,
-                pricing_source=FarmInRequest.PricingSource.RATE_CARD if amount is not None else "",
-                alert=_clip("alert", " · ".join(summary.alerts)),
-                received_at=now,
-                **_payload_fields(payload, delivery_id=delivery_id, now=now),
-                **_summary_fields(summary),
-            )
-            req_pk = req.pk
-            transaction.on_commit(lambda: _notify_new(req_pk))
-    except IntegrityError:
-        req = FarmInRequest.objects.get(transaction_id=transaction_id)
+        req = _insert_or_replay(payload, transaction_id=transaction_id, delivery_id=delivery_id)
+    except _RequesterRejected as exc:
+        return {"error": str(exc)}
     return stored_response(req)
+
+
+def _insert_or_replay(
+    payload: dict, *, transaction_id: str, delivery_id: str, retry: bool = True
+) -> FarmInRequest:
+    """Insert, or on a unique-index collision return this transaction's row; retry once."""
+    try:
+        return _insert_new(payload, transaction_id=transaction_id, delivery_id=delivery_id)
+    except IntegrityError:
+        req = FarmInRequest.objects.filter(transaction_id=transaction_id).first()
+        if req is not None:
+            return req
+        if not retry:
+            raise
+    return _insert_or_replay(
+        payload, transaction_id=transaction_id, delivery_id=delivery_id, retry=False
+    )
 
 
 def _store_delivery(req: FarmInRequest, payload: dict, *, delivery_id: str) -> None:
@@ -299,7 +333,7 @@ def _store_delivery(req: FarmInRequest, payload: dict, *, delivery_id: str) -> N
 
 
 def _cancel(req: FarmInRequest) -> None:
-    """The requester canceled: close the row; an accepted trip is flagged, its order kept."""
+    """The requester canceled an open row; an accepted trip is flagged, its order kept."""
     if req.status == FarmInRequest.Status.ACCEPTED:
         req.updated_after_accept = True
         req.alert = ALERT_CANCELED
@@ -320,28 +354,35 @@ def _rederive(req: FarmInRequest, summary: Summary) -> None:
 
 
 def handle_update(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
-    """Apply a requester's change or cancellation to the stored request (spec §5.4)."""
+    """Apply a requester's change or cancellation to the stored request (spec §5.4).
+
+    Closed rows refuse every update, a cancel included, except that a repeated cancel on a
+    canceled row is answered as a success and changes nothing.
+    """
     with transaction.atomic():
         rows = FarmInRequest.objects.select_for_update()
         req = rows.filter(transaction_id=transaction_id).first()
         if req is None:
             return {"error": "unknown transaction"}
-        if _gnet_status(payload) == GNET_CANCEL:
+        is_cancel = _gnet_status(payload) == GNET_CANCEL
+        if is_cancel and req.status == FarmInRequest.Status.CANCELED:
+            return {"reservationId": req.reservation_id_token}
+        if req.status in _CLOSED:
+            return {"error": f"request is {req.status}"}
+        if is_cancel:
             _cancel(req)
             _store_delivery(req, payload, delivery_id=delivery_id)
             req.save()
             return {"reservationId": req.reservation_id_token}
         if req.status == FarmInRequest.Status.PENDING:
             _rederive(req, summarize(payload))
-        elif req.status == FarmInRequest.Status.ACCEPTED:
+        else:
             req.updated_after_accept = True
             req.alert = ALERT_UPDATED_AFTER_ACCEPT
             req_pk = req.pk
             transaction.on_commit(
                 lambda: _notify_updated(req_pk, "GNet requester updated an accepted trip")
             )
-        else:
-            return {"error": f"request is {req.status}"}
         _store_delivery(req, payload, delivery_id=delivery_id)
         req.save()
         return stored_response(req)
@@ -349,6 +390,7 @@ def handle_update(payload: dict, *, transaction_id: str, delivery_id: str) -> di
 
 def receive(event: str, payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
     """Route one gateway delivery to its handler and return the body GNet gets back."""
+    transaction_id = (transaction_id or "").strip()
     if event not in (EVENT_QUOTE, EVENT_NEW, EVENT_UPDATE):
         return {"error": f"unsupported event {event}"}
     if not transaction_id:
