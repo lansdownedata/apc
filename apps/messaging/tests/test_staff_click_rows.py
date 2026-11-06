@@ -648,3 +648,26 @@ def test_a_seeded_touch_point_rows_choices_leave_out_clicks_and_schedules(client
     html = client.get(reverse("message_edit", args=["driver_released"])).content.decode()
     assert ">Staff clicks: " not in html and ">Schedules: " not in html
     assert ">Dates: " in html and ">Events: " in html
+
+
+def test_the_vendor_emails_plain_text_part_is_not_html_escaped():
+    """APC-128: an apostrophe or an ampersand in a stop or a name reads as typed in the
+    text part; the HTML part keeps escaping it."""
+    lead, _ = _booked()
+    trip = ReservationFactory(
+        lead=lead,
+        pickup_date=timezone.localdate() + timedelta(days=9),
+        pickup_time=time(15, 0),
+        stops=["St. Matthew's Cathedral", "Smith & Co, 1 Main St"],
+    )
+    vendor = VendorFactory(name="Smith & Co", email="ops@smith.example")
+    offer = dispatch_services.send_offer(trip, vendor, payout=Decimal("200.00"))
+    text, (html, _) = mail.outbox[-1].body, mail.outbox[-1].alternatives[0]
+    assert "St. Matthew's Cathedral" in text and "Smith & Co, 1 Main St" in text
+    assert "&#x27;" not in text and "&amp;" not in text
+    assert "St. Matthew&#x27;s Cathedral" in html
+
+    assert dispatch_services.send_cancellation(offer) is True
+    text, (html, _) = mail.outbox[-1].body, mail.outbox[-1].alternatives[0]
+    assert "St. Matthew's Cathedral" in text and "&#x27;" not in text
+    assert "St. Matthew&#x27;s Cathedral" in html
