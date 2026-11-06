@@ -49,6 +49,15 @@ def test_enqueue_creates_pending_and_delivers_on_commit(django_capture_on_commit
     assert req.alert == ""
 
 
+def test_success_keeps_another_statuss_failure_alert():
+    req = FarmInRequestFactory(alert="GNet CONFIRMED not delivered: old")
+    push = FarmInStatusPushFactory(request=req, status="ASSIGNED", state=Push.State.PENDING)
+    with patch.object(farm_in_push.gnet, "push_status", return_value={}):
+        farm_in_push.deliver(push)
+    req.refresh_from_db()
+    assert req.alert == "GNet CONFIRMED not delivered: old"
+
+
 def test_enqueue_skips_when_pending_exists_for_status():
     req = FarmInRequestFactory()
     FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.PENDING)
@@ -161,6 +170,73 @@ def test_retry_creates_fresh_pending_from_failed():
     fresh = farm_in_push.retry(failed)
     assert fresh.pk != failed.pk and fresh.state == Push.State.PENDING and fresh.attempts == 0
     assert fresh.status == "ASSIGNED" and fresh.total_amount == Decimal("10.00")
+
+
+def test_retry_refuses_when_status_already_delivered():
+    req = FarmInRequestFactory()
+    FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.SENT)
+    failed = FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.FAILED)
+    with pytest.raises(ValueError, match="Already delivered"):
+        farm_in_push.retry(failed)
+
+
+def test_retry_refuses_when_pending_exists():
+    req = FarmInRequestFactory()
+    FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.PENDING)
+    failed = FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.FAILED)
+    with pytest.raises(ValueError, match="A retry is already queued"):
+        farm_in_push.retry(failed)
+
+
+def test_retry_allows_repeatable_status_after_sent():
+    req = FarmInRequestFactory()
+    FarmInStatusPushFactory(request=req, status="ASSIGNED", state=Push.State.SENT)
+    failed = FarmInStatusPushFactory(request=req, status="ASSIGNED", state=Push.State.FAILED)
+    assert farm_in_push.retry(failed).state == Push.State.PENDING
+
+
+def test_deliver_on_sent_push_makes_no_call():
+    push = FarmInStatusPushFactory(state=Push.State.SENT)
+    with patch.object(farm_in_push.gnet, "push_status") as fake:
+        farm_in_push.deliver(push)
+    fake.assert_not_called()
+    push.refresh_from_db()
+    assert push.state == Push.State.SENT
+
+
+def test_cron_skips_a_push_claimed_by_another_attempt():
+    now = timezone.now()
+    FarmInStatusPushFactory(state=Push.State.PENDING, next_attempt_at=now - timedelta(seconds=1))
+    with patch.object(farm_in_push.gnet, "push_status", side_effect=GnetAPIError(503, "x")):
+        farm_in_push.deliver(Push.objects.get())
+        with patch.object(farm_in_push.gnet, "push_status") as fake:
+            assert farm_in_push.run_cron() == 0
+    fake.assert_not_called()
+
+
+def test_deliver_claims_with_a_lease_before_the_call():
+    push = FarmInStatusPushFactory(state=Push.State.PENDING, next_attempt_at=timezone.now())
+    seen = {}
+
+    def spy(*args, **kwargs):
+        seen["next"] = Push.objects.get(pk=push.pk).next_attempt_at
+        return {}
+
+    with patch.object(farm_in_push.gnet, "push_status", side_effect=spy):
+        farm_in_push.deliver(push)
+    assert seen["next"] > timezone.now() + timedelta(seconds=30)
+
+
+@pytest.mark.parametrize(
+    ("status", "retries"),
+    [(408, True), (429, True), (500, True), (400, False), (404, False)],
+)
+def test_status_matrix_boundaries(status, retries):
+    push = FarmInStatusPushFactory(state=Push.State.PENDING)
+    with _down(status):
+        farm_in_push.deliver(push)
+    push.refresh_from_db()
+    assert push.state == (Push.State.PENDING if retries else Push.State.FAILED)
 
 
 def test_retry_refuses_non_failed_push():

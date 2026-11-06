@@ -16,6 +16,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
@@ -30,22 +31,21 @@ MAX_ATTEMPTS = 8
 RETRY_STATUSES = frozenset({0, 408, 409, 429})
 EXPIRE_AFTER = timedelta(hours=1)
 _MAX_BACKOFF = timedelta(minutes=30)
+LEASE = timedelta(seconds=60)
 _ALERT_PREFIX = "GNet "
 
 
-def _create(
-    req: FarmInRequest, status: str, total_amount: Decimal | None, *, sent_blocks: bool
-) -> FarmInStatusPush | None:
-    """Create a pending push unless a pending one (or, if `sent_blocks`, a sent one) exists."""
+def _blocker(req: FarmInRequest, status: str) -> str:
+    """Why a push for `status` may not be queued ("" when it may)."""
     existing = FarmInStatusPush.objects.filter(request=req, status=status)
     if existing.filter(state=FarmInStatusPush.State.PENDING).exists():
-        return None
-    if (
-        sent_blocks
-        and status not in REPEATABLE
-        and existing.filter(state=FarmInStatusPush.State.SENT).exists()
-    ):
-        return None
+        return "A retry is already queued"
+    if status not in REPEATABLE and existing.filter(state=FarmInStatusPush.State.SENT).exists():
+        return "Already delivered"
+    return ""
+
+
+def _create(req: FarmInRequest, status: str, total_amount: Decimal | None) -> FarmInStatusPush:
     push = FarmInStatusPush.objects.create(
         request=req,
         status=status,
@@ -62,14 +62,23 @@ def enqueue(
     req: FarmInRequest, status: str, total_amount: Decimal | None = None
 ) -> FarmInStatusPush | None:
     """Queue a status push and try it once the transaction commits; None when blocked."""
-    return _create(req, status, total_amount, sent_blocks=True)
+    if _blocker(req, status):
+        return None
+    return _create(req, status, total_amount)
 
 
-def retry(push: FarmInStatusPush) -> FarmInStatusPush | None:
-    """Queue a fresh push for a failed one (nothing was sent, so a sent push cannot block)."""
+def retry(push: FarmInStatusPush) -> FarmInStatusPush:
+    """Queue a fresh push for a failed one; raises if the status was delivered or is queued.
+
+    The once-only rule still holds: a failed row stays retryable, so a sibling that was
+    already sent for a non-repeatable status must block a second retry.
+    """
     if push.state != FarmInStatusPush.State.FAILED:
         raise ValueError("Only a failed push can be retried")
-    return _create(push.request, push.status, push.total_amount, sent_blocks=False)
+    reason = _blocker(push.request, push.status)
+    if reason:
+        raise ValueError(reason)
+    return _create(push.request, push.status, push.total_amount)
 
 
 def _fail(push: FarmInStatusPush, reason: str) -> FarmInStatusPush:
@@ -91,7 +100,20 @@ def _fail(push: FarmInStatusPush, reason: str) -> FarmInStatusPush:
 
 
 def deliver(push: FarmInStatusPush) -> FarmInStatusPush:
-    """Make one delivery attempt and record the outcome on the push."""
+    """Make one delivery attempt and record the outcome on the push.
+
+    The attempt is claimed first by pushing `next_attempt_at` out by `LEASE`, so an
+    overlapping cron run or the on-commit attempt skips a push already in flight. A push
+    that is not pending, or not yet due, is returned untouched.
+    """
+    now = timezone.now()
+    claimed = FarmInStatusPush.objects.filter(
+        Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now),
+        pk=push.pk,
+        state=FarmInStatusPush.State.PENDING,
+    ).update(next_attempt_at=now + LEASE)
+    if not claimed:
+        return push
     if not settings.GNET_API_KEY:
         return _fail(push, "GNET_API_KEY not set")
     req = push.request
@@ -112,7 +134,7 @@ def deliver(push: FarmInStatusPush) -> FarmInStatusPush:
     push.sent_at = timezone.now()
     push.last_error = ""
     push.save(update_fields=["state", "sent_at", "last_error", "updated_at"])
-    if req.alert.startswith(_ALERT_PREFIX):
+    if req.alert.startswith(f"{_ALERT_PREFIX}{push.status} not delivered"):
         req.alert = ""
         req.save(update_fields=["alert", "updated_at"])
     return push
