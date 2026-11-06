@@ -12,6 +12,7 @@ from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseBadRequest,
+    HttpResponseNotAllowed,
     JsonResponse,
 )
 from django.shortcuts import redirect, render
@@ -19,6 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import owner_admin_required
+from apps.dispatch import farm_in
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
 from apps.messaging import events
@@ -308,6 +310,46 @@ def gnet_callback(request):
         return HttpResponse(status=200)
     handle_callback(payload)
     return HttpResponse(status=200)
+
+
+@csrf_exempt
+def gnet_farm_in(request):
+    """Receive GNet farm-in deliveries (contract v2 §1): `farm_in.new`, `.update`, `.quote`.
+
+    Unlike the farm-out callback, the gateway reads this body, so every outcome except
+    a bad signature is a 200 carrying either the success body or `{"error": ...}`; the
+    gateway treats a 4xx/5xx as a transport failure and retries. GET is the gateway's
+    reachability probe. The view never raises: an unexpected service failure is logged
+    and answered `internal error`.
+    """
+    if request.method == "GET":
+        return JsonResponse({"success": True})
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["GET", "POST"])
+    if not settings.GNET_CALLBACK_SECRET:
+        return JsonResponse({"error": "GNet farm-in is not configured"})
+    if not _gnet_signature_ok(request):
+        return HttpResponse(status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "malformed payload"})
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "malformed payload"})
+    headers = request.headers
+    transaction_id = headers.get("X-Lansdowne-Transaction-Id") or payload.get("transactionId", "")
+    delivery_id = headers.get("X-Lansdowne-Delivery-Id", "")
+    try:
+        body = farm_in.receive(
+            headers.get("X-Lansdowne-Event", ""),
+            payload,
+            transaction_id=transaction_id,
+            delivery_id=delivery_id,
+        )
+    except Exception:
+        logger.exception("GNet farm-in failed", extra={"delivery_id": delivery_id})
+        body = {"error": "internal error"}
+    return JsonResponse(body)
 
 
 @login_required

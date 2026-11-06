@@ -13,6 +13,7 @@ from apps.core.cron import run_job
 from apps.integrations.views import (
     calendly_webhook,
     gnet_callback,
+    gnet_farm_in,
     la_webhook,
     podium_webhook,
 )
@@ -97,6 +98,7 @@ urlpatterns = [
     path("webhooks/limoanywhere/<str:token>/", la_webhook, name="la_webhook"),
     path("webhooks/stripe/", stripe_webhook, name="stripe_webhook"),
     path("api/gnet/callback/", gnet_callback, name="gnet_callback"),
+    path("api/gnet/farm-in/", gnet_farm_in, name="gnet_farm_in"),
     path("cron/<slug:job>/", run_job, name="cron_job"),
     # API routes are mounted here as apps expose routers, e.g.:
     # path("api/", include("config.api")),
