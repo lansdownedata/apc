@@ -234,6 +234,9 @@ GNET_ACTIVE = env.bool("GNET_ACTIVE", default=False)
 GNET_GATEWAY_URL = env("GNET_GATEWAY_URL", default="https://lansdownedata.com")
 GNET_API_KEY = env("GNET_API_KEY", default="")
 GNET_CALLBACK_SECRET = env("GNET_CALLBACK_SECRET", default="")
+# Farm-in kill switch (APC-134): every farm-in delivery is refused until True. The GET
+# probe still answers. Go-live step in APC-137.
+GNET_FARM_IN_ENABLED = env.bool("GNET_FARM_IN_ENABLED", default=False)
 
 # Public marketing site — client-provided embeds (blank = feature hidden/degraded).
 CALENDLY_URL = env("CALENDLY_URL", default="")

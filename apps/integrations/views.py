@@ -326,6 +326,8 @@ def gnet_farm_in(request):
         return JsonResponse({"success": True})
     if request.method != "POST":
         return HttpResponseNotAllowed(["GET", "POST"])
+    if not settings.GNET_FARM_IN_ENABLED:
+        return JsonResponse({"error": "GNet farm-in is not enabled"})
     if not settings.GNET_CALLBACK_SECRET:
         return JsonResponse({"error": "GNet farm-in is not configured"})
     if not _gnet_signature_ok(request):

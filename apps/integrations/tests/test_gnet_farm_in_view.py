@@ -21,10 +21,20 @@ def _sig(secret, body):
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-def _post(client, payload, *, secret=SECRET, event="farm_in.new", tid=TID, sig=None, bearer=None):
+def _post(
+    client,
+    payload,
+    *,
+    secret=SECRET,
+    event="farm_in.new",
+    tid=TID,
+    sig=None,
+    bearer=None,
+    path=None,
+):
     body = json.dumps(payload).encode() if not isinstance(payload, bytes) else payload
     return client.post(
-        reverse("gnet_farm_in"),
+        path or reverse("gnet_farm_in"),
         data=body,
         content_type="application/json",
         HTTP_AUTHORIZATION=bearer or f"Bearer {secret}",
@@ -44,6 +54,7 @@ def _priced_sedan():
 @pytest.fixture(autouse=True)
 def _secret(settings):
     settings.GNET_CALLBACK_SECRET = SECRET
+    settings.GNET_FARM_IN_ENABLED = True
 
 
 def test_get_probe_needs_nothing(client, settings):
@@ -57,6 +68,38 @@ def test_blank_secret_refuses(client, settings):
     r = _post(client, sample_payload(), secret="x")
     assert r.status_code == 200 and r.json() == {"error": "GNet farm-in is not configured"}
     assert FarmInRequest.objects.count() == 0
+
+
+def test_disabled_refuses(client, settings):
+    settings.GNET_FARM_IN_ENABLED = False
+    r = _post(client, sample_payload())
+    assert r.status_code == 200 and r.json() == {"error": "GNet farm-in is not enabled"}
+    assert FarmInRequest.objects.count() == 0
+
+
+def test_disabled_is_checked_before_the_secret(client, settings):
+    settings.GNET_FARM_IN_ENABLED = False
+    settings.GNET_CALLBACK_SECRET = ""
+    r = _post(client, sample_payload(), secret="x")
+    assert r.json() == {"error": "GNet farm-in is not enabled"}
+
+
+def test_get_probe_answers_while_disabled(client, settings):
+    settings.GNET_FARM_IN_ENABLED = False
+    assert client.get(reverse("gnet_farm_in")).json() == {"success": True}
+
+
+def test_no_slash_path_is_served_not_redirected(client):
+    """The gateway POSTs without a trailing slash; a 301 would turn it into a GET."""
+    _priced_sedan()
+    r = _post(client, sample_payload(), path="/api/gnet/farm-in")
+    assert r.status_code == 200 and "reservationId" in r.json()
+    assert FarmInRequest.objects.filter(transaction_id=TID).exists()
+
+
+def test_no_slash_get_probe(client):
+    r = client.get("/api/gnet/farm-in")
+    assert r.status_code == 200 and r.json() == {"success": True}
 
 
 def test_bad_bearer_403(client):
