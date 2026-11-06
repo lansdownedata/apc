@@ -136,7 +136,7 @@ def summarize(payload: dict) -> Summary:
     return Summary(
         vehicle=vehicle,
         gnet_vehicle_type=code,
-        hourly="hour" in str(payload.get("runType", "")).lower(),
+        hourly=is_hourly(payload),
         pickup_at=pickup_at,
         timezone=tz_name,
         timezone_assumed=assumed,
@@ -146,6 +146,11 @@ def summarize(payload: dict) -> Summary:
         passenger_count=_passenger_count(payload.get("passengerCount"), len(passengers) or 1),
         alerts=alerts,
     )
+
+
+def is_hourly(payload: dict) -> bool:
+    """Whether the payload's runType says an hourly (as-directed) booking."""
+    return "hour" in str(payload.get("runType", "")).lower()
 
 
 def price_request(vehicle: VehicleType | None, *, hourly: bool) -> Decimal | None:
