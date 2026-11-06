@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
+from apps.contacts.models import Company, Contact
+from apps.core.choices import Channel
 from apps.integrations import gnet
 from apps.leads.models import VehicleType
 from apps.reservations import timezones
@@ -115,3 +117,27 @@ def price_request(vehicle: VehicleType | None, *, hourly: bool) -> Decimal | Non
     if hours <= 0:
         return None
     return (vehicle.rate * hours).quantize(_CENT)
+
+
+def ensure_requester(payload: dict) -> tuple[Company, bool]:
+    """Find or create the requesting operator's Company; call inside transaction.atomic()."""
+    rid = str(_dict(payload.get("affiliateReservation")).get("requesterId") or "").strip()
+    if not rid:
+        raise ValueError("requesterId missing")
+    company = Company.objects.select_for_update().filter(gnet_grid_id=rid).first()
+    if company:
+        return company, False
+    company = Company.objects.filter(name__iexact=rid, gnet_grid_id__isnull=True).first()
+    if company:
+        company.gnet_grid_id = rid
+        company.is_affiliate_account = True
+        company.save()
+        return company, False
+    company = Company.objects.create(
+        name=rid,
+        gnet_grid_id=rid,
+        is_affiliate_account=True,
+        notes="Auto-created from GNet farm-in",
+    )
+    Contact.objects.create(name=rid, company=company, channel=Channel.GNET)
+    return company, True

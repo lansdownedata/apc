@@ -2,7 +2,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from django.db import transaction
 
+from apps.contacts.factories import CompanyFactory
+from apps.contacts.models import Company, Contact
+from apps.core.choices import Channel
 from apps.dispatch import farm_in
 from apps.dispatch.tests.farm_in_payload import sample_payload
 from apps.leads.factories import VehicleTypeFactory
@@ -113,3 +117,34 @@ def test_malformed_passengers_do_not_raise():
     assert s.passenger_name == ""
     p["passengers"] = "Alex"
     assert farm_in.summarize(p).passenger_name == ""
+
+
+def test_ensure_requester_creates_company_and_contact():
+    with transaction.atomic():
+        company, created = farm_in.ensure_requester(sample_payload())
+    assert created and company.gnet_grid_id == "gnettest" and company.is_affiliate_account
+    contact = Contact.objects.get(company=company)
+    assert contact.name == "gnettest" and contact.channel == Channel.GNET
+
+
+def test_ensure_requester_reuses_by_grid_id():
+    existing = CompanyFactory(name="GNet Test Operator", gnet_grid_id="gnettest")
+    with transaction.atomic():
+        company, created = farm_in.ensure_requester(sample_payload())
+    assert company == existing and not created and Company.objects.count() == 1
+
+
+def test_ensure_requester_adopts_same_named_company():
+    existing = CompanyFactory(name="gnettest")
+    with transaction.atomic():
+        company, created = farm_in.ensure_requester(sample_payload())
+    existing.refresh_from_db()
+    assert company == existing and not created
+    assert existing.gnet_grid_id == "gnettest" and existing.is_affiliate_account
+
+
+def test_ensure_requester_blank_id():
+    p = sample_payload()
+    p["affiliateReservation"]["requesterId"] = ""
+    with pytest.raises(ValueError):
+        farm_in.ensure_requester(p)
