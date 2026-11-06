@@ -37,3 +37,13 @@ def resolve(stop) -> str:
     except Exception:
         return ""
     return found or ""
+
+
+def timezone_at(lat, lon) -> str | None:
+    """IANA zone for a coordinate pair, or None when missing, invalid or unresolvable."""
+    if lat is None or lon is None:
+        return None
+    try:
+        return _finder.timezone_at(lng=float(lon), lat=float(lat)) or None
+    except Exception:
+        return None
