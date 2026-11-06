@@ -37,14 +37,17 @@ def test_deposit_token_rejects_tampering():
 
 def _quotable_lead():
     """A NEW lead with one $185 reservation and a contact email."""
-    lead = LeadFactory(status=Lead.Status.NEW, contact=ContactFactory(email="rider@example.com"))
+    lead = LeadFactory(
+        status=Lead.Status.NEW,
+        contact=ContactFactory(email="rider@example.com", phone="(202) 555-0101"),
+    )
     TransferReservationFactory(lead=lead, rate=Decimal("185.00"))
     return lead
 
 
 def test_send_quote_happy_path():
     lead = _quotable_lead()
-    phone = lead.contact.phone
+    phone = "+12025550101"  # a click sends E.164, like every message (APC-129)
     with patch("apps.integrations.podium.send_message", return_value={}) as send:
         result = services.send_quote(lead, base_url=BASE_URL)
 

@@ -90,6 +90,11 @@ class _Click:
     logo: bool = False
     # The email's hidden inbox preview line (`rendering.preheader`).
     preheader: str = ""
+    # The coverage the click is about (an offer, a cancellation): what the company and
+    # driver recipient keys read (APC-129).
+    assignment: object = None
+    # A Podium link's rule: each person is texted when they have a mobile, else emailed.
+    text_first: bool = False
 
 
 @dataclass
@@ -655,13 +660,20 @@ def _send(
     if click is None and "sms" in channels:
         until = quiet.hold_until(tp, row, now=timezone.now(), config=config)
     held = False
+    text_first = click is not None and click.text_first and "sms" in channels
     for channel in channels:
         for person in people:
+            if text_first and channel == "email" and _address(person, "sms"):
+                continue  # texted instead
+            if text_first and channel == "sms" and _address(person, "email"):
+                continue  # emailed instead
             if channel in person.channels and not _address(person, channel):
                 if (channel, person.label[:160]) not in reported:
                     reported.add((channel, person.label[:160]))
                     _record(tp, row, channel, person, "", key, "skipped", MISSING[channel])
         for person, normalised in recipients.addresses(people, channel):
+            if text_first and channel == "email" and _address(person, "sms"):
+                continue  # texted instead
             address = _address(person, channel)
             if (channel, normalised) in sent_here:
                 continue
@@ -889,13 +901,29 @@ def _deliver(tp: TouchPoint, *, master, rows, click: _Click | None = None, confi
     elif tp.lead_id is None and row.audience != _A.STAFF:
         people = []  # nobody to resolve from without an order
     else:
-        people = rules.recipients_for(tp, row, recipients.resolve(row, tp.lead, tp.reservation))
+        people = _people(tp, row, assignment=click.assignment if click is not None else None)
     if not people:
         _mark(tp, status=TouchPoint.Status.SKIPPED, error=NO_RECIPIENT)
         return False
     if row.key == "review_request" and rules.has_built_ins(row):
         return _review(tp, row, people, config)
     return _send(tp, row, people, click, config)
+
+
+def _people(tp: TouchPoint, row: MessageTemplate, *, assignment=None) -> list[Recipient]:
+    """Who this send reaches: the row's recipients on this order, after the built-in rules."""
+    return rules.recipients_for(
+        tp, row, recipients.resolve(row, tp.lead, tp.reservation, assignment=assignment)
+    )
+
+
+def resolve_for(key: str, lead, reservation=None, *, assignment=None) -> list[Recipient]:
+    """Who a click of row ``key`` would reach on this order right now, for a caller that
+    needs to know before it sends (which channel a link goes on, whether a receipt has
+    anywhere to go). Resolved exactly as the send resolves them (APC-129)."""
+    row = MessageTemplate.objects.get(key=key)
+    tp = TouchPoint(lead=lead, reservation=reservation, message=row, kind=row.key)
+    return _people(tp, row, assignment=assignment)
 
 
 def _settle_after_error(
@@ -995,17 +1023,21 @@ def send_now(
     channels: set[str] | None = None,
     logo: bool = False,
     preheader: str = "",
+    assignment=None,
+    text_first: bool = False,
 ) -> SendResult:
     """Send the row ``key`` now, inside the click: a staff-click send, an invite or password
     reset, or a staff report (spec C sections 3 and 8). Never raises for a send.
 
     It leaves the same trail as every other send: a TouchPoint (no ``lead`` for an invite or
     a report) and a Delivery per person per channel, through the same deliver path. ``to``
-    replaces the row's recipients; ``extra_ctx`` adds or overrides placeholder values (the
-    caller's links, built from its request); ``blocks`` fills the generated parts;
-    ``channels`` narrows the row's channels to the ones the user picked; ``logo`` attaches
-    the masthead logo (only the quote and the affiliate offer carry it today); ``preheader``
-    is the email's inbox preview line.
+    replaces the row's recipients (an invite's account holder; a click reads its row,
+    APC-129); ``extra_ctx`` adds or overrides placeholder values (the caller's links, built
+    from its request); ``blocks`` fills the generated parts; ``channels`` narrows the row's
+    channels to the ones the user picked; ``logo`` attaches the masthead logo (only the
+    quote and the affiliate offer carry it today); ``preheader`` is the email's inbox
+    preview line; ``assignment`` is the coverage an affiliate click is about;
+    ``text_first`` texts each person who has a mobile and emails the rest (a Podium link).
 
     Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
     which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the
@@ -1020,6 +1052,8 @@ def send_now(
         channels=None if channels is None else frozenset(channels),
         logo=logo,
         preheader=preheader,
+        assignment=assignment,
+        text_first=text_first,
     )
     now = timezone.now()
     with transaction.atomic():

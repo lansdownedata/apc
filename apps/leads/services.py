@@ -25,7 +25,6 @@ from apps.accounts.models import User
 from apps.core import outbound
 from apps.messaging import events, rendering, sender
 from apps.messaging.models import Delivery
-from apps.messaging.recipients import Recipient
 from apps.payments.models import PaymentPlan
 
 logger = logging.getLogger(__name__)
@@ -211,15 +210,17 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
             http_status=400,
             error="Add at least one reservation before sending the quote.",
         )
-    email = (lead.contact.email or "").strip()
-    phone = (lead.contact.phone or "").strip()
-    if "email" in selected and not email:
+    # Who the Send-quote row reaches on this order (APC-129); each chosen channel needs
+    # someone with an address on it.
+    key = "send_quote_on_account" if lead.on_account else "send_quote"
+    people = sender.resolve_for(key, lead)
+    if "email" in selected and not any(p.email and "email" in p.channels for p in people):
         return SendQuoteResult(
             ok=False,
             http_status=400,
             error="Add a customer email before sending the quote by email.",
         )
-    if "sms" in selected and not phone:
+    if "sms" in selected and not any(p.phone and "sms" in p.channels for p in people):
         return SendQuoteResult(
             ok=False,
             http_status=400,
@@ -248,22 +249,13 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         events.emit("quote_sent", lead)
 
     # 6. deliver on each selected channel through the Send-quote message row (an order
-    # billed to an account has its own wording) — best-effort, never rolls back the
-    # transition
-    contact = lead.contact
-    person = Recipient(
-        name=contact.name,
-        label=f"{contact.name} (booking contact)",
-        phone=phone,
-        email=email,
-        contact_id=contact.pk,
-    )
+    # billed to an account has its own wording) to the people it lists — best-effort,
+    # never rolls back the transition
     try:
         summary = _quote_email_context(lead, plan, link)
         sent = sender.send_now(
-            "send_quote_on_account" if lead.on_account else "send_quote",
+            key,
             lead,
-            to=[person],
             extra_ctx=_quote_values(lead, plan, link),
             blocks={
                 "quote_summary": rendering.block("quote_summary", summary),
@@ -277,7 +269,7 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         logger.exception("quote %s: building its message failed", lead.pk)
         sent = sender.SendResult(sent=False, deliveries=[], errors=[str(exc)])
     delivery: dict = {}
-    for channel, address in (("email", email), ("sms", phone)):
+    for channel in ("email", "sms"):
         if channel not in selected:
             continue
         mine = [d for d in sent.deliveries if d.channel == channel]
@@ -285,6 +277,9 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         error = None
         if not ok:
             error = next((d.reason for d in mine if d.reason), "") or "; ".join(sent.errors)
+        address = next((d.address for d in mine if d.status == Delivery.Status.SENT), "") or next(
+            (p.phone if channel == "sms" else p.email for p in people), ""
+        )
         delivery[channel] = {"sent": ok, "recipient": address, "error": error or None}
 
     return SendQuoteResult(

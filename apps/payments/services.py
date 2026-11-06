@@ -1122,47 +1122,36 @@ def send_terms_link(lead, *, base_url: str, sender_name: str) -> str:
     return _send_link(lead, "send_terms_link", {"terms_link": link}, sender_name=sender_name)
 
 
-def _reach(contact):
-    """Who a link goes to and on which channel: the order's contact, SMS preferred, email
-    fallback, at the address as stored."""
-    from apps.messaging.recipients import Recipient
+def _reach(key: str, lead):
+    """Who a link goes to (the row's recipients on this order, APC-129) and the channel its
+    first person gets it on: text when they have a mobile, email otherwise."""
+    from apps.messaging import sender
 
-    if contact.phone:
-        channel = "sms"
-    elif contact.email:
-        channel = "email"
-    else:
-        raise PaymentError("No phone or email on file for this contact.")
-    person = Recipient(
-        name=contact.name,
-        label=f"{contact.name} (booking contact)",
-        phone=contact.phone or "",
-        email=(contact.email or "").strip(),
-        contact_id=contact.pk,
-    )
-    return channel, person
+    people = sender.resolve_for(key, lead)
+    for person in people:
+        if person.phone and "sms" in person.channels:
+            return "sms", person, people
+        if person.email and "email" in person.channels:
+            return "email", person, people
+    raise PaymentError("No phone or email on file for this contact.")
 
 
 def _send_link(lead, key: str, values: dict, *, sender_name: str) -> str:
-    """Send message row ``key`` (a link) to the order's contact; returns the channel used."""
+    """Send message row ``key`` (a link) to the people it lists; returns the channel the
+    first of them got it on."""
     from apps.messaging import sender
 
-    channel, person = _reach(lead.contact)
+    channel, person, _ = _reach(key, lead)
     body = sender.podium_text(key, lead, person, channel, extra_ctx=values)
     return _send_to_customer(
-        lead,
-        key=key,
-        body=body,
-        values=values,
-        channel=channel,
-        person=person,
-        sender_name=sender_name,
+        lead, key=key, body=body, values=values, channel=channel, sender_name=sender_name
     )
 
 
-def _send_to_customer(lead, *, key, body, values, channel, person, sender_name) -> str:
-    """One Podium message (the row ``key``, which renders as ``body``) to the order's
-    contact on ``channel``, recorded as outbound on their conversation. Returns the channel.
+def _send_to_customer(lead, *, key, body, values, channel, sender_name) -> str:
+    """One Podium message (the row ``key``, which renders as ``body``) to each person the
+    row lists, texted when they have a mobile and emailed otherwise, recorded as outbound
+    on the order contact's conversation. Returns ``channel``, the first person's.
 
     A send that fails raises `PodiumAPIError` with the provider's reason, for the caller to
     report as the gateway failure it is."""
@@ -1171,7 +1160,7 @@ def _send_to_customer(lead, *, key, body, values, channel, person, sender_name) 
     from apps.messaging import services as messaging_services
     from apps.messaging.models import Delivery, Message
 
-    result = sender.send_now(key, lead, to=[person], extra_ctx=values, channels={channel})
+    result = sender.send_now(key, lead, extra_ctx=values, text_first=True)
     if not result.sent:
         raise PodiumAPIError("; ".join(result.errors) or "The message was not sent.")
     uid = next((d.provider_id for d in result.deliveries if d.status == Delivery.Status.SENT), "")

@@ -41,32 +41,41 @@ def is_staff_click(trigger_key: str) -> bool:
     return trigger is not None and trigger.kind == "staff_click"
 
 
-# A seeded staff-click row's button decides who gets it, on which channel and when; the row
-# holds the wording (APC-129 tracks making the buttons row-driven). Its trigger, audience,
-# recipients, channels and service types are fixed, and the editor says this instead.
-LOCKED = ("trigger", "audience", "recipients", "staff_emails", "send_sms", "send_email")
+# A seeded staff-click row's button decides on which channel and when it goes; the row
+# holds the wording and, since APC-129, who gets it. Its trigger, audience, channels and
+# service types are fixed, and the editor says this instead. An invite's recipient is the
+# account holder its caller names, so those rows lock their recipients too.
+LOCKED = ("trigger", "audience", "send_sms", "send_email")
+INVITE_LOCKED = (*LOCKED, "recipients", "staff_emails")
 SET_BY_BUTTON = "Set by the button; it can't be changed here."
 CLICK_WHO = {
     "send_quote": (
-        "Goes to the booking contact by text and email, as staff choose when they click "
-        "Send quote — set by the button."
+        "Sent by text and email, as staff choose when they click Send quote, to the people "
+        "ticked here."
     ),
     "send_quote_on_account": (
-        "Goes to the booking contact by text and email, as staff choose when they click "
-        "Send quote on an order billed to an account — set by the button."
+        "Sent by text and email, as staff choose when they click Send quote on an order "
+        "billed to an account, to the people ticked here."
     ),
     "send_pay_link": (
-        "Goes to the booking contact by text, or email when there's no mobile — set by the button."
+        "Sent when staff click Send payment link: by text to anyone ticked here with a "
+        "mobile, by email to the rest."
     ),
     "send_terms_link": (
-        "Goes to the booking contact by text, or email when there's no mobile — set by the button."
+        "Sent when staff click Send terms link: by text to anyone ticked here with a "
+        "mobile, by email to the rest."
     ),
     "payment_receipt": (
-        "Goes to the billing contact by email, or the booking contact when the billing "
-        "contact has no email — set by the button."
+        "Sent by email once a payment or refund is recorded, to the people ticked here; "
+        "the booking contact stands in for a billing contact with no email."
     ),
-    "affiliate_offer": "Goes to the affiliate company by email — set by the button.",
-    "affiliate_cancel": "Goes to the affiliate company by email — set by the button.",
+    "affiliate_offer": (
+        "Sent by email when staff offer a trip; Company means the affiliate being offered it."
+    ),
+    "affiliate_cancel": (
+        "Sent by email when staff cancel a trip with an affiliate; Company means the "
+        "affiliate the trip is taken back from."
+    ),
 }
 # The invites, the reset and the wedding-details email: their caller names the person.
 INVITE_WHO = {
@@ -101,8 +110,14 @@ SET_BY_REPORT = "Set by the report; it can't be changed here."
 
 def is_locked(row: MessageTemplate) -> bool:
     """A seeded staff-click, invite or wedding-details row: its button (or form), not the
-    row, sets who, how and when."""
+    row, sets how and when."""
     return bool(row.seeded and (row.key in defaults.CLICKS or row.key in defaults.INVITES))
+
+
+def recipients_locked(row: MessageTemplate) -> bool:
+    """A seeded invite, reset or wedding-details row: its caller names the person, so the
+    row lists no one and the editor offers no one to tick."""
+    return bool(row.seeded and row.key in defaults.INVITES)
 
 
 def is_report(row: MessageTemplate) -> bool:
@@ -113,6 +128,8 @@ def is_report(row: MessageTemplate) -> bool:
 def locked_fields(row: MessageTemplate) -> tuple[tuple[str, ...], str]:
     """The fields a seeded row's sender fixes (service types aside: any locked row keeps
     them) and why, or ((), "") for a row the editor fully owns."""
+    if recipients_locked(row):
+        return INVITE_LOCKED, SET_BY_BUTTON
     if is_locked(row):
         return LOCKED, SET_BY_BUTTON
     if is_report(row):
@@ -723,6 +740,8 @@ def _to_lines(row: MessageTemplate, people: list) -> list[str]:
     lines = []
     for person in people:
         got = tuple(c for c in on if id(person) in claimed[c])
+        if rules.text_first(row) and len(got) == 2:
+            got = ("sms",)  # a link is texted to anyone with a mobile, emailed to the rest
         if got:
             lines.append(f"{_label(row, person)} · {_WORDS[got]}")
             continue
@@ -790,7 +809,7 @@ def preview(row: MessageTemplate, lead, *, service_types=()) -> dict:
             rules.fill_links(tp, row, ctx, base_url)
             contexts[channel] = ctx
             heads[channel] = _label(row, first) if first is not None else ""
-    if is_locked(row):
+    if recipients_locked(row):
         lines = [WHO[row.key]]
     email = ""
     if "email" in contexts:

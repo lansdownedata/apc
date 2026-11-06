@@ -419,11 +419,10 @@ def _edit(client, key, **over):
     [
         {"send_sms": None},
         {"send_email": None},
-        {"recipients": ["billing_contact"]},
         {"trigger": "quote_sent"},
         {"audience": "planner", "recipients": ["planner"]},
     ],
-    ids=["sms-off", "email-off", "recipients", "trigger", "audience"],
+    ids=["sms-off", "email-off", "trigger", "audience"],
 )
 def test_the_button_fields_of_a_click_row_cannot_be_changed(client, over):
     _owner(client)
@@ -467,22 +466,145 @@ def test_an_sms_off_attempt_leaves_the_pay_link_routing_alone(client):
     assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone", "email"]
 
 
-def test_the_editor_shows_who_the_button_sends_to_not_checkboxes(client):
+def test_the_editor_offers_recipient_checkboxes_on_a_click_row(client):
+    """APC-129: who gets a button send is the row's choice; how and when stay the button's."""
     from django.urls import reverse
 
     _owner(client)
     html = client.get(reverse("message_edit", args=["send_pay_link"])).content.decode()
 
     assert escape(editor.CLICK_WHO["send_pay_link"]) in html
-    assert 'type="checkbox" name="recipients"' not in html
+    assert 'type="checkbox" name="recipients"' in html
     assert 'name="trigger" value="send_pay_link"' in html  # posted as is, not picked
     assert 'id="id_trigger"' not in html
     assert '@click="sms = !sms' not in html
 
 
-def test_the_preview_says_who_the_button_sends_to():
+def test_a_click_rows_recipients_can_be_changed(client):
+    _owner(client)
+    resp = _edit(client, "send_pay_link", recipients=["booking_contact", "role:lead_planner"])
+
+    assert resp.status_code == 302
+    assert _row("send_pay_link").recipients == ["booking_contact", "role:lead_planner"]
+
+
+def test_the_preview_lists_who_the_row_reaches_on_this_order():
     lead = _quotable()
-    assert editor.preview(_row("send_pay_link"), lead)["to"] == [editor.CLICK_WHO["send_pay_link"]]
+    assert editor.preview(_row("send_pay_link"), lead)["to"] == [
+        "Dana Whitfield (booking contact) · text"
+    ]
+
+
+# --- the row's recipients drive the click (APC-129) ----------------------------------------
+
+
+def _planned(lead, **contact):
+    from apps.leads.models import LeadContact
+
+    values = {"name": "Lee Planner", "email": "lee@plan.example", "phone": "+12025550177"}
+    planner = ContactFactory(**(values | contact))
+    LeadContact.objects.create(lead=lead, contact=planner, role=LeadContact.Role.LEAD_PLANNER)
+    return planner
+
+
+def test_the_quote_goes_to_everyone_the_row_lists():
+    lead = _quotable()
+    _planned(lead)
+    row = _row("send_quote")
+    row.recipients = ["booking_contact", "role:lead_planner"]
+    row.save()
+
+    with patch(SEND, return_value={"uid": "q"}) as send:
+        result = lead_services.send_quote(lead, base_url=BASE_URL)
+
+    assert result.ok
+    assert sorted(c.kwargs["identifier"] for c in send.call_args_list) == [
+        "+12025550101",
+        "+12025550177",
+    ]
+    assert sorted(mail.outbox[-1].to + mail.outbox[-2].to) == [
+        "dana@example.com",
+        "lee@plan.example",
+    ]
+
+
+def test_the_pay_link_goes_to_everyone_the_row_lists_text_first():
+    """The button's channel rule stays: text to whoever has a mobile, email otherwise."""
+    lead, _ = _booked()
+    _planned(lead, phone="")
+    row = _row("send_pay_link")
+    row.recipients = ["booking_contact", "role:lead_planner"]
+    row.save()
+
+    with patch(SEND, return_value={"uid": "p"}) as send:
+        assert payments.send_pay_link(lead, base_url=BASE_URL, sender_name="Sam") == "sms"
+
+    sent = sorted((c.kwargs["channel_type"], c.kwargs["identifier"]) for c in send.call_args_list)
+    assert sent == [("email", "lee@plan.example"), ("phone", "+12025550101")]
+
+
+def test_a_click_sends_phones_in_e164_like_every_other_message():
+    lead, _ = _booked(phone="(202) 555-0101")
+
+    with patch(SEND, return_value={"uid": "p"}) as send:
+        payments.send_pay_link(lead, base_url=BASE_URL, sender_name="Sam")
+
+    assert send.call_args.kwargs["identifier"] == "+12025550101"
+
+
+def test_the_receipt_falls_back_to_the_booking_contact_as_a_built_in_rule():
+    """The row lists the billing contact; the built-in rule sends the booking contact the
+    receipt when the billing contact has no email."""
+    from apps.messaging import rules
+    from apps.messaging.recipients import resolve
+
+    lead, trip = _booked(email="pat@example.com")
+    lead.billing_contact = ContactFactory(name="No Mail", email="", phone="+12025550199")
+    lead.save()
+    row = _row("payment_receipt")
+    tp = TouchPoint(lead=lead, reservation=trip, message=row, kind=row.key)
+
+    [person] = rules.recipients_for(tp, row, resolve(row, lead, trip))
+    assert (person.label, person.email) == ("Dana Whitfield (booking contact)", "pat@example.com")
+    assert "booking contact" in " ".join(rules.built_in_descriptions("payment_receipt"))
+
+    charge = _receipt(lead, trip)
+    assert receipts.send_receipt(charge.pk) is True
+    assert mail.outbox[-1].to == ["pat@example.com"]
+
+
+def test_the_offer_goes_to_the_affiliate_being_offered_not_the_confirmed_one():
+    _, trip = _booked()
+    AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="Holding Co", email="ops@holding.example"),
+        status=Assignment.Status.CONFIRMED,
+    )
+    Assignment.objects.filter(reservation=trip).update(status=Assignment.Status.WITHDRAWN)
+    offered = VendorFactory(name="New Co", email="ops@new.example")
+
+    dispatch_services.send_offer(trip, offered, payout=Decimal("200.00"))
+
+    assert mail.outbox[-1].to == ["ops@new.example"]
+
+
+def test_the_cancellation_goes_to_the_affiliate_losing_the_trip():
+    """After a reassignment the trip's confirmed affiliate is someone else; the notice
+    goes to the one the trip was taken back from."""
+    _, trip = _booked()
+    old = AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="Old Co", email="ops@old.example"),
+        status=Assignment.Status.WITHDRAWN,
+    )
+    AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="New Co", email="ops@new.example"),
+        status=Assignment.Status.CONFIRMED,
+    )
+
+    assert dispatch_services.send_cancellation(old) is True
+    assert mail.outbox[-1].to == ["ops@old.example"]
 
 
 def test_every_click_row_says_who_the_button_sends_to():

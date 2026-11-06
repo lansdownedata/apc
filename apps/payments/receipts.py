@@ -157,31 +157,18 @@ def receipt_context(charge: Charge) -> dict:
 
 
 def recipient(charge: Charge) -> str:
-    """The billing contact's email, else the booking contact's."""
-    lead = charge.reservation.lead
-    return (lead.effective_billing_contact.email or lead.contact.email or "").strip()
+    """The first email the "Receipt" row reaches on this order: the billing contact's, else
+    the booking contact's (the row's built-in rule, APC-129)."""
+    from apps.messaging import sender
+
+    trip = charge.reservation
+    people = sender.resolve_for("payment_receipt", trip.lead, trip)
+    return next((p.email for p in people if p.email and "email" in p.channels), "")
 
 
 def subject(context: dict) -> str:
     what = "refund" if context["is_refund"] else "receipt"
     return f"Your {context['company_name']} {what} {context['number']}"
-
-
-def _person(charge: Charge, to: str):
-    from apps.messaging.recipients import Recipient
-
-    lead = charge.reservation.lead
-    billing = lead.effective_billing_contact
-    contact = billing if (billing.email or "").strip() else lead.contact
-    why = "billing contact" if contact == billing else "booking contact"
-    return Recipient(
-        name=contact.name,
-        label=f"{contact.name} ({why})",
-        phone="",
-        email=to,
-        contact_id=contact.pk,
-        channels=("email",),
-    )
 
 
 def _sentence(name: str, context: dict) -> str:
@@ -242,8 +229,7 @@ def send_receipt(charge_id: int) -> bool:
                 return False
             charge.receipt_attempted_at = timezone.now()
             charge.save(update_fields=["receipt_attempted_at", "updated_at"])
-            to = recipient(charge)
-            if not to:
+            if not recipient(charge):
                 logger.warning("receipt %s not sent: no email on the order", charge_id)
                 return False
             context = receipt_context(charge)
@@ -252,7 +238,6 @@ def send_receipt(charge_id: int) -> bool:
             "payment_receipt",
             trip.lead,
             trip,
-            to=[_person(charge, to)],
             extra_ctx=message_values(context),
             blocks={"receipt_lines": rendering.block("receipt_lines", context)},
             preheader=rendering.preheader("trip_receipt", context),

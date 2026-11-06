@@ -128,8 +128,8 @@ def _confirmed(reservation):
     return confirmed_assignment(reservation)
 
 
-def _company(reservation) -> list[Recipient]:
-    assignment = _confirmed(reservation)
+def _company(reservation, assignment=None) -> list[Recipient]:
+    assignment = assignment if assignment is not None else _confirmed(reservation)
     vendor = assignment.vendor if assignment is not None and assignment.vendor_id else None
     if vendor is None:
         return []
@@ -144,8 +144,8 @@ def _company(reservation) -> list[Recipient]:
     ]
 
 
-def _driver(reservation) -> list[Recipient]:
-    assignment = _confirmed(reservation)
+def _driver(reservation, assignment=None) -> list[Recipient]:
+    assignment = assignment if assignment is not None else _confirmed(reservation)
     info = assignment.driver_info if assignment is not None else None
     if not info:
         return []
@@ -176,11 +176,13 @@ def _staff(row) -> list[Recipient]:
     ]
 
 
-def resolve(row, lead, reservation=None) -> list[Recipient]:
+def resolve(row, lead, reservation=None, *, assignment=None) -> list[Recipient]:
     """The row's recipients for this order (and trip). Unknown keys are ignored.
 
     A farmed-in order (`lead.is_farm_in`) replaces every customer-side key with the sending
-    operator, once. Vendor and driver keys are unaffected.
+    operator, once. Vendor and driver keys are unaffected. ``assignment`` is the coverage a
+    click is about (the affiliate being offered the trip, or losing it), which the company
+    and driver keys then read instead of the trip's confirmed coverage (APC-129).
     """
     if row.audience == row.Audience.STAFF:
         return _staff(row)
@@ -204,9 +206,9 @@ def resolve(row, lead, reservation=None) -> list[Recipient]:
         elif kind == "role" and arg in LeadContact.Role.values:
             out += _role(lead, arg)
         elif key == "company":
-            out += _company(reservation)
+            out += _company(reservation, assignment)
         elif key == "driver":
-            out += _driver(reservation)
+            out += _driver(reservation, assignment)
         elif key == "planner":
             out += _planners(lead)
     return out

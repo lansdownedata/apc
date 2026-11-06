@@ -604,6 +604,7 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
         "section_options": MessageTemplate.Section.choices,
         "trigger_options": _trigger_options(row, trigger_key),
         "locked": editor.is_locked(row),
+        "recipients_locked": editor.recipients_locked(row),
         "report_row": editor.is_report(row),
         "click_who": editor.WHO.get(row.key, "") if editor.is_locked(row) else "",
         "locked_error": next(
@@ -614,7 +615,9 @@ def _editor_context(form: MessageForm, row: MessageTemplate, title: str, new: bo
             ),
             "",
         ),
-        "stored_recipients": list(stored.recipients or []) if editor.is_locked(row) else [],
+        "stored_recipients": (
+            list(stored.recipients or []) if editor.recipients_locked(row) else []
+        ),
         "stored_services": [st.pk for st in types] if locked else [],
         "unit_options": [(u, u) for u in editor.TIMING_UNITS],
         "audience_options": MessageTemplate.Audience.choices,

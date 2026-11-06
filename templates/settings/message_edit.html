@@ -55,7 +55,9 @@
               <p class="text-[12.5px] leading-relaxed text-ink">{{ click_who }}</p>
             </div>
             {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
-            {% else %}
+            {% endif %}
+            {% if not recipients_locked %}
+            {% if not locked %}
             <input type="hidden" name="audience" value="{{ state.audience }}" :value="audience">
             {% if report_row %}
             {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
@@ -69,6 +71,7 @@
               {% endfor %}
             </div>
             {% if errors.audience %}<p class="text-[11.5px] text-rose-600">{{ errors.audience }}</p>{% endif %}
+            {% endif %}
             {% endif %}
 
             <div x-show="audience === 'staff'"{% if state.audience != "staff" %} style="display: none"{% endif %}>

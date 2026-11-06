@@ -151,19 +151,6 @@ def offer_email_context(assignment: Assignment) -> dict:
     }
 
 
-def _affiliate(vendor: Vendor):
-    from apps.messaging.recipients import Recipient
-
-    return Recipient(
-        name=vendor.name,
-        label=f"{vendor.name} (company)",
-        phone="",
-        email=vendor.email.strip(),
-        contact_id=None,
-        channels=("email",),
-    )
-
-
 def _affiliate_values(vendor: Vendor, trip: Reservation) -> dict[str, str]:
     """What the affiliate offer and cancellation rows fill from this click. A trip with no
     pickup date yet says so in the subject."""
@@ -221,7 +208,7 @@ def send_offer(
             "affiliate_offer",
             reservation.lead,
             reservation,
-            to=[_affiliate(vendor)],
+            assignment=assignment,
             extra_ctx={
                 **_affiliate_values(vendor, reservation),
                 "payout": f"${assignment.payout:,.2f}",
@@ -273,7 +260,7 @@ def send_cancellation(assignment: Assignment) -> bool:
             "affiliate_cancel",
             trip.lead,
             trip,
-            to=[_affiliate(vendor)],
+            assignment=assignment,
             extra_ctx=_affiliate_values(vendor, trip),
             blocks={"cancelled_trip_sheet": sheet},
             preheader=rendering.preheader("vendor_cancel", {}),

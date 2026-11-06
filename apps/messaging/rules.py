@@ -125,13 +125,31 @@ _DESCRIPTIONS: dict[str, list[str]] = {
         "Uses Podium's review invite",
         "Held after a complaint or a low rating",
     ],
+    # The button sends (APC-129): the row says who, the button how and when.
+    "send_quote": ["By text and email, as staff choose when they click Send quote"],
+    "send_quote_on_account": ["By text and email, as staff choose when they click Send quote"],
+    "send_pay_link": ["By text to anyone with a mobile, else by email"],
+    "send_terms_link": ["By text to anyone with a mobile, else by email"],
+    "payment_receipt": ["Goes to the booking contact when the billing contact has no email"],
+    "affiliate_offer": ["Goes to the affiliate being offered the trip"],
+    "affiliate_cancel": ["Goes to the affiliate the trip is taken back from"],
 }
 
 
 def has_built_ins(row: MessageTemplate) -> bool:
     """A seeded row keeps its built-in rules only while it stays on its original trigger."""
-    default = defaults.DEFAULTS.get(row.key)
+    default = defaults.ORIGINALS.get(row.key)
     return bool(row.seeded and default is not None and row.trigger == default.trigger)
+
+
+# The Podium links: each person is texted when they have a mobile, else emailed.
+TEXT_FIRST = frozenset({"send_pay_link", "send_terms_link"})
+
+
+def text_first(row: MessageTemplate) -> bool:
+    """Whether a row's send texts each person with a mobile and emails the rest (the pay
+    and terms links, on their own trigger)."""
+    return row.key in TEXT_FIRST and has_built_ins(row)
 
 
 def combines_per_trip(key: str) -> bool:
@@ -529,7 +547,22 @@ def recipients_for(
         and not tp.lead.is_farm_in
     ):
         return [_person(tp.lead.effective_billing_contact, "billing contact")]
+    if has_built_ins(row) and row.key == "payment_receipt" and not tp.lead.is_farm_in:
+        return _billing_else_booking(tp.lead, resolved)
     return resolved
+
+
+def _billing_else_booking(lead, resolved: list[Recipient]) -> list[Recipient]:
+    """The receipt's rule (APC-129): a billing contact with no email is stood in for by the
+    booking contact, once."""
+    out: list[Recipient] = []
+    for person in resolved:
+        if person.label.endswith("(billing contact)") and not person.email:
+            person = _person(lead.contact, "booking contact")
+            if any(p.contact_id == person.contact_id for p in out):
+                continue
+        out.append(person)
+    return out
 
 
 def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
