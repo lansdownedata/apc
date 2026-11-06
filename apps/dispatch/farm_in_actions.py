@@ -42,8 +42,16 @@ class FarmInActionError(Exception):
 
 
 def _locked(pk: int) -> FarmInRequest:
-    """Fetch the request under a row lock; call inside `transaction.atomic()`."""
-    return FarmInRequest.objects.select_for_update().select_related("company", "vehicle").get(pk=pk)
+    """Fetch the request under a row lock; call inside `transaction.atomic()`.
+
+    `of=("self",)` locks only the request row: Postgres refuses a plain FOR UPDATE on the
+    nullable side of the outer join that `vehicle` brings in.
+    """
+    return (
+        FarmInRequest.objects.select_for_update(of=("self",))
+        .select_related("company", "vehicle")
+        .get(pk=pk)
+    )
 
 
 def _require_pending(req: FarmInRequest) -> None:
@@ -101,8 +109,7 @@ def set_vehicle(pk: int, *, user: User, vehicle_id: int) -> FarmInRequest:
             req.pricing_source = (
                 FarmInRequest.PricingSource.RATE_CARD if req.quoted_amount is not None else ""
             )
-        unmapped = farm_in.ALERT_UNMAPPED.format(code=req.gnet_vehicle_type)
-        req.alert = " · ".join(a for a in req.alert.split(" · ") if a and a != unmapped)
+        farm_in._remove_alert(req, farm_in.ALERT_UNMAPPED_PREFIX)
         req.save()
     return req
 
@@ -183,12 +190,18 @@ _COORD = Decimal("0.000001")
 def accept(pk: int, *, user: User) -> FarmInRequest:
     """Book the request as an order and queue the CONFIRMED push with the trip's total.
 
+    Refused without `GNET_API_KEY`: the push would fail at once and GNet, never hearing
+    back, would time the request out and cover the trip elsewhere too.
+
     The order is built inside the same transaction that holds the request lock, so a
-    refused booking leaves no lead behind and the request stays pending.
+    refused booking leaves no lead behind and the request stays pending. Alerts the
+    booking resolves (unmapped vehicle, missing pickup) are dropped; the rest stay.
     """
     with transaction.atomic():
         req = _locked(pk)
         _require_pending(req)
+        if not settings.GNET_API_KEY:
+            raise FarmInActionError("GNet pushes are not configured: set GNET_API_KEY")
         if req.quoted_amount is None:
             raise FarmInActionError("Price the request first")
         if req.vehicle is None:
@@ -199,7 +212,10 @@ def accept(pk: int, *, user: User) -> FarmInRequest:
         req.reservation = reservation
         req.decided_by = user
         req.decided_at = timezone.now()
-        req.alert = ALERT_ACCEPTED_NO_PICKUP if req.pickup_at is None else ""
+        for resolved in (farm_in.ALERT_UNMAPPED_PREFIX, farm_in.ALERT_NO_PICKUP):
+            farm_in._remove_alert(req, resolved)
+        if req.pickup_at is None:
+            farm_in._add_alert(req, ALERT_ACCEPTED_NO_PICKUP)
         req.save()
         farm_in_push.enqueue(req, "CONFIRMED", reservation.line_total)
     return req

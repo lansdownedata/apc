@@ -40,6 +40,12 @@ def sedan():
 
 
 @pytest.fixture(autouse=True)
+def gnet_key(settings):
+    """Accept refuses without a key; on-commit pushes never run here, so no HTTP leaves."""
+    settings.GNET_API_KEY = "k"
+
+
+@pytest.fixture(autouse=True)
 def airport_and_airline():
     AirportFactory(iata="LAX", name="Los Angeles International", timezone="America/Los_Angeles")
     AirlineFactory(iata="UA")
@@ -70,6 +76,16 @@ def test_accept_requires_price_and_vehicle(req, agent):
     with pytest.raises(FarmInActionError, match="Choose a vehicle first") as exc:
         farm_in_actions.accept(req.pk, user=agent)
     assert exc.value.status == 400
+
+
+def test_accept_refuses_without_a_gnet_api_key(req, agent, settings):
+    settings.GNET_API_KEY = ""
+    with pytest.raises(FarmInActionError, match="set GNET_API_KEY") as exc:
+        farm_in_actions.accept(req.pk, user=agent)
+    assert exc.value.status == 400
+    assert Lead.objects.count() == 0 and not FarmInStatusPush.objects.exists()
+    req.refresh_from_db()
+    assert req.status == FarmInRequest.Status.PENDING
 
 
 def test_accept_books_a_lead_on_the_companys_contact(req, agent):
@@ -205,6 +221,26 @@ def test_accept_without_pickup_time_books_and_alerts(sedan, agent):
     assert out.status == FarmInRequest.Status.ACCEPTED
     assert lead.status == Lead.Status.BOOKED
     assert out.alert == "No pickup time: set it on the order"
+
+
+def test_accept_resolves_its_alerts_and_keeps_the_rest(sedan, agent):
+    payload = sample_payload()
+    del payload["locations"]["pickup"]["time"]
+    req = _req(payload)
+    FarmInRequest.objects.filter(pk=req.pk).update(
+        alert=" · ".join(
+            [
+                farm_in.ALERT_UPDATED,
+                farm_in.ALERT_UNMAPPED.format(code="SEDAN"),
+                farm_in.ALERT_NO_PICKUP,
+                farm_in.ALERT_TZ_ASSUMED,
+            ]
+        )
+    )
+    out, _, _ = _accept(req, agent)
+    assert out.alert == " · ".join(
+        [farm_in.ALERT_UPDATED, farm_in.ALERT_TZ_ASSUMED, "No pickup time: set it on the order"]
+    )
 
 
 def test_accept_marks_request_and_enqueues_confirmed(

@@ -30,6 +30,7 @@ EVENT_UPDATE = "farm_in.update"
 EVENT_QUOTE = "farm_in.quote"
 
 ALERT_UNMAPPED = "Unmapped vehicle type: {code}"
+ALERT_UNMAPPED_PREFIX = "Unmapped vehicle type: "
 ALERT_NO_PICKUP = "No pickup time in request"
 ALERT_TZ_ASSUMED = "Time zone assumed from company default"
 ALERT_UPDATED = "Updated by requester"
@@ -203,6 +204,22 @@ def stored_response(req: FarmInRequest) -> dict:
 def _clip(field_name: str, value: object) -> str:
     """``value`` cut to the column's length: payload text is untrusted and unbounded."""
     return str(value)[: FarmInRequest._meta.get_field(field_name).max_length]
+
+
+ALERT_SEP = " · "
+
+
+def _add_alert(req: FarmInRequest, text: str) -> None:
+    """Append one segment to the request's " · "-joined alert (not saved; never twice)."""
+    segments = [a for a in req.alert.split(ALERT_SEP) if a and a != text]
+    req.alert = _clip("alert", ALERT_SEP.join([*segments, text]))
+
+
+def _remove_alert(req: FarmInRequest, prefix: str) -> None:
+    """Drop every segment of the request's alert that starts with `prefix` (not saved)."""
+    req.alert = ALERT_SEP.join(
+        a for a in req.alert.split(ALERT_SEP) if a and not a.startswith(prefix)
+    )
 
 
 def _gnet_status(payload: dict) -> str:

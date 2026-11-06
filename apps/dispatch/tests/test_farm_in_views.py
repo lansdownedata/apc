@@ -1,15 +1,16 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
 
 from apps.addresses.factories import AirlineFactory, AirportFactory
-from apps.dispatch import farm_in
+from apps.dispatch import farm_in, farm_in_actions, farm_in_push
 from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactory
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.dispatch.tests.farm_in_payload import sample_payload
 from apps.leads.factories import VehicleTypeFactory
-from apps.leads.models import VehicleType
+from apps.leads.models import Lead, VehicleType
 
 pytestmark = pytest.mark.django_db
 TID = "935a1056-644c-4e82-9a1a-6099efdd056b"
@@ -78,16 +79,34 @@ def test_decline_endpoint_returns_409_when_already_accepted(logged_in_client):
     assert resp.json()["ok"] is False
 
 
-def test_accept_endpoint_books(logged_in_client, sedan, django_capture_on_commit_callbacks):
+def test_accept_endpoint_books(
+    logged_in_client, sedan, settings, django_capture_on_commit_callbacks
+):
+    settings.GNET_API_KEY = "k"
     AirportFactory(iata="LAX", name="Los Angeles International", timezone="America/Los_Angeles")
     AirlineFactory(iata="UA")
     farm_in.handle_new(sample_payload(), transaction_id=TID, delivery_id="d-1")
     req = FarmInRequest.objects.get(transaction_id=TID)
     logged_in_client.post(_url("farm_in_price", req.pk), {"amount": "165.00"})
-    with django_capture_on_commit_callbacks(execute=True):
+    with (
+        patch.object(farm_in_push, "deliver"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
         resp = logged_in_client.post(_url("farm_in_accept", req.pk))
     assert resp.status_code == 200
     assert resp.json()["status"] == FarmInRequest.Status.ACCEPTED
+
+
+def test_a_missing_row_inside_an_action_is_not_a_404(logged_in_client):
+    req = FarmInRequestFactory()
+    with patch.object(farm_in_actions, "accept", side_effect=Lead.DoesNotExist("bug")):
+        with pytest.raises(Lead.DoesNotExist):
+            logged_in_client.post(_url("farm_in_accept", req.pk))
+
+
+def test_retry_push_unknown_pk_is_404(logged_in_client):
+    resp = logged_in_client.post(reverse("farm_in_retry_push", args=[999999]))
+    assert resp.status_code == 404
 
 
 def test_retry_push_endpoint(logged_in_client):

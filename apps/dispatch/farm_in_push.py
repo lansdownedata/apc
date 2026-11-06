@@ -24,6 +24,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.dispatch import farm_in
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.integrations import gnet
 from apps.integrations.gnet import GnetAPIError
@@ -84,7 +85,11 @@ def _create(req: FarmInRequest, status: str, total_amount: Decimal | None) -> Fa
 def enqueue(
     req: FarmInRequest, status: str, total_amount: Decimal | None = None
 ) -> FarmInStatusPush | None:
-    """Queue a status push and try it once the transaction commits; None when blocked."""
+    """Queue a status push and try it once the transaction commits; None when blocked.
+
+    The caller must hold `select_for_update` on `req`'s row for the whole transaction:
+    the once-only check (`_blocker`) and the insert are only atomic under that lock.
+    """
     if _blocker(req, status):
         return None
     return _create(req, status, total_amount)
@@ -151,13 +156,23 @@ def retry(push: FarmInStatusPush) -> FarmInStatusPush:
     return _create(push.request, push.status, push.total_amount)
 
 
+def _failure_prefix(status: str) -> str:
+    return f"{_ALERT_PREFIX}{status} not delivered"
+
+
 def _fail(push: FarmInStatusPush, reason: str) -> FarmInStatusPush:
-    """Mark a push terminally failed and tell the desk."""
+    """Mark a push terminally failed and tell the desk.
+
+    The failure becomes one segment of the request's alert, replacing an older failure for
+    the same status; the other segments stay.
+    """
     push.state = FarmInStatusPush.State.FAILED
     push.last_error = reason[:500]
     push.save(update_fields=["state", "last_error", "attempts", "updated_at"])
     req = push.request
-    req.alert = f"{_ALERT_PREFIX}{push.status} not delivered: {reason}"[:255]
+    req.refresh_from_db(fields=["alert"])
+    farm_in._remove_alert(req, _failure_prefix(push.status))
+    farm_in._add_alert(req, f"{_failure_prefix(push.status)}: {reason}")
     req.save(update_fields=["alert", "updated_at"])
     Notification.notify(
         None,
@@ -204,8 +219,10 @@ def deliver(push: FarmInStatusPush) -> FarmInStatusPush:
     push.sent_at = timezone.now()
     push.last_error = ""
     push.save(update_fields=["state", "sent_at", "last_error", "updated_at"])
-    if req.alert.startswith(f"{_ALERT_PREFIX}{push.status} not delivered"):
-        req.alert = ""
+    req.refresh_from_db(fields=["alert"])
+    before = req.alert
+    farm_in._remove_alert(req, _failure_prefix(push.status))
+    if req.alert != before:
         req.save(update_fields=["alert", "updated_at"])
     return push
 

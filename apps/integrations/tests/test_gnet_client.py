@@ -431,6 +431,14 @@ def test_push_status_posts_status_and_string_amount():
     assert kwargs["headers"]["Authorization"] == "Bearer lds_testkey1234567890"
 
 
+def test_push_status_quotes_the_transaction_id_in_the_path():
+    with patch.object(gnet, "requests") as req:
+        req.request.return_value = _response(200, {})
+        gnet.push_status("tx/1?x", "CANCEL")
+    url = req.request.call_args.args[1]
+    assert url == "https://gateway.example.test/api/gateway/v1/trips/tx%2F1%3Fx/status"
+
+
 def test_push_status_omits_amount_when_none():
     with patch.object(gnet, "requests") as req:
         req.request.return_value = _response(200, {})

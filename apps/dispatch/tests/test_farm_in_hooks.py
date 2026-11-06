@@ -14,6 +14,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
+from apps.accounts.models import User
 from apps.contacts.factories import ContactFactory
 from apps.dispatch import farm_in_push
 from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactory
@@ -21,6 +22,7 @@ from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments import ledger
+from apps.payments import services as payments
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import Charge, JournalEntry
 from apps.reservations import processing
@@ -276,3 +278,23 @@ def test_final_reported_reads_sent_close_only():
 
     assert farm_in_push.final_reported(trip) == Decimal("165.00")
     assert farm_in_push.final_reported(ReservationFactory()) is None
+
+
+def test_cancelling_an_accepted_farm_in_trip_queues_cancel():
+    trip = _trip(S.ASSIGNED)
+    req = _farmed_in(trip)
+    payments.cancel_trips(trip.lead, [trip], user=UserFactory(role=User.Role.OWNER_ADMIN))
+    trip.refresh_from_db()
+    assert trip.trip_status == S.CANCELLED
+    assert list(Push.objects.filter(request=req).values_list("status", "state")) == [
+        ("CANCEL", Push.State.PENDING)
+    ]
+
+
+def test_a_failing_farm_in_hook_never_breaks_a_cancel():
+    trip = _trip(S.ASSIGNED)
+    _farmed_in(trip)
+    with patch.object(farm_in_push, "after_trip_status", side_effect=RuntimeError("boom")):
+        payments.cancel_booked_order(trip.lead)
+    trip.refresh_from_db()
+    assert trip.trip_status == S.CANCELLED

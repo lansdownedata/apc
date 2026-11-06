@@ -2,6 +2,7 @@
 pages. Card data never touches our servers: it is entered into Stripe's own iframes and
 we only ever hold a PaymentMethod id (hosted Checkout was retired 2026-08-30)."""
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -20,6 +21,8 @@ from apps.reservations.models import Reservation
 
 from . import ledger
 from .models import Charge, JournalEntry, PaymentPlan
+
+logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0.00")
 
@@ -1047,6 +1050,7 @@ def _cancel(lead, trips, *, whole: bool) -> None:
         trip_status=Reservation.TripStatus.CANCELLED,
         revenue_status=Reservation.RevenueStatus.REVERSED,
     )
+    _report_cancels_to_gnet(trips)
     # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
     # them would be unreachable — pull it here while we still know the trip died.
     dispatch_services.release_trips(
@@ -1066,6 +1070,20 @@ def _cancel(lead, trips, *, whole: bool) -> None:
         events.emit("trip_cancelled", lead, trip)
     if whole:
         events.emit("order_cancelled", lead)
+
+
+def _report_cancels_to_gnet(trips) -> None:
+    """Queue GNet's CANCEL for each farmed-in trip: the bulk update above skips
+    `set_trip_status`, which is where that hook normally runs. A failure is logged, never
+    raised, so it can't undo a cancel whose money is already back."""
+    from apps.dispatch import farm_in_push
+    from apps.reservations.models import Reservation
+
+    for trip in trips:
+        try:
+            farm_in_push.after_trip_status(trip, Reservation.TripStatus.CANCELLED)
+        except Exception:
+            logger.exception("farm-in: CANCEL push for trip %s failed to queue", trip.pk)
 
 
 def cancel_booked_order(lead) -> list:

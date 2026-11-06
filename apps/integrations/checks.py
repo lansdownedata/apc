@@ -18,3 +18,19 @@ def gnet_callback_secret_set(app_configs, **kwargs):
             id="integrations.W001",
         )
     ]
+
+
+@register(Tags.security, deploy=True)
+def gnet_api_key_set_for_farm_in(app_configs, **kwargs):
+    """With the farm-in receiver on, a blank GNET_API_KEY means no decision reaches GNet:
+    accept is refused, and a decline's REJECT fails at once."""
+    if not settings.GNET_FARM_IN_ENABLED or settings.GNET_API_KEY:
+        return []
+    return [
+        Warning(
+            "GNET_FARM_IN_ENABLED is on but GNET_API_KEY is unset — farm-ins cannot be "
+            "accepted and no status reaches GNet.",
+            hint="Set GNET_API_KEY to the gateway API key, or turn GNET_FARM_IN_ENABLED off.",
+            id="integrations.W002",
+        )
+    ]

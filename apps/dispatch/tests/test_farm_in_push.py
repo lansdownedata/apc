@@ -73,6 +73,26 @@ def test_enqueue_skips_sent_status_unless_repeatable():
     assert farm_in_push.enqueue(req, "ASSIGNED") is not None
 
 
+def test_success_removes_only_its_own_failure_segment():
+    req = FarmInRequestFactory(
+        alert="No pickup time: set it on the order · GNet CONFIRMED not delivered: old"
+    )
+    push = FarmInStatusPushFactory(request=req, status="CONFIRMED", state=Push.State.PENDING)
+    with patch.object(farm_in_push.gnet, "push_status", return_value={}):
+        farm_in_push.deliver(push)
+    req.refresh_from_db()
+    assert req.alert == "No pickup time: set it on the order"
+
+
+def test_failure_adds_its_segment_and_keeps_the_others():
+    req = FarmInRequestFactory(alert="Requester canceled · GNet CANCEL not delivered: old")
+    push = FarmInStatusPushFactory(request=req, status="CANCEL", state=Push.State.PENDING)
+    with _down(422):
+        farm_in_push.deliver(push)
+    req.refresh_from_db()
+    assert req.alert == "Requester canceled · GNet CANCEL not delivered: GNet gateway 422: down"
+
+
 def test_deliver_without_api_key_fails_with_clear_error(settings):
     settings.GNET_API_KEY = ""
     push = FarmInStatusPushFactory(state=Push.State.PENDING)

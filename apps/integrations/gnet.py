@@ -18,6 +18,7 @@ from datetime import date as date_type
 from datetime import datetime
 from datetime import time as time_type
 from decimal import Decimal
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
@@ -363,4 +364,4 @@ def push_status(transaction_id: str, status: str, total_amount: Decimal | None =
     body: dict = {"status": status}
     if total_amount is not None:
         body["totalAmount"] = f"{total_amount:.2f}"
-    return _request("POST", f"{API_PATH}/{transaction_id}/status", json=body)
+    return _request("POST", f"{API_PATH}/{quote(transaction_id, safe='')}/status", json=body)

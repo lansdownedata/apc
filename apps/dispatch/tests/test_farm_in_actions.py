@@ -1,12 +1,14 @@
 import threading
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.factories import UserFactory
 from apps.accounts.models import Department, UserDepartment
-from apps.dispatch import farm_in, farm_in_actions
+from apps.dispatch import farm_in, farm_in_actions, farm_in_push
 from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactory
 from apps.dispatch.farm_in_actions import FarmInActionError
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
@@ -55,6 +57,14 @@ def test_price_sets_manual_amount_and_who(req, agent):
 def test_price_refuses_zero_or_negative(req, agent, amount):
     with pytest.raises(FarmInActionError, match="Enter a price above zero"):
         farm_in_actions.price(req.pk, user=agent, amount=amount)
+
+
+def test_desk_actions_lock_only_the_request_row(req, agent):
+    """Postgres refuses FOR UPDATE on the nullable side of the vehicle outer join."""
+    with CaptureQueriesContext(connection) as ctx:
+        farm_in_actions.price(req.pk, user=agent, amount=Decimal("210"))
+    locks = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
+    assert locks and all("FOR UPDATE OF" in sql for sql in locks)
 
 
 def test_price_refuses_decided_request_with_409(agent):
@@ -246,6 +256,45 @@ def test_decide_race_second_actor_gets_409(restore_seeded_rows):
     target.refresh_from_db()
     assert target.status == FarmInRequest.Status.DECLINED
     assert target.decided_by == user and target.decline_reason == "No cars"
+
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_accept_and_decline_race_one_wins(restore_seeded_rows, settings):
+    settings.GNET_API_KEY = "k"
+    user = UserFactory()
+    sedan = VehicleTypeFactory(name="Luxury Sedan")
+    target = FarmInRequestFactory(
+        payload=sample_payload(), vehicle=sedan, quoted_amount=Decimal("165")
+    )
+    barrier = threading.Barrier(2)
+    wins, errors = [], []
+
+    def worker(action):
+        try:
+            barrier.wait()
+            wins.append(action())
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    actions = [
+        lambda: farm_in_actions.accept(target.pk, user=user),
+        lambda: farm_in_actions.decline(target.pk, user=user, reason="No cars"),
+    ]
+    with patch.object(farm_in_push, "deliver"):
+        threads = [threading.Thread(target=worker, args=(a,)) for a in actions]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert len(wins) == 1 and len(errors) == 1
+    assert isinstance(errors[0], FarmInActionError) and errors[0].status == 409
+    codes = list(FarmInStatusPush.objects.filter(request=target).values_list("status", flat=True))
+    assert codes in (["CONFIRMED"], ["REJECT"])
+    target.refresh_from_db()
+    expected = "CONFIRMED" if target.status == FarmInRequest.Status.ACCEPTED else "REJECT"
+    assert codes == [expected]
 
 
 @pytest.mark.parametrize(

@@ -6,4 +6,4 @@ class IntegrationsConfig(AppConfig):
     name = "apps.integrations"
 
     def ready(self):
-        from . import checks  # noqa: F401  (registers the deploy check)
+        from . import checks  # noqa: F401  (registers the deploy checks)

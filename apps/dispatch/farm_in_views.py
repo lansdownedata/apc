@@ -4,13 +4,12 @@ from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import ObjectDoesNotExist
 from django.http import Http404, HttpRequest, JsonResponse
 from django.views.decorators.http import require_POST
 
 from . import farm_in_actions
 from .farm_in_actions import FarmInActionError
-from .models import FarmInRequest
+from .models import FarmInRequest, FarmInStatusPush
 
 
 def _error(message: str, status: int = 400) -> JsonResponse:
@@ -23,7 +22,7 @@ def _run(fn: Callable[..., FarmInRequest], *args, **kwargs) -> JsonResponse:
         req = fn(*args, **kwargs)
     except FarmInActionError as exc:
         return _error(str(exc), exc.status)
-    except ObjectDoesNotExist as exc:
+    except FarmInRequest.DoesNotExist as exc:
         raise Http404 from exc
     return JsonResponse(
         {
@@ -96,6 +95,6 @@ def retry_push(request: HttpRequest, pk: int) -> JsonResponse:
         push = farm_in_actions.retry_push(pk, user=request.user)
     except FarmInActionError as exc:
         return _error(str(exc), exc.status)
-    except ObjectDoesNotExist as exc:
+    except (FarmInStatusPush.DoesNotExist, FarmInRequest.DoesNotExist) as exc:
         raise Http404 from exc
     return JsonResponse({"ok": True, "push": push.pk})
