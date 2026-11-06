@@ -13,7 +13,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from apps.dispatch import monitoring
+from apps.dispatch import farm_in_push, monitoring
 from apps.integrations import la_sync
 from apps.messaging import sender
 from apps.payments import qbo_bills, tasks
@@ -33,6 +33,8 @@ JOBS: dict[str, Callable[[], int]] = {
     "reconcile-payments": tasks.reconcile_payments,
     "monitor-dispatch": monitoring.run_dispatch_monitor,
     "run-tasks": task_jobs.run_tasks,
+    # APC-135: deliver due GNet farm-in status pushes and expire stale requests.
+    "gnet-farm-in": farm_in_push.run_cron,
     # Post-trip reports (2026-10-04): monthly, and daily. Each covers "since the last one".
     "review-report": task_reports.send_review_report,
     "complaint-report": task_reports.send_complaint_report,

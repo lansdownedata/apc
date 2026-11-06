@@ -64,6 +64,7 @@ def test_registry_contains_all_jobs():
         "review-report",
         "complaint-report",
         "run-tasks",
+        "gnet-farm-in",
     }
 
 
