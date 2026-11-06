@@ -5,6 +5,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.timezone import now as _utc_now
 
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
@@ -335,3 +336,118 @@ class DispatchException(TimeStampedModel):
     @property
     def is_open(self) -> bool:
         return self.resolved_at is None
+
+
+class FarmInRequest(TimeStampedModel):
+    """One inbound GNet farm-in transaction (APC-134), keyed on its transaction id.
+
+    A re-delivery or update of the same transaction rewrites this row rather than adding a
+    new one. `reservation_id_token` (`FI-<pk>`) is the id we hand GNet as our reservation.
+    """
+
+    class Desk(models.TextChoices):
+        RESERVATIONS = "reservations", "Reservations"
+        DISPATCH = "dispatch", "Dispatch"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        CANCELED = "canceled", "Canceled by requester"
+        EXPIRED = "expired", "Expired"
+
+    class PricingSource(models.TextChoices):
+        RATE_CARD = "rate_card", "Rate card"
+        MANUAL = "manual", "Manual"
+
+    transaction_id = models.CharField(max_length=128, unique=True)
+    requester_grid_id = models.CharField(max_length=64)
+    requester_res_no = models.CharField(max_length=64, blank=True)
+    gnet_status = models.CharField(max_length=32, blank=True)
+    payload = models.JSONField(default=dict)
+    delivery_id = models.CharField(max_length=128, blank=True)
+    company = models.ForeignKey(
+        "contacts.Company", related_name="farm_in_requests", on_delete=models.PROTECT
+    )
+    company_created = models.BooleanField(default=False)
+    desk = models.CharField(max_length=16, choices=Desk.choices, default=Desk.RESERVATIONS)
+    desk_changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    desk_changed_at = models.DateTimeField(null=True, blank=True)
+    desk_note = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    vehicle = models.ForeignKey(
+        "leads.VehicleType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    gnet_vehicle_type = models.CharField(max_length=40, blank=True)
+    quoted_amount = MoneyField(null=True, blank=True, default=None)
+    pricing_source = models.CharField(max_length=12, choices=PricingSource.choices, blank=True)
+    priced_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    pricing_note = models.CharField(max_length=255, blank=True)
+    pickup_at = models.DateTimeField(null=True, blank=True)
+    timezone = models.CharField(max_length=64, blank=True)
+    timezone_assumed = models.BooleanField(default=False)
+    pickup_summary = models.CharField(max_length=255, blank=True)
+    dropoff_summary = models.CharField(max_length=255, blank=True)
+    passenger_name = models.CharField(max_length=200, blank=True)
+    passenger_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    lead = models.ForeignKey(
+        "leads.Lead", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    reservation = models.ForeignKey(
+        "reservations.Reservation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="farm_in_requests",
+    )
+    updated_after_accept = models.BooleanField(default=False)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decline_reason = models.CharField(max_length=255, blank=True)
+    alert = models.CharField(max_length=255, blank=True)
+    received_at = models.DateTimeField(default=_utc_now)
+    last_event_at = models.DateTimeField(default=_utc_now)
+
+    class Meta(TimeStampedModel.Meta):
+        indexes = [
+            models.Index(fields=["status", "desk", "pickup_at"]),
+            models.Index(fields=["reservation"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"FI-{self.pk} · {self.requester_grid_id}"
+
+    @property
+    def reservation_id_token(self) -> str:
+        return f"FI-{self.pk}"
+
+
+class FarmInStatusPush(TimeStampedModel):
+    """One status we attempt to send back to GNet for a `FarmInRequest`.
+
+    `failed` is terminal. A new push for the same status is only created once the previous
+    one for it is `sent` or `failed` (a service rule, not schema).
+    """
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
+    request = models.ForeignKey(FarmInRequest, related_name="pushes", on_delete=models.CASCADE)
+    status = models.CharField(max_length=32)
+    total_amount = MoneyField(null=True, blank=True, default=None)
+    state = models.CharField(max_length=8, choices=State.choices, default=State.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.request_id} · {self.status} ({self.state})"

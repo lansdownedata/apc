@@ -83,6 +83,14 @@ class Company(TimeStampedModel):
         """Blank griddID is NULL, so the unique index only constrains real ids."""
         self.gnet_grid_id = (self.gnet_grid_id or "").strip() or None
         super().save(*args, **kwargs)
+        if self.gnet_grid_id:
+            # Reservations merges an auto-created requester into the real customer by
+            # setting its griddID: the farm-in requests follow it.
+            from apps.dispatch.models import FarmInRequest
+
+            FarmInRequest.objects.filter(requester_grid_id=self.gnet_grid_id).exclude(
+                company_id=self.pk
+            ).update(company=self)
 
 
 class ContactManager(models.Manager):

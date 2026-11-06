@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Assignment, GnetEvent
+from .models import Assignment, FarmInRequest, FarmInStatusPush, GnetEvent
 
 
 @admin.register(Assignment)
@@ -26,3 +26,17 @@ class GnetEventAdmin(admin.ModelAdmin):
     list_filter = ("action", "result")
     search_fields = ("idempotency_key",)
     readonly_fields = ("payload", "response")
+
+
+@admin.register(FarmInRequest)
+class FarmInRequestAdmin(admin.ModelAdmin):
+    list_display = ("transaction_id", "company", "desk", "status", "pickup_at")
+    list_filter = ("status", "desk")
+    search_fields = ("transaction_id", "requester_grid_id", "requester_res_no")
+    readonly_fields = ("payload",)
+
+
+@admin.register(FarmInStatusPush)
+class FarmInStatusPushAdmin(admin.ModelAdmin):
+    list_display = ("request", "status", "state", "attempts", "next_attempt_at")
+    list_filter = ("state",)

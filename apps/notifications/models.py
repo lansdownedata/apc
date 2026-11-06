@@ -38,6 +38,12 @@ class Notification(TimeStampedModel):
         AUTH_EXPIRING = "auth_expiring", "Deposit hold expiring"
         AUTH_EXPIRED = "auth_expired", "Deposit hold released"
         TASK_OVERDUE = "task_overdue", "Task overdue"
+        # GNet farm-in requests (APC-134).
+        FARM_IN_NEW = "farm_in_new", "New farm-in request"
+        FARM_IN_COVERAGE = "farm_in_coverage", "Farm-in needs coverage"
+        FARM_IN_SENT_BACK = "farm_in_sent_back", "Farm-in sent back"
+        FARM_IN_UPDATED = "farm_in_updated", "Farm-in updated"
+        FARM_IN_PUSH_FAILED = "farm_in_push_failed", "Farm-in status push failed"
 
     # Every notification is about an order, except a vendor task's escalation (APC-71).
     lead = models.ForeignKey(
@@ -49,6 +55,13 @@ class Notification(TimeStampedModel):
     )
     vendor = models.ForeignKey(
         "vendors.Vendor",
+        related_name="notifications",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    farm_in_request = models.ForeignKey(
+        "dispatch.FarmInRequest",
         related_name="notifications",
         null=True,
         blank=True,
@@ -70,14 +83,28 @@ class Notification(TimeStampedModel):
     objects = NotificationQuerySet.as_manager()
 
     @classmethod
-    def notify(cls, lead, kind, *, title, detail="", user=None) -> "Notification":
-        return cls.objects.create(lead=lead, kind=kind, title=title, detail=detail, user=user)
+    def notify(
+        cls, lead, kind, *, title, detail="", user=None, farm_in_request=None
+    ) -> "Notification":
+        return cls.objects.create(
+            lead=lead,
+            kind=kind,
+            title=title,
+            detail=detail,
+            user=user,
+            farm_in_request=farm_in_request,
+        )
 
     @property
     def url(self) -> str:
-        """Where the tray and dashboard send you: the order, or the vendor."""
-        from django.urls import reverse
+        """Where the tray and dashboard send you: the order, the vendor, or the farm-in row."""
+        from django.urls import NoReverseMatch, reverse
 
+        if self.farm_in_request_id:
+            try:
+                return reverse("farm_in_list") + f"#fi-{self.farm_in_request_id}"
+            except NoReverseMatch:
+                return ""
         if self.lead_id:
             return reverse("lead_detail", args=[self.lead_id])
         if self.vendor_id:
