@@ -21,6 +21,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.dispatch import farm_in_push
 from apps.dispatch.models import Assignment
 from apps.leads.models import Lead
 from apps.payments import payables, trip_money
@@ -173,6 +174,7 @@ def trip_context(request: HttpRequest, trip: Reservation) -> dict:
         "categories": TripIssue.Category.choices,
         "severities": TripIssue.Severity.choices,
         "locked": review.is_processed,
+        "gnet_final": farm_in_push.final_reported(trip),
     }
 
 

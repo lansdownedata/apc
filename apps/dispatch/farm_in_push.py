@@ -7,12 +7,17 @@ up to `MAX_ATTEMPTS`; any other refusal fails at once and raises an alert for th
 A status is pushed once. A `sent` push blocks a repeat of the same status, except for the
 `REPEATABLE` ones (a trip can be reassigned or re-canceled), and a `pending` push for a
 status always blocks another.
+
+Trip status changes (`after_trip_status`, called from `set_trip_status`) and a processed
+review (`after_review_processed`, the final `CLOSE` with the trip's total) are what queue
+pushes for an accepted request.
 """
 
 import logging
 import random
 from datetime import timedelta
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.db import transaction
@@ -24,6 +29,9 @@ from apps.integrations import gnet
 from apps.integrations.gnet import GnetAPIError
 from apps.notifications.models import Notification
 
+if TYPE_CHECKING:
+    from apps.reservations.models import Reservation
+
 logger = logging.getLogger(__name__)
 
 REPEATABLE = frozenset({"ASSIGNED", "CANCEL"})
@@ -33,6 +41,21 @@ EXPIRE_AFTER = timedelta(hours=1)
 _MAX_BACKOFF = timedelta(minutes=30)
 LEASE = timedelta(seconds=60)
 _ALERT_PREFIX = "GNet "
+
+# Our trip status -> the GNet status code we report. Any status not here reports nothing.
+STATUS_MAP: dict[str, str] = {
+    "assigned": "ASSIGNED",
+    "dispatched": "ASSIGNED",
+    "on_the_way": "EN_ROUTE",
+    "arrived": "ON_LOCATION",
+    "customer_in_car": "PASSENGER_ON_BOARD",
+    "done": "COMPLETE",
+    "cancelled": "CANCEL",
+    "late_cancel": "CANCEL",
+    "cancelled_by_affiliate": "CANCEL",
+    "covid_cancellation": "CANCEL",
+    "no_show": "NO_SHOW",
+}
 
 
 def _blocker(req: FarmInRequest, status: str) -> str:
@@ -65,6 +88,53 @@ def enqueue(
     if _blocker(req, status):
         return None
     return _create(req, status, total_amount)
+
+
+def _enqueue_for_trip(
+    reservation: "Reservation", status: str, total_amount: Decimal | None = None
+) -> FarmInStatusPush | None:
+    """Queue `status` for the trip's accepted farm-in request, if it has one.
+
+    The request row is locked for the lookup and the enqueue, so two status changes landing
+    together can't both pass `enqueue`'s once-only check. One query on an ordinary trip.
+    """
+    with transaction.atomic():
+        req = (
+            FarmInRequest.objects.select_for_update()
+            .filter(reservation_id=reservation.pk, status=FarmInRequest.Status.ACCEPTED)
+            .only("pk", "transaction_id")
+            .first()
+        )
+        if req is None:
+            return None
+        return enqueue(req, status, total_amount)
+
+
+def after_trip_status(reservation: "Reservation", status: str) -> FarmInStatusPush | None:
+    """Report a trip status change to GNet; a status with no GNet code costs no query."""
+    code = STATUS_MAP.get(status)
+    if code is None:
+        return None
+    return _enqueue_for_trip(reservation, code)
+
+
+def after_review_processed(trip: "Reservation") -> FarmInStatusPush | None:
+    """Report a processed trip to GNet as `CLOSE` with its final total.
+
+    Once a `CLOSE` is sent, unlocking and re-processing pushes nothing more (`enqueue`).
+    """
+    return _enqueue_for_trip(trip, "CLOSE", trip.line_total)
+
+
+def final_reported(trip: "Reservation") -> Decimal | None:
+    """The total GNet accepted as the trip's final (its sent `CLOSE`), or None."""
+    return (
+        FarmInStatusPush.objects.filter(
+            request__reservation_id=trip.pk, status="CLOSE", state=FarmInStatusPush.State.SENT
+        )
+        .values_list("total_amount", flat=True)
+        .first()
+    )
 
 
 def retry(push: FarmInStatusPush) -> FarmInStatusPush:

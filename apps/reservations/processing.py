@@ -407,13 +407,16 @@ def process(
     3. The lock, in one transaction with both rows locked: refuse if processed meanwhile
        or the price moved under us; stamp completion, re-freeze driver pay, the lock and
        the history.
-    4. After commit: revenue follows the trip; the trip's review tasks close.
+    4. After commit: a farmed-in trip reports CLOSE to GNet; revenue follows the trip; the
+       trip's review tasks close.
     """
+    import logging
     from decimal import Decimal
 
     import stripe
     from django.db import transaction
 
+    from apps.dispatch import farm_in_push
     from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
     from apps.payments import services as payments
     from apps.payments import trip_money
@@ -529,6 +532,12 @@ def process(
             note = invoice_note(locked.lead)
         _event(review, ProcessingEvent.Kind.PROCESSED, user=user, note=note)
 
+    # APC-135: a farmed-in trip reports its final total to GNet as CLOSE. `locked` was read
+    # under the lock after every money step, so its total is final. Never undoes the lock.
+    try:
+        farm_in_push.after_review_processed(locked)
+    except Exception:  # noqa: BLE001 - the desk can retry a failed push from the request
+        logging.getLogger(__name__).exception("GNet CLOSE for processed trip %s failed", locked.pk)
     _after_lock(locked, user, keep_overtime_open=collect == "link")
     return review
 

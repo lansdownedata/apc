@@ -150,6 +150,28 @@ def test_the_pane_shows_the_wedding_fee_acknowledgment(staff):
     assert "Cleaning fee and overtime acknowledged" in after
 
 
+def test_review_pane_shows_reported_final(staff):
+    """APC-135: the CLOSE amount GNet accepted shows on the pane; nothing before it's sent."""
+    from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactory
+    from apps.dispatch.models import FarmInRequest, FarmInStatusPush
+
+    _lead, trip = _order()
+    req = FarmInRequestFactory(status=FarmInRequest.Status.ACCEPTED, reservation=trip)
+    push = FarmInStatusPushFactory(
+        request=req,
+        status="CLOSE",
+        state=FarmInStatusPush.State.PENDING,
+        total_amount=Decimal("165"),
+    )
+
+    before = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
+    FarmInStatusPush.objects.filter(pk=push.pk).update(state=FarmInStatusPush.State.SENT)
+    after = staff.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "Reported to GNet as final" not in before
+    assert "Reported to GNet as final: $165.00" in after
+
+
 def test_a_trip_on_an_order_that_isnt_booked_404s(staff):
     trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.QUOTED), trip_status="done")
 

@@ -236,8 +236,8 @@ def set_trip_status(
     The single seam every status change routes through (LA webhook + the dispatch drawer),
     so the trip's message events have one home: the status itself (Dispatched, On the way,
     Arrived), the trip entering a cancelled status, the trip done; then the rows that wait
-    for dispatch are brought up to date. Returns the event, or None when the status is
-    unchanged.
+    for dispatch are brought up to date; a farmed-in trip reports the status to GNet.
+    Returns the event, or None when the status is unchanged.
     """
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.messaging import events
@@ -263,6 +263,11 @@ def set_trip_status(
         from apps.tasks.services import sync
 
         sync(reservation.lead)
+    # APC-135: a farmed-in trip reports the status back to GNet. Imported here: at module
+    # level it cycles through apps.integrations.gnet -> apps.dispatch.models.
+    from apps.dispatch import farm_in_push
+
+    farm_in_push.after_trip_status(reservation, status)
     return event
 
 

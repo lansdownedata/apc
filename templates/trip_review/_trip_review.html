@@ -43,6 +43,7 @@
     {% elif processing and review.unlocked_at %}
     <p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-600/20 text-[12.5px] text-amber-900">Unlocked {{ review.unlocked_at|trip_clock:trip }}{% if review.unlocked_by %} by {% firstof review.unlocked_by.get_full_name review.unlocked_by.username %}{% endif %}: “{{ review.unlock_reason }}”</p>
     {% endif %}
+    {% if gnet_final is not None %}<p class="mx-6 mt-4 px-3.5 py-2.5 rounded-lg bg-surface2 text-[12.5px]">Reported to GNet as final: ${{ gnet_final }}</p>{% endif %}
     <section class="px-6 py-4">
       {% if processing %}
       <div class="flex items-center gap-2 mb-2">
