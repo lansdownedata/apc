@@ -193,25 +193,48 @@ def order_refund(request, lead_id):
 @payment_access_required
 @require_POST
 def order_cancel_refund(request, lead_id):
-    lead, plan = _plan(lead_id)
-    if lead.status != Lead.Status.BOOKED:
-        messages.error(request, "Only booked orders can be cancelled.")
+    """Cancel the chosen trips (repeated ``trips=<pk>``; none = every live trip) and
+    refund their money (APC-127). JSON for the page's dialog, a flash and redirect for a
+    plain form post."""
+    lead, _plan_ = _plan(lead_id)
+    wants_json = "application/json" in request.headers.get("Accept", "")
+
+    def fail(message: str, status: int = 400):
+        if wants_json:
+            return _json_error(message, status)
+        messages.error(request, message)
         return redirect("lead_detail", pk=lead_id)
-    if plan:
-        # Everything still on the card, the post-trip final bill included (APC-75).
-        try:
-            services.refund_payment(plan, services.refundable_total(plan))
-        except stripe.error.StripeError as exc:
-            # Stop before cancelling: an order is never marked lost with money still on it
-            # because Stripe said no. Whatever did refund is already on the books.
-            messages.error(
-                request,
-                f"Stripe refused the refund, so the order was not cancelled: "
-                f"{exc.user_message or exc}",
-            )
-            return redirect("lead_detail", pk=lead_id)
-    services.cancel_booked_order(lead)
-    messages.success(request, "Order cancelled and refunded.")
+
+    try:
+        pks = [int(v) for v in request.POST.getlist("trips")]
+    except ValueError:
+        return fail("Pick the trips to cancel.")
+    trips = list(lead.reservations.filter(pk__in=pks)) if pks else services._live_trips(lead)
+    try:
+        result = services.cancel_trips(lead, trips, user=request.user)
+    except services.PaymentError as exc:
+        return fail(str(exc))
+    except stripe.error.StripeError as exc:
+        # Stop before cancelling: a trip is never cancelled with money still on it
+        # because Stripe said no. Whatever did refund is already on the books.
+        return fail(
+            f"Stripe refused the refund, so the trip was not cancelled: {exc.user_message or exc}"
+        )
+    if wants_json:
+        return JsonResponse(
+            {
+                "ok": True,
+                "refunded": f"{result.refunded:.2f}",
+                "cancelled": [t.pk for t in result.cancelled],
+                "order_cancelled": result.order_cancelled,
+            }
+        )
+    if result.order_cancelled:
+        messages.success(request, "Order cancelled and refunded.")
+    else:
+        n = len(result.cancelled)
+        trips_ = f"{n} trip{'s' if n != 1 else ''}"
+        messages.success(request, f"{trips_} cancelled and ${result.refunded:,.2f} refunded.")
     return redirect("lead_detail", pk=lead_id)
 
 

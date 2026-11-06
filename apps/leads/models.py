@@ -199,7 +199,16 @@ class Lead(TimeStampedModel):
 
     @property
     def quote_total(self) -> Decimal:
-        return sum((r.line_total for r in self.reservations.all()), Decimal("0.00"))
+        """What the order's trips add up to. A trip cancelled with its money refunded
+        (revenue Reversed, APC-127) no longer counts."""
+        return sum(
+            (
+                r.line_total
+                for r in self.reservations.all()
+                if r.revenue_status != r.RevenueStatus.REVERSED
+            ),
+            Decimal("0.00"),
+        )
 
     @property
     def reservation_count(self) -> int:

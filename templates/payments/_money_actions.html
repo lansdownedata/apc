@@ -35,23 +35,20 @@
       </div>
     </form>
 
-    <!-- Cancel & refund -->
-    <form method="post" action="{% url 'order_cancel_refund' lead.pk %}" class="contents">
-      {% csrf_token %}
-      <button
-        type="button"
-        class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-rose-600 rounded-lg px-3 py-1.5 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
-        @click="$store.modal.confirm({
-          title: 'Cancel order and refund?',
-          variant: 'danger',
-          confirmText: 'Cancel &amp; Refund',
-          message: 'This will cancel all reservations, mark the lead as lost, and issue a full Stripe refund. This cannot be undone.',
-          onConfirm: () => $el.closest('form').submit()
-        })"
-      >
-        <i class="ti ti-circle-x text-[14px]"></i> Cancel &amp; refund
-      </button>
-    </form>
+    <!-- Cancel & refund: pick the trips (APC-127) -->
+    {% if lead.status == 'booked' %}
+    <button
+      type="button"
+      class="btn-ghost inline-flex items-center gap-1.5 text-[12px] font-medium text-rose-600 rounded-lg px-3 py-1.5 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
+      @click="cancelRefund({
+        url: '{% url 'order_cancel_refund' lead.pk %}',
+        quote: {{ lead.quote_no|json_string }},
+        trips: JSON.parse({{ cancel_options_json|json_string }})
+      })"
+    >
+      <i class="ti ti-circle-x text-[14px]"></i> Cancel &amp; refund
+    </button>
+    {% endif %}
 
     <!-- Retry balance (only when last attempt failed) -->
     {% if payment.balance_status == 'failed' and not lead.on_account %}

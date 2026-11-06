@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 
 from django.conf import settings
@@ -268,6 +269,8 @@ def lead_detail(request, pk):
         "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
         "balances": payment_reports.order_balances_with_remaining(lead),
+        # The Cancel & refund dialog's trips (APC-127), as a JSON string for the attribute.
+        "cancel_options_json": json.dumps(payment_services.cancel_options(lead, request.user)),
         "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
         "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
             "posted_at", "id"

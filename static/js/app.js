@@ -524,6 +524,58 @@ function billToAccount(opts) {
 }
 window.billToAccount = billToAccount;
 
+/* -------------------------------------------------- cancel & refund (APC-127) */
+/* "Cancel & refund" on the money card: pick the trips to cancel; each shows what comes
+   back to the card for it. A trip whose pickup has passed is greyed unless the row says
+   this user may (an Admin). Posts the picks; the page reloads with the result. */
+function cancelRefund(opts) {
+  const trips = opts.trips || [];
+  const row = (t) => `
+    <label class="flex items-start gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-inset ring-line ${t.allowed ? "cursor-pointer hover:bg-slate-50" : "opacity-60"}">
+      <input type="checkbox" name="cancel-trip" value="${t.pk}" ${t.allowed ? "" : "disabled"} class="mt-0.5 accent-amber-500">
+      <span class="min-w-0 flex-1">
+        <span class="flex items-baseline justify-between gap-3">
+          <span class="text-[12.5px] font-semibold text-ink">${escapeHtml(t.reference)}</span>
+          <span class="num text-[12.5px] text-ink">$${escapeHtml(t.amount)}</span>
+        </span>
+        <span class="block text-[11.5px] text-muted">${escapeHtml(t.when)}</span>
+        ${t.past ? `<span class="block text-[11px] text-amber-700">${t.allowed ? "Pickup has passed." : "Pickup has passed — an Admin can cancel it."}</span>` : ""}
+      </span>
+    </label>`;
+  const picked = () =>
+    Array.from(document.querySelectorAll('input[name="cancel-trip"]:checked')).map((el) => el.value);
+  const total = () =>
+    trips
+      .filter((t) => picked().includes(String(t.pk)))
+      .reduce((sum, t) => sum + Number(t.amount), 0)
+      .toFixed(2);
+  window.cancelRefundTotal = total;
+  Alpine.store("modal").show({
+    title: "Cancel trips and refund?",
+    message: `${opts.quote}: tick the trips to cancel. Each one's money goes back to the card; cancelling every trip cancels the order. This cannot be undone.`,
+    html: `<div class="mt-3 grid gap-2 text-left" onchange="this.querySelector('[data-total]').textContent = window.cancelRefundTotal()">
+        ${trips.length ? trips.map(row).join("") : '<p class="text-[12.5px] text-muted">No live trips on this order.</p>'}
+        <p class="text-[12.5px] text-ink">Refund $<span class="num font-semibold" data-total>0.00</span> to the card.</p>
+      </div>`,
+    confirmText: "Cancel & refund",
+    variant: "danger",
+    onConfirm: async () => {
+      const chosen = picked();
+      if (!chosen.length) return;
+      const body = new URLSearchParams();
+      chosen.forEach((pk) => body.append("trips", pk));
+      try {
+        await postForm(opts.url, body);
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+        throw e;
+      }
+      window.location.reload();
+    },
+  });
+}
+window.cancelRefund = cancelRefund;
+
 /* -------------------------------------------------- tasks (APC-53 / APC-54) */
 /* The queue page. Each action posts to the shared JSON endpoints; a handled row leaves
    the list in place. Skip and Reassign go through $store.modal — never a native dialog. */

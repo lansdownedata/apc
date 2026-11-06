@@ -2,6 +2,7 @@
 pages. Card data never touches our servers: it is entered into Stripe's own iframes and
 we only ever hold a PaymentMethod id (hosted Checkout was retired 2026-08-30)."""
 
+from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -911,33 +912,168 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     return charge
 
 
-def cancel_booked_order(lead) -> list:
-    """Cancel a booked order once its money is back (the Orders console's Cancel & refund):
-    every trip cancelled with its revenue reversed, any affiliate let go, the order lost.
+# --- cancel & refund by trip (APC-127) ---------------------------------------------------
 
-    Each trip that was still live is a `trip_cancelled` message event; one already
-    cancelled was news when it was. The events come last, after every write, because a
-    message due now goes out on commit, which outside a transaction is right here. Returns
-    the trips this cancelled."""
-    from apps.dispatch import services as dispatch_services
+
+def _live_trips(lead) -> list:
+    """The order's trips not yet cancelled, in pickup order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    trips = [r for r in lead.reservations.all() if r.trip_status not in CANCELLED_STATUSES]
+    return sorted(trips, key=lambda t: (t.pickup_date is None, t.pickup_date, t.pickup_time, t.pk))
+
+
+def cancel_shares(lead) -> dict[int, Decimal]:
+    """What comes back to the card for each live trip if it alone is cancelled: the
+    refundable money on its own charges, plus the order-level money (deposit, balance)
+    split across the live trips in proportion to their prices, rounded down to cents with
+    the remainder on the last trip by pickup, so the shares add up to everything refundable
+    (`refundable_total`, net of money paid back off-card)."""
+    from collections import defaultdict
+    from decimal import ROUND_DOWN
+
+    cents = Decimal("0.01")
+    live = _live_trips(lead)
+    plan = getattr(lead, "payment", None)
+    if not live:
+        return {}
+    if plan is None:
+        return {t.pk: Decimal("0.00") for t in live}
+    total = refundable_total(plan)
+    own: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    live_ids = {t.pk for t in live}
+    for src, left in _refundable_sources(plan):
+        if src.reservation_id in live_ids:
+            own[src.reservation_id] += left
+    pool = max(total - sum(own.values(), Decimal("0.00")), Decimal("0.00"))
+    weights = {t.pk: t.line_total for t in live}
+    weight_sum = sum(weights.values(), Decimal("0.00"))
+    shares: dict[int, Decimal] = {}
+    for trip in live[:-1]:
+        slice_ = pool * weights[trip.pk] / weight_sum if weight_sum else pool / len(live)
+        shares[trip.pk] = (own[trip.pk] + slice_).quantize(cents, rounding=ROUND_DOWN)
+    last = live[-1]
+    shares[last.pk] = max(total - sum(shares.values(), Decimal("0.00")), Decimal("0.00"))
+    return shares
+
+
+def cancel_options(lead, user) -> list[dict]:
+    """The Cancel & refund dialog's rows: each live trip, what its cancellation refunds,
+    and whether this user may cancel it (a trip whose pickup has passed takes an Admin)."""
+    from apps.core.templatetags.time_filters import pickup_clock
+
+    shares = cancel_shares(lead)
+    now = timezone.now()
+    rows = []
+    for trip in _live_trips(lead):
+        pickup = trip.pickup_at
+        past = pickup is not None and pickup <= now
+        when = f"{trip.pickup_date:%a, %b %-d, %Y}" if trip.pickup_date else "No date yet"
+        if trip.pickup_time is not None:
+            when = f"{when} at {pickup_clock(trip)}"
+        rows.append(
+            {
+                "pk": trip.pk,
+                "reference": trip.reference,
+                "when": when,
+                "amount": f"{shares[trip.pk]:.2f}",
+                "past": past,
+                "allowed": not past or user.is_owner_admin,
+            }
+        )
+    return rows
+
+
+@dataclass
+class CancelResult:
+    cancelled: list
+    refunded: Decimal
+    order_cancelled: bool
+
+
+def cancel_trips(lead, trips, *, user) -> CancelResult:
+    """Cancel the chosen trips of a booked order and refund each one's share (APC-127).
+
+    Every live trip chosen is today's whole-order cancellation: everything refundable comes
+    back in one refund and the order is lost. Otherwise each trip's share (`cancel_shares`)
+    is refunded against that trip, and the order stays booked with the rest. A trip whose
+    pickup has passed takes an Admin. A refund Stripe refuses raises before anything is
+    cancelled (what did refund is on the books), as the order console always has."""
+    from apps.leads.models import Lead
+
+    if lead.status != Lead.Status.BOOKED:
+        raise PaymentError("Only booked orders can be cancelled.")
+    live = _live_trips(lead)
+    wanted = {t.pk for t in trips}
+    if not wanted:
+        raise PaymentError("Pick at least one trip to cancel.")
+    chosen = [t for t in live if t.pk in wanted]
+    if len(chosen) != len(wanted):
+        raise PaymentError("That trip isn't on this order, or is already cancelled.")
+    now = timezone.now()
+    if not user.is_owner_admin and any(
+        t.pickup_at is not None and t.pickup_at <= now for t in chosen
+    ):
+        raise PaymentError("Only an Admin can cancel a trip whose pickup has passed.")
+    whole = len(chosen) == len(live)
+    plan = getattr(lead, "payment", None)
+    refunded = Decimal("0.00")
+    if plan is not None:
+        if whole:
+            refunded = refund_payment(plan, refundable_total(plan))
+        else:
+            shares = cancel_shares(lead)
+            for trip in chosen:
+                if shares[trip.pk] > Decimal("0.00"):
+                    refunded += refund_payment(plan, shares[trip.pk], reservation=trip)
+    _cancel(lead, chosen, whole=whole)
+    return CancelResult(cancelled=chosen, refunded=refunded, order_cancelled=whole)
+
+
+def _cancel(lead, trips, *, whole: bool) -> None:
+    """Cancel these trips once their money is back: status Cancelled with revenue
+    reversed, any coverage let go, their queued messages withdrawn, `trip_cancelled` each.
+    ``whole`` (no live trip left) also loses the order, withdraws every queued message
+    and emits `order_cancelled`, so the seeded Order cancelled message goes out.
+
+    The events come last, after every write, because a message due now goes out on
+    commit, which outside a transaction is right here."""
+    from apps.dispatch import services as dispatch_services
     from apps.leads.models import Lead
     from apps.reservations.models import Reservation
 
-    live = list(lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES))
-    lead.reservations.update(
+    pks = [t.pk for t in trips]
+    Reservation.objects.filter(pk__in=pks).update(
         trip_status=Reservation.TripStatus.CANCELLED,
         revenue_status=Reservation.RevenueStatus.REVERSED,
     )
     # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
     # them would be unreachable — pull it here while we still know the trip died.
-    dispatch_services.release_trips(lead.reservations.all(), note="Order cancelled")
-    lead.status = Lead.Status.LOST
-    lead.lost_reason = "Cancelled"
-    lead.has_alert = False
-    lead.save(update_fields=["status", "lost_reason", "has_alert", "updated_at"])
-    for trip in live:
+    dispatch_services.release_trips(
+        lead.reservations.all() if whole else lead.reservations.filter(pk__in=pks),
+        note="Order cancelled" if whole else "Trip cancelled",
+    )
+    if whole:
+        lead.status = Lead.Status.LOST
+        lead.lost_reason = "Cancelled"
+        lead.has_alert = False
+        lead.save(update_fields=["status", "lost_reason", "has_alert", "updated_at"])
+        events.cancel(lead, triggers=events.EVERY)
+    else:
+        for trip in trips:
+            events.cancel(lead, triggers=events.EVERY, reservation=trip)
+    for trip in Reservation.objects.filter(pk__in=pks).select_related("lead"):
         events.emit("trip_cancelled", lead, trip)
+    if whole:
+        events.emit("order_cancelled", lead)
+
+
+def cancel_booked_order(lead) -> list:
+    """Cancel a booked order once its money is back: every live trip, no permission
+    check (the console's whole-order path and the tests). Returns the trips cancelled."""
+    live = _live_trips(lead)
+    if live:
+        _cancel(lead, live, whole=True)
     return live
 
 
