@@ -222,6 +222,17 @@
           <i class="ti text-[18px]" :class="$store.theme.mode === 'dark' ? 'ti-sun' : 'ti-moon-stars'"></i>
         </button>
 
+        <!-- GNet requests (APC-136): opens the farm-in drawer; gold while any wait -->
+        <button type="button" x-data="{n: {{ farm_in_pending|default:0 }}}" @farm-in-count.window="n = $event.detail"
+                @click="$dispatch('farm-in-open', {})"
+                :class="{'ring-2 ring-gold/40': n > 0}"
+                class="btn-ghost relative w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5{% if farm_in_pending %} ring-2 ring-gold/40{% endif %}"
+                title="GNet requests" aria-label="GNet requests">
+          <i class="ti ti-arrows-exchange-2 text-[18px]"></i>
+          <span data-fi-badge x-show="n > 0" x-text="n"{% if not farm_in_pending %} style="display: none"{% endif %}
+                class="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-gold text-white text-[9.5px] font-bold grid place-items-center ring-2 ring-paper">{{ farm_in_pending|default:0 }}</span>
+        </button>
+
         <!-- notifications -->
         <div class="relative">
           <button @click="notifOpen=!notifOpen" class="btn-ghost relative w-9 h-9 grid place-items-center rounded-lg text-muted hover:bg-black/5">
@@ -282,6 +293,7 @@
   </div>
 </div>
 
+{% include "components/farm_in_drawer.html" %}
 {% include "components/modal.html" %}
 {% include "components/flash_messages.html" %}
 {% include "components/toasts.html" %}

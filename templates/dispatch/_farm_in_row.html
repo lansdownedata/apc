@@ -1,0 +1,69 @@
+{% comment %}
+  One GNet request in the drawer (APC-136, spec 2026-11-07 §5.2): a two-line trip line, and
+  a third line of actions shown only on the open row (farmInDrawer toggles `hidden` on
+  [data-actions]). `req` comes from farm_in_drawer.rows, which sets kind, route, pills,
+  needs_price and closed_reason, and prefetches the stops (and pushes off the pending tab).
+{% endcomment %}
+{% load humanize time_filters %}
+{% with res=req.reservation %}
+<div data-fi="{{ req.pk }}" data-received="{{ req.received_iso }}" tabindex="0" role="button" aria-expanded="false"
+     class="flex gap-3 px-5 py-3 border-b border-line/60 cursor-pointer hover:bg-surface2 focus-visible:outline-none focus-visible:bg-surface2">
+  <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0 {% if req.kind == 'hourly' %}bg-violet-50 text-violet-600{% else %}bg-sky-50 text-sky-600{% endif %}">
+    <i class="ti {% if req.kind == 'hourly' %}ti-clock-hour-4{% elif req.kind == 'airport' %}ti-plane{% else %}ti-arrow-narrow-right{% endif %} text-[16px]"></i>
+  </span>
+  <div class="min-w-0 flex-1">
+    <div class="flex items-center gap-2 min-w-0">
+      <span class="text-[12.5px] font-semibold text-ink num whitespace-nowrap">{% if req.pickup_at %}{{ req.pickup_at|zone_clock:req.timezone }}{% else %}<span class="text-amber-700">No pickup time</span>{% endif %}</span>
+      {% for label, css in req.pills %}<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap {{ css }}">{{ label }}</span>{% endfor %}
+      <span class="ml-auto pl-2 text-[12.5px] font-semibold num whitespace-nowrap">{% if not req.needs_price %}<span class="text-ink">${{ res.line_total|floatformat:2|intcomma }}</span>{% elif req.status == "pending" %}<span class="text-amber-700">Price it</span>{% else %}<span class="text-muted">—</span>{% endif %}</span>
+    </div>
+    <div class="text-[11.5px] text-muted mt-0.5 truncate" title="{{ req.route_title }}">
+      {{ req.route }}{% if res.vehicle %} · {{ res.vehicle.name }}{% endif %} · <span class="num">{{ res.passengers }}</span> pax · <span class="font-semibold text-ink">{{ req.company.name }}</span>{% if req.requester_res_no %} · their res {{ req.requester_res_no }}{% endif %}{% if tab == "pending" %} · {{ req.received_at|timesince }} ago{% endif %}
+    </div>
+
+    <div data-actions class="hidden mt-2.5">
+      {% if req.status == "pending" %}
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <button type="button" data-action="accept" data-url="{% url 'farm_in_accept' req.pk %}" data-price="${{ res.line_total|floatformat:2|intcomma }}"
+                class="btn-gold text-[11.5px] font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"{% if req.needs_price %} disabled title="Price the trip first"{% endif %}>Accept</button>
+        {% if req.desk == "dispatch" %}
+        <button type="button" data-action="send_back" data-url="{% url 'farm_in_send_back' req.pk %}"
+                class="btn-ghost text-[11.5px] font-semibold text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-surface2 focus-visible:outline-none focus-visible:ring-gold">Send back</button>
+        {% else %}
+        <button type="button" data-action="coverage" data-url="{% url 'farm_in_request_coverage' req.pk %}"
+                class="btn-ghost text-[11.5px] font-semibold text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-surface2 focus-visible:outline-none focus-visible:ring-gold">Request coverage</button>
+        {% endif %}
+        <button type="button" data-action="decline" data-url="{% url 'farm_in_decline' req.pk %}"
+                class="btn-ghost text-[11.5px] font-semibold text-rose-600 rounded-lg px-3 py-1.5 hover:bg-rose-50 focus-visible:outline-none focus-visible:bg-rose-50">Decline</button>
+        <a href="{% url 'lead_detail' req.lead_id %}" class="ml-auto text-[11.5px] font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Open workspace →</a>
+      </div>
+      {% else %}
+      <div class="flex items-center gap-3 text-[11.5px]">
+        {% if req.status == "accepted" %}
+        <a href="{% url 'order_detail' req.lead_id %}" class="font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Order {{ req.lead.quote_no }} →</a>
+        {% else %}
+        <span class="text-ink">{{ req.closed_reason }}</span>
+        {% endif %}
+        <a href="{% url 'lead_detail' req.lead_id %}" class="ml-auto font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Open workspace →</a>
+      </div>
+      <div class="mt-2 text-[11.5px]">
+        <div class="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Reported to GNet</div>
+        {% for push in req.pushes.all %}
+        <div class="flex items-center gap-2 mt-1">
+          <span class="font-semibold text-ink">{{ push.status }}</span>
+          {% if push.total_amount is not None %}<span class="num text-ink">${{ push.total_amount|floatformat:2|intcomma }}</span>{% endif %}
+          <span class="num text-muted">{{ push.sent_at|default:push.created_at|zone_clock:req.timezone }}</span>
+          {% if push.state == "sent" %}<i class="ti ti-check text-[13px] text-emerald-600" title="Delivered"></i>
+          {% elif push.state == "failed" %}<span class="text-rose-600">failed after {{ push.attempts }} tr{{ push.attempts|pluralize:"y,ies" }}</span>
+          <button type="button" data-action="retry" data-url="{% url 'farm_in_retry_push' push.pk %}" class="font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Retry</button>
+          {% else %}<span class="text-muted">sending</span>{% endif %}
+        </div>
+        {% empty %}
+        <div class="text-muted mt-1">Nothing sent to GNet</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endwith %}

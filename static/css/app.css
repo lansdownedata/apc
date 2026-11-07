@@ -285,6 +285,9 @@ header, aside, main, .wash-gold {
 .row-states tr.row-warn > td:first-child   { box-shadow: inset 3px 0 0 rgb(var(--warn)); }
 .row-states tr.row-danger > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--danger)); }
 .row-states tr.is-selected > td:first-child { box-shadow: inset 3px 0 0 rgb(var(--gold)); }
+/* GNet requests drawer (APC-136): a request that arrived since this browser last closed
+   the drawer. Toggled by farmInDrawer() in app.js on the injected rows. */
+.fi-new { background: rgb(var(--surface-2)); box-shadow: inset 3px 0 0 rgb(var(--gold)); }
 /* native search-field clear affordance — we render our own */
 .dispatch-search::-webkit-search-cancel-button { display: none; }
 

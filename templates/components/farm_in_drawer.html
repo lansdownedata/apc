@@ -1,0 +1,29 @@
+{% comment %}
+  The GNet requests inbox (APC-136, spec 2026-11-07 §5), included once in base.html.
+  Open it from anywhere:  $dispatch('farm-in-open', {tab: 'pending', dispatch: 1, focus: <pk>})
+  The body is the `farm_in_drawer` fragment. After every action it is fetched again and a
+  `farm-in-count` window event carries the new pending count to the header icon.
+  Not components/drawer.html: that one is per page and listens for `drawer-open`.
+  Included BEFORE modal.html so its Escape listener runs first and can leave an open modal alone.
+{% endcomment %}
+<div x-data="farmInDrawer()" x-show="isOpen" x-cloak data-url="{% url 'farm_in_drawer' %}" class="fixed inset-0 z-[55]"
+     @farm-in-open.window="open($event.detail)"
+     @keydown.escape.window="isOpen && !$store.modal.open && close()">
+  <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>
+  <aside class="absolute right-0 top-0 h-full w-full max-w-[460px] bg-surface shadow-2xl flex flex-col"
+         role="dialog" aria-modal="true" aria-labelledby="fi-drawer-title"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
+    <header class="flex items-center gap-2.5 px-5 py-4 border-b border-line shrink-0">
+      <h2 id="fi-drawer-title" class="font-display text-[17px] font-semibold text-ink">GNet requests</h2>
+      <span x-show="pending > 0" x-text="pending + ' pending'" class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-gold num"></span>
+      <button type="button" @click="close()" class="ml-auto btn-ghost p-1.5 rounded-lg" aria-label="Close">
+        <i class="ti ti-x text-[18px]"></i>
+      </button>
+    </header>
+    <div class="flex-1 overflow-y-auto" x-ref="body" x-html="body"
+         @click="onClick($event)" @change="onChange($event)" @keydown="onKey($event)"></div>
+  </aside>
+</div>

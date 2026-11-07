@@ -1,0 +1,33 @@
+{% comment %}
+  The GNet requests drawer's body (APC-136): tabs with their counts, then the tab's rows.
+  Fetched by farmInDrawer() in app.js and injected with x-html, so nothing in here may rely
+  on Alpine: the drawer wires tabs, the switch, rows and buttons by delegation.
+  `data-pending` on the root is how the drawer learns the header count after an action.
+{% endcomment %}
+<div data-fi-root data-pending="{{ counts.pending }}">
+  <div class="sticky top-0 z-10 bg-surface flex items-center gap-5 px-5 border-b border-line text-[12px]" role="tablist">
+    <button type="button" role="tab" data-fi-tab="pending" aria-selected="{% if tab == 'pending' %}true{% else %}false{% endif %}"
+            class="py-2.5 -mb-px border-b-2 num focus-visible:outline-none focus-visible:text-ink {% if tab == 'pending' %}border-gold text-ink font-semibold{% else %}border-transparent text-muted hover:text-ink{% endif %}">Pending · {{ counts.pending }}</button>
+    <button type="button" role="tab" data-fi-tab="accepted" aria-selected="{% if tab == 'accepted' %}true{% else %}false{% endif %}"
+            class="py-2.5 -mb-px border-b-2 num focus-visible:outline-none focus-visible:text-ink {% if tab == 'accepted' %}border-gold text-ink font-semibold{% else %}border-transparent text-muted hover:text-ink{% endif %}">Accepted · {{ counts.accepted }}</button>
+    <button type="button" role="tab" data-fi-tab="closed" aria-selected="{% if tab == 'closed' %}true{% else %}false{% endif %}"
+            class="py-2.5 -mb-px border-b-2 num focus-visible:outline-none focus-visible:text-ink {% if tab == 'closed' %}border-gold text-ink font-semibold{% else %}border-transparent text-muted hover:text-ink{% endif %}">Closed · {{ counts.closed }}</button>
+    {% if tab == "pending" %}
+    <label class="ml-auto flex items-center gap-1.5 text-[11.5px] text-muted cursor-pointer select-none">
+      <input type="checkbox" data-dispatch-toggle class="accent-gold"{% if dispatch_only %} checked{% endif %}>
+      Dispatch only{% if counts.dispatch %} · <span class="num">{{ counts.dispatch }}</span>{% endif %}
+    </label>
+    {% endif %}
+  </div>
+
+  {% for req in rows %}
+    {% include "dispatch/_farm_in_row.html" %}
+  {% empty %}
+  <div class="px-5 py-14 text-center">
+    <i class="ti ti-arrows-exchange-2 text-[26px] text-muted/50"></i>
+    <div class="text-[12.5px] text-muted mt-1.5">
+      {% if tab == "accepted" %}Nothing accepted yet.{% elif tab == "closed" %}Nothing closed yet.{% elif dispatch_only %}Nothing waiting at the dispatch desk.{% else %}Nothing waiting from GNet.{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>

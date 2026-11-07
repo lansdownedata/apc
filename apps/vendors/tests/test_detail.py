@@ -87,7 +87,8 @@ def test_documents_query_flat_across_distinct_uploaders(
         uploader = django_user_model.objects.create_user(username=f"up-{i}", password="x")
         VendorDocumentFactory(vendor=vendor, label=f"Doc {i}", uploaded_by=uploader)
     # +5, flat: the scorecard (APC-70).
-    with django_assert_max_num_queries(17):
+    # +1 (APC-136): the header's GNet requests badge, one COUNT on every page.
+    with django_assert_max_num_queries(18):
         resp = client.get(reverse("vendor_detail", args=[vendor.pk]))
     assert resp.status_code == 200
 

@@ -7,6 +7,7 @@ from django.utils.functional import SimpleLazyObject
 
 from apps.core import outbound
 from apps.core.us_states import US_STATES
+from apps.dispatch import farm_in_drawer
 from apps.messaging.models import Conversation, Message
 from apps.notifications.models import Notification
 from apps.tasks import queue as task_queue
@@ -125,4 +126,6 @@ def chrome(request):
         "outbound_enabled": outbound.enabled(),
         # A live QuickBooks connection (APC-41) — not merely keys in settings.
         "qbo_connected": SimpleLazyObject(_qbo_connected),
+        # GNet requests awaiting a decision (APC-136): the header icon's badge, one COUNT.
+        "farm_in_pending": SimpleLazyObject(farm_in_drawer.pending_count),
     }

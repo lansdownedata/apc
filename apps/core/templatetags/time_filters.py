@@ -1,6 +1,6 @@
 """Wall-clock display for a reservation's pickup, with a zone label when needed."""
 
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django import template
 from django.conf import settings
@@ -38,3 +38,25 @@ def trip_clock(dt, reservation) -> str:
     label = dateformat.format(local, "M j, g:i A")
     abbrev = reservation.pickup_tz_abbrev
     return f"{label} {abbrev}" if abbrev else label
+
+
+@register.filter
+def zone_clock(dt, tz_name) -> str:
+    """An aware datetime as `Sun Nov 8 · 10:27 AM PST` in the IANA zone `tz_name`.
+
+    The abbreviation is shown only when that zone differs from TIME_ZONE; a blank zone
+    means TIME_ZONE, and so does an unknown one, so one bad row never breaks a list. For
+    rows that carry their own zone rather than a reservation's.
+    """
+    if not dt:
+        return ""
+    zone = tz_name or settings.TIME_ZONE
+    try:
+        local = dt.astimezone(ZoneInfo(zone))
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = settings.TIME_ZONE
+        local = dt.astimezone(ZoneInfo(zone))
+    label = dateformat.format(local, "D M j · g:i A")
+    if zone == settings.TIME_ZONE:
+        return label
+    return f"{label} {local.tzname()}"

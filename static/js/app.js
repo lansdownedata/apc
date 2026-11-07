@@ -171,6 +171,191 @@ function drawer() {
 }
 window.drawer = drawer;
 
+/* GNet requests drawer (APC-136) — the shell-level inbox over farm-in requests. Its body is
+ * the server fragment (dispatch/_farm_in_rows.html); markup injected with x-html carries no
+ * Alpine of its own, so tabs, the Dispatch-only switch, rows and buttons are wired here by
+ * delegation. Every decision posts to an APC-135 action endpoint, then the body is fetched
+ * again and `farm-in-count` tells the header icon the new pending count. */
+const FARM_IN_DONE = {
+  accept: "Accepted: the order is booked and GNet is told",
+  decline: "Declined",
+  send_back: "Sent back to reservations",
+  coverage: "Sent to dispatch for coverage",
+  retry: "Queued to send again",
+};
+
+function farmInDrawer() {
+  return {
+    isOpen: false,
+    tab: "pending",
+    dispatchOnly: false,
+    body: "",
+    openRow: null,
+    pending: 0,
+    /* ms of this browser's last drawer close; rows received after it get the gold edge.
+     * 0 (never opened, or storage blocked) highlights nothing. */
+    lastSeen: 0,
+
+    open(detail) {
+      const d = detail || {};
+      this.tab = ["pending", "accepted", "closed"].includes(d.tab) ? d.tab : "pending";
+      this.dispatchOnly = Boolean(d.dispatch) && String(d.dispatch) !== "0";
+      this.openRow = d.focus ? String(d.focus) : null;
+      this.lastSeen = this.readSeen();
+      this.body = '<p class="px-5 py-6 text-muted text-[13px]">Loading…</p>';
+      this.isOpen = true;
+      return this.load();
+    },
+
+    async load() {
+      const params = new URLSearchParams({ tab: this.tab, dispatch: this.dispatchOnly ? "1" : "0" });
+      try {
+        const resp = await fetch(`${this.$root.dataset.url}?${params}`, {
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+        if (!resp.ok) throw new Error(resp.status);
+        this.body = await resp.text();
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: "Could not load GNet requests" });
+        return;
+      }
+      this.$nextTick(() => {
+        const root = this.$refs.body.querySelector("[data-fi-root]");
+        if (root) {
+          this.pending = Number(root.dataset.pending) || 0;
+          window.dispatchEvent(new CustomEvent("farm-in-count", { detail: this.pending }));
+        }
+        this.paintRows();
+        const focused = this.openRow && this.$refs.body.querySelector(`[data-fi="${this.openRow}"]`);
+        if (focused) focused.scrollIntoView({ block: "nearest" });
+      });
+    },
+
+    /* Open state, the action strip and the new-arrival edge live on the injected rows. */
+    paintRows() {
+      this.$refs.body.querySelectorAll("[data-fi]").forEach((row) => {
+        const isOpen = row.dataset.fi === this.openRow;
+        const received = Date.parse(row.dataset.received);
+        row.classList.toggle("bg-surface2", isOpen);
+        row.classList.toggle("fi-new", this.lastSeen > 0 && received > this.lastSeen);
+        row.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        const actions = row.querySelector("[data-actions]");
+        if (actions) actions.classList.toggle("hidden", !isOpen);
+      });
+    },
+
+    toggleRow(pk) {
+      const key = String(pk);
+      this.openRow = this.openRow === key ? null : key;
+      this.paintRows();
+    },
+
+    onClick(e) {
+      const button = e.target.closest("[data-action]");
+      if (button) return this.act(button);
+      const tab = e.target.closest("[data-fi-tab]");
+      if (tab) {
+        this.tab = tab.dataset.fiTab;
+        this.openRow = null;
+        return this.load();
+      }
+      if (e.target.closest("a, input, label")) return;
+      const row = e.target.closest("[data-fi]");
+      if (row) this.toggleRow(row.dataset.fi);
+    },
+
+    onChange(e) {
+      if (!e.target.matches("[data-dispatch-toggle]")) return;
+      this.dispatchOnly = e.target.checked;
+      this.openRow = null;
+      this.load();
+    },
+
+    onKey(e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (!e.target.matches("[data-fi]")) return;
+      e.preventDefault();
+      this.toggleRow(e.target.dataset.fi);
+    },
+
+    act(button) {
+      const kind = button.dataset.action;
+      const url = button.dataset.url;
+      const modal = Alpine.store("modal");
+      if (kind === "accept") {
+        return modal.confirm({
+          title: "Accept this request?",
+          message: `Book this trip and confirm it to GNet at ${button.dataset.price}?`,
+          variant: "gold",
+          confirmText: "Accept",
+          onConfirm: () => this.post(kind, url, {}),
+        });
+      }
+      if (kind === "decline" || kind === "send_back") {
+        const decline = kind === "decline";
+        return modal.confirm({
+          title: decline ? "Decline this request?" : "Send back to reservations?",
+          message: decline
+            ? "The requester is told no. Your reason goes with it."
+            : "Reservations gets it back with your note.",
+          html:
+            `<label for="fi-reason" class="block text-[12.5px] font-medium text-ink">${decline ? "Reason" : "Note"}</label>` +
+            '<textarea id="fi-reason" class="field mt-1.5" rows="3"></textarea>',
+          variant: decline ? "danger" : "info",
+          confirmText: decline ? "Decline" : "Send back",
+          onConfirm: () => {
+            const box = document.getElementById("fi-reason");
+            const text = box ? box.value.trim() : "";
+            if (!text) {
+              Alpine.store("toast").push({ type: "danger", title: "Say why" });
+              // A rejected promise keeps the modal open with what was typed.
+              return Promise.reject(new Error("Say why"));
+            }
+            return this.post(kind, url, decline ? { reason: text } : { note: text });
+          },
+        });
+      }
+      return this.post(kind, url, {});
+    },
+
+    /* Never rejects: a refusal is a toast, and the list is re-read either way because the
+     * request may have moved on under us (decided elsewhere, canceled by the requester). */
+    async post(kind, url, data) {
+      try {
+        await postForm(url, data);
+        Alpine.store("toast").push({ type: "success", title: FARM_IN_DONE[kind] || "Done" });
+        if (kind !== "retry") this.openRow = null;
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That did not go through" });
+      }
+      await this.load();
+    },
+
+    close() {
+      this.isOpen = false;
+      this.openRow = null;
+      this.body = "";
+      this.writeSeen(Date.now());
+    },
+
+    readSeen() {
+      try {
+        return Number(localStorage.getItem("farmInSeen")) || 0;
+      } catch (e) {
+        return 0;
+      }
+    },
+
+    writeSeen(ms) {
+      this.lastSeen = ms;
+      try {
+        localStorage.setItem("farmInSeen", String(ms));
+      } catch (e) { /* private mode: nothing is highlighted next time */ }
+    },
+  };
+}
+window.farmInDrawer = farmInDrawer;
+
 /* Assign drawer — posts the offer form and the resolve actions, then refreshes the board. */
 function assignPanel(panelUrl = "") {
   return {
