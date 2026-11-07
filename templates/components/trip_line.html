@@ -13,6 +13,9 @@
               order, which ops needs on a booked one too.
               A page including this must also include leads/_copy_dates_modal.html.
   Optional:
+    gnet    — the lead's GNet farm-in request: a GNet request is one trip GNet knows about,
+              so nothing that adds or removes a trip renders (duplicate, copy to dates,
+              return trip, remove). Decline the request instead.
     res.task_rows / green_lit / task_blockers — from tasks.selectors.attach_green_lit (booked
               orders only). Present means the checklist icon renders.
     res.coverage / res.active — from dispatch.selectors.attach_coverage. Present means the
@@ -109,6 +112,7 @@
         needs a second vehicle or next week's run without going back to the quote. Both
         are scope-free: a global function, and a window event. {% endcomment %}
 
+        {% if not gnet %}
         {# duplicate — opens the quantity picker ($store.modal); the count rides on this hidden form #}
         <form method="post" action="{% url 'reservation_duplicate' res.pk %}" id="form-dup-{{ res.pk }}" class="hidden">
           {% csrf_token %}
@@ -125,11 +129,13 @@
                 class="p-1 text-muted hover:text-ink transition-colors" title="Copy to dates">
           <i class="ti ti-calendar-plus text-[15px]"></i>
         </button>
+        {% endif %}
 
         {% comment %} Undoing it stays with sales: an order is booked, and these three
         rewrite or delete a trip somebody is already driving to. {% endcomment %}
         {% if actions == "sales" %}
 
+        {% if not gnet %}
         {# create return trip (APC-15) — a new reversed trip with a blank schedule; opens the editor on it #}
         <form method="post" action="{% url 'reservation_return' res.pk %}" class="hidden" id="form-ret-{{ res.pk }}">
           {% csrf_token %}
@@ -138,6 +144,7 @@
                 class="p-1 text-muted hover:text-ink transition-colors" title="Create return trip">
           <i class="ti ti-arrow-back-up text-[15px]"></i>
         </button>
+        {% endif %}
 
         {# reverse route (APC-16) — flips pickup ↔ drop-off in place; destructive to the saved route #}
         <form method="post" action="{% url 'reservation_reverse' res.pk %}" id="form-rev-{{ res.pk }}" class="hidden">
@@ -155,7 +162,8 @@
           <i class="ti ti-arrows-exchange text-[15px]"></i>
         </button>
 
-        {% if line.is_group %}
+        {% if gnet %}
+        {% elif line.is_group %}
         {# the line stands for the whole set, so its remove takes the whole set #}
         <form method="post" action="{% url 'reservation_group_delete' res.pk %}" id="form-group-del-{{ res.pk }}" class="hidden">
           {% csrf_token %}
@@ -222,7 +230,7 @@
               class="p-1 text-muted hover:text-ink transition-colors" title="Edit this vehicle">
         <i class="ti ti-pencil text-[14px]"></i>
       </button>
-      {% if actions == "sales" %}
+      {% if actions == "sales" and not gnet %}
       <form method="post" action="{% url 'reservation_delete' member.pk %}" id="form-del-{{ member.pk }}" class="hidden">
         {% csrf_token %}
       </form>

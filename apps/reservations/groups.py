@@ -305,6 +305,16 @@ def set_group_size(reservation: Reservation, count: int) -> list[Reservation]:
     return current
 
 
+FARM_IN_TRIP_REFUSAL = "Decline the GNet request instead of removing the trip"
+
+
+def has_farm_in(reservations: list[Reservation]) -> bool:
+    """Whether any of these trips is a GNet request's, which only Decline may close."""
+    from apps.dispatch.models import FarmInRequest
+
+    return FarmInRequest.objects.filter(reservation__in=[r.pk for r in reservations]).exists()
+
+
 def _delete_members(doomed: list[Reservation]) -> None:
     """Remove trips from a shrinking set, releasing coverage on the way out.
 
@@ -318,6 +328,8 @@ def _delete_members(doomed: list[Reservation]) -> None:
 
     from .drafts import DraftError
 
+    if has_farm_in(doomed):
+        raise DraftError(FARM_IN_TRIP_REFUSAL)
     if any(r.charges.exists() for r in doomed):
         raise DraftError(
             "A trip with charges or refunds on it can't be removed. Cancel it instead."

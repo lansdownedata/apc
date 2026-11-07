@@ -76,7 +76,11 @@ def apply_update(reservation: Reservation, lead: Lead, payload: dict, *, summary
     and zone and the lead notes are rewritten. Vehicle, rate, hours, gratuity and discount
     stay as the agent left them, except that a trip still without a vehicle takes the
     newly mapped one and its rate card.
+
+    The trip row is re-read under a lock first (the caller holds the transaction), so an
+    editor save on the same trip waits for this rewrite instead of interleaving with it.
     """
+    reservation.refresh_from_db(from_queryset=Reservation.objects.select_for_update(of=("self",)))
     lead.notes = _lead_notes(payload, _res_no(payload))
     lead.save(update_fields=["notes", "updated_at"])
     reservation.pickup_date, reservation.pickup_time = _local_pickup(

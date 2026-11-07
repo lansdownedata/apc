@@ -34,6 +34,7 @@ class FarmInRequestAdmin(admin.ModelAdmin):
     list_filter = ("status", "desk")
     search_fields = ("transaction_id", "requester_grid_id", "requester_res_no")
     readonly_fields = ("payload",)
+    raw_id_fields = ("lead", "reservation", "company")
 
 
 @admin.register(FarmInStatusPush)

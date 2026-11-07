@@ -9,11 +9,12 @@ from __future__ import annotations
 from datetime import UTC
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, F, Prefetch, Q
+from django.db.models import Count, F, Prefetch, Q, Subquery
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
+from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation, Stop
 
@@ -102,6 +103,7 @@ def _decorate(req: FarmInRequest) -> None:
     req.route = _route(ends, res, hourly=hourly)
     req.route_title = " → ".join(s.address for s in ends if s.address)
     req.needs_price = res.vehicle_id is None or res.line_total <= 0
+    req.lead_lost = req.status == _S.PENDING and req.lead.status == Lead.Status.LOST
     req.pills = _pills(req)[:_MAX_PILLS]
     req.closed_reason = closed_reason(req)
     # UTC to the second: every browser's Date.parse reads it (some reject microseconds).
@@ -139,6 +141,9 @@ def _pills(req: FarmInRequest) -> list[tuple[str, str]]:
             pills.append(("Updated by requester", _WARN))
         return pills
     pills = []
+    if req.lead_lost:
+        # First, so the two-pill cap never hides why Accept is disabled.
+        pills.append(("Lead lost", _DANGER))
     if req.desk == FarmInRequest.Desk.DISPATCH:
         pills.append(("Pending dispatch", _GOLD))
     if req.company_created:
@@ -183,22 +188,30 @@ def farm_in_drawer_fragment(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_GET
 def pulse(request: HttpRequest) -> JsonResponse:
-    """What the shell polls: the pending count, and the arrivals past `since` (two queries)."""
+    """What the shell polls: the pending count, and the arrivals past `since` (two queries).
+
+    `max_id` is the newest unread arrival whatever `since` says (0 for none): a tab with no
+    `since` yet seeds from it rather than toasting the whole backlog. The newest row rides
+    along in the arrivals query, so it costs no query of its own.
+    """
     try:
         since = int(request.GET.get("since", 0))
     except ValueError:
         since = 0
     kinds = [Notification.Kind.FARM_IN_NEW, Notification.Kind.FARM_IN_COVERAGE]
-    arrivals = list(
-        Notification.objects.unread_for(request.user)
-        .filter(kind__in=kinds, pk__gt=since)
+    unread = Notification.objects.unread_for(request.user).filter(kind__in=kinds)
+    newest = Subquery(unread.order_by("-pk").values("pk")[:1])
+    rows = list(
+        unread.filter(Q(pk__gt=since) | Q(pk=newest))
         .select_related("farm_in_request")
         .order_by("pk")
     )
+    arrivals = [n for n in rows if n.pk > since]
     return JsonResponse(
         {
             "pending": pending_count(),
             "latest_id": arrivals[-1].pk if arrivals else None,
+            "max_id": rows[-1].pk if rows else 0,
             "arrivals": [
                 {
                     "id": n.pk,

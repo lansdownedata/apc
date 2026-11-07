@@ -968,3 +968,16 @@ def test_a_numeric_label_is_stored_as_text():
     data = drafts.parse_draft(_payload(extras=[{"kind": "other", "label": 123, "amount": 5}]))
 
     assert data["extras"][0]["label"] == "123"
+
+
+def test_saving_an_existing_trip_locks_its_row():
+    """The editor's save serializes with a GNet requester update on the same trip."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    lead = LeadFactory()
+    res = drafts.save_reservation_from_draft(lead, _payload())
+    with CaptureQueriesContext(connection) as ctx:
+        drafts.save_reservation_from_draft(lead, _payload(pax=5), instance=res)
+    table = Reservation._meta.db_table
+    assert any("FOR UPDATE" in q["sql"] and table in q["sql"] for q in ctx.captured_queries)

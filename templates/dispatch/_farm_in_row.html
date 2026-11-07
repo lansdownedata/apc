@@ -25,7 +25,7 @@
       {% if req.status == "pending" %}
       <div class="flex items-center gap-1.5 flex-wrap">
         <button type="button" data-action="accept" data-url="{% url 'farm_in_accept' req.pk %}" data-price="${{ res.line_total|floatformat:2|intcomma }}"
-                class="btn-gold text-[11.5px] font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"{% if req.needs_price %} disabled title="Price the trip first"{% endif %}>Accept</button>
+                class="btn-gold text-[11.5px] font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"{% if req.lead_lost %} disabled title="Lead is lost"{% elif req.needs_price %} disabled title="Price the trip first"{% endif %}>Accept</button>
         {% if req.desk == "dispatch" %}
         <button type="button" data-action="send_back" data-url="{% url 'farm_in_send_back' req.pk %}"
                 class="btn-ghost text-[11.5px] font-semibold text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-surface2 focus-visible:outline-none focus-visible:ring-gold">Send back</button>

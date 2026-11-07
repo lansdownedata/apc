@@ -219,3 +219,29 @@ def test_malformed_passengers_do_not_raise():
     assert farm_in_order._passenger_rows(p) == [] and farm_in_order._headcount(p) == 2
     p["passengers"] = "Alex"
     assert farm_in_order._passenger_rows(p) == []
+
+
+def _locks_the_reservation(queries) -> bool:
+    table = Reservation._meta.db_table
+    return any(
+        "FOR UPDATE" in q["sql"] and table in q["sql"] and q["sql"].lstrip().startswith("SELECT")
+        for q in queries
+    )
+
+
+def test_apply_update_locks_the_reservation_row_before_writing(sedan):
+    """A requester update and an editor save must not interleave on the trip row."""
+    req = _req()
+    payload = sample_payload()
+    with CaptureQueriesContext(connection) as ctx:
+        farm_in_order.apply_update(
+            req.reservation, req.lead, payload, summary=farm_in.summarize(payload)
+        )
+    assert _locks_the_reservation(ctx.captured_queries)
+    first_lock = next(i for i, q in enumerate(ctx.captured_queries) if "FOR UPDATE" in q["sql"])
+    first_res_write = next(
+        i
+        for i, q in enumerate(ctx.captured_queries)
+        if q["sql"].startswith("UPDATE") and Reservation._meta.db_table in q["sql"]
+    )
+    assert first_lock < first_res_write

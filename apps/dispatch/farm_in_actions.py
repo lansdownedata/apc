@@ -167,7 +167,12 @@ def accept(pk: int, *, user: User) -> FarmInRequest:
         reservation = req.reservation
         if reservation.vehicle_id is None or reservation.line_total <= 0:
             raise FarmInActionError("Price the trip first")
-        if not req.lead.can_transition(Lead.Status.BOOKED):
+        if req.lead.reservations.count() > 1:
+            raise FarmInActionError("A GNet request is one trip; remove the extra trips first")
+        # Already Booked is fine: `book_lead` is idempotent, and GNet still needs CONFIRMED.
+        if req.lead.status != Lead.Status.BOOKED and not req.lead.can_transition(
+            Lead.Status.BOOKED
+        ):
             raise FarmInActionError(f"Lead is {req.lead.get_status_display().lower()}")
         try:
             book_lead(req.lead)

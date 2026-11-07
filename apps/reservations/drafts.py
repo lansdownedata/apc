@@ -376,6 +376,10 @@ def save_reservation_from_draft(
     `user` is stamped on the extras and on an overtime decision made here."""
     from . import pricing
 
+    if instance is not None:
+        # Hold the trip row for the whole save: a GNet requester update rewrites the same
+        # trip (farm_in_order.apply_update) and the two must not interleave.
+        Reservation.objects.select_for_update(of=("self",)).filter(pk=instance.pk).exists()
     kept = (
         frozenset(instance.stops.exclude(airline_id=None).values_list("airline_id", flat=True))
         if instance is not None

@@ -187,3 +187,24 @@ def test_accept_refuses_a_lost_lead(req, agent):
     req.refresh_from_db()
     assert req.status == FarmInRequest.Status.PENDING
     assert not FarmInStatusPush.objects.exists()
+
+
+def test_accept_refuses_a_lead_that_grew_extra_trips(req, agent):
+    from apps.reservations.groups import clone_reservation
+
+    clone_reservation(req.reservation, 1)
+    with pytest.raises(FarmInActionError, match="remove the extra trips first") as exc:
+        farm_in_actions.accept(req.pk, user=agent)
+    assert exc.value.status == 400
+    req.refresh_from_db()
+    assert req.status == FarmInRequest.Status.PENDING
+    assert not FarmInStatusPush.objects.exists()
+
+
+def test_accept_tolerates_an_already_booked_lead(req, agent):
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.BOOKED)
+    out, lead, _res = _accept(req, agent)
+    assert out.status == FarmInRequest.Status.ACCEPTED
+    assert lead.status == Lead.Status.BOOKED
+    push = FarmInStatusPush.objects.get(request=req)
+    assert push.status == "CONFIRMED"

@@ -62,10 +62,11 @@
       <i class="ti ti-plane-arrival text-[17px]"></i>
       <span class="font-semibold">GNet request</span>
       <span class="text-ink/80">{{ farm_in.company.name }}{% if farm_in.requester_res_no %} · their res {{ farm_in.requester_res_no }}{% endif %} · received {{ farm_in.received_at|zone_clock:farm_in.timezone }}</span>
-      {% if farm_in_pending %}
+      {% if farm_in_lead_lost %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-danger">Lead lost</span>{% endif %}
+      {% if farm_in_is_pending %}
       <span class="ml-auto flex items-center gap-1.5 flex-wrap">
         <button type="button" class="btn-gold text-[12px] font-semibold rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                {% if farm_in_needs_price %}disabled title="Price the trip first"{% endif %}
+                {% if farm_in_lead_lost %}disabled title="Lead is lost"{% elif farm_in_needs_price %}disabled title="Price the trip first"{% endif %}
                 @click="farmInAct('{% url 'farm_in_accept' farm_in.pk %}', 'accept', '${{ farm_in_price|floatformat:2|intcomma }}')">Accept</button>
         {% if farm_in.desk == "dispatch" %}
         <button type="button" class="btn-ghost text-[12px] font-semibold text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-surface2 focus-visible:outline-none focus-visible:ring-gold"
@@ -81,7 +82,7 @@
       <a href="{% url 'order_detail' lead.pk %}" class="ml-auto text-[12px] font-semibold hover:underline focus-visible:outline-none focus-visible:underline">Order {{ lead.quote_no }} →</a>
       {% endif %}
     </div>
-    {% if farm_in_pending and farm_in.alert %}<div class="mt-1.5 text-ink/80">{{ farm_in.alert }}</div>{% endif %}
+    {% if farm_in_is_pending and farm_in.alert %}<div class="mt-1.5 text-ink/80">{{ farm_in.alert }}</div>{% endif %}
     {% if farm_in.status == "accepted" %}
     <div class="mt-1.5 text-ink/80">
       Reported to GNet:
@@ -93,7 +94,7 @@
       {% else %}<span class="text-muted">sending</span>{% endif %}
       {% empty %}nothing sent yet{% endfor %}
     </div>
-    {% elif not farm_in_pending %}
+    {% elif not farm_in_is_pending %}
     <div class="mt-1.5 text-ink/80">{{ farm_in_closed_reason }}</div>
     {% endif %}
   </div>
@@ -172,7 +173,7 @@
 
     <!-- actions -->
     <div class="flex flex-wrap items-center gap-2.5 mt-5 pt-4 border-t border-line">
-      {% if lead.status == 'new' and not farm_in_pending or lead.status == 'quoted' and not farm_in_pending or lead.status == 'booked' and not payment.is_paid_in_full %}
+      {% if not farm_in %}{% if lead.status == 'new' or lead.status == 'quoted' or lead.status == 'booked' and not payment.is_paid_in_full %}
       <div class="flex flex-col gap-1">
         <button class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg px-3.5 py-2"
                 @click="openSendQuoteModal()" :class="sending && 'opacity-60 cursor-wait'" :disabled="sending">
@@ -187,7 +188,7 @@
         </span>
         {% endif %}
       </div>
-      {% endif %}
+      {% endif %}{% endif %}
 
       {% if lead.status == 'quoted' and lead.quote_expired %}
       {# reissue (APC-25) — fresh expiry + restarted reminders after a staff availability/pricing recheck; no re-send #}
@@ -205,7 +206,7 @@
       </button>
       {% endif %}
 
-      {% if lead.status == 'new' and not farm_in_pending or lead.status == 'quoted' and not farm_in_pending %}
+      {% if lead.status == 'new' and not farm_in or lead.status == 'quoted' and not farm_in %}
       <form id="form-mark-booked" method="post" action="{% url 'lead_mark_booked' lead.pk %}" class="hidden">
         {% csrf_token %}
       </form>
@@ -255,7 +256,7 @@
       </div>
       {% endif %}
 
-      {% if lead.status != 'lost' and not farm_in_pending %}
+      {% if lead.status != 'lost' and not farm_in_is_pending %}
       <!-- Mark lost — hidden form + modal to collect reason -->
       <form id="form-mark-lost" method="post" action="{% url 'lead_mark_lost' lead.pk %}" class="hidden">
         {% csrf_token %}
@@ -279,8 +280,8 @@
       </button>
       {% endif %}
 
-      <!-- Re-open lead — shown only when status is lost -->
-      {% if lead.status == 'lost' %}
+      <!-- Re-open lead — shown only when status is lost; a GNet lead's fate is the request's -->
+      {% if lead.status == 'lost' and not farm_in %}
       <form method="post" action="{% url 'lead_reopen' lead.pk %}" class="ml-auto">
         {% csrf_token %}
         <button type="submit"
@@ -297,17 +298,21 @@
     <div class="flex items-center px-5 py-3.5 border-b border-line">
       <span class="font-display text-[15px] font-semibold text-ink">Reservations</span>
       <span class="ml-2 text-[11px] text-muted">{{ reservations|length }} trip{{ reservations|length|pluralize }} on this quote</span>
+      {% comment %} A GNet request is one trip: anything that adds trips is hidden, since GNet
+         would never hear about them. {% endcomment %}
+      {% if not farm_in %}
       <button @click="$dispatch('reservation-new')"
               class="ml-auto btn-gold flex items-center gap-1.5 text-[12px] font-semibold rounded-lg px-3 py-1.5">
         <i class="ti ti-plus text-[14px]"></i> Add reservation
       </button>
+      {% endif %}
     </div>
     <div class="divide-y divide-line/70">
       {% comment %} One line per quote line, not per reservation: a linked set of identical
          trips (APC-14) folds into its first member and carries a ×N badge. The members
          stay separate trips underneath — expand the line to reach each one. {% endcomment %}
       {% for line in reservation_lines %}
-      {% include "components/trip_line.html" with line=line actions="sales" %}
+      {% include "components/trip_line.html" with line=line actions="sales" gnet=farm_in %}
       {% empty %}
       <div class="px-5 py-12 text-center text-[13px] text-muted">
         <i class="ti ti-car-off text-[26px] text-slate-300"></i>

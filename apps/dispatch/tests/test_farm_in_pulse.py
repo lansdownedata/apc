@@ -38,6 +38,7 @@ def test_pulse_shape_and_counts(logged_in_client):
     data = logged_in_client.get(URL).json()
     assert data["pending"] == 1
     assert data["latest_id"] == n.pk
+    assert data["max_id"] == n.pk
     assert [a["id"] for a in data["arrivals"]][0] == n.pk
     first = data["arrivals"][0]
     assert set(first) == {"id", "title", "detail", "dispatch", "lead", "request"}
@@ -48,7 +49,7 @@ def test_pulse_shape_and_counts(logged_in_client):
 
 def test_pulse_empty_has_null_latest(logged_in_client):
     data = logged_in_client.get(URL).json()
-    assert data == {"pending": 0, "latest_id": None, "arrivals": []}
+    assert data == {"pending": 0, "latest_id": None, "max_id": 0, "arrivals": []}
 
 
 def test_pulse_since_filters_already_seen_arrivals(logged_in_client):
@@ -79,3 +80,17 @@ def test_pulse_is_two_queries(logged_in_client):
         if "django_session" not in q["sql"] and "FROM `accounts_user`" not in q["sql"]
     ]
     assert len(pulse) == 2, [q["sql"] for q in pulse]
+
+
+def test_pulse_max_id_is_the_newest_unread_arrival_whatever_since_says(logged_in_client):
+    """A new tab seeds its `since` from `max_id` instead of toasting the whole backlog."""
+    old = _arrival()
+    new = _arrival(kind=K.FARM_IN_COVERAGE)
+    _arrival(kind=K.FARM_IN_SENT_BACK)  # not an arrival kind: never the max
+    assert logged_in_client.get(URL, {"since": new.pk}).json()["max_id"] == new.pk
+    data = logged_in_client.get(URL, {"since": old.pk}).json()
+    assert data["max_id"] == new.pk
+    assert [a["id"] for a in data["arrivals"]] == [new.pk]
+    new.read = True
+    new.save(update_fields=["read"])
+    assert logged_in_client.get(URL, {"since": new.pk}).json()["max_id"] == old.pk

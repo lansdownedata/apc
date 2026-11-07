@@ -27,11 +27,13 @@ from .drafts import FLIGHT_RE, TAIL_RE, DraftError, save_reservation_from_draft
 from .flights import FlightLookupError
 from .groups import (
     DUPLICATE_MAX,
+    FARM_IN_TRIP_REFUSAL,
     apply_to_group,
     clone_reservation,
     copy_to_dates,
     delete_group,
     group_size,
+    has_farm_in,
     set_group_size,
 )
 from .models import FlightDirection, Reservation, Stop
@@ -287,6 +289,9 @@ def reservation_delete(request, pk) -> HttpResponse:
 
     if processing.lock_message(res):
         messages.error(request, "This trip is processed and can't be removed.")
+        return redirect("lead_detail", pk=lead_id)
+    if has_farm_in([res]):
+        messages.error(request, FARM_IN_TRIP_REFUSAL)
         return redirect("lead_detail", pk=lead_id)
     if res.charges.exists():
         # Money moved for this trip (APC-101): its row is the audit trail. Cancel, don't delete.

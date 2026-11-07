@@ -128,23 +128,38 @@ function shell() {
     navOpen: window.innerWidth >= 1024,
     notifOpen: false,
     toggleNav() { this.navOpen = !this.navOpen; },
-    /* Notice a new GNet request (APC-136): poll while the tab is visible. */
-    since: 0,
+    /* Notice a new GNet request (APC-136): poll while the tab is visible. `since` is null
+     * until this tab has pulsed once. */
+    since: null,
     init() {
-      try { this.since = parseInt(sessionStorage.getItem("farmInSince"), 10) || 0; } catch (e) { /* private mode */ }
+      try {
+        const stored = sessionStorage.getItem("farmInSince");
+        if (stored !== null) this.since = parseInt(stored, 10) || 0;
+      } catch (e) { /* private mode */ }
+      this._pulse();
       setInterval(() => { if (document.visibilityState === "visible") this._pulse(); }, 30000);
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") this._pulse();
       });
     },
+    _saveSince() {
+      try { sessionStorage.setItem("farmInSince", String(this.since)); } catch (e) { /* private mode */ }
+    },
     async _pulse() {
       try {
-        const resp = await fetch(`/portal/farm-in/pulse/?since=${this.since}`, {
+        const resp = await fetch(`/portal/farm-in/pulse/?since=${this.since || 0}`, {
           headers: { "X-Requested-With": "XMLHttpRequest" },
         });
         if (!resp.ok) throw new Error(resp.status);
         const data = await resp.json();
         window.dispatchEvent(new CustomEvent("farm-in-count", { detail: data.pending }));
+        // Seed: a tab's first pulse starts from the newest unread arrival without toasting,
+        // so a new tab doesn't replay the whole backlog. Only later arrivals toast.
+        if (this.since === null) {
+          this.since = data.max_id || 0;
+          this._saveSince();
+          return;
+        }
         for (const a of data.arrivals) {
           Alpine.store("toast").push({
             type: "gold",
@@ -161,7 +176,7 @@ function shell() {
         }
         if (data.latest_id) {
           this.since = Math.max(this.since, data.latest_id);
-          try { sessionStorage.setItem("farmInSince", String(this.since)); } catch (e) { /* private mode */ }
+          this._saveSince();
         }
       } catch (e) {
         console.debug("farm-in pulse failed", e);
@@ -224,9 +239,11 @@ const FARM_IN_DONE = {
 };
 
 /* The confirm flow for one farm-in decision, shared by the drawer and the workspace banner.
+ * Not named farmInAct: a top-level function in this classic script is a window property, so
+ * the banner's `window.farmInAct` below would replace it and call itself.
  * `send(data)` does the post; Accept and Decline/Send back ask first (Decline and Send back
  * insist on a reason), anything else goes straight through. */
-function farmInAct(kind, url, price, send) {
+function farmInConfirm(kind, url, price, send) {
   const modal = Alpine.store("modal");
   if (kind === "accept") {
     return modal.confirm({
@@ -266,7 +283,7 @@ function farmInAct(kind, url, price, send) {
 
 /* The workspace banner's buttons: same flow, then reload so the page shows the outcome. */
 window.farmInAct = (url, kind, price) =>
-  farmInAct(kind, url, price, async (data) => {
+  farmInConfirm(kind, url, price, async (data) => {
     try {
       await postForm(url, data);
     } catch (e) {
@@ -308,7 +325,15 @@ function farmInDrawer() {
         if (!resp.ok) throw new Error(resp.status);
         this.body = await resp.text();
       } catch (e) {
-        Alpine.store("toast").push({ type: "danger", title: "Could not load GNet requests" });
+        // A list already on screen stays (a toast says the refresh failed); a first load
+        // that fails says so in place of "Loading…", with a way to try again.
+        if (this.body.includes("data-fi-root")) {
+          Alpine.store("toast").push({ type: "danger", title: "Could not load GNet requests" });
+        } else {
+          this.body =
+            '<div class="px-5 py-6 text-[13px] text-muted">Couldn\'t load GNet requests. ' +
+            '<button type="button" data-fi-retry class="font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Try again</button></div>';
+        }
         return;
       }
       this.$nextTick(() => {
@@ -343,6 +368,10 @@ function farmInDrawer() {
     },
 
     onClick(e) {
+      if (e.target.closest("[data-fi-retry]")) {
+        this.body = '<p class="px-5 py-6 text-muted text-[13px]">Loading…</p>';
+        return this.load();
+      }
       const button = e.target.closest("[data-action]");
       if (button) return this.act(button);
       const tab = e.target.closest("[data-fi-tab]");
@@ -372,7 +401,7 @@ function farmInDrawer() {
 
     act(button) {
       const { action: kind, url, price } = button.dataset;
-      return farmInAct(kind, url, price, (data) => this.post(kind, url, data));
+      return farmInConfirm(kind, url, price, (data) => this.post(kind, url, data));
     },
 
     /* Never rejects: a refusal is a toast, and the list is re-read either way because the

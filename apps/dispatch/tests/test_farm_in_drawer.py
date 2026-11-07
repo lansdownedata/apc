@@ -340,3 +340,33 @@ def test_zone_clock(settings):
         "Fri Jul 3 · 6:00 PM PDT"
     )
     assert _clock(None, "America/Los_Angeles") == ""
+
+
+def test_banner_and_drawer_share_a_helper_that_is_not_shadowed():
+    """`app.js` is a classic script: a top-level `function farmInAct` IS `window.farmInAct`,
+    so assigning the banner's arrow to that name made every Accept/Decline call itself."""
+    from pathlib import Path
+
+    from django.conf import settings
+
+    js = (Path(settings.BASE_DIR) / "static" / "js" / "app.js").read_text()
+    assert "function farmInConfirm(" in js
+    assert "function farmInAct(" not in js
+    window_line = next(ln for ln in js.splitlines() if ln.startswith("window.farmInAct ="))
+    following = js[js.index(window_line) :][:200]
+    assert "farmInConfirm(" in following
+    assert "farmInAct(kind" not in following
+
+
+def test_pending_row_on_a_lost_lead_says_so_and_cannot_be_accepted(logged_in_client, sedan):
+    from apps.leads.models import Lead
+
+    req = _arrive(company_created=True, desk="dispatch")
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.LOST)
+
+    (row,) = farm_in_drawer.rows(tab="pending", dispatch_only=False)
+    body = _fragment(logged_in_client)
+
+    assert [label for label, _css in row.pills][0] == "Lead lost"
+    assert "Lead lost" in body
+    assert 'disabled title="Lead is lost"' in body

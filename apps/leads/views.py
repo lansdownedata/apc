@@ -300,12 +300,14 @@ def lead_detail(request, pk):
 def _farm_in_context(req) -> dict:
     """What the GNet banner needs; empty keys for an ordinary lead."""
     if req is None:
-        return {"farm_in": None, "farm_in_pending": False}
+        return {"farm_in": None, "farm_in_is_pending": False}
     pending = req.status == req.Status.PENDING
     res = req.reservation
+    # Not `farm_in_pending`: that is the chrome context processor's header count.
     return {
         "farm_in": req,
-        "farm_in_pending": pending,
+        "farm_in_is_pending": pending,
+        "farm_in_lead_lost": pending and req.lead.status == Lead.Status.LOST,
         "farm_in_needs_price": res.vehicle_id is None or res.line_total <= 0,
         "farm_in_price": res.line_total,
         "farm_in_pushes": [] if pending else list(req.pushes.order_by("created_at", "pk")),
@@ -452,6 +454,8 @@ def _transition_refused(request: HttpRequest, message: str) -> HttpResponse:
 @require_POST
 def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
+    if lead.farm_in_requests.filter(status=FarmInRequest.Status.PENDING).exists():
+        return _transition_refused(request, "Use Decline on the GNet request")
     try:
         services.mark_lost(lead, request.POST.get("reason") or "")
     except services.LeadStateError as exc:
