@@ -11,6 +11,7 @@ from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactor
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.integrations import gnet
 from apps.integrations.gnet import GnetAPIError
+from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
@@ -205,6 +206,42 @@ def test_cron_expiry_skips_an_already_lost_lead():
     req.lead.refresh_from_db()
     assert req.status == FarmInRequest.Status.EXPIRED
     assert req.lead.lost_reason == "Too far"
+
+
+def test_cron_expiry_on_a_booked_lead_flags_for_review(django_capture_on_commit_callbacks):
+    now = timezone.now()
+    req = FarmInRequestFactory(pickup_at=now - timedelta(hours=2))
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.BOOKED)
+    with django_capture_on_commit_callbacks(execute=True):
+        assert farm_in_push.run_cron() == 1
+    req.refresh_from_db()
+    req.lead.refresh_from_db()
+    assert req.status == FarmInRequest.Status.EXPIRED
+    assert req.alert == "Expired, review the order"
+    assert req.lead.status == Lead.Status.BOOKED
+    n = Notification.objects.get(kind=Notification.Kind.FARM_IN_UPDATED)
+    assert n.farm_in_request_id == req.pk
+
+
+def test_cron_expiry_survives_a_row_that_fails():
+    now = timezone.now()
+    bad = FarmInRequestFactory(pickup_at=now - timedelta(hours=3))
+    good = FarmInRequestFactory(pickup_at=now - timedelta(hours=2))
+    real = lead_services.mark_lost
+
+    def mark_lost(lead, reason):
+        if lead.pk == bad.lead_id:
+            raise RuntimeError("touch-points down")
+        return real(lead, reason)
+
+    with patch.object(lead_services, "mark_lost", side_effect=mark_lost):
+        assert farm_in_push.run_cron() == 2
+    bad.refresh_from_db()
+    good.refresh_from_db()
+    good.lead.refresh_from_db()
+    assert bad.status == FarmInRequest.Status.PENDING
+    assert good.status == FarmInRequest.Status.EXPIRED
+    assert good.lead.status == Lead.Status.LOST
 
 
 def test_retry_creates_fresh_pending_from_failed():

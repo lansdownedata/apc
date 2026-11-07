@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 REPEATABLE = frozenset({"ASSIGNED", "CANCEL"})
 EXPIRED_ALERT = "Expired: pickup time passed"
 EXPIRED_LOST_REASON = "GNet request expired"
+EXPIRED_BOOKED_ALERT = "Expired, review the order"
 MAX_ATTEMPTS = 8
 RETRY_STATUSES = frozenset({0, 408, 409, 429})
 EXPIRE_AFTER = timedelta(hours=1)
@@ -243,7 +244,7 @@ def run_cron() -> int:
 
     Expiry sends nothing to GNet (the trip simply passed) and raises no notification; the
     request's lead is marked Lost.
-    Returns pushes attempted plus requests expired.
+    Returns pushes attempted plus requests whose expiry was attempted.
     """
     now = timezone.now()
     due = FarmInStatusPush.objects.filter(
@@ -260,29 +261,47 @@ def run_cron() -> int:
 
 
 def _expire_pending(now: datetime) -> int:
-    """Expire each pending request an hour past pickup and mark its lead Lost; returns how many.
+    """Expire each pending request an hour past pickup and mark its lead Lost.
 
     Each row is re-read under its lock, so a request accepted since the scan stays accepted.
-    A lead already Lost keeps its reason.
+    A lead already Lost keeps its reason; a Booked one is flagged for review instead
+    (`farm_in.close_lead`). A row that fails is rolled back and logged, stays pending for
+    the next run, and never blocks the rows after it. Returns how many rows were attempted.
     """
     due = FarmInRequest.objects.filter(
         status=FarmInRequest.Status.PENDING, pickup_at__lt=now - EXPIRE_AFTER
     )
-    expired = 0
+    attempted = 0
     for pk in due.order_by("pk").values_list("pk", flat=True):
-        with transaction.atomic():
-            req = (
-                FarmInRequest.objects.select_for_update(of=("self",))
-                .select_related("lead")
-                .filter(pk=pk, status=FarmInRequest.Status.PENDING)
-                .first()
-            )
-            if req is None:
+        try:
+            if not _expire_one(pk, now):
                 continue
-            req.status = FarmInRequest.Status.EXPIRED
-            req.alert = EXPIRED_ALERT
-            req.last_event_at = now
-            req.save(update_fields=["status", "alert", "last_event_at", "updated_at"])
-            farm_in.mark_lead_lost(req.lead, EXPIRED_LOST_REASON)
-        expired += 1
-    return expired
+        except Exception:
+            logger.exception("farm-in: expiring request %s failed", pk)
+        attempted += 1
+    return attempted
+
+
+def _expire_one(pk: int, now: datetime) -> bool:
+    """Expire one request if it is still pending; False when someone decided it meanwhile."""
+    with transaction.atomic():
+        req = (
+            FarmInRequest.objects.select_for_update(of=("self",))
+            .select_related("lead")
+            .filter(pk=pk, status=FarmInRequest.Status.PENDING)
+            .first()
+        )
+        if req is None:
+            return False
+        booked = req.lead.status == req.lead.Status.BOOKED
+        req.status = FarmInRequest.Status.EXPIRED
+        req.alert = "" if booked else EXPIRED_ALERT  # a booked lead gets the review alert
+        req.last_event_at = now
+        farm_in.close_lead(
+            req,
+            EXPIRED_LOST_REASON,
+            review_alert=EXPIRED_BOOKED_ALERT,
+            title="GNet request expired on a booked order",
+        )
+        req.save(update_fields=["status", "alert", "last_event_at", "updated_at"])
+    return True

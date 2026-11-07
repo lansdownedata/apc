@@ -101,6 +101,7 @@ def test_new_replay_is_identical_and_creates_nothing(sedan, django_capture_on_co
         second = _new()
     assert first == second
     assert FarmInRequest.objects.count() == 1 and Company.objects.count() == 1
+    assert Lead.objects.count() == 1 and Reservation.objects.count() == 1
     assert Notification.objects.filter(kind=Notification.Kind.FARM_IN_NEW).count() == 1
 
 
@@ -188,6 +189,7 @@ def test_concurrent_new_produces_one_row(restore_seeded_rows, sedan):
         t.join()
     assert errors == [] and results[0] == results[1]
     assert FarmInRequest.objects.count() == 1 and Company.objects.count() == 1
+    assert Lead.objects.count() == 1 and Reservation.objects.count() == 1
 
 
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
@@ -213,12 +215,13 @@ def test_concurrent_new_different_transactions_same_unknown_requester(restore_se
     assert all("error" not in body for body in results)
     assert results[0]["reservationId"] != results[1]["reservationId"]
     assert FarmInRequest.objects.count() == 2 and Company.objects.count() == 1
+    assert Lead.objects.count() == 2 and Reservation.objects.count() == 2
 
 
 def test_quote_priced_and_persists_nothing(sedan):
     body = farm_in.handle_quote(sample_payload(), transaction_id=TID)
     assert body == {"reservationId": TID, "totalAmount": "165.00"}
-    assert FarmInRequest.objects.count() == 0
+    assert FarmInRequest.objects.count() == 0 and Lead.objects.count() == 0
 
 
 def test_quote_creates_no_company(sedan):
@@ -271,7 +274,15 @@ def test_update_rewrites_stops_and_passengers(sedan):
 def test_update_keeps_agent_pricing_and_vehicle(sedan):
     _new()
     suv = VehicleTypeFactory(name="Executive SUV")
-    Reservation.objects.update(vehicle=suv, rate=Decimal("200"), hours=3, gratuity_pct=20)
+    Reservation.objects.update(
+        vehicle=suv,
+        rate=Decimal("200"),
+        hours=3,
+        gratuity_pct=20,
+        discount_pct=10,
+        discount_flat=Decimal("5"),
+    )
+    FarmInRequest.objects.update(desk=FarmInRequest.Desk.DISPATCH)
     p = sample_payload()
     p["locations"]["stops"].append({"address": "500 Rodeo Dr", "stopNumber": "2"})
     body = _update(p)
@@ -279,6 +290,8 @@ def test_update_keeps_agent_pricing_and_vehicle(sedan):
     assert res.stops.count() == 4
     assert res.vehicle == suv and res.rate == Decimal("200.00") and res.hours == 3
     assert res.gratuity_pct == 20 and res.min_hours == Decimal("1")
+    assert res.discount_pct == 10 and res.discount_flat == Decimal("5.00")
+    assert _req().desk == FarmInRequest.Desk.DISPATCH
     assert body["totalAmount"] == f"{res.line_total:.2f}"
 
 
@@ -339,6 +352,24 @@ def test_cancel_before_accept_on_an_already_lost_lead_keeps_its_reason(sedan):
     _update(p)
     req = _req()
     assert req.status == FarmInRequest.Status.CANCELED and req.lead.lost_reason == "Too far"
+
+
+def test_cancel_on_a_booked_lead_before_accept_flags_for_review(
+    sedan, django_capture_on_commit_callbacks
+):
+    _new()
+    Lead.objects.update(status=Lead.Status.BOOKED)
+    p = sample_payload()
+    p["status"] = "CANCEL"
+    with django_capture_on_commit_callbacks(execute=True):
+        body = _update(p)
+    req = _req()
+    assert body == {"reservationId": f"FI-{req.pk}"}
+    assert req.status == FarmInRequest.Status.CANCELED
+    assert req.lead.status == Lead.Status.BOOKED
+    assert req.alert == "Requester canceled, review the order"
+    n = Notification.objects.get(kind=Notification.Kind.FARM_IN_UPDATED)
+    assert n.farm_in_request_id == req.pk
 
 
 def test_cancel_after_accept_leaves_order_booked(sedan, django_capture_on_commit_callbacks):

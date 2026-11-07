@@ -41,6 +41,7 @@ ALERT_CANCELED = "Requester canceled"
 ALERT_UPDATED_AFTER_ACCEPT = "Updated by requester after accept, review the order"
 ALERT_CANCEL_AS_NEW = "Cancel received as a new delivery, review"
 ALERT_NOW_ASKS_FOR = "Requester now asks for "
+ALERT_CANCELED_BOOKED = "Requester canceled, review the order"
 LOST_CANCELED = "Requester canceled"
 
 GNET_CANCEL = "CANCEL"
@@ -317,16 +318,18 @@ def handle_new(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
     """Store a new farm-in request once per transaction id and answer with its token.
 
     A re-delivery replays the stored response without re-pricing; one that says CANCEL is
-    not applied but flags the row for review (cancels belong on `farm_in.update`). Concurrent first
-    deliveries are settled by unique indexes: the savepoint covers the requester company and
-    the request insert, so a loser rolls back only its savepoint. If it collided on its own
-    transaction id, the winner's row is that request and is replayed. If it collided on the
-    company's griddID (a different transaction from the same never-seen requester), no row
-    exists for its id yet, so the savepoint runs once more: the company now exists and
-    `ensure_requester` finds it under lock. `ensure_requester` runs first so that, when the
-    company exists, its row lock queues same-requester deliveries.
+    not applied but flags the row for review (cancels belong on `farm_in.update`).
+    Concurrent first deliveries are settled by unique indexes: the savepoint covers the
+    requester company, the lead and reservation, and the request insert, so a loser rolls
+    back only its savepoint. If it collided on its own transaction id, the winner's row is
+    that request and is replayed. If it collided on the company's griddID (a different
+    transaction from the same never-seen requester), no row exists for its id yet, so the
+    savepoint runs once more: the company now exists and `ensure_requester` finds it under
+    lock. `ensure_requester` runs first so that, when the company exists, its row lock
+    queues same-requester deliveries.
     """
-    existing = FarmInRequest.objects.filter(transaction_id=transaction_id).first()
+    rows = FarmInRequest.objects.select_related("reservation")
+    existing = rows.filter(transaction_id=transaction_id).first()
     if existing:
         if _is_cancel(payload) and existing.status != FarmInRequest.Status.CANCELED:
             _flag_cancel_as_new(existing, transaction_id)
@@ -360,7 +363,8 @@ def _insert_or_replay(
     try:
         return _insert_new(payload, transaction_id=transaction_id, delivery_id=delivery_id)
     except IntegrityError:
-        req = FarmInRequest.objects.filter(transaction_id=transaction_id).first()
+        rows = FarmInRequest.objects.select_related("reservation")
+        req = rows.filter(transaction_id=transaction_id).first()
         if req is not None:
             return req
         if not retry:
@@ -377,24 +381,36 @@ def _store_delivery(req: FarmInRequest, payload: dict, *, delivery_id: str) -> N
         setattr(req, name, value)
 
 
-def mark_lead_lost(lead: Lead, reason: str) -> None:
-    """Mark a farm-in's lead Lost unless it cannot go there (already Lost, or Booked)."""
-    if lead.can_transition(Lead.Status.LOST):
+def close_lead(req: FarmInRequest, reason: str, *, review_alert: str, title: str) -> None:
+    """Mark the request's lead Lost as its envelope closes before accept (not saved).
+
+    A lead already Lost keeps its reason. A Booked one (booked from the workspace or the
+    pipeline rather than by Accept) cannot go Lost: its order is kept, `review_alert` is
+    added to the request and the desk is notified with `title` on commit.
+    """
+    lead = req.lead
+    if lead.status == Lead.Status.BOOKED:
+        _add_alert(req, review_alert)
+        req_pk = req.pk
+        transaction.on_commit(lambda: _notify_updated(req_pk, title))
+    elif lead.can_transition(Lead.Status.LOST):
         lead_services.mark_lost(lead, reason)
 
 
 def _cancel(req: FarmInRequest) -> None:
     """The requester canceled an open row.
 
-    Before accept the lead goes Lost; an accepted trip is flagged and its order kept.
+    Before accept the lead goes Lost (a booked one is flagged instead); an accepted trip is
+    flagged and its order kept.
     """
+    title = "GNet requester canceled"
     if req.status == FarmInRequest.Status.ACCEPTED:
         req.updated_after_accept = True
         req.alert = ALERT_CANCELED
         req_pk = req.pk
-        transaction.on_commit(lambda: _notify_updated(req_pk, "GNet requester canceled"))
+        transaction.on_commit(lambda: _notify_updated(req_pk, title))
     else:
-        mark_lead_lost(req.lead, LOST_CANCELED)
+        close_lead(req, LOST_CANCELED, review_alert=ALERT_CANCELED_BOOKED, title=title)
     req.status = FarmInRequest.Status.CANCELED
 
 
