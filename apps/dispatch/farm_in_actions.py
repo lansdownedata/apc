@@ -1,4 +1,4 @@
-"""Desk actions on a pending farm-in request: price, vehicle, coverage, send back, decide.
+"""Desk actions on a pending farm-in request: coverage, send back, decide.
 
 Every action locks the request row first (`_locked`), then checks it is still pending, then
 acts, so two staff deciding at once cannot both win. Callers see `FarmInActionError` with an
@@ -6,7 +6,6 @@ HTTP-ish `status`: 409 when someone already decided, 400 for any other refusal.
 """
 
 import logging
-from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
@@ -15,8 +14,8 @@ from django.utils import timezone
 from apps.accounts.models import Department, User
 from apps.dispatch import farm_in, farm_in_push
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
-from apps.leads.models import VehicleType
-from apps.leads.services import BookLeadError, book_lead
+from apps.leads.models import Lead
+from apps.leads.services import BookLeadError, LeadStateError, book_lead, mark_lost
 from apps.notifications.models import Notification
 
 logger = logging.getLogger(__name__)
@@ -37,11 +36,11 @@ def _locked(pk: int) -> FarmInRequest:
     """Fetch the request under a row lock; call inside `transaction.atomic()`.
 
     `of=("self",)` locks only the request row: Postgres refuses a plain FOR UPDATE on the
-    nullable side of the outer join that `vehicle` brings in.
+    nullable side of an outer join.
     """
     return (
         FarmInRequest.objects.select_for_update(of=("self",))
-        .select_related("company", "vehicle")
+        .select_related("company", "lead", "reservation")
         .get(pk=pk)
     )
 
@@ -70,42 +69,6 @@ def _notify_quietly(
         logger.exception("farm-in: %s notification failed for request %s", kind, req_pk)
 
 
-def price(pk: int, *, user: User, amount: Decimal, note: str = "") -> FarmInRequest:
-    """Set a manual price; it survives later vehicle changes and requester updates."""
-    with transaction.atomic():
-        req = _locked(pk)
-        _require_pending(req)
-        if amount is None or amount <= 0:
-            raise FarmInActionError("Enter a price above zero")
-        req.quoted_amount = amount
-        req.pricing_source = FarmInRequest.PricingSource.MANUAL
-        req.priced_by = user
-        req.pricing_note = note[:_TEXT_MAX]
-        req.save()
-    return req
-
-
-def set_vehicle(pk: int, *, user: User, vehicle_id: int) -> FarmInRequest:
-    """Map the request to one of our vehicle types and re-price it unless priced by hand."""
-    with transaction.atomic():
-        req = _locked(pk)
-        _require_pending(req)
-        vehicle = VehicleType.objects.filter(pk=vehicle_id, active=True).first()
-        if vehicle is None:
-            raise FarmInActionError("Unknown vehicle")
-        req.vehicle = vehicle
-        if req.pricing_source != FarmInRequest.PricingSource.MANUAL:
-            req.quoted_amount = farm_in.price_request(
-                vehicle, hourly=farm_in.is_hourly(req.payload)
-            )
-            req.pricing_source = (
-                FarmInRequest.PricingSource.RATE_CARD if req.quoted_amount is not None else ""
-            )
-        farm_in._remove_alert(req, farm_in.ALERT_UNMAPPED_PREFIX)
-        req.save()
-    return req
-
-
 def request_coverage(pk: int, *, user: User) -> FarmInRequest:
     """Hand the request to dispatch and tell the operations team."""
     with transaction.atomic():
@@ -118,7 +81,7 @@ def request_coverage(pk: int, *, user: User) -> FarmInRequest:
         req.desk_changed_at = timezone.now()
         req.save()
         title = f"Coverage requested: {req.company.name}"
-        detail = f"{req.pickup_summary} → {req.dropoff_summary}"
+        detail = farm_in._route(req)
         recipients = list(User.objects.in_department(Department.OPERATIONS).filter(is_active=True))
         recipients = recipients or [None]
         for recipient in recipients:
@@ -158,13 +121,22 @@ def send_back(pk: int, *, user: User, note: str) -> FarmInRequest:
 
 
 def decline(pk: int, *, user: User, reason: str) -> FarmInRequest:
-    """Decline the request and queue the REJECT push to GNet."""
+    """Decline the request, mark its lead Lost with the reason and queue the REJECT push.
+
+    A lead that is already Lost stays as it is; a Booked one refuses before anything changes.
+    """
     with transaction.atomic():
         req = _locked(pk)
         _require_pending(req)
         reason = reason.strip()
         if not reason:
             raise FarmInActionError("Give the requester a reason")
+        if req.lead.status == Lead.Status.BOOKED:
+            raise FarmInActionError("Lead is booked")
+        try:
+            mark_lost(req.lead, reason)
+        except LeadStateError:
+            pass
         req.status = FarmInRequest.Status.DECLINED
         req.decline_reason = reason[:_TEXT_MAX]
         req.decided_by = user
@@ -192,11 +164,11 @@ def accept(pk: int, *, user: User) -> FarmInRequest:
         _require_pending(req)
         if not settings.GNET_API_KEY:
             raise FarmInActionError("GNet pushes are not configured: set GNET_API_KEY")
-        if req.quoted_amount is None:
-            raise FarmInActionError("Price the request first")
-        if req.vehicle is None:
-            raise FarmInActionError("Choose a vehicle first")
         reservation = req.reservation
+        if reservation.vehicle_id is None or reservation.line_total <= 0:
+            raise FarmInActionError("Price the trip first")
+        if not req.lead.can_transition(Lead.Status.BOOKED):
+            raise FarmInActionError(f"Lead is {req.lead.get_status_display().lower()}")
         try:
             book_lead(req.lead)
         except BookLeadError as exc:

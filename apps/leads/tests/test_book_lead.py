@@ -7,12 +7,14 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.dispatch.factories import FarmInRequestFactory
+from apps.dispatch.models import FarmInRequest
 from apps.leads import services
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging.models import TouchPoint
 from apps.payments.models import PaymentPlan
-from apps.reservations.factories import TransferReservationFactory
+from apps.reservations.factories import ReservationFactory, TransferReservationFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -108,6 +110,28 @@ def test_mark_booked_refuses_lost(logged_in_client):
     resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
     assert resp.status_code == 400
     assert "new or quoted" in resp.json()["error"]
+
+
+def test_mark_booked_refuses_a_lead_with_a_pending_gnet_request(logged_in_client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    FarmInRequestFactory(lead=lead, reservation=ReservationFactory(lead=lead))
+    resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "Use Accept on the GNet request"
+    lead.refresh_from_db()
+    assert lead.status == Lead.Status.NEW
+
+
+def test_mark_booked_allows_a_lead_whose_gnet_request_is_decided(logged_in_client):
+    lead = LeadFactory(status=Lead.Status.NEW)
+    FarmInRequestFactory(
+        lead=lead,
+        reservation=ReservationFactory(lead=lead),
+        status=FarmInRequest.Status.ACCEPTED,
+    )
+    with patch("apps.integrations.la_sync.push_lead_bookings"):
+        resp = logged_in_client.post(reverse("lead_mark_booked", args=[lead.pk]), **JSON_HEADERS)
+    assert resp.status_code == 200
 
 
 def test_mark_booked_requires_login(client):

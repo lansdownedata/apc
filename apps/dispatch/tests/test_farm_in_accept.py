@@ -62,15 +62,17 @@ def _accept(req, agent) -> tuple[FarmInRequest, Lead, Reservation]:
     return out, out.lead, out.reservation
 
 
-def test_accept_requires_price_and_vehicle(req, agent):
-    FarmInRequest.objects.filter(pk=req.pk).update(quoted_amount=None)
-    with pytest.raises(FarmInActionError, match="Price the request first") as exc:
+def test_accept_requires_vehicle_and_price(req, agent, sedan):
+    Reservation.objects.filter(pk=req.reservation_id).update(vehicle=None)
+    with pytest.raises(FarmInActionError, match="Price the trip first") as exc:
         farm_in_actions.accept(req.pk, user=agent)
     assert exc.value.status == 400
-    FarmInRequest.objects.filter(pk=req.pk).update(quoted_amount=Decimal("165"), vehicle=None)
-    with pytest.raises(FarmInActionError, match="Choose a vehicle first") as exc:
+    Reservation.objects.filter(pk=req.reservation_id).update(vehicle=sedan, rate=0)
+    with pytest.raises(FarmInActionError, match="Price the trip first") as exc:
         farm_in_actions.accept(req.pk, user=agent)
     assert exc.value.status == 400
+    req.refresh_from_db()
+    assert req.status == FarmInRequest.Status.PENDING
 
 
 def test_accept_refuses_without_a_gnet_api_key(req, agent, settings):
@@ -78,9 +80,10 @@ def test_accept_refuses_without_a_gnet_api_key(req, agent, settings):
     with pytest.raises(FarmInActionError, match="set GNET_API_KEY") as exc:
         farm_in_actions.accept(req.pk, user=agent)
     assert exc.value.status == 400
-    assert Lead.objects.count() == 0 and not FarmInStatusPush.objects.exists()
+    assert not FarmInStatusPush.objects.exists()
     req.refresh_from_db()
     assert req.status == FarmInRequest.Status.PENDING
+    assert req.lead.status == Lead.Status.NEW
 
 
 def test_accept_books_a_lead_on_the_companys_contact(req, agent):
@@ -123,7 +126,7 @@ def test_accept_resolves_its_alerts_and_keeps_the_rest(sedan, agent):
     )
 
 
-def test_accept_marks_request_and_enqueues_confirmed(
+def test_accept_books_the_arrival_lead_and_pushes_confirmed(
     req, agent, settings, django_capture_on_commit_callbacks
 ):
     settings.GNET_API_KEY = "k"
@@ -158,11 +161,29 @@ def test_accept_twice_second_gets_409(req, agent):
     assert Lead.objects.count() == 1
 
 
-def test_accept_rolls_back_order_when_booking_fails(req, agent):
+def test_accept_leaves_request_pending_when_booking_fails(req, agent):
     with patch.object(farm_in_actions, "book_lead", side_effect=BookLeadError("No can do")):
         with pytest.raises(FarmInActionError, match="No can do"):
             farm_in_actions.accept(req.pk, user=agent)
-    assert Lead.objects.count() == 0 and Reservation.objects.count() == 0
     req.refresh_from_db()
-    assert req.status == FarmInRequest.Status.PENDING and req.lead is None
+    assert req.status == FarmInRequest.Status.PENDING
+    assert req.lead.status == Lead.Status.NEW
+    assert PaymentPlan.objects.count() == 0
+    assert not FarmInStatusPush.objects.exists()
+
+
+def test_accept_pushes_the_current_line_total(req, agent):
+    Reservation.objects.filter(pk=req.reservation_id).update(hours=Decimal("3"))
+    farm_in_actions.accept(req.pk, user=agent)
+    push = FarmInStatusPush.objects.get(request=req)
+    assert push.status == "CONFIRMED" and push.total_amount == Decimal("495.00")
+
+
+def test_accept_refuses_a_lost_lead(req, agent):
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.LOST)
+    with pytest.raises(FarmInActionError, match="Lead is lost") as exc:
+        farm_in_actions.accept(req.pk, user=agent)
+    assert exc.value.status == 400
+    req.refresh_from_db()
+    assert req.status == FarmInRequest.Status.PENDING
     assert not FarmInStatusPush.objects.exists()

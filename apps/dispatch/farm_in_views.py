@@ -1,7 +1,6 @@
 """Staff endpoints for the farm-in desk actions (APC-135); the services own the rules."""
 
 from collections.abc import Callable
-from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpRequest, JsonResponse
@@ -29,37 +28,9 @@ def _run(fn: Callable[..., FarmInRequest], *args, **kwargs) -> JsonResponse:
             "ok": True,
             "status": req.status,
             "desk": req.desk,
-            "quoted_amount": None if req.quoted_amount is None else f"{req.quoted_amount:.2f}",
+            "lead": req.lead_id,
         }
     )
-
-
-@login_required
-@require_POST
-def price(request: HttpRequest, pk: int) -> JsonResponse:
-    try:
-        amount = Decimal(str(request.POST.get("amount", "")).strip())
-    except (InvalidOperation, ValueError):
-        return _error("Enter a valid amount")
-    if not amount.is_finite():
-        return _error("Enter a valid amount")
-    return _run(
-        farm_in_actions.price,
-        pk,
-        user=request.user,
-        amount=amount,
-        note=request.POST.get("note", ""),
-    )
-
-
-@login_required
-@require_POST
-def vehicle(request: HttpRequest, pk: int) -> JsonResponse:
-    try:
-        vehicle_id = int(str(request.POST.get("vehicle_id", "")).strip())
-    except ValueError:
-        return _error("Choose a vehicle")
-    return _run(farm_in_actions.set_vehicle, pk, user=request.user, vehicle_id=vehicle_id)
 
 
 @login_required

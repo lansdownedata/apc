@@ -27,6 +27,7 @@ from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.dispatch import selectors as dispatch_selectors
+from apps.dispatch.models import FarmInRequest
 from apps.integrations import la_sync
 from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
 from apps.integrations.models import ZapEvent
@@ -467,6 +468,8 @@ def lead_mark_booked(request, pk: int) -> HttpResponse:
         return _transition_refused(request, "Only new or quoted leads can be booked.")
     if not lead.reservations.exists():
         return _transition_refused(request, "Add at least one trip before booking.")
+    if lead.farm_in_requests.filter(status=FarmInRequest.Status.PENDING).exists():
+        return _transition_refused(request, "Use Accept on the GNet request")
     try:
         services.book_lead(lead)
     except services.BookLeadError as exc:

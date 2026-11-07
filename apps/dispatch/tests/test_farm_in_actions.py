@@ -1,5 +1,4 @@
 import threading
-from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -13,8 +12,7 @@ from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactor
 from apps.dispatch.farm_in_actions import FarmInActionError
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.dispatch.tests.farm_in_payload import sample_payload
-from apps.leads.factories import VehicleTypeFactory
-from apps.leads.models import VehicleType
+from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
 pytestmark = pytest.mark.django_db
@@ -33,84 +31,23 @@ def ops_user():
 
 
 @pytest.fixture
-def sedan():
-    vt = VehicleTypeFactory(name="Luxury Sedan")
-    VehicleType.objects.filter(pk=vt.pk).update(rate=Decimal("165"), transfer_min_hours=1)
-    vt.refresh_from_db()
-    return vt
-
-
-@pytest.fixture
 def req():
     return FarmInRequestFactory(payload=sample_payload(), gnet_vehicle_type="SEDAN")
 
 
-def test_price_sets_manual_amount_and_who(req, agent):
-    out = farm_in_actions.price(req.pk, user=agent, amount=Decimal("210"), note="holiday")
-    out.refresh_from_db()
-    assert out.quoted_amount == Decimal("210.00")
-    assert out.pricing_source == FarmInRequest.PricingSource.MANUAL
-    assert out.priced_by == agent and out.pricing_note == "holiday"
-
-
-@pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-5")])
-def test_price_refuses_zero_or_negative(req, agent, amount):
-    with pytest.raises(FarmInActionError, match="Enter a price above zero"):
-        farm_in_actions.price(req.pk, user=agent, amount=amount)
-
-
 def test_desk_actions_lock_only_the_request_row(req, agent):
-    """Postgres refuses FOR UPDATE on the nullable side of the vehicle outer join."""
+    """Postgres refuses FOR UPDATE on the nullable side of an outer join."""
     with CaptureQueriesContext(connection) as ctx:
-        farm_in_actions.price(req.pk, user=agent, amount=Decimal("210"))
+        farm_in_actions.request_coverage(req.pk, user=agent)
     locks = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
     assert locks and all("FOR UPDATE OF" in sql for sql in locks)
 
 
-def test_price_refuses_decided_request_with_409(agent):
+def test_decided_request_refuses_with_409(agent):
     done = FarmInRequestFactory(status=FarmInRequest.Status.ACCEPTED)
     with pytest.raises(FarmInActionError) as exc:
-        farm_in_actions.price(done.pk, user=agent, amount=Decimal("10"))
+        farm_in_actions.request_coverage(done.pk, user=agent)
     assert exc.value.status == 409
-
-
-def test_set_vehicle_reprices_from_rate_card(req, agent, sedan):
-    req.alert = farm_in.ALERT_UNMAPPED.format(code="SEDAN")
-    req.save()
-    out = farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
-    out.refresh_from_db()
-    assert out.vehicle == sedan and out.quoted_amount == Decimal("165.00")
-    assert out.pricing_source == FarmInRequest.PricingSource.RATE_CARD
-    assert out.alert == ""
-
-
-def test_set_vehicle_clears_only_its_own_alert(req, agent, sedan):
-    req.alert = f"{farm_in.ALERT_TZ_ASSUMED} · {farm_in.ALERT_UNMAPPED.format(code='SEDAN')}"
-    req.save()
-    farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
-    req.refresh_from_db()
-    assert req.alert == farm_in.ALERT_TZ_ASSUMED
-
-
-def test_set_vehicle_keeps_manual_price(req, agent, sedan):
-    req.quoted_amount = Decimal("200")
-    req.pricing_source = FarmInRequest.PricingSource.MANUAL
-    req.save()
-    out = farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
-    out.refresh_from_db()
-    assert out.vehicle == sedan and out.quoted_amount == Decimal("200.00")
-    assert out.pricing_source == FarmInRequest.PricingSource.MANUAL
-
-
-def test_set_vehicle_with_no_rate_leaves_amount_none(req, agent, sedan):
-    VehicleType.objects.filter(pk=sedan.pk).update(rate=0)
-    out = farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=sedan.pk)
-    assert out.quoted_amount is None and out.pricing_source == ""
-
-
-def test_set_vehicle_refuses_unknown_vehicle(req, agent):
-    with pytest.raises(FarmInActionError, match="Unknown vehicle"):
-        farm_in_actions.set_vehicle(req.pk, user=agent, vehicle_id=0)
 
 
 def test_request_coverage_moves_desk_and_notifies_operations(
@@ -185,14 +122,33 @@ def test_send_back_refuses_from_reservations_desk(req, agent):
         farm_in_actions.send_back(req.pk, user=agent, note="x")
 
 
-def test_decline_requires_reason_and_enqueues_reject(req, agent):
+def test_decline_marks_lead_lost_with_reason_and_enqueues_reject(req, agent):
     with pytest.raises(FarmInActionError, match="Give the requester a reason"):
         farm_in_actions.decline(req.pk, user=agent, reason=" ")
     out = farm_in_actions.decline(req.pk, user=agent, reason="No cars")
     out.refresh_from_db()
     assert out.status == FarmInRequest.Status.DECLINED and out.decline_reason == "No cars"
     assert out.decided_by == agent and out.decided_at is not None
+    assert out.lead.status == Lead.Status.LOST and out.lead.lost_reason == "No cars"
     assert FarmInStatusPush.objects.filter(request=req, status="REJECT").count() == 1
+
+
+def test_decline_on_already_lost_lead_still_declines(req, agent):
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.LOST, lost_reason="Earlier")
+    out = farm_in_actions.decline(req.pk, user=agent, reason="No cars")
+    out.refresh_from_db()
+    assert out.status == FarmInRequest.Status.DECLINED
+    assert out.lead.lost_reason == "Earlier"
+    assert FarmInStatusPush.objects.filter(request=req, status="REJECT").count() == 1
+
+
+def test_decline_refuses_a_booked_lead_and_changes_nothing(req, agent):
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.BOOKED)
+    with pytest.raises(FarmInActionError, match="Lead is booked"):
+        farm_in_actions.decline(req.pk, user=agent, reason="No cars")
+    req.refresh_from_db()
+    assert req.status == FarmInRequest.Status.PENDING
+    assert not FarmInStatusPush.objects.exists()
 
 
 def test_decline_refuses_expired_with_400_and_accepted_with_409(agent):
@@ -262,10 +218,7 @@ def test_decide_race_second_actor_gets_409(restore_seeded_rows):
 def test_accept_and_decline_race_one_wins(restore_seeded_rows, settings):
     settings.GNET_API_KEY = "k"
     user = UserFactory()
-    sedan = VehicleTypeFactory(name="Luxury Sedan")
-    target = FarmInRequestFactory(
-        payload=sample_payload(), vehicle=sedan, quoted_amount=Decimal("165")
-    )
+    target = FarmInRequestFactory(payload=sample_payload())
     barrier = threading.Barrier(2)
     wins, errors = [], []
 
