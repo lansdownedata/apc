@@ -15,7 +15,7 @@ pushes for an accepted request.
 
 import logging
 import random
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REPEATABLE = frozenset({"ASSIGNED", "CANCEL"})
+EXPIRED_ALERT = "Expired: pickup time passed"
+EXPIRED_LOST_REASON = "GNet request expired"
 MAX_ATTEMPTS = 8
 RETRY_STATUSES = frozenset({0, 408, 409, 429})
 EXPIRE_AFTER = timedelta(hours=1)
@@ -239,7 +241,8 @@ def _deliver_quietly(push_pk: int) -> None:
 def run_cron() -> int:
     """Attempt every due push, then expire pending requests an hour past pickup.
 
-    Expiry sends nothing to GNet (the trip simply passed) and raises no notification.
+    Expiry sends nothing to GNet (the trip simply passed) and raises no notification; the
+    request's lead is marked Lost.
     Returns pushes attempted plus requests expired.
     """
     now = timezone.now()
@@ -253,11 +256,33 @@ def run_cron() -> int:
         except Exception:
             logger.exception("farm-in: status push %s failed unexpectedly", push.pk)
         attempted += 1
-    expired = FarmInRequest.objects.filter(
+    return attempted + _expire_pending(now)
+
+
+def _expire_pending(now: datetime) -> int:
+    """Expire each pending request an hour past pickup and mark its lead Lost; returns how many.
+
+    Each row is re-read under its lock, so a request accepted since the scan stays accepted.
+    A lead already Lost keeps its reason.
+    """
+    due = FarmInRequest.objects.filter(
         status=FarmInRequest.Status.PENDING, pickup_at__lt=now - EXPIRE_AFTER
-    ).update(
-        status=FarmInRequest.Status.EXPIRED,
-        alert="Expired: pickup time passed",
-        last_event_at=now,
     )
-    return attempted + expired
+    expired = 0
+    for pk in due.order_by("pk").values_list("pk", flat=True):
+        with transaction.atomic():
+            req = (
+                FarmInRequest.objects.select_for_update(of=("self",))
+                .select_related("lead")
+                .filter(pk=pk, status=FarmInRequest.Status.PENDING)
+                .first()
+            )
+            if req is None:
+                continue
+            req.status = FarmInRequest.Status.EXPIRED
+            req.alert = EXPIRED_ALERT
+            req.last_event_at = now
+            req.save(update_fields=["status", "alert", "last_event_at", "updated_at"])
+            farm_in.mark_lead_lost(req.lead, EXPIRED_LOST_REASON)
+        expired += 1
+    return expired

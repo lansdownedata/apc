@@ -432,17 +432,10 @@ def _transition_refused(request: HttpRequest, message: str) -> HttpResponse:
 @require_POST
 def lead_mark_lost(request, pk: int) -> HttpResponse:
     lead = get_object_or_404(Lead, pk=pk)
-    if not lead.can_transition(Lead.Status.LOST):
-        message = (
-            "Booked orders are cancelled from the Orders console."
-            if lead.status == Lead.Status.BOOKED
-            else "Already marked lost."
-        )
-        return _transition_refused(request, message)
-    lead.status = Lead.Status.LOST
-    lead.lost_reason = (request.POST.get("reason") or "").strip() or "Marked lost"
-    lead.save(update_fields=["status", "lost_reason", "updated_at"])
-    events.cancel(lead, triggers=events.EVERY)
+    try:
+        services.mark_lost(lead, request.POST.get("reason") or "")
+    except services.LeadStateError as exc:
+        return _transition_refused(request, str(exc))
     if _wants_json(request):
         return JsonResponse({"ok": True, "status": lead.status})
     return redirect("lead_detail", pk=pk)

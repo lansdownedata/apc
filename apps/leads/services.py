@@ -349,6 +349,29 @@ def acknowledge_fees(lead: Lead, *, ip: str) -> bool:
     return bool(stamped)
 
 
+class LeadStateError(Exception):
+    """A lead cannot make the status change asked of it; the message says why."""
+
+
+def mark_lost(lead: Lead, reason: str) -> Lead:
+    """Mark a new or quoted lead Lost and withdraw every queued send of the order.
+
+    A blank `reason` records "Marked lost". Booked and already-lost leads refuse with
+    `LeadStateError`: a booked order is cancelled from the Orders console instead.
+    """
+    if not lead.can_transition(lead.Status.LOST):
+        raise LeadStateError(
+            "Booked orders are cancelled from the Orders console."
+            if lead.status == lead.Status.BOOKED
+            else "Already marked lost."
+        )
+    lead.status = lead.Status.LOST
+    lead.lost_reason = (reason or "").strip() or "Marked lost"
+    lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    events.cancel(lead, triggers=events.EVERY)
+    return lead
+
+
 class BookLeadError(Exception):
     """Raised when a lead cannot be converted to Booked (e.g. it is Lost)."""
 

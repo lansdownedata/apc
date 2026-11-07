@@ -11,6 +11,7 @@ from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactor
 from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.integrations import gnet
 from apps.integrations.gnet import GnetAPIError
+from apps.leads.models import Lead
 from apps.notifications.models import Notification
 
 pytestmark = pytest.mark.django_db
@@ -181,6 +182,29 @@ def test_cron_expires_pending_requests_an_hour_past_pickup():
     assert recent.status == FarmInRequest.Status.PENDING
     assert accepted.status == FarmInRequest.Status.ACCEPTED
     assert Push.objects.count() == 0
+
+
+def test_cron_expiry_marks_lead_lost():
+    now = timezone.now()
+    old = FarmInRequestFactory(pickup_at=now - timedelta(minutes=61))
+    recent = FarmInRequestFactory(pickup_at=now - timedelta(minutes=30))
+    assert farm_in_push.run_cron() == 1
+    old.lead.refresh_from_db()
+    recent.lead.refresh_from_db()
+    assert old.lead.status == Lead.Status.LOST
+    assert old.lead.lost_reason == "GNet request expired"
+    assert recent.lead.status == Lead.Status.NEW
+
+
+def test_cron_expiry_skips_an_already_lost_lead():
+    now = timezone.now()
+    req = FarmInRequestFactory(pickup_at=now - timedelta(hours=2))
+    Lead.objects.filter(pk=req.lead_id).update(status=Lead.Status.LOST, lost_reason="Too far")
+    assert farm_in_push.run_cron() == 1
+    req.refresh_from_db()
+    req.lead.refresh_from_db()
+    assert req.status == FarmInRequest.Status.EXPIRED
+    assert req.lead.lost_reason == "Too far"
 
 
 def test_retry_creates_fresh_pending_from_failed():

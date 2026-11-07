@@ -1,7 +1,9 @@
 """Farm-in receive service: turns a GNet reservation payload into portal facts.
 
-Contract: GNET-CONNECTION-GUIDE.md §1. `summarize` / `price_request` interpret a payload;
-`receive` and the `handle_*` functions persist it and build the body GNet gets back.
+Contract: GNET-CONNECTION-GUIDE.md §1. `summarize` / `price_quote` interpret a payload;
+`receive` and the `handle_*` functions persist it and build the body GNet gets back. A new
+request is stored as its order (a lead with one trip, `farm_in_order`) inside the envelope
+row that ties it to the GNet transaction (spec 2026-11-07 §3).
 """
 
 import logging
@@ -19,7 +21,8 @@ from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.dispatch.models import FarmInRequest
 from apps.integrations import gnet
-from apps.leads.models import VehicleType
+from apps.leads import services as lead_services
+from apps.leads.models import Lead, VehicleType
 from apps.notifications.models import Notification
 from apps.reservations import timezones
 
@@ -37,6 +40,8 @@ ALERT_UPDATED = "Updated by requester"
 ALERT_CANCELED = "Requester canceled"
 ALERT_UPDATED_AFTER_ACCEPT = "Updated by requester after accept, review the order"
 ALERT_CANCEL_AS_NEW = "Cancel received as a new delivery, review"
+ALERT_NOW_ASKS_FOR = "Requester now asks for "
+LOST_CANCELED = "Requester canceled"
 
 GNET_CANCEL = "CANCEL"
 _CLOSED = (
@@ -44,8 +49,6 @@ _CLOSED = (
     FarmInRequest.Status.CANCELED,
     FarmInRequest.Status.EXPIRED,
 )
-_MAX_SMALL_INT = 32767
-
 _CENT = Decimal("0.01")
 
 
@@ -58,26 +61,12 @@ class Summary:
     hourly: bool
     pickup_at: datetime | None
     timezone: str
-    timezone_assumed: bool
-    pickup_summary: str
-    dropoff_summary: str
-    passenger_name: str
-    passenger_count: int
     alerts: list[str] = field(default_factory=list)
 
 
 def _dict(value) -> dict:
     """``value`` when it is a dict, else an empty dict (payloads are untrusted)."""
     return value if isinstance(value, dict) else {}
-
-
-def _passenger_count(raw, fallback: int) -> int:
-    """Headcount from a GNet string; cosmetic, so junk falls back and the floor is 1."""
-    try:
-        count = int(str(raw).strip())
-    except ValueError:
-        count = fallback
-    return max(count, 1)
 
 
 def _parse_pickup(raw, tz_name: str) -> datetime | None:
@@ -109,7 +98,6 @@ def summarize(payload: dict) -> Summary:
     alerts: list[str] = []
     locations = _dict(payload.get("locations"))
     pickup = _dict(locations.get("pickup"))
-    dropoff = _dict(locations.get("dropOff"))
 
     code = str(payload.get("preferredVehicleType") or "")
     vehicle = gnet.vehicle_type_for_code(code)
@@ -129,22 +117,12 @@ def summarize(payload: dict) -> Summary:
     if assumed:
         alerts.append(ALERT_TZ_ASSUMED)
 
-    passengers = payload.get("passengers")
-    passengers = passengers if isinstance(passengers, list) else []
-    lead = _dict(passengers[0]) if passengers else {}
-    name = f"{lead.get('firstName') or ''} {lead.get('lastName') or ''}".strip()
-
     return Summary(
         vehicle=vehicle,
         gnet_vehicle_type=code,
         hourly=is_hourly(payload),
         pickup_at=pickup_at,
         timezone=tz_name,
-        timezone_assumed=assumed,
-        pickup_summary=pickup.get("address") or "",
-        dropoff_summary=dropoff.get("address") or "",
-        passenger_name=name,
-        passenger_count=_passenger_count(payload.get("passengerCount"), len(passengers) or 1),
         alerts=alerts,
     )
 
@@ -154,11 +132,16 @@ def is_hourly(payload: dict) -> bool:
     return "hour" in str(payload.get("runType", "")).lower()
 
 
-def price_request(vehicle: VehicleType | None, *, hourly: bool) -> Decimal | None:
-    """Rate-card price: rate x the applicable minimum hours; None when unpriceable."""
+def price_quote(payload: dict) -> Decimal | None:
+    """Rate-card price of a payload: rate x the applicable minimum hours; None when unpriceable.
+
+    The same figure `farm_in_order.build` gives a new trip as its `line_total`.
+    """
+    summary = summarize(payload)
+    vehicle = summary.vehicle
     if vehicle is None or vehicle.rate <= 0:
         return None
-    hours = vehicle.hourly_min_hours if hourly else vehicle.transfer_min_hours
+    hours = vehicle.hourly_min_hours if summary.hourly else vehicle.transfer_min_hours
     if hours <= 0:
         return None
     return (vehicle.rate * hours).quantize(_CENT)
@@ -194,10 +177,11 @@ def ensure_requester(payload: dict) -> tuple[Company, bool]:
 
 
 def stored_response(req: FarmInRequest) -> dict:
-    """The body GNet gets for a stored request; `totalAmount` only once a price exists."""
+    """The body GNet gets for a stored request; `totalAmount` only once the trip has a price."""
     body = {"reservationId": req.reservation_id_token}
-    if req.quoted_amount is not None:
-        body["totalAmount"] = f"{req.quoted_amount:.2f}"
+    total = req.reservation.line_total
+    if total > 0:
+        body["totalAmount"] = f"{total:.2f}"
     return body
 
 
@@ -241,29 +225,29 @@ def _payload_fields(payload: dict, *, delivery_id: str, now: datetime) -> dict:
 
 
 def _summary_fields(summary: Summary) -> dict:
-    """Row fields derived from a `Summary` (everything but price and alert)."""
+    """Envelope fields derived from a `Summary` (everything but the alert)."""
     return {
-        "vehicle": summary.vehicle,
         "gnet_vehicle_type": _clip("gnet_vehicle_type", summary.gnet_vehicle_type),
         "pickup_at": summary.pickup_at,
         "timezone": summary.timezone,
-        "timezone_assumed": summary.timezone_assumed,
-        "pickup_summary": _clip("pickup_summary", summary.pickup_summary),
-        "dropoff_summary": _clip("dropoff_summary", summary.dropoff_summary),
-        "passenger_name": _clip("passenger_name", summary.passenger_name),
-        "passenger_count": min(summary.passenger_count, _MAX_SMALL_INT),
     }
+
+
+def _route(req: FarmInRequest) -> str:
+    """The trip's first and last stop as "A → B", for a notification's detail line."""
+    stops = list(req.reservation.stops.order_by("sequence").values_list("address", flat=True))
+    return " → ".join(stops[:1] + stops[1:][-1:])
 
 
 def _notify_new(req_pk: int) -> None:
     """Tell the desk a request arrived; a failure is logged, never raised into GNet's reply."""
     try:
-        req = FarmInRequest.objects.select_related("company").get(pk=req_pk)
+        req = FarmInRequest.objects.select_related("company", "reservation").get(pk=req_pk)
         Notification.notify(
             None,
             Notification.Kind.FARM_IN_NEW,
             title=f"GNet request from {req.company.name}",
-            detail=f"{req.pickup_summary} → {req.dropoff_summary}",
+            detail=_route(req),
             farm_in_request=req,
         )
     except Exception:
@@ -273,12 +257,12 @@ def _notify_new(req_pk: int) -> None:
 def _notify_updated(req_pk: int, title: str) -> None:
     """Tell the desk the requester changed an accepted trip; failures are logged only."""
     try:
-        req = FarmInRequest.objects.get(pk=req_pk)
+        req = FarmInRequest.objects.select_related("reservation").get(pk=req_pk)
         Notification.notify(
             None,
             Notification.Kind.FARM_IN_UPDATED,
             title=title,
-            detail=f"{req.pickup_summary} → {req.dropoff_summary}",
+            detail=_route(req),
             farm_in_request=req,
         )
     except Exception:
@@ -287,10 +271,9 @@ def _notify_updated(req_pk: int, title: str) -> None:
 
 def handle_quote(payload: dict, *, transaction_id: str) -> dict:
     """Price a quote request from the rate card. Persists nothing, not even the company."""
-    summary = summarize(payload)
-    amount = price_request(summary.vehicle, hourly=summary.hourly)
+    amount = price_quote(payload)
     if amount is None:
-        return {"error": f"No rate on file for {summary.gnet_vehicle_type}"}
+        return {"error": f"No rate on file for {payload.get('preferredVehicleType') or ''}"}
     return {"reservationId": transaction_id, "totalAmount": f"{amount:.2f}"}
 
 
@@ -299,23 +282,28 @@ class _RequesterRejected(Exception):
 
 
 def _insert_new(payload: dict, *, transaction_id: str, delivery_id: str) -> FarmInRequest:
-    """Create the requester (if new) and the request in one savepoint; may raise IntegrityError."""
+    """Create the requester (if new), its order and the envelope in one savepoint.
+
+    Any failure, a unique-index `IntegrityError` included, rolls back all three.
+    """
+    from apps.dispatch import farm_in_order
+
     with transaction.atomic():
         try:
             company, company_created = ensure_requester(payload)
         except ValueError as exc:
             raise _RequesterRejected(str(exc)) from exc
         summary = summarize(payload)
-        amount = price_request(summary.vehicle, hourly=summary.hourly)
+        lead, reservation = farm_in_order.build(payload, company, summary=summary)
         now = timezone.now()
         req = FarmInRequest.objects.create(
             transaction_id=transaction_id,
             requester_grid_id=company.gnet_grid_id,
             company=company,
             company_created=company_created,
-            quoted_amount=amount,
-            pricing_source=FarmInRequest.PricingSource.RATE_CARD if amount is not None else "",
-            alert=_clip("alert", " · ".join(summary.alerts)),
+            lead=lead,
+            reservation=reservation,
+            alert=_clip("alert", ALERT_SEP.join(summary.alerts)),
             received_at=now,
             **_payload_fields(payload, delivery_id=delivery_id, now=now),
             **_summary_fields(summary),
@@ -389,25 +377,54 @@ def _store_delivery(req: FarmInRequest, payload: dict, *, delivery_id: str) -> N
         setattr(req, name, value)
 
 
+def mark_lead_lost(lead: Lead, reason: str) -> None:
+    """Mark a farm-in's lead Lost unless it cannot go there (already Lost, or Booked)."""
+    if lead.can_transition(Lead.Status.LOST):
+        lead_services.mark_lost(lead, reason)
+
+
 def _cancel(req: FarmInRequest) -> None:
-    """The requester canceled an open row; an accepted trip is flagged, its order kept."""
+    """The requester canceled an open row.
+
+    Before accept the lead goes Lost; an accepted trip is flagged and its order kept.
+    """
     if req.status == FarmInRequest.Status.ACCEPTED:
         req.updated_after_accept = True
         req.alert = ALERT_CANCELED
         req_pk = req.pk
         transaction.on_commit(lambda: _notify_updated(req_pk, "GNet requester canceled"))
+    else:
+        mark_lead_lost(req.lead, LOST_CANCELED)
     req.status = FarmInRequest.Status.CANCELED
 
 
-def _rederive(req: FarmInRequest, summary: Summary) -> None:
-    """Re-run the summary and rate-card price on a pending row; a manual price stands."""
+_DERIVED_ALERTS = (ALERT_UPDATED, ALERT_UNMAPPED_PREFIX, ALERT_NO_PICKUP, ALERT_TZ_ASSUMED)
+
+
+def _rederive(req: FarmInRequest, summary: Summary, payload: dict) -> None:
+    """Apply a requester's change to a pending request's order and envelope (spec §3.2).
+
+    The order keeps the agent's vehicle and pricing (`farm_in_order.apply_update`). The
+    alert's derived segments are replaced by this payload's; when the trip keeps a vehicle
+    while the requester's code changes, that is flagged rather than reported as unmapped.
+    """
+    from apps.dispatch import farm_in_order
+
+    reservation = req.reservation
+    kept_vehicle = reservation.vehicle_id is not None
+    farm_in_order.apply_update(reservation, req.lead, payload, summary=summary)
+    code = _clip("gnet_vehicle_type", summary.gnet_vehicle_type)
+    for prefix in _DERIVED_ALERTS:
+        _remove_alert(req, prefix)
+    _add_alert(req, ALERT_UPDATED)
+    for alert in summary.alerts:
+        if not (reservation.vehicle_id and alert.startswith(ALERT_UNMAPPED_PREFIX)):
+            _add_alert(req, alert)
+    if kept_vehicle and code != req.gnet_vehicle_type:
+        _remove_alert(req, ALERT_NOW_ASKS_FOR)
+        _add_alert(req, f"{ALERT_NOW_ASKS_FOR}{code}")
     for name, value in _summary_fields(summary).items():
         setattr(req, name, value)
-    if req.pricing_source != FarmInRequest.PricingSource.MANUAL:
-        amount = price_request(summary.vehicle, hourly=summary.hourly)
-        req.quoted_amount = amount
-        req.pricing_source = FarmInRequest.PricingSource.RATE_CARD if amount is not None else ""
-    req.alert = _clip("alert", " · ".join([ALERT_UPDATED, *summary.alerts]))
 
 
 def handle_update(payload: dict, *, transaction_id: str, delivery_id: str) -> dict:
@@ -432,7 +449,7 @@ def handle_update(payload: dict, *, transaction_id: str, delivery_id: str) -> di
             req.save()
             return {"reservationId": req.reservation_id_token}
         if req.status == FarmInRequest.Status.PENDING:
-            _rederive(req, summarize(payload))
+            _rederive(req, summarize(payload), payload)
         else:
             req.updated_after_accept = True
             req.alert = ALERT_UPDATED_AFTER_ACCEPT

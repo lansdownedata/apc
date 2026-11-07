@@ -1,17 +1,23 @@
+import hashlib
+import hmac
+import json
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.db import connection
+from django.urls import reverse
 
 from apps.contacts.models import Company
-from apps.dispatch import farm_in
+from apps.dispatch import farm_in, farm_in_order
 from apps.dispatch.models import FarmInRequest
 from apps.dispatch.tests.farm_in_payload import sample_payload
 from apps.leads.factories import VehicleTypeFactory
-from apps.leads.models import VehicleType
+from apps.leads.models import Lead, VehicleType
 from apps.notifications.models import Notification
+from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
 TID = "935a1056-644c-4e82-9a1a-6099efdd056b"
@@ -29,26 +35,64 @@ def _new(payload=None, tid=TID):
     return farm_in.handle_new(payload or sample_payload(), transaction_id=tid, delivery_id="d-1")
 
 
-def test_new_creates_request_and_responds(sedan, django_capture_on_commit_callbacks):
+def _req() -> FarmInRequest:
+    return FarmInRequest.objects.select_related("lead", "reservation").get(transaction_id=TID)
+
+
+def test_new_creates_lead_reservation_and_envelope(sedan, django_capture_on_commit_callbacks):
     with django_capture_on_commit_callbacks(execute=True):
         body = _new()
-    req = FarmInRequest.objects.get(transaction_id=TID)
+    req = _req()
     assert body == {"reservationId": f"FI-{req.pk}", "totalAmount": "165.00"}
+    assert Lead.objects.count() == 1 and Reservation.objects.count() == 1
+    assert req.lead == Lead.objects.get() and req.reservation == Reservation.objects.get()
+    assert req.reservation.lead == req.lead and req.lead.status == Lead.Status.NEW
+    assert req.reservation.stops.count() == 3
+    assert req.reservation.named_passengers.count() == 1
+    assert req.reservation.vehicle == sedan and req.gnet_vehicle_type == "SEDAN"
     assert req.company.gnet_grid_id == "gnettest" and req.company_created
-    assert req.vehicle == sedan and req.pricing_source == FarmInRequest.PricingSource.RATE_CARD
     assert req.requester_res_no == "1715016686" and req.gnet_status == "BOOKING_REQUEST"
     assert req.payload["locations"]["pickup"]["time"] == "2024-08-03T10:27:22"
+    assert req.pickup_at == datetime(2024, 8, 3, 17, 27, 22, tzinfo=UTC)
     assert req.timezone == "America/Los_Angeles" and req.desk == "reservations"
+    assert req.alert == ""
     n = Notification.objects.get(kind=Notification.Kind.FARM_IN_NEW)
     assert n.farm_in_request_id == req.pk and n.lead_id is None
+    assert n.detail.startswith("123 S Beverly Dr, Beverly Hills, CA 90212, USA → ")
+    assert n.detail.endswith("(LAX)")
 
 
-def test_new_unpriced_omits_total_amount():
-    vt = VehicleTypeFactory(name="Luxury Sedan")
-    VehicleType.objects.filter(pk=vt.pk).update(rate=0)
-    body = _new()
-    assert "totalAmount" not in body and body["reservationId"].startswith("FI-")
-    assert FarmInRequest.objects.get().quoted_amount is None
+def test_new_unmapped_leaves_no_vehicle_and_omits_total(sedan):
+    p = sample_payload()
+    p["preferredVehicleType"] = "BLIMP"
+    body = _new(p)
+    req = _req()
+    assert body == {"reservationId": f"FI-{req.pk}"}
+    res = req.reservation
+    assert res.vehicle is None and res.rate == 0 and res.min_hours == 0
+    assert res.line_total == Decimal("0.00") and res.stops.count() == 3
+    assert req.alert == "Unmapped vehicle type: BLIMP"
+
+
+def test_new_build_failure_leaves_no_rows(client, settings):
+    settings.GNET_CALLBACK_SECRET = secret = "farminsecret"
+    settings.GNET_FARM_IN_ENABLED = True
+    raw = json.dumps(sample_payload()).encode()
+    sig = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    with patch.object(farm_in_order, "build", side_effect=RuntimeError("boom")):
+        r = client.post(
+            reverse("gnet_farm_in"),
+            data=raw,
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {secret}",
+            HTTP_X_LANSDOWNE_SIGNATURE=sig,
+            HTTP_X_LANSDOWNE_EVENT=farm_in.EVENT_NEW,
+            HTTP_X_LANSDOWNE_TRANSACTION_ID=TID,
+            HTTP_X_LANSDOWNE_DELIVERY_ID="d-1",
+        )
+    assert r.json() == {"error": "internal error"}
+    assert not FarmInRequest.objects.exists() and not Company.objects.exists()
+    assert not Lead.objects.exists() and not Reservation.objects.exists()
 
 
 def test_new_replay_is_identical_and_creates_nothing(sedan, django_capture_on_commit_callbacks):
@@ -197,56 +241,118 @@ def test_update_unknown_transaction():
     assert _update(sample_payload(), tid="nope") == {"error": "unknown transaction"}
 
 
-def test_update_pending_rederives_but_keeps_manual_price(sedan):
+def test_update_rewrites_stops_and_passengers(sedan):
     _new()
-    req = FarmInRequest.objects.get()
-    req.quoted_amount = Decimal("200")
-    req.pricing_source = "manual"
-    req.save()
     p = sample_payload()
+    p["locations"]["stops"] = []
+    p["locations"]["pickup"]["time"] = "2024-08-04T08:15:00"
+    p["passengers"] = [
+        {"firstName": "Dana", "lastName": "Lee"},
+        {"firstName": "Sam", "lastName": "Ray"},
+    ]
     p["passengerCount"] = "3"
-    p["affiliateReservation"]["action"] = "UPDATE"
+    p["notes"] = [{"context": "AFFILIATE", "text": "New flight"}]
     body = _update(p)
-    req.refresh_from_db()
-    assert body == {"reservationId": f"FI-{req.pk}", "totalAmount": "200.00"}
-    assert req.passenger_count == 3 and req.alert == "Updated by requester"
-    assert req.payload["passengerCount"] == "3"
+    req = _req()
+    res = req.reservation
+    assert body == {"reservationId": f"FI-{req.pk}", "totalAmount": "165.00"}
+    stops = list(res.stops.order_by("sequence"))
+    assert len(stops) == 2 and stops[0].address.startswith("123 S Beverly Dr")
+    assert stops[1].address.endswith("(LAX)")
+    assert [r.name for r in res.named_passengers.all()] == ["Dana Lee", "Sam Ray"]
+    assert res.passengers == 3
+    assert res.pickup_date == date(2024, 8, 4) and res.pickup_time == time(8, 15)
+    assert req.pickup_at == datetime(2024, 8, 4, 15, 15, tzinfo=UTC)
+    assert req.lead.notes.splitlines() == ["New flight", "GNet res no 1715016686"]
+    assert req.payload["passengerCount"] == "3" and req.alert == "Updated by requester"
+    assert Reservation.objects.count() == 1 and Lead.objects.count() == 1
 
 
-def test_update_pending_appends_summary_alerts(sedan):
+def test_update_keeps_agent_pricing_and_vehicle(sedan):
+    _new()
+    suv = VehicleTypeFactory(name="Executive SUV")
+    Reservation.objects.update(vehicle=suv, rate=Decimal("200"), hours=3, gratuity_pct=20)
+    p = sample_payload()
+    p["locations"]["stops"].append({"address": "500 Rodeo Dr", "stopNumber": "2"})
+    body = _update(p)
+    res = _req().reservation
+    assert res.stops.count() == 4
+    assert res.vehicle == suv and res.rate == Decimal("200.00") and res.hours == 3
+    assert res.gratuity_pct == 20 and res.min_hours == Decimal("1")
+    assert body["totalAmount"] == f"{res.line_total:.2f}"
+
+
+def test_update_fills_vehicle_only_when_trip_had_none(sedan):
+    p = sample_payload()
+    p["preferredVehicleType"] = "BLIMP"
+    _new(p)
+    body = _update(sample_payload())
+    req = _req()
+    res = req.reservation
+    assert res.vehicle == sedan and res.rate == Decimal("165.00") and res.min_hours == 1
+    assert body == {"reservationId": f"FI-{req.pk}", "totalAmount": "165.00"}
+    assert req.alert == "Updated by requester" and req.gnet_vehicle_type == "SEDAN"
+
+
+def test_update_alerts_when_requester_changes_vehicle_after_agent_chose(sedan):
+    _new()
+    p = sample_payload()
+    p["preferredVehicleType"] = "SUV"
+    _update(p)
+    req = _req()
+    assert req.reservation.vehicle == sedan and req.reservation.rate == Decimal("165.00")
+    assert req.alert == "Updated by requester · Requester now asks for SUV"
+    assert req.gnet_vehicle_type == "SUV"
+    _update(p)
+    assert _req().alert == "Requester now asks for SUV · Updated by requester"
+
+
+def test_update_unmapped_code_on_a_trip_with_a_vehicle_is_not_flagged_unmapped(sedan):
     _new()
     p = sample_payload()
     p["preferredVehicleType"] = "BLIMP"
-    body = _update(p)
-    req = FarmInRequest.objects.get()
-    assert body == {"reservationId": f"FI-{req.pk}"}
-    assert req.alert == "Updated by requester · Unmapped vehicle type: BLIMP"
-    assert req.vehicle is None and req.quoted_amount is None and req.pricing_source == ""
+    _update(p)
+    req = _req()
+    assert req.reservation.vehicle == sedan
+    assert req.alert == "Updated by requester · Requester now asks for BLIMP"
 
 
-def test_update_cancel_pending(sedan, django_capture_on_commit_callbacks):
+def test_cancel_before_accept_marks_lead_lost(sedan, django_capture_on_commit_callbacks):
     _new()
     p = sample_payload()
     p["status"] = "CANCEL"
     with django_capture_on_commit_callbacks(execute=True):
         body = _update(p)
-    req = FarmInRequest.objects.get()
+    req = _req()
     assert body == {"reservationId": f"FI-{req.pk}"}
     assert req.status == FarmInRequest.Status.CANCELED and req.gnet_status == "CANCEL"
+    assert req.lead.status == Lead.Status.LOST and req.lead.lost_reason == "Requester canceled"
     assert not req.updated_after_accept
     assert not Notification.objects.filter(kind=Notification.Kind.FARM_IN_UPDATED).exists()
 
 
-def test_update_cancel_after_accept_flags_only(sedan, django_capture_on_commit_callbacks):
+def test_cancel_before_accept_on_an_already_lost_lead_keeps_its_reason(sedan):
+    _new()
+    Lead.objects.update(status=Lead.Status.LOST, lost_reason="Too far")
+    p = sample_payload()
+    p["status"] = "CANCEL"
+    _update(p)
+    req = _req()
+    assert req.status == FarmInRequest.Status.CANCELED and req.lead.lost_reason == "Too far"
+
+
+def test_cancel_after_accept_leaves_order_booked(sedan, django_capture_on_commit_callbacks):
     _new()
     FarmInRequest.objects.update(status=FarmInRequest.Status.ACCEPTED)
+    Lead.objects.update(status=Lead.Status.BOOKED)
     p = sample_payload()
     p["status"] = "CANCEL"
     with django_capture_on_commit_callbacks(execute=True):
         _update(p)
-    req = FarmInRequest.objects.get()
+    req = _req()
     assert req.status == FarmInRequest.Status.CANCELED and req.updated_after_accept
     assert req.alert == "Requester canceled"
+    assert req.lead.status == Lead.Status.BOOKED
     assert Notification.objects.filter(kind=Notification.Kind.FARM_IN_UPDATED).exists()
 
 
@@ -255,12 +361,13 @@ def test_update_after_accept_stores_and_flags(sedan, django_capture_on_commit_ca
     FarmInRequest.objects.update(status=FarmInRequest.Status.ACCEPTED)
     p = sample_payload()
     p["passengerCount"] = "4"
+    p["locations"]["stops"] = []
     with django_capture_on_commit_callbacks(execute=True):
         body = _update(p)
-    req = FarmInRequest.objects.get()
+    req = _req()
     assert body == {"reservationId": f"FI-{req.pk}", "totalAmount": "165.00"}
     assert req.updated_after_accept and req.payload["passengerCount"] == "4"
-    assert req.passenger_count == 2  # not re-derived after accept
+    assert req.reservation.passengers == 2 and req.reservation.stops.count() == 3
     assert req.alert == "Updated by requester after accept, review the order"
     n = Notification.objects.get(kind=Notification.Kind.FARM_IN_UPDATED)
     assert n.farm_in_request_id == req.pk
