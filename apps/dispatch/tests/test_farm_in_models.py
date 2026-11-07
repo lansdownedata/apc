@@ -3,6 +3,7 @@ import importlib
 import pytest
 from django.db import IntegrityError
 from django.db.models import ProtectedError
+from django.urls import reverse
 
 from apps.contacts.factories import CompanyFactory
 from apps.dispatch.factories import FarmInRequestFactory, FarmInStatusPushFactory
@@ -37,11 +38,11 @@ def test_push_defaults():
     assert p.state == FarmInStatusPush.State.PENDING and p.attempts == 0
 
 
-def test_notification_links_request_without_lead():
+def test_notification_url_points_at_the_lead_workspace():
     r = FarmInRequestFactory()
     n = Notification.notify(None, Notification.Kind.FARM_IN_NEW, title="t", farm_in_request=r)
     assert n.lead_id is None and n.farm_in_request_id == r.pk
-    assert n.url == ""  # farm_in_list ships in APC-136
+    assert n.url == reverse("lead_detail", args=[r.lead_id])
 
 
 def test_setting_grid_id_reparents_requests():

@@ -26,7 +26,7 @@ def dashboard(request):
     )
     alerts = (
         Notification.objects.unread_for(request.user)
-        .select_related("lead", "lead__contact")
+        .select_related("lead", "lead__contact", "farm_in_request")
         .order_by("-created_at")[:6]
     )
     context = {

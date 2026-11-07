@@ -96,9 +96,9 @@ document.addEventListener("alpine:init", () => {
   Alpine.store("toast", {
     items: [],
     _seq: 1,
-    push({ type = "success", title = "", message = "", timeout = 4200 } = {}) {
+    push({ type = "success", title = "", message = "", timeout = 4200, action = null } = {}) {
       const id = this._seq++;
-      this.items.push({ id, type, title, message });
+      this.items.push({ id, type, title, message, action });
       if (timeout) setTimeout(() => this.dismiss(id), timeout);
       return id;
     },
@@ -128,6 +128,45 @@ function shell() {
     navOpen: window.innerWidth >= 1024,
     notifOpen: false,
     toggleNav() { this.navOpen = !this.navOpen; },
+    /* Notice a new GNet request (APC-136): poll while the tab is visible. */
+    since: 0,
+    init() {
+      try { this.since = parseInt(sessionStorage.getItem("farmInSince"), 10) || 0; } catch (e) { /* private mode */ }
+      setInterval(() => { if (document.visibilityState === "visible") this._pulse(); }, 30000);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") this._pulse();
+      });
+    },
+    async _pulse() {
+      try {
+        const resp = await fetch(`/portal/farm-in/pulse/?since=${this.since}`, {
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        window.dispatchEvent(new CustomEvent("farm-in-count", { detail: data.pending }));
+        for (const a of data.arrivals) {
+          Alpine.store("toast").push({
+            type: "gold",
+            title: a.title,
+            message: a.detail,
+            timeout: 0,
+            action: {
+              label: "View",
+              onClick: () => window.dispatchEvent(new CustomEvent("farm-in-open", {
+                detail: { tab: "pending", dispatch: a.dispatch, focus: a.request },
+              })),
+            },
+          });
+        }
+        if (data.latest_id) {
+          this.since = Math.max(this.since, data.latest_id);
+          try { sessionStorage.setItem("farmInSince", String(this.since)); } catch (e) { /* private mode */ }
+        }
+      } catch (e) {
+        console.debug("farm-in pulse failed", e);
+      }
+    },
   };
 }
 window.shell = shell;

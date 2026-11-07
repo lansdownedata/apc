@@ -10,10 +10,11 @@ from datetime import UTC
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, F, Prefetch, Q
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
+from apps.notifications.models import Notification
 from apps.reservations.models import Reservation, Stop
 
 from . import farm_in
@@ -176,4 +177,38 @@ def farm_in_drawer_fragment(request: HttpRequest) -> HttpResponse:
             "tab": tab,
             "dispatch_only": dispatch_only,
         },
+    )
+
+
+@login_required
+@require_GET
+def pulse(request: HttpRequest) -> JsonResponse:
+    """What the shell polls: the pending count, and the arrivals past `since` (two queries)."""
+    try:
+        since = int(request.GET.get("since", 0))
+    except ValueError:
+        since = 0
+    kinds = [Notification.Kind.FARM_IN_NEW, Notification.Kind.FARM_IN_COVERAGE]
+    arrivals = list(
+        Notification.objects.unread_for(request.user)
+        .filter(kind__in=kinds, pk__gt=since)
+        .select_related("farm_in_request")
+        .order_by("pk")
+    )
+    return JsonResponse(
+        {
+            "pending": pending_count(),
+            "latest_id": arrivals[-1].pk if arrivals else None,
+            "arrivals": [
+                {
+                    "id": n.pk,
+                    "title": n.title,
+                    "detail": n.detail,
+                    "dispatch": n.kind == Notification.Kind.FARM_IN_COVERAGE,
+                    "lead": n.farm_in_request.lead_id,
+                    "request": n.farm_in_request_id,
+                }
+                for n in arrivals
+            ],
+        }
     )

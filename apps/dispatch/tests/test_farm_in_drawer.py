@@ -16,6 +16,7 @@ from apps.dispatch.models import FarmInRequest, FarmInStatusPush
 from apps.dispatch.tests.farm_in_payload import sample_payload
 from apps.leads.factories import VehicleTypeFactory
 from apps.leads.models import VehicleType
+from apps.notifications.models import Notification
 
 pytestmark = pytest.mark.django_db
 
@@ -313,10 +314,14 @@ def test_chrome_adds_one_query_at_most(logged_in_client):
             logged_in_client.get(reverse("dashboard"))
         return sum("dispatch_farminrequest" in q["sql"] for q in ctx.captured_queries)
 
-    assert farm_in_queries() == 1
+    # The tray and the dashboard's alerts join their request (a mention each);
+    # the count is one more. The cost stays flat as requests arrive.
+    before = farm_in_queries()
+    assert before == 3
     for _ in range(3):
-        FarmInRequestFactory()
-    assert farm_in_queries() == 1
+        n = FarmInRequestFactory()
+        Notification.notify(n.lead, Notification.Kind.FARM_IN_NEW, title="t", farm_in_request=n)
+    assert farm_in_queries() == before
 
 
 def _clock(dt, tz_name) -> str:

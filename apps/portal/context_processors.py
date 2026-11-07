@@ -107,7 +107,9 @@ def chrome(request):
         }
 
     # The tray is per person (APC-77): their own notifications plus the shared alerts.
-    unread = Notification.objects.unread_for(request.user).select_related("lead", "lead__contact")
+    unread = Notification.objects.unread_for(request.user).select_related(
+        "lead", "lead__contact", "farm_in_request"
+    )
     return {
         "nav_soon": NAV_SOON,
         "asset_version": _asset_version(),

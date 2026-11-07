@@ -5,12 +5,15 @@
          style="animation: toastIn .3s cubic-bezier(.2,.7,.2,1) both">
       <div class="flex gap-3 p-3.5">
         <span class="w-8 h-8 rounded-lg grid place-items-center shrink-0"
-              :class="{ 'bg-emerald-50 text-emerald-600': t.type==='success', 'bg-rose-50 text-rose-600': t.type==='danger', 'bg-sky-50 text-sky-600': t.type==='info' }">
-          <i class="ti text-[17px]" :class="{ 'ti-circle-check': t.type==='success', 'ti-alert-triangle': t.type==='danger', 'ti-info-circle': t.type==='info' }"></i>
+              :class="{ 'bg-emerald-50 text-emerald-600': t.type==='success', 'bg-rose-50 text-rose-600': t.type==='danger', 'bg-sky-50 text-sky-600': t.type==='info', 'bg-goldl text-goldd': t.type==='gold' }">
+          <i class="ti text-[17px]" :class="{ 'ti-circle-check': t.type==='success', 'ti-alert-triangle': t.type==='danger', 'ti-info-circle': t.type==='info', 'ti-arrows-exchange-2': t.type==='gold' }"></i>
         </span>
         <div class="min-w-0 flex-1">
           <div class="text-[13px] font-semibold text-ink" x-text="t.title"></div>
           <div class="text-[12px] text-muted mt-0.5" x-show="t.message" x-text="t.message"></div>
+          <button type="button" x-show="t.action" x-text="t.action && t.action.label"
+                  @click="t.action.onClick(); $store.toast.dismiss(t.id)"
+                  class="mt-1.5 text-[12px] text-goldd font-semibold hover:underline focus-visible:underline"></button>
         </div>
         <button @click="$store.toast.dismiss(t.id)" class="text-slate-400 hover:text-ink self-start"><i class="ti ti-x text-[15px]"></i></button>
       </div>

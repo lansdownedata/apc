@@ -97,14 +97,12 @@ class Notification(TimeStampedModel):
 
     @property
     def url(self) -> str:
-        """Where the tray and dashboard send you: the order, the vendor, or the farm-in row."""
-        from django.urls import NoReverseMatch, reverse
+        """Where the tray and dashboard send you: the order, the vendor, or the farm-in order."""
+        from django.urls import reverse
 
         if self.farm_in_request_id:
-            try:
-                return reverse("farm_in_list") + f"#fi-{self.farm_in_request_id}"
-            except NoReverseMatch:
-                return ""
+            lead_id = self.farm_in_request.lead_id
+            return reverse("lead_detail", args=[lead_id]) if lead_id else ""
         if self.lead_id:
             return reverse("lead_detail", args=[self.lead_id])
         if self.vendor_id:
