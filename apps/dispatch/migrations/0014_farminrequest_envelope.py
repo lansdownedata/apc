@@ -4,6 +4,19 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def refuse_orphan_rows(apps, schema_editor):
+    """Fail before any DDL: MySQL cannot roll back a half-applied migration."""
+    farm_in = apps.get_model("dispatch", "FarmInRequest")
+    orphans = farm_in.objects.filter(
+        models.Q(lead__isnull=True) | models.Q(reservation__isnull=True)
+    ).count()
+    if orphans:
+        raise RuntimeError(
+            f"dispatch.0014: {orphans} FarmInRequest rows have no lead/reservation; "
+            "delete or fix them before migrating"
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -13,6 +26,17 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(refuse_orphan_rows, migrations.RunPython.noop),
+        migrations.AlterField(
+            model_name='farminrequest',
+            name='lead',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='farm_in_requests', to='leads.lead'),
+        ),
+        migrations.AlterField(
+            model_name='farminrequest',
+            name='reservation',
+            field=models.OneToOneField(on_delete=django.db.models.deletion.PROTECT, related_name='farm_in', to='reservations.reservation'),
+        ),
         migrations.RemoveIndex(
             model_name='farminrequest',
             name='dispatch_fa_reserva_6bbcf2_idx',
@@ -56,15 +80,5 @@ class Migration(migrations.Migration):
         migrations.RemoveField(
             model_name='farminrequest',
             name='vehicle',
-        ),
-        migrations.AlterField(
-            model_name='farminrequest',
-            name='lead',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='farm_in_requests', to='leads.lead'),
-        ),
-        migrations.AlterField(
-            model_name='farminrequest',
-            name='reservation',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.PROTECT, related_name='farm_in', to='reservations.reservation'),
         ),
     ]

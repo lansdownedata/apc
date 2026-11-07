@@ -1,3 +1,5 @@
+import importlib
+
 import pytest
 from django.db import IntegrityError
 from django.db.models import ProtectedError
@@ -110,3 +112,9 @@ def test_deleting_a_gnet_reservation_is_refused():
 )
 def test_removed_fields_are_gone(name):
     assert hasattr(FarmInRequest, name) is False
+
+
+def test_envelope_migration_alters_before_it_removes():
+    migration = importlib.import_module("apps.dispatch.migrations.0014_farminrequest_envelope")
+    names = [type(op).__name__ for op in migration.Migration.operations]
+    assert names[:4] == ["RunPython", "AlterField", "AlterField", "RemoveIndex"]
