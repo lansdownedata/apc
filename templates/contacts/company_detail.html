@@ -9,6 +9,7 @@
          name: {{ company.name|json_string }},
          billing_contact: '{{ company.billing_contact_id|default_if_none:'' }}',
          is_affiliate_account: '{{ company.is_affiliate_account|yesno:"1,0" }}',
+         gnet_grid_id: {{ company.gnet_grid_id|default_if_none:''|json_string }},
          notes: {{ company.notes|json_string }}
        }
      })">
@@ -78,6 +79,11 @@
               <span class="block text-[11.5px] text-muted">An operator that sends us trips. Its orders: {{ farm_in_summary }}.</span>
             </span>
           </label>
+        </div>
+        <div>
+          <label for="co-grid-id" class="text-[11px] font-semibold text-muted uppercase tracking-wide">GNet griddID</label>
+          <input id="co-grid-id" type="text" x-model="header.gnet_grid_id" @blur="saveHeader()" class="field mt-1.5" autocomplete="off">
+          <span class="block text-[11.5px] text-muted mt-1">The requester id GNet sends; farm-in requests from it file under this company.</span>
         </div>
         <div>
           <label class="text-[11px] font-semibold text-muted uppercase tracking-wide">Notes</label>

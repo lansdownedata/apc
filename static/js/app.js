@@ -223,6 +223,59 @@ const FARM_IN_DONE = {
   retry: "Queued to send again",
 };
 
+/* The confirm flow for one farm-in decision, shared by the drawer and the workspace banner.
+ * `send(data)` does the post; Accept and Decline/Send back ask first (Decline and Send back
+ * insist on a reason), anything else goes straight through. */
+function farmInAct(kind, url, price, send) {
+  const modal = Alpine.store("modal");
+  if (kind === "accept") {
+    return modal.confirm({
+      title: "Accept this request?",
+      message: `Book this trip and confirm it to GNet at ${price}?`,
+      variant: "gold",
+      confirmText: "Accept",
+      onConfirm: () => send({}),
+    });
+  }
+  if (kind === "decline" || kind === "send_back") {
+    const decline = kind === "decline";
+    return modal.confirm({
+      title: decline ? "Decline this request?" : "Send back to reservations?",
+      message: decline
+        ? "The requester is told no. Your reason goes with it."
+        : "Reservations gets it back with your note.",
+      html:
+        `<label for="fi-reason" class="block text-[12.5px] font-medium text-ink">${decline ? "Reason" : "Note"}</label>` +
+        '<textarea id="fi-reason" class="field mt-1.5" rows="3"></textarea>',
+      variant: decline ? "danger" : "info",
+      confirmText: decline ? "Decline" : "Send back",
+      onConfirm: () => {
+        const box = document.getElementById("fi-reason");
+        const text = box ? box.value.trim() : "";
+        if (!text) {
+          Alpine.store("toast").push({ type: "danger", title: "Say why" });
+          // A rejected promise keeps the modal open with what was typed.
+          return Promise.reject(new Error("Say why"));
+        }
+        return send(decline ? { reason: text } : { note: text });
+      },
+    });
+  }
+  return send({});
+}
+
+/* The workspace banner's buttons: same flow, then reload so the page shows the outcome. */
+window.farmInAct = (url, kind, price) =>
+  farmInAct(kind, url, price, async (data) => {
+    try {
+      await postForm(url, data);
+    } catch (e) {
+      Alpine.store("toast").push({ type: "danger", title: e.message || "That did not go through" });
+      return;
+    }
+    window.location.reload();
+  });
+
 function farmInDrawer() {
   return {
     isOpen: false,
@@ -318,43 +371,8 @@ function farmInDrawer() {
     },
 
     act(button) {
-      const kind = button.dataset.action;
-      const url = button.dataset.url;
-      const modal = Alpine.store("modal");
-      if (kind === "accept") {
-        return modal.confirm({
-          title: "Accept this request?",
-          message: `Book this trip and confirm it to GNet at ${button.dataset.price}?`,
-          variant: "gold",
-          confirmText: "Accept",
-          onConfirm: () => this.post(kind, url, {}),
-        });
-      }
-      if (kind === "decline" || kind === "send_back") {
-        const decline = kind === "decline";
-        return modal.confirm({
-          title: decline ? "Decline this request?" : "Send back to reservations?",
-          message: decline
-            ? "The requester is told no. Your reason goes with it."
-            : "Reservations gets it back with your note.",
-          html:
-            `<label for="fi-reason" class="block text-[12.5px] font-medium text-ink">${decline ? "Reason" : "Note"}</label>` +
-            '<textarea id="fi-reason" class="field mt-1.5" rows="3"></textarea>',
-          variant: decline ? "danger" : "info",
-          confirmText: decline ? "Decline" : "Send back",
-          onConfirm: () => {
-            const box = document.getElementById("fi-reason");
-            const text = box ? box.value.trim() : "";
-            if (!text) {
-              Alpine.store("toast").push({ type: "danger", title: "Say why" });
-              // A rejected promise keeps the modal open with what was typed.
-              return Promise.reject(new Error("Say why"));
-            }
-            return this.post(kind, url, decline ? { reason: text } : { note: text });
-          },
-        });
-      }
-      return this.post(kind, url, {});
+      const { action: kind, url, price } = button.dataset;
+      return farmInAct(kind, url, price, (data) => this.post(kind, url, data));
     },
 
     /* Never rejects: a refusal is a toast, and the list is re-read either way because the

@@ -426,6 +426,14 @@ def company_update(request: HttpRequest, pk: int) -> HttpResponse:
         else:
             company.billing_contact_id = None
         fields.append("billing_contact")
+    if "gnet_grid_id" in request.POST:
+        grid_id = request.POST.get("gnet_grid_id", "").strip() or None
+        if grid_id and Company.objects.filter(gnet_grid_id=grid_id).exclude(pk=company.pk).exists():
+            return JsonResponse(
+                {"ok": False, "error": "That griddID belongs to another company."}, status=400
+            )
+        company.gnet_grid_id = grid_id
+        fields.append("gnet_grid_id")
     flag_changed = False
     if "is_affiliate_account" in request.POST:
         flag = request.POST.get("is_affiliate_account") in ("1", "true", "on")

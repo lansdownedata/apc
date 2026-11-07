@@ -105,6 +105,11 @@
     </a>
     {% endfor %}
 
+    {% if farm_in_dispatch_count %}
+    <button type="button" data-farm-in-chip @click="$dispatch('farm-in-open', {tab:'pending', dispatch:true})"
+            class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2.5 py-1 rounded-full chip-gold ring-1 ring-gold/25 hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-gold">{{ farm_in_dispatch_count }} GNet requests</button>
+    {% endif %}
+
     <div class="flex items-center gap-1.5 ml-auto text-[12px]">
       <button type="button" x-show="sortable" @click="exceptionsFirst = !exceptionsFirst; savePrefs(); apply()"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ring-1 transition"

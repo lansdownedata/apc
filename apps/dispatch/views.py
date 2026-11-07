@@ -12,6 +12,7 @@ from django.views.decorators.http import require_POST
 from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.core.phone import to_e164
+from apps.dispatch import farm_in_drawer
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.reservations import editor as reservation_editor
@@ -89,6 +90,7 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
             "today": timezone.localdate(),
             "active_filter": filters.coverage,
             "chips": chips,
+            "farm_in_dispatch_count": farm_in_drawer.counts()["dispatch"],
             "view_links": [
                 {"key": k, "label": lbl, "url": filters.switch_url(k), "active": filters.view == k}
                 for k, lbl in (("day", "Day"), ("week", "Week"), ("range", "Range"))

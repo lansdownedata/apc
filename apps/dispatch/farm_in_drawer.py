@@ -103,7 +103,7 @@ def _decorate(req: FarmInRequest) -> None:
     req.route_title = " → ".join(s.address for s in ends if s.address)
     req.needs_price = res.vehicle_id is None or res.line_total <= 0
     req.pills = _pills(req)[:_MAX_PILLS]
-    req.closed_reason = _closed_reason(req)
+    req.closed_reason = closed_reason(req)
     # UTC to the second: every browser's Date.parse reads it (some reject microseconds).
     req.received_iso = req.received_at.astimezone(UTC).isoformat(timespec="seconds")
 
@@ -150,7 +150,7 @@ def _pills(req: FarmInRequest) -> list[tuple[str, str]]:
     return pills
 
 
-def _closed_reason(req: FarmInRequest) -> str:
+def closed_reason(req: FarmInRequest) -> str:
     if req.status == _S.DECLINED:
         return req.decline_reason or "Declined"
     if req.status == _S.CANCELED:

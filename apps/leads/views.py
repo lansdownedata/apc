@@ -26,6 +26,7 @@ from apps.contacts import services as contact_services
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
+from apps.dispatch import farm_in_drawer
 from apps.dispatch import selectors as dispatch_selectors
 from apps.dispatch.models import FarmInRequest
 from apps.integrations import la_sync
@@ -250,7 +251,9 @@ def lead_detail(request, pk):
     )
 
     wedding_state = _wedding_state(lead)
+    farm_in_req = lead.farm_in
     context = {
+        **_farm_in_context(farm_in_req),
         "nav": "leads",
         "page_title": lead.quote_no,
         "lead": lead,
@@ -292,6 +295,22 @@ def lead_detail(request, pk):
         ),
     }
     return render(request, "leads/lead_detail.html", context)
+
+
+def _farm_in_context(req) -> dict:
+    """What the GNet banner needs; empty keys for an ordinary lead."""
+    if req is None:
+        return {"farm_in": None, "farm_in_pending": False}
+    pending = req.status == req.Status.PENDING
+    res = req.reservation
+    return {
+        "farm_in": req,
+        "farm_in_pending": pending,
+        "farm_in_needs_price": res.vehicle_id is None or res.line_total <= 0,
+        "farm_in_price": res.line_total,
+        "farm_in_pushes": [] if pending else list(req.pushes.order_by("created_at", "pk")),
+        "farm_in_closed_reason": farm_in_drawer.closed_reason(req),
+    }
 
 
 @login_required
