@@ -122,7 +122,17 @@ def test_accepted_tab_shows_order_link_and_pushes(logged_in_client):
     failed = FarmInStatusPushFactory(
         request=req, status="DRIVER_ASSIGNED", state=FarmInStatusPush.State.FAILED, attempts=8
     )
-    _pending = FarmInStatusPushFactory(request=FarmInRequestFactory(), status="REJECT")
+    fast = FarmInStatusPushFactory(
+        request=req,
+        status="REJECT",
+        state=FarmInStatusPush.State.FAILED,
+        attempts=0,
+        last_error="GNet key missing " + "x" * 80,
+    )
+    once = FarmInStatusPushFactory(
+        request=req, status="CANCELED", state=FarmInStatusPush.State.FAILED, attempts=1
+    )
+    _pending = FarmInStatusPushFactory(request=FarmInRequestFactory(), status="PENDING")
 
     body = _fragment(logged_in_client, tab="accepted")
 
@@ -133,7 +143,11 @@ def test_accepted_tab_shows_order_link_and_pushes(logged_in_client):
     assert "CONFIRMED" in body and "$495.00" in body
     assert "DRIVER_ASSIGNED" in body and "failed after 8 tries" in body
     assert reverse("farm_in_retry_push", args=[failed.pk]) in body
-    assert "REJECT" not in body
+    assert "failed: GNet key missing" in body and "failed after 0" not in body
+    assert "failed after 1 try<" in body
+    assert reverse("farm_in_retry_push", args=[fast.pk]) in body
+    assert reverse("farm_in_retry_push", args=[once.pk]) in body
+    assert "PENDING" not in body
 
 
 def test_closed_tab_shows_reason(logged_in_client):

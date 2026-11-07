@@ -12,10 +12,12 @@
     <i class="ti {% if req.kind == 'hourly' %}ti-clock-hour-4{% elif req.kind == 'airport' %}ti-plane{% else %}ti-arrow-narrow-right{% endif %} text-[16px]"></i>
   </span>
   <div class="min-w-0 flex-1">
-    <div class="flex items-center gap-2 min-w-0">
+    <div class="flex items-start gap-2 min-w-0">
+     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
       <span class="text-[12.5px] font-semibold text-ink num whitespace-nowrap">{% if req.pickup_at %}{{ req.pickup_at|zone_clock:req.timezone }}{% else %}<span class="text-amber-700">No pickup time</span>{% endif %}</span>
       {% for label, css in req.pills %}<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap {{ css }}">{{ label }}</span>{% endfor %}
-      <span class="ml-auto pl-2 text-[12.5px] font-semibold num whitespace-nowrap">{% if not req.needs_price %}<span class="text-ink">${{ res.line_total|floatformat:2|intcomma }}</span>{% elif req.status == "pending" %}<span class="text-amber-700">Price it</span>{% else %}<span class="text-muted">—</span>{% endif %}</span>
+     </div>
+      <span class="shrink-0 ml-auto pl-2 text-[12.5px] font-semibold num whitespace-nowrap">{% if not req.needs_price %}<span class="text-ink">${{ res.line_total|floatformat:2|intcomma }}</span>{% elif req.status == "pending" %}<span class="text-amber-700">Price it</span>{% else %}<span class="text-muted">—</span>{% endif %}</span>
     </div>
     <div class="text-[11.5px] text-muted mt-0.5 truncate" title="{{ req.route_title }}">
       {{ req.route }}{% if res.vehicle %} · {{ res.vehicle.name }}{% endif %} · <span class="num">{{ res.passengers }}</span> pax · <span class="font-semibold text-ink">{{ req.company.name }}</span>{% if req.requester_res_no %} · their res {{ req.requester_res_no }}{% endif %}{% if tab == "pending" %} · {{ req.received_at|timesince }} ago{% endif %}
@@ -54,7 +56,7 @@
           {% if push.total_amount is not None %}<span class="num text-ink">${{ push.total_amount|floatformat:2|intcomma }}</span>{% endif %}
           <span class="num text-muted">{{ push.sent_at|default:push.created_at|zone_clock:req.timezone }}</span>
           {% if push.state == "sent" %}<i class="ti ti-check text-[13px] text-emerald-600" title="Delivered"></i>
-          {% elif push.state == "failed" %}<span class="text-rose-600">failed after {{ push.attempts }} tr{{ push.attempts|pluralize:"y,ies" }}</span>
+          {% elif push.state == "failed" %}<span class="text-rose-600">{% if push.attempts == 0 %}failed: {{ push.last_error|truncatechars:60 }}{% else %}failed after {{ push.attempts }} tr{{ push.attempts|pluralize:"y,ies" }}{% endif %}</span>
           <button type="button" data-action="retry" data-url="{% url 'farm_in_retry_push' push.pk %}" class="font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline">Retry</button>
           {% else %}<span class="text-muted">sending</span>{% endif %}
         </div>
