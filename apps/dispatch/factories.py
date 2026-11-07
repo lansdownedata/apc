@@ -1,7 +1,8 @@
 import factory
 
-from apps.contacts.factories import CompanyFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.fleet.factories import DriverFactory
+from apps.leads.factories import LeadFactory
 from apps.reservations.factories import ReservationFactory
 from apps.vendors.factories import VendorFactory
 
@@ -42,6 +43,11 @@ class FarmInRequestFactory(factory.django.DjangoModelFactory):
     transaction_id = factory.Sequence(lambda n: f"tx-{n}")
     requester_grid_id = "gnettest"
     payload = factory.LazyFunction(dict)
+    lead = factory.SubFactory(
+        LeadFactory,
+        contact=factory.SubFactory(ContactFactory, company=factory.SelfAttribute("...company")),
+    )
+    reservation = factory.SubFactory(ReservationFactory, lead=factory.SelfAttribute("..lead"))
 
 
 class FarmInStatusPushFactory(factory.django.DjangoModelFactory):

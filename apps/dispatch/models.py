@@ -356,10 +356,6 @@ class FarmInRequest(TimeStampedModel):
         CANCELED = "canceled", "Canceled by requester"
         EXPIRED = "expired", "Expired"
 
-    class PricingSource(models.TextChoices):
-        RATE_CARD = "rate_card", "Rate card"
-        MANUAL = "manual", "Manual"
-
     transaction_id = models.CharField(max_length=128, unique=True)
     requester_grid_id = models.CharField(max_length=64)
     requester_res_no = models.CharField(max_length=64, blank=True)
@@ -377,32 +373,14 @@ class FarmInRequest(TimeStampedModel):
     desk_changed_at = models.DateTimeField(null=True, blank=True)
     desk_note = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
-    vehicle = models.ForeignKey(
-        "leads.VehicleType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
-    )
     gnet_vehicle_type = models.CharField(max_length=40, blank=True)
-    quoted_amount = MoneyField(null=True, blank=True, default=None)
-    pricing_source = models.CharField(max_length=12, choices=PricingSource.choices, blank=True)
-    priced_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
-    )
-    pricing_note = models.CharField(max_length=255, blank=True)
     pickup_at = models.DateTimeField(null=True, blank=True)
     timezone = models.CharField(max_length=64, blank=True)
-    timezone_assumed = models.BooleanField(default=False)
-    pickup_summary = models.CharField(max_length=255, blank=True)
-    dropoff_summary = models.CharField(max_length=255, blank=True)
-    passenger_name = models.CharField(max_length=200, blank=True)
-    passenger_count = models.PositiveSmallIntegerField(null=True, blank=True)
     lead = models.ForeignKey(
-        "leads.Lead", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        "leads.Lead", on_delete=models.PROTECT, related_name="farm_in_requests"
     )
-    reservation = models.ForeignKey(
-        "reservations.Reservation",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="farm_in_requests",
+    reservation = models.OneToOneField(
+        "reservations.Reservation", on_delete=models.PROTECT, related_name="farm_in"
     )
     updated_after_accept = models.BooleanField(default=False)
     decided_by = models.ForeignKey(
@@ -417,7 +395,6 @@ class FarmInRequest(TimeStampedModel):
     class Meta(TimeStampedModel.Meta):
         indexes = [
             models.Index(fields=["status", "desk", "pickup_at"]),
-            models.Index(fields=["reservation"]),
         ]
 
     def __str__(self) -> str:

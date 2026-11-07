@@ -1,4 +1,6 @@
 from decimal import Decimal
+from functools import cached_property
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -10,6 +12,9 @@ from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
+
+if TYPE_CHECKING:
+    from apps.dispatch.models import FarmInRequest
 
 
 class ServiceType(TimeStampedModel):
@@ -179,6 +184,11 @@ class Lead(TimeStampedModel):
     po_number = models.CharField(max_length=64, blank=True)
 
     objects = LeadQuerySet.as_manager()
+
+    @cached_property
+    def farm_in(self) -> "FarmInRequest | None":
+        """The GNet farm-in envelope for this lead, or None for an ordinary lead."""
+        return self.farm_in_requests.order_by("pk").first()
 
     @property
     def on_account(self) -> bool:
