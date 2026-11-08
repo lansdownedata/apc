@@ -231,7 +231,9 @@ _CONFIRM_LINK_KINDS = frozenset({"thank_you", "thank_you_wedding"}) | _TRIP_KIND
 
 
 def _keys_for(kind: str) -> set[str]:
-    group = lambda name: {k for k, _ in _GROUPS[name]}  # noqa: E731
+    def group(name: str) -> set[str]:
+        return {k for k, _ in _GROUPS[name]}
+
     if kind == "trip_confirm_affiliate":
         return (
             group("Trip") | group("Affiliate") | group("Company") | group("Driver") | {"ack_link"}
@@ -361,15 +363,19 @@ def _check_boxes(boxes: dict[str, str], allowed: set[str]) -> tuple[dict[str, st
 def _missing_link(
     errors: dict[str, str], present: set[str], required: frozenset[str], order: tuple[str, ...]
 ) -> None:
-    """Report the first required link the wording lacks against the first channel's box."""
+    """Report the first required link the wording lacks against the first channel's box
+    (none while no channel is on)."""
     missing = sorted(required - present)
-    first = next((b for b in ("email_body", "sms_body") if _BOX_CHANNEL[b] in order[:1]), "")
-    if missing and first and first not in errors:
+    if not missing or not order:
+        return
+    first = _BODY_BOX[order[0]]
+    if first not in errors:
         key = missing[0]
         errors[first] = f"This message needs {{{key}}} — it's how {_PURPOSE[key]}."
 
 
 _BOX_CHANNEL = {"subject": "email", "email_body": "email", "sms_body": "sms"}
+_BODY_BOX = {"email": "email_body", "sms": "sms_body"}
 _BOX_ORDER = ("subject", "email_body", "sms_body")
 
 
