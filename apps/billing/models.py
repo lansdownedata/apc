@@ -9,8 +9,10 @@ Nothing here talks to QuickBooks. The `qbo_*` fields exist from the start so the
 Phase 2 is a service and a cron job rather than a migration on live billing data.
 """
 
+from django.conf import settings
 from django.db import models
 
+from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 
 
@@ -134,6 +136,63 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     @property
     def effective_terms(self) -> str:
         return self.terms or self.account.terms
+
+
+class Invoice(QboSyncedModel, TimeStampedModel):
+    """A bill made out to one group, covering a set of trips (APC-106). Becomes the
+    Invoice in QuickBooks. Never edited once made: a wrong one is voided and replaced."""
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        VOID = "void", "Void"
+
+    group = models.ForeignKey(AccountGroup, on_delete=models.PROTECT, related_name="invoices")
+    # QuickBooks' DocNumber. Blank until the push assigns it (APC-107).
+    number = models.CharField(max_length=21, blank=True)
+    invoice_date = models.DateField()
+    due_date = models.DateField()
+    po_number = models.CharField(max_length=64, blank=True)
+    total = MoneyField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN)
+    memo = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    void_reason = models.CharField(max_length=255, blank=True)
+    # The invoice issued in this one's place after a void.
+    replaced_by = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    # Lease taken by the QuickBooks push so two workers never push one invoice (APC-107).
+    qbo_push_started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["-invoice_date", "-pk"]
+
+    def __str__(self) -> str:
+        return self.label
+
+    @property
+    def label(self) -> str:
+        return f"Invoice {self.number}" if self.number else f"Invoice (draft #{self.pk})"
+
+
+class InvoiceLine(TimeStampedModel):
+    """One trip on an invoice. The OneToOne is the rule that a trip is billed once."""
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="lines")
+    reservation = models.OneToOneField(
+        "reservations.Reservation", on_delete=models.PROTECT, related_name="invoice_line"
+    )
+    description = models.TextField()
+    amount = MoneyField()
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["pk"]
 
 
 class QboTerm(TimeStampedModel):

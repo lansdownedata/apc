@@ -1,6 +1,15 @@
 from django.contrib import admin
 
-from .models import AccountGroup, BillingAccount, QboAccount, QboAccountMapping, QboTerm, SyncState
+from .models import (
+    AccountGroup,
+    BillingAccount,
+    Invoice,
+    InvoiceLine,
+    QboAccount,
+    QboAccountMapping,
+    QboTerm,
+    SyncState,
+)
 
 # Fields QuickBooks holds a copy of (APC-42): changing one here queues the record again, the
 # same as an edit on the contact page does.
@@ -85,3 +94,22 @@ class QboAccountMappingAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+class InvoiceLineInline(admin.TabularInline):
+    model = InvoiceLine
+    extra = 0
+    fields = ("reservation", "description", "amount")
+    readonly_fields = ("reservation", "description", "amount")
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):
+    list_display = ("pk", "number", "group", "invoice_date", "due_date", "total", "status")
+    list_filter = ("status",)
+    search_fields = ("number", "group__name", "group__account__name")
+    inlines = [InvoiceLineInline]

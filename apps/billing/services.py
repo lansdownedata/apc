@@ -165,6 +165,8 @@ def delete_group(group: AccountGroup) -> None:
         )
     if group.is_default:
         raise BillingError("Make another group the default before removing this one.")
+    if group.invoices.exists():
+        raise BillingError("This group has invoices. Void them first.")
     orders = group.orders.count()
     if orders:
         raise BillingError(
