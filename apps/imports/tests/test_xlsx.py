@@ -233,3 +233,16 @@ def test_unknown_header_written_plain():
     ws = write([["Jo", "no thanks"]], headers=["Name", "Reason"])["Contacts"]
     assert ws["B1"].value == "Reason"
     assert ws["B2"].value == "no thanks"
+
+
+def test_gnet_header_is_ignored():
+    from apps.vendors.resources import VENDOR_COLUMNS
+
+    buf = make_xlsx(
+        ["Name", "Email", "GNet griddID"],
+        [["Capital Cars", "ops@acme.test", "GRID-1"]],
+        sheet="Vendors",
+    )
+    parsed = read_rows(buf, sheet="Vendors", columns=VENDOR_COLUMNS)
+    assert parsed.ignored_columns == ["GNet griddID"]
+    assert parsed.dataset.headers == ["Name", "Email", "__row__"]

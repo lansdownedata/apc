@@ -17,7 +17,7 @@ from apps.imports.address import (
     clean_address,
     write_address,
 )
-from apps.imports.resources import PortalResource, cell, row_no
+from apps.imports.resources import PortalResource, cell, row_no, same_number
 from apps.imports.xlsx import Column
 
 from . import services
@@ -73,11 +73,6 @@ def parse_other_phones(text: str) -> list[tuple[str, str, str | None, str]]:
                 )
         items.append((item, number.strip(), to_e164(number), value))
     return items
-
-
-def same_number(stored: str, typed: str, e164: str | None) -> bool:
-    """`typed` is `stored` as typed, as E.164 or as `phone_display` shows it."""
-    return bool(stored) and (typed == stored or e164 == stored or typed == phone_display(stored))
 
 
 def phone_with_label(number: str, label: str) -> str:

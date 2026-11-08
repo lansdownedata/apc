@@ -14,6 +14,7 @@ from import_export.resources import ModelResource
 from import_export.results import RowResult
 
 from apps.core.phone import to_e164
+from apps.core.templatetags.phone_filters import phone_display
 
 from .xlsx import ROW_COLUMN, Column
 
@@ -32,6 +33,11 @@ def row_no(row) -> int:
 
 def cell(row, column: str) -> str:
     return row.get(column, "") or ""
+
+
+def same_number(stored: str, typed: str, e164: str | None) -> bool:
+    """`typed` is `stored` as typed, as E.164 or as `phone_display` shows it."""
+    return bool(stored) and (typed == stored or e164 == stored or typed == phone_display(stored))
 
 
 def _blank(value) -> bool:

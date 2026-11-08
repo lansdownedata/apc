@@ -80,7 +80,7 @@ def write_address(owner, slot: str, row) -> None:
         return
     for attr in changed:
         setattr(address, attr, typed[attr])
-    if address.latitude is not None or address.longitude is not None:
+    if any(getattr(address, attr) not in (None, "") for attr in LOCATION_FIELDS):
         address.latitude = address.longitude = None
         address.locationiq_place_id = address.display_name = ""
         changed += LOCATION_FIELDS
