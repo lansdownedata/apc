@@ -693,13 +693,19 @@ def test_customer_docs_card_renders_and_saves(client):
 
     _owner(client)
     item = QboItemFactory(realm_id="123")
+    deposit = _deposit_account()
     with (
         patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.payments.qbo_bills.customers.current_realm", return_value="123"),
         patch("apps.settings.views._qbo_or_404", return_value=qbo),
     ):
         resp = client.post(
             reverse("quickbooks_customer_docs"),
-            {"trip_item": item.pk, "customer_docs_from": "2026-12-01"},
+            {
+                "trip_item": item.pk,
+                "sales_deposit_account": deposit.pk,
+                "customer_docs_from": "2026-12-01",
+            },
             follow=True,
         )
     config = QboAccountMapping.load()
@@ -777,3 +783,78 @@ def test_refresh_items_endpoint(client):
         resp = client.post(reverse("quickbooks_refresh_items"), follow=True)
     assert QboItem.objects.filter(qbo_id="5", active=True).exists()
     assert "1 products and services read from QuickBooks." in resp.content.decode()
+
+
+# --- APC-108: the deposit account on the Customer documents card ------------------------------
+
+
+def _deposit_account(realm="123", kind="Other Current Asset", qbo_id="20"):
+    from apps.billing.models import QboAccount
+
+    return QboAccount.objects.create(
+        realm_id=realm, qbo_id=qbo_id, name="Undeposited Funds", account_type=kind
+    )
+
+
+def test_customer_docs_card_saves_the_deposit_account(client):
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    item = QboItemFactory(realm_id="123")
+    deposit = _deposit_account()
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.payments.qbo_bills.customers.current_realm", return_value="123"),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+    ):
+        resp = client.post(
+            reverse("quickbooks_customer_docs"),
+            {
+                "trip_item": item.pk,
+                "sales_deposit_account": deposit.pk,
+                "customer_docs_from": "2026-12-01",
+            },
+            follow=True,
+        )
+    assert QboAccountMapping.load().sales_deposit_account == deposit
+    assert "Saved. Open invoices go out on the next sync." in resp.content.decode()
+
+
+def test_customer_docs_rejects_a_non_deposit_account(client):
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    item = QboItemFactory(realm_id="123")
+    expense = _deposit_account(kind="Expense", qbo_id="7")
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.payments.qbo_bills.customers.current_realm", return_value="123"),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+    ):
+        resp = client.post(
+            reverse("quickbooks_customer_docs"),
+            {
+                "trip_item": item.pk,
+                "sales_deposit_account": expense.pk,
+                "customer_docs_from": "2026-12-01",
+            },
+            follow=True,
+        )
+    assert QboAccountMapping.load().sales_deposit_account is None
+    assert "the deposit account for card payments" in resp.content.decode()
+
+
+def test_customer_docs_unset_chip_names_all_three(client):
+    from django.test import override_settings
+
+    _owner(client)
+    with (
+        override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+    assert "a product/service, a deposit account and a start date are chosen." in html
+    assert "Deposit account for card payments" in html
+    assert 'name="sales_deposit_account"' in html

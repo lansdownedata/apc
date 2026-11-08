@@ -75,15 +75,18 @@ _NO_PAYMENT_ACCOUNT = (
 # --- the chart of accounts cache and the two choices ------------------------------------------
 
 
+# Every account kind a choice can come from; "Bank" is in two lists, the set drops the repeat.
+_CACHED_TYPES = tuple(
+    dict.fromkeys((*QboAccount.EXPENSE_TYPES, *QboAccount.PAYMENT_TYPES, *QboAccount.DEPOSIT_TYPES))
+)
+
 # Intuit's query pages: 1-based STARTPOSITION, at most 1000 rows a page.
 ACCOUNT_PAGE = 1000
 
 
 def _account_rows() -> list[dict]:
     """Every usable account in the company, page by page until a short page."""
-    kinds = ", ".join(
-        f"'{kind}'" for kind in (*QboAccount.EXPENSE_TYPES, *QboAccount.PAYMENT_TYPES)
-    )
+    kinds = ", ".join(f"'{kind}'" for kind in _CACHED_TYPES)
     rows: list[dict] = []
     position = 1
     while True:
@@ -100,14 +103,13 @@ def _account_rows() -> list[dict]:
 
 
 def refresh_accounts() -> int:
-    """Cache the company's expense and bank accounts; one no longer there is retired, not
+    """Cache the company's expense, bank and deposit accounts; one no longer there is retired, not
     deleted (a mapping that pointed at it then reads as unset). Every page is read before
     anything is retired, so a failure part-way retires nothing. Returns how many are active."""
     realm = customers.current_realm()
-    kinds = (*QboAccount.EXPENSE_TYPES, *QboAccount.PAYMENT_TYPES)
     seen = []
     for row in _account_rows():
-        if row.get("AccountType") not in kinds:
+        if row.get("AccountType") not in _CACHED_TYPES:
             continue
         QboAccount.objects.update_or_create(
             realm_id=realm,
@@ -119,7 +121,7 @@ def refresh_accounts() -> int:
             },
         )
         seen.append(str(row["Id"]))
-    QboAccount.objects.exclude(realm_id=realm, qbo_id__in=seen).update(active=False)
+    QboAccount.objects.filter(realm_id=realm).exclude(qbo_id__in=seen).update(active=False)
     return QboAccount.objects.filter(realm_id=realm, active=True).count()
 
 
@@ -137,6 +139,10 @@ def payment_choices() -> list[tuple[int, str]]:
     return list(_usable(QboAccount.PAYMENT_TYPES).values_list("pk", "name"))
 
 
+def deposit_choices() -> list[tuple[int, str]]:
+    return list(_usable(QboAccount.DEPOSIT_TYPES).values_list("pk", "name"))
+
+
 def _ref(account: QboAccount | None, types: tuple[str, ...]) -> dict | None:
     if account is None or not _usable(types).filter(pk=account.pk).exists():
         return None
@@ -151,6 +157,11 @@ def expense_account_ref() -> dict | None:
 def payment_account_ref() -> dict | None:
     """The bank account bill payments come from, or None until one is chosen."""
     return _ref(QboAccountMapping.load().payment_account, QboAccount.PAYMENT_TYPES)
+
+
+def deposit_account_ref() -> dict | None:
+    """Where card payments are deposited, or None until one is chosen for this company."""
+    return _ref(QboAccountMapping.load().sales_deposit_account, QboAccount.DEPOSIT_TYPES)
 
 
 # --- the shared push machinery -------------------------------------------------------------------

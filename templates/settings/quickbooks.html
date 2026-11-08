@@ -109,16 +109,18 @@
       </form>
     </div>
     <p class="text-[12.5px] text-muted mb-3">
-      Invoices for billing accounts (and, later, card receipts) go to QuickBooks as customer documents.
+      Invoices for billing accounts and card receipts go to QuickBooks as customer documents.
       Every trip is one line on this product or service. Only documents dated on or after the start
       date go, so past billing isn't back-dated into the books.
     </p>
     {% if customer_docs_unset %}
-      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Customer documents won't go to QuickBooks until a product/service and a start date are chosen.</p>
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Customer documents won't go to QuickBooks until a product/service, a deposit account and a start date are chosen.</p>
     {% endif %}
     <form method="post" action="{% url 'quickbooks_customer_docs' %}" class="grid gap-3">{% csrf_token %}
       <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Product/Service for trip charges</span>
         {% include "components/searchable_select.html" with name="trip_item" field_id="qbo-trip-item" options=item_choices selected=trip_item_selected empty_label="Choose a product or service" %}</label>
+      <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Deposit account for card payments</span>
+        {% include "components/searchable_select.html" with name="sales_deposit_account" field_id="qbo-deposit-account" options=deposit_choices selected=deposit_selected empty_label="Choose an account" %}</label>
       <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Send customer documents dated from</span>
         <input type="text" name="customer_docs_from" id="qbo-customer-docs-from" class="field" data-flatpickr data-fp-past
                placeholder="Choose a date" value="{{ customer_docs_from|date:'Y-m-d' }}"></label>

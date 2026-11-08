@@ -1022,18 +1022,23 @@ def _qbo_accounts_context() -> dict:
 
 
 def _qbo_customer_docs_context() -> dict:
-    """APC-107: the Product/Service every trip line posts to and the date customer documents
-    start from. A choice that's no longer an active item of this company reads as unset."""
+    """APC-107/108: the Product/Service every trip line posts to, the account card payments are
+    deposited into and the date customer documents start from. A choice that's no longer an
+    active item or account of this company reads as unset."""
     from apps.billing import qbo_invoices
     from apps.billing.models import QboAccountMapping
+    from apps.payments import qbo_bills
 
     config = QboAccountMapping.load()
     item = config.trip_item_id if qbo_invoices.trip_item_ref() else ""
+    deposit = config.sales_deposit_account_id if qbo_bills.deposit_account_ref() else ""
     return {
         "item_choices": qbo_invoices.item_choices(),
         "trip_item_selected": item,
+        "deposit_choices": qbo_bills.deposit_choices(),
+        "deposit_selected": deposit,
         "customer_docs_from": config.customer_docs_from,
-        "customer_docs_unset": not (item and config.customer_docs_from),
+        "customer_docs_unset": not (item and deposit and config.customer_docs_from),
     }
 
 
@@ -1094,31 +1099,38 @@ def quickbooks_refresh_accounts(request: HttpRequest) -> HttpResponse:
 @owner_admin_required
 @require_POST
 def quickbooks_customer_docs(request: HttpRequest) -> HttpResponse:
-    """Save the Product/Service trip lines post to and the date customer documents start from.
-    Only an active item of the connected company is accepted; anything else (or a date that
-    doesn't parse) is left unset."""
+    """Save the Product/Service trip lines post to, the account card payments are deposited
+    into and the date customer documents start from. Only an active item or deposit account of
+    the connected company is accepted; anything else (or a date that doesn't parse) is left
+    unset."""
     from django.utils.dateparse import parse_date
 
     from apps.billing import qbo_invoices
-    from apps.billing.models import QboAccountMapping, QboItem
+    from apps.billing.models import QboAccount, QboAccountMapping, QboItem
+    from apps.payments import qbo_bills
 
     _qbo_or_404()
     raw = request.POST.get("trip_item", "")
     allowed = {str(pk) for pk, _ in qbo_invoices.item_choices()}
     config = QboAccountMapping.load()
     config.trip_item = QboItem.objects.get(pk=raw) if raw in allowed else None
+    raw_deposit = request.POST.get("sales_deposit_account", "")
+    deposits = {str(pk) for pk, _ in qbo_bills.deposit_choices()}
+    config.sales_deposit_account = (
+        QboAccount.objects.get(pk=raw_deposit) if raw_deposit in deposits else None
+    )
     try:
         config.customer_docs_from = parse_date(request.POST.get("customer_docs_from", "").strip())
     except ValueError:  # well-formed but impossible, like Feb 30
         config.customer_docs_from = None
     config.save()
-    if config.trip_item and config.customer_docs_from:
+    if config.trip_item and config.sales_deposit_account and config.customer_docs_from:
         messages.success(request, "Saved. Open invoices go out on the next sync.")
     else:
         messages.error(
             request,
-            "Choose the Product/Service for trip charges and the date customer documents "
-            "start from.",
+            "Choose the Product/Service for trip charges, the deposit account for card payments "
+            "and the date customer documents start from.",
         )
     return redirect("quickbooks_settings")
 
