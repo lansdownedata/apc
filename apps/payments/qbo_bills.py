@@ -1103,11 +1103,12 @@ def push_attachment(payable: AffiliatePayable) -> bool:
 
 def run_hourly() -> int:
     """The `retry-qbo-sync` cron: customers first (APC-42: terms, accounts, groups), then the
-    chart of accounts, then vendors, bills and payments, then card customers and receipts
-    (APC-108), then customer invoices (APC-107). A failed accounts refresh doesn't stop the
-    push: the cached choice still stands. The bills, receipts and invoices passes share one
-    PushBudget and each runs whatever the others did, so one failing never stops the next or
-    the cron. Does nothing without a live connection."""
+    chart of accounts, the products and services and the books-closing date (APC-109), then
+    vendors, bills and payments, then card customers and receipts (APC-108), then customer
+    invoices (APC-107). A failed refresh doesn't stop the push: the cached value still stands.
+    The bills, receipts and invoices passes share one PushBudget and each runs whatever the
+    others did, so one failing never stops the next or the cron. Does nothing without a live
+    connection."""
     if not qbo.is_connected():
         return 0
     pushed = customers.run_hourly()
@@ -1121,6 +1122,10 @@ def run_hourly() -> int:
         qbo_invoices.refresh_items()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
+    try:
+        qbo_invoices.refresh_preferences()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        logger.warning("QuickBooks preferences refresh failed; keeping the cached closing date")
     budget = PushBudget(seconds=20)
     for name, run in (
         ("bill", sync_pending),

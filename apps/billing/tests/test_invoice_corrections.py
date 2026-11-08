@@ -162,6 +162,31 @@ def test_edit_refused_on_void_invoice() -> None:
         _edit(invoice, memo="x")
 
 
+def test_local_void_refused_in_closed_period_only_when_linked() -> None:
+    import re
+
+    linked = _invoice(qbo_id="900", qbo_realm_id="123")
+    unsent = _invoice()
+    elsewhere = _invoice(qbo_id="901", qbo_realm_id="999")
+    _close_books(date(2026, 11, 30))
+    with patch(REALM, return_value="123"):
+        with pytest.raises(invoices.InvoiceError, match=re.escape(invoices.CLOSED_PERIOD_MESSAGE)):
+            invoices.void_invoice(linked, reason="Wrong PO", user=None)
+        linked.refresh_from_db()
+        assert linked.status == Invoice.Status.OPEN
+        assert linked.qbo_void_requested_at is None
+        # Never in this company's books: voided here, QuickBooks has nothing of it to close.
+        for invoice in (unsent, elsewhere):
+            assert invoices.void_invoice(invoice, reason="Wrong PO", user=None).status == (
+                Invoice.Status.VOID
+            )
+        # Once the books are open again the linked one voids as before.
+        _close_books(date(2026, 10, 31))
+        assert invoices.void_invoice(linked, reason="Wrong PO", user=None).status == (
+            Invoice.Status.VOID
+        )
+
+
 @pytest.fixture
 def accountant():
     return UserFactory(can_manage_payments=True)

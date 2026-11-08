@@ -287,7 +287,9 @@ def create_invoice(
 def void_invoice(invoice: Invoice, *, reason: str, user) -> Invoice:
     """Void an invoice: its lines go, so the trips are ready to invoice again. One that is in
     QuickBooks (or whose create is in flight right now, and may land) is queued for the
-    QuickBooks void, which the hourly sync or a Retry sends (APC-107)."""
+    QuickBooks void, which the hourly sync or a Retry sends (APC-107). One in this company's
+    books inside a closed period is refused; one never sent there may still be voided here
+    (APC-109)."""
     reason = (reason or "").strip()
     if not reason:
         raise InvoiceError("Say why the invoice is voided.")
@@ -295,6 +297,12 @@ def void_invoice(invoice: Invoice, *, reason: str, user) -> Invoice:
         invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status == Invoice.Status.VOID:
             raise InvoiceError("This invoice is already void.")
+        if (
+            invoice.qbo_id
+            and invoice.qbo_realm_id == qbo_sync.current_realm()
+            and in_closed_period(invoice.invoice_date)
+        ):
+            raise InvoiceError(CLOSED_PERIOD_MESSAGE)
         if invoice.qbo_id or invoice.qbo_push_started_at:
             invoice.qbo_void_requested_at = timezone.now()
             invoice.qbo_sync_state = SyncState.NOT_SYNCED

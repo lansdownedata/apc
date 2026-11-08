@@ -30,6 +30,11 @@ urlpatterns = [
         "quickbooks/refresh-items/", views.quickbooks_refresh_items, name="quickbooks_refresh_items"
     ),
     path(
+        "quickbooks/refresh-preferences/",
+        views.quickbooks_refresh_preferences,
+        name="quickbooks_refresh_preferences",
+    ),
+    path(
         "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
     ),
     path("messages/", views.messages_list, name="messages"),

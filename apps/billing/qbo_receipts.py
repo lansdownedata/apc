@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db.models import Exists, OuterRef, Prefetch, Q
 
-from apps.billing.invoices import line_description
+from apps.billing.invoices import CLOSED_PERIOD_MESSAGE, in_closed_period, line_description
 from apps.billing.models import AccountGroup, BillingAccount, CustomerLink, SyncState
 from apps.billing.qbo_invoices import (
     DESCRIPTION_MAX,
@@ -581,7 +581,22 @@ def push_receipt(charge) -> bool:
             return False
         if customer_ref(_contact(charge), realm) is None:
             return False  # waits for its customer, with nothing said
+        if _closed_update(charge, realm):
+            _fail(_receipt_link(charge)[0], CLOSED_PERIOD_MESSAGE)
+            return False
         return _push_receipt(charge, realm)
+
+
+def _closed_update(charge, realm: str) -> bool:
+    """A Retry of a receipt already in this company, dated inside the closed period: never
+    sent (APC-109). A create is QuickBooks' call. A trip zone that isn't valid is left for the
+    payload to refuse."""
+    if not (charge.qbo_id and charge.qbo_realm_id == realm):
+        return False
+    try:
+        return in_closed_period(txn_date(charge))
+    except _Refused:
+        return False
 
 
 # --- hourly --------------------------------------------------------------------------------------

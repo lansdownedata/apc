@@ -762,3 +762,147 @@ def test_sync_state_before_the_start_date(mapping):
     assert qbo_invoices.sync_state(early, connected=True)["before_start"] is True
     assert qbo_invoices.sync_state(on_time, connected=True)["before_start"] is False
     assert qbo_invoices.sync_state(early, connected=True, start=None)["before_start"] is False
+
+
+# --- APC-109: the books-closing date and the update of an edited invoice ---
+
+
+def _prefs(close=None):
+    info = {} if close is None else {"BookCloseDate": close}
+    return {"Preferences": {"AccountingInfoPrefs": info}}
+
+
+def _close_books(mapping, through):
+    mapping.book_close_date = through
+    mapping.save()
+
+
+def test_refresh_preferences_reads_book_close_date():
+    with patch(REQ, return_value=_prefs("2026-10-31")) as req:
+        assert qbo_invoices.refresh_preferences() == date(2026, 10, 31)
+    req.assert_called_once_with("GET", "preferences")
+    assert QboAccountMapping.load().book_close_date == date(2026, 10, 31)
+    malformed = (_prefs("31/10/2026"), _prefs("2026-02-30"), _prefs(20261031))
+    absent = (_prefs(), {}, {"Preferences": None}, {"Preferences": {"AccountingInfoPrefs": None}})
+    for answer in (*absent, *malformed):
+        QboAccountMapping.objects.filter(pk=1).update(book_close_date=date(2026, 10, 31))
+        with patch(REQ, return_value=answer):
+            assert qbo_invoices.refresh_preferences() is None
+        assert QboAccountMapping.load().book_close_date is None
+
+
+def _edit(invoice, **kw):
+    args = {"invoice_date": invoice.invoice_date, "po_number": "", "memo": "", "user": None}
+    args.update(kw)
+    return invoices.edit_invoice(Invoice.objects.get(pk=invoice.pk), **args)
+
+
+def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
+    invoice = _pushed(_open_invoice())
+    _edit(invoice, invoice_date=date(2026, 3, 5), memo="Fixed")
+    with patch(REQ, return_value=_sent(invoice, token="1")) as req:
+        assert qbo_invoices.sync_pending() == 1
+    req.assert_called_once()
+    body = req.call_args.kwargs["json"]
+    assert req.call_args.args == ("POST", "invoice")
+    assert req.call_args.kwargs["params"] == {
+        "requestid": f"apc-{qbo_bills._digest(body)}-i{invoice.pk}-u0"[:50]
+    }
+    assert (body["Id"], body["SyncToken"]) == ("900", "0")
+    assert "sparse" not in body and "DocNumber" not in body
+    assert body["TxnDate"] == "2026-03-05"
+    assert body["PrivateNote"] == "Fixed"
+    assert len(body["Line"]) == 2
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.SYNCED
+    assert invoice.qbo_sync_token == "1"
+    assert invoice.qbo_edit_requested_at is None
+    assert list(qbo_invoices.pending_invoices("123", START)) == []
+
+
+def test_edit_during_create_is_pushed_as_an_update_afterwards(mapping):
+    invoice = _open_invoice()
+    response = _sent(invoice)
+
+    def edit_then_answer(*args, **kwargs):
+        # Staff correct the date while QuickBooks is still making the invoice.
+        _edit(invoice, invoice_date=date(2026, 3, 9))
+        return response
+
+    with patch(REQ, side_effect=edit_then_answer):
+        assert qbo_invoices.push_invoice(invoice) is False
+    invoice.refresh_from_db()
+    assert (invoice.qbo_id, invoice.number) == ("900", "1042")
+    assert invoice.qbo_sync_state == SyncState.NOT_SYNCED
+    assert invoice.qbo_edit_requested_at is not None
+    assert list(qbo_invoices.pending_invoices("123", START)) == [invoice]
+    with patch(REQ, return_value=_sent(invoice, token="1")) as req:
+        assert qbo_invoices.sync_pending() == 1
+    body = req.call_args.kwargs["json"]
+    assert (body["Id"], body["SyncToken"], body["TxnDate"]) == ("900", "0", "2026-03-09")
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.SYNCED
+    assert invoice.qbo_edit_requested_at is None
+
+
+def test_queued_edit_refused_when_period_closes(mapping):
+    invoice = _pushed(_open_invoice())
+    _edit(invoice, invoice_date=date(2026, 3, 5))
+    _close_books(mapping, date(2026, 3, 31))
+    with patch(REQ) as req:
+        assert qbo_invoices.sync_pending() == 0
+        assert qbo_invoices.sync_pending() == 0
+        assert qbo_invoices.push_invoice(invoice) is False
+    req.assert_not_called()
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == invoices.CLOSED_PERIOD_MESSAGE
+    assert invoice.qbo_edit_requested_at is not None
+    assert _alerts().count() == 1
+    assert _alerts().get().detail == invoices.CLOSED_PERIOD_MESSAGE
+
+
+def test_create_is_never_gated_by_the_closing_date(mapping):
+    invoice = _open_invoice()
+    _close_books(mapping, date(2026, 3, 31))
+    with patch(REQ, return_value=_sent(invoice)) as req:
+        assert qbo_invoices.sync_pending() == 1
+    assert "Id" not in req.call_args.kwargs["json"]
+
+
+def test_void_push_refused_in_closed_period(mapping):
+    invoice = _pushed(_open_invoice())
+    invoices.void_invoice(invoice, reason="Wrong PO", user=None)
+    _close_books(mapping, date(2026, 3, 1))
+    with patch(REQ) as req:
+        assert qbo_invoices.sync_pending() == 0
+        assert qbo_invoices.push_void(invoice) is False
+    req.assert_not_called()
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == invoices.CLOSED_PERIOD_MESSAGE
+    assert _alerts().count() == 1
+    assert _alerts().get().title == f"QuickBooks didn't void Invoice 1042: {invoice.group}"
+
+
+def test_run_hourly_refreshes_preferences_and_survives_its_failure(mapping):
+    invoice = _open_invoice()
+    passes = (
+        patch.object(qbo_bills, "sync_pending", return_value=0),
+        patch("apps.billing.qbo_sync.run_hourly", return_value=0),
+        patch.object(qbo_bills, "refresh_accounts"),
+        patch.object(qbo_invoices, "refresh_items"),
+    )
+    with passes[0], passes[1], passes[2], passes[3]:
+        with patch(REQ, side_effect=[_prefs("2026-01-31"), _sent(invoice)]) as req:
+            assert qbo_bills.run_hourly() == 1
+        assert req.call_args_list[0].args == ("GET", "preferences")
+        assert QboAccountMapping.load().book_close_date == date(2026, 1, 31)
+        # A failed read keeps the cached date and the push still runs.
+        other = _open_invoice()
+        down = qbo.QboAPIError(503, "Service Unavailable")
+        with patch(REQ, side_effect=[down, _sent(other, qbo_id="901", doc="1043")]):
+            assert qbo_bills.run_hourly() == 1
+    assert QboAccountMapping.load().book_close_date == date(2026, 1, 31)
+    other.refresh_from_db()
+    assert other.qbo_sync_state == SyncState.SYNCED

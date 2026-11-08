@@ -113,6 +113,10 @@
       Every trip is one line on this product or service. Only documents dated on or after the start
       date go, so past billing isn't back-dated into the books.
     </p>
+    <form method="post" action="{% url 'quickbooks_refresh_preferences' %}" class="flex items-center gap-2 mb-3 text-[12.5px]">{% csrf_token %}
+      <span class="text-ink">{% if book_close_date %}Books closed through {{ book_close_date|date:"M j, Y" }}{% else %}No closing date set in QuickBooks{% endif %}</span>
+      <button type="submit" class="font-medium text-goldd hover:text-gold focus-gold rounded">Refresh</button>
+    </form>
     {% if invoices_unset %}
       <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Invoices won't go to QuickBooks until a product/service and a start date are chosen.</p>
     {% endif %}

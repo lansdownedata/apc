@@ -320,7 +320,9 @@ def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending():
     # APC-74: the job then reads the chart of accounts and pushes affiliate bills (none here).
     accounts = {"QueryResponse": {"Account": []}}
     items = {"QueryResponse": {"Item": []}}
-    with patch(REQ, side_effect=[terms, _created("58"), _created("59"), accounts, items]) as req:
+    prefs = {"Preferences": {"AccountingInfoPrefs": {}}}  # APC-109: the books-closing date
+    calls = [terms, _created("58"), _created("59"), accounts, items, prefs]
+    with patch(REQ, side_effect=calls) as req:
         assert JOBS["retry-qbo-sync"]() == 2
 
     assert req.call_args_list[0].args == ("GET", "query")
@@ -799,6 +801,37 @@ def test_refresh_items_endpoint(client):
         resp = client.post(reverse("quickbooks_refresh_items"), follow=True)
     assert QboItem.objects.filter(qbo_id="5", active=True).exists()
     assert "1 products and services read from QuickBooks." in resp.content.decode()
+
+
+def test_settings_shows_books_closed_through(client):
+    from datetime import date
+
+    from django.test import override_settings
+
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    prefs = {"Preferences": {"AccountingInfoPrefs": {"BookCloseDate": "2026-10-31"}}}
+    with (
+        override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+        assert "No closing date set in QuickBooks" in html
+        assert reverse("quickbooks_refresh_preferences") in html
+        with patch("apps.billing.qbo_invoices.qbo.request", return_value=prefs) as req:
+            resp = client.post(reverse("quickbooks_refresh_preferences"), follow=True)
+        req.assert_called_once_with("GET", "preferences")
+        html = resp.content.decode()
+        assert "Books closed through Oct 31, 2026" in html
+        assert "No closing date set in QuickBooks" not in html
+        assert QboAccountMapping.load().book_close_date == date(2026, 10, 31)
+        # A failed read says so and keeps the date it had.
+        down = qbo.QboAPIError(503, "Service Unavailable")
+        with patch("apps.billing.qbo_invoices.qbo.request", side_effect=down):
+            resp = client.post(reverse("quickbooks_refresh_preferences"), follow=True)
+        assert "Couldn&#x27;t read QuickBooks&#x27; closing date." in resp.content.decode()
+        assert QboAccountMapping.load().book_close_date == date(2026, 10, 31)
 
 
 # --- APC-108: the deposit account on the Customer documents card ------------------------------

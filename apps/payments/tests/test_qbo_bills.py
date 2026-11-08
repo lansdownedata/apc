@@ -991,7 +991,8 @@ def test_the_hourly_job_does_customers_then_refreshes_accounts_then_pushes_bills
     customer = {"Customer": {"Id": "58", "SyncToken": "0"}}
     group = {"Customer": {"Id": "59", "SyncToken": "0"}}
     items = {"QueryResponse": {"Item": []}}
-    calls = [terms, customer, group, accounts, items, _vendor(), _bill(), _billpayment()]
+    prefs = {"Preferences": {"AccountingInfoPrefs": {}}}
+    calls = [terms, customer, group, accounts, items, prefs, _vendor(), _bill(), _billpayment()]
 
     with patch(REQ, side_effect=calls) as req:
         assert JOBS["retry-qbo-sync"]() == 5
@@ -1003,6 +1004,7 @@ def test_the_hourly_job_does_customers_then_refreshes_accounts_then_pushes_bills
         "customer",
         "query",
         "query",
+        "preferences",
         "vendor",
         "bill",
         "billpayment",
@@ -1023,6 +1025,7 @@ def test_the_hourly_job_pushes_receipts_after_bills_and_before_invoices():
         patch("apps.billing.qbo_sync.run_hourly", passes.customers),
         patch.object(qbo_bills, "refresh_accounts"),
         patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_invoices, "refresh_preferences"),
         patch.object(qbo_bills, "sync_pending", passes.bills),
         patch.object(qbo_receipts, "sync_pending", passes.receipts),
         patch.object(qbo_invoices, "sync_pending", passes.invoices),
@@ -1037,7 +1040,8 @@ def test_a_failed_accounts_refresh_still_pushes_with_the_cached_choice():
     terms = {"QueryResponse": {"Term": []}}
 
     items = {"QueryResponse": {"Item": []}}
-    with patch(REQ, side_effect=[terms, qbo.QboAPIError(503, "down"), items, _bill()]):
+    prefs = {"Preferences": {"AccountingInfoPrefs": {}}}
+    with patch(REQ, side_effect=[terms, qbo.QboAPIError(503, "down"), items, prefs, _bill()]):
         assert JOBS["retry-qbo-sync"]() == 1
 
 
@@ -1050,7 +1054,8 @@ def test_a_failed_items_refresh_still_pushes_with_the_cached_choice():
         _acct("35", "Checking", "Bank"),
     )
 
-    with patch(REQ, side_effect=[terms, accounts, qbo.QboAPIError(503, "down"), _bill()]):
+    prefs = {"Preferences": {"AccountingInfoPrefs": {}}}
+    with patch(REQ, side_effect=[terms, accounts, qbo.QboAPIError(503, "down"), prefs, _bill()]):
         assert JOBS["retry-qbo-sync"]() == 1
 
 

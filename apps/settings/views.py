@@ -1038,6 +1038,8 @@ def _qbo_customer_docs_context() -> dict:
         "deposit_choices": qbo_bills.deposit_choices(),
         "deposit_selected": deposit,
         "customer_docs_from": config.customer_docs_from,
+        # APC-109: documents dated on or before this are in QuickBooks' closed period.
+        "book_close_date": config.book_close_date,
         # Per document type: invoices need the item and the start date; card receipts need
         # those and the deposit account, so their own chip names only the account.
         "invoices_unset": not (item and config.customer_docs_from),
@@ -1163,6 +1165,33 @@ def quickbooks_refresh_items(request: HttpRequest) -> HttpResponse:
         )
     else:
         messages.success(request, f"{count} products and services read from QuickBooks.")
+    return redirect("quickbooks_settings")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_refresh_preferences(request: HttpRequest) -> HttpResponse:
+    """Re-read the date the books are closed through now (the hourly sync does it too)."""
+    from django.utils.dateformat import format as date_format
+
+    from apps.billing import qbo_invoices
+
+    qbo = _qbo_or_404()
+    if not qbo.is_connected():
+        messages.error(request, "Connect QuickBooks first.")
+        return redirect("quickbooks_settings")
+    try:
+        closed = qbo_invoices.refresh_preferences()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        messages.error(request, "Couldn't read QuickBooks' closing date. Try again in a minute.")
+    else:
+        messages.success(
+            request,
+            f"Books closed through {date_format(closed, 'M j, Y')}."
+            if closed
+            else "No closing date set in QuickBooks.",
+        )
     return redirect("quickbooks_settings")
 
 

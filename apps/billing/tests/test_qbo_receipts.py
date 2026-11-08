@@ -951,6 +951,27 @@ def test_hourly_never_updates_a_linked_receipt(ready) -> None:
     assert (elsewhere.qbo_id, elsewhere.qbo_realm_id) == ("901", "123")
 
 
+def test_receipt_retry_refused_in_closed_period(ready) -> None:
+    from apps.billing.invoices import CLOSED_PERIOD_MESSAGE
+
+    charge = _card_charge(qbo_id="900", qbo_sync_token="2", qbo_realm_id="123")
+    ready.book_close_date = qbo_receipts.txn_date(charge)
+    ready.save()
+    with patch(REQ) as req:
+        assert qbo_receipts.push_receipt(charge) is False
+        assert qbo_receipts.push_receipt(charge) is False
+    req.assert_not_called()
+    charge.refresh_from_db()
+    assert charge.qbo_sync_state == SyncState.ERROR
+    assert charge.qbo_sync_error == CLOSED_PERIOD_MESSAGE
+    assert _alerts().count() == 1
+    # A receipt never sent is a create: QuickBooks decides, not the closing date.
+    fresh = _card_charge()
+    with patch(REQ, return_value=_receipt(id_="901")) as req:
+        assert qbo_receipts.push_receipt(fresh) is True
+    assert "Id" not in req.call_args.kwargs["json"]
+
+
 def test_refund_receipt_does_not_wait_for_the_charge(ready) -> None:
     charge = _card_charge()
     refund = _refund(reservation=charge.reservation)
@@ -1005,6 +1026,7 @@ def test_run_hourly_isolated_passes() -> None:
         patch("apps.billing.qbo_sync.run_hourly", return_value=0),
         patch.object(qbo_bills, "refresh_accounts"),
         patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_invoices, "refresh_preferences"),
         patch.object(qbo_bills, "sync_pending", return_value=0),
         patch.object(qbo_receipts, "sync_pending", side_effect=RuntimeError("boom")),
         patch.object(qbo_invoices, "sync_pending", return_value=1) as invoices,
@@ -1016,6 +1038,7 @@ def test_run_hourly_isolated_passes() -> None:
         patch("apps.billing.qbo_sync.run_hourly", return_value=0),
         patch.object(qbo_bills, "refresh_accounts"),
         patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_invoices, "refresh_preferences"),
         patch.object(qbo_bills, "sync_pending", return_value=0),
         patch.object(qbo_receipts, "sync_pending", return_value=2),
         patch.object(qbo_invoices, "sync_pending", side_effect=RuntimeError("boom")),
@@ -1032,6 +1055,7 @@ def test_run_hourly_shares_one_budget_and_survives_the_bills_pass() -> None:
         patch("apps.billing.qbo_sync.run_hourly", return_value=0),
         patch.object(qbo_bills, "refresh_accounts"),
         patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_invoices, "refresh_preferences"),
         patch.object(qbo_bills, "sync_pending", side_effect=RuntimeError("boom")) as bills,
         patch.object(qbo_receipts, "sync_pending", return_value=2) as receipts,
         patch.object(qbo_invoices, "sync_pending", return_value=1) as invoices,

@@ -13,7 +13,9 @@ from decimal import Decimal
 
 from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 
+from apps.billing.invoices import CLOSED_PERIOD_MESSAGE, in_closed_period
 from apps.billing.models import Invoice, InvoiceLine, QboAccountMapping, QboItem, SyncState
 from apps.billing.qbo_sync import (
     STALE_OBJECT,
@@ -98,6 +100,22 @@ def trip_item_ref() -> dict | None:
     if item is None or not _usable().filter(pk=item.pk).exists():
         return None
     return {"value": item.qbo_id}
+
+
+def refresh_preferences() -> date | None:
+    """Cache the date the books are closed through in QuickBooks (APC-109). None, and the
+    cached date cleared, when QuickBooks has none or sends one that isn't a date."""
+    prefs = qbo.request("GET", "preferences")
+    info = (prefs.get("Preferences") or {}).get("AccountingInfoPrefs") or {}
+    raw = info.get("BookCloseDate")
+    try:
+        closed = parse_date(raw) if isinstance(raw, str) else None
+    except ValueError:  # well-formed but impossible, like Feb 30
+        closed = None
+    config = QboAccountMapping.load()
+    config.book_close_date = closed
+    config.save(update_fields=["book_close_date"])
+    return closed
 
 
 def customer_docs_from() -> date | None:
@@ -218,9 +236,9 @@ def pending_invoices(realm: str, start: date | None, *, linked: bool = False):
     with no start date (None) every one comes back, for the run to mark as waiting on it. An
     invoice with no lines is never sent.
 
-    One already in this company is left out unless `linked`: our invoices are never edited,
-    so the hourly run never updates one (a mismatch would rewrite it every hour); only a
-    person's Retry sends it again."""
+    One already in this company is left out unless `linked` or an edit of it is waiting to go
+    (`qbo_edit_requested_at`, APC-109): otherwise the hourly run never updates one (a mismatch
+    would rewrite it every hour); only a person's Retry sends it again."""
     rows = (
         Invoice.objects.filter(status=Invoice.Status.OPEN)
         .filter(_stale("qbo_", realm))
@@ -229,7 +247,10 @@ def pending_invoices(realm: str, start: date | None, *, linked: bool = False):
         .filter(Exists(InvoiceLine.objects.filter(invoice=OuterRef("pk"))))
     )
     if not linked:
-        rows = rows.exclude(~Q(qbo_id="") & Q(qbo_realm_id=realm))
+        # `_stale` already holds a row linked here to NOT_SYNCED / ERROR.
+        rows = rows.filter(
+            Q(qbo_id="") | ~Q(qbo_realm_id=realm) | Q(qbo_edit_requested_at__isnull=False)
+        )
     if start is not None:
         rows = rows.filter(invoice_date__gte=start)
     return unsent_first(rows.select_related("group"))
@@ -255,13 +276,26 @@ def _in_step(invoice: Invoice, realm: str) -> bool:
     )
 
 
+def _linked_here(record, realm: str) -> bool:
+    return bool(record.qbo_id) and record.qbo_realm_id == realm
+
+
 def _push_invoice(invoice: Invoice, realm: str) -> bool:
     """Create (or update) the QuickBooks Invoice; QuickBooks numbers it and the number comes
     back onto ours. One QuickBooks holds differently (sales tax on the item, most likely) is
-    ERROR with both figures and alerts once; the hourly run never sends it again."""
+    ERROR with both figures and alerts once; the hourly run never sends it again.
+
+    An update (an edit, APC-109) goes whole with its SyncToken, never inside a closed period:
+    that is ERROR with no call. A create is QuickBooks' call whatever its date. An edit saved
+    while the create was in flight is queued as an update once the create lands."""
     returned: dict = {}
     mismatch = ""
     already_failed = invoice.qbo_sync_state == SyncState.ERROR
+    link = _Link(invoice, "invoice", "Invoice")
+    creating = not _linked_here(invoice, realm)
+    if not creating and in_closed_period(invoice.invoice_date):
+        _fail(link, CLOSED_PERIOD_MESSAGE)
+        return False
 
     def matches(obj: dict, body: dict) -> bool:
         nonlocal mismatch
@@ -271,7 +305,6 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
         mismatch = _mismatch(obj, body, invoice)
         return False
 
-    link = _Link(invoice, "invoice", "Invoice")
     in_step = _push(link, lambda: invoice_payload(invoice, realm), matches=matches, what="invoice")
     # Whatever came back is the invoice QuickBooks holds, so its number is ours to show.
     number = str(returned.get("DocNumber") or "")[:DOC_NUMBER_MAX]
@@ -282,6 +315,18 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
     linked = invoice.qbo_id and invoice.status == Invoice.Status.OPEN
     if mismatch and linked and invoice.qbo_sync_state == SyncState.NOT_SYNCED:
         _fail(link, mismatch, alert=not already_failed)
+    elif in_step:
+        # Only while still SYNCED: an edit committing now sets NOT_SYNCED and a new stamp.
+        Invoice.objects.filter(pk=invoice.pk, qbo_sync_state=SyncState.SYNCED).exclude(
+            qbo_edit_requested_at=None
+        ).update(qbo_edit_requested_at=None)
+        invoice.refresh_from_db(fields=["qbo_edit_requested_at"])
+    elif creating and linked and invoice.qbo_sync_state == SyncState.NOT_SYNCED:
+        # Landed, but changed here while QuickBooks made it: the change goes as an update.
+        Invoice.objects.filter(
+            pk=invoice.pk, qbo_sync_state=SyncState.NOT_SYNCED, qbo_edit_requested_at=None
+        ).update(qbo_edit_requested_at=timezone.now())
+        invoice.refresh_from_db(fields=["qbo_edit_requested_at"])
     return in_step
 
 
@@ -332,7 +377,11 @@ def _void(invoice: Invoice) -> dict:
 
 
 def _push_void(invoice: Invoice) -> bool:
+    """Void the QuickBooks invoice, never inside a closed period: that is ERROR with no call."""
     link = _Link(invoice, "invoice", "Invoice")
+    if in_closed_period(invoice.invoice_date):
+        _fail(link, CLOSED_PERIOD_MESSAGE)
+        return False
     try:
         obj = _void(invoice)
     except qbo.QboAPIError as exc:
