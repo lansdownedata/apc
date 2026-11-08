@@ -18,7 +18,7 @@ from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured, Obje
 from django.db.models import Model
 from django.utils.text import capfirst
 
-from apps.audit.display import money
+from apps.audit import display
 
 # Every registered model is a TimeStampedModel. auditlog's own setting for this
 # (AUDITLOG_EXCLUDE_TRACKING_FIELDS) refuses to load without AUDITLOG_INCLUDE_ALL_MODELS,
@@ -116,7 +116,7 @@ def _vendor_child_parents(row: Model) -> dict:
 
 
 def _extra_label(extra: Model) -> str:
-    return f"{extra.label or extra.get_kind_display()} {money(extra.amount)}"
+    return f"{extra.label or extra.get_kind_display()} {display.money(extra.amount)}"
 
 
 def _assignment_label(assignment: Model) -> str:
@@ -183,6 +183,7 @@ SPECS: list[ModelSpec] = [
             "recognized_at",
             "recognized_amount",
         ),
+        labels={"passengers": "Passenger count", "named_passengers": "Passengers"},
         parents=_reservation_parents,
         label=_reservation_label,
         sentences={"customer_confirmed_at": "Confirmed the trip"},
@@ -315,7 +316,7 @@ SPECS: list[ModelSpec] = [
             "trip_id": charge.reservation_id,
             "order_id": _through(charge, "plan__lead_id"),
         },
-        label=lambda charge: f"{charge.get_kind_display()} {money(charge.amount)}",
+        label=lambda charge: f"{charge.get_kind_display()} {display.money(charge.amount)}",
     ),
     ModelSpec(
         model="payments.AffiliatePayable",
@@ -342,7 +343,7 @@ SPECS: list[ModelSpec] = [
     ModelSpec(
         model="billing.InvoiceLine",
         parents=_invoice_line_parents,
-        label=lambda line: f"Invoice line {money(line.amount)}",
+        label=lambda line: f"Invoice line {display.money(line.amount)}",
     ),
     ModelSpec(
         model="planners.PlannerRequest",
