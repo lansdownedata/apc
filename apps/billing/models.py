@@ -172,6 +172,14 @@ class Invoice(QboSyncedModel, TimeStampedModel):
     # Set when a portal void must also void the QuickBooks invoice; cleared never, the sync
     # state says whether it landed.
     qbo_void_requested_at = models.DateTimeField(null=True, blank=True)
+    # An open invoice's date, PO and memo can be corrected (APC-109); the last edit is stamped.
+    edited_at = models.DateTimeField(null=True, blank=True)
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    edit_note = models.CharField(max_length=255, blank=True)
+    # Set when an edit of an invoice already in QuickBooks must be sent there too.
+    qbo_edit_requested_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         ordering = ["-invoice_date", "-pk"]
@@ -316,6 +324,9 @@ class QboAccountMapping(models.Model):
     sales_deposit_account = models.ForeignKey(
         QboAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # Invoices dated on or before this are in a period the accountant closed in QuickBooks, so
+    # the portal refuses to edit them (APC-109). Blank = no period is closed.
+    book_close_date = models.DateField("QuickBooks books closed through", null=True, blank=True)
 
     class Meta:
         verbose_name = "QuickBooks account mapping"

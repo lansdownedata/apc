@@ -13,7 +13,16 @@ from django.utils import timezone
 from apps.reservations.models import Reservation, Stop
 from apps.reservations.processing import _day, _reference_pk, _short, _with_route
 
-from .models import AccountGroup, BillingAccount, Invoice, InvoiceLine, SyncState, Terms
+from . import qbo_sync
+from .models import (
+    AccountGroup,
+    BillingAccount,
+    Invoice,
+    InvoiceLine,
+    QboAccountMapping,
+    SyncState,
+    Terms,
+)
 
 # --- Terms ---------------------------------------------------------------------------------
 
@@ -295,5 +304,74 @@ def void_invoice(invoice: Invoice, *, reason: str, user) -> Invoice:
         invoice.voided_at = timezone.now()
         invoice.voided_by = user
         invoice.void_reason = reason[:255]
+        invoice.save()
+    return invoice
+
+
+EARLIEST_INVOICE_DATE = date(2020, 1, 1)
+CLOSED_PERIOD_MESSAGE = "In a closed period. Correct it with a credit memo or a new invoice."
+
+
+def in_closed_period(doc_date: date | None) -> bool:
+    """Is `doc_date` on or before the date the books are closed through in QuickBooks?"""
+    if doc_date is None:
+        return False
+    closed = QboAccountMapping.load().book_close_date
+    return closed is not None and doc_date <= closed
+
+
+def _edit_note(invoice: Invoice, invoice_date: date, po: str, memo: str) -> str:
+    """The changed parts only, e.g. "date 2026-11-01 → 2026-11-05 · PO 4471 → 4480"."""
+    parts = []
+    if invoice_date != invoice.invoice_date:
+        parts.append(f"date {invoice.invoice_date:%Y-%m-%d} → {invoice_date:%Y-%m-%d}")
+    if po != invoice.po_number:
+        parts.append(f"PO {invoice.po_number or 'none'} → {po or 'none'}")
+    if memo != invoice.memo:
+        parts.append("memo changed")
+    return " · ".join(parts)[:255]
+
+
+def edit_invoice(
+    invoice: Invoice, *, invoice_date: date, po_number: str, memo: str, user
+) -> Invoice:
+    """Correct an open invoice's date, PO and memo. Lines and total never change; the due date
+    follows the new date. Refused when the invoice or its new date is in a closed period. An
+    edit of an invoice already in QuickBooks is queued to go there (APC-109)."""
+    if not EARLIEST_INVOICE_DATE <= invoice_date <= timezone.localdate() + timedelta(days=365):
+        raise InvoiceError("Enter a valid invoice date.")
+    po = (po_number or "").strip()
+    memo = (memo or "").strip()
+    if len(po) > 64:
+        raise InvoiceError("The PO number is too long (64 characters at most).")
+    if len(memo) > 255:
+        raise InvoiceError("The memo is too long (255 characters at most).")
+    with transaction.atomic():
+        invoice = (
+            Invoice.objects.select_for_update(of=("self",))
+            .select_related("group")
+            .get(pk=invoice.pk)
+        )
+        if invoice.status != Invoice.Status.OPEN:
+            raise InvoiceError("Only an open invoice can be edited.")
+        if invoice.group.po_required and not po:
+            raise InvoiceError("This group needs a PO number.")
+        if in_closed_period(invoice.invoice_date) or in_closed_period(invoice_date):
+            raise InvoiceError(CLOSED_PERIOD_MESSAGE)
+        note = _edit_note(invoice, invoice_date, po, memo)
+        if not note:
+            return invoice
+        now = timezone.now()
+        invoice.invoice_date = invoice_date
+        invoice.due_date = due_date(invoice_date, invoice.group.effective_terms)
+        invoice.po_number = po
+        invoice.memo = memo
+        invoice.edited_at = now
+        invoice.edited_by = user
+        invoice.edit_note = note
+        if invoice.qbo_id and invoice.qbo_realm_id == qbo_sync.current_realm():
+            invoice.qbo_edit_requested_at = now
+            invoice.qbo_sync_state = SyncState.NOT_SYNCED
+            invoice.qbo_sync_error = ""
         invoice.save()
     return invoice
