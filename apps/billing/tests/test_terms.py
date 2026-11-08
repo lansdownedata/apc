@@ -95,3 +95,13 @@ def test_term_ref_uses_resolver():
     assert qbo_sync.term_ref("net_30") == {"value": "3"}
     assert qbo_sync.term_ref("Net 30") == {"value": "3"}
     assert qbo_sync.term_ref("") is None
+
+
+def test_choices_keeps_the_stored_code_over_a_same_named_quickbooks_term():
+    _term("3", "Net 30")
+    _term("4", "Net 45")
+    with patch("apps.billing.terms.qbo.is_connected", return_value=True):
+        got = terms.choices("net_30")
+    assert got == [("Net 45", "Net 45"), ("net_30", "Net 30")]
+    assert [label for _, label in got].count("Net 30") == 1
+    assert terms.resolve("net_30").value == "net_30"

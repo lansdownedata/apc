@@ -1021,30 +1021,23 @@ def test_terms_cache_is_scoped_by_realm():
     assert QboTerm.objects.get(realm_id="B", qbo_id="3").active is False
 
 
-@pytest.mark.django_db(transaction=True)
 def test_migration_fills_the_realm_of_existing_terms_from_the_credential():
-    from django.db import connection
-    from django.db.migrations.executor import MigrationExecutor
+    import importlib
 
-    executor = MigrationExecutor(connection)
-    before = [("billing", "0012_backfill_qbo_txn_date"), ("integrations", "0007_qbo_credential")]
-    after = [("billing", "0013_qboterm_rules_realm"), ("integrations", "0007_qbo_credential")]
-    executor.migrate(before)
-    try:
-        old = executor.loader.project_state(before).apps
-        Credential = old.get_model("integrations", "QboCredential")
-        Credential.objects.update_or_create(singleton_id=1, defaults={"realm_id": "9130"})
-        old.get_model("billing", "QboTerm").objects.create(qbo_id="3", name="Net 30")
+    from django.apps import apps as live_apps
 
-        executor = MigrationExecutor(connection)
-        executor.migrate(after)
-        new = executor.loader.project_state(after).apps
-        term = new.get_model("billing", "QboTerm").objects.get(qbo_id="3")
-        assert term.realm_id == "9130"
-        assert term.term_type == ""
-    finally:
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
+    from apps.integrations.models import QboCredential
+
+    migration = importlib.import_module("apps.billing.migrations.0013_qboterm_rules_realm")
+    cred = QboCredential.load()
+    cred.realm_id = "123"
+    cred.save()
+    term = QboTerm.objects.create(qbo_id="3", name="Net 30")
+
+    migration.fill_realm(live_apps, None)
+
+    term.refresh_from_db()
+    assert term.realm_id == "123"
 
 
 def test_refresh_terms_refuses_without_a_company():

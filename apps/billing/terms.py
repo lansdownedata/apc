@@ -32,7 +32,9 @@ def _realm() -> str:
 
 
 def _usable():
-    return QboTerm.objects.filter(realm_id=_realm(), active=True)
+    from . import qbo_sync
+
+    return qbo_sync._usable_terms()
 
 
 def _add_months(year: int, month: int, extra: int) -> tuple[int, int]:
@@ -107,7 +109,8 @@ def due(value: str, invoice_date: date) -> date:
 
 def choices(current: str = "") -> list[tuple[str, str]]:
     """The picker's options: the company's own QuickBooks terms when connected and cached,
-    else the legacy list. The record's current value is always present."""
+    else the legacy list. The record's current value is always present, as stored: a legacy
+    code keeps its code and replaces the same-named QuickBooks entry."""
     names = (
         list(_usable().order_by("name").values_list("name", flat=True))
         if (qbo.is_connected())
@@ -115,5 +118,7 @@ def choices(current: str = "") -> list[tuple[str, str]]:
     )
     options = [(n, n) for n in names] or list(Terms.choices)
     if current and current not in {value for value, _ in options}:
-        options.append((current, resolve(current).label))
+        label = resolve(current).label
+        options = [(v, lbl) for v, lbl in options if lbl.lower() != label.lower()]
+        options.append((current, label))
     return options

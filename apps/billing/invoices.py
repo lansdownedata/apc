@@ -27,9 +27,7 @@ from .models import (
 
 # --- Terms ---------------------------------------------------------------------------------
 
-TERM_DAYS = (
-    terms_module.TERM_DAYS
-)  # legacy-code fallback, read by invoice_views until APC-96 task 3
+TERM_DAYS = terms_module.TERM_DAYS  # legacy-code days, kept as an alias
 
 
 def due_date(invoice_date: date, terms: str) -> date:
