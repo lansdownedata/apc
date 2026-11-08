@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import QuerySet
 
 from apps.audit.models import AuditEntry
 from apps.dispatch.factories import AssignmentFactory
@@ -119,23 +120,32 @@ def test_ensure_payable_integrity_race_returns_existing():
         assignment=Assignment.objects.get(reservation=trip), expected_amount=Decimal("420")
     )
     real_filter = AffiliatePayable.objects.filter
-    calls = {"n": 0}
+    real_get = QuerySet.get
+    seen = {"filter": 0, "get": 0}
 
     class _Blind:
-        def __init__(self, qs):
-            self.qs = qs
-
         def first(self):
             return None
 
     def filter_once(*args, **kwargs):
-        calls["n"] += 1
-        qs = real_filter(*args, **kwargs)
-        return _Blind(qs) if calls["n"] == 1 else qs
+        seen["filter"] += 1
+        return _Blind() if seen["filter"] == 1 else real_filter(*args, **kwargs)
 
-    with patch.object(AffiliatePayable.objects, "filter", side_effect=filter_once):
+    def get_once(self, *args, **kwargs):
+        # get_or_create's first read misses (the rival is not visible yet), so it INSERTs,
+        # hits the unique constraint and re-reads
+        if self.model is AffiliatePayable and seen["get"] == 0:
+            seen["get"] += 1
+            raise AffiliatePayable.DoesNotExist
+        return real_get(self, *args, **kwargs)
+
+    with (
+        patch.object(AffiliatePayable.objects, "filter", side_effect=filter_once),
+        patch.object(QuerySet, "get", get_once),
+    ):
         payable = payables.ensure_payable(trip)
 
+    assert seen["get"] == 1
     assert payable.pk == rival.pk
     assert AffiliatePayable.objects.filter(assignment__reservation=trip).count() == 1
     assert _entries(AffiliatePayable, trip_id=trip.pk).count() == 1

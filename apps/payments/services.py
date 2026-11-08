@@ -1121,7 +1121,7 @@ def _release_cleaning_hold(lead) -> None:
 
 
 def _report_cancels_to_gnet(trips) -> None:
-    """Queue GNet's CANCEL for each farmed-in trip: the bulk update above skips
+    """Queue GNet's CANCEL for each farmed-in trip: the per-trip save above skips
     `set_trip_status`, which is where that hook normally runs. A failure is logged, never
     raised, so it can't undo a cancel whose money is already back."""
     from apps.dispatch import farm_in_push
