@@ -1537,8 +1537,8 @@ def test_refreshing_accounts_asks_only_for_the_usable_types_and_reads_every_page
 
     first, second = (c.kwargs["params"]["query"] for c in req.call_args_list)
     assert (
-        "AccountType in ('Expense', 'Cost of Goods Sold', 'Other Expense', 'Bank', 'Other Current Asset')"
-        in first
+        "AccountType in ('Expense', 'Cost of Goods Sold', 'Other Expense', 'Bank', "
+        "'Other Current Asset')" in first
     )
     assert "startposition 1 maxresults 2" in first.lower()
     assert "startposition 3 maxresults 2" in second.lower()
