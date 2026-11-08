@@ -9,7 +9,7 @@ import html
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -975,6 +975,26 @@ def test_the_hourly_job_does_customers_then_refreshes_accounts_then_pushes_bills
     ]
     assert "from Account" in req.call_args_list[3].kwargs["params"]["query"]
     assert "from Item" in req.call_args_list[4].kwargs["params"]["query"]
+
+
+def test_the_hourly_job_pushes_receipts_after_bills_and_before_invoices():
+    from apps.billing import qbo_invoices, qbo_receipts
+
+    passes = Mock()
+    passes.attach_mock(Mock(return_value=1), "customers")
+    passes.attach_mock(Mock(return_value=1), "bills")
+    passes.attach_mock(Mock(return_value=1), "receipts")
+    passes.attach_mock(Mock(return_value=1), "invoices")
+    with (
+        patch("apps.billing.qbo_sync.run_hourly", passes.customers),
+        patch.object(qbo_bills, "refresh_accounts"),
+        patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_bills, "sync_pending", passes.bills),
+        patch.object(qbo_receipts, "sync_pending", passes.receipts),
+        patch.object(qbo_invoices, "sync_pending", passes.invoices),
+    ):
+        assert JOBS["retry-qbo-sync"]() == 4
+    assert [c[0] for c in passes.mock_calls] == ["customers", "bills", "receipts", "invoices"]
 
 
 def test_a_failed_accounts_refresh_still_pushes_with_the_cached_choice():

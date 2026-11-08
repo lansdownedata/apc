@@ -315,6 +315,16 @@ def _alert(link: _Link, message: str) -> None:
             detail=message,
         )
         return
+    if link.entity in ("salesreceipt", "refundreceipt"):
+        lead = record.reservation.lead
+        what = "receipt" if record.kind == record.Kind.TRIP else "refund receipt"
+        Notification.notify(
+            lead,
+            Notification.Kind.SYNC_FAILED,
+            title=f"QuickBooks {what} failed: R-{record.pk} {lead.contact.name}",
+            detail=message,
+        )
+        return
     what = {"bill": "bill", "billpayment": "bill payment", "attachment": "invoice file"}[
         link.entity
     ]
@@ -1088,9 +1098,11 @@ def push_attachment(payable: AffiliatePayable) -> bool:
 
 def run_hourly() -> int:
     """The `retry-qbo-sync` cron: customers first (APC-42: terms, accounts, groups), then the
-    chart of accounts, then vendors, bills and payments, then customer invoices (APC-107). A
-    failed accounts refresh doesn't stop the push: the cached choice still stands. Does nothing
-    without a live connection."""
+    chart of accounts, then vendors, bills and payments, then card customers and receipts
+    (APC-108), then customer invoices (APC-107). A failed accounts refresh doesn't stop the
+    push: the cached choice still stands. The receipts and invoices passes each run whatever
+    the other did, so one failing never stops the next or the cron. Does nothing without a
+    live connection."""
     if not qbo.is_connected():
         return 0
     pushed = customers.run_hourly()
@@ -1098,13 +1110,22 @@ def run_hourly() -> int:
         refresh_accounts()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks accounts refresh failed; pushing with the cached choice")
-    from apps.billing import qbo_invoices
+    from apps.billing import qbo_invoices, qbo_receipts
 
     try:
         qbo_invoices.refresh_items()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
-    return pushed + sync_pending() + qbo_invoices.sync_pending()
+    pushed += sync_pending()
+    for name, run in (
+        ("receipt", qbo_receipts.sync_pending),
+        ("invoice", qbo_invoices.sync_pending),
+    ):
+        try:
+            pushed += run()
+        except Exception:  # one pass never stops the next
+            logger.exception("QuickBooks %s sync failed", name)
+    return pushed
 
 
 def sync_state(payable: AffiliatePayable, *, connected: bool | None = None) -> dict | None:
