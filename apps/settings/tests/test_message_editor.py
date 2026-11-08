@@ -344,6 +344,25 @@ def test_toggle_returns_400_when_the_saved_text_no_longer_validates(client):
     assert "gone_field" in body["error"]
 
 
+def test_toggle_flips_the_stored_switch_under_a_row_lock(client):
+    """Two tabs: this one loaded the row as on, another has switched it off since. The
+    toggle flips what is stored (off -> on), read under FOR UPDATE, not its stale copy."""
+    client.force_login(_owner_admin())
+    MessageTemplate.objects.filter(key="tp1_welcome").update(enabled=False)
+    stale = _row("tp1_welcome")
+    stale.enabled = True
+
+    with (
+        mock.patch("apps.settings.views._live_row", return_value=stale),
+        CaptureQueriesContext(connection) as ctx,
+    ):
+        resp = client.post(reverse("message_toggle", args=["tp1_welcome"]))
+
+    assert json.loads(resp.content) == {"ok": True, "enabled": True}
+    assert _row("tp1_welcome").enabled is True
+    assert any("FOR UPDATE" in q["sql"] for q in ctx.captured_queries)
+
+
 class TestPreviewOrders:
     """Spec B picked orders by message kind; spec C by the trigger's level and the row's
     service types (a wedding message is a row with the Wedding service type)."""

@@ -684,7 +684,7 @@ def message_toggle(request: HttpRequest, key: str) -> JsonResponse:
     broken = fields.wording_errors(listing.row_data(row))
     if broken:
         return JsonResponse({"ok": False, "error": next(iter(broken.values()))}, status=400)
-    editor.set_enabled(row, not row.enabled, user=request.user)
+    editor.set_enabled(row, None, user=request.user)
     return JsonResponse({"ok": True, "enabled": row.enabled})
 
 

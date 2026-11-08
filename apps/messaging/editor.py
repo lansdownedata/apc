@@ -274,11 +274,13 @@ def reset(row: MessageTemplate, *, user=None) -> int:
     return _follow(row, was)
 
 
-def set_enabled(row: MessageTemplate, enabled: bool, *, user=None) -> None:
-    """Flip a row's switch; switching off withdraws its queued sends."""
+def set_enabled(row: MessageTemplate, enabled: bool | None, *, user=None) -> None:
+    """Set a row's switch; switching off withdraws its queued sends. ``enabled`` None flips
+    the switch as stored, read under the row lock, so two tabs flipping at once don't both
+    act on the same stale value."""
     with transaction.atomic():
         was = _lock(row)
-        row.enabled = enabled
+        row.enabled = (not was.enabled) if enabled is None else enabled
         row.updated_by = user
         row.save(update_fields=["enabled", "updated_by", "updated_at"])
     _follow(row, was)
