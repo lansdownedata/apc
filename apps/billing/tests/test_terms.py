@@ -136,7 +136,7 @@ def test_labels_match_resolve_in_one_batch(django_assert_max_num_queries):
         (terms.TermRule("DATE_DRIVEN", day_of_month=31), "31st of the month"),
         (
             terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=10),
-            "15th of the month, next month after the 10th",
+            "15th of the month, next month if issued within 10 days",
         ),
     ],
 )
@@ -147,3 +147,47 @@ def test_rule_label(rule, text):
 def test_rule_label_of_a_term_without_a_rule_is_blank():
     assert terms.rule_label(_term()) == ""
     assert terms.rule_label(_term("4", "Net 15", term_type="STANDARD", due_days=15)) == "15 days"
+
+
+@pytest.mark.parametrize(
+    ("rule", "issued", "due"),
+    [
+        (
+            terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=10),
+            date(2026, 11, 3),
+            date(2026, 11, 15),
+        ),
+        (
+            terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=10),
+            date(2026, 11, 6),
+            date(2026, 12, 15),
+        ),
+        (
+            terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=10),
+            date(2026, 11, 12),
+            date(2026, 12, 15),
+        ),
+        (
+            terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=20),
+            date(2026, 11, 18),
+            date(2026, 12, 15),
+        ),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=1), date(2026, 11, 12), date(2026, 12, 1)),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=31), date(2027, 2, 1), date(2027, 2, 28)),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=31), date(2027, 1, 31), date(2027, 1, 31)),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=15), date(2026, 12, 20), date(2027, 1, 15)),
+    ],
+)
+def test_a_date_driven_term_never_falls_due_before_the_invoice_date(rule, issued, due):
+    """The due day of the invoice month when it is still ahead and more than `cutoff` days
+    away; else the same day next month (clamped). Never before the invoice date."""
+    assert rule.due(issued) == due
+
+
+def test_terms_are_unusable_while_disconnected():
+    """Leftover rows with a blank realm never match while no company is connected."""
+    QboTerm.objects.create(realm_id="", qbo_id="3", name="Net 30")
+    with patch("apps.billing.qbo_sync.current_realm", return_value=""):
+        assert not qbo_sync._usable_terms().exists()
+        assert terms.resolve("net_30").qbo_id is None
+        assert qbo_sync.term_ref("Net 30") is None

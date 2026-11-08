@@ -51,13 +51,27 @@ class TermRule:
     cutoff: int = 0
 
     def due(self, invoice_date: date) -> date:
-        """STANDARD: invoice date plus `days`. DATE_DRIVEN: the `day_of_month` of the invoice
-        month, or of the next month when the invoice day is past `cutoff` (if set); the day is
-        clamped to the month's length. Semantics unverified on the sandbox."""
+        """STANDARD: invoice date plus `days`.
+
+        DATE_DRIVEN: the `day_of_month` of the invoice month (clamped to its length); the
+        next month's when that day is already behind the invoice date; and the month after
+        that candidate when it is within `cutoff` days of the invoice date (QuickBooks'
+        DueNextMonthDays: "due next month if issued within N days of the due date"). Never
+        before the invoice date. "Within" is read as strictly fewer than `cutoff` days;
+        `<` vs `<=` is unverified on the sandbox. templates/billing/list.html mirrors this.
+        """
         if self.kind != "DATE_DRIVEN":
             return invoice_date + timedelta(days=self.days)
-        extra = 1 if self.cutoff > 0 and invoice_date.day > self.cutoff else 0
-        year, month = _add_months(invoice_date.year, invoice_date.month, extra)
+        candidate = self._due_in(invoice_date, 0)
+        if candidate < invoice_date:
+            candidate = self._due_in(invoice_date, 1)
+        if self.cutoff > 0 and (candidate - invoice_date).days < self.cutoff:
+            candidate = self._due_in(candidate, 1)
+        return candidate
+
+    def _due_in(self, start: date, extra: int) -> date:
+        """The due day `extra` months after `start`'s month, clamped to that month."""
+        year, month = _add_months(start.year, start.month, extra)
         return date(year, month, min(self.day_of_month, calendar.monthrange(year, month)[1]))
 
     def describe(self) -> str:
@@ -68,7 +82,8 @@ class TermRule:
             return f"{self.days} day" if self.days == 1 else f"{self.days} days"
         text = f"{_ordinal(self.day_of_month)} of the month"
         if self.cutoff > 0:
-            text += f", next month after the {_ordinal(self.cutoff)}"
+            days = "1 day" if self.cutoff == 1 else f"{self.cutoff} days"
+            text += f", next month if issued within {days}"
         return text
 
 

@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
-from apps.billing import invoices
+from apps.billing import invoices, terms
 from apps.billing.factories import (
     AccountGroupFactory,
     InvoiceFactory,
@@ -868,7 +868,7 @@ def test_labels_everywhere_use_resolve(accountant, connected_terms, term, label)
     body = profile.content.decode()
     assert "Net 45" in body
     assert f"&middot; {label}" in body
-    assert other.terms_label == label
+    assert terms.labels([other.terms]) == {term: label}
 
     # the order's money card
     BillingAccount.objects.filter(pk=group.account_id).update(terms=term)

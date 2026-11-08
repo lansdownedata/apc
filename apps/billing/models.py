@@ -108,12 +108,6 @@ class BillingAccount(QboSyncedModel, TimeStampedModel):
                 return group
         return None
 
-    @property
-    def terms_label(self) -> str:
-        from . import terms
-
-        return terms.resolve(self.terms).label
-
 
 class AccountGroup(QboSyncedModel, TimeStampedModel):
     """Who an invoice is made out to. A sub-customer in QuickBooks."""
@@ -144,13 +138,6 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     @property
     def effective_terms(self) -> str:
         return self.terms or self.account.terms
-
-    @property
-    def terms_label(self) -> str:
-        """The group's own terms as people read them ("" when it inherits the account's)."""
-        from . import terms
-
-        return terms.resolve(self.terms).label
 
 
 class Invoice(QboSyncedModel, TimeStampedModel):

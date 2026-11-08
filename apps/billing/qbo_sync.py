@@ -98,8 +98,12 @@ def _who(record) -> str:
 
 
 def _usable_terms():
-    """Active terms cached for the connected company — another company's ids mean nothing."""
-    return QboTerm.objects.filter(realm_id=current_realm(), active=True)
+    """Active terms cached for the connected company — another company's ids mean nothing,
+    and with no company (a blank realm) no cached row is usable, leftovers included."""
+    realm = current_realm()
+    if not realm:
+        return QboTerm.objects.none()
+    return QboTerm.objects.filter(realm_id=realm, active=True)
 
 
 def term_ref(term: str) -> dict | None:

@@ -17,6 +17,7 @@ from apps.notifications.models import Notification
 
 pytestmark = pytest.mark.django_db
 REQ = "apps.billing.qbo_sync.qbo.request"
+REAL_REALM = qbo_sync.current_realm  # read from the stored credential, unpatched
 
 
 @pytest.fixture(autouse=True)
@@ -25,14 +26,18 @@ def connected():
         yield
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def company():
+    """Every test runs against one connected company, "123": cached terms are usable only
+    for the current company, never for a blank realm (APC-96)."""
     with patch("apps.billing.qbo_sync.current_realm", return_value="123"):
         yield "123"
 
 
 def _account(name="Ridgeline Partners", group="Accounts Payable", **kw):
-    QboTerm.objects.get_or_create(qbo_id="3", defaults={"name": "Net 30", "active": True})
+    QboTerm.objects.get_or_create(
+        realm_id="123", qbo_id="3", defaults={"name": "Net 30", "active": True}
+    )
     return services.create_account(ContactFactory(), name=name, group_name=group, **kw)
 
 
@@ -304,7 +309,7 @@ def test_refreshing_terms_caches_quickbooks_terms_and_retires_missing_ones(compa
 
 
 def test_terms_match_by_name_ignoring_case():
-    QboTerm.objects.create(qbo_id="7", name="NET 30", active=True)
+    QboTerm.objects.create(realm_id="123", qbo_id="7", name="NET 30", active=True)
 
     assert qbo_sync.term_ref(Terms.NET_30) == {"value": "7"}
     assert qbo_sync.term_ref(Terms.NET_15) is None
@@ -450,7 +455,7 @@ def test_payment_terms_card_shows_each_terms_rule(client, company):
         html = client.get(reverse("quickbooks_settings")).content.decode()
 
     assert "Net 30 (30 days)" in html
-    assert "15th (15th of the month, next month after the 10th)" in html
+    assert "15th (15th of the month, next month if issued within 10 days)" in html
     assert "Elsewhere" not in html
 
 
@@ -651,6 +656,7 @@ def test_two_accounts_can_each_have_an_accounts_payable_group():
     for n, name in enumerate(("Ridgeline Partners", "Harbor Events")):
         account = _account(name=name)
         account.qbo_id = str(58 + n)
+        account.qbo_realm_id = "123"
         account.qbo_sync_state = SyncState.SYNCED
         account.save()
 
@@ -1018,6 +1024,7 @@ def test_refresh_terms_tolerates_missing_rule_fields(company):
     assert QboTerm.objects.get(qbo_id="1").term_type == ""
 
 
+@patch("apps.billing.qbo_sync.current_realm", REAL_REALM)
 def test_terms_cache_is_scoped_by_realm():
     _set_realm("A")
     with patch(REQ, return_value={"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30"}]}}):
