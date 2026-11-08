@@ -7,9 +7,11 @@ now posts the whole row. Podium and Postmark are patched wherever a send could h
 
 import json
 from datetime import date, time, timedelta
+from pathlib import Path
 from unittest import mock
 
 import pytest
+from django.conf import settings
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -29,6 +31,8 @@ from apps.public.services import WEDDING_SERVICE_NAME
 from apps.reservations.factories import ReservationFactory
 
 pytestmark = pytest.mark.django_db
+
+APP_JS = Path(settings.BASE_DIR) / "static" / "js" / "app.js"
 
 TRANSPORTS = (
     "apps.integrations.podium.send_message",
@@ -438,7 +442,7 @@ def test_editor_has_error_state_and_sample_label(client):
     html = client.get(reverse("message_edit", args=["tp1_welcome"])).content.decode()
     assert "data-sample-label" in html
     assert "Sample order" in html
-    js = open("static/js/app.js").read()
+    js = APP_JS.read_text()
     assert "Preview unavailable. Check the text and try again." in js
     assert "Example unavailable." in js
 
@@ -459,7 +463,7 @@ def test_page_sections_and_seeded_controls(client):
 
 
 def test_who_gets_it_copy_matches_the_mockup():
-    js = open("static/js/app.js").read()
+    js = APP_JS.read_text()
     for copy in (
         "the lead passenger if one is marked, else every passenger with a mobile, else the "
         "booking contact",
