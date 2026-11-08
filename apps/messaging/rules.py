@@ -12,12 +12,13 @@ import logging
 from typing import Literal
 
 from django.conf import settings
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.reservations.models import Reservation
 
 from . import defaults, fields, triggers
-from .models import MessageTemplate, NotificationConfig, TouchPoint
+from .models import Delivery, MessageTemplate, NotificationConfig, TouchPoint
 from .recipients import Recipient, _person, resolve
 
 logger = logging.getLogger(__name__)
@@ -297,6 +298,39 @@ def ready(reservation, waits_for: str, *, dispatch_config=None) -> bool:
     return driver_details_ready(assignment, dispatch_config or DispatchAlertConfig.load())
 
 
+# Rows whose sends carry the driver's details (`sender._DRIVER_TRIGGERS`), and the old
+# scheduler's kinds for them.
+_DRIVER_TRIGGERS = ("pickup_dispatched", "driver_changed")
+_DRIVER_KINDS = ("driver_released", "driver_updated")
+
+
+def last_told_driver(reservation, *, exclude: int | None = None) -> TouchPoint | None:
+    """The trip's newest driver message that reached anyone (sent, or still holding its
+    texts for quiet hours: its email went), so its `driver_details` are what the customer
+    was last told. ``exclude`` leaves out one TouchPoint (the one being checked)."""
+    rows = MessageTemplate.objects.filter(trigger__in=_DRIVER_TRIGGERS)
+    reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
+    sent = TouchPoint.objects.annotate(partly=Exists(reached)).filter(
+        Q(message__in=rows) | Q(message__isnull=True, kind__in=_DRIVER_KINDS),
+        Q(status=TouchPoint.Status.SENT) | Q(status=TouchPoint.Status.SCHEDULED, partly=True),
+        reservation=reservation,
+    )
+    if exclude is not None:
+        sent = sent.exclude(pk=exclude)
+    return max(sent, key=lambda tp: (tp.sent_at or tp.created_at, tp.pk), default=None)
+
+
+def _driver_unchanged(tp: TouchPoint) -> bool:
+    """A driver-change notice whose details are back to what the customer was last told:
+    there is no change to report. Unknown details (a send made before they were recorded,
+    or no coverage now) never count as unchanged."""
+    newest = last_told_driver(tp.reservation, exclude=tp.pk)
+    if newest is None or newest.driver_details is None:
+        return False
+    assignment = confirmed_assignment(tp.reservation)
+    return assignment is not None and newest.driver_details == assignment.driver_info
+
+
 def _uses_site_link(row: MessageTemplate) -> bool:
     texts = []
     if row.send_email:
@@ -530,6 +564,8 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
 
     if waits_for and not ready(res, waits_for):
         return "wait", "waiting for Dispatched with the driver's details"
+    if row.trigger == "driver_changed" and res is not None and _driver_unchanged(tp):
+        return "skip", "no change to report"
     if _uses_site_link(row) and not settings.PUBLIC_BASE_URL:
         logger.warning("touch-point %s (%s) not sent: PUBLIC_BASE_URL is unset", tp.pk, row.key)
         return "wait", "waiting for PUBLIC_BASE_URL"

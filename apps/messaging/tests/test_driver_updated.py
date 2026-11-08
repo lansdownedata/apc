@@ -176,3 +176,17 @@ def test_update_is_editable():
     assert (default.name, group) == ("Driver details updated", "Trip day")
     assert t.subject == "Updated driver details for {trip_pickup_date}"
     assert "Your driver details have changed:" in t.email_body
+
+
+def test_update_skipped_when_details_revert_before_it_sends():
+    res, a = _sent_trip()
+    _new_cell(a)
+    (up,) = _updates(res)
+    _new_cell(a, INFO["cell"])  # back to what the customer was told
+    _due(up)
+    with patch("apps.messaging.sender.podium.send_message") as send:
+        sender.run_touchpoints()
+    up.refresh_from_db()
+    assert (up.status, up.error) == (TouchPoint.Status.SKIPPED, "no change to report")
+    send.assert_not_called()
+    assert _updates(res).count() == 1

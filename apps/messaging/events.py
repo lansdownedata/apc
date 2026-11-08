@@ -383,10 +383,6 @@ def reschedule_trip(reservation) -> None:
 # --- rows that wait --------------------------------------------------------------------
 
 _WAITING_TRIGGERS = tuple(t.key for t in catalog.CATALOG.values() if t.waits_for)
-# Rows whose sends carry the driver's details (`sender._DRIVER_TRIGGERS`), and the old
-# scheduler's kinds for them.
-_DRIVER_TRIGGERS = ("pickup_dispatched", "driver_changed")
-_DRIVER_KINDS = ("driver_released", "driver_updated")
 
 
 def _maybe_driver_changed(lead, reservation, *, dispatch_config=None) -> None:
@@ -397,14 +393,7 @@ def _maybe_driver_changed(lead, reservation, *, dispatch_config=None) -> None:
     carries."""
     if not rules.ready(reservation, "dispatched_with_driver", dispatch_config=dispatch_config):
         return
-    rows = MessageTemplate.objects.filter(trigger__in=_DRIVER_TRIGGERS)
-    reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
-    sent = TouchPoint.objects.annotate(partly=Exists(reached)).filter(
-        Q(message__in=rows) | Q(message__isnull=True, kind__in=_DRIVER_KINDS),
-        Q(status=_S.SENT) | Q(status=_S.SCHEDULED, partly=True),
-        reservation=reservation,
-    )
-    newest = max(sent, key=lambda tp: (tp.sent_at or tp.created_at, tp.pk), default=None)
+    newest = rules.last_told_driver(reservation)
     if newest is None or newest.driver_details is None:
         return
     if newest.driver_details == rules.confirmed_assignment(reservation).driver_info:
