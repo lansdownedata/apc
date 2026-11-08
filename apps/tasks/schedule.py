@@ -271,8 +271,8 @@ def preview(key: str, variant: str, amount: int, unit: str, *, now: datetime | N
 
     The sample pickup is the next Saturday at 7:30 PM in the business timezone; open-anchored
     items sample "opened Monday 9:00 AM" of that week, and an expiry falls on that Saturday.
-    Raises ValueError for an unknown row, a unit the row doesn't offer, or an amount outside
-    its bounds."""
+    Raises ValueError for an unknown row, a unit the row doesn't offer, an amount outside
+    its bounds, or a due type this doesn't know how to describe."""
     row = _ROW_INDEX.get((key, variant))
     if row is None:
         raise ValueError(f"unknown checklist item {key!r} ({variant!r})")
@@ -295,7 +295,8 @@ def preview(key: str, variant: str, amount: int, unit: str, *, now: datetime | N
         start, at = f"Last trip {stamp(pickup)}", due.resolve(pickup)
     elif isinstance(due, BeforeExpiry):
         start, at = f"Policy expires {saturday.strftime('%a %b %-d')}", due.resolve(saturday)
-    else:
-        assert isinstance(due, AfterOpen)
+    elif isinstance(due, AfterOpen):
         start, at = f"Opened {stamp(opened)}", due.resolve_from(opened)
+    else:
+        raise ValueError(f"unknown due type {type(due).__name__}")
     return f"{start} → due {stamp(at.astimezone(zone))}"

@@ -179,3 +179,15 @@ def test_farm_in_inputs_are_named_apart_from_the_standard_row(client):
     assert 'aria-label="Deposit received (farmed-in orders) amount"' in html
     assert 'aria-label="Deposit received (farmed-in orders) unit"' in html
     assert html.count('aria-label="Deposit received amount"') == 1
+
+
+def test_preview_refuses_a_due_type_it_cannot_describe():
+    class Unknown:
+        pass
+
+    def stub(kind, amount, unit):
+        return type("Kind", (), {"due": Unknown()})()
+
+    with patch("apps.tasks.schedule.apply_schedule", stub):
+        with pytest.raises(ValueError, match="unknown due type Unknown"):
+            schedule.preview("ops_review", "standard", 24, "hours", now=FIXED)
