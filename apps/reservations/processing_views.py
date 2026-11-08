@@ -176,8 +176,23 @@ def _pane(request, trip) -> dict:
         .exclude(status=Charge.Status.PENDING, stripe_client_secret="")
         .order_by("created_at")
     )
+    from apps.billing import qbo_invoices, qbo_receipts
+    from apps.integrations import qbo
     from apps.payments import services as payments
 
+    # APC-108: one connection read and one start-date read for every charge listed.
+    connected = qbo.is_connected()
+    start = qbo_invoices.customer_docs_from() if connected else None
+    for charge in charges:
+        charge.sync = (
+            qbo_receipts.sync_state(charge, connected=connected, start=start)
+            if charge.kind == Charge.Kind.TRIP
+            or (
+                charge.kind == Charge.Kind.REFUND
+                and charge.refund_method in ("", Charge.RefundMethod.CARD)
+            )
+            else None
+        )
     allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
     return {
         "review": review,

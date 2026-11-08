@@ -22,6 +22,7 @@ urlpatterns = [
         "<int:lead_id>/bill-to-account/", views.order_bill_to_account, name="order_bill_to_account"
     ),
     path("<int:lead_id>/bill-to-card/", views.order_bill_to_card, name="order_bill_to_card"),
+    path("charges/<int:pk>/qbo-sync/", views.charge_qbo_sync, name="charge_qbo_sync"),
     path("receipts/<int:pk>/", views.order_receipt, name="order_receipt"),
     path("payables/<int:pk>/invoice/", views.payable_invoice, name="payable_invoice"),
     path("payables/<int:pk>/approve/", views.payable_approve, name="payable_approve"),

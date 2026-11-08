@@ -273,3 +273,34 @@ def account_sync(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 def group_sync(request: HttpRequest, pk: int) -> JsonResponse:
     return _sync_now(get_object_or_404(AccountGroup.objects.select_related("account"), pk=pk))
+
+
+@login_required
+@payment_access_required
+@require_POST
+def customer_sync(request: HttpRequest, pk: int) -> JsonResponse:
+    """Retry the contact's QuickBooks Customer (the card-receipt link), now (APC-108)."""
+    from apps.integrations import qbo
+
+    from . import qbo_receipts, qbo_sync
+
+    contact = get_object_or_404(Contact, pk=pk)
+    if not qbo.is_connected():
+        return JsonResponse({"ok": False, "error": "QuickBooks isn't connected."}, status=400)
+    link = qbo_receipts.ensure_link(contact)
+    if link is None:
+        return JsonResponse(
+            {"ok": False, "error": "This customer uses the billing account's QuickBooks customer."},
+            status=400,
+        )
+    try:
+        qbo_receipts.push_customer(link)
+    except qbo.QboNotConnected as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    except qbo_sync.SyncPaused:
+        return JsonResponse(
+            {"ok": False, "error": "QuickBooks couldn't be reached. Try again in a minute."},
+            status=502,
+        )
+    link.refresh_from_db()
+    return JsonResponse({"ok": True, "state": link.qbo_sync_state, "error": link.qbo_sync_error})

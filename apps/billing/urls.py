@@ -19,6 +19,7 @@ urlpatterns = [
     ),
     path("accounts/<int:pk>/", views.account_update, name="billing_account_update"),
     path("accounts/<int:pk>/sync/", views.account_sync, name="billing_account_sync"),
+    path("contacts/<int:pk>/customer-sync/", views.customer_sync, name="billing_customer_sync"),
     path("groups/<int:pk>/sync/", views.group_sync, name="billing_group_sync"),
     path("accounts/<int:pk>/groups/", views.group_add, name="billing_group_add"),
     path("groups/<int:pk>/", views.group_update, name="billing_group_update"),

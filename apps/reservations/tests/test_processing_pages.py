@@ -15,7 +15,7 @@ from apps.contacts.factories import ContactFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments import ledger
-from apps.payments.factories import PaymentPlanFactory
+from apps.payments.factories import ChargeFactory, PaymentPlanFactory
 from apps.payments.models import Charge, JournalEntry
 from apps.reservations import processing
 from apps.reservations.factories import ReservationFactory
@@ -416,3 +416,58 @@ def test_the_refund_modal_knows_what_the_card_can_still_take(accountant):
 
     assert "cardRefundable: &#x27;600.00&#x27;" in footer or "cardRefundable: '600.00'" in footer
     assert "Hold as credit" not in footer  # nothing overpaid here
+
+
+def _processed_pane(accountant, **charges):
+    trip = _trip()
+    _paid(trip)
+    processing.process(trip, user=accountant.user, expected="0.00")
+    made = {name: ChargeFactory(reservation=trip, **fields) for name, fields in charges.items()}
+    return trip, made
+
+
+def test_processed_pane_shows_receipt_state_per_charge(accountant):
+    trip, made = _processed_pane(
+        accountant,
+        synced={
+            "kind": Charge.Kind.TRIP,
+            "status": Charge.Status.SUCCEEDED,
+            "qbo_sync_state": "synced",
+        },
+        failed={
+            "kind": Charge.Kind.TRIP,
+            "status": Charge.Status.SUCCEEDED,
+            "qbo_sync_state": "error",
+            "qbo_sync_error": "Customer is inactive.",
+        },
+        deposit={"kind": Charge.Kind.DEPOSIT, "status": Charge.Status.SUCCEEDED},
+    )
+
+    with patch("apps.integrations.qbo.is_connected", return_value=True):
+        body = _page(accountant, trip=trip.pk, view="processed").content.decode()
+
+    assert "In QuickBooks" in body
+    assert "Customer is inactive." in body
+    assert reverse("charge_qbo_sync", args=[made["failed"].pk]) in body
+    assert reverse("charge_qbo_sync", args=[made["synced"].pk]) not in body
+    assert reverse("charge_qbo_sync", args=[made["deposit"].pk]) not in body
+    assert body.count("Not sent yet") == 0
+
+
+def test_processed_pane_quiet_when_disconnected(accountant):
+    trip, made = _processed_pane(
+        accountant,
+        failed={
+            "kind": Charge.Kind.TRIP,
+            "status": Charge.Status.SUCCEEDED,
+            "qbo_sync_state": "error",
+            "qbo_sync_error": "Customer is inactive.",
+        },
+    )
+
+    with patch("apps.integrations.qbo.is_connected", return_value=False):
+        body = _page(accountant, trip=trip.pk, view="processed").content.decode()
+
+    assert "Customer is inactive." not in body
+    assert "In QuickBooks" not in body and "Not sent yet" not in body
+    assert reverse("charge_qbo_sync", args=[made["failed"].pk]) not in body

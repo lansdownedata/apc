@@ -9,6 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.conf import settings
+from django.urls import reverse
 
 from .models import BillingAccount, Terms
 
@@ -143,6 +144,40 @@ def _qbo_connected() -> bool:
     return qbo.is_connected()
 
 
+def qbo_customer_line(contact) -> dict | None:
+    """APC-108: the "QuickBooks customer" line on the Billing card — the billing account's
+    Customer when that carries the contact's card receipts, else the contact's own link and its
+    state. None while QuickBooks isn't connected, or when the contact has neither a link nor a
+    card receipt to carry."""
+    from apps.payments.models import Charge
+
+    from . import qbo_receipts
+    from .models import CustomerLink
+    from .qbo_sync import current_realm
+
+    if not _qbo_connected():
+        return None
+    link = CustomerLink.objects.filter(contact=contact).first()
+    if link is None:
+        if qbo_receipts.customer_ref(contact, current_realm()) is not None:
+            return {"uses_account": True}
+        carries = Charge.objects.filter(
+            status=Charge.Status.SUCCEEDED,
+            kind__in=(Charge.Kind.TRIP, Charge.Kind.REFUND),
+            reservation__review__processed_at__isnull=False,
+            reservation__lead__contact=contact,
+        ).exists()
+        if not carries:
+            return None
+    return {
+        "uses_account": False,
+        "link": link,
+        "state": link.qbo_sync_state if link else "not_synced",
+        "error": link.qbo_sync_error if link else "",
+        "sync_url": reverse("billing_customer_sync", args=[contact.pk]),
+    }
+
+
 def billing_context(contact) -> dict:
     """The Billing card's whole context for one contact.
 
@@ -171,6 +206,7 @@ def billing_context(contact) -> dict:
         # A live connection (APC-41), not just keys in settings — a developer with keys in
         # .env and nothing connected must not see a wall of red chips.
         "qbo_connected": _qbo_connected(),
+        "qbo_customer": qbo_customer_line(contact),
     }
 
 

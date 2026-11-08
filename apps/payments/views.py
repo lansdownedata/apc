@@ -567,6 +567,52 @@ def payable_sync(request, pk):
 
 @login_required
 @payment_access_required
+@require_POST
+def charge_qbo_sync(request, pk):
+    """Retry one card receipt's QuickBooks push, now (APC-108): its customer first, then the
+    receipt. A person asked, so this one call may wait on Intuit."""
+    from apps.billing import qbo_receipts
+    from apps.billing.qbo_sync import current_realm
+    from apps.integrations import qbo
+
+    from .models import Charge
+
+    charge = get_object_or_404(
+        Charge.objects.select_related("reservation__lead__contact"),
+        pk=pk,
+        kind__in=(Charge.Kind.TRIP, Charge.Kind.REFUND),
+        reservation__isnull=False,
+    )
+    if not qbo.is_connected():
+        return _json_error("QuickBooks isn't connected.")
+    contact = charge.reservation.lead.contact
+    try:
+        if qbo_receipts.customer_ref(contact, current_realm()) is None:
+            link = qbo_receipts.ensure_link(contact)
+            if link is None or not qbo_receipts.push_customer(link):
+                if link is not None:
+                    link.refresh_from_db()
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "state": link.qbo_sync_state if link else charge.qbo_sync_state,
+                        "error": (link.qbo_sync_error if link else "")
+                        or qbo_receipts.WAITING_FOR_CUSTOMER,
+                    }
+                )
+        qbo_receipts.push_receipt(charge)
+    except qbo.QboNotConnected as exc:
+        return _json_error(str(exc))
+    except qbo_receipts.SyncPaused:
+        return _json_error("QuickBooks couldn't be reached. Try again in a minute.", status=502)
+    charge.refresh_from_db()
+    return JsonResponse(
+        {"ok": True, "state": charge.qbo_sync_state, "error": charge.qbo_sync_error}
+    )
+
+
+@login_required
+@payment_access_required
 def order_receipt(request, pk):
     """Staff view of a customer's receipt (APC-103): the same email the customer got, and
     whether it went."""

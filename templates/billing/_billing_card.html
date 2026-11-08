@@ -49,6 +49,20 @@
     {% endif %}
   </div>
 
+  {% if qbo_customer %}
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 pt-2 text-[12px] text-muted">
+    <span>QuickBooks customer</span>
+    {% if qbo_customer.uses_account %}
+    <span>Uses the billing account's QuickBooks customer</span>
+    {% else %}
+    {% include "billing/_sync_chip.html" with record=qbo_customer.link synced_label="In QuickBooks" %}
+    {% if qbo_customer.state == 'not_synced' and not qbo_customer.error %}<span>Not sent yet</span>{% endif %}
+    {% if qbo_customer.state == 'error' %}<span class="text-rose-600">{{ qbo_customer.error }}</span>{% endif %}
+    {% if user.has_payments_access and qbo_customer.state != 'synced' %}<button type="button" class="font-semibold text-goldd hover:text-gold focus-gold rounded px-1" @click="retryQboSync('{{ qbo_customer.sync_url }}')">Retry</button>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="flex items-center gap-6 px-5 mt-3 border-b border-line text-[13px]">
     <button type="button" @click="go('cards')"
             class="-mb-px pb-2.5 border-b-2 transition-colors focus-gold"

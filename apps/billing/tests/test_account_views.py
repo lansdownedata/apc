@@ -437,3 +437,110 @@ def test_each_modal_shows_and_hides_as_one():
     a second x-show inside left the overlay up with nothing visible in it."""
     for name in MODALS:
         assert _markup(name).count('x-show="modal ===') == 1, name
+
+
+# --- QuickBooks customer line (APC-108) -----------------------------------------------
+
+
+def _connected():
+    from unittest.mock import patch
+
+    return patch("apps.integrations.qbo.is_connected", return_value=True)
+
+
+def _with_receipt(contact) -> None:
+    from apps.billing.tests._helpers import _processed_trip
+    from apps.payments.factories import ChargeFactory
+    from apps.payments.models import Charge
+
+    trip = _processed_trip(accountant=UserFactory(), contact=contact)
+    ChargeFactory(kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED, reservation=trip)
+
+
+def test_billing_card_shows_customer_link_state(client, biller):
+    from apps.billing.factories import CustomerLinkFactory
+    from apps.billing.models import SyncState
+
+    contact = ContactFactory()
+    link = CustomerLinkFactory(
+        contact=contact, qbo_sync_state=SyncState.ERROR, qbo_sync_error="Bad email."
+    )
+    with _connected():
+        body = _profile(client, contact)
+    assert "QuickBooks customer" in body
+    assert "Bad email." in body
+    assert reverse("billing_customer_sync", args=[contact.pk]) in body
+    assert link.contact_id == contact.pk
+
+    pending = ContactFactory()
+    _with_receipt(pending)
+    with _connected():
+        body = _profile(client, pending)
+    assert "Not sent yet" in body
+
+    quiet = ContactFactory()
+    with _connected():
+        assert "QuickBooks customer" not in _profile(client, quiet)
+    with patch_connected(False):
+        assert "QuickBooks customer" not in _profile(client, contact)
+
+
+def patch_connected(value: bool):
+    from unittest.mock import patch
+
+    return patch("apps.integrations.qbo.is_connected", return_value=value)
+
+
+def test_billing_card_says_account_customer_is_used(client, biller):
+    account = _account()
+    account.qbo_id = "88"
+    account.qbo_realm_id = "123"
+    account.save(update_fields=["qbo_id", "qbo_realm_id"])
+    with _connected(), patch_realm():
+        body = _profile(client, account.contact)
+    assert "Uses the billing account&#x27;s QuickBooks customer" in body or (
+        "Uses the billing account's QuickBooks customer" in body
+    )
+    assert reverse("billing_customer_sync", args=[account.contact.pk]) not in body
+
+
+def patch_realm():
+    from unittest.mock import patch
+
+    return patch("apps.billing.qbo_sync.current_realm", return_value="123")
+
+
+def test_customer_sync_endpoint_gated_and_pushes(client, biller):
+    from unittest.mock import patch
+
+    from apps.billing.models import CustomerLink
+    from apps.integrations import qbo
+
+    contact = ContactFactory(name="Ada Lovelace")
+    url = reverse("billing_customer_sync", args=[contact.pk])
+    answer = {"Customer": {"Id": "55", "SyncToken": "0", "DisplayName": "Ada Lovelace"}}
+    with (
+        _connected(),
+        patch_realm(),
+        patch("apps.billing.qbo_receipts.current_realm", return_value="123"),
+        patch("apps.billing.qbo_receipts.qbo.request", return_value=answer),
+    ):
+        resp = client.post(url)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "state": "synced", "error": ""}
+    assert CustomerLink.objects.get(contact=contact).qbo_id == "55"
+
+    with patch_connected(False):
+        assert client.post(url).status_code == 400
+    with (
+        _connected(),
+        patch_realm(),
+        patch("apps.billing.qbo_receipts.qbo.request", side_effect=qbo.QboAPIError(503, "down")),
+    ):
+        assert client.post(url).status_code == 502
+
+    client.force_login(UserFactory(can_manage_payments=False))
+    assert client.post(url).status_code == 403
+    client.logout()
+    resp = client.post(url)
+    assert resp.status_code == 302 and "login" in resp["Location"]

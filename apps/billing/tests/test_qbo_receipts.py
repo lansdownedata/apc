@@ -653,9 +653,7 @@ def test_historical_charge_before_start_left_alone(ready) -> None:
     charge.refresh_from_db()
     assert (charge.qbo_sync_state, charge.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
     assert not _alerts().exists()
-    # Task 6 adds the `charge_qbo_sync` route; drop this patch then.
-    with patch("django.urls.reverse", return_value="/sync/"):
-        assert qbo_receipts.sync_state(charge, connected=True)["before_start"] is True
+    assert qbo_receipts.sync_state(charge, connected=True)["before_start"] is True
 
 
 def test_window_follows_the_trip_calendar(ready) -> None:
@@ -1036,18 +1034,14 @@ def test_sync_state_none_when_disconnected() -> None:
 
 def test_sync_state_when_connected(ready) -> None:
     charge = _card_charge(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Nope")
-    # Task 6 adds the `charge_qbo_sync` route; drop this patch then.
-    with patch("django.urls.reverse", return_value="/sync/") as rev:
-        state = qbo_receipts.sync_state(charge, connected=True)
-    rev.assert_called_once_with("charge_qbo_sync", args=[charge.pk])
+    state = qbo_receipts.sync_state(charge, connected=True)
     assert state == {
         "state": SyncState.ERROR,
         "error": "Nope",
-        "sync_url": "/sync/",
+        "sync_url": reverse("charge_qbo_sync", args=[charge.pk]),
         "before_start": False,
     }
-    with patch("django.urls.reverse", return_value="/sync/"):
-        assert qbo_receipts.sync_state(charge, connected=True, start=None)["before_start"] is False
+    assert qbo_receipts.sync_state(charge, connected=True, start=None)["before_start"] is False
 
 
 def _answer_after(change, response):
