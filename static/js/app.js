@@ -1877,6 +1877,8 @@ window.cardVault = cardVault;
  */
 function checklistSchedule(opts = {}) {
   const timers = new WeakMap();
+  // Each row's latest request: a slow answer to an earlier one must not overwrite it.
+  const latest = new WeakMap();
   const parts = (row) => ({
     amount: row.querySelector('input[name^="amount__"]'),
     unit: row.querySelector('[name^="unit__"]'),
@@ -1892,6 +1894,8 @@ function checklistSchedule(opts = {}) {
     },
     async refresh(row) {
       const { amount, unit, example } = parts(row);
+      const seq = (latest.get(row) || 0) + 1;
+      latest.set(row, seq);
       if (amount.value === "") {
         example.textContent = "";
         return;
@@ -1905,9 +1909,10 @@ function checklistSchedule(opts = {}) {
       try {
         const res = await fetch(`${this.previewUrl}?${qs}`, { headers: { Accept: "application/json" } });
         const data = await res.json();
+        if (latest.get(row) !== seq) return;
         example.textContent = data.ok ? data.text : data.error;
       } catch (e) {
-        example.textContent = "";
+        if (latest.get(row) === seq) example.textContent = "";
       }
     },
     reset(row) {
