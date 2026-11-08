@@ -20,4 +20,4 @@ phonenumbers>=8.13,<10       # E.164 normalization for contact dedupe
 timezonefinder>=8.2,<9       # offline coordinate → IANA; no network in the save path
 
 # --- Audit ---
-django-auditlog>=3.4,<3.5     # field-level change trail (APC-140); swapped model in apps.audit
+django-auditlog==3.4.2        # change trail (APC-140); pinned: AuditEntryManager._write copies its log_create

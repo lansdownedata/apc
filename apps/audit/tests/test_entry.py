@@ -2,6 +2,7 @@
 
 from datetime import time
 from decimal import Decimal
+from importlib.metadata import version
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
@@ -155,3 +156,9 @@ def test_a_blank_pair_under_an_explicit_key_is_kept():
     )
 
     assert entry.changes == {"route.2": ["", None]}
+
+
+def test_auditlog_is_the_version_write_was_copied_from():
+    """`AuditEntryManager._write` copies `LogEntryManager.log_create`'s body from 3.4.2; an
+    upgrade must re-read that body before this pin moves (Ruling 27)."""
+    assert version("django-auditlog") == "3.4.2"
