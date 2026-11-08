@@ -7,6 +7,7 @@ from .models import (
     InvoiceLine,
     QboAccount,
     QboAccountMapping,
+    QboItem,
     QboTerm,
     SyncState,
 )
@@ -86,11 +87,30 @@ class QboAccountAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(QboItem)
+class QboItemAdmin(admin.ModelAdmin):
+    """Read from QuickBooks by the hourly sync and Settings → QuickBooks."""
+
+    list_display = ("name", "item_type", "realm_id", "active")
+    list_filter = ("active", "item_type")
+    readonly_fields = ("realm_id", "qbo_id", "name", "item_type", "active")
+
+    def has_add_permission(self, request):
+        return False
+
+
 @admin.register(QboAccountMapping)
 class QboAccountMappingAdmin(admin.ModelAdmin):
     """Chosen on Settings → QuickBooks; shown here for support."""
 
-    list_display = ("__str__", "expense_account", "payment_account")
+    list_display = (
+        "__str__",
+        "expense_account",
+        "payment_account",
+        "bills_from",
+        "trip_item",
+        "customer_docs_from",
+    )
 
     def has_add_permission(self, request):
         return False

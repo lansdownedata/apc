@@ -169,6 +169,9 @@ class Invoice(QboSyncedModel, TimeStampedModel):
     )
     # Lease taken by the QuickBooks push so two workers never push one invoice (APC-107).
     qbo_push_started_at = models.DateTimeField(null=True, blank=True)
+    # Set when a portal void must also void the QuickBooks invoice; cleared never, the sync
+    # state says whether it landed.
+    qbo_void_requested_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         ordering = ["-invoice_date", "-pk"]
@@ -242,6 +245,32 @@ class QboAccount(TimeStampedModel):
         return self.name
 
 
+class QboItem(TimeStampedModel):
+    """A product/service item from the connected company (APC-107) — a cache, like
+    `QboAccount`, refreshed by the hourly sync and the Settings action.
+
+    Only the kinds an invoice line can use are kept (`ITEM_TYPES`). Keyed by company as well
+    as id, because QuickBooks numbers each company's items from 1.
+    """
+
+    ITEM_TYPES = ("Service", "NonInventory")
+
+    realm_id = models.CharField(max_length=32)
+    qbo_id = models.CharField(max_length=32)
+    name = models.CharField(max_length=255)
+    item_type = models.CharField(max_length=40)
+    active = models.BooleanField(default=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["realm_id", "qbo_id"], name="uniq_qbo_item"),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class QboAccountMapping(models.Model):
     """Which QuickBooks accounts affiliate bills post to and pay from (APC-74). A singleton,
     chosen on Settings → QuickBooks. Until a choice is made the matching push refuses with a
@@ -257,6 +286,12 @@ class QboAccountMapping(models.Model):
     # never do, so the first sync doesn't back-date every past affiliate bill into the books.
     # Blank = no bills or payments go at all.
     bills_from = models.DateField("push affiliate bills from", null=True, blank=True)
+    # The item every invoice line posts under, and the date (trip-local) from which customer
+    # invoices go to QuickBooks; earlier ones never do. Blank = no customer documents go at all.
+    trip_item = models.ForeignKey(
+        QboItem, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    customer_docs_from = models.DateField("push customer documents from", null=True, blank=True)
 
     class Meta:
         verbose_name = "QuickBooks account mapping"
