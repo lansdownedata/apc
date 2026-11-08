@@ -101,6 +101,24 @@ def test_date_cell_is_a_row_error():
     assert parsed.dataset["__row__"] == [3]
 
 
+def test_date_error_values_use_coerced_strings():
+    buf = make_xlsx(["Name", "Phone", "ZIP"], [["Jo", 2025550143.0, datetime.datetime(2026, 1, 2)]])
+    values = read(buf).row_errors[0]["values"]
+    assert values["Phone"] == "2025550143"
+    assert values["ZIP"].startswith("2026-01-02")
+
+
+def test_programming_error_in_row_loop_propagates(monkeypatch):
+    from apps.imports import xlsx
+
+    def boom(*a, **k):
+        raise TypeError("bug")
+
+    monkeypatch.setattr(xlsx, "_coerce", boom)
+    with pytest.raises(TypeError):
+        read(make_xlsx(["Name"], [["Jo"]]))
+
+
 def test_blank_rows_dropped():
     buf = make_xlsx(["Name"], [["A"], [None], ["  "], ["B"]])
     assert read(buf).dataset["Name"] == ["A", "B"]
@@ -161,6 +179,21 @@ def test_text_format_on_phone_zip_usdot():
     assert ws["D2"].number_format == "@"
     assert ws["E2"].number_format == "@"
     assert ws["A2"].number_format != "@"
+
+
+def test_text_format_applies_to_whole_column_with_no_data():
+    ws = write([])["Contacts"]
+    assert ws.column_dimensions["C"].number_format == "@"
+    assert ws.column_dimensions["D"].number_format == "@"
+    assert ws.column_dimensions["E"].number_format == "@"
+    assert ws.column_dimensions["A"].number_format != "@"
+
+
+def test_minus_prefix_is_written_as_text():
+    ws = write([row_of(Name="-cmd|calc", Notes="-1+1")])["Contacts"]
+    assert ws["A2"].data_type == "s"
+    assert ws["G2"].data_type == "s"
+    assert ws["G2"].value == "-1+1"
 
 
 def test_dropdown_on_choice_columns():

@@ -6,19 +6,27 @@ the template and export workbooks. Spec: APC-141 design §3.3, §3.5, §3.6.
 
 import datetime
 import io
+import logging
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from xml.etree.ElementTree import ParseError
 
 import tablib
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.datavalidation import DataValidation
 
 ACCEPTED_SHEET = "Accepted values"
 EXAMPLE_DOMAINS = ("example.com", "example.org", "example.net")
 ROW_COLUMN = "__row__"
+
+logger = logging.getLogger(__name__)
+# What a corrupt or truncated file raises while a read-only sheet is streamed lazily.
+CORRUPT_FILE_ERRORS = (zipfile.BadZipFile, OSError, ValueError, ParseError, InvalidFileException)
 
 NOT_XLSX = "This isn't an Excel file we can read. Upload a .xlsx file."
 NO_NAME = "This file has no Name column. Use the template's header row."
@@ -81,6 +89,7 @@ def read_rows(file, *, sheet: str, columns: Sequence[Column]) -> ParsedSheet:
     try:
         wb = load_workbook(file, read_only=True, data_only=True)
     except Exception as exc:  # openpyxl/zipfile raise many types for a bad file
+        logger.warning("Could not open uploaded workbook", exc_info=True)
         raise FileError(NOT_XLSX) from exc
     try:
         try:
@@ -91,6 +100,7 @@ def read_rows(file, *, sheet: str, columns: Sequence[Column]) -> ParsedSheet:
                 if not names:
                     raise FileError(NO_NAME)
                 ws = wb[names[0]]
+            ws.reset_dimensions()
             rows = ws.iter_rows(values_only=True)
             header = next(rows, None)
             if header is None:
@@ -137,7 +147,7 @@ def read_rows(file, *, sheet: str, columns: Sequence[Column]) -> ParsedSheet:
                             "key": texts.get("Email") or texts.get("Phone", ""),
                             "reason": f"Unexpected date in {bad}",
                             "values": {
-                                n: (str(v) if v is not None else "") for n, v in cells.items()
+                                n: (str(v) if n == bad else texts[n]) for n, v in cells.items()
                             },
                         }
                     )
@@ -146,7 +156,8 @@ def read_rows(file, *, sheet: str, columns: Sequence[Column]) -> ParsedSheet:
             return parsed
         except FileError:
             raise
-        except Exception as exc:
+        except CORRUPT_FILE_ERRORS as exc:
+            logger.exception("Uploaded workbook is corrupt")
             raise FileError(NOT_XLSX) from exc
     finally:
         wb.close()
@@ -191,6 +202,10 @@ def write_workbook(spec: SheetSpec, dataset: tablib.Dataset) -> bytes:
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = min(w + 2, MAX_WIDTH)
     ws.freeze_panes = "A2"
+    for col_idx, h in enumerate(headers, start=1):
+        col = by_name.get(h)
+        if col and col.text:
+            ws.column_dimensions[get_column_letter(col_idx)].number_format = "@"
 
     acc = wb.create_sheet(ACCEPTED_SHEET)
     counts: dict[str, int] = {}
