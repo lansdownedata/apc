@@ -77,5 +77,8 @@ def resolve() -> tuple[User | None, str, str]:
     if frame.resolved is None:
         actor = _value(frame.actor)
         actor_email = _value(frame.actor_email) or (getattr(actor, "email", "") if actor else "")
-        frame.resolved = (actor, actor_email or "", _value(frame.source))
+        # A source that comes out blank would leave an entry saying nothing (or fail the
+        # save on the NOT NULL column), so it falls back like a frameless write.
+        source = _value(frame.source) or fallback_source()
+        frame.resolved = (actor, actor_email or "", source)
     return frame.resolved

@@ -4,13 +4,21 @@ import sys
 from unittest.mock import Mock
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 
 from apps.accounts.factories import UserFactory
 from apps.audit.context import audit_context, current_cid
 from apps.audit.models import AuditEntry
 from apps.reservations.factories import ReservationFactory
+from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
+
+
+def _entries(*reservations):
+    """The trips' own entries: by content type too, since pks repeat across tables."""
+    ct = ContentType.objects.get_for_model(Reservation)
+    return AuditEntry.objects.filter(content_type=ct, object_id__in=[r.pk for r in reservations])
 
 
 def test_nested_context_restores_outer_frame():
@@ -19,7 +27,7 @@ def test_nested_context_restores_outer_frame():
             pass
         reservation = ReservationFactory()
 
-    entry = AuditEntry.objects.get(object_id=reservation.pk)
+    entry = _entries(reservation).get()
     assert entry.source == "outer"
     assert entry.cid == "c-outer"
 
@@ -32,7 +40,7 @@ def test_callable_actor_not_evaluated_when_nothing_written():
         reservation.save()
 
     assert not actor.called
-    assert AuditEntry.objects.filter(object_id=reservation.pk).count() == 1  # the create only
+    assert _entries(reservation).count() == 1  # the create only
 
 
 def test_callable_actor_evaluated_once_per_frame():
@@ -44,8 +52,40 @@ def test_callable_actor_evaluated_once_per_frame():
         second = ReservationFactory()
 
     assert actor.call_count == 1
-    entries = AuditEntry.objects.filter(object_id__in=[first.pk, second.pk])
+    entries = _entries(first, second)
     assert [(e.actor, e.actor_email) for e in entries] == [(user, user.email)] * 2
+
+
+def test_callable_source_with_no_value_falls_back(monkeypatch):
+    """A frame must never write an entry with neither actor nor source."""
+    monkeypatch.setattr(sys, "argv", ["/usr/bin/pytest", "-q"])
+
+    with audit_context(source=Mock(return_value=None)):
+        reservation = ReservationFactory()
+
+    entry = _entries(reservation).get()
+    assert entry.source == "system"
+    assert entry.actor is None
+
+
+def test_empty_source_falls_back(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["manage.py", "shell"])
+
+    with audit_context(source=""):
+        reservation = ReservationFactory()
+
+    assert _entries(reservation).get().source == "command: shell"
+
+
+def test_callable_source_evaluated_once_per_frame():
+    source = Mock(return_value="portal")
+
+    with audit_context(source=source):
+        first = ReservationFactory()
+        second = ReservationFactory()
+
+    assert source.call_count == 1
+    assert [e.source for e in _entries(first, second)] == ["portal", "portal"]
 
 
 def test_no_frame_under_manage_py_is_command_source(monkeypatch):
@@ -53,7 +93,7 @@ def test_no_frame_under_manage_py_is_command_source(monkeypatch):
 
     reservation = ReservationFactory()
 
-    entry = AuditEntry.objects.get(object_id=reservation.pk)
+    entry = _entries(reservation).get()
     assert entry.source == "command: backfill_trip_timezones"
     assert entry.actor is None
 
@@ -63,7 +103,7 @@ def test_no_frame_otherwise_is_system(monkeypatch):
 
     reservation = ReservationFactory()
 
-    entry = AuditEntry.objects.get(object_id=reservation.pk)
+    entry = _entries(reservation).get()
     assert entry.source == "system"
     assert entry.actor is None
 

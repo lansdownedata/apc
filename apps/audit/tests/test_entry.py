@@ -4,6 +4,7 @@ from datetime import time
 from decimal import Decimal
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 
 from apps.audit import registry
@@ -14,8 +15,14 @@ from apps.reservations.models import Reservation, TripReview
 pytestmark = pytest.mark.django_db
 
 
+def _entries(reservation: Reservation, action: int):
+    """The trip's own entries: by content type too, since pks repeat across tables."""
+    ct = ContentType.objects.get_for_model(Reservation)
+    return AuditEntry.objects.filter(content_type=ct, object_id=reservation.pk, action=action)
+
+
 def _updates(reservation: Reservation):
-    return AuditEntry.objects.filter(object_id=reservation.pk, action=AuditEntry.Action.UPDATE)
+    return _entries(reservation, AuditEntry.Action.UPDATE)
 
 
 def test_reservation_update_logs_one_entry_with_parents():
@@ -33,7 +40,7 @@ def test_reservation_update_logs_one_entry_with_parents():
 def test_create_entry_holds_only_the_trips_own_columns():
     r = ReservationFactory()
 
-    entry = AuditEntry.objects.get(object_id=r.pk, action=AuditEntry.Action.CREATE)
+    entry = _entries(r, AuditEntry.Action.CREATE).get()
     assert "pickup_timezone" in entry.changes
     assert not {"stops", "charges", "review", "farm_in"} & set(entry.changes)
 
@@ -80,7 +87,7 @@ def test_same_number_in_another_form_is_not_a_change():
     r = ReservationFactory()
     r.refresh_from_db()
     r.rate = Decimal("185")
-    r.hours = 1
+    r.hours = 1  # an int over the stored 1.00: another form of the same number
     r.save()
 
     assert not _updates(r).exists()
