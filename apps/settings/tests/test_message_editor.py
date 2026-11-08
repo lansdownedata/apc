@@ -447,6 +447,17 @@ def test_editor_has_error_state_and_sample_label(client):
     assert "Example unavailable." in js
 
 
+def test_editor_counter_and_error_states_are_wired():
+    """The counter's segment maths and the fetch error paths live in app.js (no JS test
+    runner here); this pins that the pieces are there. Behaviour checked by hand."""
+    js = APP_JS.read_text()
+    assert "function smsSegments(text)" in js
+    assert "[160, 153] : [70, 67]" in js
+    assert "smsUnknown" in js
+    assert 'data.ok ? data.text : data.error || "Example unavailable."' in js
+    assert 'Object.values(data.errors)[0] || "Preview unavailable.' in js
+
+
 # --- the spec C editor ----------------------------------------------------------------
 
 

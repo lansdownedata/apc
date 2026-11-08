@@ -1935,6 +1935,34 @@ function checklistSchedule(opts = {}) {
 }
 window.checklistSchedule = checklistSchedule;
 
+/* -------------------------------------------------- smsSegments
+ * How many texts an SMS body takes. GSM-7 text fits 160 characters in one text and 153 per
+ * text once split (the extension characters ^{}\[~]|€ take two); anything outside GSM-7
+ * (curly quotes, emoji, accented letters it lacks) sends as UCS-2: 70, then 67 per text,
+ * counted in UTF-16 units, so an emoji takes two.
+ */
+const GSM_BASIC =
+  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+  "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const GSM_EXTENDED = "^{}\\[~]|€\f";
+function smsSegments(text) {
+  let septets = 0;
+  let gsm = true;
+  for (const ch of text) {
+    if (GSM_BASIC.includes(ch)) septets += 1;
+    else if (GSM_EXTENDED.includes(ch)) septets += 2;
+    else {
+      gsm = false;
+      break;
+    }
+  }
+  const length = gsm ? septets : text.length;
+  const [single, multi] = gsm ? [160, 153] : [70, 67];
+  const texts = length === 0 ? 0 : length <= single ? 1 : Math.ceil(length / multi);
+  return { chars: text.length, texts, unicode: !gsm };
+}
+window.smsSegments = smsSegments;
+
 /* -------------------------------------------------- messageEditor
  * Settings -> Messages -> one message (spec C section 6). Who gets it, the trigger and its
  * timing, service types and wording all live in one form; the server renders the preview
@@ -1968,6 +1996,9 @@ function messageEditor(state = {}) {
     emailTo: "",
     last: "",
     smsText: null,
+    // The preview failed and returned no rendered text: the counter stays blank rather
+    // than counting the raw wording, placeholders and all.
+    smsUnknown: false,
     init() {
       this.updateCounter();
       this.refreshPreview();
@@ -2121,10 +2152,14 @@ function messageEditor(state = {}) {
       const counter = this.$root.querySelector("[data-counter]");
       const box = this.box("sms_body");
       if (!counter || !box) return;
+      if (this.smsUnknown) {
+        counter.textContent = "";
+        return;
+      }
       const text = this.smsText !== null ? this.smsText : box.value;
-      const n = text.length;
-      const texts = n === 0 ? 0 : n <= 160 ? 1 : Math.ceil(n / 153);
-      counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${texts} text${texts === 1 ? "" : "s"}`;
+      const { chars: n, texts, unicode } = smsSegments(text);
+      const note = unicode ? " (special characters: 70 per text)" : "";
+      counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${texts} text${texts === 1 ? "" : "s"}${note}`;
     },
     async refreshPreview() {
       const form = this.$root.querySelector("#message-form");
@@ -2132,10 +2167,14 @@ function messageEditor(state = {}) {
       const seq = ++previewSeq;
       const error = this.$root.querySelector("[data-preview-error]");
       const label = this.$root.querySelector("[data-sample-label]");
-      const fail = (text) => {
+      const fail = (text, data) => {
         error.textContent = text;
         error.classList.remove("hidden");
-        this.smsText = null;
+        label.classList.add("hidden");
+        // Count the rendered text when the failed answer still carried one.
+        const sms = data && typeof data.sms === "string" ? data.sms : null;
+        this.smsText = sms;
+        this.smsUnknown = sms === null;
         this.updateCounter();
       };
       try {
@@ -2148,11 +2187,11 @@ function messageEditor(state = {}) {
         if (seq !== previewSeq) return;
         if (data && data.fields) this.chips = data.fields;
         if (!data || (!data.ok && !data.errors)) {
-          fail("Preview unavailable. Check the text and try again.");
+          fail("Preview unavailable. Check the text and try again.", data);
           return;
         }
         if (!data.ok) {
-          fail(Object.values(data.errors)[0] || "");
+          fail(Object.values(data.errors)[0] || "Preview unavailable. Check the text and try again.", data);
           return;
         }
         error.classList.add("hidden");
@@ -2167,6 +2206,7 @@ function messageEditor(state = {}) {
         this.smsTo = data.sms_to || "";
         this.emailTo = data.email_to || "";
         this.smsText = data.sms;
+        this.smsUnknown = false;
       } catch (e) {
         if (seq === previewSeq) fail("Preview unavailable. Check the text and try again.");
         return;
@@ -2190,7 +2230,7 @@ function messageEditor(state = {}) {
       try {
         const res = await fetch(`${state.timingUrl}?${qs}`, { headers: { Accept: "application/json" } });
         const data = await res.json();
-        example.textContent = data.ok ? data.text : data.error;
+        example.textContent = data.ok ? data.text : data.error || "Example unavailable.";
       } catch (e) {
         example.textContent = "Example unavailable.";
       }
