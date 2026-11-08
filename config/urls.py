@@ -64,6 +64,7 @@ staff_patterns = [
     path("reviews/", review_list, name="review_list"),
     path("tasks/", include("apps.tasks.urls")),
     path("exceptions/", task_views.exceptions_dashboard, name="exceptions"),
+    path("history/", include("apps.audit.urls")),
 ]
 
 urlpatterns = [

@@ -4,9 +4,11 @@
     {% include "components/drawer.html" with drawer_title="Assign trip" %}
   Open it from anywhere on the page:  $dispatch('drawer-open', {url: '/portal/…/panel/'})
   The fragment at `url` is fetched and injected — the drawer never knows what it holds.
+  An optional `title` in the detail heads that one open (History); without one the heading
+  is `drawer_title`, so every other caller keeps its own.
 {% endcomment %}
-<div x-data="drawer()" x-show="open" x-cloak data-drawer class="fixed inset-0 z-[55]"
-     @drawer-open.window="load($event.detail.url, $event.detail.stale, $event.detail.scrollTo)"
+<div x-data="drawer()" data-title="{{ drawer_title|default:"Details" }}" x-show="open" x-cloak data-drawer class="fixed inset-0 z-[55]"
+     @drawer-open.window="load($event.detail.url, $event.detail.stale, $event.detail.scrollTo, $event.detail.title)"
      @keydown.escape.window="open && close()">
   <div class="absolute inset-0 bg-ink/40" x-transition.opacity @click="close()"></div>
   <aside class="absolute right-0 top-0 h-full w-full max-w-[520px] bg-surface shadow-2xl overflow-y-auto"
@@ -14,8 +16,8 @@
          x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
          x-transition:leave="transition ease-in duration-150"
          x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
-    <header class="flex items-center gap-3 px-5 py-4 border-b border-line sticky top-0 bg-surface">
-      <h2 class="font-display text-[17px] font-semibold text-ink">{{ drawer_title|default:"Details" }}</h2>
+    <header class="flex items-center gap-3 px-5 py-4 border-b border-line sticky top-0 z-10 bg-surface">
+      <h2 class="font-display text-[17px] font-semibold text-ink" x-text="title">{{ drawer_title|default:"Details" }}</h2>
       <button @click="close()" class="ml-auto btn-ghost p-1.5 rounded-lg" aria-label="Close">
         <i class="ti ti-x text-[18px]"></i>
       </button>

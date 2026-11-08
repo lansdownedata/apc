@@ -1,0 +1,31 @@
+{% comment %}
+  History drawer body (APC-140, spec §6.2) — injected via the drawer's x-html, so a fragment.
+  All / People reloads it through the drawer (keeping the drawer's title); "Show older"
+  appends the next page's groups (audit/_history_groups.html) through auditOlder() in app.js.
+{% endcomment %}
+<div x-data="auditOlder('{{ older_url }}')">
+  <div class="inline-flex rounded-lg bg-surface2 p-0.5 text-[12px] font-semibold ring-1 ring-line mb-4" role="group" aria-label="Show changes by">
+    <button type="button" @click="$dispatch('drawer-open', { url: '{{ all_url }}', title })"
+            aria-pressed="{% if people_only %}false{% else %}true{% endif %}" {% if not people_only %}disabled{% endif %}
+            class="rounded-md px-2.5 py-1 transition focus-gold disabled:cursor-default {% if people_only %}text-muted hover:text-ink{% else %}bg-surface text-ink shadow-sm{% endif %}">All</button>
+    <button type="button" @click="$dispatch('drawer-open', { url: '{{ people_url }}', title })"
+            title="Hide automatic changes: scheduled jobs, webhooks and commands"
+            aria-pressed="{% if people_only %}true{% else %}false{% endif %}" {% if people_only %}disabled{% endif %}
+            class="rounded-md px-2.5 py-1 transition focus-gold disabled:cursor-default {% if people_only %}bg-surface text-ink shadow-sm{% else %}text-muted hover:text-ink{% endif %}">People</button>
+  </div>
+
+  {% if groups %}
+    <div x-ref="list">{% include "audit/_history_groups.html" %}</div>
+    {% if older_url %}
+      <div x-show="url" class="pt-1">
+        <button type="button" @click="more()" :disabled="busy"
+                class="text-[12.5px] font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline disabled:opacity-50 disabled:no-underline disabled:cursor-wait">
+          <span x-show="!busy">Show older</span><span x-show="busy" x-cloak>Loading…</span>
+        </button>
+        <p x-show="failed" x-cloak class="mt-1 text-[12.5px] text-rose-600">Could not load older changes. Try again.</p>
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="text-[13px] text-muted">No changes recorded. History starts {{ launch_date|date:"M j, Y" }}</p>
+  {% endif %}
+</div>
