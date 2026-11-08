@@ -6,6 +6,7 @@
   The fragment at `url` is fetched and injected — the drawer never knows what it holds.
   An optional `title` in the detail heads that one open (History); without one the heading
   is `drawer_title`, so every other caller keeps its own.
+  The header is a fixed h-16, so a fragment's sticky element can sit flush under it at top-16.
 {% endcomment %}
 <div x-data="drawer()" data-title="{{ drawer_title|default:"Details" }}" x-show="open" x-cloak data-drawer class="fixed inset-0 z-[55]"
      @drawer-open.window="load($event.detail.url, $event.detail.stale, $event.detail.scrollTo, $event.detail.title)"
@@ -16,7 +17,7 @@
          x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
          x-transition:leave="transition ease-in duration-150"
          x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
-    <header class="flex items-center gap-3 px-5 py-4 border-b border-line sticky top-0 z-10 bg-surface">
+    <header class="h-16 flex items-center gap-3 px-5 border-b border-line sticky top-0 z-10 bg-surface">
       <h2 class="font-display text-[17px] font-semibold text-ink" x-text="title">{{ drawer_title|default:"Details" }}</h2>
       <button @click="close()" class="ml-auto btn-ghost p-1.5 rounded-lg" aria-label="Close">
         <i class="ti ti-x text-[18px]"></i>

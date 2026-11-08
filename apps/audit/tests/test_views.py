@@ -1,8 +1,10 @@
 """The History drawer's fragment, selector and staff URLs (spec §6.1, §6.2, §8; §9 group 8)."""
 
+import re
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from html.parser import HTMLParser
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -468,3 +470,18 @@ def test_history_urls_cannot_break_out_of_their_js_strings():
     carrying = [(k, v) for k, v in parser.attrs if "alert" in v]
     assert carrying == [("data-older-url", evil), ("data-url", evil), ("data-url", evil)]
     assert "<b>" not in html
+
+
+def test_the_sticky_day_heading_sits_flush_under_a_fixed_height_drawer_header():
+    """The heading sticks at top-16, so the drawer header must be exactly h-16: a taller
+    padded header let a sliver of the list show under the heading."""
+    drawer = render_to_string("components/drawer.html", {})
+    header = re.search(r'<header class="([^"]+)"', drawer).group(1).split()
+    assert "h-16" in header
+    assert not {"py-4", "py-3", "py-2"} & set(header)
+
+    groups = render_to_string(
+        "audit/_history_groups.html", {"rows": [("Today", Mock(lines=[], who="", clock=""))]}
+    )
+    heading = re.search(r'<h3 class="([^"]+)"', groups).group(1).split()
+    assert {"sticky", "top-16", "bg-surface", "py-3"} <= set(heading)
