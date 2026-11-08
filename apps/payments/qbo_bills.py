@@ -1122,10 +1122,7 @@ def run_hourly() -> int:
         qbo_invoices.refresh_items()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
-    try:
-        qbo_invoices.refresh_preferences()
-    except (qbo.QboAPIError, qbo.QboNotConnected):
-        logger.warning("QuickBooks preferences refresh failed; keeping the cached closing date")
+    qbo_invoices.refresh_preferences_quietly()
     budget = PushBudget(seconds=20)
     for name, run in (
         ("bill", sync_pending),

@@ -570,8 +570,9 @@ def payable_sync(request, pk):
 @require_POST
 def charge_qbo_sync(request, pk):
     """Retry one card receipt's QuickBooks push, now (APC-108): its customer first, then the
-    receipt. A person asked, so this one call may wait on Intuit."""
-    from apps.billing import qbo_receipts
+    receipt. A person asked, so this one call may wait on Intuit. Judged on the closing date
+    QuickBooks has now (APC-109)."""
+    from apps.billing import qbo_invoices, qbo_receipts
     from apps.billing.qbo_sync import current_realm
     from apps.integrations import qbo
 
@@ -585,6 +586,7 @@ def charge_qbo_sync(request, pk):
     )
     if not qbo.is_connected():
         return _json_error("QuickBooks isn't connected.")
+    qbo_invoices.refresh_preferences_quietly()
     contact = charge.reservation.lead.contact
     try:
         if qbo_receipts.customer_ref(contact, current_realm()) is None:

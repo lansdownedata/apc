@@ -231,10 +231,12 @@ def invoice_replace(request: HttpRequest, pk: int) -> JsonResponse:
 @payment_access_required
 @require_POST
 def invoice_sync(request: HttpRequest, pk: int) -> JsonResponse:
-    """Retry one invoice's QuickBooks push now; a person asked, so this call may wait."""
+    """Retry one invoice's QuickBooks push now; a person asked, so this call may wait. Judged
+    on the closing date QuickBooks has now (APC-109)."""
     invoice = get_object_or_404(Invoice, pk=pk)
     if not qbo.is_connected():
         return _bad("QuickBooks isn't connected.")
+    qbo_invoices.refresh_preferences_quietly()
     push = (
         qbo_invoices.push_void
         if invoice.status == Invoice.Status.VOID

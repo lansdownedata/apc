@@ -104,7 +104,8 @@ def trip_item_ref() -> dict | None:
 
 def refresh_preferences() -> date | None:
     """Cache the date the books are closed through in QuickBooks (APC-109). None, and the
-    cached date cleared, when QuickBooks has none or sends one that isn't a date."""
+    cached date cleared, when QuickBooks has none or sends one that isn't a date; an answer
+    without the key path, or a date that isn't one, is logged."""
     prefs = qbo.request("GET", "preferences")
     section = prefs.get("Preferences") if isinstance(prefs, dict) else None
     info = section.get("AccountingInfoPrefs") if isinstance(section, dict) else None
@@ -113,10 +114,25 @@ def refresh_preferences() -> date | None:
         closed = parse_date(raw) if isinstance(raw, str) else None
     except ValueError:  # well-formed but impossible, like Feb 30
         closed = None
+    if not isinstance(info, dict) or (raw is not None and closed is None):
+        logger.warning(
+            "QuickBooks preferences carry no readable BookCloseDate; treating the books as "
+            "open: %.500r",
+            prefs,
+        )
     config = QboAccountMapping.load()
     config.book_close_date = closed
     config.save(update_fields=["book_close_date"])
     return closed
+
+
+def refresh_preferences_quietly() -> None:
+    """`refresh_preferences`, best-effort: a failed read keeps the cached closing date. Run
+    before a push so it is judged on the closing date QuickBooks has now."""
+    try:
+        refresh_preferences()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        logger.warning("QuickBooks preferences refresh failed; keeping the cached closing date")
 
 
 def customer_docs_from() -> date | None:
@@ -130,7 +146,7 @@ ITEM_LINE = "SalesItemLineDetail"
 # QuickBooks' limit for a line Description and for PrivateNote.
 DESCRIPTION_MAX = 4000
 # QuickBooks' limit for DocNumber. A create sends none (QuickBooks numbers the invoice); an
-# update is the whole object, so it sends back the number QuickBooks gave.
+# update sends back the number QuickBooks gave.
 DOC_NUMBER_MAX = 21
 
 NO_TRIP_ITEM = "Waiting: choose the Product/Service for trip charges in Settings \u2192 QuickBooks."
@@ -139,6 +155,9 @@ NO_START_DATE = (
 )
 NO_LINES = "This invoice has no lines, so it isn't sent."
 LINES_OFF_TOTAL = "This invoice's lines don't add up to its total."
+# An update (an edit, or a Retry of one in QuickBooks) refused at push time: QuickBooks holds
+# it, or would, in a closed period. A refusal on the page says `CLOSED_PERIOD_MESSAGE`.
+CLOSED_UPDATE_MESSAGE = "This edit didn't reach QuickBooks: the period is closed there."
 
 
 def _money(amount) -> str:
@@ -148,7 +167,8 @@ def _money(amount) -> str:
 def invoice_payload(invoice: Invoice, realm: str) -> dict:
     """The QuickBooks Invoice body for one of our invoices. Optional keys are left out when
     blank. The PO rides on the note and on the first line's description. An update (already in
-    this company) carries its number, since a whole-object update keeps only what it sends."""
+    this company) is sparse: it carries its number, and a blank note so a cleared PO and memo
+    clear it there too (a key left out keeps what QuickBooks has)."""
     item = trip_item_ref()
     if item is None:
         raise _Refused(NO_TRIP_ITEM, alert=False)
@@ -188,9 +208,10 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
     if group.invoice_email:
         body["BillEmail"] = {"Address": group.invoice_email}
     note = " \u00b7 ".join(part for part in (po, invoice.memo) if part)
-    if note:
+    updating = _linked_here(invoice, realm)
+    if note or updating:
         body["PrivateNote"] = note[:DESCRIPTION_MAX]
-    if _linked_here(invoice, realm) and invoice.number:
+    if updating and invoice.number:
         body["DocNumber"] = invoice.number
     return body
 
@@ -290,19 +311,21 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
     back onto ours. One QuickBooks holds differently (sales tax on the item, most likely) is
     ERROR with both figures and alerts once; the hourly run never sends it again.
 
-    An update (an edit, APC-109) goes whole with its SyncToken, never while its date or the date
-    QuickBooks holds is in a closed period: that is ERROR with no call. A create is QuickBooks'
-    call whatever its date. A create that lands holding other values than ours (an edit saved
-    while it was in flight, or a replay of an earlier attempt) is queued as an update."""
+    An update (an edit, APC-109) goes sparse with its SyncToken, never while its date or the
+    date QuickBooks holds is in a closed period: that is ERROR with no call. A create is
+    QuickBooks' call whatever its date. A create that lands holding other values than ours (an
+    edit saved while it was in flight, or a replay of an earlier attempt) is queued as an
+    update."""
     returned: dict = {}
     sent: dict = {}
     mismatch = ""
     already_failed = invoice.qbo_sync_state == SyncState.ERROR
     stamp = invoice.qbo_edit_requested_at
-    link = _Link(invoice, "invoice", "Invoice")
+    # Sparse touches updates only: a create sends no Id, so `_send` adds no flag.
+    link = _Link(invoice, "invoice", "Invoice", sparse=True)
     creating = not _linked_here(invoice, realm)
     if not creating and closed_in_quickbooks(invoice):
-        _fail(link, CLOSED_PERIOD_MESSAGE)
+        _fail(link, CLOSED_UPDATE_MESSAGE)
         return False
 
     def matches(obj: dict, body: dict) -> bool:
@@ -371,7 +394,8 @@ def _stale_values(obj: dict, body: dict) -> bool:
 
 
 def _queue_update(invoice: Invoice) -> None:
-    """Stamp a landed invoice NOT_SYNCED with no stamp yet so the next run sends it whole."""
+    """Stamp a landed invoice NOT_SYNCED with no stamp yet so the next run sends it as an
+    update."""
     Invoice.objects.filter(
         pk=invoice.pk, qbo_sync_state=SyncState.NOT_SYNCED, qbo_edit_requested_at=None
     ).update(qbo_edit_requested_at=timezone.now())

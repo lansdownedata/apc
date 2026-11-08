@@ -16,7 +16,7 @@
   </div>
   <p class="text-[11.5px] text-muted num">Dated {{ invoice.invoice_date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}{% if invoice.po_number %} · PO {{ invoice.po_number }}{% endif %}</p>
   {% if invoice.edited_at or invoice.replaces %}
-  <p class="text-[11.5px] text-muted">{% if invoice.edited_at %}Edited {{ invoice.edited_at|date:"M j" }}{% if invoice.edited_by %} by {{ invoice.edited_by.first_name|default:invoice.edited_by.email }}{% endif %}{% endif %}{% if invoice.edited_at and invoice.replaces %} · {% endif %}{% if invoice.replaces %}<a href="{% url 'billing' %}?group={{ invoice.group_id }}&amp;invoice={{ invoice.replaces.pk }}" class="hover:text-ink underline-offset-2 hover:underline focus-gold rounded">Replaces {{ invoice.replaces.label }}</a>{% endif %}</p>
+  <p class="text-[11.5px] text-muted">{% if invoice.edited_at %}<span title="{{ invoice.edit_note }}">Edited {{ invoice.edited_at|date:"M j" }}{% if invoice.edited_by %} by {{ invoice.edited_by.first_name|default:invoice.edited_by.email }}{% endif %}</span>{% endif %}{% if invoice.edited_at and invoice.replaces %} · {% endif %}{% if invoice.replaces %}<a href="{% url 'billing' %}?group={{ invoice.group_id }}&amp;invoice={{ invoice.replaces.pk }}" class="hover:text-ink underline-offset-2 hover:underline focus-gold rounded">Replaces {{ invoice.replaces.label }}</a>{% endif %}</p>
   {% endif %}
   {% if invoice.sync and invoice.sync.state == 'error' %}
   <p class="text-[11.5px] text-rose-600 mt-1">{{ invoice.sync.error }}</p>

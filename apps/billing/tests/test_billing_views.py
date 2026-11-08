@@ -453,6 +453,50 @@ def test_sync_endpoint_pushes_now(accountant, mapping, realm) -> None:
     assert invoice.number == "1042" and invoice.qbo_sync_state == SyncState.SYNCED
 
 
+def _prefs(close: str | None = None) -> dict:
+    info = {} if close is None else {"BookCloseDate": close}
+    return {"Preferences": {"AccountingInfoPrefs": info}}
+
+
+def test_sync_endpoint_reads_the_closing_date_before_pushing(accountant, mapping, realm) -> None:
+    from django.utils import timezone
+
+    from apps.billing import qbo_invoices
+
+    # In QuickBooks, edited here; the bookkeeper closed March since the last hourly run.
+    invoice = _open_invoice(
+        qbo_id="900",
+        qbo_realm_id="123",
+        number="1042",
+        qbo_txn_date=date(2026, 3, 1),
+        qbo_edit_requested_at=timezone.now(),
+    )
+    with (
+        patch(CONNECTED, return_value=True),
+        patch(QBO_REQUEST, side_effect=[_prefs("2026-03-31")]) as req,
+    ):
+        resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
+    assert resp.status_code == 200
+    assert resp.json()["error"] == qbo_invoices.CLOSED_UPDATE_MESSAGE
+    assert [c.args for c in req.call_args_list] == [("GET", "preferences")]
+    assert QboAccountMapping.load().book_close_date == date(2026, 3, 31)
+
+
+def test_sync_endpoint_pushes_when_the_closing_date_cant_be_read(
+    accountant, mapping, realm
+) -> None:
+    from apps.integrations import qbo
+
+    invoice = _open_invoice()
+    down = qbo.QboAPIError(503, "down")
+    with (
+        patch(CONNECTED, return_value=True),
+        patch(QBO_REQUEST, side_effect=[down, _qbo_answer()]),
+    ):
+        resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
+    assert resp.json() == {"ok": True, "state": "synced", "error": "", "number": "1042"}
+
+
 def test_sync_endpoint_400_when_not_connected(accountant) -> None:
     invoice = _open_invoice()
     with patch(CONNECTED, return_value=False):
@@ -618,9 +662,10 @@ def test_replace_endpoint_creates_new_and_highlights_it(accountant) -> None:
         "ok": True,
         "redirect": f"{reverse('billing')}?group={old.group_id}&invoice={new.pk}",
     }
-    # The date defaults to today, the PO carries over, the memo names the old invoice.
+    # The date defaults to today, a blank PO clears it (the form starts with the old one),
+    # the memo names the old invoice.
     assert new.invoice_date == timezone.localdate()
-    assert (new.po_number, new.memo) == ("4471", "Replaces Invoice 1042")
+    assert (new.po_number, new.memo) == ("", "Replaces Invoice 1042")
 
 
 def test_endpoints_gated(client) -> None:
@@ -705,6 +750,9 @@ def test_row_shows_edited_and_replaced_links(accountant) -> None:
         html = accountant.get(reverse("billing"), {"group": old.group_id}).content.decode()
     edited = timezone.localtime(new.edited_at)
     assert f"Edited {edited:%b} {edited.day} by Ana" in html
+    # What changed, on hover.
+    assert new.edit_note.startswith("date 2026-11-05 → 2026-11-06")
+    assert f'title="{new.edit_note}"' in html
     base = f"{reverse('billing')}?group={old.group_id}&amp;invoice="
     assert f'href="{base}{old.pk}"' in html and "Replaces Invoice 1042" in html
     # The old one waits in "Voids waiting for QuickBooks" and points at its replacement.

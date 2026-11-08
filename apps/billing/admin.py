@@ -113,6 +113,8 @@ class QboAccountMappingAdmin(admin.ModelAdmin):
         "sales_deposit_account",
         "customer_docs_from",
     )
+    # Read from QuickBooks by the hourly sync and Settings → QuickBooks (APC-109).
+    readonly_fields = ("book_close_date",)
 
     def has_add_permission(self, request):
         return False
@@ -138,10 +140,26 @@ class InvoiceAdmin(admin.ModelAdmin):
     inlines = [InvoiceLineInline]
 
     def get_readonly_fields(self, request, obj=None):
-        """Lines and the total are frozen at creation; status changes go through void."""
+        """Lines and the total are frozen at creation; status changes go through void. The
+        date, PO and memo change through Edit on the Billing page (APC-109), which queues the
+        change for QuickBooks and refuses a closed period; the rest is that edit's record."""
         if obj is None:
             return self.readonly_fields
-        return (*self.readonly_fields, "status", "total", "group", "number")
+        return (
+            *self.readonly_fields,
+            "status",
+            "total",
+            "group",
+            "number",
+            "invoice_date",
+            "po_number",
+            "memo",
+            "edited_at",
+            "edited_by",
+            "edit_note",
+            "qbo_edit_requested_at",
+            "qbo_txn_date",
+        )
 
 
 @admin.register(CustomerLink)

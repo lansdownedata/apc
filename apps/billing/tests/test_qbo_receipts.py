@@ -952,8 +952,6 @@ def test_hourly_never_updates_a_linked_receipt(ready) -> None:
 
 
 def test_receipt_retry_refused_in_closed_period(ready) -> None:
-    from apps.billing.invoices import CLOSED_PERIOD_MESSAGE
-
     charge = _card_charge(qbo_id="900", qbo_sync_token="2", qbo_realm_id="123")
     ready.book_close_date = qbo_receipts.txn_date(charge)
     ready.save()
@@ -963,7 +961,9 @@ def test_receipt_retry_refused_in_closed_period(ready) -> None:
     req.assert_not_called()
     charge.refresh_from_db()
     assert charge.qbo_sync_state == SyncState.ERROR
-    assert charge.qbo_sync_error == CLOSED_PERIOD_MESSAGE
+    assert charge.qbo_sync_error == (
+        "This change didn't reach QuickBooks: the period is closed there."
+    )
     assert _alerts().count() == 1
     # A receipt never sent is a create: QuickBooks decides, not the closing date.
     fresh = _card_charge()

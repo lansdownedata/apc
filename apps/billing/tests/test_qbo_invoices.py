@@ -167,7 +167,7 @@ def test_payload_shape_exact():
         ],
     }
     assert "DocNumber" not in body
-    # An update is the whole object, so it carries the number QuickBooks gave it.
+    # An update carries the number QuickBooks gave it.
     invoice.qbo_id, invoice.qbo_realm_id, invoice.number = "900", "123", "1042"
     assert qbo_invoices.invoice_payload(invoice, "123")["DocNumber"] == "1042"
     # Linked in another company only: a create here, never that company's number.
@@ -180,6 +180,15 @@ def test_payload_without_term_po_email_memo():
     for key in ("SalesTermRef", "BillEmail", "PrivateNote", "DocNumber"):
         assert key not in body
     assert body["Line"][0]["Description"] == "Trip 920.00"
+
+
+def test_update_payload_clears_the_note_when_po_and_memo_are_blank():
+    invoice = _invoice(po="", memo="")
+    invoice.qbo_id, invoice.qbo_realm_id, invoice.number = "900", "123", "1042"
+    # Sparse: a key left out keeps what QuickBooks has, so a cleared note is sent blank.
+    body = qbo_invoices.invoice_payload(invoice, "123")
+    assert body["PrivateNote"] == ""
+    assert body["DocNumber"] == "1042"
 
 
 def test_payload_refuses_without_trip_item():
@@ -808,13 +817,38 @@ def test_refresh_preferences_reads_book_close_date():
         assert QboAccountMapping.load().book_close_date is None
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {},
+        {"Preferences": None},
+        {"Preferences": []},
+        {"Preferences": {"AccountingInfoPrefs": None}},
+        {"Preferences": {"AccountingInfoPrefs": "2026-10-31"}},
+        _prefs("31/10/2026"),
+        _prefs("2026-02-30"),
+        _prefs(20261031),
+    ],
+)
+def test_refresh_preferences_warns_on_a_missing_or_malformed_answer(answer, caplog):
+    with patch(REQ, return_value=answer), caplog.at_level("WARNING", logger=qbo_invoices.__name__):
+        assert qbo_invoices.refresh_preferences() is None
+    assert any("preferences" in r.getMessage() for r in caplog.records)
+
+
+def test_refresh_preferences_is_quiet_when_no_closing_date_is_set(caplog):
+    with patch(REQ, return_value=_prefs()), caplog.at_level("WARNING"):
+        assert qbo_invoices.refresh_preferences() is None
+    assert caplog.records == []
+
+
 def _edit(invoice, **kw):
     args = {"invoice_date": invoice.invoice_date, "po_number": "", "memo": "", "user": None}
     args.update(kw)
     return invoices.edit_invoice(Invoice.objects.get(pk=invoice.pk), **args)
 
 
-def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
+def test_edited_invoice_is_pushed_as_sparse_update_and_stamp_cleared(mapping):
     invoice = _pushed(_open_invoice())
     assert invoice.qbo_txn_date == date(2026, 3, 1)
     _edit(invoice, invoice_date=date(2026, 3, 5), memo="Fixed")
@@ -828,7 +862,7 @@ def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
         "requestid": f"apc-{qbo_bills._digest(body)}-i{invoice.pk}-u0"[:50]
     }
     assert (body["Id"], body["SyncToken"]) == ("900", "0")
-    assert "sparse" not in body
+    assert body["sparse"] is True
     assert body["DocNumber"] == "1042"
     assert body["TxnDate"] == "2026-03-05"
     assert body["PrivateNote"] == "Fixed"
@@ -865,7 +899,9 @@ def test_update_refused_when_the_date_quickbooks_holds_is_closed(mapping):
     req.assert_not_called()
     invoice.refresh_from_db()
     assert invoice.qbo_sync_state == SyncState.ERROR
-    assert invoice.qbo_sync_error == invoices.CLOSED_PERIOD_MESSAGE
+    assert invoice.qbo_sync_error == (
+        "This edit didn't reach QuickBooks: the period is closed there."
+    )
     # Nor can it be voided here: QuickBooks still holds it in October.
     with pytest.raises(invoices.InvoiceError, match="In a closed period"):
         invoices.void_invoice(invoice, reason="Wrong date", user=None)
@@ -931,10 +967,35 @@ def test_queued_edit_refused_when_period_closes(mapping):
     req.assert_not_called()
     invoice.refresh_from_db()
     assert invoice.qbo_sync_state == SyncState.ERROR
-    assert invoice.qbo_sync_error == invoices.CLOSED_PERIOD_MESSAGE
+    assert invoice.qbo_sync_error == qbo_invoices.CLOSED_UPDATE_MESSAGE
     assert invoice.qbo_edit_requested_at is not None
     assert _alerts().count() == 1
-    assert _alerts().get().detail == invoices.CLOSED_PERIOD_MESSAGE
+    assert _alerts().get().detail == qbo_invoices.CLOSED_UPDATE_MESSAGE
+
+
+def test_edit_of_an_invoice_pushed_before_0011_is_gated_on_its_old_date(mapping):
+    invoice = _pushed(_open_invoice())  # QuickBooks holds 2026-03-01
+    Invoice.objects.filter(pk=invoice.pk).update(qbo_txn_date=None)  # as before migration 0011
+    _edit(invoice, invoice_date=date(2026, 4, 5))
+    _close_books(mapping, date(2026, 3, 31))  # March closed before the hourly run
+    with patch(REQ) as req:
+        assert qbo_invoices.sync_pending() == 0
+    req.assert_not_called()
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == qbo_invoices.CLOSED_UPDATE_MESSAGE
+
+
+def test_edit_while_disconnected_is_sent_after_reconnecting(mapping):
+    invoice = _pushed(_open_invoice())
+    with patch("apps.billing.qbo_sync.current_realm", return_value=""):
+        _edit(invoice, invoice_date=date(2026, 3, 5), memo="Fixed")
+    invoice.refresh_from_db()
+    assert list(qbo_invoices.pending_invoices("123", START)) == [invoice]
+    with patch(REQ, return_value=_sent(invoice, token="1")) as req:
+        assert qbo_invoices.sync_pending() == 1
+    body = req.call_args.kwargs["json"]
+    assert (body["Id"], body["TxnDate"], body["PrivateNote"]) == ("900", "2026-03-05", "Fixed")
 
 
 def test_create_is_never_gated_by_the_closing_date(mapping):

@@ -15,7 +15,7 @@ from apps.billing.factories import (
     InvoiceLineFactory,
     QboItemFactory,
 )
-from apps.billing.models import Invoice, QboAccountMapping, SyncState
+from apps.billing.models import AccountGroup, Invoice, QboAccountMapping, SyncState
 from apps.billing.tests._helpers import _processed_trip
 from apps.billing.tests.test_qbo_invoices import _fault
 from apps.notifications.models import Notification
@@ -77,7 +77,23 @@ def test_edit_changes_date_po_memo_and_due_date() -> None:
     assert edited.memo == "Nov fix"
     assert edited.edited_by == user
     assert edited.edited_at is not None
-    assert edited.edit_note == "date 2026-11-01 → 2026-11-05 · PO 4471 → 4480 · memo changed"
+    assert edited.edit_note == (
+        "date 2026-11-01 → 2026-11-05 · due 2026-12-01 → 2026-12-05 · PO 4471 → 4480 · memo changed"
+    )
+
+
+def test_edit_moves_the_due_date_only_with_the_invoice_date() -> None:
+    invoice = _invoice()
+    # The group's terms changed since the invoice was made: a PO fix leaves the due date be.
+    AccountGroup.objects.filter(pk=invoice.group_id).update(terms="net_15")
+    edited = _edit(Invoice.objects.get(pk=invoice.pk), po_number="4480")
+    edited.refresh_from_db()
+    assert edited.due_date == date(2026, 12, 1)
+    assert edited.edit_note == "PO 4471 → 4480"
+    edited = _edit(edited, invoice_date=date(2026, 11, 2))
+    edited.refresh_from_db()
+    assert edited.due_date == date(2026, 11, 17)
+    assert edited.edit_note == "date 2026-11-01 → 2026-11-02 · due 2026-12-01 → 2026-11-17"
 
 
 def test_edit_never_touches_lines_or_total() -> None:
@@ -145,6 +161,51 @@ def test_edit_of_linked_invoice_queues_update() -> None:
     assert invoice.qbo_edit_requested_at is not None
     assert invoice.qbo_sync_state == SyncState.NOT_SYNCED
     assert invoice.qbo_sync_error == ""
+
+
+def test_edit_while_disconnected_is_queued_for_reconnect() -> None:
+    # No company to compare (as `void_invoice`): one with a QuickBooks id counts as there.
+    invoice = _invoice(qbo_id="55", qbo_realm_id="123", qbo_sync_state=SyncState.SYNCED)
+    with patch(REALM, return_value=""):
+        _edit(invoice, memo="new memo")
+    invoice.refresh_from_db()
+    assert invoice.qbo_edit_requested_at is not None
+    assert invoice.qbo_sync_state == SyncState.NOT_SYNCED
+
+
+def test_edit_of_a_linked_invoice_with_no_held_date_holds_its_old_one() -> None:
+    # Pushed before QuickBooks' date was kept (migration 0011): it holds the invoice's date.
+    invoice = _invoice(qbo_id="55", qbo_realm_id="123", qbo_sync_state=SyncState.SYNCED)
+    assert invoice.qbo_txn_date is None
+    with patch(REALM, return_value="123"):
+        _edit(invoice, invoice_date=date(2026, 11, 5))
+    invoice.refresh_from_db()
+    assert invoice.qbo_txn_date == date(2026, 11, 1)
+    _close_books(date(2026, 11, 3))
+    assert invoices.closed_in_quickbooks(invoice) is True
+    # Never sent: nothing held there.
+    unsent = _invoice()
+    _close_books(date(2026, 10, 31))
+    _edit(unsent, invoice_date=date(2026, 11, 5))
+    unsent.refresh_from_db()
+    assert unsent.qbo_txn_date is None
+
+
+def test_backfill_sets_the_held_date_on_pushed_invoices() -> None:
+    from importlib import import_module
+
+    from django.apps import apps as django_apps
+
+    backfill = import_module("apps.billing.migrations.0012_backfill_qbo_txn_date")
+    pushed = _invoice(qbo_id="55", qbo_realm_id="123")
+    held = _invoice(qbo_id="56", qbo_realm_id="123", qbo_txn_date=date(2026, 10, 30))
+    unsent = _invoice()
+    backfill.forwards(django_apps, None)
+    for row in (pushed, held, unsent):
+        row.refresh_from_db()
+    assert pushed.qbo_txn_date == date(2026, 11, 1)
+    assert held.qbo_txn_date == date(2026, 10, 30)
+    assert unsent.qbo_txn_date is None
 
 
 def test_edit_of_invoice_from_other_realm_does_not_queue() -> None:
@@ -260,7 +321,7 @@ def test_replace_voids_and_recreates_linked_both_ways(accountant) -> None:
     assert set(new.lines.values_list("reservation_id", flat=True)) == {t.pk for t in trips}
     assert new.invoice_date == date(2026, 11, 5)
     assert new.memo == "Replaces Invoice 1042"
-    assert new.po_number == "4471"
+    assert new.po_number == ""  # a blank PO clears it
     assert old.qbo_void_requested_at is not None
 
 
@@ -268,6 +329,40 @@ def test_replace_keeps_given_po_and_memo(accountant) -> None:
     old, _ = _invoiced(accountant)
     new = _replace(old, accountant, po_number="9", memo="Fixed")
     assert (new.po_number, new.memo) == ("9", "Fixed")
+
+
+def test_replace_strips_the_po_as_entered(accountant) -> None:
+    old, _ = _invoiced(accountant)
+    assert _replace(old, accountant, po_number="  4480 ").po_number == "4480"
+
+
+def test_replace_of_a_linked_invoice_cannot_be_dated_before_the_start_date(accountant) -> None:
+    import re
+
+    QboAccountMapping.objects.update_or_create(
+        pk=1, defaults={"customer_docs_from": date(2026, 11, 1)}
+    )
+    message = (
+        "Invoices already in QuickBooks can't be dated before the QuickBooks start date "
+        "(Nov 1, 2026)."
+    )
+    linked, _ = _invoiced(accountant, qbo_id="900", qbo_realm_id="123")
+    for realm in ("123", ""):  # connected to its company, or disconnected
+        with (
+            patch(REALM, return_value=realm),
+            pytest.raises(invoices.InvoiceError, match=re.escape(message)),
+        ):
+            _replace(linked, accountant, invoice_date=date(2026, 10, 31))
+        _still_open(linked)
+    with patch(REALM, return_value="123"):
+        assert _replace(linked, accountant, invoice_date=date(2026, 11, 1)).invoice_date == (
+            date(2026, 11, 1)
+        )
+        # Never sent: the replacement simply stays out of QuickBooks.
+        unsent, _ = _invoiced(accountant)
+        assert _replace(unsent, accountant, invoice_date=date(2026, 10, 31)).invoice_date == (
+            date(2026, 10, 31)
+        )
 
 
 def test_replace_refused_in_closed_period(accountant) -> None:
@@ -374,10 +469,12 @@ def test_replace_needs_a_po_when_the_group_requires_one(accountant) -> None:
     with pytest.raises(invoices.InvoiceError, match="This group needs a PO number."):
         _replace(old, accountant, po_number="  ")
     _still_open(old)
-    # The old invoice's PO carries over when none is given.
+    # A blank clears the old invoice's PO, so the group's rule refuses it.
     old.po_number = "4471"
     old.save()
-    assert _replace(old, accountant, po_number="").po_number == "4471"
+    with pytest.raises(invoices.InvoiceError, match="This group needs a PO number."):
+        _replace(old, accountant, po_number="")
+    _still_open(old)
 
 
 def test_replace_refused_when_the_new_date_is_in_a_closed_period(accountant) -> None:
@@ -421,3 +518,25 @@ def test_closed_in_quickbooks_takes_a_loaded_config() -> None:
     assert len(queries) == 0
     config.book_close_date = date(2026, 10, 31)
     assert invoices.closed_in_quickbooks(invoice, config) is False
+
+
+def test_invoice_admin_keeps_corrections_and_quickbooks_dates_read_only(rf) -> None:
+    from django.contrib.admin.sites import site
+
+    request = rf.get("/")
+    request.user = UserFactory(is_superuser=True, is_staff=True)
+    readonly = set(site._registry[Invoice].get_readonly_fields(request, _invoice()))
+    assert {
+        "invoice_date",
+        "po_number",
+        "memo",
+        "edited_at",
+        "edited_by",
+        "edit_note",
+        "qbo_edit_requested_at",
+        "qbo_txn_date",
+    } <= readonly
+    mapping = QboAccountMapping.load()
+    assert "book_close_date" in site._registry[QboAccountMapping].get_readonly_fields(
+        request, mapping
+    )

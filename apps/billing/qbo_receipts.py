@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db.models import Exists, OuterRef, Prefetch, Q
 
-from apps.billing.invoices import CLOSED_PERIOD_MESSAGE, in_closed_period, line_description
+from apps.billing.invoices import in_closed_period, line_description
 from apps.billing.models import AccountGroup, BillingAccount, CustomerLink, SyncState
 from apps.billing.qbo_invoices import (
     DESCRIPTION_MAX,
@@ -290,6 +290,8 @@ NO_DEPOSIT_ACCOUNT = (
     "Waiting: choose the deposit account for card payments in Settings \u2192 QuickBooks."
 )
 WAITING_FOR_CUSTOMER = "Waiting for the customer in QuickBooks."
+# A Retry of a receipt in QuickBooks dated inside the closed period (APC-109).
+CLOSED_UPDATE_MESSAGE = "This change didn't reach QuickBooks: the period is closed there."
 # QuickBooks' limit for PaymentRefNum.
 PAYMENT_REF_MAX = 21
 
@@ -582,7 +584,7 @@ def push_receipt(charge) -> bool:
         if customer_ref(_contact(charge), realm) is None:
             return False  # waits for its customer, with nothing said
         if _closed_update(charge, realm):
-            _fail(_receipt_link(charge)[0], CLOSED_PERIOD_MESSAGE)
+            _fail(_receipt_link(charge)[0], CLOSED_UPDATE_MESSAGE)
             return False
         return _push_receipt(charge, realm)
 
