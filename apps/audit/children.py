@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from auditlog.context import auditlog_disabled
 from django.db.models import Model
 
 from apps.addresses.models import Address
@@ -61,9 +62,14 @@ def _route(reservation_id: int) -> list[dict[str, str | None]]:
 
 
 def _passenger_label(passenger: Passenger) -> str:
-    """The name, else the mobile masked to its last four; the lead is marked."""
-    who = passenger.name or (f"•••{passenger.mobile[-4:]}" if passenger.mobile else "")
-    return f"{who} (lead)" if passenger.is_lead else who
+    """The name, the lead marker and the mobile masked to its last four, each when present:
+    "Ana Ruiz (lead) •••1234". The mobile is always shown, since messages go to it."""
+    parts = [passenger.name] if passenger.name else []
+    if passenger.mobile:
+        parts.append(f"•••{passenger.mobile[-4:]}")
+    if passenger.is_lead:
+        parts.insert(1 if passenger.name else len(parts), "(lead)")
+    return " ".join(parts)
 
 
 def _passengers(reservation_id: int) -> str:
@@ -76,7 +82,7 @@ def _snapshot(reservation_id: int, *, route: bool, passengers: bool) -> dict:
     if route:
         snap["route"] = _route(reservation_id)
     if passengers:
-        snap["passengers"] = _passengers(reservation_id)
+        snap["named_passengers"] = _passengers(reservation_id)
     return snap
 
 
@@ -103,24 +109,31 @@ def track_children(
 ) -> Iterator[None]:
     """Log what the block did to the trip's route and/or named passengers as one entry.
 
-    One SELECT per tracked set on the way in and again on the way out, and one INSERT when
-    anything differs. An exception in the block writes nothing.
+    The passenger list is keyed `named_passengers`: `passengers` is the trip's own headcount
+    field, logged by auditlog on the trip's save. One SELECT per tracked set on the way in
+    and again on the way out, and one INSERT when anything differs. An exception in the
+    block writes nothing, and so does a block run under auditlog's `disable_auditlog()`.
     """
+    if auditlog_disabled.get():
+        yield
+        return
     before = _snapshot(reservation.pk, route=route, passengers=passengers)
     yield
     after = _snapshot(reservation.pk, route=route, passengers=passengers)
     changes: Changes = {}
     if route:
         changes.update(_route_changes(before["route"], after["route"]))
-    if passengers and before["passengers"] != after["passengers"]:
-        changes["passengers"] = [before["passengers"], after["passengers"]]
+    if passengers and before["named_passengers"] != after["named_passengers"]:
+        changes["named_passengers"] = [before["named_passengers"], after["named_passengers"]]
     if changes:
         AuditEntry.objects.log_create(reservation, action=AuditEntry.Action.UPDATE, changes=changes)
 
 
 def _address_values(address: Address | None) -> dict[str, str]:
+    """The compared fields; with no address yet, what a new Address starts with (so a first
+    address that leaves the default country alone logs no country change)."""
     if address is None:
-        return dict.fromkeys(ADDRESS_FIELDS, "")
+        return {name: Address._meta.get_field(name).get_default() for name in ADDRESS_FIELDS}
     return {name: getattr(address, name) for name in ADDRESS_FIELDS}
 
 
@@ -129,10 +142,14 @@ def track_address(owner: Model, *, slot: str) -> Iterator[None]:
     """Log what the block did to the address in `owner.<slot>` as one entry on the owner.
 
     The block may write a different Address instance than the owner holds, so the slot is
-    re-read from the database afterwards. A first address reads as blank before. The owner's
-    own FK change, when the slot is filled for the first time, is auditlog's entry on the
-    owner's save and is not repeated here.
+    re-read from the database afterwards. A first address reads as the model's defaults
+    before. The owner's own FK change, when the slot is filled for the first time, is
+    auditlog's entry on the owner's save and is not repeated here. Nothing is written under
+    auditlog's `disable_auditlog()`.
     """
+    if auditlog_disabled.get():
+        yield
+        return
     before = _address_values(getattr(owner, slot))
     yield
     fresh = type(owner).objects.select_related(slot).get(pk=owner.pk)

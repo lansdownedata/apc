@@ -35,12 +35,14 @@ class AuditEntryManager(LogEntryManager):
     @staticmethod
     def _without_equivalents(instance: models.Model, changes: dict) -> dict:
         """Drop pairs that differ only as text: auditlog compares `str()`s, so an editor
-        assigning Decimal("185") over a stored 185.00 would read as a change."""
+        assigning Decimal("185") over a stored 185.00 would read as a change. Only the
+        model's own columns are compared; any other key (a reverse relation's name used by an
+        explicit entry, e.g. `named_passengers`) is kept as given."""
         kept = {}
         for name, (old, new) in changes.items():
             try:
                 field = instance._meta.get_field(name)
-                same = field.to_python(old) == field.to_python(new)
+                same = field.concrete and field.to_python(old) == field.to_python(new)
             except (FieldDoesNotExist, ValidationError, TypeError, ValueError):
                 same = False
             if not same:

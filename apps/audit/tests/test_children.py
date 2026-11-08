@@ -1,12 +1,13 @@
 """Route, passengers and addresses: logged on their owner, not registered (spec §3.3, §3.4)."""
 
 import pytest
+from auditlog.context import disable_auditlog
 from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AddressFactory, AirlineFactory, AirportFactory
-from apps.audit.children import track_children
+from apps.audit.children import track_address, track_children
 from apps.audit.context import audit_context
 from apps.audit.models import AuditEntry
 from apps.contacts.factories import ContactFactory
@@ -41,7 +42,7 @@ def _trip_updates(trip):
 
 
 def _child_entries(trip, prefix: str = "route"):
-    """The trip's UPDATE entries carrying a `route...` (or `passengers`) key."""
+    """The trip's UPDATE entries carrying a `route...` (or `named_passengers`) key."""
     return [
         e for e in _trip_updates(trip) if any(key.startswith(prefix) for key in e.changes or {})
     ]
@@ -166,7 +167,7 @@ def test_gnet_apply_update_logs_route_and_passengers():
     req = _gnet_request(payload)
     res = req.reservation
     (created,) = _child_entries(res)
-    assert created.changes["passengers"] == ["", "Alex Smith"]
+    assert created.changes["named_passengers"] == ["", "Alex Smith"]
     assert created.changes["route.1"][0] is None
 
     update = sample_payload()
@@ -180,7 +181,7 @@ def test_gnet_apply_update_logs_route_and_passengers():
     (entry,) = [e for e in _child_entries(res) if e.pk != created.pk]
     assert entry.changes == {
         "route.2.address": ["9876 Wilshire Blvd, Beverly Hills, CA 90210, USA", "200 N Rodeo Dr"],
-        "passengers": ["Alex Smith", "Dana Lee (lead), Sam Ray"],
+        "named_passengers": ["Alex Smith", "Dana Lee (lead) •••0123, Sam Ray"],
     }
 
 
@@ -241,8 +242,10 @@ def test_save_passengers_logs_names_with_lead_marker():
         ],
     )
 
-    (entry,) = _child_entries(res, "passengers")
-    assert entry.changes == {"passengers": ["", "Ana Ruiz (lead), Ben Ortiz, •••1234"]}
+    (entry,) = _child_entries(res, "named_passengers")
+    assert entry.changes == {
+        "named_passengers": ["", "Ana Ruiz (lead) •••0123, Ben Ortiz •••0124, •••1234"]
+    }
 
 
 def test_save_passengers_same_list_logs_nothing():
@@ -262,8 +265,14 @@ def test_save_passengers_same_list_logs_nothing():
 @pytest.mark.parametrize(
     "after,expected",
     [
-        ([("Ben Ortiz", False), ("Ana Ruiz", True)], "Ben Ortiz, Ana Ruiz (lead)"),
-        ([("Ana Ruiz", False), ("Ben Ortiz", True)], "Ana Ruiz, Ben Ortiz (lead)"),
+        (
+            [("Ben Ortiz", False), ("Ana Ruiz", True)],
+            "Ben Ortiz •••0124, Ana Ruiz (lead) •••0123",
+        ),
+        (
+            [("Ana Ruiz", False), ("Ben Ortiz", True)],
+            "Ana Ruiz •••0123, Ben Ortiz (lead) •••0124",
+        ),
     ],
     ids=["order", "lead-marker"],
 )
@@ -277,12 +286,47 @@ def test_save_passengers_order_or_lead_alone_logs(after, expected):
             {"name": "Ben Ortiz", "mobile": mobiles["Ben Ortiz"]},
         ],
     )
-    seen = {e.pk for e in _child_entries(res, "passengers")}
+    seen = {e.pk for e in _child_entries(res, "named_passengers")}
 
     save_passengers(res, [{"name": n, "mobile": mobiles[n], "is_lead": lead} for n, lead in after])
 
-    (entry,) = [e for e in _child_entries(res, "passengers") if e.pk not in seen]
-    assert entry.changes == {"passengers": ["Ana Ruiz (lead), Ben Ortiz", expected]}
+    (entry,) = [e for e in _child_entries(res, "named_passengers") if e.pk not in seen]
+    assert entry.changes == {
+        "named_passengers": ["Ana Ruiz (lead) •••0123, Ben Ortiz •••0124", expected]
+    }
+
+
+def test_save_passengers_lead_mobile_alone_logs():
+    """Messages go to the lead's number, so changing only that number is a change."""
+    res = TransferReservationFactory()
+    save_passengers(res, [{"name": "Ana Ruiz", "mobile": "+12025550123", "is_lead": True}])
+    seen = {e.pk for e in _child_entries(res, "named_passengers")}
+
+    save_passengers(res, [{"name": "Ana Ruiz", "mobile": "+12025559876", "is_lead": True}])
+
+    (entry,) = [e for e in _child_entries(res, "named_passengers") if e.pk not in seen]
+    assert entry.changes == {
+        "named_passengers": ["Ana Ruiz (lead) •••0123", "Ana Ruiz (lead) •••9876"]
+    }
+
+
+def test_headcount_and_names_in_one_save_log_two_distinct_keys():
+    lead = LeadFactory()
+    res = save_reservation_from_draft(lead, _payload())
+    save_reservation_from_draft(lead, reservation_draft(res), instance=res)
+    res.refresh_from_db()
+    seen = set(AuditEntry.objects.values_list("pk", flat=True))
+
+    draft = reservation_draft(res)
+    draft["pax"] = 5
+    draft["passengerList"] = [{"name": "Ana Ruiz", "mobile": "", "lead": False}]
+    save_reservation_from_draft(lead, draft, instance=res)
+
+    changes = [e.changes for e in _trip_updates(res).exclude(pk__in=seen)]
+    headcount = [c["passengers"] for c in changes if "passengers" in c]
+    names = [c["named_passengers"] for c in changes if "named_passengers" in c]
+    assert headcount == [["3", "5"]]
+    assert names == [["", "Ana Ruiz"]]
 
 
 # --- addresses ------------------------------------------------------------------------
@@ -319,6 +363,8 @@ def test_contact_address_update_logs_slot_fields(staff):
 
 
 def test_first_address_old_side_blank(staff):
+    """Blank before, except fields with a model default: no country was posted, so the
+    country the new Address defaults to is no change."""
     contact = ContactFactory()
     assert contact.billing_address_id is None
 
@@ -331,7 +377,6 @@ def test_first_address_old_side_blank(staff):
     assert entry.changes == {
         "billing_address.line1": ["", "14 Beacon St"],
         "billing_address.city": ["", "Boston"],
-        "billing_address.country": ["", "United States"],
     }
     # Pointing the contact at its new Address is auditlog's own entry on the save, not ours.
     contact.refresh_from_db()
@@ -363,3 +408,55 @@ def test_unchanged_address_post_logs_nothing(staff):
     )
 
     assert not AuditEntry.objects.exclude(pk__in=seen).exists()
+
+
+def test_first_address_posting_a_country_logs_it_from_the_default(staff):
+    contact = ContactFactory()
+
+    staff.post(
+        reverse("contact_address_update", args=[contact.pk, "primary"]),
+        {"city": "Toronto", "country": "Canada"},
+    )
+
+    (entry,) = _address_entries(Contact, contact, "primary_address.")
+    assert entry.changes == {
+        "primary_address.city": ["", "Toronto"],
+        "primary_address.country": ["United States", "Canada"],
+    }
+
+
+# --- auditlog switched off --------------------------------------------------------------
+
+
+def test_trackers_write_nothing_while_auditlog_is_disabled():
+    res = TransferReservationFactory()
+    contact = ContactFactory(primary_address=AddressFactory(city="Boston"))
+    seen = set(AuditEntry.objects.values_list("pk", flat=True))
+
+    with disable_auditlog():
+        with track_children(res, passengers=True):
+            Stop.objects.filter(reservation=res, sequence=1).update(address="Elsewhere")
+            save_passengers(res, [{"name": "Ana Ruiz"}])
+        with track_address(contact, slot="primary_address"):
+            contact.primary_address.city = "Cambridge"
+            contact.primary_address.save()
+
+    assert not AuditEntry.objects.exclude(pk__in=seen).exists()
+
+
+def test_reverse_with_propagate_logs_once_on_source_and_each_sibling():
+    res = TransferReservationFactory()
+    groups.set_group_size(res, 3)
+    res.refresh_from_db()
+    members = list(Reservation.objects.filter(group_key=res.group_key))
+    assert len(members) == 3
+    seen = set(AuditEntry.objects.values_list("pk", flat=True))
+
+    reverse_route(res, propagate=True)
+
+    for trip in members:
+        (entry,) = [e for e in _child_entries(trip) if e.pk not in seen]
+        assert entry.changes == {
+            "route.1.address": ["Pickup", "Drop-off"],
+            "route.2.address": ["Drop-off", "Pickup"],
+        }

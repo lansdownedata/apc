@@ -106,3 +106,15 @@ def test_effective_exclude_adds_the_timestamps_to_the_spec():
     exclude = registry.effective_exclude(Reservation)
 
     assert {"created_at", "updated_at", "extras_total", "sort_order"} <= set(exclude)
+
+
+def test_an_explicit_key_named_like_a_reverse_relation_is_kept():
+    """`named_passengers` is also the trip's reverse accessor; the equivalence check only
+    knows how to compare the model's own columns, so any other key is a change as given."""
+    r = ReservationFactory()
+
+    entry = AuditEntry.objects.log_create(
+        r, action=AuditEntry.Action.UPDATE, changes={"named_passengers": ["", "Ana Ruiz"]}
+    )
+
+    assert entry.changes == {"named_passengers": ["", "Ana Ruiz"]}
