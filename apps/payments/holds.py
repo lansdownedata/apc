@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import stripe
@@ -28,6 +29,9 @@ from apps.notifications.models import Notification
 
 from . import services, trip_money
 from .models import Charge, PaymentPlan
+
+if TYPE_CHECKING:
+    from apps.leads.models import Lead
 
 logger = logging.getLogger(__name__)
 
@@ -455,39 +459,43 @@ def _with_trips(queryset, prefix: str = ""):
     )
 
 
-def due_for_placement(now: datetime) -> list:
-    """Booked card orders with a held trip and no HOLD row yet (in any state) whose
-    placement moment has come: `hold_place_time` on the first held trip's day, in that
-    trip's zone (or any time after it), unless the order is already over (`_over`).
-
-    The database narrows by date across every zone at once (local dates sit within a day of
-    UTC's); the exact rule is checked per order in Python. A fixed handful of queries."""
+def _candidates(now: datetime, release_days: int):
+    """Booked card orders with a live held trip dated inside the window every zone's
+    "today" can fall in, and no HOLD row yet (in any state). One row per order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
     from apps.reservations.models import Reservation
-    from apps.tasks.models import TaskConfig
 
-    config = TaskConfig.load()
     latest = (now + timedelta(days=1)).date()
-    earliest = (now - timedelta(days=1)).date() - timedelta(days=config.hold_release_days)
+    earliest = (now - timedelta(days=1)).date() - timedelta(days=release_days)
     held = Reservation.objects.filter(lead=OuterRef("pk"), vehicle__cleaning_fee__gt=0).exclude(
         trip_status__in=CANCELLED_STATUSES
     )
-    leads = _with_trips(
+    # No join here multiplies rows; `distinct()` guards against a MySQL semi-join plan
+    # that was once seen returning an order per matching trip.
+    return _with_trips(
         Lead.objects.filter(status=Lead.Status.BOOKED, billing_group__isnull=True)
         .filter(Exists(held.filter(pickup_date__lte=latest)))
         .filter(Exists(held.filter(pickup_date__gte=earliest)))
         .exclude(Exists(Charge.objects.filter(plan__lead=OuterRef("pk"), kind=Charge.Kind.HOLD)))
         .select_related("contact__company")
         .order_by("pk")
+        .distinct()
     )
-    due, seen = [], set()
-    for lead in leads:
-        # Once seen locally (MySQL 8.0, fresh test tables), the semi-join gave a lead once
-        # per matching trip; a lead is placed once whatever plan the database picks.
-        if lead.pk in seen:
-            continue
-        seen.add(lead.pk)
+
+
+def due_for_placement(now: datetime) -> list[Lead]:
+    """The `_candidates` whose placement moment has come: `hold_place_time` on the first
+    held trip's day, in that trip's zone (or any time after it), unless the order is
+    already over (`_over`) or farmed in.
+
+    The database narrows by date across every zone at once (local dates sit within a day of
+    UTC's); the exact rule is checked per order in Python. A fixed handful of queries."""
+    from apps.tasks.models import TaskConfig
+
+    config = TaskConfig.load()
+    due = []
+    for lead in _candidates(now, config.hold_release_days):
         trips = _dated(_live_held(lead))
         if not trips or lead.is_farm_in or _over(trips, now, config.hold_release_days):
             continue
@@ -525,8 +533,14 @@ def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
 
     lead = hold.plan.lead
     live = _live_held(lead)
-    # A hold serves nothing once the order is lost or no held trip is left on it.
-    needed = lead.status == Lead.Status.BOOKED and bool(live)
+    # A hold serves nothing once the order is lost, billed to an account, farmed in, or
+    # has no held trip left: `eligible`, from the prefetched trips.
+    needed = (
+        lead.status == Lead.Status.BOOKED
+        and not lead.on_account
+        and not lead.is_farm_in
+        and bool(live)
+    )
     if hold.status == Charge.Status.PENDING:
         return _settle_pending(lead, hold, now, needed)
     if hold.captured_at is not None:
@@ -547,20 +561,11 @@ def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
 
 
 def _settle_pending(lead, hold: Charge, now: datetime, needed: bool) -> int:
-    """A hold Stripe has not finished answering for. With nothing left to hold for, an
-    intent Stripe created is cancelled; otherwise `place_hold` re-sends or reads it back,
-    and one still unanswered after the card-hold window is given up as FAILED."""
-    if not needed and hold.stripe_payment_intent_id:
-        try:
-            services._stripe().PaymentIntent.cancel(hold.stripe_payment_intent_id)
-        except stripe.error.StripeError:
-            if _stripe_status(hold) != "canceled":
-                logger.exception("cleaning hold: could not cancel pending charge %s", hold.pk)
-                return 0
-        hold.status = Charge.Status.RELEASED
-        hold.note = "no held trip left"
-        hold.save(update_fields=["status", "note", "updated_at"])
-        return 1
+    """A hold Stripe has not finished answering for. With nothing left to hold for it is
+    let go quietly (`_drop_pending`); otherwise `place_hold` re-sends or reads it back, and
+    one still unanswered after the card-hold window is given up as FAILED."""
+    if not needed:
+        return _drop_pending(hold)
     place_hold(lead, now=now)
     hold.refresh_from_db()
     if hold.status != Charge.Status.PENDING:
@@ -569,6 +574,28 @@ def _settle_pending(lead, hold: Charge, now: datetime, needed: bool) -> int:
         _unplaceable(lead, hold, "no answer from Stripe")
         return 1
     return 0
+
+
+def _drop_pending(hold: Charge) -> int:
+    """RELEASED, with no task or alert: the order no longer needs a hold. An intent Stripe
+    created is cancelled first. Under the plan lock and only while the row is still
+    PENDING, since overlapping runs (a cron retry on timeout) may have settled it."""
+    with transaction.atomic():
+        PaymentPlan.objects.select_for_update().get(pk=hold.plan_id)
+        hold.refresh_from_db()
+        if hold.status != Charge.Status.PENDING:
+            return 0
+        if hold.stripe_payment_intent_id:
+            try:
+                services._stripe().PaymentIntent.cancel(hold.stripe_payment_intent_id)
+            except stripe.error.StripeError:
+                if _stripe_status(hold) != "canceled":
+                    logger.exception("cleaning hold: could not cancel pending charge %s", hold.pk)
+                    return 0
+        hold.status = Charge.Status.RELEASED
+        hold.note = "no held trip left"
+        hold.save(update_fields=["status", "note", "updated_at"])
+    return 1
 
 
 def _flag_unbooked(lead) -> int:

@@ -144,8 +144,9 @@ def test_two_runs_one_row():
 def test_placement_follows_the_trips_zone():
     lead, _plan, _trips = _order("500.00", zone="America/Los_Angeles")
 
-    # 06:00 UTC is 10 PM the evening before in Los Angeles.
-    processed, create = _run(datetime.combine(DAY, time(6, 0), tzinfo=UTC))
+    # 09:00 UTC is 1 AM in Los Angeles, but already 4 AM in New York (the business zone):
+    # placing now would be reading the wrong clock.
+    processed, create = _run(datetime.combine(DAY, time(9, 0), tzinfo=UTC))
     assert (processed, create.call_count) == (0, 0)
 
     # 11:00 UTC is 3 AM in Los Angeles.
@@ -206,10 +207,13 @@ def test_due_for_placement_skips_unheld_and_already_held_orders():
 def test_due_for_placement_is_a_fixed_number_of_queries(django_assert_max_num_queries):
     for _ in range(4):
         _order("500.00", "250.00")
-    TaskConfig.load()
+    config = TaskConfig.load()
     with django_assert_max_num_queries(6):
         due = holds.due_for_placement(_at(DAY, time(3, 0)))
     assert len(due) == 4
+    # One row per order from the database, whatever plan it picks (2 held trips each).
+    rows = list(holds._candidates(_at(DAY, time(3, 0)), config.hold_release_days))
+    assert len(rows) == len({lead.pk for lead in rows}) == 4
 
 
 # --- the sweep ------------------------------------------------------------------------------
@@ -327,6 +331,54 @@ def test_sweep_cancels_a_pending_intent_with_no_held_trip_left():
     cancel.assert_called_once_with("pi_hold")
     hold.refresh_from_db()
     assert hold.status == Charge.Status.RELEASED
+
+
+def test_sweep_cancels_a_pending_intent_only_while_it_is_still_pending():
+    lead, _plan, (trip,) = _order("500.00")
+    with patch.object(stripe.PaymentIntent, "create", return_value=_intent(status="processing")):
+        stale = holds.place_hold(lead, now=_at(DAY, time(3, 0)))
+    # An overlapping run settled the row after this one read it.
+    Charge.objects.filter(pk=stale.pk).update(status=Charge.Status.AUTHORIZED)
+
+    with patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        assert holds._settle_pending(lead, stale, _at(DAY, time(12, 0)), needed=False) == 0
+
+    cancel.assert_not_called()
+    stale.refresh_from_db()
+    assert stale.status == Charge.Status.AUTHORIZED
+
+
+@pytest.mark.parametrize("change", ["lost", "trips_cancelled"])
+def test_sweep_quietly_settles_a_pending_hold_with_no_intent_nobody_needs(change):
+    lead, _plan, (trip,) = _order("500.00")
+    with patch.object(
+        stripe.PaymentIntent, "create", side_effect=stripe.error.APIConnectionError("no route")
+    ):
+        hold = holds.place_hold(lead, now=_at(DAY, time(3, 0)))
+    assert (hold.status, hold.stripe_payment_intent_id) == (Charge.Status.PENDING, "")
+    if change == "lost":
+        lead.status = Lead.Status.LOST
+        lead.save(update_fields=["status"])
+    else:
+        trip.trip_status = Reservation.TripStatus.CANCELLED
+        trip.save(update_fields=["trip_status"])
+    old = _at(DAY, time(3, 0)) - timedelta(days=services.AUTH_HOLD_DAYS + 1)
+    Charge.objects.filter(pk=hold.pk).update(created_at=old)
+
+    with (
+        patch.object(stripe.PaymentIntent, "create") as create,
+        patch.object(stripe.PaymentIntent, "cancel") as cancel,
+    ):
+        assert holds.sweep(_at(DAY, time(12, 0))) == 1
+
+    create.assert_not_called()
+    cancel.assert_not_called()
+    hold.refresh_from_db()
+    assert (hold.status, hold.note) == (Charge.Status.RELEASED, "no held trip left")
+    assert not Task.objects.filter(lead=lead).filter(kind__startswith="cleaning_hold").exists()
+    assert not Notification.objects.filter(lead=lead).exists()
+    lead.refresh_from_db()
+    assert lead.has_alert is False
 
 
 # --- cancelling -----------------------------------------------------------------------------
