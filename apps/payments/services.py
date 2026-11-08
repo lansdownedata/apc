@@ -757,6 +757,14 @@ def record_payment(
 
     with transaction.atomic():
         charge = _charge_for(plan, intent, payment_intent_id, kind)
+        if (
+            charge.kind == Charge.Kind.HOLD
+            and charge.reservation_id is None
+            and charge.status != Charge.Status.SUCCEEDED
+        ):
+            # A cleaning hold is booked by its capture for a trip (`holds.capture_hold`),
+            # never as order money for the whole authorization.
+            raise PaymentError("A cleaning hold is booked only when captured for a trip.")
         paid_event, receipt_now = _settle(
             plan, charge, payment_intent_id, memo="Balance captured" if balance_settled else None
         )

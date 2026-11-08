@@ -554,7 +554,8 @@ def test_a_capture_whose_reply_was_lost_recovers_and_posts_once():
         patch.object(stripe.PaymentIntent, "capture", side_effect=err),
         patch.object(stripe.PaymentIntent, "retrieve", return_value=captured),
     ):
-        charge = holds.capture_hold(trip, Decimal("250.00"))
+        # Asked for 400; Stripe took 250 (the first, lost capture): Stripe's figure wins.
+        charge = holds.capture_hold(trip, Decimal("400.00"))
 
     charge.refresh_from_db()
     assert (charge.status, charge.amount, charge.reservation) == (
@@ -610,3 +611,168 @@ def test_a_capture_already_taken_at_stripe_is_finished_not_taken_again():
     charge.refresh_from_db()
     assert (charge.status, charge.amount) == ("succeeded", Decimal("250.00"))
     assert JournalEntry.objects.filter(charge=hold).count() == 1
+
+
+# --- fix round 2: booked only for what was captured, whoever finishes it --------------------
+
+
+def _succeeded_event(lead, amount_received):
+    return _event("payment_intent.succeeded", lead, amount_received=amount_received)
+
+
+def test_a_succeeded_webhook_before_the_capture_is_saved_books_nothing_yet():
+    from apps.payments import webhooks
+
+    lead, _plan, _trips, hold = _placed("500.00")
+
+    webhooks.process_stripe_event(_succeeded_event(lead, 25000))
+
+    hold.refresh_from_db()
+    assert (hold.status, hold.amount, hold.reservation) == (
+        Charge.Status.AUTHORIZED,
+        Decimal("250.00"),
+        None,
+    )
+    assert hold.captured_at is not None
+    assert not JournalEntry.objects.filter(charge=hold).exists()
+
+
+def test_a_later_capture_adopts_a_hold_the_webhook_saw_captured():
+    from apps.payments import webhooks
+
+    lead, _plan, (trip,), hold = _placed("500.00")
+    err = stripe.error.APIConnectionError("Network down")
+    with (
+        patch.object(stripe.PaymentIntent, "capture", side_effect=err),
+        patch.object(stripe.PaymentIntent, "retrieve", side_effect=err),
+    ):
+        with pytest.raises(services.PaymentError):
+            holds.capture_hold(trip, Decimal("400.00"))
+    webhooks.process_stripe_event(_succeeded_event(lead, 25000))
+
+    with (
+        patch.object(stripe.PaymentIntent, "capture") as capture,
+        patch.object(
+            stripe.PaymentIntent,
+            "retrieve",
+            return_value=_intent(status="succeeded", amount=50000),
+        ),
+        patch("apps.payments.receipts.queue") as queue,
+    ):
+        charge = holds.capture_hold(trip, Decimal("400.00"))
+
+    capture.assert_not_called()
+    charge.refresh_from_db()
+    assert (charge.status, charge.amount, charge.reservation) == (
+        Charge.Status.SUCCEEDED,
+        Decimal("250.00"),
+        trip,
+    )
+    assert charge.receipt_lines == [["Cleaning fee", "250.00"]]
+    assert charge.receipt_due_at is not None
+    queue.assert_called_once()
+    entries = JournalEntry.objects.filter(charge=hold)
+    assert entries.count() == 1 and entries.get().reservation == trip
+
+
+def test_a_succeeded_webhook_racing_the_capture_still_books_the_trip():
+    from apps.payments import webhooks
+
+    lead, _plan, (trip,), hold = _placed("500.00")
+
+    def stripe_replies_and_the_webhook_lands(*args, **kwargs):
+        webhooks.process_stripe_event(_succeeded_event(lead, 25000))
+        return _intent(status="succeeded", amount=50000)
+
+    with (
+        patch.object(
+            stripe.PaymentIntent, "capture", side_effect=stripe_replies_and_the_webhook_lands
+        ),
+        patch.object(
+            stripe.PaymentIntent,
+            "retrieve",
+            return_value=_intent(status="succeeded", amount=50000),
+        ),
+        patch("apps.payments.receipts.queue") as queue,
+    ):
+        charge = holds.capture_hold(trip, Decimal("250.00"))
+
+    charge.refresh_from_db()
+    assert (charge.status, charge.amount, charge.reservation) == (
+        Charge.Status.SUCCEEDED,
+        Decimal("250.00"),
+        trip,
+    )
+    queue.assert_called_once()
+    entries = JournalEntry.objects.filter(charge=hold)
+    assert entries.count() == 1 and entries.get().reservation == trip
+
+
+def test_capture_locks_the_hold_row():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _lead, _plan, (trip,), _hold = _placed("500.00")
+    seen = []
+
+    def capture(*args, **kwargs):
+        seen.extend(q["sql"] for q in ctx.captured_queries)
+        return _intent(status="succeeded")
+
+    with (
+        CaptureQueriesContext(connection) as ctx,
+        patch.object(stripe.PaymentIntent, "capture", side_effect=capture),
+    ):
+        holds.capture_hold(trip, Decimal("250.00"))
+
+    # Held before Stripe is asked, so a webhook for this intent waits for the save.
+    assert any("payments_charge" in sql and "FOR UPDATE" in sql for sql in seen)
+
+
+def test_record_payment_refuses_to_book_a_hold_without_its_trip():
+    _lead, plan, _trips, hold = _placed("500.00")
+    with pytest.raises(services.PaymentError):
+        services.record_payment(
+            plan, hold.stripe_payment_intent_id, intent=_intent(status="succeeded")
+        )
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.AUTHORIZED
+    assert not JournalEntry.objects.filter(charge=hold).exists()
+
+
+@pytest.mark.parametrize("state", ["canceled", "succeeded"])
+def test_a_placement_stripe_already_settled_fails_once_and_stops(state):
+    lead, plan, _trips = _order("500.00")
+    row = plan.record_charge(kind=Charge.Kind.HOLD, amount=Decimal("500.00"), note="Cleaning hold")
+    row.stripe_payment_intent_id = "pi_hold"
+    row.save(update_fields=["stripe_payment_intent_id"])
+
+    with patch.object(
+        stripe.PaymentIntent, "retrieve", return_value=_intent(status=state)
+    ) as retrieve:
+        first = holds.place_hold(lead, now=NOW)
+        second = holds.place_hold(lead, now=NOW)
+
+    assert retrieve.call_count == 1
+    assert first == second and first.status == Charge.Status.FAILED
+    task = Task.objects.get(lead=lead, kind="cleaning_hold_failed")
+    assert task.note == f"Cleaning hold could not be placed: {state}"
+    assert Notification.objects.filter(lead=lead, kind=Notification.Kind.HOLD_FAILED).count() == 1
+
+
+def test_an_idempotency_conflict_on_the_resend_fails_once_and_stops():
+    lead, _plan, _trips = _order("500.00")
+    with patch.object(
+        stripe.PaymentIntent, "create", side_effect=stripe.error.APIConnectionError("down")
+    ):
+        holds.place_hold(lead, now=NOW)
+    conflict = stripe.error.IdempotencyError("Keys for idempotent requests can only be used...")
+
+    with patch.object(stripe.PaymentIntent, "create", side_effect=conflict) as create:
+        first = holds.place_hold(lead, now=NOW)
+        second = holds.place_hold(lead, now=NOW)
+
+    assert create.call_count == 1
+    assert first == second and first.status == Charge.Status.FAILED
+    task = Task.objects.get(lead=lead, kind="cleaning_hold_failed")
+    assert task.note.startswith("Cleaning hold could not be placed: ")

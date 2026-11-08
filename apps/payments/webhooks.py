@@ -17,8 +17,9 @@ _SUCCESS_KINDS = {
     "balance": Charge.Kind.BALANCE,
     "final": Charge.Kind.FINAL,
     "trip": Charge.Kind.TRIP,
-    # A cleaning-hold capture whose books never finished inline (APC-95): the row is found
-    # by its intent id and settled once under `record_payment`'s lock.
+    # A cleaning-hold capture whose books never finished inline (APC-95): booked once if
+    # our capture already tagged it with its trip, else only marked captured
+    # (`holds.record_captured`).
     "hold": Charge.Kind.HOLD,
 }
 
@@ -99,7 +100,12 @@ def _payment_succeeded(intent) -> None:
         return
 
     try:
-        services.record_payment(plan, intent["id"], kind=kind)
+        if kind == Charge.Kind.HOLD:
+            from . import holds
+
+            holds.record_captured(plan, intent)
+        else:
+            services.record_payment(plan, intent["id"], kind=kind)
     except Exception:
         logger.exception("Payment reconcile failed for intent %s", intent.get("id"))
 

@@ -126,11 +126,11 @@ def place_hold(lead, *, now=None) -> Charge | None:
     except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
         # The card said no, or the saved card is gone: a decline, recorded and not retried.
         reason = (getattr(exc, "user_message", None) or str(exc))[:255]
-        charge.status = Charge.Status.FAILED
-        charge.failure_reason = reason
-        charge.save(update_fields=["status", "failure_reason", "updated_at"])
-        _hold_failed(lead, f"Cleaning hold declined: {reason}", reason)
-        return charge
+        return _fail(lead, charge, reason, f"Cleaning hold declined: {reason}")
+    except stripe.error.IdempotencyError as exc:
+        # The key was reused for a different request: the re-send can never finish.
+        logger.error("cleaning hold: idempotency conflict for charge %s: %s", charge.pk, exc)
+        return _unplaceable(lead, charge, "idempotency conflict")
     except stripe.error.StripeError:
         logger.exception("cleaning hold: Stripe unreachable for charge %s", charge.pk)
         return charge
@@ -138,7 +138,12 @@ def place_hold(lead, *, now=None) -> Charge | None:
     if charge.stripe_payment_intent_id != intent.id:
         charge.stripe_payment_intent_id = intent.id
         charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
-    if getattr(intent, "status", "") != "requires_capture":
+    state = getattr(intent, "status", "")
+    if state in ("canceled", "succeeded"):
+        # Not a hold any more, and nothing this job can turn back into one.
+        logger.error("cleaning hold: charge %s intent %s is %s", charge.pk, intent.id, state)
+        return _unplaceable(lead, charge, state)
+    if state != "requires_capture":
         logger.warning(
             "cleaning hold: charge %s intent %s is %s, not awaiting capture",
             charge.pk,
@@ -154,6 +159,19 @@ def place_hold(lead, *, now=None) -> Charge | None:
     charge.save(update_fields=["status", "authorized_at", "capture_expires_at", "updated_at"])
     services._snapshot_plan_card(plan, charge)
     return charge
+
+
+def _fail(lead, charge: Charge, reason: str, title: str) -> Charge:
+    """Record the hold FAILED (the cron stops trying it) and tell staff, once."""
+    charge.status = Charge.Status.FAILED
+    charge.failure_reason = reason[:255]
+    charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    _hold_failed(lead, title, reason[:255])
+    return charge
+
+
+def _unplaceable(lead, charge: Charge, state: str) -> Charge:
+    return _fail(lead, charge, state, f"Cleaning hold could not be placed: {state}")
 
 
 def _create_intent(plan: PaymentPlan, charge: Charge):
@@ -226,7 +244,15 @@ def capture_hold(trip, amount) -> Charge:
     intent = None
     with transaction.atomic():
         plan = PaymentPlan.objects.select_for_update().get(lead=lead)
-        hold = current_hold(lead)
+        # The row itself, held across Stripe's capture and our save: a `succeeded` webhook
+        # for this intent locks the same row, so it waits and then sees the trip (APC-126).
+        hold = (
+            plan.charges.select_for_update()
+            .filter(kind=Charge.Kind.HOLD)
+            .exclude(status=Charge.Status.FAILED)
+            .order_by("-pk")
+            .first()
+        )
         if hold is None or hold.status != Charge.Status.AUTHORIZED:
             raise services.PaymentError("No cleaning hold to capture.")
         if hold.captured_at is None:
@@ -239,26 +265,15 @@ def capture_hold(trip, amount) -> Charge:
                 # Our reply was lost: what Stripe took is the fact, not what we asked for.
                 take = (Decimal(intent.amount_received) / 100).quantize(Decimal("0.01"))
             if not expired:
-                hold.reservation = trip
-                hold.amount = take
                 hold.captured_at = timezone.now()
-                hold.note = "Cleaning fee from the hold"
-                hold.receipt_lines = trip_money.charge_lines(
-                    trip, take, lines=[("Cleaning fee", take)]
-                )
-                hold.save(
-                    update_fields=[
-                        "reservation",
-                        "amount",
-                        "captured_at",
-                        "note",
-                        "receipt_lines",
-                        "updated_at",
-                    ]
-                )
+                _tag(hold, trip, take)
         else:
-            # Captured at Stripe by a call that stopped before the books: finish it below.
+            # Captured at Stripe, books not finished: by a call of ours that stopped before
+            # them, or seen by the webhook with no trip to book it against. This trip
+            # adopts it, for what Stripe took.
             expired = False
+            if hold.reservation_id is None:
+                _tag(hold, trip, Decimal(hold.amount))
     if expired:
         mark_expired(hold)
         raise services.PaymentError("The bank released the cleaning hold; charge the card instead.")
@@ -266,6 +281,50 @@ def capture_hold(trip, amount) -> Charge:
     return services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
     )
+
+
+def _tag(hold: Charge, trip, amount: Decimal) -> None:
+    """The captured hold is this trip's cleaning fee, for `amount`."""
+    hold.reservation = trip
+    hold.amount = amount
+    hold.note = "Cleaning fee from the hold"
+    hold.receipt_lines = trip_money.charge_lines(trip, amount, lines=[("Cleaning fee", amount)])
+    hold.save(
+        update_fields=[
+            "reservation",
+            "amount",
+            "captured_at",
+            "note",
+            "receipt_lines",
+            "updated_at",
+        ]
+    )
+
+
+def record_captured(plan: PaymentPlan, intent) -> Charge | None:
+    """`payment_intent.succeeded` for a hold. A capture our own call already tagged with its
+    trip is booked here (the same `record_payment`, once). One with no trip yet (our reply
+    was lost, or someone captured it at Stripe) is only marked captured, for what Stripe
+    took: it stays AUTHORIZED and unbooked until `capture_hold` adopts it for a trip, so
+    nothing books money against no trip or for more than was taken."""
+    pi_id = intent["id"]
+    with transaction.atomic():
+        hold = (
+            plan.charges.select_for_update()
+            .filter(kind=Charge.Kind.HOLD, stripe_payment_intent_id=pi_id)
+            .first()
+        )
+        if hold is None or hold.status != Charge.Status.AUTHORIZED:
+            return hold
+        if hold.reservation_id is None:
+            if hold.captured_at is None:
+                received = intent.get("amount_received") or 0
+                hold.captured_at = timezone.now()
+                if received:
+                    hold.amount = (Decimal(received) / 100).quantize(Decimal("0.01"))
+                hold.save(update_fields=["captured_at", "amount", "updated_at"])
+            return hold
+    return services.record_payment(plan, pi_id, kind=Charge.Kind.HOLD)
 
 
 def _capture(hold: Charge, take: Decimal) -> tuple[object | None, bool]:
