@@ -664,6 +664,19 @@ def _charge_for(plan: PaymentPlan, intent, payment_intent_id: str, kind: str) ->
     return charge
 
 
+def _memo(charge: Charge) -> str:
+    """What the ledger entry for a newly succeeded charge says."""
+    if charge.kind == Charge.Kind.DEPOSIT:
+        return "Deposit captured"
+    if charge.kind == Charge.Kind.HOLD:
+        if charge.reservation_id:
+            return f"Cleaning fee from the hold ({charge.reservation})"
+        return "Cleaning hold captured"
+    if charge.kind == Charge.Kind.TRIP:
+        return f"Trip charge ({charge.reservation})"
+    return "Card payment"
+
+
 def _settle(
     plan: PaymentPlan, charge: Charge, payment_intent_id: str, *, memo: str | None = None
 ) -> tuple[str | None, bool]:
@@ -695,16 +708,7 @@ def _settle(
         idempotency_key=f"capture-charge{charge.pk}",
         charge=charge,
         stripe_ref=payment_intent_id,
-        memo=memo
-        or (
-            "Deposit captured"
-            if is_deposit
-            else f"Cleaning fee from the hold ({charge.reservation})"
-            if is_trip and charge.kind == Charge.Kind.HOLD
-            else f"Trip charge ({charge.reservation})"
-            if is_trip
-            else "Card payment"
-        ),
+        memo=memo or _memo(charge),
         reservation=charge.reservation if is_trip else None,
     )
     return _PAID_EVENTS.get(charge.kind), receipt_now
@@ -768,7 +772,10 @@ def record_payment(
     if charge.kind == Charge.Kind.FINAL:
         _close_overtime_invoiced(plan.lead)
     elif charge.kind in TRIP_MONEY_KINDS and charge.reservation_id:
-        _close_overtime_invoiced(plan.lead, reservation_id=charge.reservation_id)
+        # A captured cleaning hold pays the cleaning fee only: the trip's overtime is still
+        # to collect, so only a trip charge closes its task.
+        if charge.kind == Charge.Kind.TRIP:
+            _close_overtime_invoiced(plan.lead, reservation_id=charge.reservation_id)
         # The trip's revenue follows its live total (spec 2026-10-25 §4.4): a charge on an
         # already-recognised trip moves the new money out of deferred into revenue.
         ledger.true_up_recognition(charge.reservation)

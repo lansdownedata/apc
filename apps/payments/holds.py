@@ -13,6 +13,7 @@ A card problem never raises out of here: a missing card or a decline opens one
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -24,6 +25,8 @@ from apps.notifications.models import Notification
 
 from . import services, trip_money
 from .models import Charge, PaymentPlan
+
+logger = logging.getLogger(__name__)
 
 TASK_KIND = "cleaning_hold_failed"
 
@@ -86,71 +89,94 @@ def any_hold(lead) -> Charge | None:
 
 
 def place_hold(lead, *, now=None) -> Charge | None:
-    """Place the order's one cleaning hold on the card on file. Idempotent: an order that
-    already has a HOLD row in any state gets that row back, so a decline is never retried.
-    Returns None for an order that isn't held, or that has no card (the task opens once)."""
+    """Place the order's one cleaning hold on the card on file. Returns the hold row, or
+    None for an order that was never held or has no card (the task opens once).
+
+    Idempotent. An order that already has a hold gets that row back in any settled state,
+    even after its held trips were cancelled, and a decline (FAILED) is never retried. A
+    row still PENDING is finished instead: with no intent id (Stripe was unreachable) the
+    create is re-sent under the same idempotency key, which Stripe replays; with one (we
+    stopped between Stripe's reply and the save) the intent is read back. A Stripe outage
+    never raises out of here, so the cron carries on with the next order."""
     now = now or timezone.now()
     if not eligible(lead):
         return any_hold(lead)
     services.ensure_plan(lead)
     with transaction.atomic():
         plan = PaymentPlan.objects.select_for_update().get(lead=lead)
-        existing = plan.charges.filter(kind=Charge.Kind.HOLD).order_by("-pk").first()
-        if existing is not None:
-            return existing
+        charge = plan.charges.filter(kind=Charge.Kind.HOLD).order_by("-pk").first()
+        if charge is not None and charge.status != Charge.Status.PENDING:
+            return charge
         has_card = bool(plan.stripe_payment_method_id and plan.stripe_customer_id)
-        if has_card:
+        if charge is None and has_card:
             charge = plan.record_charge(
                 kind=Charge.Kind.HOLD, amount=hold_amount(lead), note="Cleaning hold"
             )
-    if not has_card:
+    if charge is None:
         _hold_failed(lead, "Cleaning hold not placed: no card on file", "no card on file")
         return None
 
     try:
-        intent = services._stripe().PaymentIntent.create(
-            amount=services._cents(charge.amount),
-            currency="usd",
-            customer=plan.stripe_customer_id,
-            payment_method=plan.stripe_payment_method_id,
-            payment_method_types=["card"],
-            off_session=True,
-            confirm=True,
-            capture_method="manual",
-            # The charge carries the issuer's real capture deadline.
-            expand=["latest_charge"],
-            metadata={
-                "lead_id": str(plan.lead_id),
-                "kind": Charge.Kind.HOLD.value,
-                "charge_id": str(charge.pk),
-            },
-            idempotency_key=charge.idempotency_key,
-        )
-    except stripe.error.StripeError as exc:
+        if charge.stripe_payment_intent_id:
+            intent = services._stripe().PaymentIntent.retrieve(
+                charge.stripe_payment_intent_id, expand=["latest_charge"]
+            )
+        else:
+            intent = _create_intent(plan, charge)
+    except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
+        # The card said no, or the saved card is gone: a decline, recorded and not retried.
         reason = (getattr(exc, "user_message", None) or str(exc))[:255]
         charge.status = Charge.Status.FAILED
         charge.failure_reason = reason
         charge.save(update_fields=["status", "failure_reason", "updated_at"])
         _hold_failed(lead, f"Cleaning hold declined: {reason}", reason)
         return charge
+    except stripe.error.StripeError:
+        logger.exception("cleaning hold: Stripe unreachable for charge %s", charge.pk)
+        return charge
 
+    if charge.stripe_payment_intent_id != intent.id:
+        charge.stripe_payment_intent_id = intent.id
+        charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
+    if getattr(intent, "status", "") != "requires_capture":
+        logger.warning(
+            "cleaning hold: charge %s intent %s is %s, not awaiting capture",
+            charge.pk,
+            intent.id,
+            getattr(intent, "status", ""),
+        )
+        return charge
     charge.status = Charge.Status.AUTHORIZED
-    charge.stripe_payment_intent_id = intent.id
     charge.authorized_at = now
     charge.capture_expires_at = _capture_before(intent) or now + timedelta(
         days=services.AUTH_HOLD_DAYS
     )
-    charge.save(
-        update_fields=[
-            "status",
-            "stripe_payment_intent_id",
-            "authorized_at",
-            "capture_expires_at",
-            "updated_at",
-        ]
-    )
+    charge.save(update_fields=["status", "authorized_at", "capture_expires_at", "updated_at"])
     services._snapshot_plan_card(plan, charge)
     return charge
+
+
+def _create_intent(plan: PaymentPlan, charge: Charge):
+    """The off-session, manual-capture authorization for `charge`, under its own
+    idempotency key (a re-send replays Stripe's first answer)."""
+    return services._stripe().PaymentIntent.create(
+        amount=services._cents(charge.amount),
+        currency="usd",
+        customer=plan.stripe_customer_id,
+        payment_method=plan.stripe_payment_method_id,
+        payment_method_types=["card"],
+        off_session=True,
+        confirm=True,
+        capture_method="manual",
+        # The charge carries the issuer's real capture deadline.
+        expand=["latest_charge"],
+        metadata={
+            "lead_id": str(plan.lead_id),
+            "kind": Charge.Kind.HOLD.value,
+            "charge_id": str(charge.pk),
+        },
+        idempotency_key=charge.idempotency_key,
+    )
 
 
 def _field(obj, name):
@@ -194,7 +220,8 @@ def _hold_failed(lead, title: str, reason: str) -> None:
 def capture_hold(trip, amount) -> Charge:
     """Take the cleaning fee for `trip` out of the hold: `min(amount, hold)` is captured
     (Stripe lets the rest go), the row is tagged with the trip and posted like a trip charge.
-    One capture per hold: anything but an AUTHORIZED hold raises `PaymentError`."""
+    One capture per hold: anything but an AUTHORIZED hold raises `PaymentError`, and so does
+    a hold the bank already released (it is marked EXPIRED; charge the card instead)."""
     lead = trip.lead
     intent = None
     with transaction.atomic():
@@ -206,35 +233,65 @@ def capture_hold(trip, amount) -> Charge:
             take = min(Decimal(amount), Decimal(hold.amount)).quantize(Decimal("0.01"))
             if take <= services.ZERO:
                 raise services.PaymentError("Nothing to capture from the cleaning hold.")
-            try:
-                intent = services._stripe().PaymentIntent.capture(
-                    hold.stripe_payment_intent_id, amount_to_capture=services._cents(take)
+            intent, recovered = _capture(hold, take)
+            expired = intent is None
+            if recovered and not expired:
+                # Our reply was lost: what Stripe took is the fact, not what we asked for.
+                take = (Decimal(intent.amount_received) / 100).quantize(Decimal("0.01"))
+            if not expired:
+                hold.reservation = trip
+                hold.amount = take
+                hold.captured_at = timezone.now()
+                hold.note = "Cleaning fee from the hold"
+                hold.receipt_lines = trip_money.charge_lines(
+                    trip, take, lines=[("Cleaning fee", take)]
                 )
-            except stripe.error.StripeError as exc:
-                raise services.PaymentError(
-                    f"The cleaning hold could not be captured: "
-                    f"{getattr(exc, 'user_message', None) or exc}"
-                ) from exc
-            hold.reservation = trip
-            hold.amount = take
-            hold.captured_at = timezone.now()
-            hold.note = "Cleaning fee from the hold"
-            hold.receipt_lines = trip_money.charge_lines(trip, take, lines=[("Cleaning fee", take)])
-            hold.save(
-                update_fields=[
-                    "reservation",
-                    "amount",
-                    "captured_at",
-                    "note",
-                    "receipt_lines",
-                    "updated_at",
-                ]
-            )
-        # else: captured at Stripe by a call that stopped before the books; finish it below.
+                hold.save(
+                    update_fields=[
+                        "reservation",
+                        "amount",
+                        "captured_at",
+                        "note",
+                        "receipt_lines",
+                        "updated_at",
+                    ]
+                )
+        else:
+            # Captured at Stripe by a call that stopped before the books: finish it below.
+            expired = False
+    if expired:
+        mark_expired(hold)
+        raise services.PaymentError("The bank released the cleaning hold; charge the card instead.")
     # The one reconcile every money path shares: SUCCEEDED and the ledger entry, once.
     return services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
     )
+
+
+def _capture(hold: Charge, take: Decimal) -> tuple[object | None, bool]:
+    """Capture `take` from the hold: (intent, whether it was read back). A lost reply is
+    resolved by reading the intent: captured → that intent; released by the bank → None;
+    anything else → `PaymentError`."""
+    try:
+        intent = services._stripe().PaymentIntent.capture(
+            hold.stripe_payment_intent_id,
+            amount_to_capture=services._cents(take),
+            idempotency_key=f"{hold.idempotency_key}-capture",
+        )
+        return intent, False
+    except stripe.error.StripeError as exc:
+        try:
+            intent = services._stripe().PaymentIntent.retrieve(hold.stripe_payment_intent_id)
+        except stripe.error.StripeError:
+            intent = None
+        status = getattr(intent, "status", "") if intent is not None else ""
+        if status == "succeeded":
+            return intent, True
+        if status == "canceled":
+            return None, True
+        raise services.PaymentError(
+            f"The cleaning hold could not be captured: {getattr(exc, 'user_message', None) or exc}"
+        ) from exc
 
 
 def release_hold(lead, *, reason: str = "") -> Charge | None:

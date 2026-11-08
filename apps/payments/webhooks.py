@@ -17,6 +17,9 @@ _SUCCESS_KINDS = {
     "balance": Charge.Kind.BALANCE,
     "final": Charge.Kind.FINAL,
     "trip": Charge.Kind.TRIP,
+    # A cleaning-hold capture whose books never finished inline (APC-95): the row is found
+    # by its intent id and settled once under `record_payment`'s lock.
+    "hold": Charge.Kind.HOLD,
 }
 
 
@@ -102,10 +105,14 @@ def _payment_succeeded(intent) -> None:
 
 
 def _balance_failed(intent) -> None:
+    kind = (intent.get("metadata") or {}).get("kind")
+    if kind == Charge.Kind.HOLD:
+        # A declined cleaning hold is no balance failure: `holds.place_hold` already
+        # recorded it FAILED, opened its task and notified, inline.
+        return
     plan = _plan_from_metadata(intent)
     if plan is None:
         return
-    kind = (intent.get("metadata") or {}).get("kind")
     # A final bill or a trip charge is money on top of a booked balance that may well be
     # paid — its failure mustn't mark that balance failed.
     final = kind in (Charge.Kind.FINAL, Charge.Kind.TRIP)
