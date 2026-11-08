@@ -6,6 +6,7 @@ import re
 
 from django.db import transaction
 
+from apps.audit.children import track_children
 from apps.core.phone import to_e164
 
 from .models import Passenger, Reservation
@@ -61,16 +62,17 @@ def save_passengers(reservation: Reservation, rows: list[dict]) -> list[Passenge
         raise DraftError("Only one passenger can be the lead.")
     with transaction.atomic():
         locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
-        locked.named_passengers.all().delete()
-        return Passenger.objects.bulk_create(
-            [
-                Passenger(
-                    reservation=locked,
-                    name=r["name"],
-                    mobile=r.get("mobile", ""),
-                    is_lead=r.get("is_lead", False),
-                    sort=r.get("sort", i),
-                )
-                for i, r in enumerate(rows)
-            ]
-        )
+        with track_children(locked, route=False, passengers=True):
+            locked.named_passengers.all().delete()
+            return Passenger.objects.bulk_create(
+                [
+                    Passenger(
+                        reservation=locked,
+                        name=r["name"],
+                        mobile=r.get("mobile", ""),
+                        is_lead=r.get("is_lead", False),
+                        sort=r.get("sort", i),
+                    )
+                    for i, r in enumerate(rows)
+                ]
+            )

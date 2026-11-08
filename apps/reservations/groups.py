@@ -18,6 +18,8 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from apps.audit.children import track_children
+
 from .models import Reservation, Stop
 
 
@@ -113,27 +115,28 @@ def _write_stops(target: Reservation, stops: list[Stop]) -> None:
     Takes the source route as a list rather than a reservation so a caller writing it to
     N siblings reads it once instead of once per sibling.
     """
-    target.stops.all().delete()
-    Stop.objects.bulk_create(
-        [
-            Stop(
-                reservation=target,
-                sequence=s.sequence,
-                address=s.address,
-                note=s.note,
-                name=s.name,
-                scheduled_time=s.scheduled_time,
-                latitude=s.latitude,
-                longitude=s.longitude,
-                airport_id=s.airport_id,
-                airline_id=s.airline_id,
-                flight_number=s.flight_number,
-                flight_direction=s.flight_direction,
-                flight_id=s.flight_id,
-            )
-            for s in stops
-        ]
-    )
+    with track_children(target, route=True, passengers=False):
+        target.stops.all().delete()
+        Stop.objects.bulk_create(
+            [
+                Stop(
+                    reservation=target,
+                    sequence=s.sequence,
+                    address=s.address,
+                    note=s.note,
+                    name=s.name,
+                    scheduled_time=s.scheduled_time,
+                    latitude=s.latitude,
+                    longitude=s.longitude,
+                    airport_id=s.airport_id,
+                    airline_id=s.airline_id,
+                    flight_number=s.flight_number,
+                    flight_direction=s.flight_direction,
+                    flight_id=s.flight_id,
+                )
+                for s in stops
+            ]
+        )
 
 
 def clone_reservation(

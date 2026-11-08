@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 
+from apps.audit.children import track_children
+
 from .flights import link_flights
 from .models import Reservation, Stop
 from .passengers import parse_passengers, save_passengers
@@ -407,27 +409,28 @@ def save_reservation_from_draft(
     pricing.replace_extras(instance, extras, user=user)
     if prev_overtime != Decimal(instance.overtime_hours or 0):
         pricing.apply_trip_overtime(instance, user=user)
-    instance.stops.all().delete()
-    Stop.objects.bulk_create(
-        [
-            Stop(
-                reservation=instance,
-                sequence=i,
-                address=s["address"],
-                note=s["note"],
-                name=s["name"],
-                scheduled_time=s["scheduled_time"],
-                latitude=s["latitude"],
-                longitude=s["longitude"],
-                airport_id=s["airport_id"],
-                airline_id=s["airline_id"],
-                flight_number=s["flight_number"],
-                flight_direction=s["flight_direction"],
-                flight_id=s["flight_id"],
-            )
-            for i, s in enumerate(stops)
-        ]
-    )
+    with track_children(instance, route=True, passengers=False):
+        instance.stops.all().delete()
+        Stop.objects.bulk_create(
+            [
+                Stop(
+                    reservation=instance,
+                    sequence=i,
+                    address=s["address"],
+                    note=s["note"],
+                    name=s["name"],
+                    scheduled_time=s["scheduled_time"],
+                    latitude=s["latitude"],
+                    longitude=s["longitude"],
+                    airport_id=s["airport_id"],
+                    airline_id=s["airline_id"],
+                    flight_number=s["flight_number"],
+                    flight_direction=s["flight_direction"],
+                    flight_id=s["flight_id"],
+                )
+                for i, s in enumerate(stops)
+            ]
+        )
     instance.refresh_pickup_timezone()
     if passenger_list is not None:
         save_passengers(instance, passenger_list)

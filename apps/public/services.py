@@ -6,6 +6,7 @@ from django.core import signing
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.audit.children import track_children
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.leads.models import Lead, ServiceType
@@ -54,23 +55,24 @@ def create_lead_from_booking(data: dict) -> Lead:
             s.setdefault("flight_direction", "")
     link_flights(stops, reservation.pickup_date)
     if stops:
-        Stop.objects.bulk_create(
-            [
-                Stop(
-                    reservation=reservation,
-                    sequence=i,
-                    address=s.get("address", ""),
-                    latitude=s.get("lat"),
-                    longitude=s.get("lng"),
-                    airport_id=s.get("airport_id"),
-                    airline_id=s.get("airline_id"),
-                    flight_number=s.get("flight_number", ""),
-                    flight_direction=s.get("flight_direction", ""),
-                    flight_id=s.get("flight_id"),
-                )
-                for i, s in enumerate(stops)
-            ]
-        )
+        with track_children(reservation, route=True):
+            Stop.objects.bulk_create(
+                [
+                    Stop(
+                        reservation=reservation,
+                        sequence=i,
+                        address=s.get("address", ""),
+                        latitude=s.get("lat"),
+                        longitude=s.get("lng"),
+                        airport_id=s.get("airport_id"),
+                        airline_id=s.get("airline_id"),
+                        flight_number=s.get("flight_number", ""),
+                        flight_direction=s.get("flight_direction", ""),
+                        flight_id=s.get("flight_id"),
+                    )
+                    for i, s in enumerate(stops)
+                ]
+            )
         reservation.refresh_pickup_timezone()
     Notification.notify(
         lead,
