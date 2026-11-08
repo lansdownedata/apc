@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     AccountGroup,
     BillingAccount,
+    CustomerLink,
     Invoice,
     InvoiceLine,
     QboAccount,
@@ -109,6 +110,7 @@ class QboAccountMappingAdmin(admin.ModelAdmin):
         "payment_account",
         "bills_from",
         "trip_item",
+        "sales_deposit_account",
         "customer_docs_from",
     )
 
@@ -140,3 +142,9 @@ class InvoiceAdmin(admin.ModelAdmin):
         if obj is None:
             return self.readonly_fields
         return (*self.readonly_fields, "status", "total", "group", "number")
+
+
+@admin.register(CustomerLink)
+class CustomerLinkAdmin(admin.ModelAdmin):
+    list_display = ("display_name", "contact", "qbo_sync_state", "qbo_synced_at")
+    list_select_related = ("contact",)

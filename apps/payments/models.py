@@ -112,7 +112,7 @@ class PaymentPlan(TimeStampedModel):
         return f"Payment plan · {self.lead.quote_no}"
 
 
-class Charge(TimeStampedModel):
+class Charge(QboSyncedModel, TimeStampedModel):
     """A single Stripe charge attempt (deposit or balance) — idempotent + auditable."""
 
     class Kind(models.TextChoices):
@@ -198,6 +198,12 @@ class Charge(TimeStampedModel):
     # over several Stripe charges is one receipt: the extra rows point at the first.
     receipt_due_at = models.DateTimeField(null=True, blank=True)
     receipt_sent_at = models.DateTimeField(null=True, blank=True)
+    # Lease taken by the QuickBooks receipt push (APC-108).
+    qbo_push_started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        pass
+
     receipt_message_id = models.CharField(max_length=120, blank=True)
     # What the charge was for, snapshotted when it was created: [[label, "0.00"], ...].
     receipt_lines = models.JSONField(default=list, blank=True)

@@ -5,7 +5,15 @@ import factory
 from apps.contacts.factories import ContactFactory
 from apps.reservations.factories import ReservationFactory
 
-from .models import AccountGroup, BillingAccount, Invoice, InvoiceLine, QboItem, Terms
+from .models import (
+    AccountGroup,
+    BillingAccount,
+    CustomerLink,
+    Invoice,
+    InvoiceLine,
+    QboItem,
+    Terms,
+)
 
 
 class BillingAccountFactory(factory.django.DjangoModelFactory):
@@ -54,3 +62,11 @@ class QboItemFactory(factory.django.DjangoModelFactory):
     qbo_id = factory.Sequence(str)
     name = factory.Sequence(lambda n: f"Trip Charges {n}")
     item_type = "Service"
+
+
+class CustomerLinkFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = CustomerLink
+
+    contact = factory.SubFactory(ContactFactory)
+    display_name = factory.Sequence(lambda n: f"Card Customer {n}")

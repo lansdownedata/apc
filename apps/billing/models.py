@@ -198,6 +198,24 @@ class InvoiceLine(TimeStampedModel):
         ordering = ["pk"]
 
 
+class CustomerLink(QboSyncedModel, TimeStampedModel):
+    """A card-paying contact's QuickBooks Customer (APC-108). A contact who owns a
+    BillingAccount already in QuickBooks reuses that Customer and never gets a link."""
+
+    contact = models.OneToOneField(
+        "contacts.Contact", on_delete=models.CASCADE, related_name="qbo_customer"
+    )
+    display_name = models.CharField(max_length=100)
+    # Lease taken by the QuickBooks customer push (APC-108).
+    qbo_push_started_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        pass
+
+    def __str__(self) -> str:
+        return self.display_name
+
+
 class QboTerm(TimeStampedModel):
     """A payment term as it exists in the connected QuickBooks company (APC-42) — a cache,
     refreshed by the `retry-qbo-sync` cron and the Settings action, never fetched per page.
@@ -228,6 +246,8 @@ class QboAccount(TimeStampedModel):
 
     EXPENSE_TYPES = ("Expense", "Cost of Goods Sold", "Other Expense")
     PAYMENT_TYPES = ("Bank",)
+    # Undeposited Funds is an "Other Current Asset".
+    DEPOSIT_TYPES = ("Bank", "Other Current Asset")
 
     realm_id = models.CharField(max_length=32)
     qbo_id = models.CharField(max_length=32)
@@ -292,6 +312,10 @@ class QboAccountMapping(models.Model):
         QboItem, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     customer_docs_from = models.DateField("push customer documents from", null=True, blank=True)
+    # Where card charges and refunds deposit (APC-108).
+    sales_deposit_account = models.ForeignKey(
+        QboAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         verbose_name = "QuickBooks account mapping"
