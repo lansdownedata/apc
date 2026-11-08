@@ -584,3 +584,156 @@ def test_customer_sync_endpoint_gated_and_pushes(client, biller):
     client.logout()
     resp = client.post(url)
     assert resp.status_code == 302 and "login" in resp["Location"]
+
+
+# --- APC-96: the terms pickers offer the connected company's own terms -----------------
+
+QBO_REALM = "123"
+
+
+@pytest.fixture
+def quickbooks_terms():
+    """A connected company with three cached terms (never a real call to Intuit)."""
+    from unittest.mock import patch
+
+    from apps.billing.models import QboTerm
+
+    for qbo_id, name, days in (("1", "Net 30", 30), ("2", "Net 45", 45), ("3", "Due now", 0)):
+        QboTerm.objects.create(
+            realm_id=QBO_REALM, qbo_id=qbo_id, name=name, term_type="STANDARD", due_days=days
+        )
+    with (
+        patch("apps.billing.qbo_sync.current_realm", return_value=QBO_REALM),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        yield
+
+
+def _picker(body: str, field_id: str) -> list[tuple[str, str, bool]]:
+    """The (value, label, selected) options of the Tom Select `<select>` with this id."""
+    import html
+    import re
+
+    block = re.search(rf'<select[^>]*id="{field_id}".*?</select>', body, re.S)
+    assert block, f"no picker {field_id}"
+    return [
+        (html.unescape(value), html.unescape(label.strip()), bool(selected))
+        for value, selected, label in re.findall(
+            r'<option value="([^"]*)"( selected)?[^>]*>([^<]*)</option>', block.group(0)
+        )
+    ]
+
+
+def test_pickers_offer_quickbooks_terms_when_connected(client, biller, quickbooks_terms):
+    account = _account(terms="Net 45")
+    body = _profile(client, account.contact)
+    assert _picker(body, "billing-account-terms") == [
+        ("Due now", "Due now", False),
+        ("Net 30", "Net 30", False),
+        ("Net 45", "Net 45", True),
+    ]
+    assert '<select name="terms" id="billing-account-terms" data-tom' in body
+    group_values = [v for v, _, _ in _picker(body, "billing-group-terms")]
+    assert group_values == ["", "Due now", "Net 30", "Net 45"]
+
+
+def test_pickers_fall_back_when_disconnected(client, biller):
+    account = _account()
+    body = _profile(client, account.contact)
+    options = _picker(body, "billing-account-terms")
+    assert [(v, lbl) for v, lbl, _ in options] == list(Terms.choices)
+    assert [v for v, _, s in options if s] == [Terms.NET_30]
+    group = _picker(body, "billing-group-terms")
+    assert group[0] == ("", "Same as the account — Net 30", True)
+    assert [(v, lbl) for v, lbl, _ in group[1:]] == list(Terms.choices)
+
+
+def test_a_new_account_defaults_to_net_30_when_connected(client, biller, quickbooks_terms):
+    """No account yet: the picker starts on QuickBooks' own "Net 30", never a code it lacks."""
+    body = _profile(client, ContactFactory())
+    assert [v for v, _, s in _picker(body, "billing-account-terms") if s] == ["Net 30"]
+
+
+def test_modal_keeps_an_unmatched_term_selected(client, biller, quickbooks_terms):
+    import html
+    import json
+    import re
+
+    account = _account()
+    group = services.add_group(account, name="Events", terms="Net 30 days")
+    body = _profile(client, account.contact)
+
+    handler = re.search(rf'@click="openGroup\((\{{ id: {group.pk}.*?\}})\)"', body, re.S)
+    assert handler, "the group row lost its edit handler"
+    raw = html.unescape(handler.group(1))
+    options = json.loads(re.search(r"options: (\[.*?\]\]|\[\])", raw).group(1))
+    assert ["Net 30 days", "Net 30 days"] in options
+    assert options[0][0] == ""  # "Same as the account" stays first
+    assert 'terms: "Net 30 days"' in raw
+
+    resp = client.post(
+        reverse("billing_group_update", args=[group.pk]),
+        {"name": "Events renamed", "invoice_email": "", "terms": "Net 30 days"},
+    )
+    assert resp.status_code == 200, resp.content
+    group.refresh_from_db()
+    assert (group.name, group.terms) == ("Events renamed", "Net 30 days")
+
+
+def test_saving_a_quickbooks_term_name(client, biller, quickbooks_terms):
+    from apps.billing import qbo_sync
+
+    account = _account()
+    resp = client.post(
+        reverse("billing_account_update", args=[account.pk]),
+        {"name": account.name, "terms": "Net 45"},
+    )
+    assert resp.status_code == 200, resp.content
+    account.refresh_from_db()
+    assert account.terms == "Net 45"
+    assert qbo_sync.term_ref(account.terms) == {"value": "2"}
+
+
+def test_a_term_quickbooks_lacks_cannot_be_picked_for_another_record(
+    client, biller, quickbooks_terms
+):
+    account = _account()
+    resp = client.post(
+        reverse("billing_account_update", args=[account.pk]),
+        {"name": account.name, "terms": "Net 30 days"},
+    )
+    assert resp.status_code == 400
+    assert "terms" in resp.json()["errors"]
+
+
+# --- the forms' choices ------------------------------------------------------------------
+
+
+def test_account_form_offers_the_legacy_list_when_disconnected():
+    from apps.billing.forms import AccountForm
+
+    assert list(AccountForm().fields["terms"].choices) == list(Terms.choices)
+
+
+def test_account_form_offers_quickbooks_names_and_keeps_the_current_value(quickbooks_terms):
+    from apps.billing.forms import AccountForm, NewAccountForm
+
+    assert list(NewAccountForm().fields["terms"].choices) == [
+        ("Due now", "Due now"),
+        ("Net 30", "Net 30"),
+        ("Net 45", "Net 45"),
+    ]
+    form = AccountForm({"name": "Ridgeline", "terms": "Old terms"}, current="Old terms")
+    assert ("Old terms", "Old terms") in form.fields["terms"].choices
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["terms"] == "Old terms"
+
+
+def test_group_form_keeps_the_blank_inherit_choice(quickbooks_terms):
+    from apps.billing.forms import GroupForm
+
+    choices = list(GroupForm(current="Net 30 days").fields["terms"].choices)
+    assert choices[0] == ("", "")
+    assert ("Net 30 days", "Net 30 days") in choices
+    assert ("Net 45", "Net 45") in choices
+    assert GroupForm({"name": "AP", "terms": ""}).is_valid()

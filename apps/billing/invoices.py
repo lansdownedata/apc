@@ -14,6 +14,7 @@ from apps.reservations.models import Reservation, Stop
 from apps.reservations.processing import _day, _reference_pk, _short, _with_route
 
 from . import qbo_sync
+from . import terms as terms_module
 from .models import (
     AccountGroup,
     BillingAccount,
@@ -21,29 +22,13 @@ from .models import (
     InvoiceLine,
     QboAccountMapping,
     SyncState,
-    Terms,
 )
 
 # --- Terms ---------------------------------------------------------------------------------
 
-TERM_DAYS: dict[str, int] = {
-    Terms.DUE_ON_RECEIPT: 0,
-    Terms.NET_15: 15,
-    Terms.NET_30: 30,
-    Terms.NET_45: 45,
-}
-
-
-def days(terms: str) -> int:
-    """Days from the invoice date to the due date for a payment-terms value."""
-    try:
-        return TERM_DAYS[terms]
-    except KeyError:
-        raise ValueError(f"Unknown payment terms {terms!r}") from None
-
 
 def due_date(invoice_date: date, terms: str) -> date:
-    return invoice_date + timedelta(days=days(terms))
+    return terms_module.due(terms, invoice_date)
 
 
 # --- Line text -----------------------------------------------------------------------------
@@ -125,11 +110,13 @@ class GroupRow:
     group: AccountGroup
     trips: list[Reservation] = field(default_factory=list)
     total: Decimal = Decimal("0")
+    # "Net 30": the group's own terms, else its account's. `ready_accounts` passes it in,
+    # resolved once per distinct term; built alone, the row resolves its own.
+    terms_label: str = ""
 
-    @property
-    def terms_label(self) -> str:
-        """ "Net 30": the group's own terms, else its account's."""
-        return Terms(self.group.effective_terms).label
+    def __post_init__(self) -> None:
+        if not self.terms_label:
+            self.terms_label = terms_module.resolve(self.group.effective_terms).label
 
 
 @dataclass
@@ -172,11 +159,15 @@ def ready_accounts(filters: BillingFilters) -> list[AccountRow]:
     groups by name; trips in pickup order)."""
     accounts: dict[int, AccountRow] = {}
     groups: dict[int, GroupRow] = {}
-    for trip in _with_route(list(ready_queryset(filters))):
+    trips = _with_route(list(ready_queryset(filters)))
+    # Every group's label in one batch, not a lookup per group (APC-96).
+    labels = terms_module.labels(t.lead.billing_group.effective_terms for t in trips)
+    for trip in trips:
         group = trip.lead.billing_group
         row = groups.get(group.pk)
         if row is None:
-            row = groups[group.pk] = GroupRow(group=group)
+            label = labels[group.effective_terms]
+            row = groups[group.pk] = GroupRow(group=group, terms_label=label)
             account = group.account
             accounts.setdefault(account.pk, AccountRow(account=account)).groups.append(row)
         row.trips.append(trip)

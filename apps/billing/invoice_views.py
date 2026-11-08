@@ -20,9 +20,9 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.accounts.permissions import payment_access_required
 from apps.integrations import qbo
 
-from . import invoices, qbo_invoices
+from . import invoices, qbo_invoices, terms
 from .invoices import EARLIEST_INVOICE_DATE
-from .models import AccountGroup, Invoice, QboAccountMapping, Terms
+from .models import AccountGroup, Invoice, QboAccountMapping
 from .qbo_sync import SyncPaused
 
 # An invoice date outside this window is a typo, not a backdated or forward invoice.
@@ -69,6 +69,14 @@ def _billing_url(group_id: int, invoice_id: int, request: HttpRequest) -> str:
     return f"{reverse('billing')}?{urlencode(query)}"
 
 
+def _due_rule(rule: terms.TermRule) -> dict:
+    """The due rule as the pane's JS reads it to recompute the due date when the invoice
+    date changes (templates/billing/list.html mirrors `TermRule.due`)."""
+    if rule.kind == "DATE_DRIVEN":
+        return {"kind": "DATE_DRIVEN", "day": rule.day_of_month, "cutoff": rule.cutoff}
+    return {"kind": "STANDARD", "days": rule.days}
+
+
 @login_required
 @require_GET
 def billing_list(request: HttpRequest) -> HttpResponse:
@@ -85,7 +93,8 @@ def billing_list(request: HttpRequest) -> HttpResponse:
     pane: dict = {}
     if group is not None:
         trips = invoices.group_ready_trips(group, filters)
-        terms = group.effective_terms
+        term = terms.resolve(group.effective_terms)
+        rule = term.rule or terms.TermRule("STANDARD", days=terms.UNKNOWN_DAYS)
         pos = [(t.lead.po_number or "").strip() for t in trips]
         connected = qbo.is_connected()
         start = qbo_invoices.customer_docs_from() if connected else None
@@ -97,9 +106,8 @@ def billing_list(request: HttpRequest) -> HttpResponse:
         pane = {
             "trips": trips,
             "trip_lines": [(t, invoices.line_description(t)) for t in trips],
-            "terms_label": dict(Terms.choices)[terms],
-            "term_days": invoices.TERM_DAYS[terms],
-            "due_preview": invoices.due_date(today, terms),
+            "terms_label": term.label,
+            "due_preview": rule.due(today),
             "default_po": pos[0] if pos else "",
             "mixed_po": len({po for po in pos if po}) > 1,
             "invoices": open_rows,
@@ -109,7 +117,7 @@ def billing_list(request: HttpRequest) -> HttpResponse:
                     {"id": t.pk, "amount": f"{t.line_total:.2f}", "po": po}
                     for t, po in zip(trips, pos, strict=True)
                 ],
-                "termDays": invoices.TERM_DAYS[terms],
+                "dueRule": _due_rule(rule),
                 "today": today.isoformat(),
                 "group": group.name,
                 "filters": _filter_params(filters),

@@ -34,7 +34,8 @@ from django.utils import timezone
 
 from apps.integrations import qbo
 
-from .models import AccountGroup, BillingAccount, QboTerm, SyncState, Terms
+from . import terms as terms_module
+from .models import AccountGroup, BillingAccount, QboTerm, SyncState
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,12 @@ def _kind(record) -> str:
 
 
 def current_realm() -> str:
+    """The connected company's id, "" when none. A read: the Billing pages resolve terms
+    through it on every GET, and a GET must not create the credential row."""
     from apps.integrations.models import QboCredential
 
-    return QboCredential.load().realm_id
+    realm = QboCredential.objects.filter(singleton_id=1).values_list("realm_id", flat=True)
+    return realm.first() or ""
 
 
 def display_name(record) -> str:
@@ -93,24 +97,27 @@ def _who(record) -> str:
     return record.name
 
 
-def _label(term: str) -> str:
-    return Terms(term).label if term in Terms.values else term
+def _usable_terms():
+    """Active terms cached for the connected company — another company's ids mean nothing,
+    and with no company (a blank realm) no cached row is usable, leftovers included."""
+    realm = current_realm()
+    if not realm:
+        return QboTerm.objects.none()
+    return QboTerm.objects.filter(realm_id=realm, active=True)
 
 
 def term_ref(term: str) -> dict | None:
-    """Our term matched to a cached QuickBooks term by name, or None — never a guess."""
-    if not term:
-        return None
-    match = QboTerm.objects.filter(active=True, name__iexact=_label(term)).first()
-    return {"value": match.qbo_id} if match else None
+    """Our term matched to a cached QuickBooks term by the resolver, or None — never a guess."""
+    qbo_id = terms_module.resolve(term).qbo_id
+    return {"value": qbo_id} if qbo_id else None
 
 
 def unmatched_terms() -> list[str]:
     """Terms our accounts and groups actually use that QuickBooks has no term for."""
-    names = {n.lower() for n in QboTerm.objects.filter(active=True).values_list("name", flat=True)}
     used = set(BillingAccount.objects.values_list("terms", flat=True))
     used |= set(AccountGroup.objects.exclude(terms="").values_list("terms", flat=True))
-    return [label for value, label in Terms.choices if value in used and label.lower() not in names]
+    resolved = (terms_module.resolve(value) for value in used if value)
+    return sorted({r.label for r in resolved if r.qbo_id is None})
 
 
 def _terms_of(record) -> str:
@@ -130,8 +137,9 @@ def payload(record) -> dict:
     if terms:
         ref = term_ref(terms)
         if ref is None:
+            label = terms_module.resolve(terms).label
             raise _Refused(
-                f"QuickBooks has no “{_label(terms)}” term. Add it in QuickBooks, refresh the terms"
+                f"QuickBooks has no “{label}” term. Add it in QuickBooks, refresh the terms"
                 " in Settings, then retry."
             )
         body["SalesTermRef"] = ref
@@ -328,20 +336,43 @@ def sync_pending() -> int:
     return pushed
 
 
+def _rule(term: dict, key: str) -> int | None:
+    """A term's day count, or None when QuickBooks omits it or sends something unusable."""
+    value = term.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value <= 32767 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return _rule({key: int(value)}, key)
+    return None
+
+
 def refresh_terms() -> int:
-    """Cache the company's payment terms; a term no longer in QuickBooks is retired, not
-    deleted. Returns how many active terms QuickBooks has."""
+    """Cache the company's payment terms and their due rules; a term no longer in QuickBooks
+    is retired, not deleted — only within this company. Returns how many active terms there are."""
+    realm = current_realm()
+    if not realm:
+        raise qbo.QboNotConnected("No QuickBooks company is connected.")
     rows = qbo.request("GET", "query", params={"query": "select * from Term"})
     terms = rows.get("QueryResponse", {}).get("Term", [])
     seen = []
     for term in terms:
         QboTerm.objects.update_or_create(
+            realm_id=realm,
             qbo_id=str(term["Id"]),
-            defaults={"name": term.get("Name", "")[:100], "active": bool(term.get("Active", True))},
+            defaults={
+                "name": term.get("Name", "")[:100],
+                "active": bool(term.get("Active", True)),
+                "term_type": str(term.get("Type") or "")[:20],
+                "due_days": _rule(term, "DueDays"),
+                "day_of_month_due": _rule(term, "DayOfMonthDue"),
+                "due_next_month_days": _rule(term, "DueNextMonthDays"),
+            },
         )
         seen.append(str(term["Id"]))
-    QboTerm.objects.exclude(qbo_id__in=seen).update(active=False)
-    return QboTerm.objects.filter(active=True).count()
+    QboTerm.objects.filter(realm_id=realm).exclude(qbo_id__in=seen).update(active=False)
+    return _usable_terms().count()
 
 
 def run_hourly() -> int:

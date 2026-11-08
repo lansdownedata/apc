@@ -13,14 +13,22 @@ from __future__ import annotations
 
 from django import forms
 
-from .models import Terms
+from . import terms as terms_module
 
 
 class AccountForm(forms.Form):
-    """The account itself: what QuickBooks will call this customer, and on what terms."""
+    """The account itself: what QuickBooks will call this customer, and on what terms.
+
+    The terms offered are the picker's own (APC-96): the connected company's QuickBooks
+    terms, else the legacy list, plus the record's `current` value, so saving a record whose
+    term QuickBooks lacks keeps it rather than refusing the save."""
 
     name = forms.CharField(max_length=200, error_messages={"required": "Give the account a name."})
-    terms = forms.ChoiceField(choices=Terms.choices, initial=Terms.NET_30)
+    terms = forms.ChoiceField(choices=())
+
+    def __init__(self, *args, current: str = "", **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fields["terms"].choices = terms_module.choices(current=current)
 
 
 class NewAccountForm(AccountForm):
@@ -40,5 +48,9 @@ class GroupForm(forms.Form):
 
     name = forms.CharField(max_length=200, error_messages={"required": "Give the group a name."})
     invoice_email = forms.EmailField(required=False)
-    terms = forms.ChoiceField(choices=[("", "")] + list(Terms.choices), required=False)
+    terms = forms.ChoiceField(choices=(), required=False)
     po_required = forms.BooleanField(required=False)
+
+    def __init__(self, *args, current: str = "", **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fields["terms"].choices = [("", "")] + terms_module.choices(current=current)

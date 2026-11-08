@@ -1,3 +1,4 @@
+{% load json_filters %}
 {% comment %}
   billing/_billing_card.html — Billing, on the customer profile.
 
@@ -17,7 +18,8 @@
 <div class="card overflow-hidden"
      x-data="billingCard({
        initialTab: '{% if billing_account %}accounts{% else %}cards{% endif %}',
-       accountTerms: '{{ billing_account.terms|default:"net_30" }}',
+       accountTerms: {{ billing_default_terms|json_string }},
+       groupTerms: {{ billing_group_terms|json_attr }},
        urls: {
          create: '{% url 'billing_account_create' contact.pk %}',
          {% if billing_account %}

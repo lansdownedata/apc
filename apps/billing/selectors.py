@@ -11,6 +11,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.urls import reverse
 
+from . import terms as terms_module
 from .models import BillingAccount, Terms
 
 ZERO = Decimal("0.00")
@@ -173,12 +174,56 @@ def qbo_customer_line(contact) -> dict | None:
     }
 
 
+def _terms_pickers(account, groups: list) -> dict:
+    """The terms pickers' options (APC-96), as plain (value, label) pairs.
+
+    One list for the account modal and one per group: each always carries that record's
+    stored value, so a term QuickBooks lacks shows selected instead of the first option. The
+    group modal is shared by every group, so each row hands its own list to openGroup(),
+    and add-group gets the list with no current value.
+
+    The base list once, then every stored value's label in one batch (`terms.labels`): no
+    query per group. Each group also gets `terms_note`, its own terms' label only when it
+    reads differently from the account's (`net_30` and "Net 30" read the same).
+    """
+    base = terms_module.choices()
+    account_terms = account.terms if account else ""
+    label_for = terms_module.labels([account_terms, *(g.terms for g in groups)])
+    account_label = label_for.get(account_terms, "")
+
+    def for_value(current: str) -> list[tuple[str, str]]:
+        return terms_module.offer(base, current, label_for.get(current, ""))
+
+    account_options = for_value(account_terms)
+    inherit = ("", f"Same as the account — {account_label}") if account else ("", "")
+    for group in groups:
+        group.term_choices = [inherit, *for_value(group.terms)]
+        own = label_for.get(group.terms, "")
+        group.terms_note = own if own.lower() != account_label.lower() else ""
+    return {
+        "billing_terms": account_options,
+        "billing_group_terms": [inherit, *base],
+        "billing_default_terms": account_terms or _default_terms(account_options),
+        "billing_account_terms_label": account_label,
+    }
+
+
+def _default_terms(options: list[tuple[str, str]]) -> str:
+    """A new account starts on Net 30: the legacy code, else the company's own "Net 30",
+    else its first term — never a value the picker doesn't offer."""
+    for value, label in options:
+        if value == Terms.NET_30 or label.lower() == Terms.NET_30.label.lower():
+            return value
+    return options[0][0] if options else ""
+
+
 def billing_context(contact) -> dict:
     """The Billing card's whole context for one contact.
 
-    Two queries whatever the account holds — the account, then its groups in one prefetch.
-    A group row reads `account.terms` for the inherit case, so the account must come back
-    with the groups rather than each row fetching its parent.
+    The account, then its groups in one prefetch, plus the terms lookups (`_terms_pickers`),
+    which do not grow with the groups. A group row reads `account.terms` for the inherit
+    case, so the account must come back with the groups rather than each row fetching its
+    parent.
     """
     account = BillingAccount.objects.filter(contact=contact).prefetch_related("groups").first()
     groups = list(account.groups.all()) if account else []
@@ -188,9 +233,9 @@ def billing_context(contact) -> dict:
         # The last group cannot be removed (an account needs one to invoice against), so
         # the row hides the control rather than offering one that can only fail.
         "billing_multiple_groups": len(groups) > 1,
-        # The modals' terms picker. Rendered through components/searchable_select.html,
-        # so it wants the plain (value, label) pairs.
-        "billing_terms": Terms.choices,
+        # The modals' terms pickers. Rendered through components/searchable_select.html,
+        # so they want the plain (value, label) pairs.
+        **_terms_pickers(account, groups),
         "account_figures": account_figures(account) if account else None,
         # APC-47: the vault, then — read-only — cards from orders that were paid on their
         # own Stripe customer before the vault existed (they can't be moved over).
@@ -241,10 +286,6 @@ def groups_for_lead(lead) -> list:
     return ordered
 
 
-def _terms_label(code: str) -> str:
-    return dict(Terms.choices).get(code, code)
-
-
 def paid_by_context(lead) -> dict:
     """The money card's "Paid by" line and its picker (APC-105): the groups this order may
     bill to, and the rows the picker draws (built in JS, so as plain data)."""
@@ -252,6 +293,8 @@ def paid_by_context(lead) -> dict:
 
     groups = groups_for_lead(lead)
     group = lead.billing_group
+    # Every group's label in one batch, not a lookup per group (APC-96).
+    labels = terms_module.labels(g.effective_terms for g in [*groups, *([group] if group else [])])
     order_invoices: list = []
     uninvoiced = 0
     if lead.on_account:
@@ -269,7 +312,7 @@ def paid_by_context(lead) -> dict:
         "uninvoiced_processed": uninvoiced,
         "billing_groups": groups,
         "billed_group": group,
-        "billed_terms": _terms_label(group.effective_terms) if group else "",
+        "billed_terms": labels[group.effective_terms] if group else "",
         "billing_picker": [
             {
                 "id": g.pk,
@@ -278,7 +321,7 @@ def paid_by_context(lead) -> dict:
                     x
                     for x in (
                         g.invoice_email or "No invoice email yet",
-                        _terms_label(g.effective_terms),
+                        labels[g.effective_terms],
                         "PO number required" if g.po_required else "",
                     )
                     if x

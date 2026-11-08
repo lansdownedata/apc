@@ -66,7 +66,7 @@ def account_create(request: HttpRequest, contact_pk: int) -> JsonResponse:
 @require_POST
 def account_update(request: HttpRequest, pk: int) -> JsonResponse:
     account = get_object_or_404(BillingAccount, pk=pk)
-    form = AccountForm(request.POST)
+    form = AccountForm(request.POST, current=account.terms)
     if not form.is_valid():
         return _invalid(form)
     try:
@@ -105,7 +105,7 @@ def group_add(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 def group_update(request: HttpRequest, pk: int) -> JsonResponse:
     group = get_object_or_404(AccountGroup.objects.select_related("account"), pk=pk)
-    form = GroupForm(request.POST)
+    form = GroupForm(request.POST, current=group.terms)
     if not form.is_valid():
         return _invalid(form)
     data = form.cleaned_data

@@ -19,9 +19,9 @@ from apps.core.models import TimeStampedModel
 class Terms(models.TextChoices):
     """Payment terms, as a plain string.
 
-    Deliberately not a foreign key to a terms table: Phase 2 replaces this picker with the
-    client's own terms list out of QuickBooks, matched by name. Keeping the stored value a
-    string means that swap is a form change, not a data migration.
+    Deliberately not a foreign key to a terms table. Since APC-96 the pickers offer the
+    connected company's own QuickBooks term names and store the name; these four codes are
+    the fallback list while QuickBooks is not connected, and stay valid on existing records.
     """
 
     DUE_ON_RECEIPT = "due_on_receipt", "Due on receipt"
@@ -83,7 +83,9 @@ class BillingAccount(QboSyncedModel, TimeStampedModel):
         related_name="billing_accounts",
     )
     name = models.CharField(max_length=200)  # the Customer DisplayName in QBO
-    terms = models.CharField(max_length=20, choices=Terms.choices, default=Terms.NET_30)
+    # A legacy `Terms` code or an exact QuickBooks term name (APC-96): read it through
+    # `terms.resolve`, never `Terms(...)`.
+    terms = models.CharField(max_length=100, default=Terms.NET_30)
 
     class Meta(TimeStampedModel.Meta):
         constraints = [
@@ -114,7 +116,7 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     name = models.CharField(max_length=200)
     invoice_email = models.EmailField(blank=True)
     # Blank means "whatever the account says" — see `effective_terms`.
-    terms = models.CharField(max_length=20, choices=Terms.choices, blank=True)
+    terms = models.CharField(max_length=100, blank=True)
     po_required = models.BooleanField(default=False)
     is_default = models.BooleanField(default=False)
 
@@ -235,12 +237,22 @@ class QboTerm(TimeStampedModel):
     doesn't have is left off the customer and listed on Settings, never guessed.
     """
 
-    qbo_id = models.CharField(max_length=32, unique=True)
+    realm_id = models.CharField(max_length=32, blank=True, default="")
+    qbo_id = models.CharField(max_length=32)
     name = models.CharField(max_length=100)
     active = models.BooleanField(default=True)
+    # QuickBooks' own rule: Type is "STANDARD" (DueDays) or "DATE_DRIVEN" (DayOfMonthDue,
+    # DueNextMonthDays); a field QuickBooks doesn't send stays null.
+    term_type = models.CharField(max_length=20, blank=True, default="")
+    due_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    day_of_month_due = models.PositiveSmallIntegerField(null=True, blank=True)
+    due_next_month_days = models.PositiveSmallIntegerField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["realm_id", "qbo_id"], name="uniq_qbo_term"),
+        ]
 
     def __str__(self) -> str:
         return self.name

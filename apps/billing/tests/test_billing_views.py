@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
-from apps.billing import invoices
+from apps.billing import invoices, terms
 from apps.billing.factories import (
     AccountGroupFactory,
     InvoiceFactory,
@@ -242,7 +242,7 @@ def test_draft_data_is_safe_json(accountant) -> None:
     payload = html[html.index(">", start) + 1 : html.index("</script>", start)]
     data = json.loads(payload)
     assert [t["id"] for t in data["trips"]] == [first.pk, second.pk]
-    assert data["termDays"] == 30
+    assert data["dueRule"] == {"kind": "STANDARD", "days": 30}
 
 
 def test_draft_carries_each_trips_po(accountant) -> None:
@@ -772,3 +772,106 @@ def test_edit_modal_fields_prefilled(accountant) -> None:
     assert f'data-edit-url="{reverse("billing_invoice_edit", args=[invoice.pk])}"' in html
     assert f'data-replace-url="{reverse("billing_invoice_replace", args=[invoice.pk])}"' in html
     assert 'Say "hi" <b>' not in html
+
+
+# --- APC-96: due dates and labels from the terms resolver ---------------------------------
+
+REALM = "123"
+
+
+@pytest.fixture
+def connected_terms():
+    """A connected company's cached terms (never a real call to Intuit)."""
+    from apps.billing.models import QboTerm
+
+    QboTerm.objects.create(
+        realm_id=REALM, qbo_id="7", name="Net 31", term_type="STANDARD", due_days=31
+    )
+    QboTerm.objects.create(
+        realm_id=REALM,
+        qbo_id="8",
+        name="Mid month",
+        term_type="DATE_DRIVEN",
+        day_of_month_due=15,
+        due_next_month_days=10,
+    )
+    QboTerm.objects.create(
+        realm_id=REALM, qbo_id="9", name="Net 60 (QB)", term_type="STANDARD", due_days=60
+    )
+    with (
+        patch("apps.billing.qbo_sync.current_realm", return_value=REALM),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        yield
+
+
+def _draft(resp) -> dict:
+    html = resp.content.decode()
+    start = html.index('id="billing-draft"')
+    return json.loads(html[html.index(">", start) + 1 : html.index("</script>", start)])
+
+
+@pytest.mark.parametrize(
+    ("term", "rule", "due"),
+    [
+        ("Net 31", {"kind": "STANDARD", "days": 31}, date(2026, 12, 13)),
+        ("Mid month", {"kind": "DATE_DRIVEN", "day": 15, "cutoff": 10}, date(2026, 12, 15)),
+        ("net_15", {"kind": "STANDARD", "days": 15}, date(2026, 11, 27)),
+    ],
+)
+def test_billing_pane_due_preview_uses_the_rule(
+    accountant, connected_terms, term, rule, due
+) -> None:
+    group, _, _ = _two_ready(accountant)
+    group.terms = term
+    group.save(update_fields=["terms"])
+    with patch("apps.billing.invoice_views.timezone.localdate", return_value=date(2026, 11, 12)):
+        resp = accountant.get(reverse("billing"), {"group": group.pk})
+    assert resp.context["due_preview"] == due
+    data = _draft(resp)
+    assert data["dueRule"] == rule
+    assert "termDays" not in data
+    assert "term_days" not in resp.context
+
+
+def test_the_pane_js_reads_due_rule_not_term_days() -> None:
+    """The Billing pane's JS recomputes the due date from `dueRule` for both rule kinds."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[3] / "templates/billing/list.html").read_text()
+    assert "termDays" not in source
+    assert "data.dueRule" in source
+    assert '"DATE_DRIVEN"' in source
+
+
+@pytest.mark.parametrize(("term", "label"), [("Net 60 (QB)", "Net 60 (QB)"), ("net_15", "Net 15")])
+def test_labels_everywhere_use_resolve(accountant, connected_terms, term, label) -> None:
+    from apps.billing import selectors
+    from apps.billing.models import BillingAccount
+
+    group, first, _ = _two_ready(accountant)
+    BillingAccount.objects.filter(pk=group.account_id).update(terms=term)
+    group.refresh_from_db()
+
+    # the Billing page: the list row and the group pane
+    resp = accountant.get(reverse("billing"), {"group": group.pk})
+    assert resp.context["terms_label"] == label
+    row = resp.context["accounts"][0].groups[0]
+    assert row.terms_label == label
+    html = resp.content.decode()
+    assert f"· {label} ·" in html.replace("&#x27;", "'")
+
+    # the account card on the profile, and a group with its own terms on its row
+    other = AccountGroupFactory(account=group.account, name="Events", terms=term)
+    BillingAccount.objects.filter(pk=group.account_id).update(terms="net_45")
+    profile = accountant.get(reverse("contact_detail", args=[group.account.contact_id]))
+    body = profile.content.decode()
+    assert "Net 45" in body
+    assert f"&middot; {label}" in body
+    assert terms.labels([other.terms]) == {term: label}
+
+    # the order's money card
+    BillingAccount.objects.filter(pk=group.account_id).update(terms=term)
+    paid_by = selectors.paid_by_context(first.lead)
+    assert paid_by["billed_terms"] == label
+    assert label in paid_by["billing_picker"][0]["detail"]

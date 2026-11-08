@@ -148,10 +148,30 @@ function invoiceDraft(dataId, createUrl) {
     get createLabel() {
       return `Create invoice from ${plural(this.picked.length)}`;
     },
+    /* Mirrors apps/billing/terms.py TermRule.due (APC-96). STANDARD: the invoice date plus
+       `days`. DATE_DRIVEN: `day` of the invoice month (clamped to its length); next month's
+       when that is behind the invoice date; one month later again when it is fewer than
+       `cutoff` days away. Never before the invoice date. UTC throughout. */
     get due() {
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(this.invoiceDate || "");
       if (!m) return "";
-      const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + (data.termDays || 0)));
+      const rule = data.dueRule || { kind: "STANDARD", days: 0 };
+      const [year, month, day] = [+m[1], +m[2] - 1, +m[3]];
+      let d;
+      if (rule.kind === "DATE_DRIVEN") {
+        const dueIn = (y, m) => {
+          const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+          return new Date(Date.UTC(y, m, Math.min(rule.day, last)));
+        };
+        const issued = Date.UTC(year, month, day);
+        d = dueIn(year, month);
+        if (d.getTime() < issued) d = dueIn(year, month + 1);
+        if (rule.cutoff > 0 && (d.getTime() - issued) / 86400000 < rule.cutoff) {
+          d = dueIn(d.getUTCFullYear(), d.getUTCMonth() + 1);
+        }
+      } else {
+        d = new Date(Date.UTC(year, month, day + (rule.days || 0)));
+      }
       return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
     },
     create() {

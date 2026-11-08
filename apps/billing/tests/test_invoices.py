@@ -62,9 +62,8 @@ def test_due_date_per_term(terms: str, expected: date) -> None:
     assert invoices.due_date(date(2026, 1, 20), terms) == expected
 
 
-def test_due_date_unknown_terms_is_a_value_error() -> None:
-    with pytest.raises(ValueError, match="Unknown payment terms 'net_60'"):
-        invoices.due_date(date(2026, 1, 20), "net_60")
+def test_due_date_unknown_terms_falls_back_to_thirty_days() -> None:
+    assert invoices.due_date(date(2026, 1, 20), "net_60") == date(2026, 2, 19)
 
 
 def _trip(stops: list[tuple[str, str]], **kwargs) -> Reservation:
