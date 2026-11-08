@@ -8,7 +8,7 @@
       <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Affiliate documents</h1>
       <p class="text-[12.5px] text-muted mt-0.5">The documents each affiliate can have on file. Required, active types are what the compliance check expects.</p>
     </div>
-    <a href="{% url 'document_type_create' %}" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"><i class="ti ti-plus text-[15px]"></i> New type</a>
+    <a href="{% url 'document_type_create' %}" class="btn-gold ml-auto flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 focus-gold"><i class="ti ti-plus text-[15px]"></i> New type</a>
   </div>
 
   <div class="card overflow-hidden">
@@ -28,8 +28,8 @@
             <td colspan="3" class="px-3 py-3.5 text-muted">Tracked under Insurance on each affiliate</td>
           </tr>
           {% for t in document_types %}
-          <tr onclick="window.location='{% url 'document_type_edit' t.pk %}'" class="border-b border-line/70 last:border-0 hover:wash-gold cursor-pointer transition-colors">
-            <td class="px-5 py-3.5 font-semibold text-ink">{{ t.name }}</td>
+          <tr class="border-b border-line/70 last:border-0 hover:wash-gold transition-colors">
+            <td class="px-5 py-3.5 font-semibold text-ink"><a href="{% url 'document_type_edit' t.pk %}" class="rounded hover:text-goldd focus-gold transition-colors">{{ t.name }}</a></td>
             <td class="px-3 py-3.5 text-center text-muted">{% if t.required %}Yes{% else %}No{% endif %}</td>
             <td class="px-3 py-3.5 text-center text-muted">{{ t.sort_order }}</td>
             <td class="px-3 py-3.5 text-center">

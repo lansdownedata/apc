@@ -21,7 +21,7 @@
       {% if form.non_field_errors %}<p class="text-[11.5px] text-rose-600">{{ form.non_field_errors|striptags }}</p>{% endif %}
       <div class="flex items-center justify-between gap-2.5 pt-2">
         {% if target and not form.protected %}
-        <button type="button" class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50"
+        <button type="button" class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-rose-600 rounded-lg px-3.5 py-2 ring-1 ring-rose-200 bg-surface hover:bg-rose-50 focus-gold disabled:opacity-40 disabled:cursor-not-allowed"
                 @click="$store.modal.confirm({
                   title: 'Delete {{ target.name|escapejs }}?',
                   message: 'Documents already on file keep it. If any use it, it is hidden from new uploads instead of deleted.',
@@ -30,8 +30,8 @@
                 })"><i class="ti ti-trash text-[14px]"></i> Delete</button>
         {% else %}<span></span>{% endif %}
         <div class="flex items-center gap-2.5">
-          <a href="{% url 'document_type_list' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors">Cancel</a>
-          <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2"><i class="ti ti-check text-[15px]"></i> Save</button>
+          <a href="{% url 'document_type_list' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors focus-gold">Cancel</a>
+          <button type="submit" class="btn-gold flex items-center gap-1.5 text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold"><i class="ti ti-check text-[15px]"></i> Save</button>
         </div>
       </div>
     </form>

@@ -105,3 +105,13 @@ def test_other_delete_is_refused(client):
     assert resp.status_code == 302 and resp.url == reverse("document_type_list")
     assert AffiliateDocumentType.objects.filter(pk=other.pk, active=True).exists()
     assert "Other is the default for uploads and can't be removed." in _messages(resp)
+
+
+def test_list_rows_open_by_a_focusable_link(client):
+    _owner(client)
+    body = client.get(reverse("document_type_list")).content.decode()
+    assert "onclick" not in body
+    for t in AffiliateDocumentType.objects.all():
+        link = f'href="{reverse("document_type_edit", args=[t.pk])}"'
+        assert link in body
+        assert "focus-gold" in body.split(link)[1].split(">")[0]
