@@ -316,7 +316,8 @@ def fee_terms_context(lead: Lead, config=None) -> dict:
     overtime rule table (APC-91) from TaskConfig, so the block never drifts from Settings.
 
     `fees` is `[(type name, fee), ...]`, highest first, one entry per type, types with no
-    fee left out. `hold` is `Decimal("0")` when no trip is in a held vehicle.
+    fee left out. `hold` is `Decimal("0")` when no trip is in a held vehicle; `hold_on` is
+    the Tasks screen's "Place cleaning holds" switch.
     """
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.tasks.models import TaskConfig
@@ -331,7 +332,9 @@ def fee_terms_context(lead: Lead, config=None) -> dict:
     )
     fees = [(name, Decimal(fee)) for name, fee in rows]
     hold = fees[0][1] if fees else Decimal("0")
-    return {"fees": fees, "hold": hold, "config": config}
+    # The hold is mentioned only while holds are placed: a customer is never told about a
+    # hold the switch keeps from happening.
+    return {"fees": fees, "hold": hold, "hold_on": bool(config.hold_enabled), "config": config}
 
 
 def fee_terms_html(lead: Lead, config=None) -> str:

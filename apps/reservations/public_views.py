@@ -127,6 +127,7 @@ def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
         trips_confirmed=ctx["confirmed"],
         confirmed=ctx["confirmed"] and not fees_pending,
         hold=terms["hold"],
+        hold_on=terms["hold_on"],
         fee_terms=lead_services.fee_terms_html(lead, terms["config"]),
         fees_pending=fees_pending,
         fees_acknowledged_on=lead.fees_acknowledged_on,

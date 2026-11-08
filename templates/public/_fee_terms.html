@@ -1,9 +1,10 @@
 {% comment %}
   APC-94/95 · the billing contact acknowledges the cleaning fees and the overtime rule on the
   72-hour confirmation. `fees` is each vehicle type on the order with its fee (highest
-  first) and `hold` the highest of them; every overtime number comes from TaskConfig
-  (`config`). leads.services.fee_terms_version(lead) hashes the rendered result, so the
-  per-type amounts are part of the version. CLIENT COPY PENDING (APC-27) — structure is
+  first) and `hold` the highest of them, mentioned only while `hold_on` (the Tasks screen's
+  switch); every overtime number comes from TaskConfig (`config`).
+  leads.services.fee_terms_version(lead) hashes the rendered result, so the per-type amounts
+  and the switch are part of the version. CLIENT COPY PENDING (APC-27) — structure is
   final, wording is a draft.
 {% endcomment %}
 <h2>Before you confirm</h2>
@@ -13,8 +14,10 @@ cleaning after your trip:</p>
 <ul>
 {% for name, fee in fees %}<li>{{ name }} — ${{ fee|floatformat:2 }} cleaning fee</li>
 {% endfor %}</ul>
+{% if hold_on and hold > 0 %}
 <p>One hold for the highest of these, ${{ hold|floatformat:2 }}, is placed on the card on file
 early on the first trip's day and released after the trip is reviewed.</p>
+{% endif %}
 {% endif %}
 <p><strong>Overtime.</strong> Buses, vans and stretch limousines have a
 {{ config.grace_large_minutes }}-minute grace period; sedans and SUVs have

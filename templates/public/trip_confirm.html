@@ -54,7 +54,7 @@ CLIENT COPY PENDING (APC-27).
         {% if hold %}
         <label class="check">
           <input type="checkbox" name="ack_cleaning" required>
-          <span>I understand the cleaning fees above apply if a vehicle needs more than normal cleaning, and a hold of ${{ hold|floatformat:2 }} is placed on my card.</span>
+          <span>I understand the cleaning fees above apply if a vehicle needs more than normal cleaning{% if hold_on %}, and a hold of ${{ hold|floatformat:2 }} is placed on my card{% endif %}.</span>
         </label>
         {% endif %}
         <label class="check">

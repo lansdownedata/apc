@@ -16,6 +16,7 @@ from apps.leads.models import Lead
 from apps.reservations import acknowledgements as ack
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
+from apps.tasks.models import TaskConfig
 
 pytestmark = pytest.mark.django_db
 
@@ -175,6 +176,22 @@ def test_a_wedding_day_shows_the_fee_terms_and_both_boxes(client):
     assert "Before you confirm" in body
     assert 'name="ack_cleaning"' in body and 'name="ack_overtime"' in body
     assert "$250.00" in body
+
+
+def test_the_cleaning_box_mentions_the_hold_only_while_holds_are_on(client):
+    _fee("250")
+    res = _wedding_res()
+
+    off = client.get(_wedding_url(res)).content.decode()
+    cfg = TaskConfig.load()
+    cfg.hold_enabled = True
+    cfg.save()
+    on = client.get(_wedding_url(res)).content.decode()
+
+    box = "I understand the cleaning fees above apply if a vehicle needs more than normal cleaning"
+    assert 'name="ack_cleaning"' in off and box in off
+    assert "hold" not in off.lower()
+    assert "and a hold of $250.00 is placed on my card" in on
 
 
 def test_a_wedding_with_no_fee_shows_only_the_overtime_box(client):

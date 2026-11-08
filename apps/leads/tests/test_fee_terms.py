@@ -45,9 +45,11 @@ def test_fee_block_lists_each_held_type_and_the_highest_hold():
         ("Test stretch", "750", "cancelled"),  # a cancelled trip neither lists nor raises the hold
     )
 
-    terms = services.fee_terms_context(lead)
-    html = services.fee_terms_html(lead)
+    config = _config(hold_enabled=True)
+    terms = services.fee_terms_context(lead, config)
+    html = services.fee_terms_html(lead, config)
 
+    assert terms["hold_on"] is True
     assert terms["fees"] == [("Test coach", Decimal("500")), ("Test sprinter", Decimal("250"))]
     assert terms["hold"] == Decimal("500")
     assert "Test coach — $500.00 cleaning fee" in html
@@ -56,6 +58,31 @@ def test_fee_block_lists_each_held_type_and_the_highest_hold():
     assert html.index("Test coach") < html.index("Test sprinter")  # highest first
     assert "One hold for the highest of these, $500.00" in html
     assert "5-minute" in html and "15-minute" in html  # the overtime rule stays
+
+
+def test_fee_block_hides_the_hold_while_holds_are_off():
+    """A customer is never told a hold is placed while the switch is off."""
+    lead = _order(("Test coach", "500"), ("Test sprinter", "250"))
+    config = _config(hold_enabled=False)
+
+    terms = services.fee_terms_context(lead, config)
+    html = services.fee_terms_html(lead, config)
+
+    assert terms["hold_on"] is False and terms["hold"] == Decimal("500")
+    assert "Test coach — $500.00 cleaning fee" in html
+    assert "Test sprinter — $250.00 cleaning fee" in html
+    assert "hold" not in html.lower()
+    assert "Overtime." in html
+
+
+def test_fee_terms_version_changes_when_holds_are_switched_on():
+    lead = _order(("Test coach", "500"))
+
+    off = services.fee_terms_version(lead, _config(hold_enabled=False))
+    on = services.fee_terms_version(lead, _config(hold_enabled=True))
+
+    assert off != on
+    assert off == services.fee_terms_version(lead, _config(hold_enabled=False))
 
 
 def test_fee_block_without_held_vehicle_has_overtime_only():
