@@ -190,3 +190,63 @@ def test_update_skipped_when_details_revert_before_it_sends():
     assert (up.status, up.error) == (TouchPoint.Status.SKIPPED, "no change to report")
     send.assert_not_called()
     assert _updates(res).count() == 1
+
+
+def test_second_row_on_driver_changed_is_not_skipped():
+    """Two rows on the trigger queue two notices for one change. The first to send must not
+    make the other read as "no change": only a notice that reached someone before this one
+    was queued counts as what the reader was last told."""
+    from apps.messaging.factories import MessageRowFactory
+
+    seeded = MessageTemplate.objects.get(key="driver_updated")
+    MessageRowFactory(
+        trigger="driver_changed",
+        audience=seeded.audience,
+        send_sms=seeded.send_sms,
+        send_email=seeded.send_email,
+        subject=seeded.subject,
+        email_body=seeded.email_body,
+        sms_body=seeded.sms_body,
+        recipients=seeded.recipients,
+        enabled=True,
+    )
+    res, a = _sent_trip()
+    _new_cell(a)
+    ups = list(TouchPoint.objects.filter(reservation=res, message__trigger="driver_changed"))
+    assert len(ups) == 2
+    for up in ups:
+        _due(up)
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}):
+        sender.run_touchpoints()
+    for up in ups:
+        up.refresh_from_db()
+        assert (up.status, up.error) == (TouchPoint.Status.SENT, ""), up.error
+
+
+def test_partly_sent_update_keeps_its_held_texts_after_a_revert():
+    """Its email went with the new details; the texts held for quiet hours still go even if
+    the details are then put back, so its readers hear the same story."""
+    from apps.messaging.factories import DeliveryFactory
+    from apps.messaging.models import Delivery
+
+    res, a = _sent_trip()
+    _new_cell(a)
+    (up,) = _updates(res)
+    a.refresh_from_db()
+    up.driver_details = a.driver_info  # stamped by its email
+    up.save(update_fields=["driver_details"])
+    DeliveryFactory(
+        touchpoint=up,
+        message=up.message,
+        channel=Delivery.Channel.EMAIL,
+        address="dana@example.com",
+        status=Delivery.Status.SENT,
+    )
+    _new_cell(a, INFO["cell"])  # back to what the first message said
+    _due(up)
+    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+        sender.run_touchpoints()
+    up.refresh_from_db()
+    assert up.error != "no change to report"
+    assert up.status == TouchPoint.Status.SENT
+    send.assert_called()

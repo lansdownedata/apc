@@ -304,10 +304,10 @@ _DRIVER_TRIGGERS = ("pickup_dispatched", "driver_changed")
 _DRIVER_KINDS = ("driver_released", "driver_updated")
 
 
-def last_told_driver(reservation, *, exclude: int | None = None) -> TouchPoint | None:
+def last_told_driver(reservation, *, before=None) -> TouchPoint | None:
     """The trip's newest driver message that reached anyone (sent, or still holding its
     texts for quiet hours: its email went), so its `driver_details` are what the customer
-    was last told. ``exclude`` leaves out one TouchPoint (the one being checked)."""
+    was last told. ``before`` only counts one that reached them before that moment."""
     rows = MessageTemplate.objects.filter(trigger__in=_DRIVER_TRIGGERS)
     reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
     sent = TouchPoint.objects.annotate(partly=Exists(reached)).filter(
@@ -315,16 +315,29 @@ def last_told_driver(reservation, *, exclude: int | None = None) -> TouchPoint |
         Q(status=TouchPoint.Status.SENT) | Q(status=TouchPoint.Status.SCHEDULED, partly=True),
         reservation=reservation,
     )
-    if exclude is not None:
-        sent = sent.exclude(pk=exclude)
-    return max(sent, key=lambda tp: (tp.sent_at or tp.created_at, tp.pk), default=None)
+
+    def told_at(tp: TouchPoint):
+        return tp.sent_at or tp.created_at
+
+    if before is not None:
+        sent = [tp for tp in sent if told_at(tp) < before]
+    return max(sent, key=lambda tp: (told_at(tp), tp.pk), default=None)
 
 
 def _driver_unchanged(tp: TouchPoint) -> bool:
-    """A driver-change notice whose details are back to what the customer was last told:
-    there is no change to report. Unknown details (a send made before they were recorded,
-    or no coverage now) never count as unchanged."""
-    newest = last_told_driver(tp.reservation, exclude=tp.pk)
+    """A driver-change notice whose details are back to what its readers were told before
+    it was queued: there is no change to report. Only notices that reached someone before
+    this one was queued count, so a sibling row's notice for the same change (any audience)
+    never stands in for it. A notice that already reached someone (its email went, its
+    texts wait for quiet hours) always finishes, so all its readers hear the same details.
+    Unknown details (a send made before they were recorded, or no coverage now) never
+    count as unchanged."""
+    reached = (
+        tp.driver_details is not None or tp.deliveries.filter(status=Delivery.Status.SENT).exists()
+    )
+    if reached:
+        return False
+    newest = last_told_driver(tp.reservation, before=tp.created_at)
     if newest is None or newest.driver_details is None:
         return False
     assignment = confirmed_assignment(tp.reservation)
