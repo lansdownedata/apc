@@ -125,6 +125,7 @@ def test_acknowledge_fees_ip_absent_from_changes(client):
     )
 
     new = _entries(Lead, lead.pk).exclude(pk__in=before).get()
+    assert new.source == "customer: trip confirmation"
     assert set(new.changes) == {"fees_acknowledged_at", "fees_acknowledged_version"}
     assert "203.0.113.9" not in str(new.changes)
 
@@ -150,8 +151,9 @@ def test_confirm_trip_day_logs_only_trips_this_call_stamped(client):
         assert entry.order_id == lead.pk
         assert set(entry.changes) == {"customer_confirmed_at"}
         trip.refresh_from_db()
-        # The stamp must be read back equal to what was written (MySQL DATETIME precision).
-        assert trip.customer_confirmed_at is not None
+        assert entry.changes["customer_confirmed_at"][1] == str(
+            trip.customer_confirmed_at.replace(tzinfo=None)
+        )
 
 
 def test_affiliate_confirm_source(client):
@@ -222,3 +224,52 @@ def test_hold_transition_logs_once_and_loser_logs_nothing():
     new = list(_entries(Charge, charge.pk).order_by("pk"))[before:]
     assert len(new) == 1
     assert new[0].changes["status"] == [Charge.Status.PENDING, Charge.Status.AUTHORIZED]
+
+
+# --- odd kwargs ------------------------------------------------------------------------
+
+
+def test_record_update_fk_by_attname_logs_under_the_field_name():
+    charge = ChargeFactory()
+    trip = ReservationFactory()
+
+    entry = record_update(charge, reservation_id=trip.pk)
+
+    assert list(entry.changes) == ["reservation"]
+    assert entry.changes["reservation"][1] == str(trip.pk)
+
+
+def test_record_update_excluded_fk_by_attname_logs_nothing_and_does_not_raise():
+    charge = ChargeFactory()
+
+    assert record_update(charge, receipt_parent_id=5) is None
+
+
+def test_record_update_unknown_name_is_ignored():
+    charge = ChargeFactory()
+
+    assert record_update(charge, no_such_column=1) is None
+
+
+def test_record_update_writes_nothing_when_auditlog_is_disabled():
+    from auditlog.context import disable_auditlog
+
+    lead = LeadFactory()
+    before = AuditEntry.objects.count()
+
+    with disable_auditlog():
+        assert record_update(lead, accepted_terms_version="abcd1234") is None
+
+    assert AuditEntry.objects.count() == before
+
+
+def test_hold_transition_excluded_columns_stay_out_of_changes():
+    charge = ChargeFactory(kind=Charge.Kind.HOLD, status=Charge.Status.PENDING)
+    now = timezone.now()
+
+    holds._while_pending(
+        charge, status=Charge.Status.AUTHORIZED, authorized_at=now, capture_expires_at=now
+    )
+
+    entry = _entries(Charge, charge.pk).order_by("pk").last()
+    assert set(entry.changes) == {"status"}

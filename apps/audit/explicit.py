@@ -21,26 +21,26 @@ from .models import AuditEntry
 def record_update(instance: Model, **new_values) -> AuditEntry | None:
     """Log a change made by a queryset UPDATE. Old values are read from `instance`, so call it
     before refreshing or assigning; fields the registry excludes are dropped, and nothing is
-    written when no tracked field differs (or the model isn't registered)."""
+    written when no tracked field differs (or the model isn't registered).
+
+    Pass the concrete values the UPDATE wrote: expressions (F(), Now()) are not supported."""
     if auditlog_disabled.get() or registry.spec_for(instance) is None:
         return None
     excluded = set(registry.effective_exclude(instance))
     after = copy.copy(instance)
     changes: dict[str, list[str]] = {}
     for name, value in new_values.items():
-        if name in excluded:
-            continue
         try:
             field = instance._meta.get_field(name)
         except FieldDoesNotExist:
             continue
-        if not field.concrete:
+        if not field.concrete or {field.name, field.attname, name} & excluded:
             continue
-        setattr(after, field.name, value)
+        setattr(after, field.attname, value)
         old = smart_str(get_field_value(instance, field))
         new = smart_str(get_field_value(after, field))
         if old != new:
-            changes[name] = [old, new]
+            changes[field.name] = [old, new]
     if not changes:
         return None
     return AuditEntry.objects.log_create(instance, action=AuditEntry.Action.UPDATE, changes=changes)
