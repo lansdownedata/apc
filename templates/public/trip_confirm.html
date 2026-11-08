@@ -51,10 +51,10 @@ CLIENT COPY PENDING (APC-27).
         {% comment %} APC-94 · wedding only; the billing contact signs off on the fee and the
              overtime rule. The block's numbers come from Settings. CLIENT COPY PENDING (APC-27). {% endcomment %}
         <div class="terms">{{ fee_terms }}</div>
-        {% if fee %}
+        {% if hold %}
         <label class="check">
           <input type="checkbox" name="ack_cleaning" required>
-          <span>I understand a cleaning fee of ${{ fee|floatformat:2 }} applies if a vehicle needs more than normal cleaning.</span>
+          <span>I understand the cleaning fees above apply if a vehicle needs more than normal cleaning, and a hold of ${{ hold|floatformat:2 }} is placed on my card.</span>
         </label>
         {% endif %}
         <label class="check">

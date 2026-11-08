@@ -121,13 +121,13 @@ def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
     trips = wedding_day_group(lead, day)
     ctx = _day_context(trips, lead.effective_billing_contact.name)
     fees_pending = lead.fees_acknowledged_at is None
-    terms = lead_services.fee_terms_context()
+    terms = lead_services.fee_terms_context(lead)
     ctx.update(
         wedding=True,
         trips_confirmed=ctx["confirmed"],
         confirmed=ctx["confirmed"] and not fees_pending,
-        fee=terms["fee"],
-        fee_terms=lead_services.fee_terms_html(terms["config"]),
+        hold=terms["hold"],
+        fee_terms=lead_services.fee_terms_html(lead, terms["config"]),
         fees_pending=fees_pending,
         fees_acknowledged_on=lead.fees_acknowledged_on,
         fee_ack_error=False,
@@ -135,7 +135,7 @@ def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
     if request.method == "POST" and request.POST.get("form") == "feedback":
         return _submit_feedback(request, token, ctx, page="wedding_trip_confirm")
     if request.method == "POST" and trips:
-        boxes = ["ack_overtime"] + (["ack_cleaning"] if ctx["fee"] else [])
+        boxes = ["ack_overtime"] + (["ack_cleaning"] if ctx["hold"] else [])
         ctx["ack_error"] = not ctx["trips_confirmed"] and not request.POST.get("ack")
         ctx["fee_ack_error"] = fees_pending and not all(request.POST.get(b) for b in boxes)
         if ctx["ack_error"] or ctx["fee_ack_error"]:

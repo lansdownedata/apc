@@ -1,6 +1,7 @@
 """APC-49 — the TaskConfig singleton and its settings screen."""
 
 import importlib
+from datetime import time
 from decimal import Decimal
 
 import pytest
@@ -77,9 +78,13 @@ def test_the_overtime_rule_defaults_to_the_clients_numbers():
     assert _rule(TaskConfig.load()) == (5, 15, 15, 25, 50, 60)
 
 
-def test_the_cleaning_fee_defaults_to_zero():
-    """APC-94: the client's number is entered in Settings when he sends it."""
-    assert TaskConfig.load().cleaning_fee == Decimal("0.00")
+def test_hold_switch_ships_off():
+    """APC-95: holds are dark until someone turns them on in Settings."""
+    cfg = TaskConfig.load()
+    assert cfg.hold_enabled is False
+    assert cfg.hold_place_time == time(3, 0)
+    assert cfg.hold_release_days == 3
+    assert not hasattr(cfg, "cleaning_fee")  # the fee moved to each vehicle type
 
 
 def test_the_overtime_block_cannot_be_zero(client):
@@ -121,7 +126,8 @@ def test_owner_admin_can_save(client):
             "airport_domestic_grace_minutes": 20,
             "airport_international_grace_minutes": 45,
             "overtime_block_minutes": 30,
-            "cleaning_fee": "250.00",
+            "hold_place_time": "03:00",
+            "hold_release_days": 3,
         },
     )
 
@@ -131,7 +137,6 @@ def test_owner_admin_can_save(client):
     assert cfg.overdue_grace_hours == 12
     assert cfg.post_trip_grace_hours == 3
     assert _rule(cfg) == (4, 10, 12, 20, 45, 30)
-    assert cfg.cleaning_fee == Decimal("250.00")
     assert cfg.sales_owner is None
     assert TaskConfig.objects.count() == 1
 
@@ -152,3 +157,86 @@ def test_the_settings_index_links_to_it(client):
     body = client.get(reverse("settings_index")).content.decode()
 
     assert reverse("task_settings") in body
+
+
+def test_tasks_screen_saves_hold_settings(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    body = client.get(reverse("task_settings")).content.decode()
+    assert "Cleaning hold" in body
+    assert "Place cleaning holds" in body
+    assert "on the day of the order's first held trip (trip's local time)" in body
+    assert "days after the order's last held trip" in body
+    assert 'type="time"' in body
+    assert "cleaning_fee" not in body  # the fee is set per vehicle type now
+
+    resp = client.post(
+        reverse("task_settings"),
+        {
+            "enabled": "on",
+            "overdue_grace_hours": 24,
+            "post_trip_grace_hours": 2,
+            "grace_large_minutes": 5,
+            "grace_standard_minutes": 15,
+            "transfer_grace_minutes": 15,
+            "airport_domestic_grace_minutes": 25,
+            "airport_international_grace_minutes": 50,
+            "overtime_block_minutes": 60,
+            "hold_enabled": "on",
+            "hold_place_time": "04:30",
+            "hold_release_days": 5,
+        },
+    )
+
+    assert resp.status_code == 302
+    cfg = TaskConfig.load()
+    assert cfg.hold_enabled is True
+    assert cfg.hold_place_time == time(4, 30)
+    assert cfg.hold_release_days == 5
+
+
+# --- the fee moves onto the vehicle types (APC-95) ----------------------------------------
+
+
+def _copy_fee_migration():
+    return importlib.import_module("apps.tasks.migrations.0017_hold_settings")
+
+
+@pytest.mark.parametrize(("old_fee", "large_gets"), [("250.00", "250.00"), ("0.00", "0.00")])
+def test_migration_copies_global_fee_to_large_types_only_when_positive(old_fee, large_gets):
+    """The data step runs against the live models; only reading the old column is stubbed,
+    because the test database is already past the migration that drops it."""
+    from unittest.mock import patch
+
+    from django.apps import apps
+
+    from apps.leads.factories import VehicleTypeFactory
+    from apps.leads.models import VehicleType
+
+    bus = VehicleTypeFactory(name="Mini Bus", overtime_class=VehicleType.OvertimeClass.LARGE)
+    coach = VehicleTypeFactory(
+        name="Coach", overtime_class=VehicleType.OvertimeClass.LARGE, cleaning_fee=Decimal("90")
+    )
+    sedan = VehicleTypeFactory(name="Sedan", overtime_class=VehicleType.OvertimeClass.STANDARD)
+    migration = _copy_fee_migration()
+
+    with patch.object(migration, "_old_fee", return_value=Decimal(old_fee)):
+        migration.copy_fee(apps, None)
+
+    for row in (bus, coach, sedan):
+        row.refresh_from_db()
+    assert bus.cleaning_fee == Decimal(large_gets)
+    # A zero global fee copies nothing: an already-set type keeps its own number.
+    assert coach.cleaning_fee == (Decimal(large_gets) if old_fee != "0.00" else Decimal("90"))
+    assert sedan.cleaning_fee == Decimal("0.00")
+
+
+def test_the_migration_reads_the_old_fee_before_dropping_the_column():
+    from django.db import migrations
+
+    ops = _copy_fee_migration().Migration.operations
+    kinds = [type(op) for op in ops]
+    copy_at = kinds.index(migrations.RunPython)
+    remove_at = next(i for i, op in enumerate(ops) if isinstance(op, migrations.RemoveField))
+    assert copy_at < remove_at
+    assert ops[remove_at].name == "cleaning_fee"

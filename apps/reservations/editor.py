@@ -95,11 +95,10 @@ def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=No
     editor nothing up front and lets it fetch the trip being opened.
     """
     from apps.leads import services as lead_services
-    from apps.tasks.models import TaskConfig
 
     vehicles = list(
         VehicleType.objects.filter(active=True).values(
-            "id", "name", "rate", "hourly_min_hours", "transfer_min_hours"
+            "id", "name", "rate", "hourly_min_hours", "transfer_min_hours", "cleaning_fee"
         )
     )
     sizes = {m.pk: line.size for line in groups.as_lines(reservations) for m in line.members}
@@ -120,11 +119,11 @@ def editor_context(request, lead: Lead | None, reservations, *, trip_defaults=No
                 "rate": float(v["rate"]),
                 "hourlyMin": float(v["hourly_min_hours"]),
                 "transferMin": float(v["transfer_min_hours"]),
+                # "+ Cleaning fee" pre-fills the trip's vehicle type fee (APC-95).
+                "cleaningFee": float(v["cleaning_fee"]),
             }
             for v in vehicles
         ],
         "vehicle_options": [(v["id"], v["name"]) for v in vehicles],
         "service_type_options": lead_services.service_type_options(lead),
-        # "+ Cleaning fee" pre-fills the Settings amount (spec 2026-10-25 §3.1).
-        "cleaning_fee": float(TaskConfig.load().cleaning_fee or 0),
     }

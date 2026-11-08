@@ -1,6 +1,7 @@
 """Vehicle Types CRUD — owner-admin only, guarded delete."""
 
 import re
+from decimal import Decimal
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -285,3 +286,49 @@ def test_the_overtime_class_picker_is_a_searchable_select_not_native(client):
     select = re.search(r"<select[^>]*name=\"overtime_class\"[^>]*>", html)
     assert select is not None
     assert "data-tom" in select.group(0)
+
+
+def test_vehicle_type_fee_saves(client):
+    """APC-95: the cleaning fee (and the card hold) lives on each vehicle type."""
+    client.force_login(UserFactory(role="owner_admin"))
+    response = client.post(
+        reverse("vehicle_type_create"),
+        {
+            "name": "Test Coach",
+            "capacity": 56,
+            "description": "",
+            "sort_order": 0,
+            "active": "on",
+            "overtime_class": "large",
+            "cleaning_fee": "500.00",
+        },
+    )
+    assert response.status_code == 302
+    coach = VehicleType.objects.get(name="Test Coach")
+    assert coach.cleaning_fee == Decimal("500.00")
+
+    body = client.get(reverse("vehicle_type_edit", args=[coach.pk])).content.decode()
+    assert "Cleaning fee" in body
+    assert "Also the card hold placed before the trip. 0 = no fee and no hold." in body
+
+
+def test_a_blank_cleaning_fee_saves_as_no_fee(client):
+    client.force_login(UserFactory(role="owner_admin"))
+    vt = VehicleTypeFactory(name="Fee Cleared Van")
+    vt.cleaning_fee = Decimal("250")
+    vt.save()
+
+    client.post(
+        reverse("vehicle_type_edit", args=[vt.pk]),
+        {
+            "name": "Fee Cleared Van",
+            "capacity": 14,
+            "sort_order": 0,
+            "active": "on",
+            "overtime_class": "large",
+            "cleaning_fee": "",
+        },
+    )
+
+    vt.refresh_from_db()
+    assert vt.cleaning_fee == Decimal("0.00")

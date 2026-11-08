@@ -167,6 +167,27 @@ def test_the_editor_offers_the_five_extra_buttons_and_an_overtime_box(agent, cli
     assert "cleaningFee" in body
 
 
+def test_editor_prefills_the_trips_type_fee(rf):
+    """APC-95: "+ Cleaning fee" pre-fills the fee of the vehicle type on the trip being
+    edited, not one global number. The editor is page-wide (several trips, or none on the
+    dispatch board), so each vehicle carries its fee and the line reads the draft's."""
+    from apps.leads.factories import VehicleTypeFactory
+    from apps.reservations.editor import editor_context
+
+    coach = VehicleTypeFactory(name="Coach", cleaning_fee=Decimal("500"))
+    sedan = VehicleTypeFactory(name="Sedan", cleaning_fee=Decimal("0"))
+    trip = ReservationFactory(vehicle=coach)
+
+    ctx = editor_context(rf.get("/"), trip.lead, [trip])
+
+    fees = {v["id"]: v["cleaningFee"] for v in ctx["vehicles_json"]}
+    assert fees[coach.pk] == 500.0
+    assert fees[sedan.pk] == 0.0
+    assert ctx["reservations_json"][0]["vehicle"] == coach.pk
+    add_extra = APP_JS[APP_JS.index("addExtra(kind) {") :][:400]
+    assert "this.draft.vehicle" in add_extra and "cleaningFee" in add_extra
+
+
 def test_the_extras_block_uses_no_native_select():
     start = EDITOR.index("Extras")
     block = EDITOR[start : EDITOR.index("Subtotal", start)]

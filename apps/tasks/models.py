@@ -8,7 +8,6 @@ from django.db.models import OuterRef, Subquery
 from django.utils import dateformat, timezone
 
 from apps.accounts.models import Department
-from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 
 
@@ -94,11 +93,18 @@ class TaskConfig(models.Model):
         validators=[MinValueValidator(1)],
         help_text="Past the grace, overtime bills in blocks this long, each one started.",
     )
-    # APC-94: shown to wedding customers on the 72-hour confirmation, which they acknowledge.
-    # The client sets the number here; 0 hides the cleaning line.
-    cleaning_fee = MoneyField(
-        help_text="Charged when a vehicle needs more than normal cleaning after a trip. Shown "
-        "to wedding customers on the 72-hour confirmation; 0 hides it.",
+    # The cleaning hold (APC-95). The fee itself is on each vehicle type; these say whether
+    # holds are placed at all, when, and how long an unused one may stay on the card.
+    hold_enabled = models.BooleanField("Place cleaning holds", default=False)
+    hold_place_time = models.TimeField(
+        "Place the hold at",
+        default=time(3, 0),
+        help_text="On the day of the order's first held trip, in the trip's local time.",
+    )
+    hold_release_days = models.PositiveSmallIntegerField(
+        "Release an unused hold no later than",
+        default=3,
+        help_text="Days after the order's last held trip.",
     )
     # When each post-trip report last ran. The complaint report covers what was logged
     # since its stamp; the review report shows its stamp as the period start (which orders

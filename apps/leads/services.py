@@ -310,24 +310,39 @@ def accept_terms(lead: Lead) -> bool:
     return bool(stamped)
 
 
-def fee_terms_context(config=None) -> dict:
-    """What `public/_fee_terms.html` renders from: the cleaning fee and the overtime rule
-    table (APC-91), both TaskConfig settings so the block never drifts from them."""
+def fee_terms_context(lead: Lead, config=None) -> dict:
+    """What `public/_fee_terms.html` renders from: the cleaning fee of each vehicle type on
+    the order's live trips (APC-95), the one hold they make (the highest of them), and the
+    overtime rule table (APC-91) from TaskConfig, so the block never drifts from Settings.
+
+    `fees` is `[(type name, fee), ...]`, highest first, one entry per type, types with no
+    fee left out. `hold` is `Decimal("0")` when no trip is in a held vehicle.
+    """
+    from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.tasks.models import TaskConfig
 
     config = config or TaskConfig.load()
-    return {"fee": Decimal(config.cleaning_fee or 0), "config": config}
+    rows = (
+        lead.reservations.filter(vehicle__cleaning_fee__gt=0)
+        .exclude(trip_status__in=CANCELLED_STATUSES)
+        .order_by("-vehicle__cleaning_fee", "vehicle__name")
+        .values_list("vehicle__name", "vehicle__cleaning_fee")
+        .distinct()
+    )
+    fees = [(name, Decimal(fee)) for name, fee in rows]
+    hold = fees[0][1] if fees else Decimal("0")
+    return {"fees": fees, "hold": hold, "config": config}
 
 
-def fee_terms_html(config=None) -> str:
-    return render_to_string("public/_fee_terms.html", fee_terms_context(config))
+def fee_terms_html(lead: Lead, config=None) -> str:
+    return render_to_string("public/_fee_terms.html", fee_terms_context(lead, config))
 
 
-def fee_terms_version(config=None) -> str:
-    """Like `terms_version()` for the wedding fee block (APC-94): the first 8 hex chars of
-    the SHA-256 of the rendered text. Not cached — the fee and the grace numbers are
-    settings, so an edit on the Tasks screen is a new version."""
-    return hashlib.sha256(fee_terms_html(config).encode()).hexdigest()[:8]
+def fee_terms_version(lead: Lead, config=None) -> str:
+    """Like `terms_version()` for the fee block (APC-94): the first 8 hex chars of the
+    SHA-256 of the rendered text. Not cached: the per-type fees and the grace numbers are
+    settings, and the order's vehicles change, so either is a new version."""
+    return hashlib.sha256(fee_terms_html(lead, config).encode()).hexdigest()[:8]
 
 
 def acknowledge_fees(lead: Lead, *, ip: str) -> bool:
@@ -339,7 +354,7 @@ def acknowledge_fees(lead: Lead, *, ip: str) -> bool:
         .update(
             fees_acknowledged_at=timezone.now(),
             fees_acknowledged_ip=ip or None,
-            fees_acknowledged_version=fee_terms_version(),
+            fees_acknowledged_version=fee_terms_version(lead),
         )
     )
     if stamped:

@@ -11,12 +11,11 @@ from apps.contacts.factories import ContactFactory
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads import services as lead_services
-from apps.leads.factories import LeadFactory, ServiceTypeFactory
+from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.reservations import acknowledgements as ack
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
-from apps.tasks.models import TaskConfig
 
 pytestmark = pytest.mark.django_db
 
@@ -142,10 +141,11 @@ def test_trip_confirm_shows_nothing_to_confirm_when_the_day_is_cancelled(client)
 
 
 def _fee(amount):
-    cfg = TaskConfig.load()
-    cfg.cleaning_fee = Decimal(amount)
-    cfg.save()
-    return cfg
+    """The cleaning fee on the vehicle type `_wedding_res` books (the factory default)."""
+    vehicle = VehicleTypeFactory()
+    vehicle.cleaning_fee = Decimal(amount)
+    vehicle.save()
+    return vehicle
 
 
 def _wedding_res(**kw):
@@ -249,7 +249,7 @@ def test_a_wedding_confirm_stamps_the_lead_with_ip_and_version(client):
     assert res.customer_confirmed_at is not None
     assert lead.fees_acknowledged_at is not None
     assert lead.fees_acknowledged_ip == "203.0.113.9"
-    assert lead.fees_acknowledged_version == lead_services.fee_terms_version()
+    assert lead.fees_acknowledged_version == lead_services.fee_terms_version(lead)
 
 
 def test_reopening_shows_acknowledged_and_never_restamps(client):

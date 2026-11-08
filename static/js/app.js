@@ -2618,8 +2618,6 @@ function reservationEditor(opts = {}) {
      * lead's trips knows it up front; the dispatch board's fetched draft brings its own. */
     bookingContactName: opts.bookingContactName || "",
     defaultCostRatio: opts.defaultCostRatio ?? 65,
-    /* "+ Cleaning fee" pre-fills the Settings amount (spec 2026-10-25 §3.1). */
-    cleaningFee: Number(opts.cleaningFee) || 0,
     /* Mirrors TripExtra.Kind and its labels (apps/reservations/models.py). Five kinds, no
      * "Wait time": on a transfer the Overtime line already is the wait. */
     extraKinds: ["cleaning", "tolls", "parking", "credit", "other"],
@@ -3046,8 +3044,11 @@ function reservationEditor(opts = {}) {
     resTotal(r) {
       return Math.max(this.resDiscountedBase(r) + this.resOvertime(r) + this.resGratuity(r) + this.resExtras(r), 0);
     },
+    /* "+ Cleaning fee" pre-fills the fee of the vehicle type on the trip (APC-95); no
+     * vehicle, or one with no fee, starts the line at 0. */
     addExtra(kind) {
-      const amount = kind === "cleaning" ? this.cleaningFee : 0;
+      const v = this.vehicles.find((x) => String(x.id) === String(this.draft.vehicle));
+      const amount = kind === "cleaning" && v ? Number(v.cleaningFee) || 0 : 0;
       this.draft.extras.push({ kind, label: this.extraLabels[kind] || "", amount });
     },
     removeExtra(i) { this.draft.extras.splice(i, 1); },

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
 from django.utils import dateformat, timezone
@@ -78,6 +79,14 @@ class VehicleType(TimeStampedModel):
         default=OvertimeClass.STANDARD,
         help_text="Which overtime grace applies: 5 minutes for buses, vans and stretches; "
         "15 for sedans and SUVs.",
+    )
+    # APC-95: one number per type, two uses. The trip editor's "+ Cleaning fee" pre-fills
+    # it, and an order is held on its card for the highest one among its trips.
+    cleaning_fee = MoneyField(
+        "Cleaning fee",
+        validators=[MinValueValidator(0)],
+        help_text="Charged when the vehicle needs more than normal cleaning. Also the card "
+        "hold placed before the trip. 0 = no fee and no hold.",
     )
 
     class Meta:
@@ -166,8 +175,8 @@ class Lead(TimeStampedModel):
     accepted_terms_version = models.CharField(max_length=16, blank=True)
     # APC-94: on a wedding the billing contact acknowledged the cleaning fee and the
     # overtime rule on the 72-hour confirmation. Stamped once by `services.acknowledge_fees`;
-    # the version is `services.fee_terms_version()` (hash of the rendered block, which
-    # carries the fee and the grace numbers from TaskConfig).
+    # the version is `services.fee_terms_version(lead)` (hash of the rendered block, which
+    # carries the order's per-vehicle-type fees and the grace numbers from TaskConfig).
     fees_acknowledged_at = models.DateTimeField(null=True, blank=True)
     fees_acknowledged_ip = models.GenericIPAddressField(null=True, blank=True)
     fees_acknowledged_version = models.CharField(max_length=16, blank=True)

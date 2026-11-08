@@ -1,6 +1,7 @@
 """Model forms for the Settings screens."""
 
 import re
+from decimal import Decimal
 
 from django import forms
 from django.core.validators import validate_email
@@ -31,6 +32,7 @@ class VehicleTypeForm(forms.ModelForm):
             "hourly_min_hours",
             "transfer_min_hours",
             "overtime_class",
+            "cleaning_fee",
             "sort_order",
             "active",
             "group_transport",
@@ -49,6 +51,9 @@ class VehicleTypeForm(forms.ModelForm):
             # Tom Select, never a bare <select> (CLAUDE.md).
             "overtime_class": forms.Select(
                 attrs={"class": "field w-full", "data-tom": "", "data-search": "off"}
+            ),
+            "cleaning_fee": forms.NumberInput(
+                attrs={"class": "field w-full", "min": 0, "step": "0.01"}
             ),
             "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
             # Plain FileInput, not the default ClearableFileInput: the template wraps
@@ -73,6 +78,14 @@ class VehicleTypeForm(forms.ModelForm):
                 "Turn it off for limousines and anything else that is not a shuttle."
             ),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Left blank means no fee, the same as 0.
+        self.fields["cleaning_fee"].required = False
+
+    def clean_cleaning_fee(self) -> Decimal:
+        return self.cleaned_data.get("cleaning_fee") or Decimal("0")
 
 
 class ServiceTypeForm(forms.ModelForm):
@@ -108,6 +121,7 @@ class ServiceTypeForm(forms.ModelForm):
 _NUM = {"class": "field w-full", "min": 0}
 _CHECK = {"class": "rounded focus-visible:ring-2 focus-visible:ring-gold disabled:opacity-50"}
 _AREA = {"class": "field w-full", "rows": 3}
+_TIME = {"class": "field w-full", "type": "time"}
 
 
 class DispatchAlertConfigForm(forms.ModelForm):
@@ -175,7 +189,9 @@ class TaskConfigForm(forms.ModelForm):
             "airport_domestic_grace_minutes",
             "airport_international_grace_minutes",
             "overtime_block_minutes",
-            "cleaning_fee",
+            "hold_enabled",
+            "hold_place_time",
+            "hold_release_days",
         ]
         widgets = {
             "sales_owner": forms.Select(attrs=_OWNER),
@@ -191,7 +207,10 @@ class TaskConfigForm(forms.ModelForm):
             "airport_domestic_grace_minutes": forms.NumberInput(attrs=_NUM),
             "airport_international_grace_minutes": forms.NumberInput(attrs=_NUM),
             "overtime_block_minutes": forms.NumberInput(attrs=_NUM),
-            "cleaning_fee": forms.NumberInput(attrs={**_NUM, "step": "0.01"}),
+            "hold_enabled": forms.CheckboxInput(attrs=_CHECK),
+            # A native time input is fine here: it is not an option picker (CLAUDE.md).
+            "hold_place_time": forms.TimeInput(attrs=_TIME, format="%H:%M"),
+            "hold_release_days": forms.NumberInput(attrs=_NUM),
         }
 
     def __init__(self, *args, **kwargs):
