@@ -195,6 +195,18 @@ def open_invoices(group: AccountGroup) -> list[Invoice]:
     )
 
 
+def voids_waiting(group: AccountGroup) -> list[Invoice]:
+    """This group's voided invoices whose QuickBooks void is still to go, or was refused. One
+    whose create never reached QuickBooks has nothing there to void."""
+    return list(
+        Invoice.objects.filter(group=group, status=Invoice.Status.VOID)
+        .exclude(qbo_void_requested_at=None)
+        .exclude(qbo_id="")
+        .exclude(qbo_sync_state=SyncState.SYNCED)
+        .order_by("-voided_at", "-pk")
+    )
+
+
 # --- services ------------------------------------------------------------------------------
 
 

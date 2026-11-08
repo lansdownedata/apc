@@ -281,12 +281,11 @@ def _alert(link: _Link, message: str) -> None:
         )
         return
     if link.entity == "invoice":
-        Notification.notify(
-            None,
-            Notification.Kind.SYNC_FAILED,
-            title=f"QuickBooks invoice failed: {record.group}",
-            detail=message,
-        )
+        if record.status == record.Status.VOID:
+            title = f"QuickBooks didn't void {record.label}: {record.group}"
+        else:
+            title = f"QuickBooks invoice failed: {record.label}: {record.group}"
+        Notification.notify(None, Notification.Kind.SYNC_FAILED, title=title, detail=message)
         return
     what = {"bill": "bill", "billpayment": "bill payment", "attachment": "invoice file"}[
         link.entity

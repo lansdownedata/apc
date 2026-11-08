@@ -153,10 +153,11 @@ function invoiceDraft(dataId, createUrl) {
         },
       });
     },
-    voidInvoice(url, label) {
+    voidInvoice(url, label, inQuickBooks) {
+      const quickbooks = inQuickBooks ? ` ${label} is voided in QuickBooks too, on the next sync.` : "";
       Alpine.store("modal").show({
         title: `Void ${label}?`,
-        message: "Its trips go back to ready to invoice.",
+        message: `Its trips go back to ready to invoice.${quickbooks}`,
         html:
           '<label for="void-reason" class="block text-[12.5px] font-medium text-ink">Why it is voided</label>' +
           '<input id="void-reason" type="text" class="field mt-1.5" maxlength="255" required>',

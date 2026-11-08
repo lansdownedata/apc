@@ -11,7 +11,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.billing.models import Invoice, InvoiceLine, QboAccountMapping, QboItem, SyncState
@@ -26,6 +26,7 @@ from apps.billing.qbo_sync import (
 )
 from apps.integrations import qbo
 from apps.payments.qbo_bills import (
+    _cents,
     _fail,
     _leased,
     _Link,
@@ -105,6 +106,7 @@ def customer_docs_from() -> date | None:
 
 # --- the Invoice payload -------------------------------------------------------------------------
 
+ITEM_LINE = "SalesItemLineDetail"
 # QuickBooks' limit for a line Description and for PrivateNote.
 DESCRIPTION_MAX = 4000
 # QuickBooks' limit for DocNumber (we send none; QuickBooks numbers the invoice itself).
@@ -115,6 +117,7 @@ NO_START_DATE = (
     "Waiting: choose the start date for customer documents in Settings \u2192 QuickBooks."
 )
 NO_LINES = "This invoice has no lines, so it isn't sent."
+LINES_OFF_TOTAL = "This invoice's lines don't add up to its total."
 
 
 def _money(amount) -> str:
@@ -132,6 +135,8 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
     rows = list(invoice.lines.order_by("pk"))
     if not rows:
         raise _Refused(NO_LINES, alert=False)
+    if sum((line.amount for line in rows), Decimal("0")) != invoice.total:
+        raise _Refused(LINES_OFF_TOTAL, alert=False)
     group = invoice.group
     po = f"PO {invoice.po_number}" if invoice.po_number else ""
     lines = []
@@ -139,7 +144,7 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
         description = f"{po} \u00b7 {line.description}" if po and index == 0 else line.description
         lines.append(
             {
-                "DetailType": "SalesItemLineDetail",
+                "DetailType": ITEM_LINE,
                 "Amount": _money(line.amount),
                 "Description": description[:DESCRIPTION_MAX],
                 "SalesItemLineDetail": {
@@ -166,25 +171,43 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
     return body
 
 
+def _mismatch(obj: dict, body: dict, invoice: Invoice) -> str:
+    """Why what QuickBooks holds isn't what we sent, in a sentence staff can act on."""
+    if not _same_total(obj, invoice.total):
+        held = _cents(obj.get("TotalAmt"))
+        if held is not None:
+            return (
+                f"QuickBooks totals this invoice ${held:,.2f}, not ${invoice.total:,.2f}. "
+                "Check sales tax on the Product/Service."
+            )
+    items = sum(1 for line in obj.get("Line", []) if line.get("DetailType") == ITEM_LINE)
+    return (
+        f"QuickBooks holds this invoice with {items} lines, not {len(body['Line'])}. "
+        "Check it in QuickBooks."
+    )
+
+
 def invoice_matches(obj: dict, body: dict) -> bool:
     """QuickBooks' Invoice is the one we sent: same total to the cent and the same number of
     item lines (QuickBooks adds its own subtotal line, which is not ours)."""
     expected = sum((Decimal(line["Amount"]) for line in body["Line"]), Decimal("0"))
     if not _same_total(obj, expected):
         return False
-    items = [
-        line for line in obj.get("Line", []) if line.get("DetailType") == "SalesItemLineDetail"
-    ]
+    items = [line for line in obj.get("Line", []) if line.get("DetailType") == ITEM_LINE]
     return len(items) == len(body["Line"])
 
 
 # --- the push ------------------------------------------------------------------------------------
 
 
-def pending_invoices(realm: str, start: date | None):
+def pending_invoices(realm: str, start: date | None, *, linked: bool = False):
     """Open invoices not in step with this company, once their group is in it. Those dated
     before `start` are never sent (no error); with no start date (None) every one comes back,
-    for the run to mark as waiting on it. An invoice with no lines is never sent."""
+    for the run to mark as waiting on it. An invoice with no lines is never sent.
+
+    One already in this company is left out unless `linked`: our invoices are never edited,
+    so the hourly run never updates one (a mismatch would rewrite it every hour); only a
+    person's Retry sends it again."""
     rows = (
         Invoice.objects.filter(status=Invoice.Status.OPEN)
         .filter(_stale("qbo_", realm))
@@ -192,6 +215,8 @@ def pending_invoices(realm: str, start: date | None):
         .filter(group__qbo_realm_id=realm)
         .filter(Exists(InvoiceLine.objects.filter(invoice=OuterRef("pk"))))
     )
+    if not linked:
+        rows = rows.exclude(~Q(qbo_id="") & Q(qbo_realm_id=realm))
     if start is not None:
         rows = rows.filter(invoice_date__gte=start)
     return rows.select_related("group").order_by("pk")
@@ -219,24 +244,31 @@ def _in_step(invoice: Invoice, realm: str) -> bool:
 
 def _push_invoice(invoice: Invoice, realm: str) -> bool:
     """Create (or update) the QuickBooks Invoice; QuickBooks numbers it and the number comes
-    back onto ours."""
+    back onto ours. One QuickBooks holds differently (sales tax on the item, most likely) is
+    ERROR with both figures and alerts once; the hourly run never sends it again."""
     returned: dict = {}
+    mismatch = ""
+    already_failed = invoice.qbo_sync_state == SyncState.ERROR
 
     def matches(obj: dict, body: dict) -> bool:
+        nonlocal mismatch
         returned.update(obj)
-        return invoice_matches(obj, body)
+        if invoice_matches(obj, body):
+            return True
+        mismatch = _mismatch(obj, body, invoice)
+        return False
 
-    in_step = _push(
-        _Link(invoice, "invoice", "Invoice"),
-        lambda: invoice_payload(invoice, realm),
-        matches=matches,
-        what="invoice",
-    )
+    link = _Link(invoice, "invoice", "Invoice")
+    in_step = _push(link, lambda: invoice_payload(invoice, realm), matches=matches, what="invoice")
     # Whatever came back is the invoice QuickBooks holds, so its number is ours to show.
     number = str(returned.get("DocNumber") or "")[:DOC_NUMBER_MAX]
     if number and number != invoice.number:
         Invoice.objects.filter(pk=invoice.pk).update(number=number)
         invoice.number = number
+    # Voided while QuickBooks was making it: the void follows it there, whatever it totals.
+    linked = invoice.qbo_id and invoice.status == Invoice.Status.OPEN
+    if mismatch and linked and invoice.qbo_sync_state == SyncState.NOT_SYNCED:
+        _fail(link, mismatch, alert=not already_failed)
     return in_step
 
 
@@ -247,10 +279,11 @@ def push_invoice(invoice: Invoice) -> bool:
     with _leased(Invoice, invoice.pk, "qbo_push_started_at") as mine:
         if not mine:
             return False
-        invoice.refresh_from_db()
         realm = current_realm()
         start = customer_docs_from()
-        if not pending_invoices(realm, start).filter(pk=invoice.pk).exists():
+        _clear_blocks(start, Invoice.objects.filter(pk=invoice.pk))
+        invoice.refresh_from_db()
+        if not pending_invoices(realm, start, linked=True).filter(pk=invoice.pk).exists():
             return _in_step(invoice, realm)
         if start is None:
             _fail(_Link(invoice, "invoice", "Invoice"), NO_START_DATE, alert=False)
@@ -319,6 +352,22 @@ def push_void(invoice: Invoice) -> bool:
         return _push_void(invoice)
 
 
+def _clear_blocks(start: date | None, rows=None) -> None:
+    """A block whose setting has since been chosen no longer applies: back to not sent, so an
+    invoice now before the start date says nothing and the next real refusal alerts."""
+    cleared = []
+    if start is not None:
+        cleared.append(NO_START_DATE)
+    if trip_item_ref() is not None:
+        cleared.append(NO_TRIP_ITEM)
+    if not cleared:
+        return
+    rows = Invoice.objects.all() if rows is None else rows
+    rows.filter(
+        status=Invoice.Status.OPEN, qbo_sync_state=SyncState.ERROR, qbo_sync_error__in=cleared
+    ).update(qbo_sync_state=SyncState.NOT_SYNCED, qbo_sync_error="")
+
+
 def _block_all(rows: list[Invoice], message: str) -> bool:
     """Every pending invoice shares one missing setting: mark each (so the row says why). True
     when any is newly marked, so the run alerts once rather than every hour."""
@@ -355,6 +404,7 @@ def sync_pending() -> int:
     start = customer_docs_from()
     pushed = attempted = 0
     blocked = ""  # newly blocked by a missing setting: alert once for the run
+    _clear_blocks(start)
     try:
         rows = list(pending_invoices(realm, start))
         if rows and start is None:
@@ -380,17 +430,24 @@ def sync_pending() -> int:
     return pushed
 
 
-def sync_state(invoice: Invoice, *, connected: bool | None = None) -> dict | None:
-    """What the invoice row shows: its state, its sentence and where Retry posts. None while
-    QuickBooks isn't connected. Pass `connected` when building many."""
+_UNSET = object()
+
+
+def sync_state(invoice: Invoice, *, connected: bool | None = None, start=_UNSET) -> dict | None:
+    """What the invoice row shows: its state, its sentence, where Retry posts and whether it
+    is dated before the start date (so never sent). None while QuickBooks isn't connected.
+    Pass `connected` and `start` when building many."""
     from django.urls import reverse
 
     if connected is None:
         connected = qbo.is_connected()
     if not connected:
         return None
+    if start is _UNSET:
+        start = customer_docs_from()
     return {
         "state": invoice.qbo_sync_state,
         "error": invoice.qbo_sync_error,
         "sync_url": reverse("billing_invoice_sync", args=[invoice.pk]),
+        "before_start": start is not None and invoice.invoice_date < start,
     }

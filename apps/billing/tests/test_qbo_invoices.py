@@ -125,8 +125,10 @@ def _invoice(*, terms=True, po="4471", memo="Oct trips", email="ap@example.com",
     if terms:
         QboTerm.objects.create(name="Net 30", qbo_id="3")
     group = AccountGroupFactory(qbo_id="55", invoice_email=email, terms="net_30" if terms else "")
-    invoice = InvoiceFactory(group=group, po_number=po, memo=memo)
-    for amount in amounts or ["920.00", "184.00"]:
+    amounts = amounts or ["920.00", "184.00"]
+    total = sum((Decimal(a) for a in amounts), Decimal("0"))
+    invoice = InvoiceFactory(group=group, po_number=po, memo=memo, total=total)
+    for amount in amounts:
         InvoiceLineFactory(invoice=invoice, description=f"Trip {amount}", amount=amount)
     return invoice
 
@@ -207,6 +209,18 @@ def test_payload_refuses_an_invoice_without_lines():
         qbo_invoices.invoice_payload(invoice, "123")
     assert err.value.alert is False
     assert str(err.value) == qbo_invoices.NO_LINES
+
+
+def test_payload_refuses_lines_that_dont_add_up_to_the_total():
+    from apps.payments.qbo_bills import _Refused
+
+    invoice = _invoice()
+    Invoice.objects.filter(pk=invoice.pk).update(total=Decimal("1104.01"))
+    invoice.refresh_from_db()
+    with pytest.raises(_Refused) as err:
+        qbo_invoices.invoice_payload(invoice, "123")
+    assert err.value.alert is False
+    assert str(err.value) == "This invoice's lines don't add up to its total."
 
 
 def test_matches_ignores_subtotal_line():
@@ -387,8 +401,46 @@ def test_pending_window_and_blocks(mapping):
     invoice.refresh_from_db()
     assert invoice.qbo_sync_error == qbo_invoices.NO_TRIP_ITEM
     early.refresh_from_db()
-    assert early.qbo_sync_error == qbo_invoices.NO_START_DATE  # outside the window: untouched
+    # The date it waited on is set and it falls before it: not sent, and nothing to say.
+    assert (early.qbo_sync_state, early.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
     assert _alerts().count() == 2
+
+
+def test_block_cleared_then_real_refusal_alerts(mapping):
+    invoice = _open_invoice()
+    mapping.customer_docs_from = None
+    mapping.save()
+    with patch(REQ) as req:
+        qbo_invoices.sync_pending()
+    req.assert_not_called()
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_error == qbo_invoices.NO_START_DATE
+    assert _alerts().count() == 1
+
+    mapping.customer_docs_from = START
+    mapping.save()
+    refusal = _fault("6000", "A business validation error has occurred", detail="Inactive")
+    with patch(REQ, side_effect=[refusal]):
+        assert qbo_invoices.sync_pending() == 0
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_error == "QuickBooks didn't accept this invoice: Inactive"
+    assert _alerts().count() == 2
+    assert _alerts().order_by("pk").last().title == (
+        f"QuickBooks invoice failed: {invoice.label}: {invoice.group}"
+    )
+
+
+def test_retry_clears_a_block_whose_setting_arrived(mapping):
+    invoice = _open_invoice()
+    Invoice.objects.filter(pk=invoice.pk).update(
+        qbo_sync_state=SyncState.ERROR, qbo_sync_error=qbo_invoices.NO_TRIP_ITEM
+    )
+    refusal = _fault("6000", "A business validation error has occurred", detail="Inactive")
+    with patch(REQ, side_effect=[refusal]):
+        assert qbo_invoices.push_invoice(invoice) is False
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_error == "QuickBooks didn't accept this invoice: Inactive"
+    assert _alerts().count() == 1  # its first real refusal
 
 
 def test_start_date_change_leaves_sent_and_earlier_invoices_alone(mapping):
@@ -418,7 +470,69 @@ def test_refusal_marks_error_once(mapping):
     assert invoice.qbo_sync_error.startswith("QuickBooks didn't accept this invoice")
     assert invoice.qbo_sync_error == "QuickBooks didn't accept this invoice: Inactive"
     assert _alerts().count() == 1
-    assert _alerts().get().title == f"QuickBooks invoice failed: {invoice.group}"
+    assert _alerts().get().title == f"QuickBooks invoice failed: {invoice.label}: {invoice.group}"
+
+
+def _taxed(invoice, total):
+    """QuickBooks' answer when the item carries sales tax: same lines, a bigger TotalAmt."""
+    answer = _sent(invoice)
+    answer["Invoice"]["TotalAmt"] = total
+    return answer
+
+
+def test_mismatch_marks_error_with_both_totals_once(mapping):
+    invoice = _open_invoice()
+    with patch(REQ, return_value=_taxed(invoice, 1170.24)) as req:
+        assert qbo_invoices.sync_pending() == 0
+        assert qbo_invoices.sync_pending() == 0
+    assert req.call_count == 1  # never rewritten on the next run
+    invoice.refresh_from_db()
+    assert invoice.qbo_id == "900" and invoice.number == "1042"
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == (
+        "QuickBooks totals this invoice $1,170.24, not $1,104.00. "
+        "Check sales tax on the Product/Service."
+    )
+    assert _alerts().count() == 1
+    assert _alerts().get().detail == invoice.qbo_sync_error
+
+
+def test_mismatched_line_count_marks_error(mapping):
+    invoice = _open_invoice()
+    answer = _sent(invoice)
+    answer["Invoice"]["Line"].insert(0, {"DetailType": "SalesItemLineDetail", "Amount": 0})
+    with patch(REQ, return_value=answer):
+        assert qbo_invoices.push_invoice(invoice) is False
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == (
+        "QuickBooks holds this invoice with 3 lines, not 2. Check it in QuickBooks."
+    )
+    assert _alerts().count() == 1
+
+
+def test_hourly_never_updates_a_linked_open_invoice(mapping):
+    invoice = _open_invoice()
+    Invoice.objects.filter(pk=invoice.pk).update(
+        qbo_id="900",
+        qbo_sync_token="0",
+        qbo_realm_id="123",
+        qbo_sync_state=SyncState.ERROR,
+        qbo_sync_error="QuickBooks didn't accept this invoice: Inactive",
+    )
+    assert list(qbo_invoices.pending_invoices("123", START)) == []
+    with patch(REQ) as req:
+        assert qbo_invoices.sync_pending() == 0
+    req.assert_not_called()
+    # Linked in another company: pushed there as new.
+    Invoice.objects.filter(pk=invoice.pk).update(qbo_realm_id="999")
+    assert list(qbo_invoices.pending_invoices("123", START)) == [invoice]
+    # A person's Retry still sends the linked one (an update).
+    Invoice.objects.filter(pk=invoice.pk).update(qbo_realm_id="123")
+    invoice.refresh_from_db()
+    with patch(REQ, return_value=_sent(invoice, token="1")) as req:
+        assert qbo_invoices.push_invoice(invoice) is True
+    assert req.call_args.kwargs["json"]["Id"] == "900"
 
 
 def test_outage_pauses_nothing_marked(mapping):
@@ -505,6 +619,38 @@ def test_void_refusal_marks_error_once(mapping):
     assert invoice.qbo_sync_state == SyncState.ERROR
     assert invoice.qbo_sync_error == "QuickBooks didn't accept this void: It has a payment"
     assert _alerts().count() == 1
+    assert _alerts().get().title == f"QuickBooks didn't void Invoice 1042: {invoice.group}"
+    assert invoices.voids_waiting(invoice.group) == [invoice]
+
+
+def test_voids_waiting_lists_pending_and_refused_voids_only():
+    group = AccountGroupFactory()
+    now = timezone.now()
+    refused = InvoiceFactory(
+        group=group,
+        status=Invoice.Status.VOID,
+        qbo_id="900",
+        qbo_void_requested_at=now,
+        qbo_sync_state=SyncState.ERROR,
+    )
+    queued = InvoiceFactory(
+        group=group, status=Invoice.Status.VOID, qbo_id="901", qbo_void_requested_at=now
+    )
+    InvoiceFactory(  # voided in QuickBooks: done
+        group=group,
+        status=Invoice.Status.VOID,
+        qbo_id="902",
+        qbo_void_requested_at=now,
+        qbo_sync_state=SyncState.SYNCED,
+    )
+    InvoiceFactory(group=group, status=Invoice.Status.VOID)  # never in QuickBooks
+    InvoiceFactory(  # its create never landed: nothing to void there
+        group=group, status=Invoice.Status.VOID, qbo_void_requested_at=now
+    )
+    InvoiceFactory(  # another group's
+        status=Invoice.Status.VOID, qbo_id="903", qbo_void_requested_at=now
+    )
+    assert set(invoices.voids_waiting(group)) == {refused, queued}
 
 
 def test_void_outage_pauses_nothing_marked(mapping):
@@ -574,4 +720,13 @@ def test_sync_state_when_connected():
         "state": SyncState.ERROR,
         "error": "Nope",
         "sync_url": f"/portal/billing/invoices/{invoice.pk}/sync/",
+        "before_start": False,
     }
+
+
+def test_sync_state_before_the_start_date(mapping):
+    early = InvoiceFactory(invoice_date=START - timedelta(days=1))
+    on_time = InvoiceFactory(invoice_date=START)
+    assert qbo_invoices.sync_state(early, connected=True)["before_start"] is True
+    assert qbo_invoices.sync_state(on_time, connected=True)["before_start"] is False
+    assert qbo_invoices.sync_state(early, connected=True, start=None)["before_start"] is False

@@ -92,5 +92,26 @@
         <p class="text-[12.5px] text-muted">No open invoices for this group.</p>
       {% endfor %}
     </section>
+
+    {% if voids_waiting %}
+    <section class="px-4 sm:px-6 pb-4" aria-labelledby="voids-waiting-h">
+      <h3 id="voids-waiting-h" class="text-[13px] font-semibold text-ink mb-2">Voids waiting for QuickBooks</h3>
+      {% for invoice in voids_waiting %}
+      <div id="void-{{ invoice.pk }}" class="flex flex-wrap items-start gap-x-3 gap-y-1 py-2">
+        <div class="flex-1 min-w-0">
+          <p class="text-[12.5px] font-medium text-ink">{{ invoice.label }}</p>
+          <p class="text-[11.5px] text-muted num">Voided {{ invoice.voided_at|date:"M j, Y" }}</p>
+          {% if invoice.sync.state == 'error' %}
+          <p class="text-[11.5px] text-rose-600 mt-1">{{ invoice.sync.error }}</p>
+          {% endif %}
+        </div>
+        {% if user.has_payments_access %}
+        <button type="button" class="shrink-0 text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5"
+                @click="retryQboSync('{{ invoice.sync.sync_url }}')">Retry</button>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
   </div>
 </div>

@@ -1107,9 +1107,10 @@ def quickbooks_customer_docs(request: HttpRequest) -> HttpResponse:
     allowed = {str(pk) for pk, _ in qbo_invoices.item_choices()}
     config = QboAccountMapping.load()
     config.trip_item = QboItem.objects.get(pk=raw) if raw in allowed else None
-    config.customer_docs_from = (
-        parse_date(request.POST.get("customer_docs_from", "").strip() or "") or None
-    )
+    try:
+        config.customer_docs_from = parse_date(request.POST.get("customer_docs_from", "").strip())
+    except ValueError:  # well-formed but impossible, like Feb 30
+        config.customer_docs_from = None
     config.save()
     if config.trip_item and config.customer_docs_from:
         messages.success(request, "Saved. Open invoices go out on the next sync.")

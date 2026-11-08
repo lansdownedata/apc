@@ -9,7 +9,7 @@
     <span class="font-semibold text-ink">{{ invoice.label }}</span>
     {% include "billing/_sync_chip.html" with record=invoice synced_label="In QuickBooks" %}
     {% if invoice.sync and invoice.sync.state == 'not_synced' and not invoice.sync.error %}
-    <span class="text-[11.5px] text-muted">Not sent yet</span>
+    <span class="text-[11.5px] text-muted">{% if invoice.sync.before_start %}Before the QuickBooks start date{% else %}Not sent yet{% endif %}</span>
     {% endif %}
     <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
   </div>
@@ -35,7 +35,7 @@
     {% endif %}
     {% if user.has_payments_access %}
     <button type="button" class="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50"
-            @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }})">Void</button>
+            @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }}, {% if invoice.qbo_id %}true{% else %}false{% endif %})">Void</button>
     {% endif %}
   </div>
 </div>

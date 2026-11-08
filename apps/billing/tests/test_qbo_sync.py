@@ -724,6 +724,26 @@ def test_customer_docs_card_shows_copy_and_warning(client):
     assert "No products or services read yet." in html
 
 
+def test_customer_docs_impossible_date_is_an_error_not_500(client):
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    item = QboItemFactory(realm_id="123")
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+    ):
+        resp = client.post(
+            reverse("quickbooks_customer_docs"),
+            {"trip_item": item.pk, "customer_docs_from": "2026-02-30"},
+            follow=True,
+        )
+    assert resp.status_code == 200
+    assert QboAccountMapping.load().customer_docs_from is None
+    assert "Choose the Product/Service for trip charges" in resp.content.decode()
+
+
 def test_customer_docs_rejects_foreign_item(client):
     from apps.billing.factories import QboItemFactory
     from apps.billing.models import QboAccountMapping

@@ -470,3 +470,67 @@ def test_sync_endpoint_502_on_outage(accountant, mapping, realm) -> None:
         resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
     assert resp.status_code == 502
     assert resp.json()["error"] == "QuickBooks couldn't be reached. Try again in a minute."
+
+
+def test_void_confirm_says_quickbooks_voids_it_too(accountant) -> None:
+    sent = _open_invoice(qbo_id="900", qbo_sync_state=SyncState.SYNCED, number="1042")
+    unsent = InvoiceFactory(group=sent.group, total="0")
+    InvoiceLineFactory(invoice=unsent, description="Trip", amount="0")
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": sent.group_id}).content.decode()
+    void_sent = reverse("billing_invoice_void", args=[sent.pk])
+    void_unsent = reverse("billing_invoice_void", args=[unsent.pk])
+    assert f"voidInvoice('{void_sent}', &quot;Invoice 1042&quot;, true)" in html
+    assert f"voidInvoice('{void_unsent}', &quot;{unsent.label}&quot;, false)" in html
+    assert "is voided in QuickBooks too, on the next sync." in html
+
+
+def test_row_before_the_start_date_says_so(accountant, mapping) -> None:
+    invoice = _open_invoice()
+    Invoice.objects.filter(pk=invoice.pk).update(invoice_date=date(2025, 12, 31))
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Before the QuickBooks start date" in html
+    assert "Not sent yet" not in html
+
+
+def _refused_void():
+    invoice = _open_invoice(qbo_id="900", qbo_realm_id="123", number="1042")
+    invoices.void_invoice(invoice, reason="Wrong PO", user=None)
+    Invoice.objects.filter(pk=invoice.pk).update(
+        qbo_sync_state=SyncState.ERROR,
+        qbo_sync_error="QuickBooks didn't accept this void: It has a payment",
+    )
+    invoice.refresh_from_db()
+    return invoice
+
+
+def test_group_pane_lists_a_refused_void_with_retry(accountant) -> None:
+    invoice = _refused_void()
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Voids waiting for QuickBooks" in html
+    assert "Invoice 1042" in html
+    assert f"Voided {timezone.localtime(invoice.voided_at):%b %-d, %Y}" in html
+    assert "QuickBooks didn&#x27;t accept this void: It has a payment" in html
+    assert f"retryQboSync('{reverse('billing_invoice_sync', args=[invoice.pk])}')" in html
+
+
+def test_group_pane_void_section_hidden_without_voids_or_connection(accountant) -> None:
+    group = _open_invoice().group
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": group.pk}).content.decode()
+    assert "Voids waiting for QuickBooks" not in html
+
+    invoice = _refused_void()
+    with patch(CONNECTED, return_value=False):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Voids waiting for QuickBooks" not in html
+
+
+def test_retry_on_a_waiting_void_needs_payments_access(staff) -> None:
+    invoice = _refused_void()
+    with patch(CONNECTED, return_value=True):
+        html = staff.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Voids waiting for QuickBooks" in html
+    assert "retryQboSync(" not in html

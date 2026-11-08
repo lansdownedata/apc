@@ -42,11 +42,10 @@ def _filter_params(filters: invoices.BillingFilters) -> dict[str, str]:
     }
 
 
-def _with_sync(rows: list[Invoice]) -> list[Invoice]:
+def _with_sync(rows: list[Invoice], *, connected: bool, start) -> list[Invoice]:
     """Attach each invoice's QuickBooks row state as `.sync` (None while disconnected)."""
-    connected = qbo.is_connected()
     for invoice in rows:
-        invoice.sync = qbo_invoices.sync_state(invoice, connected=connected)
+        invoice.sync = qbo_invoices.sync_state(invoice, connected=connected, start=start)
     return rows
 
 
@@ -66,6 +65,9 @@ def billing_list(request: HttpRequest) -> HttpResponse:
         trips = invoices.group_ready_trips(group, filters)
         terms = group.effective_terms
         pos = [(t.lead.po_number or "").strip() for t in trips]
+        connected = qbo.is_connected()
+        start = qbo_invoices.customer_docs_from() if connected else None
+        synced = {"connected": connected, "start": start}
         pane = {
             "trips": trips,
             "trip_lines": [(t, invoices.line_description(t)) for t in trips],
@@ -74,7 +76,11 @@ def billing_list(request: HttpRequest) -> HttpResponse:
             "due_preview": invoices.due_date(today, terms),
             "default_po": pos[0] if pos else "",
             "mixed_po": len({po for po in pos if po}) > 1,
-            "invoices": _with_sync(invoices.open_invoices(group)),
+            "invoices": _with_sync(invoices.open_invoices(group), **synced),
+            # Only while connected: a void can't reach QuickBooks without the connection.
+            "voids_waiting": (
+                _with_sync(invoices.voids_waiting(group), **synced) if connected else []
+            ),
             "draft": {
                 "trips": [
                     {"id": t.pk, "amount": f"{t.line_total:.2f}", "po": po}
