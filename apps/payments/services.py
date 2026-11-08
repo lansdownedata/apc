@@ -929,6 +929,8 @@ def cancel_order(lead, *, user=None, reason: str = "") -> Charge:
     lead.status = Lead.Status.LOST
     lead.lost_reason = (reason or "Could not confirm availability")[:255]
     lead.save(update_fields=["status", "lost_reason", "updated_at"])
+    # The order is lost with its trips still on it, so any cleaning hold goes regardless.
+    _release_cleaning_hold(lead)
     events.cancel(lead, triggers=events.EVERY)
     # Queued *after* the sweep above, which cancels every pending message — the message
     # explaining the cancellation must not be cancelled by the cancellation.
@@ -1078,6 +1080,10 @@ def _cancel(lead, trips, *, whole: bool) -> None:
         lead.reservations.all() if whole else lead.reservations.filter(pk__in=pks),
         note="Order cancelled" if whole else "Trip cancelled",
     )
+    from . import holds
+
+    if not holds.held_trips(lead):
+        _release_cleaning_hold(lead)
     if whole:
         lead.status = Lead.Status.LOST
         lead.lost_reason = "Cancelled"
@@ -1091,6 +1097,18 @@ def _cancel(lead, trips, *, whole: bool) -> None:
         events.emit("trip_cancelled", lead, trip)
     if whole:
         events.emit("order_cancelled", lead)
+
+
+def _release_cleaning_hold(lead) -> None:
+    """Let the order's cleaning hold go (APC-95): nothing is left for it to cover. A release
+    Stripe refuses is logged, never raised, so it can't undo a cancel whose money is already
+    back; the hourly `cleaning-holds` sweep releases it on its next run."""
+    from . import holds
+
+    try:
+        holds.release_hold(lead, reason="order cancelled")
+    except PaymentError:
+        logger.exception("cleaning hold: release for lead %s failed on cancel", lead.pk)
 
 
 def _report_cancels_to_gnet(trips) -> None:

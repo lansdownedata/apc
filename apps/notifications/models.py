@@ -46,6 +46,8 @@ class Notification(TimeStampedModel):
         FARM_IN_PUSH_FAILED = "farm_in_push_failed", "Farm-in status push failed"
         # The cleaning hold could not be placed: no card, or the card declined (APC-95).
         HOLD_FAILED = "hold_failed", "Cleaning hold not placed"
+        # A hold captured at Stripe that no trip has taken up yet: money moved, books not.
+        HOLD_UNBOOKED = "hold_unbooked", "Cleaning hold not booked"
 
     # Every notification is about an order, except a vendor task's escalation (APC-71).
     lead = models.ForeignKey(

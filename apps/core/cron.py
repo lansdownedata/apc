@@ -16,7 +16,7 @@ from django.views.decorators.http import require_POST
 from apps.dispatch import farm_in_push, monitoring
 from apps.integrations import la_sync
 from apps.messaging import sender
-from apps.payments import qbo_bills, tasks
+from apps.payments import holds, qbo_bills, tasks
 from apps.reservations import tasks as reservation_tasks
 from apps.tasks import jobs as task_jobs
 from apps.tasks import reports as task_reports
@@ -39,6 +39,9 @@ JOBS: dict[str, Callable[[], int]] = {
     "review-report": task_reports.send_review_report,
     "complaint-report": task_reports.send_complaint_report,
     "unconfirmed-trips-report": reservation_tasks.send_unconfirmed_trip_report,
+    # APC-95: place each held order's cleaning hold on its first held trip's day, and sweep
+    # unused, expired and unbooked holds (hourly; needs a cron-job.org entry).
+    "cleaning-holds": holds.run_cron,
 }
 
 

@@ -14,11 +14,14 @@ A card problem never raises out of here: a missing card or a decline opens one
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import stripe
+from django.conf import settings
 from django.db import transaction
+from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 
 from apps.notifications.models import Notification
@@ -29,6 +32,7 @@ from .models import Charge, PaymentPlan
 logger = logging.getLogger(__name__)
 
 TASK_KIND = "cleaning_hold_failed"
+UNBOOKED_TASK_KIND = "cleaning_hold_unbooked"
 
 
 # --- which orders are held ------------------------------------------------------------------
@@ -401,3 +405,212 @@ def mark_expired(charge: Charge) -> Charge:
         charge.status = Charge.Status.EXPIRED
         charge.save(update_fields=["status", "updated_at"])
     return charge
+
+
+# --- the hourly job (`cleaning-holds`) -------------------------------------------------------
+
+
+def _zone(trip) -> ZoneInfo:
+    """The trip's own zone (blank or unknown: the business zone)."""
+    try:
+        return ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(settings.TIME_ZONE)
+
+
+def _today(trip, now: datetime) -> date:
+    """`now`'s date where the trip is."""
+    return now.astimezone(_zone(trip)).date()
+
+
+def _live_held(lead) -> list:
+    """`held_trips` read from the lead's prefetched reservations (no query), in any order."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    return [
+        t
+        for t in lead.reservations.all()
+        if t.trip_status not in CANCELLED_STATUSES and t.vehicle_id and t.vehicle.cleaning_fee > 0
+    ]
+
+
+def _dated(trips: list) -> list:
+    """The trips with a pickup day, in pickup order: the job's clock reads their days."""
+    dated = [t for t in trips if t.pickup_date is not None]
+    return sorted(dated, key=lambda t: (t.pickup_date, t.pickup_time or datetime.min.time(), t.pk))
+
+
+def _over(trips: list, now: datetime, release_days: int) -> bool:
+    """More than `release_days` days have passed since the last held trip's day, in its
+    zone: nothing is left for a hold to cover."""
+    last = trips[-1]
+    return last.pickup_date + timedelta(days=release_days) < _today(last, now)
+
+
+def _with_trips(queryset, prefix: str = ""):
+    from apps.reservations.models import Reservation
+
+    return queryset.prefetch_related(
+        Prefetch(f"{prefix}reservations", queryset=Reservation.objects.select_related("vehicle"))
+    )
+
+
+def due_for_placement(now: datetime) -> list:
+    """Booked card orders with a held trip and no HOLD row yet (in any state) whose
+    placement moment has come: `hold_place_time` on the first held trip's day, in that
+    trip's zone (or any time after it), unless the order is already over (`_over`).
+
+    The database narrows by date across every zone at once (local dates sit within a day of
+    UTC's); the exact rule is checked per order in Python. A fixed handful of queries."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.leads.models import Lead
+    from apps.reservations.models import Reservation
+    from apps.tasks.models import TaskConfig
+
+    config = TaskConfig.load()
+    latest = (now + timedelta(days=1)).date()
+    earliest = (now - timedelta(days=1)).date() - timedelta(days=config.hold_release_days)
+    held = Reservation.objects.filter(lead=OuterRef("pk"), vehicle__cleaning_fee__gt=0).exclude(
+        trip_status__in=CANCELLED_STATUSES
+    )
+    leads = _with_trips(
+        Lead.objects.filter(status=Lead.Status.BOOKED, billing_group__isnull=True)
+        .filter(Exists(held.filter(pickup_date__lte=latest)))
+        .filter(Exists(held.filter(pickup_date__gte=earliest)))
+        .exclude(Exists(Charge.objects.filter(plan__lead=OuterRef("pk"), kind=Charge.Kind.HOLD)))
+        .select_related("contact__company")
+        .order_by("pk")
+    )
+    due, seen = [], set()
+    for lead in leads:
+        # Once seen locally (MySQL 8.0, fresh test tables), the semi-join gave a lead once
+        # per matching trip; a lead is placed once whatever plan the database picks.
+        if lead.pk in seen:
+            continue
+        seen.add(lead.pk)
+        trips = _dated(_live_held(lead))
+        if not trips or lead.is_farm_in or _over(trips, now, config.hold_release_days):
+            continue
+        first = trips[0]
+        if now >= datetime.combine(first.pickup_date, config.hold_place_time, _zone(first)):
+            due.append(lead)
+    return due
+
+
+def sweep(now: datetime) -> int:
+    """Settle every hold still open (PENDING or AUTHORIZED). Returns how many changed or
+    were flagged. One order's failure is logged and the sweep carries on."""
+    from apps.tasks.models import TaskConfig
+
+    release_days = TaskConfig.load().hold_release_days
+    rows = _with_trips(
+        Charge.objects.filter(
+            kind=Charge.Kind.HOLD, status__in=(Charge.Status.PENDING, Charge.Status.AUTHORIZED)
+        )
+        .select_related("plan__lead__contact__company")
+        .order_by("pk"),
+        prefix="plan__lead__",
+    )
+    swept = 0
+    for hold in rows:
+        try:
+            swept += _sweep_one(hold, now, release_days)
+        except Exception:
+            logger.exception("cleaning hold: sweep failed for charge %s", hold.pk)
+    return swept
+
+
+def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
+    from apps.leads.models import Lead
+
+    lead = hold.plan.lead
+    live = _live_held(lead)
+    # A hold serves nothing once the order is lost or no held trip is left on it.
+    needed = lead.status == Lead.Status.BOOKED and bool(live)
+    if hold.status == Charge.Status.PENDING:
+        return _settle_pending(lead, hold, now, needed)
+    if hold.captured_at is not None:
+        # Money moved at Stripe: never released or expired. If no trip took it up, the
+        # books are missing it, and a person books it.
+        return _flag_unbooked(lead) if hold.reservation_id is None else 0
+    if hold.capture_expires_at is not None and hold.capture_expires_at < now:
+        return int(mark_expired(hold).status != Charge.Status.AUTHORIZED)
+    trips = _dated(live)
+    if not needed:
+        reason = "order cancelled" if lead.status != Lead.Status.BOOKED else "no held trip left"
+    elif trips and _over(trips, now, release_days):
+        reason = "unused after the last held trip"
+    else:
+        return 0
+    # RELEASED, or EXPIRED when the bank had let it go first: either way, settled.
+    return int(release_hold(lead, reason=reason).status != Charge.Status.AUTHORIZED)
+
+
+def _settle_pending(lead, hold: Charge, now: datetime, needed: bool) -> int:
+    """A hold Stripe has not finished answering for. With nothing left to hold for, an
+    intent Stripe created is cancelled; otherwise `place_hold` re-sends or reads it back,
+    and one still unanswered after the card-hold window is given up as FAILED."""
+    if not needed and hold.stripe_payment_intent_id:
+        try:
+            services._stripe().PaymentIntent.cancel(hold.stripe_payment_intent_id)
+        except stripe.error.StripeError:
+            if _stripe_status(hold) != "canceled":
+                logger.exception("cleaning hold: could not cancel pending charge %s", hold.pk)
+                return 0
+        hold.status = Charge.Status.RELEASED
+        hold.note = "no held trip left"
+        hold.save(update_fields=["status", "note", "updated_at"])
+        return 1
+    place_hold(lead, now=now)
+    hold.refresh_from_db()
+    if hold.status != Charge.Status.PENDING:
+        return 1
+    if hold.created_at < now - timedelta(days=services.AUTH_HOLD_DAYS):
+        _unplaceable(lead, hold, "no answer from Stripe")
+        return 1
+    return 0
+
+
+def _flag_unbooked(lead) -> int:
+    """One open Accounting task (and a notification) for a captured hold no trip took up;
+    none while one is still open."""
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    if Task.objects.filter(lead=lead, kind=UNBOOKED_TASK_KIND, status=Task.Status.OPEN).exists():
+        return 0
+    title = "Cleaning hold captured but not booked to a trip"
+    task = tasks.open_request_task(lead, UNBOOKED_TASK_KIND)
+    task.note = title
+    task.save(update_fields=["note", "updated_at"])
+    Notification.notify(
+        lead,
+        Notification.Kind.HOLD_UNBOOKED,
+        title=title,
+        detail="Process the trip with its cleaning fee to book it.",
+    )
+    lead.has_alert = True
+    lead.save(update_fields=["has_alert", "updated_at"])
+    return 1
+
+
+def run_cron(now: datetime | None = None) -> int:
+    """The hourly `cleaning-holds` job: the sweep, then placement. Nothing at all while
+    `hold_enabled` is off. Each order on its own: one failure is logged, never stops the
+    run. Returns holds swept plus holds placed (AUTHORIZED this run)."""
+    from apps.tasks.models import TaskConfig
+
+    if not TaskConfig.load().hold_enabled:
+        return 0
+    now = now or timezone.now()
+    # Sweep first, so a hold this run leaves PENDING waits for the next run's retry.
+    processed = sweep(now)
+    for lead in due_for_placement(now):
+        try:
+            hold = place_hold(lead, now=now)
+        except Exception:
+            logger.exception("cleaning hold: placement failed for lead %s", lead.pk)
+            continue
+        if hold is not None and hold.status == Charge.Status.AUTHORIZED:
+            processed += 1
+    return processed

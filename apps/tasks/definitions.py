@@ -525,6 +525,16 @@ REGISTRY: tuple[TaskKind, ...] = (
         applies=_never,
     ),
     TaskKind(
+        # APC-95. The hold was captured at Stripe but no trip took it up, so the money is
+        # not on the books. Opened only by the `cleaning-holds` sweep, while none is open.
+        key="cleaning_hold_unbooked",
+        label="Cleaning hold captured but not booked",
+        department=_D.ACCOUNTING,
+        level=Level.ORDER,
+        due=AfterOpenBusinessDays(days=1),
+        applies=_never,
+    ),
+    TaskKind(
         # APC-71. One per affiliate policy; closes itself when a policy with a later expiry
         # is uploaded (see `vendor_tasks`). Opens where the vendor page's "expiring" colour
         # starts; due the morning it expires.
