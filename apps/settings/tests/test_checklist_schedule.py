@@ -169,3 +169,13 @@ def test_schedule_inputs_carry_accessible_labels(client):
 
     assert 'aria-label="Deposit received amount"' in html
     assert 'aria-label="Deposit received unit"' in html
+
+
+def test_farm_in_inputs_are_named_apart_from_the_standard_row(client):
+    _owner(client)
+
+    html = client.get(reverse("checklist_schedule")).content.decode()
+
+    assert 'aria-label="Deposit received (farmed-in orders) amount"' in html
+    assert 'aria-label="Deposit received (farmed-in orders) unit"' in html
+    assert html.count('aria-label="Deposit received amount"') == 1

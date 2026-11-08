@@ -310,23 +310,27 @@ class ChecklistScheduleForm(forms.Form):
             amount, unit = saved.get((row.key, row.variant)) or schedule.code_default(
                 row.key, row.variant
             )
+            # A farm-in row shows only "Farmed-in orders", so its controls name both.
+            name = row.label
+            if row.variant == schedule.FARM:
+                name = f"{row.label} (farmed-in orders)"
             self.fields[f"amount__{row.key}__{row.variant}"] = forms.IntegerField(
                 min_value=0,
                 initial=amount,
-                label=f"{row.label} amount",
+                label=f"{name} amount",
                 widget=forms.NumberInput(
                     attrs={
                         "class": "field",
                         "min": 0,
                         "inputmode": "numeric",
-                        "aria-label": f"{row.label} amount",
+                        "aria-label": f"{name} amount",
                     }
                 ),
             )
             self.fields[f"unit__{row.key}__{row.variant}"] = forms.ChoiceField(
                 choices=[(u, UNIT_LABELS[u]) for u in row.units],
                 initial=unit,
-                label=f"{row.label} unit",
+                label=f"{name} unit",
             )
 
     def clean(self):
