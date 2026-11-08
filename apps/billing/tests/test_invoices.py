@@ -14,10 +14,12 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.billing import invoices, services
 from apps.billing.factories import AccountGroupFactory, InvoiceFactory, InvoiceLineFactory
+from apps.billing.models import Invoice
 from apps.billing.tests._helpers import _processed_trip
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import VehicleTypeFactory
 from apps.leads.models import Lead
+from apps.payments import ledger
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripReview
 
@@ -208,3 +210,152 @@ def test_ready_accounts_is_flat(accountant) -> None:
     one = _count(invoices.BillingFilters())
     _build(accountant, 29, 6)
     assert _count(invoices.BillingFilters()) == one
+
+
+# --- services: create and void ---------------------------------------------------------------
+
+
+def _create(group, trips, **kw):
+    kw.setdefault("invoice_date", date(2026, 3, 1))
+    kw.setdefault("po_number", "")
+    kw.setdefault("memo", "")
+    kw.setdefault("user", None)
+    return invoices.create_invoice(group, [t.pk for t in trips], **kw)
+
+
+def test_create_freezes_lines_and_total(accountant) -> None:
+    group = AccountGroupFactory(terms="net_30")
+    first = _processed_trip(group, accountant=accountant)
+    second = _processed_trip(group, accountant=accountant)
+    Lead.objects.filter(pk=first.lead_id).update(po_number="PO-7")
+
+    invoice = _create(group, [first, second], user=accountant)
+
+    assert invoice.lines.count() == 2
+    for trip in (first, second):
+        assert invoice.lines.get(reservation=trip).amount == trip.line_total
+    assert invoice.total == first.line_total + second.line_total
+    assert invoice.due_date == date(2026, 3, 31)
+    assert invoice.po_number == "PO-7"
+    assert invoice.created_by == accountant
+    assert invoice.status == invoice.Status.OPEN
+
+
+def test_create_po_required_rule(accountant) -> None:
+    group = AccountGroupFactory(po_required=True)
+    trip = _processed_trip(group, accountant=accountant)
+    with pytest.raises(invoices.InvoiceError, match="This group needs a PO number."):
+        _create(group, [trip])
+    assert not Invoice.objects.exists()
+    assert _create(group, [trip], po_number="  PO-1 ").po_number == "PO-1"
+
+
+def test_create_refuses_empty_selection() -> None:
+    with pytest.raises(invoices.InvoiceError, match="Pick at least one trip."):
+        invoices.create_invoice(
+            AccountGroupFactory(),
+            [],
+            invoice_date=date(2026, 3, 1),
+            po_number="",
+            memo="",
+            user=None,
+        )
+
+
+def test_create_refuses_trips_outside_the_group(accountant) -> None:
+    group = AccountGroupFactory()
+    mine = _processed_trip(group, accountant=accountant)
+    other = _processed_trip(accountant=accountant)
+    with pytest.raises(invoices.InvoiceError, match="processed, billed to this group"):
+        _create(group, [mine, other])
+    assert not Invoice.objects.exists()
+
+
+def test_create_refuses_a_trip_already_invoiced(accountant) -> None:
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    other = _processed_trip(group, accountant=accountant)
+    existing = InvoiceLineFactory(
+        reservation=trip, invoice=InvoiceFactory(group=group, number="1042")
+    )
+    with pytest.raises(invoices.InvoiceError, match="Pick trips that are processed"):
+        _create(group, [trip, other])
+    assert Invoice.objects.count() == 1
+    assert Invoice.objects.get() == existing.invoice
+
+
+def test_create_names_the_invoice_when_the_insert_collides(accountant) -> None:
+    """The lock normally catches an invoiced trip; if one slips through, the OneToOne does."""
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    InvoiceLineFactory(reservation=trip, invoice=InvoiceFactory(group=group, number="1042"))
+    ready = Reservation.objects.filter(pk=trip.pk)
+    with patch.object(invoices, "_lock_ready", return_value=list(ready)):
+        with pytest.raises(
+            invoices.InvoiceError, match=f"Trip #{trip.reference} is already on Invoice 1042"
+        ):
+            _create(group, [trip])
+    assert Invoice.objects.count() == 1
+
+
+def test_create_lock_names_only_the_reservation_row(accountant) -> None:
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    with CaptureQueriesContext(connection) as ctx:
+        _create(group, [trip])
+    locks = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
+    assert locks
+    assert all("FOR UPDATE OF" in sql for sql in locks)
+
+
+def test_price_edit_after_invoice_does_not_move_the_line(accountant) -> None:
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = _create(group, [trip])
+    before = invoice.total
+    Reservation.objects.filter(pk=trip.pk).update(hours=5)
+    invoice.refresh_from_db()
+    assert invoice.lines.get().amount == before
+    assert invoice.total == before
+
+
+def test_void_frees_the_trips(accountant) -> None:
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = _create(group, [trip])
+    assert not invoices.ready_queryset(invoices.BillingFilters()).filter(pk=trip.pk).exists()
+
+    invoices.void_invoice(invoice, reason="Wrong PO", user=accountant)
+
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.Status.VOID
+    assert invoice.lines.count() == 0
+    assert invoice.void_reason == "Wrong PO"
+    assert invoice.voided_by == accountant
+    assert invoice.voided_at is not None
+    assert invoices.ready_queryset(invoices.BillingFilters()).filter(pk=trip.pk).exists()
+    with pytest.raises(invoices.InvoiceError, match="This invoice is already void."):
+        invoices.void_invoice(invoice, reason="again", user=accountant)
+
+
+def test_void_needs_reason() -> None:
+    with pytest.raises(invoices.InvoiceError, match="Say why the invoice is voided."):
+        invoices.void_invoice(InvoiceFactory(), reason="  ", user=None)
+
+
+def test_void_refuses_an_invoice_in_quickbooks() -> None:
+    invoice = InvoiceFactory(qbo_id="7")
+    with pytest.raises(invoices.InvoiceError, match="Voiding it there is APC-107."):
+        invoices.void_invoice(invoice, reason="oops", user=None)
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.Status.OPEN
+
+
+def test_invoicing_posts_nothing(accountant) -> None:
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    before = ledger.order_balances(trip.lead)
+    invoice = _create(group, [trip])
+    assert ledger.order_balances(trip.lead) == before
+    invoices.void_invoice(invoice, reason="redo", user=accountant)
+    assert ledger.order_balances(trip.lead) == before

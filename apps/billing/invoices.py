@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db import IntegrityError, transaction
 from django.db.models import Prefetch, Q
+from django.utils import timezone
 
 from apps.reservations.models import Reservation, Stop
 from apps.reservations.processing import _day, _reference_pk, _short, _with_route
 
-from .models import AccountGroup, BillingAccount, Invoice, Terms
+from .models import AccountGroup, BillingAccount, Invoice, InvoiceLine, Terms
 
 # --- Terms ---------------------------------------------------------------------------------
 
@@ -180,3 +182,92 @@ def open_invoices(group: AccountGroup) -> list[Invoice]:
         .prefetch_related("lines__reservation__stops")
         .order_by("-invoice_date", "-pk")
     )
+
+
+# --- services ------------------------------------------------------------------------------
+
+
+class InvoiceError(ValueError):
+    """A refusal the accountant can read as-is."""
+
+
+def _lock_ready(group: AccountGroup, trip_ids: set[int]) -> list[Reservation]:
+    """Lock the requested trips that are still ready and billed to `group`. `of=("self",)`
+    because the ready filter joins nullable tables and Postgres refuses a plain FOR UPDATE
+    there (APC-139)."""
+    return list(
+        ready_queryset(BillingFilters())
+        .select_for_update(of=("self",))
+        .filter(pk__in=trip_ids, lead__billing_group=group)
+    )
+
+
+def create_invoice(
+    group: AccountGroup,
+    trip_ids: list[int],
+    *,
+    invoice_date: date,
+    po_number: str,
+    memo: str,
+    user,
+) -> Invoice:
+    """Freeze the chosen trips onto one open invoice: each line keeps the trip's text and
+    `line_total` as of now, so later price edits never move it. Posts nothing to the ledger."""
+    wanted = set(trip_ids)
+    if not wanted:
+        raise InvoiceError("Pick at least one trip.")
+    with transaction.atomic():
+        trips = _lock_ready(group, wanted)
+        if len(trips) != len(wanted):
+            raise InvoiceError(
+                "Pick trips that are processed, billed to this group and not yet invoiced."
+            )
+        trips = _with_route(trips)
+        po = (po_number or "").strip()[:64] or (trips[0].lead.po_number or "").strip()[:64]
+        if group.po_required and not po:
+            raise InvoiceError("This group needs a PO number.")
+        invoice = Invoice.objects.create(
+            group=group,
+            invoice_date=invoice_date,
+            due_date=due_date(invoice_date, group.effective_terms),
+            po_number=po,
+            memo=(memo or "").strip()[:255],
+            total=sum((t.line_total for t in trips), Decimal("0")),
+            created_by=user,
+        )
+        for trip in trips:
+            try:
+                with transaction.atomic():
+                    InvoiceLine.objects.create(
+                        invoice=invoice,
+                        reservation=trip,
+                        description=line_description(trip),
+                        amount=trip.line_total,
+                    )
+            except IntegrityError:
+                existing = InvoiceLine.objects.select_related("invoice").get(reservation=trip)
+                raise InvoiceError(
+                    f"Trip #{trip.reference} is already on {existing.invoice.label}"
+                ) from None
+    return invoice
+
+
+def void_invoice(invoice: Invoice, *, reason: str, user) -> Invoice:
+    """Void an invoice nobody has pushed to QuickBooks: its lines go, so the trips are ready
+    to invoice again."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise InvoiceError("Say why the invoice is voided.")
+    with transaction.atomic():
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        if invoice.status == Invoice.Status.VOID:
+            raise InvoiceError("This invoice is already void.")
+        if invoice.qbo_id:
+            raise InvoiceError("This invoice is in QuickBooks. Voiding it there is APC-107.")
+        invoice.lines.all().delete()
+        invoice.status = Invoice.Status.VOID
+        invoice.voided_at = timezone.now()
+        invoice.voided_by = user
+        invoice.void_reason = reason[:255]
+        invoice.save()
+    return invoice
