@@ -25,6 +25,7 @@ from django.db import transaction
 from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 
+from apps.audit.explicit import record_update
 from apps.notifications.models import Notification
 
 from . import services, trip_money
@@ -203,6 +204,8 @@ def _while_pending(charge: Charge, **fields) -> bool:
     updated = Charge.objects.filter(pk=charge.pk, status=Charge.Status.PENDING).update(
         updated_at=timezone.now(), **fields
     )
+    if updated:
+        record_update(charge, **fields)
     return bool(updated)
 
 
