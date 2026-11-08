@@ -18,13 +18,18 @@ def match_contact(contact_model, phone_model, *, phone: str = "", email: str = "
         return contact_model.objects.filter(email__iexact=email).first()
     if not phone:
         return None
+    return phone_matches(contact_model, phone_model, phone).first()
+
+
+def phone_matches(contact_model, phone_model, phone: str) -> models.QuerySet:
+    """Contacts holding `phone` (texting or any other number on file), newest first."""
     # Match the canonical form *and* the raw input: rows that predate the
     # backfill, and numbers to_e164 rejects, are only reachable as typed.
     numbers = {phone, to_e164(phone) or phone}
     lookup = Q(phone__in=numbers) | Q(
         pk__in=phone_model.objects.filter(number__in=numbers).values("contact")
     )
-    return contact_model.objects.filter(lookup).order_by("-created_at").first()
+    return contact_model.objects.filter(lookup).order_by("-created_at")
 
 
 class CompanyManager(models.Manager):
@@ -125,6 +130,20 @@ class ContactManager(models.Manager):
         on file rather than just the texting one.
         """
         return match_contact(self.model, ContactPhone, phone=phone, email=email)
+
+    def find_by_phone(self, phone: str, *, without_email: bool = False) -> "Contact | None":
+        """`find_match`'s phone rule on its own, newest first.
+
+        `without_email` keeps to contacts with no email on file: the import fills an email
+        in on a phone-only contact, but never overwrites one (APC-141, spec §5.2).
+        """
+        phone = (phone or "").strip()
+        if not phone:
+            return None
+        matches = phone_matches(self.model, ContactPhone, phone)
+        if without_email:
+            matches = matches.filter(Q(email__isnull=True) | Q(email=""))
+        return matches.first()
 
     def match_or_create(
         self,
