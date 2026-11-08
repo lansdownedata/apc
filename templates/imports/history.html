@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Import history{% endblock %}
+{% block content %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+  <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Import history</h1>
+  {% for r in runs %}
+  <p class="text-[13px] mt-2">
+    <a href="{% if r.kind == 'import' %}{% url 'import_run' r.pk %}{% else %}#{% endif %}" class="focus-gold hover:underline">{{ r.created_at|date:"M j, Y g:i A T" }} · {{ r.filename }}</a>
+    · {{ r.user.get_full_name|default:r.user.email }}
+  </p>
+  {% empty %}
+  <p class="text-[13px] text-muted mt-4">No imports yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

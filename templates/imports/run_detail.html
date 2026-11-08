@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+{% block content %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+  <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">{{ run.filename }}</h1>
+  <p class="text-[12.5px] text-muted mt-1">
+    {{ run.created_at|date:"M j, Y g:i A T" }}{% if run.user %} · {{ run.user.get_full_name|default:run.user.email }}{% endif %}
+  </p>
+  {% if run.status == "failed" %}<p class="mt-3 text-[13px]">{{ run.error }}</p>{% endif %}
+  {% if expired %}<p class="mt-3 text-[13px]">This preview has expired. Upload the file again.</p>{% endif %}
+  {% if run.status == "previewed" and not expired %}
+  <form method="post" action="{% url 'import_confirm' run.pk %}" class="mt-3">
+    {% csrf_token %}
+    <button type="submit" class="btn-gold" {% if not applicable %}disabled{% endif %}>Apply {{ applicable }} rows</button>
+  </form>
+  {% endif %}
+  {% if errors %}
+  <section class="mt-6"><h2 class="text-[14px] font-semibold">Errors</h2>
+    {% for row in errors %}<p class="text-[13px]">{{ row.row }} · {{ row.label|default:row.key }} · {{ row.reason }}</p>{% endfor %}
+  </section>
+  {% endif %}
+  {% if warnings %}
+  <section class="mt-6"><h2 class="text-[14px] font-semibold">Warnings</h2>
+    {% for row in warnings %}{% for w in row.warnings %}<p class="text-[13px]">{{ row.row }} · {{ row.label }} · {{ w }}</p>{% endfor %}{% endfor %}
+  </section>
+  {% endif %}
+  {% if new %}
+  <section class="mt-6"><h2 class="text-[14px] font-semibold">New</h2>
+    {% for row in new %}<p class="text-[13px]">{{ row.row }} · {{ row.label }} · {{ row.key }}</p>{% endfor %}
+  </section>
+  {% endif %}
+  {% if updated %}
+  <section class="mt-6"><h2 class="text-[14px] font-semibold">Updated</h2>
+    {% for row in updated %}<p class="text-[13px]">{{ row.row }} · {{ row.label }}{% for c in row.changes %} · {{ c.0 }}: {{ c.1 }} → {{ c.2 }}{% endfor %}</p>{% endfor %}
+  </section>
+  {% endif %}
+  {% if unchanged %}
+  <section class="mt-6"><h2 class="text-[14px] font-semibold">Unchanged</h2>
+    <p class="text-[13px]">{{ unchanged|length }} rows</p>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
