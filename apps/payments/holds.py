@@ -70,15 +70,16 @@ def held_trips(lead) -> list:
     )
 
 
-def eligible(lead) -> bool:
-    """Booked, a card order (not farmed in, not billed to an account), with a held trip."""
+def eligible(lead, *, has_held_trip: bool | None = None) -> bool:
+    """Booked, a card order (not farmed in, not billed to an account), with a held trip.
+    `has_held_trip`, when a caller already knows it (an annotation), spares the read."""
     from apps.leads.models import Lead
 
     # The free checks first, then one read for the trips; the company only for a held one.
     return (
         lead.status == Lead.Status.BOOKED
         and not lead.on_account
-        and bool(held_trips(lead))
+        and (bool(held_trips(lead)) if has_held_trip is None else has_held_trip)
         and not lead.is_farm_in
     )
 
@@ -264,9 +265,9 @@ def _hold_failed(lead, title: str, reason: str) -> None:
 def capture_hold(trip, amount) -> Charge:
     """Take the cleaning fee for `trip` out of the hold: `min(amount, hold)` is captured
     (Stripe lets the rest go), the row is tagged with the trip and posted like a trip charge.
-    One capture per hold: anything but an AUTHORIZED hold raises `HoldUsed`, and a hold the
-    bank already released raises `HoldLapsed` (it is marked EXPIRED). Both are
-    `PaymentError`s that took nothing: charge the card instead."""
+    One capture per hold: a hold already captured (or none) raises `HoldUsed`; one let go
+    (EXPIRED, RELEASED, or released by the bank under us, then marked EXPIRED) raises
+    `HoldLapsed`. Both are `PaymentError`s that took nothing: charge the card instead."""
     lead = trip.lead
     intent = None
     with transaction.atomic():
@@ -280,8 +281,11 @@ def capture_hold(trip, amount) -> Charge:
             .order_by("-pk")
             .first()
         )
-        if hold is None or hold.status != Charge.Status.AUTHORIZED:
+        if hold is None or hold.status in (Charge.Status.SUCCEEDED, Charge.Status.PENDING):
             raise HoldUsed("No cleaning hold to capture.")
+        if hold.status != Charge.Status.AUTHORIZED:
+            # EXPIRED or RELEASED between our read and the lock: let go, nothing taken.
+            raise HoldLapsed("The cleaning hold was let go; charge the card instead.")
         if hold.captured_at is None:
             take = min(Decimal(amount), Decimal(hold.amount)).quantize(Decimal("0.01"))
             if take <= services.ZERO:

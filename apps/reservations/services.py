@@ -60,6 +60,24 @@ def is_wedding_trip(reservation: Reservation) -> bool:
     return bool(st and st.name.strip().lower() == WEDDING_SERVICE_NAME.lower())
 
 
+def is_order_keyed(reservation: Reservation, cache: dict | None = None) -> bool:
+    """A trip confirmed through its order's own link, by the billing contact, with the fee
+    acknowledgment: a wedding's (APC-94), or any held order's (APC-95, a booked card order
+    with a cleaning-fee vehicle). The one decision the 72h notice and the T-24h chase list
+    share. `cache` (lead id -> held) reads each order once; an `order_held` annotation on
+    the trip (see `apps.reservations.reports`) spares the trip read entirely."""
+    from apps.payments import holds
+
+    if is_wedding_trip(reservation):
+        return True
+    if cache is not None and reservation.lead_id in cache:
+        return cache[reservation.lead_id]
+    held = holds.eligible(reservation.lead, has_held_trip=getattr(reservation, "order_held", None))
+    if cache is not None:
+        cache[reservation.lead_id] = held
+    return held
+
+
 def flight_line(stop: Stop) -> str:
     """One stop's flight detail, as far as it's verified: `"UA 123 · arr 7:30 PM EDT ·
     Terminal C"`, falling back to just the label when nothing has been looked up yet.

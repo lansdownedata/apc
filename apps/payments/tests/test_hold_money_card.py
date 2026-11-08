@@ -219,3 +219,14 @@ def test_a_held_order_shows_the_fee_acknowledgment_state(client):
 
     # Before any hold row exists: the acknowledgment the confirmation now asks for.
     assert "Cleaning fee and overtime not yet acknowledged" in body
+
+
+def test_a_closed_no_card_task_no_longer_shows_the_line():
+    """Once staff close the task (they dealt with it), there is nothing open to report."""
+    from apps.tasks.models import Task
+
+    lead, plan, trip = _order(card=False)
+    holds.place_hold(lead, now=PLACED)
+    Task.objects.filter(lead=lead, kind=holds.TASK_KIND).update(status=Task.Status.DONE)
+
+    assert reports.cleaning_hold(lead)["hold_state"] == ""

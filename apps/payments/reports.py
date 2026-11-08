@@ -217,7 +217,7 @@ def _hold_task_open(lead) -> bool:
 
     from . import holds
 
-    return Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()
+    return Task.objects.filter(lead=lead, kind=holds.TASK_KIND, status__in=Task.UNRESOLVED).exists()
 
 
 def _hold_outcome(hold: Charge) -> tuple[str, str]:
@@ -257,15 +257,14 @@ def _first_trip(lead):
 
 def _in_trip_zone(moment, trip) -> tuple[str, str]:
     """`("Nov 8, 3:02 AM", "PST")`: `moment` on the trip's wall clock, and that zone's
-    abbreviation at that moment. A blank or unknown zone is TIME_ZONE."""
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    abbreviation at that moment. No trip, or a blank or unknown zone, is TIME_ZONE."""
+    from zoneinfo import ZoneInfo
 
     from django.utils import dateformat
 
-    try:
-        zone = ZoneInfo((trip.pickup_timezone if trip else "") or settings.TIME_ZONE)
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = ZoneInfo(settings.TIME_ZONE)
+    from . import holds
+
+    zone = holds._zone(trip) if trip is not None else ZoneInfo(settings.TIME_ZONE)
     local = moment.astimezone(zone)
     return dateformat.format(local, "M j, g:i A"), local.tzname() or ""
 

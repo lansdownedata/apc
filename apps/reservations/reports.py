@@ -18,10 +18,16 @@ def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
     the fallback the client asked for — at T-24h an unconfirmed day stops chasing itself
     and goes to the office to be confirmed by hand.
     """
+    from django.db.models import Exists, OuterRef
+
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
 
     today = today or timezone.localdate()
+    # Whether each trip's order is held (APC-95), in the same query.
+    held = Reservation.objects.filter(lead=OuterRef("lead"), vehicle__cleaning_fee__gt=0).exclude(
+        trip_status__in=CANCELLED_STATUSES
+    )
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     trips = (
         Reservation.objects.filter(
@@ -30,6 +36,7 @@ def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
             customer_confirmed_at__isnull=True,
         )
         .exclude(trip_status__in=CANCELLED_STATUSES)
+        .annotate(order_held=Exists(held))
         .select_related(
             "lead",
             "lead__contact",
@@ -42,13 +49,17 @@ def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
         .order_by("lead__contact__name", "pickup_time", "pk")
     )
 
-    from .services import is_wedding_trip
+    from .services import is_order_keyed
 
     rows: dict[int, dict] = {}
+    keyed: dict[int, bool] = {}
     for trip in trips:
-        # A wedding's confirmation went to the billing contact (APC-94) — chase them.
+        # A wedding's or a held order's confirmation went to the billing contact (APC-94,
+        # APC-95): chase them, not the booker who never got the link.
         contact = (
-            trip.lead.effective_billing_contact if is_wedding_trip(trip) else trip.lead.contact
+            trip.lead.effective_billing_contact
+            if is_order_keyed(trip, keyed)
+            else trip.lead.contact
         )
         row = rows.get(contact.pk)
         if row is None:

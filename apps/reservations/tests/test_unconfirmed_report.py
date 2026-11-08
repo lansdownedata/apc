@@ -90,6 +90,37 @@ def test_a_wedding_row_names_the_billing_contact_who_was_asked():
     assert (row["customer"], row["phone"]) == ("Pat Payer", "+15715550002")
 
 
+def test_a_held_order_row_names_the_billing_contact_who_was_asked():
+    """APC-95: a held order (a vehicle with a cleaning fee) is confirmed by its billing
+    contact, wedding or not; the chase list must name who got the link."""
+    from decimal import Decimal
+
+    from apps.contacts.factories import CompanyFactory
+    from apps.leads.factories import VehicleTypeFactory
+
+    ap = ContactFactory(name="Avery AP", phone="+15715550009")
+    company = CompanyFactory(billing_contact=ap)
+    booker = ContactFactory(name="Bo Booker", company=company)
+    van = VehicleTypeFactory(name="Sprinter chase", cleaning_fee=Decimal("250"))
+    _trip(lead=LeadFactory(contact=booker, status=Lead.Status.BOOKED), vehicle=van)
+
+    (row,) = reports.unconfirmed_trip_rows()
+
+    assert (row["customer"], row["phone"]) == ("Avery AP", "+15715550009")
+
+
+def test_an_unheld_company_order_row_names_the_booker():
+    from apps.contacts.factories import CompanyFactory
+
+    company = CompanyFactory(billing_contact=ContactFactory(name="Avery AP"))
+    booker = ContactFactory(name="Bo Booker", company=company)
+    _trip(lead=LeadFactory(contact=booker, status=Lead.Status.BOOKED))
+
+    (row,) = reports.unconfirmed_trip_rows()
+
+    assert row["customer"] == "Bo Booker"
+
+
 def test_report_emails_the_office():
     _trip()
 
@@ -123,4 +154,23 @@ def test_rows_do_not_scale_queries_with_the_number_of_trips(django_assert_num_qu
     with django_assert_num_queries(2):  # the trips + their prefetched stops
         rows = reports.unconfirmed_trip_rows()
 
+    assert len(rows[0]["trips"]) == 4
+
+
+def test_held_rows_do_not_scale_queries_either(django_assert_num_queries):
+    from decimal import Decimal
+
+    from apps.contacts.factories import CompanyFactory
+    from apps.leads.factories import VehicleTypeFactory
+
+    company = CompanyFactory(billing_contact=ContactFactory(name="Avery AP"))
+    van = VehicleTypeFactory(name="Sprinter chase", cleaning_fee=Decimal("250"))
+    for i in range(4):
+        booker = ContactFactory(name=f"Booker {i}", company=company)
+        _trip(lead=LeadFactory(contact=booker, status=Lead.Status.BOOKED), vehicle=van)
+
+    with django_assert_num_queries(2):  # still the trips + their stops
+        rows = reports.unconfirmed_trip_rows()
+
+    assert [r["customer"] for r in rows] == ["Avery AP"]
     assert len(rows[0]["trips"]) == 4

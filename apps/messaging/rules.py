@@ -227,20 +227,11 @@ def _is_wedding(reservation) -> bool:
 
 
 def _order_keyed(reservation, cache: dict | None = None) -> bool:
-    """A trip confirmed through its order's own link, by the billing contact, with the fee
-    acknowledgment: a wedding's (APC-94), or any held order's (APC-95, a vehicle with a
-    cleaning fee on a booked card order). `cache` (lead id → held) spares a read per trip
-    when a caller asks for many trips."""
-    from apps.payments import holds
+    """`reservations.services.is_order_keyed`: a wedding's or a held order's confirmation
+    goes through the order's own link, to the billing contact."""
+    from apps.reservations.services import is_order_keyed
 
-    if _is_wedding(reservation):
-        return True
-    if cache is not None and reservation.lead_id in cache:
-        return cache[reservation.lead_id]
-    held = holds.eligible(reservation.lead)
-    if cache is not None:
-        cache[reservation.lead_id] = held
-    return held
+    return is_order_keyed(reservation, cache)
 
 
 def _held_cache(tp: TouchPoint) -> dict | None:

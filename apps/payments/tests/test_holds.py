@@ -776,3 +776,24 @@ def test_an_idempotency_conflict_on_the_resend_fails_once_and_stops():
     assert first == second and first.status == Charge.Status.FAILED
     task = Task.objects.get(lead=lead, kind="cleaning_hold_failed")
     assert task.note.startswith("Cleaning hold could not be placed: ")
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (Charge.Status.SUCCEEDED, holds.HoldUsed),
+        (Charge.Status.EXPIRED, holds.HoldLapsed),
+        (Charge.Status.RELEASED, holds.HoldLapsed),
+    ],
+)
+def test_capturing_a_hold_no_longer_on_the_card_says_why(status, error):
+    """Used by another trip → `HoldUsed`; let go (by the bank or by us) → `HoldLapsed`.
+    Both took nothing, so processing charges the card instead."""
+    lead, plan, trips, hold = _placed("500.00")
+    Charge.objects.filter(pk=hold.pk).update(status=status)
+
+    with patch.object(stripe.PaymentIntent, "capture") as capture:
+        with pytest.raises(error):
+            holds.capture_hold(trips[0], Decimal("250.00"))
+
+    capture.assert_not_called()
