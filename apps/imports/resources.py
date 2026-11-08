@@ -12,6 +12,7 @@ from typing import ClassVar
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from import_export.resources import ModelResource
 from import_export.results import RowResult
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 from apps.core.phone import to_e164
 from apps.core.templatetags.phone_filters import phone_display
@@ -47,6 +48,23 @@ def export_phone(stored: str | None) -> str:
     if not stored:
         return ""
     return phone_display(stored) if to_e164(stored) == stored else stored
+
+
+def phone_match_warning(record) -> str:
+    """A row with no email matched by phone a record that has one: shared numbers are common
+    (family, a front desk), so the preview asks the user to check (spec §5.2 step 4, §6.2)."""
+    return f"Matched by phone to {record.name} ({record.email}) — check this is the same person"
+
+
+def same_text(stored, typed) -> bool:
+    """`stored` and `typed` differ only in what a workbook can't carry: line endings, outer
+    whitespace, or a control character Excel refuses (the export drops it)."""
+    return isinstance(stored, str) and isinstance(typed, str) and _text(stored) == _text(typed)
+
+
+def _text(value: str) -> str:
+    value = ILLEGAL_CHARACTERS_RE.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
+    return value.strip()
 
 
 def _blank(value) -> bool:
@@ -121,9 +139,15 @@ class PortalResource(ModelResource):
             self._created.add(instance.pk)
 
     def import_field(self, field, instance, row, is_m2m=False, **kwargs):
-        """A blank cell leaves the saved value alone: an import never clears."""
+        """A blank cell leaves the saved value alone: an import never clears. Text equal to
+        the stored value but for line endings, outer whitespace or a control character is
+        left alone too (`same_text`)."""
         if not field.attribute or _blank(row.get(field.column_name)):
             return
+        if not is_m2m and same_text(
+            getattr(instance, field.attribute, None), row.get(field.column_name)
+        ):
+            return  # the stored text, as the export wrote it: not a change, never rewritten
         super().import_field(field, instance, row, is_m2m, **kwargs)
 
     def skip_row(self, instance, original, row, import_validation_errors=None) -> bool:

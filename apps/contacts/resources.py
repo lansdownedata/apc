@@ -17,7 +17,14 @@ from apps.imports.address import (
     clean_address,
     write_address,
 )
-from apps.imports.resources import PortalResource, cell, export_phone, row_no, same_number
+from apps.imports.resources import (
+    PortalResource,
+    cell,
+    export_phone,
+    phone_match_warning,
+    row_no,
+    same_number,
+)
 from apps.imports.xlsx import Column
 
 from . import services
@@ -207,7 +214,10 @@ class ContactResource(PortalResource):
             return None
         if phone:
             note["key"] = phone
-            return Contact.objects.find_match(phone=phone)
+            found = Contact.objects.find_match(phone=phone)
+            if found is not None and found.email:
+                note["warnings"].append(phone_match_warning(found))
+            return found
         raise ValidationError("Needs an email or a phone to match or create a contact.")
 
     def after_init_instance(self, instance, new, row, **kwargs) -> None:

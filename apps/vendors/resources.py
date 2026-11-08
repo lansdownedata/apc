@@ -15,7 +15,14 @@ from apps.imports.address import (
     clean_address,
     write_address,
 )
-from apps.imports.resources import PortalResource, cell, export_phone, row_no, same_number
+from apps.imports.resources import (
+    PortalResource,
+    cell,
+    export_phone,
+    phone_match_warning,
+    row_no,
+    same_number,
+)
 from apps.imports.xlsx import Column
 from apps.leads.models import VehicleType
 from apps.tasks import vendor_tasks
@@ -164,6 +171,9 @@ class VendorResource(PortalResource):
             if typed.lower() not in STATUSES:
                 raise ValidationError("Status must be Active or Inactive")
             row["Status"] = STATUSES[typed.lower()]
+        website = cell(row, "Website").strip()
+        if website and "://" not in website:
+            row["Website"] = f"https://{website}"  # as VendorForm's URLField takes it
         clean_address(row)
         self._parsed.update(phone=phone, phone_e164=e164, types=self._parse_types(row))
 
@@ -208,7 +218,10 @@ class VendorResource(PortalResource):
             return None
         if phone:
             note["key"] = phone
-            return _only(by_phone, "Phone")
+            found = _only(by_phone, "Phone")
+            if found is not None and found.email:
+                note["warnings"].append(phone_match_warning(found))
+            return found
         raise ValidationError("Needs an email or a phone to match or create a vendor.")
 
     def after_init_instance(self, instance, new, row, **kwargs) -> None:

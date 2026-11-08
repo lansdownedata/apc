@@ -14,6 +14,7 @@ from apps.accounts.permissions import owner_admin_required
 from . import services
 from .models import ImportRun
 from .screens import SCREENS, get_screen
+from .xlsx import NOT_XLSX
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PAGE_SIZE = 50
@@ -80,7 +81,7 @@ def _cell(row: dict, column: str) -> str:
 @require_GET
 def history(request: HttpRequest) -> HttpResponse:
     screen_filter = request.GET.get("screen", "")
-    runs = ImportRun.objects.select_related("user")
+    runs = ImportRun.objects.select_related("user").defer("rows")  # the Result reads counts
     if screen_filter in SCREENS:
         runs = runs.filter(screen=screen_filter)
     else:
@@ -123,18 +124,27 @@ def export(request: HttpRequest, screen: str) -> HttpResponse:
 @owner_admin_required
 @require_POST
 def upload(request: HttpRequest, screen: str) -> JsonResponse:
+    """Spec §4.5 step 2. Every upload is a run: a file refused before it is read (not .xlsx,
+    too big) is kept as FAILED without storing it; with no file at all there is nothing to log."""
     found = get_screen(screen)
     file = request.FILES.get("file")
-    if file is None or not file.name.lower().endswith(".xlsx"):
+    if file is None:
         return JsonResponse({"ok": False, "error": NEED_XLSX}, status=400)
-    run = ImportRun.objects.create(
-        kind=ImportRun.Kind.IMPORT,
-        status=ImportRun.Status.PREVIEWED,
-        screen=found.slug,
-        user=request.user,
-        filename=file.name[:255],
-        file=file,
-    )
+    fields = {
+        "kind": ImportRun.Kind.IMPORT,
+        "screen": found.slug,
+        "user": request.user,
+        "filename": file.name[:255],
+    }
+    refused = ""
+    if not file.name.lower().endswith(".xlsx"):
+        refused = NOT_XLSX
+    elif file.size > services.MAX_BYTES:
+        refused = services.TOO_BIG
+    if refused:
+        ImportRun.objects.create(**fields, status=ImportRun.Status.FAILED, error=refused)
+        return JsonResponse({"ok": False, "error": refused}, status=400)
+    run = ImportRun.objects.create(**fields, status=ImportRun.Status.PREVIEWED, file=file)
     services.preview(run)
     if run.status == ImportRun.Status.FAILED:
         return JsonResponse({"ok": False, "error": run.error}, status=400)
@@ -150,7 +160,8 @@ def _import_run_or_404(pk: int) -> ImportRun:
 @require_GET
 def run_detail(request: HttpRequest, pk: int) -> HttpResponse:
     run = _import_run_or_404(pk)
-    rows = run.rows
+    # A run that failed (even during apply, after a preview) shows its error alone.
+    rows = [] if run.status == ImportRun.Status.FAILED else run.rows
     new = [
         r | {"email": _cell(r, "Email"), "phone": _cell(r, "Phone")}
         for r in rows

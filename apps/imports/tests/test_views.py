@@ -3,9 +3,12 @@
 import html as html_lib
 import io
 import re
+from pathlib import Path
 
 import pytest
 from django.core.files.base import ContentFile
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import content_disposition_header
@@ -104,14 +107,40 @@ def test_upload_file_error_returns_sentence_and_keeps_failed_run(client, admin):
     assert run.status == "failed"
 
 
-def test_upload_without_xlsx_creates_no_run(client, admin):
-    url = reverse("import_upload", args=["contacts"])
-    expected = {"ok": False, "error": "Choose a .xlsx file to upload."}
-    missing = client.post(url)
-    wrong = client.post(url, {"file": _upload_file(name="people.csv")})
-    assert (missing.status_code, missing.json()) == (400, expected)
-    assert (wrong.status_code, wrong.json()) == (400, expected)
+def test_upload_without_a_file_creates_no_run(client, admin):
+    response = client.post(reverse("import_upload", args=["contacts"]))
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "error": "Choose a .xlsx file to upload."}
     assert ImportRun.objects.count() == 0
+
+
+def test_upload_that_is_not_xlsx_keeps_a_failed_run_without_the_file(client, admin):
+    response = client.post(
+        reverse("import_upload", args=["contacts"]), {"file": _upload_file(name="people.csv")}
+    )
+    run = ImportRun.objects.get()
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "error": run.error}
+    assert run.error == "This isn't an Excel file we can read. Upload a .xlsx file."
+    assert (run.kind, run.status, run.screen, run.user) == ("import", "failed", "contacts", admin)
+    assert run.filename == "people.csv"
+    assert not run.file
+
+
+def test_upload_over_the_size_limit_is_refused_before_storing(client, admin, monkeypatch):
+    monkeypatch.setattr(services, "MAX_BYTES", 10)
+    stored = []
+    monkeypatch.setattr(
+        "django.core.files.storage.FileSystemStorage._save",
+        lambda self, name, content: stored.append(name) or name,
+    )
+    response = client.post(reverse("import_upload", args=["contacts"]), {"file": _upload_file()})
+    run = ImportRun.objects.get()
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "error": services.TOO_BIG}
+    assert (run.status, run.error, run.filename) == ("failed", services.TOO_BIG, "people.xlsx")
+    assert not run.file
+    assert stored == []
 
 
 def test_run_page_lists_errors_before_new_and_updated(client, admin):
@@ -341,6 +370,30 @@ def test_run_page_failed_run_shows_its_error(client, admin):
     assert "data-apply" not in body
 
 
+def test_run_page_failed_during_apply_shows_only_the_error(client, admin):
+    """A run that previewed, then failed on apply, still holds its preview rows: the page
+    shows the error alone, never the sections or the action bar."""
+    Contact.objects.create(name="Bob", email="bob@acme.test")
+    run = _previewed(
+        [["Ann Lee", "ann@acme.test"], ["Robert", "bob@acme.test"], ["", "bad@acme.test"]]
+    )
+    ImportRun.objects.filter(pk=run.pk).update(
+        status=ImportRun.Status.FAILED, error="Something went wrong reading row 3."
+    )
+    body = client.get(reverse("import_run", args=[run.pk])).content.decode()
+    assert "Something went wrong reading row 3." in body
+    assert "Nothing was saved." in body
+    assert "data-section" not in body
+    assert "data-apply" not in body
+    assert reverse("import_errors", args=[run.pk]) not in body
+
+
+def test_run_page_failed_error_already_saying_nothing_was_saved_says_it_once(client, admin):
+    run = ImportRunFactory(status=ImportRun.Status.FAILED, error=services.FILE_CRASHED)
+    body = client.get(reverse("import_run", args=[run.pk])).content.decode()
+    assert body.count("Nothing was saved.") == 1
+
+
 # --- the history page ----------------------------------------------------------------
 
 
@@ -400,3 +453,44 @@ def test_history_marks_expired_previews(client, admin):
     body = client.get(reverse("import_history")).content.decode()
     assert "Expired" in body
     assert "Preview — not applied" not in body
+
+
+def test_history_never_loads_the_rows_json(client, admin):
+    ImportRunFactory(
+        status=ImportRun.Status.APPLIED,
+        counts={"new": 2, "updated": 0, "unchanged": 0, "errors": 0, "examples": 0},
+        rows=[{"row": 2, "outcome": "new"}],
+    )
+    with CaptureQueriesContext(connection) as queries:
+        body = client.get(reverse("import_history")).content.decode()
+    assert "2 new" in body
+    run_selects = [q["sql"] for q in queries if "imports_importrun" in q["sql"]]
+    assert run_selects
+    assert all("`rows`" not in sql and '"rows"' not in sql for sql in run_selects)
+
+
+# --- the upload handler (static/js/app.js) ---------------------------------------------
+
+
+def _upload_js() -> str:
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function uploadProblem")
+    return js[start : js.index("/* ----", start)]
+
+
+def test_upload_handler_explains_a_response_that_is_not_json():
+    body = _upload_js()
+    assert "content-type" in body.lower()
+    assert "resp.redirected" in body and "/login/" in body
+    assert "Your session has ended. Sign in again." in body
+    assert "resp.status === 403" in body
+    assert "You don't have access to imports" in body
+    assert "Sign in again as an admin." in body
+    assert "resp.status >= 500" in body
+    assert "This is taking longer than expected" in body
+    assert (
+        "Large files can take a while. Check Import history in a minute — the preview will be "
+        "there if it finished." in body
+    )
+    assert "window.alert" not in body and "confirm(" not in body
+    assert "return new Promise(() => {});" in body  # an alert stays up until its own button

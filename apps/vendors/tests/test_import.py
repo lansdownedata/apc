@@ -168,6 +168,25 @@ def test_phone_on_vendor_with_other_email_creates_new_and_warns():
     assert pat.email == "pat@other.test"
 
 
+def test_no_email_row_matched_by_phone_to_a_vendor_with_email_warns():
+    """Spec §6.2 step 2 is unchanged (one vendor holds the phone); the preview says so."""
+    vendor = VendorFactory(name="Chris Cars", email="chris@acme.test", phone="+12025550143")
+    result, _ = run_import([{"Phone": "(202) 555-0143", "Notes": "shared line"}])
+    out = result.outcomes[0]
+    assert (out["outcome"], out["object_id"]) == ("updated", vendor.pk)
+    assert out["warnings"] == [
+        "Matched by phone to Chris Cars (chris@acme.test) — check this is the same person"
+    ]
+    vendor.refresh_from_db()
+    assert vendor.notes == "shared line"
+
+
+def test_no_email_row_matched_by_phone_to_an_email_less_vendor_has_no_warning():
+    VendorFactory(name="Pat Cars", email="", phone="+12025550143")
+    result, _ = run_import([{"Phone": "(202) 555-0143", "Notes": "shared line"}])
+    assert result.outcomes[0]["warnings"] == []
+
+
 def test_no_key_is_an_error():
     result, _ = run_import([{"Name": "Capital Cars", "Notes": "hello"}])
     out = result.outcomes[0]
@@ -321,6 +340,22 @@ def test_bad_status_is_an_error():
     assert out["reason"] == "Status must be Active or Inactive"
     vendor.refresh_from_db()
     assert vendor.notes == ""
+
+
+def test_website_without_a_scheme_is_saved_as_https():
+    """As the vendor form takes it (Django 5's URLField form assumes a scheme)."""
+    run_import([{"Name": "Capital Cars", "Email": "ops@acme.test", "Website": "acmelimo.com"}])
+    assert Vendor.objects.get().website == "https://acmelimo.com"
+
+
+def test_website_that_is_not_a_url_is_still_an_error():
+    result, _ = run_import(
+        [{"Name": "Capital Cars", "Email": "ops@acme.test", "Website": "not a url"}]
+    )
+    out = result.outcomes[0]
+    assert out["outcome"] == "error"
+    assert out["reason"] == "Website: Enter a valid URL."
+    assert not Vendor.objects.exists()
 
 
 def test_invalid_website_is_an_error():

@@ -14,6 +14,7 @@ from xml.etree.ElementTree import ParseError
 
 import tablib
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.comments import Comment
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
@@ -164,7 +165,10 @@ def read_rows(file, *, sheet: str, columns: Sequence[Column]) -> ParsedSheet:
 
 
 def _store(cell, value) -> None:
-    """Assign a value; strings that look like formulas are stored as text, never evaluated."""
+    """Assign a value; strings that look like formulas are stored as text, never evaluated.
+    Control characters Excel refuses (openpyxl raises `IllegalCharacterError`) are dropped."""
+    if isinstance(value, str):
+        value = ILLEGAL_CHARACTERS_RE.sub("", value)
     cell.value = value
     if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
         cell.data_type = "s"

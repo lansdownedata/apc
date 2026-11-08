@@ -454,6 +454,10 @@ def _contact_fixtures() -> None:
     )
     contact_services.add_phone(intl, "(617) 555-0102", label="work")
     ContactFactory(name="=SUM(A1)", email="formula@acme.test", phone="", notes="-1 +2 @x")
+    # Stored text the workbook can't carry exactly: line endings, outer whitespace, and a
+    # control character Excel refuses. None of it is a change.
+    ContactFactory(name="Sam ", email="sam@acme.test", phone="", notes="line one\r\nline two")
+    ContactFactory(name="Tab\x0bbed", email="ctrl@acme.test", phone="", notes="a\x0bb")
 
 
 def _vendor_fixtures() -> None:
@@ -470,13 +474,18 @@ def _vendor_fixtures() -> None:
         address=AddressFactory(line1="1 Main St", city="Boston", state="MA", postal="02134"),
     ).vehicle_types.set([sedan, retired])
     VendorFactory(name="Odd Number", email="odd@acme.test", phone="555-0100 ext 4")
-    VendorFactory(name="Parked", email="parked@acme.test", status=Vendor.Status.INACTIVE)
+    VendorFactory(
+        name="Parked",
+        email="parked@acme.test",
+        status=Vendor.Status.INACTIVE,
+        notes="line one\r\nline two\x0b ",
+    )
 
 
 @pytest.mark.parametrize(
     ("screen", "fixtures", "filters", "total"),
     [
-        ("contacts", _contact_fixtures, {"scope": "all"}, 3),
+        ("contacts", _contact_fixtures, {"scope": "all"}, 5),
         ("vendors", _vendor_fixtures, {"status": "all"}, 4),
     ],
 )
@@ -484,6 +493,7 @@ def test_round_trip_is_all_unchanged(screen, fixtures, filters, total):
     fixtures()
     model = Contact if screen == "contacts" else Vendor
     before = model.objects.count()
+    stored = list(model.objects.order_by("pk").values())
     _, content = _export(screen, filters)
     run = _upload(content, screen=screen)
     services.preview(run)
@@ -496,6 +506,7 @@ def test_round_trip_is_all_unchanged(screen, fixtures, filters, total):
     run.refresh_from_db()
     assert run.counts["unchanged"] == total
     assert model.objects.count() == before
+    assert list(model.objects.order_by("pk").values()) == stored  # nothing rewritten
 
 
 def test_export_writes_legacy_phones_as_stored():

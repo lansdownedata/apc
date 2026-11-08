@@ -1,6 +1,7 @@
 """Contact import (APC-141): matching (spec §5.2), columns (§5.1), phones (§5.3), address
 (§5.4), side effects (§5.5)."""
 
+from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
@@ -151,6 +152,27 @@ def test_new_email_with_phone_on_other_email_creates_new_and_warns():
     assert out["object_id"] == jordan.pk
     pat.refresh_from_db()
     assert pat.email == "pat@other.test"
+
+
+def test_no_email_row_matched_by_phone_to_a_contact_with_email_warns():
+    """Spec §5.2 step 4 is unchanged (any contact, newest wins); the preview says so."""
+    pat = ContactFactory(name="Pat", email=None, phone="+12025550143")
+    Contact.objects.filter(pk=pat.pk).update(created_at=pat.created_at - timedelta(days=1))
+    chris = ContactFactory(name="Chris", email="chris@acme.test", phone="+12025550143")
+    result, _ = run_import([{"Phone": "(202) 555-0143", "Notes": "shared line"}])
+    out = result.outcomes[0]
+    assert (out["outcome"], out["object_id"]) == ("updated", chris.pk)
+    assert out["warnings"] == [
+        "Matched by phone to Chris (chris@acme.test) — check this is the same person"
+    ]
+    chris.refresh_from_db()
+    assert chris.notes == "shared line"
+
+
+def test_no_email_row_matched_by_phone_to_an_email_less_contact_has_no_warning():
+    ContactFactory(name="Pat", email=None, phone="+12025550143")
+    result, _ = run_import([{"Phone": "(202) 555-0143", "Notes": "shared line"}])
+    assert result.outcomes[0]["warnings"] == []
 
 
 def test_no_key_is_an_error():

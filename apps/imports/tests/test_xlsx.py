@@ -246,3 +246,10 @@ def test_gnet_header_is_ignored():
     parsed = read_rows(buf, sheet="Vendors", columns=VENDOR_COLUMNS)
     assert parsed.ignored_columns == ["GNet griddID"]
     assert parsed.dataset.headers == ["Name", "Email", "__row__"]
+
+
+def test_control_characters_excel_refuses_are_dropped():
+    """openpyxl raises IllegalCharacterError on them; the export must not crash."""
+    ws = write([row_of(Name="Jo\x0bAnn", Notes="a\x00b\x1fc\nd")])["Contacts"]
+    assert ws["A2"].value == "JoAnn"
+    assert ws["G2"].value == "abc\nd"

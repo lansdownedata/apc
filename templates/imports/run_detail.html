@@ -14,6 +14,7 @@ the bottom so Apply stays in reach while scrolling a long preview; the section h
   {% if run.status == "failed" %}
   <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">This file couldn't be imported</h1>
   <p class="text-[13.5px] text-danger mt-2">{{ run.error }}</p>
+  {% if "Nothing was saved" not in run.error %}<p class="text-[13.5px] text-ink mt-1">Nothing was saved.</p>{% endif %}
   {% else %}
   <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight num">
     {% if counts.errors %}<span class="text-danger">{{ counts.errors|intcomma }} error{{ counts.errors|pluralize }}</span>{% endif %}
