@@ -783,3 +783,36 @@ def test_transaction_id_still_wins_when_both_are_present(client, settings):
     by_res_no.refresh_from_db()
     assert by_id.status == Assignment.Status.CONFIRMED
     assert by_res_no.status == Assignment.Status.OFFERED
+
+
+# --- APC-138: the gateway's path has no trailing slash ------------------------------------
+
+
+def test_no_slash_path_is_served_not_redirected(client, settings):
+    """The gateway POSTs to /api/gnet/callback (seed-gnet.ts). A 301 to the slashed path
+    makes Node's fetch re-issue a bodiless GET, which the view answers 400 — so no status
+    callback would ever reach handle_callback."""
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = json.dumps({"transactionId": "TX-1", "status": "ASSIGNED"}).encode()
+    with patch("apps.integrations.views.handle_callback") as handled:
+        r = client.post(
+            "/api/gnet/callback",
+            data=body,
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {SECRET}",
+            HTTP_X_LANSDOWNE_SIGNATURE=_sig(SECRET, body),
+        )
+    assert r.status_code == 200
+    handled.assert_called_once_with({"transactionId": "TX-1", "status": "ASSIGNED"})
+
+
+def test_non_utf8_body_is_bad_request_not_500(client, settings):
+    settings.GNET_CALLBACK_SECRET = SECRET
+    body = b"\xff\xfe\xfd"
+    r = _post(
+        client,
+        body,
+        HTTP_AUTHORIZATION=f"Bearer {SECRET}",
+        HTTP_X_LANSDOWNE_SIGNATURE=_sig(SECRET, body),
+    )
+    assert r.status_code == 400

@@ -98,7 +98,8 @@ urlpatterns = [
     path("webhooks/calendly/", calendly_webhook, name="calendly_webhook"),
     path("webhooks/limoanywhere/<str:token>/", la_webhook, name="la_webhook"),
     path("webhooks/stripe/", stripe_webhook, name="stripe_webhook"),
-    path("api/gnet/callback/", gnet_callback, name="gnet_callback"),
+    # No trailing slash required: the gateway posts to /api/gnet/callback (APC-138).
+    re_path(r"^api/gnet/callback/?$", gnet_callback, name="gnet_callback"),
     # No trailing slash is the gateway's spelling: APPEND_SLASH would 301 it and the
     # gateway's fetch would re-issue the POST as a GET (the probe), losing the booking.
     re_path(r"^api/gnet/farm-in/?$", gnet_farm_in, name="gnet_farm_in"),

@@ -300,7 +300,7 @@ def gnet_callback(request):
         return HttpResponse(status=403)
     try:
         payload = json.loads(request.body or b"{}")
-    except json.JSONDecodeError:
+    except ValueError:  # JSONDecodeError, and a non-UTF-8 body (APC-138)
         return HttpResponseBadRequest("Invalid JSON.")
     if not isinstance(payload, dict):
         logger.warning(
