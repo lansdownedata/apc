@@ -198,6 +198,17 @@ def test_description_cut_to_4000():
     assert len(body["PrivateNote"]) == 4000
 
 
+def test_payload_refuses_an_invoice_without_lines():
+    from apps.payments.qbo_bills import _Refused
+
+    invoice = _invoice()
+    invoice.lines.all().delete()
+    with pytest.raises(_Refused) as err:
+        qbo_invoices.invoice_payload(invoice, "123")
+    assert err.value.alert is False
+    assert str(err.value) == qbo_invoices.NO_LINES
+
+
 def test_matches_ignores_subtotal_line():
     body = qbo_invoices.invoice_payload(_invoice(), "123")
     item = {"DetailType": "SalesItemLineDetail"}
@@ -452,7 +463,7 @@ def test_void_pushes_operation_void(mapping):
     req.assert_called_once_with(
         "POST",
         "invoice",
-        params={"operation": "void", "requestid": f"apc-i{invoice.pk}-void"},
+        params={"operation": "void", "requestid": f"apc-i{invoice.pk}-void-u0"},
         json={"Id": "900", "SyncToken": "0"},
     )
     invoice.refresh_from_db()
@@ -472,8 +483,11 @@ def test_void_takes_the_current_sync_token_when_quickbooks_changed_it(mapping):
     ]
     with patch(REQ, side_effect=effects) as req:
         assert qbo_invoices.push_void(invoice) is True
+    assert req.call_args_list[0].kwargs["params"]["requestid"] == f"apc-i{invoice.pk}-void-u0"
     assert req.call_args_list[1].args == ("GET", "invoice/900")
     assert req.call_args_list[2].kwargs["json"] == {"Id": "900", "SyncToken": "3"}
+    # A new token is a new request: never the stale attempt's cached fault replayed.
+    assert req.call_args_list[2].kwargs["params"]["requestid"] == f"apc-i{invoice.pk}-void-u3"
     invoice.refresh_from_db()
     assert (invoice.qbo_sync_state, invoice.qbo_sync_token) == (SyncState.SYNCED, "4")
 
@@ -511,6 +525,24 @@ def test_void_during_a_create_still_voids_in_quickbooks(mapping):
     invoice.refresh_from_db()
     # The create in flight may land: the void is queued so it follows the invoice there.
     assert invoice.qbo_void_requested_at is not None
+
+
+def test_create_returning_after_a_void_leaves_the_invoice_in_pending_voids(mapping):
+    invoice = _open_invoice()
+    response = _sent(invoice)
+
+    def void_then_answer(*args, **kwargs):
+        # Staff void the invoice while QuickBooks is still making it.
+        invoices.void_invoice(Invoice.objects.get(pk=invoice.pk), reason="Wrong PO", user=None)
+        return response
+
+    with patch(REQ, side_effect=void_then_answer):
+        assert qbo_invoices.push_invoice(invoice) is False
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.Status.VOID
+    assert invoice.qbo_id == "900"
+    assert invoice.qbo_sync_state != SyncState.SYNCED
+    assert list(qbo_invoices.pending_voids("123")) == [invoice]
 
 
 def test_run_hourly_pushes_invoices_last(mapping):

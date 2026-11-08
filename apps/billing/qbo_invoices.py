@@ -114,6 +114,7 @@ NO_TRIP_ITEM = "Waiting: choose the Product/Service for trip charges in Settings
 NO_START_DATE = (
     "Waiting: choose the start date for customer documents in Settings \u2192 QuickBooks."
 )
+NO_LINES = "This invoice has no lines, so it isn't sent."
 
 
 def _money(amount) -> str:
@@ -126,10 +127,15 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
     item = trip_item_ref()
     if item is None:
         raise _Refused(NO_TRIP_ITEM, alert=False)
+    # Read once: a void committing after the pending check empties the lines, and QuickBooks
+    # must never get an invoice with none.
+    rows = list(invoice.lines.order_by("pk"))
+    if not rows:
+        raise _Refused(NO_LINES, alert=False)
     group = invoice.group
     po = f"PO {invoice.po_number}" if invoice.po_number else ""
     lines = []
-    for index, line in enumerate(invoice.lines.order_by("pk")):
+    for index, line in enumerate(rows):
         description = f"{po} \u00b7 {line.description}" if po and index == 0 else line.description
         lines.append(
             {
@@ -254,13 +260,18 @@ def push_invoice(invoice: Invoice) -> bool:
 
 def _void(invoice: Invoice) -> dict:
     """POST the void; on a stale SyncToken (the invoice was changed in QuickBooks, e.g. sent
-    from there) take the current one and try once more."""
+    from there) take the current one and try once more.
+
+    The requestid is keyed by the SyncToken, as APC-74 keys updates: a lost success replays
+    under the same token, a re-read token is a new request (never the stale attempt's cached
+    fault), and a void that landed bumps the token, so it can't be sent twice."""
 
     def send() -> dict:
+        requestid = f"apc-i{invoice.pk}-void-u{invoice.qbo_sync_token}"[:50]
         return qbo.request(
             "POST",
             "invoice",
-            params={"operation": "void", "requestid": f"apc-i{invoice.pk}-void"},
+            params={"operation": "void", "requestid": requestid},
             json={"Id": invoice.qbo_id, "SyncToken": invoice.qbo_sync_token},
         )["Invoice"]
 
