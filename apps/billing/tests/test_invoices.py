@@ -1,18 +1,25 @@
 """Invoice and InvoiceLine (APC-106): a trip is on at most one invoice, and a group that
 has been invoiced cannot be removed."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import ProtectedError
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
+from apps.accounts.factories import UserFactory
 from apps.billing import invoices, services
 from apps.billing.factories import AccountGroupFactory, InvoiceFactory, InvoiceLineFactory
+from apps.billing.tests._helpers import _processed_trip
+from apps.contacts.factories import ContactFactory
 from apps.leads.factories import VehicleTypeFactory
+from apps.leads.models import Lead
 from apps.reservations.factories import ReservationFactory
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, TripReview
 
 pytestmark = pytest.mark.django_db
 
@@ -111,3 +118,93 @@ def test_overtime_hours_wording(hours: int, wording: str) -> None:
         overtime_hours=Decimal(hours),
     )
     assert wording in invoices.line_description(trip).split("\n")[0]
+
+
+# --- selectors -----------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _quiet(settings):
+    settings.STRIPE_SECRET_KEY = ""
+    with patch("apps.integrations.la_sync.push_lead_bookings"):
+        yield
+
+
+@pytest.fixture
+def accountant():
+    return UserFactory(can_manage_payments=True)
+
+
+def test_ready_requires_processed_on_account_uninvoiced(accountant) -> None:
+    ready = _processed_trip(accountant=accountant)
+    card = _processed_trip(accountant=accountant)
+    Lead.objects.filter(pk=card.lead_id).update(billing_group=None)
+    unprocessed = _processed_trip(accountant=accountant)
+    TripReview.objects.filter(reservation=unprocessed).update(processed_at=None)
+    invoiced = _processed_trip(accountant=accountant)
+    InvoiceLineFactory(reservation=invoiced)
+    found = set(invoices.ready_queryset(invoices.BillingFilters()).values_list("pk", flat=True))
+    assert found == {ready.pk}
+
+
+def test_lost_order_trips_are_not_ready_but_invoiced_rows_remain(accountant) -> None:
+    trip = _processed_trip(accountant=accountant)
+    group = trip.lead.billing_group
+    line = InvoiceLineFactory(reservation=trip, invoice=InvoiceFactory(group=group))
+    Lead.objects.filter(pk=trip.lead_id).update(status="lost")
+    assert invoices.ready_count() == 0
+    assert invoices.open_invoices(group)[0].lines.count() == 1
+    assert line.invoice_id == invoices.open_invoices(group)[0].pk
+
+
+def test_ready_accounts_groups_and_totals(accountant) -> None:
+    contact = ContactFactory()
+    zed = AccountGroupFactory(account__contact=contact, account__name="Zed", name="B group")
+    ann = AccountGroupFactory(account__name="Ann", name="A group")
+    zed2 = AccountGroupFactory(account=zed.account, name="A2 group", is_default=False)
+    t1 = _processed_trip(zed, accountant=accountant)
+    t2 = _processed_trip(zed2, accountant=accountant)
+    t3 = _processed_trip(ann, accountant=accountant)
+    rows = invoices.ready_accounts(invoices.BillingFilters())
+    assert [r.account.name for r in rows] == ["Ann", "Zed"]
+    assert rows[0].total == t3.line_total
+    assert [g.group.name for g in rows[1].groups] == ["A2 group", "B group"]
+    assert [g.total for g in rows[1].groups] == [t2.line_total, t1.line_total]
+    assert rows[1].total == t1.line_total + t2.line_total
+    assert all(hasattr(t, "route_short") for g in rows[1].groups for t in g.trips)
+
+
+def test_date_range_and_search_filters(accountant) -> None:
+    today = timezone.localdate()
+    recent = _processed_trip(accountant=accountant, pickup_date=today - timedelta(days=1))
+    old = _processed_trip(accountant=accountant, pickup_date=today - timedelta(days=40))
+    ids = lambda f: {  # noqa: E731
+        t.pk for r in invoices.ready_accounts(f) for g in r.groups for t in g.trips
+    }
+    assert ids(invoices.BillingFilters()) == {recent.pk, old.pk}
+    assert ids(invoices.BillingFilters(date_from=today - timedelta(days=10))) == {recent.pk}
+    assert ids(invoices.BillingFilters(date_to=today - timedelta(days=10))) == {old.pk}
+    assert ids(invoices.BillingFilters(q=recent.reference)) == {recent.pk}
+    name = old.lead.contact.name
+    assert ids(invoices.BillingFilters(q=name[:4])) >= {old.pk}
+    mine = invoices.BillingFilters.from_query({"q": " x ", "from": "2026-01-02", "to": "bad"})
+    assert (mine.q, mine.date_from, mine.date_to) == ("x", date(2026, 1, 2), None)
+
+
+def _build(accountant, trips: int, groups: int) -> None:
+    made = [AccountGroupFactory() for _ in range(groups)]
+    for i in range(trips):
+        _processed_trip(made[i % groups], accountant=accountant)
+
+
+def _count(filters) -> int:
+    with CaptureQueriesContext(connection) as ctx:
+        invoices.ready_accounts(filters)
+    return len(ctx)
+
+
+def test_ready_accounts_is_flat(accountant) -> None:
+    _build(accountant, 1, 1)
+    one = _count(invoices.BillingFilters())
+    _build(accountant, 29, 6)
+    assert _count(invoices.BillingFilters()) == one
