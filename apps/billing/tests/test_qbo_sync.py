@@ -537,6 +537,8 @@ def test_clearing_a_groups_email_clears_it_in_quickbooks():
 
 def test_records_from_another_quickbooks_company_are_pushed_again_as_new():
     account = _account()
+    for realm in ("111", "222"):
+        QboTerm.objects.create(realm_id=realm, qbo_id="3", name="Net 30")
     with (
         patch("apps.billing.qbo_sync.current_realm", return_value="111"),
         patch(REQ, side_effect=[_created("58"), _created("59")]),
@@ -925,3 +927,115 @@ def test_customer_docs_unset_chips_per_document_type(client):
     assert INVOICES_UNSET in html and RECEIPTS_UNSET not in html
     assert "Deposit account for card payments" in html
     assert 'name="sales_deposit_account"' in html
+
+
+# --- terms' due rules and company scope (APC-96) ---------------------------------------------
+
+
+def _set_realm(realm: str) -> None:
+    from apps.integrations.models import QboCredential
+
+    cred = QboCredential.load()
+    cred.realm_id = realm
+    cred.save()
+
+
+def test_refresh_terms_caches_due_rules():
+    response = {
+        "QueryResponse": {
+            "Term": [
+                {"Id": "3", "Name": "Net 30", "Type": "STANDARD", "DueDays": 30, "Active": True},
+                {
+                    "Id": "8",
+                    "Name": "15th of next month",
+                    "Type": "DATE_DRIVEN",
+                    "DayOfMonthDue": 15,
+                    "DueNextMonthDays": 20,
+                    "Active": True,
+                },
+            ]
+        }
+    }
+    with patch(REQ, return_value=response):
+        qbo_sync.refresh_terms()
+
+    net30 = QboTerm.objects.get(qbo_id="3")
+    assert (net30.term_type, net30.due_days) == ("STANDARD", 30)
+    assert (net30.day_of_month_due, net30.due_next_month_days) == (None, None)
+    dated = QboTerm.objects.get(qbo_id="8")
+    assert dated.term_type == "DATE_DRIVEN"
+    assert (dated.day_of_month_due, dated.due_next_month_days) == (15, 20)
+    assert dated.due_days is None
+
+
+def test_refresh_terms_tolerates_missing_rule_fields():
+    response = {
+        "QueryResponse": {
+            "Term": [
+                {"Id": "1", "Name": "Due on receipt", "Active": True},
+                {"Id": "2", "Name": "Odd", "Type": "STANDARD", "DueDays": "soon"},
+                {"Id": "4", "Name": "Flag", "Type": "STANDARD", "DueDays": True},
+            ]
+        }
+    }
+    with patch(REQ, return_value=response):
+        assert qbo_sync.refresh_terms() == 3
+
+    for qbo_id in ("1", "2", "4"):
+        term = QboTerm.objects.get(qbo_id=qbo_id)
+        assert (term.due_days, term.day_of_month_due, term.due_next_month_days) == (None,) * 3
+    assert QboTerm.objects.get(qbo_id="1").term_type == ""
+
+
+def test_terms_cache_is_scoped_by_realm():
+    _set_realm("A")
+    with patch(REQ, return_value={"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30"}]}}):
+        qbo_sync.refresh_terms()
+    assert QboTerm.objects.get(qbo_id="3").realm_id == "A"
+    assert qbo_sync.term_ref(Terms.NET_30) == {"value": "3"}
+
+    _set_realm("B")
+    assert qbo_sync.term_ref(Terms.NET_30) is None
+    account = services.create_account(
+        ContactFactory(), name="X", group_name="G", terms=Terms.NET_30
+    )
+    assert account.terms == Terms.NET_30
+    assert "Net 30" in qbo_sync.unmatched_terms()
+
+    # B's refresh neither touches nor retires A's rows, and the same id coexists.
+    with patch(REQ, return_value={"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30 B"}]}}):
+        qbo_sync.refresh_terms()
+    assert QboTerm.objects.get(realm_id="A", qbo_id="3").name == "Net 30"
+    assert QboTerm.objects.get(realm_id="A", qbo_id="3").active is True
+    assert QboTerm.objects.get(realm_id="B", qbo_id="3").name == "Net 30 B"
+
+    with patch(REQ, return_value={"QueryResponse": {"Term": []}}):
+        qbo_sync.refresh_terms()
+    assert QboTerm.objects.get(realm_id="A", qbo_id="3").active is True
+    assert QboTerm.objects.get(realm_id="B", qbo_id="3").active is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_migration_fills_the_realm_of_existing_terms_from_the_credential():
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    executor = MigrationExecutor(connection)
+    before = [("billing", "0012_backfill_qbo_txn_date"), ("integrations", "0007_qbo_credential")]
+    after = [("billing", "0013_qboterm_rules_realm"), ("integrations", "0007_qbo_credential")]
+    executor.migrate(before)
+    try:
+        old = executor.loader.project_state(before).apps
+        Credential = old.get_model("integrations", "QboCredential")
+        Credential.objects.update_or_create(singleton_id=1, defaults={"realm_id": "9130"})
+        old.get_model("billing", "QboTerm").objects.create(qbo_id="3", name="Net 30")
+
+        executor = MigrationExecutor(connection)
+        executor.migrate(after)
+        new = executor.loader.project_state(after).apps
+        term = new.get_model("billing", "QboTerm").objects.get(qbo_id="3")
+        assert term.realm_id == "9130"
+        assert term.term_type == ""
+    finally:
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())

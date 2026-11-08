@@ -123,7 +123,7 @@ def _invoice(*, terms=True, po="4471", memo="Oct trips", email="ap@example.com",
     config.trip_item = item
     config.save()
     if terms:
-        QboTerm.objects.create(name="Net 30", qbo_id="3")
+        QboTerm.objects.create(realm_id="123", name="Net 30", qbo_id="3")
     group = AccountGroupFactory(qbo_id="55", invoice_email=email, terms="net_30" if terms else "")
     amounts = amounts or ["920.00", "184.00"]
     total = sum((Decimal(a) for a in amounts), Decimal("0"))

@@ -235,12 +235,22 @@ class QboTerm(TimeStampedModel):
     doesn't have is left off the customer and listed on Settings, never guessed.
     """
 
-    qbo_id = models.CharField(max_length=32, unique=True)
+    realm_id = models.CharField(max_length=32, blank=True, default="")
+    qbo_id = models.CharField(max_length=32)
     name = models.CharField(max_length=100)
     active = models.BooleanField(default=True)
+    # QuickBooks' own rule: Type is "STANDARD" (DueDays) or "DATE_DRIVEN" (DayOfMonthDue,
+    # DueNextMonthDays); a field QuickBooks doesn't send stays null.
+    term_type = models.CharField(max_length=20, blank=True, default="")
+    due_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    day_of_month_due = models.PositiveSmallIntegerField(null=True, blank=True)
+    due_next_month_days = models.PositiveSmallIntegerField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["realm_id", "qbo_id"], name="uniq_qbo_term"),
+        ]
 
     def __str__(self) -> str:
         return self.name

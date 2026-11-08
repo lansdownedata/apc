@@ -97,17 +97,22 @@ def _label(term: str) -> str:
     return Terms(term).label if term in Terms.values else term
 
 
+def _usable_terms():
+    """Active terms cached for the connected company — another company's ids mean nothing."""
+    return QboTerm.objects.filter(realm_id=current_realm(), active=True)
+
+
 def term_ref(term: str) -> dict | None:
     """Our term matched to a cached QuickBooks term by name, or None — never a guess."""
     if not term:
         return None
-    match = QboTerm.objects.filter(active=True, name__iexact=_label(term)).first()
+    match = _usable_terms().filter(name__iexact=_label(term)).first()
     return {"value": match.qbo_id} if match else None
 
 
 def unmatched_terms() -> list[str]:
     """Terms our accounts and groups actually use that QuickBooks has no term for."""
-    names = {n.lower() for n in QboTerm.objects.filter(active=True).values_list("name", flat=True)}
+    names = {n.lower() for n in _usable_terms().values_list("name", flat=True)}
     used = set(BillingAccount.objects.values_list("terms", flat=True))
     used |= set(AccountGroup.objects.exclude(terms="").values_list("terms", flat=True))
     return [label for value, label in Terms.choices if value in used and label.lower() not in names]
@@ -328,20 +333,41 @@ def sync_pending() -> int:
     return pushed
 
 
+def _rule(term: dict, key: str) -> int | None:
+    """A term's day count, or None when QuickBooks omits it or sends something unusable."""
+    value = term.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value <= 32767 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return _rule({key: int(value)}, key)
+    return None
+
+
 def refresh_terms() -> int:
-    """Cache the company's payment terms; a term no longer in QuickBooks is retired, not
-    deleted. Returns how many active terms QuickBooks has."""
+    """Cache the company's payment terms and their due rules; a term no longer in QuickBooks
+    is retired, not deleted — only within this company. Returns how many active terms there are."""
     rows = qbo.request("GET", "query", params={"query": "select * from Term"})
     terms = rows.get("QueryResponse", {}).get("Term", [])
+    realm = current_realm()
     seen = []
     for term in terms:
         QboTerm.objects.update_or_create(
+            realm_id=realm,
             qbo_id=str(term["Id"]),
-            defaults={"name": term.get("Name", "")[:100], "active": bool(term.get("Active", True))},
+            defaults={
+                "name": term.get("Name", "")[:100],
+                "active": bool(term.get("Active", True)),
+                "term_type": str(term.get("Type") or "")[:20],
+                "due_days": _rule(term, "DueDays"),
+                "day_of_month_due": _rule(term, "DayOfMonthDue"),
+                "due_next_month_days": _rule(term, "DueNextMonthDays"),
+            },
         )
         seen.append(str(term["Id"]))
-    QboTerm.objects.exclude(qbo_id__in=seen).update(active=False)
-    return QboTerm.objects.filter(active=True).count()
+    QboTerm.objects.filter(realm_id=realm).exclude(qbo_id__in=seen).update(active=False)
+    return _usable_terms().count()
 
 
 def run_hourly() -> int:
