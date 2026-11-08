@@ -170,10 +170,10 @@ def open_request_task(lead: Lead, key: str) -> Task:
     owned by its department's default owner. A new row every call — each request is its
     own piece of work — so it bypasses generation's one-per-kind rule, and it is created
     whatever the order's status or the generation switch: a person asked for something."""
-    from . import schedule
+    from . import schedule as task_schedule
 
     kind = KINDS[key]
-    if row := schedule.load().get((key, "standard")):
+    if row := task_schedule.load().get((key, "standard")):
         kind = apply_schedule(kind, *row)
     now = timezone.now()
     return Task.objects.create(

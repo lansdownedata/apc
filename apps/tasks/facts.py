@@ -20,7 +20,7 @@ from apps.payments.models import PaymentPlan
 from apps.reservations.models import Reservation, TripIssue, TripReview
 from apps.reservations.services import is_wedding_trip
 
-from . import schedule
+from . import schedule as task_schedule
 
 # A sent thank-you of either wording thanks the order: a wedding order gets the wedding one.
 THANK_YOU_KINDS = ("thank_you", "thank_you_wedding")
@@ -100,7 +100,7 @@ def load_facts(leads: Iterable[Lead]) -> dict[int, LeadFacts]:
         return facts
     ids = list(facts)
 
-    schedules = schedule.load()
+    schedules = task_schedule.load()
     message_rows = rows.load()
     dispatch_config = DispatchAlertConfig.load()
     for f in facts.values():
