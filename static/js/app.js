@@ -1509,6 +1509,9 @@ function billingCard(opts = {}) {
     group: { mode: "add", id: null },
     urls: opts.urls || {},
     accountTerms: opts.accountTerms || "net_30",
+    // Add-group's terms list; editing a group swaps in that row's own (APC-96): each list
+    // carries its record's stored term, even one QuickBooks no longer has.
+    groupTerms: opts.groupTerms || null,
 
     init() {
       /* Remembered per viewer; private mode throws on read, and the default handed in
@@ -1530,11 +1533,23 @@ function billingCard(opts = {}) {
     },
 
     /* Tom Select owns what the picker shows; setting the <select>'s value alone changes
-       nothing on screen. Same reason as the reservation editor's vehicle picker. */
-    _setTerms(id, value) {
+       nothing on screen. Same reason as the reservation editor's vehicle picker.
+       `options` ([value, label] pairs) replaces the list first, when given. */
+    _setTerms(id, value, options = null) {
       const el = document.getElementById(id);
       if (!el) return;
-      if (el.tomselect) el.tomselect.setValue(value || "", true);
+      const ts = el.tomselect;
+      if (Array.isArray(options)) {
+        if (ts) {
+          ts.clear(true);
+          ts.clearOptions();
+          ts.addOptions(options.map(([v, text]) => ({ value: v, text })));
+          ts.refreshOptions(false);
+        } else {
+          el.replaceChildren(...options.map(([v, text]) => new Option(text, v)));
+        }
+      }
+      if (ts) ts.setValue(value || "", true);
       else el.value = value || "";
     },
 
@@ -1555,7 +1570,11 @@ function billingCard(opts = {}) {
       this.$refs.groupName.value = current ? current.name : "";
       this.$refs.groupForm.elements.invoice_email.value = current ? current.email : "";
       this.$refs.groupPo.checked = !!(current && current.po);
-      this._setTerms("billing-group-terms", current ? current.terms : "");
+      this._setTerms(
+        "billing-group-terms",
+        current ? current.terms : "",
+        (current && current.options) || this.groupTerms,
+      );
       this.modal = "group";
       this.$nextTick(() => this.$refs.groupName.focus());
     },

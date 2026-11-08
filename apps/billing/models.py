@@ -19,9 +19,9 @@ from apps.core.models import TimeStampedModel
 class Terms(models.TextChoices):
     """Payment terms, as a plain string.
 
-    Deliberately not a foreign key to a terms table: Phase 2 replaces this picker with the
-    client's own terms list out of QuickBooks, matched by name. Keeping the stored value a
-    string means that swap is a form change, not a data migration.
+    Deliberately not a foreign key to a terms table. Since APC-96 the pickers offer the
+    connected company's own QuickBooks term names and store the name; these four codes are
+    the fallback list while QuickBooks is not connected, and stay valid on existing records.
     """
 
     DUE_ON_RECEIPT = "due_on_receipt", "Due on receipt"
@@ -83,7 +83,9 @@ class BillingAccount(QboSyncedModel, TimeStampedModel):
         related_name="billing_accounts",
     )
     name = models.CharField(max_length=200)  # the Customer DisplayName in QBO
-    terms = models.CharField(max_length=20, choices=Terms.choices, default=Terms.NET_30)
+    # A legacy `Terms` code or an exact QuickBooks term name (APC-96): read it through
+    # `terms.resolve`, never `Terms(...)`.
+    terms = models.CharField(max_length=100, default=Terms.NET_30)
 
     class Meta(TimeStampedModel.Meta):
         constraints = [
@@ -106,6 +108,12 @@ class BillingAccount(QboSyncedModel, TimeStampedModel):
                 return group
         return None
 
+    @property
+    def terms_label(self) -> str:
+        from . import terms
+
+        return terms.resolve(self.terms).label
+
 
 class AccountGroup(QboSyncedModel, TimeStampedModel):
     """Who an invoice is made out to. A sub-customer in QuickBooks."""
@@ -114,7 +122,7 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     name = models.CharField(max_length=200)
     invoice_email = models.EmailField(blank=True)
     # Blank means "whatever the account says" — see `effective_terms`.
-    terms = models.CharField(max_length=20, choices=Terms.choices, blank=True)
+    terms = models.CharField(max_length=100, blank=True)
     po_required = models.BooleanField(default=False)
     is_default = models.BooleanField(default=False)
 
@@ -136,6 +144,13 @@ class AccountGroup(QboSyncedModel, TimeStampedModel):
     @property
     def effective_terms(self) -> str:
         return self.terms or self.account.terms
+
+    @property
+    def terms_label(self) -> str:
+        """The group's own terms as people read them ("" when it inherits the account's)."""
+        from . import terms
+
+        return terms.resolve(self.terms).label
 
 
 class Invoice(QboSyncedModel, TimeStampedModel):

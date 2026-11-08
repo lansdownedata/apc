@@ -22,12 +22,9 @@ from .models import (
     InvoiceLine,
     QboAccountMapping,
     SyncState,
-    Terms,
 )
 
 # --- Terms ---------------------------------------------------------------------------------
-
-TERM_DAYS = terms_module.TERM_DAYS  # legacy-code days, kept as an alias
 
 
 def due_date(invoice_date: date, terms: str) -> date:
@@ -113,11 +110,13 @@ class GroupRow:
     group: AccountGroup
     trips: list[Reservation] = field(default_factory=list)
     total: Decimal = Decimal("0")
+    # "Net 30": the group's own terms, else its account's. `ready_accounts` passes it in,
+    # resolved once per distinct term; built alone, the row resolves its own.
+    terms_label: str = ""
 
-    @property
-    def terms_label(self) -> str:
-        """ "Net 30": the group's own terms, else its account's."""
-        return Terms(self.group.effective_terms).label
+    def __post_init__(self) -> None:
+        if not self.terms_label:
+            self.terms_label = terms_module.resolve(self.group.effective_terms).label
 
 
 @dataclass
@@ -160,11 +159,15 @@ def ready_accounts(filters: BillingFilters) -> list[AccountRow]:
     groups by name; trips in pickup order)."""
     accounts: dict[int, AccountRow] = {}
     groups: dict[int, GroupRow] = {}
+    labels: dict[str, str] = {}
     for trip in _with_route(list(ready_queryset(filters))):
         group = trip.lead.billing_group
         row = groups.get(group.pk)
         if row is None:
-            row = groups[group.pk] = GroupRow(group=group)
+            value = group.effective_terms
+            if value not in labels:
+                labels[value] = terms_module.resolve(value).label
+            row = groups[group.pk] = GroupRow(group=group, terms_label=labels[value])
             account = group.account
             accounts.setdefault(account.pk, AccountRow(account=account)).groups.append(row)
         row.trips.append(trip)

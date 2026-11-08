@@ -75,9 +75,12 @@ def _kind(record) -> str:
 
 
 def current_realm() -> str:
+    """The connected company's id, "" when none. A read: the Billing pages resolve terms
+    through it on every GET, and a GET must not create the credential row."""
     from apps.integrations.models import QboCredential
 
-    return QboCredential.load().realm_id
+    realm = QboCredential.objects.filter(singleton_id=1).values_list("realm_id", flat=True)
+    return realm.first() or ""
 
 
 def display_name(record) -> str:

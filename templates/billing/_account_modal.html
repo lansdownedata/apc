@@ -12,7 +12,7 @@
   same rule, and the same reason, as templates/leads/_reservation_editor.html.
 
   Driven by billingCard() in static/js/app.js. Requires `billing_account` (may be absent),
-  `contact`, and `billing_terms`.
+  `contact`, `billing_terms` and `billing_default_terms`.
 {% endcomment %}
 <div x-cloak x-show="modal === 'account'"
      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -44,7 +44,7 @@
 
         <div class="max-w-[14rem]">
           <label for="billing-account-terms" class="mb-1.5 block text-[12px] font-medium text-muted">Payment terms</label>
-          {% include "components/searchable_select.html" with name="terms" field_id="billing-account-terms" options=billing_terms selected="net_30" search="off" %}
+          {% include "components/searchable_select.html" with name="terms" field_id="billing-account-terms" options=billing_terms selected=billing_default_terms search="off" %}
           <p class="mt-1.5 text-[11.5px] text-muted">The terms set up in QuickBooks.</p>
         </div>
 

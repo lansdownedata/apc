@@ -18,7 +18,7 @@
       {% comment %} Only when they actually differ from the account's. A group may be set
          explicitly to the same terms it would have inherited; repeating them on the row
          tells the office nothing. {% endcomment %}
-      {% if group.terms and group.terms != account.terms %} &middot; {{ group.get_terms_display }}{% endif %}
+      {% if group.terms and group.terms != account.terms %} &middot; {{ group.terms_label }}{% endif %}
       {% if group.po_required %} &middot; PO number required{% endif %}
     </div>
     {% if qbo_connected and group.qbo_sync_state == 'error' and group.qbo_sync_error %}
@@ -36,7 +36,7 @@
   {% if user.has_payments_access %}
     <div class="flex items-center gap-3 text-[12px] font-medium">
       <button type="button" class="text-muted hover:text-ink focus-gold rounded"
-              @click="openGroup({ id: {{ group.pk }}, name: {{ group.name|json_string }}, email: {{ group.invoice_email|json_string }}, terms: '{{ group.terms }}', po: {% if group.po_required %}true{% else %}false{% endif %} })">
+              @click="openGroup({ id: {{ group.pk }}, name: {{ group.name|json_string }}, email: {{ group.invoice_email|json_string }}, terms: {{ group.terms|json_string }}, options: {{ group.term_choices|json_attr }}, po: {% if group.po_required %}true{% else %}false{% endif %} })">
         Edit
       </button>
       {% if not group.is_default %}

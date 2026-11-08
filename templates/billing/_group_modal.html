@@ -10,7 +10,8 @@
 
   One x-show on the OUTER container and no x-transition — see _account_modal.html for the
   bug that rule exists for. Driven by billingCard() in static/js/app.js.
-  Requires `billing_account` and `billing_terms`.
+  Requires `billing_account` and `billing_group_terms` (its first option is the blank
+  "Same as the account" one). Editing a group swaps in that row's own list (APC-96).
 {% endcomment %}
 <div x-cloak x-show="modal === 'group'"
      class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -48,7 +49,7 @@
             Payment terms
             <span class="text-[10px] font-semibold uppercase tracking-wide text-muted/70">Optional</span>
           </label>
-          {% include "components/searchable_select.html" with name="terms" field_id="billing-group-terms" options=billing_terms selected="" empty_label="Same as the account — "|add:billing_account.get_terms_display search="off" %}
+          {% include "components/searchable_select.html" with name="terms" field_id="billing-group-terms" options=billing_group_terms selected="" search="off" %}
         </div>
         <label class="flex items-start gap-2.5 text-[13px] text-ink cursor-pointer pt-1">
           <input type="checkbox" name="po_required" x-ref="groupPo" class="mt-0.5">
