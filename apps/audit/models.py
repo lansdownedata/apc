@@ -5,7 +5,9 @@ record without creating `auditlog_logentry` and every entry lands here. The extr
 plain values, not foreign keys, so an entry outlives the rows it describes.
 """
 
+from auditlog.cid import get_cid
 from auditlog.models import AbstractLogEntry, LogEntryManager
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldDoesNotExist, ValidationError
 from django.db import models
 
@@ -51,9 +53,26 @@ class AuditEntryManager(LogEntryManager):
             changes = kwargs["changes"] = self._without_equivalents(instance, changes)
             if not changes and not force_log:
                 return None
-        if kwargs.get("changes") is not None or force_log:
-            self._stamp(instance, kwargs)
-        return super().log_create(instance, force_log=force_log, **kwargs)
+        if kwargs.get("changes") is None and not force_log:
+            return None
+        self._stamp(instance, kwargs)
+        return self._write(instance, kwargs)
+
+    def _write(self, instance: models.Model, kwargs: dict):
+        """`LogEntryManager.log_create`'s body minus its `smart_str(instance)`: that runs
+        even when `object_repr` is given, and `Lead.__str__` reads its contact, a query per
+        entry (spec §4.2)."""
+        pk = self._get_pk_value(instance)
+        kwargs.setdefault("content_type", ContentType.objects.get_for_model(instance))
+        kwargs.setdefault("object_pk", pk)
+        kwargs.setdefault("serialized_data", self._get_serialized_data_or_none(instance))
+        if isinstance(pk, int):
+            kwargs.setdefault("object_id", pk)
+        get_additional_data = getattr(instance, "get_additional_data", None)
+        if callable(get_additional_data):
+            kwargs.setdefault("additional_data", get_additional_data())
+        kwargs.setdefault("cid", get_cid())
+        return self.create(**kwargs)
 
     def log_m2m_changes(
         self, changed_queryset, instance: models.Model, operation: str, field_name: str, **kwargs
