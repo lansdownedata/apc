@@ -183,13 +183,20 @@ def _pane(request, trip) -> dict:
     # APC-108: one connection read and one start-date read for every charge listed.
     connected = qbo.is_connected()
     start = qbo_invoices.customer_docs_from() if connected else None
+    # Every charge is this trip's: hand it over (and the review already read) so the state
+    # reads no row per charge.
+    trip.review = review
     for charge in charges:
+        charge.reservation = trip
         charge.sync = (
             qbo_receipts.sync_state(charge, connected=connected, start=start)
-            if charge.kind == Charge.Kind.TRIP
-            or (
-                charge.kind == Charge.Kind.REFUND
-                and charge.refund_method in ("", Charge.RefundMethod.CARD)
+            if charge.status == Charge.Status.SUCCEEDED
+            and (
+                charge.kind == Charge.Kind.TRIP
+                or (
+                    charge.kind == Charge.Kind.REFUND
+                    and charge.refund_method in ("", Charge.RefundMethod.CARD)
+                )
             )
             else None
         )

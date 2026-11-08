@@ -441,6 +441,12 @@ def test_processed_pane_shows_receipt_state_per_charge(accountant):
             "qbo_sync_error": "Customer is inactive.",
         },
         deposit={"kind": Charge.Kind.DEPOSIT, "status": Charge.Status.SUCCEEDED},
+        declined={
+            "kind": Charge.Kind.TRIP,
+            "status": Charge.Status.FAILED,
+            "qbo_sync_state": "error",
+            "qbo_sync_error": "Declined row sentence.",
+        },
     )
 
     with patch("apps.integrations.qbo.is_connected", return_value=True):
@@ -452,6 +458,8 @@ def test_processed_pane_shows_receipt_state_per_charge(accountant):
     assert reverse("charge_qbo_sync", args=[made["synced"].pk]) not in body
     assert reverse("charge_qbo_sync", args=[made["deposit"].pk]) not in body
     assert body.count("Not sent yet") == 0
+    assert "Declined row sentence." not in body
+    assert reverse("charge_qbo_sync", args=[made["declined"].pk]) not in body
 
 
 def test_processed_pane_quiet_when_disconnected(accountant):
@@ -471,3 +479,30 @@ def test_processed_pane_quiet_when_disconnected(accountant):
     assert "Customer is inactive." not in body
     assert "In QuickBooks" not in body and "Not sent yet" not in body
     assert reverse("charge_qbo_sync", args=[made["failed"].pk]) not in body
+
+
+def test_processed_pane_query_count_is_flat_with_receipt_state(accountant):
+    from datetime import date
+
+    from apps.billing.models import QboAccountMapping
+
+    mapping = QboAccountMapping.load()
+    mapping.customer_docs_from = date(2020, 1, 1)
+    mapping.save()
+    trip, _ = _processed_pane(accountant)
+
+    def add(n):
+        for _ in range(n):
+            ChargeFactory(reservation=trip, kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED)
+
+    def count():
+        with patch("apps.integrations.qbo.is_connected", return_value=True):
+            with CaptureQueriesContext(connection) as ctx:
+                _page(accountant, trip=trip.pk, view="processed")
+        return len(ctx)
+
+    add(1)
+    count()  # warm the per-process caches
+    one = count()
+    add(4)
+    assert count() == one
