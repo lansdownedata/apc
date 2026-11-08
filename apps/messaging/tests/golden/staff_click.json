@@ -1,7 +1,7 @@
 {
   "affiliate_cancel": [
     {
-      "body": "Capital Coach Lines — trip cancelled Thank you for covering this trip. Our plans have changed and we have released it, so no further action is required on your side. We appreciate your time and look forward to working with you again soon. Tuesday, April 20, 2027 at 2:00 PM Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew's Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter",
+      "body": "Capital Coach Lines — trip cancelled Thank you for covering this trip. Our plans have changed and we have released it, so no further action is required on your side. We appreciate your time and look forward to working with you again soon. Tuesday, April 20, 2027 at 2:00 PM EDT Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew's Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Questions? Reply to this email or call (703) 555-0100. -- All Pro Charter",
       "email_to": [
         "dispatch@capitalcoach.example.com"
       ],
@@ -10,7 +10,7 @@
   ],
   "affiliate_offer": [
     {
-      "body": "Capital Coach Lines — trip offer from All Pro Charter Tuesday, April 20, 2027 at 2:00 PM Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew's Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Payout offered: $1,200.00 Reply to this email or call the office to accept.",
+      "body": "Capital Coach Lines — trip offer from All Pro Charter Tuesday, April 20, 2027 at 2:00 PM EDT Vehicle: Luxury SUV Passengers: 3 Routing: 1. St. Matthew's Cathedral 2. Anderson House, 2118 Massachusetts Ave NW Payout offered: $1,200.00 Reply to this email or call the office to accept.",
       "email_to": [
         "dispatch@capitalcoach.example.com"
       ],

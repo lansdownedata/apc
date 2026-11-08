@@ -2,7 +2,7 @@
        style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
   <tr><td style="padding:22px 26px 8px;">
     <div class="dm-ink" style="font-size:16px;font-weight:bold;color:#17191D;">
-      {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+      {{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock_tz }}
     </div>
     <div class="dm-muted" style="font-size:14px;color:#4b5563;padding-top:4px;">
       {{ trip.vehicle.name|default:"—" }} &middot; {{ trip.passengers }} passenger{{ trip.passengers|pluralize }}

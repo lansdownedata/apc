@@ -1,6 +1,6 @@
 """Tests for the `json_filters` template tags."""
 
-from datetime import date, time
+from datetime import UTC, date, time
 
 import pytest
 from django.template import Context, Template
@@ -81,3 +81,55 @@ def test_pickup_clock_empty_without_a_time():
     res = TransferReservationFactory(pickup_time=None, pickup_timezone="America/Los_Angeles")
     tpl = Template("{% load time_filters %}{{ trip|pickup_clock }}")
     assert tpl.render(Context({"trip": res})) == ""
+
+
+def _et_trip(**kw):
+    return TransferReservationFactory(
+        pickup_date=date(2026, 7, 14),
+        pickup_time=time(7, 30),
+        pickup_timezone=kw.pop("pickup_timezone", "America/New_York"),
+        **kw,
+    )
+
+
+def test_pickup_clock_tz_always_carries_the_abbreviation():
+    tpl = Template("{% load time_filters %}{{ trip|pickup_clock_tz }}|{{ trip|pickup_clock }}")
+    assert tpl.render(Context({"trip": _et_trip()})) == "7:30 AM EDT|7:30 AM"
+
+
+def test_trip_clock_tz_always_carries_the_abbreviation():
+    from datetime import datetime
+
+    sent = datetime(2026, 7, 14, 15, 5, tzinfo=UTC)
+    tpl = Template(
+        "{% load time_filters %}{{ sent|trip_clock_tz:trip }}|{{ sent|trip_clock:trip }}"
+    )
+    out = tpl.render(Context({"trip": _et_trip(), "sent": sent}))
+    assert out == "Jul 14, 11:05 AM EDT|Jul 14, 11:05 AM"
+
+
+def test_clock_tz_filters_tolerate_an_invalid_stored_zone():
+    from datetime import datetime
+
+    trip = _et_trip(pickup_timezone="Not/AZone")
+    sent = datetime(2026, 7, 14, 15, 5, tzinfo=UTC)
+    tpl = Template(
+        "{% load time_filters %}{{ trip|pickup_clock_tz }}|{{ sent|trip_clock_tz:trip }}"
+    )
+    assert tpl.render(Context({"trip": trip, "sent": sent})) == "7:30 AM EDT|Jul 14, 11:05 AM EDT"
+    assert trip.pickup_tz_label == "EDT"
+
+
+def test_sheet_blocks_carry_the_zone_for_an_eastern_trip():
+    from django.template.loader import render_to_string
+
+    trip = _et_trip()
+    ctx = {"trip": trip, "stops": list(trip.ordered_stops)}
+    for name in (
+        "email/blocks/trip_sheet.html",
+        "email/blocks/trip_sheet.txt",
+        "email/blocks/cancelled_trip_sheet.html",
+        "email/blocks/cancelled_trip_sheet.txt",
+        "email/preheaders/vendor_offer.html",
+    ):
+        assert "7:30 AM EDT" in render_to_string(name, {**ctx, "payout": "100"}), name

@@ -1,4 +1,4 @@
-{% load time_filters %}{% autoescape off %}{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock }}
+{% load time_filters %}{% autoescape off %}{{ trip.pickup_date|date:"l, F j, Y" }} at {{ trip|pickup_clock_tz }}
 Vehicle: {{ trip.vehicle.name|default:"—" }}
 Passengers: {{ trip.passengers }}
 

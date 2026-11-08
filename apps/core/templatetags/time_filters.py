@@ -60,3 +60,27 @@ def zone_clock(dt, tz_name) -> str:
     if zone == settings.TIME_ZONE:
         return label
     return f"{label} {local.tzname()}"
+
+
+@register.filter
+def pickup_clock_tz(reservation, when=None) -> str:
+    """Like `pickup_clock` but the zone abbreviation is never omitted (`7:30 AM EDT`).
+
+    For customer- and affiliate-facing text, where the reader may not be in the trip's zone.
+    """
+    clock = reservation.pickup_time if when is None else when
+    if not clock:
+        return ""
+    return f"{dateformat.format(clock, 'g:i A')} {reservation.pickup_tz_label}".strip()
+
+
+@register.filter
+def trip_clock_tz(dt, reservation) -> str:
+    """Like `trip_clock` but the zone abbreviation is never omitted (`Sep 4, 7:30 AM EDT`)."""
+    if not dt or reservation is None:
+        return ""
+    try:
+        local = dt.astimezone(ZoneInfo(reservation.pickup_timezone or settings.TIME_ZONE))
+    except (ZoneInfoNotFoundError, ValueError):
+        local = dt.astimezone(ZoneInfo(settings.TIME_ZONE))
+    return f"{dateformat.format(local, 'M j, g:i A')} {local.tzname()}"

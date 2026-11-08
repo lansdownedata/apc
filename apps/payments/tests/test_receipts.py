@@ -1,5 +1,6 @@
 """APC-103 — one receipt email per trip charge and per trip refund (spec 2026-10-25 §4.5)."""
 
+import re
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -617,3 +618,17 @@ def test_send_receipt_lock_names_only_the_charge_row(django_capture_on_commit_ca
     ]
     assert joined_locks, "the receipt's charge lock was not exercised"
     assert all("FOR UPDATE OF" in sql for sql in joined_locks)
+
+
+def test_the_receipt_page_sent_time_carries_the_zone_for_an_eastern_trip(client, agent):
+    trip = _trip()
+    Reservation.objects.filter(pk=trip.pk).update(pickup_timezone="America/New_York")
+    trip.refresh_from_db()
+    charge = _due(trip, timedelta(hours=1))
+    charge.receipt_sent_at = timezone.now()
+    charge.save(update_fields=["receipt_sent_at"])
+    client.force_login(agent)
+
+    body = client.get(reverse("order_receipt", args=[charge.pk])).content.decode()
+
+    assert re.search(r"Sent .*? (EDT|EST) to ", body)

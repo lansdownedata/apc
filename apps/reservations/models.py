@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_UP, Decimal
 from typing import NamedTuple
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
 from django.core.validators import MinValueValidator
@@ -524,10 +524,13 @@ class Reservation(TimeStampedModel):
     def pickup_tz_label(self) -> str:
         """Zone abbreviation for customer/affiliate text: unlike `pickup_tz_abbrev`, never
         blank in TIME_ZONE (they may sit in another zone). Blank pickup_timezone uses TIME_ZONE."""
-        zone = self.pickup_timezone or settings.TIME_ZONE
         clock = self.pickup_time or time(12, 0)
         day = self.pickup_date or dj_timezone.localdate()
-        return datetime.combine(day, clock, tzinfo=ZoneInfo(zone)).tzname() or ""
+        try:
+            tz = ZoneInfo(self.pickup_timezone or settings.TIME_ZONE)
+        except (ZoneInfoNotFoundError, ValueError):
+            tz = ZoneInfo(settings.TIME_ZONE)
+        return datetime.combine(day, clock, tzinfo=tz).tzname() or ""
 
     def refresh_pickup_timezone(self) -> bool:
         """Re-resolve from the current pickup stop. No-op (no save) when unchanged."""

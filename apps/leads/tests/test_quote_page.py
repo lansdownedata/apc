@@ -279,3 +279,16 @@ def test_quote_page_renders_a_private_tail_number_alone(client):
     html = client.get(reverse("quote_page", args=[token])).content.decode()
     assert "Arriving on N561FX" in html
     assert "Private" not in html
+
+
+def test_quote_page_stop_time_carries_the_zone_for_an_eastern_trip(client):
+    from datetime import date, time
+
+    lead = _quoted_lead()
+    reservation = lead.reservations.first()
+    reservation.pickup_timezone = "America/New_York"
+    reservation.pickup_date = date(2027, 7, 14)
+    reservation.save()
+    Stop.objects.filter(reservation=reservation).update(scheduled_time=time(7, 30))
+    resp = client.get(reverse("quote_page", args=[services.make_deposit_token(lead)]))
+    assert "7:30 AM EDT" in resp.content.decode()

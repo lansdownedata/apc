@@ -1,1 +1,1 @@
-{% load time_filters %}{{ trip.pickup_date|date:"M j" }} at {{ trip|pickup_clock }} — ${{ payout }} payout.
+{% load time_filters %}{{ trip.pickup_date|date:"M j" }} at {{ trip|pickup_clock_tz }} — ${{ payout }} payout.
