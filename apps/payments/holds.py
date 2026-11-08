@@ -39,6 +39,11 @@ TASK_KIND = "cleaning_hold_failed"
 UNBOOKED_TASK_KIND = "cleaning_hold_unbooked"
 
 
+class HoldLapsed(services.PaymentError):
+    """The bank let the hold go before we captured it: nothing was taken, so the fee is
+    collected the normal way."""
+
+
 # --- which orders are held ------------------------------------------------------------------
 
 
@@ -284,7 +289,7 @@ def capture_hold(trip, amount) -> Charge:
                 _tag(hold, trip, Decimal(hold.amount))
     if expired:
         mark_expired(hold)
-        raise services.PaymentError("The bank released the cleaning hold; charge the card instead.")
+        raise HoldLapsed("The bank released the cleaning hold; charge the card instead.")
     # The one reconcile every money path shares: SUCCEEDED and the ledger entry, once.
     return services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
@@ -389,6 +394,31 @@ def release_hold(lead, *, reason: str = "") -> Charge | None:
             fields.append("note")
         hold.save(update_fields=fields)
     return hold
+
+
+def release_if_done(lead) -> Charge | None:
+    """After a trip is processed (spec §4 "Releasing"): let an AUTHORIZED, uncaptured hold go
+    once no held trip on the order is left unprocessed. A hold captured, released or expired
+    is left alone. Never raises: a release Stripe refuses is logged, and the hourly sweep
+    lets the hold go later."""
+    from apps.reservations.models import TripReview
+
+    hold = current_hold(lead)
+    if hold is None or hold.status != Charge.Status.AUTHORIZED or hold.captured_at:
+        return hold
+    trips = held_trips(lead)
+    done = set(
+        TripReview.objects.filter(reservation__in=trips, processed_at__isnull=False).values_list(
+            "reservation_id", flat=True
+        )
+    )
+    if any(trip.pk not in done for trip in trips):
+        return hold
+    try:
+        return release_hold(lead, reason="all held trips processed")
+    except services.PaymentError:
+        logger.exception("cleaning hold: release after processing failed for lead %s", lead.pk)
+        return hold
 
 
 def _stripe_status(hold: Charge) -> str:

@@ -320,7 +320,7 @@ def _alert(link: _Link, message: str) -> None:
         return
     if link.entity in ("salesreceipt", "refundreceipt"):
         lead = record.reservation.lead
-        what = "receipt" if record.kind == record.Kind.TRIP else "refund receipt"
+        what = "refund receipt" if record.kind == record.Kind.REFUND else "receipt"
         Notification.notify(
             lead,
             Notification.Kind.SYNC_FAILED,

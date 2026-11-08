@@ -192,7 +192,7 @@ def _pane(request, trip) -> dict:
             qbo_receipts.sync_state(charge, connected=connected, start=start)
             if charge.status == Charge.Status.SUCCEEDED
             and (
-                charge.kind == Charge.Kind.TRIP
+                charge.kind in (Charge.Kind.TRIP, Charge.Kind.HOLD)
                 or (
                     charge.kind == Charge.Kind.REFUND
                     and charge.refund_method in ("", Charge.RefundMethod.CARD)
@@ -202,6 +202,7 @@ def _pane(request, trip) -> dict:
         )
     allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
     return {
+        "hold": _hold_for(trip),
         "review": review,
         "prepaid": allocation,
         "paid_for_trip": money.allocated,
@@ -228,6 +229,21 @@ def _pane(request, trip) -> dict:
         "trip_charges": charges,
         "events": list(review.events.select_related("actor", "charge")),
     }
+
+
+def _hold_for(trip) -> Charge | None:
+    """The order's cleaning hold as the pane tells it (APC-95): one still on the card, or
+    one captured for this trip. None otherwise (released, expired, another trip's)."""
+    from apps.payments import holds
+
+    hold = holds.current_hold(trip.lead)
+    if hold is None:
+        return None
+    if hold.status == Charge.Status.AUTHORIZED and hold.captured_at is None:
+        return hold
+    if hold.status == Charge.Status.SUCCEEDED and hold.reservation_id == trip.pk:
+        return hold
+    return None
 
 
 @login_required

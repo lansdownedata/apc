@@ -219,8 +219,15 @@ def charge_balance(plan: PaymentPlan) -> Charge:
 
 
 # Newest money back first (Moe, 2026-10-24): the trip's own charges (APC-101), then a
-# historical final bill, then the balance, then the deposit.
-_REFUND_ORDER = (Charge.Kind.TRIP, Charge.Kind.FINAL, Charge.Kind.BALANCE, Charge.Kind.DEPOSIT)
+# cleaning hold captured for it (APC-95), then a historical final bill, then the balance,
+# then the deposit.
+_REFUND_ORDER = (
+    Charge.Kind.TRIP,
+    Charge.Kind.HOLD,
+    Charge.Kind.FINAL,
+    Charge.Kind.BALANCE,
+    Charge.Kind.DEPOSIT,
+)
 
 
 def _refunded_on(plan, payment_intent_id: str) -> Decimal:
@@ -233,13 +240,15 @@ def _refunded_on(plan, payment_intent_id: str) -> Decimal:
 
 def _refundable_sources(plan, *, trip=None) -> list[tuple[Charge, Decimal]]:
     """(charge, still refundable) for every succeeded Stripe charge, in refund order. With
-    `trip`, only that trip's TRIP charges count (another trip's money is not this trip's to
-    return); without, every TRIP charge counts, newest first."""
+    `trip`, only that trip's own money counts — its TRIP charges and a cleaning hold
+    captured for it (another trip's money is not this trip's to return); without, every
+    one counts, newest first. Only a captured hold is SUCCEEDED: one still on the card is
+    not money."""
     rank = {kind: i for i, kind in enumerate(_REFUND_ORDER)}
     charges = plan.charges.filter(kind__in=_REFUND_ORDER, status=Charge.Status.SUCCEEDED)
     if trip is not None:
-        charges = charges.exclude(kind=Charge.Kind.TRIP) | charges.filter(
-            kind=Charge.Kind.TRIP, reservation=trip
+        charges = charges.exclude(kind__in=TRIP_MONEY_KINDS) | charges.filter(
+            kind__in=TRIP_MONEY_KINDS, reservation=trip
         )
     out = []
     for src in sorted(charges, key=lambda c: (rank[c.kind], -c.pk)):

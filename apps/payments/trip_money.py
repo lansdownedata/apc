@@ -109,12 +109,13 @@ def allocation(lead) -> dict[int, Decimal]:
 
 
 def money_for(trip) -> TripMoney:
-    """The trip's live total against everything already paid for it."""
+    """The trip's live total against everything already paid for it: its own trip charges
+    and a cleaning hold captured for it (APC-95) count alike."""
     own = Charge.objects.filter(reservation=trip, status=Charge.Status.SUCCEEDED)
     return TripMoney(
         line_total=trip.line_total,
         prepaid=allocation(trip.lead).get(trip.pk, ZERO),
-        charged=_sum(own.filter(kind=Charge.Kind.TRIP)),
+        charged=_sum(own.filter(kind__in=services.TRIP_MONEY_KINDS)),
         refunded=_sum(own.filter(kind=Charge.Kind.REFUND)),
     )
 

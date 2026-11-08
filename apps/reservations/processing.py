@@ -401,14 +401,16 @@ def process(
        not processed; the overtime decided when there is a suggestion (the agent must see
        the money they confirm); `expected` — the difference the pane showed — still true.
     2. Money, each step committing on its own (never inside the lock's transaction, so a
-       later failure can't erase a charge Stripe already took): charge the card, open and
-       send a pay link, refund with a reason, or keep an off-card overpayment as credit.
-       A difference of 0 cancels any open pay link for the trip.
+       later failure can't erase a charge Stripe already took). First the cleaning hold
+       (APC-95): a trip owing a cleaning fee takes it out of the order's hold, and the
+       difference is read again. Then charge the card, open and send a pay link, refund
+       with a reason, or keep an off-card overpayment as credit, for what is left. A
+       difference of 0 cancels any open pay link for the trip.
     3. The lock, in one transaction with both rows locked: refuse if processed meanwhile
        or the price moved under us; stamp completion, re-freeze driver pay, the lock and
        the history.
     4. After commit: a farmed-in trip reports CLOSE to GNet; revenue follows the trip; the
-       trip's review tasks close.
+       trip's review tasks close; the last held trip lets the cleaning hold go.
     """
     import logging
     from decimal import Decimal
@@ -418,8 +420,8 @@ def process(
 
     from apps.dispatch import farm_in_push
     from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+    from apps.payments import holds, trip_money
     from apps.payments import services as payments
-    from apps.payments import trip_money
 
     from . import reviews
     from .models import ProcessingEvent
@@ -448,6 +450,25 @@ def process(
         raise ProcessingError(ON_ACCOUNT)
     if collect == "invoice" and not on_account:
         raise ProcessingError("Charge the card or send a payment link.")
+    if money.difference > 0 and collect not in ("card", "link", "invoice"):
+        # Before the hold is touched: a capture must never be the only step that ran.
+        raise ProcessingError("Charge the card or send a payment link.")
+
+    if not on_account:
+        try:
+            if _take_cleaning_from_hold(trip, money, record):
+                # The hold paid (part of) the trip: what is left to collect, as of now.
+                money = trip_money.money_for(_fresh(trip))
+        except holds.HoldLapsed:
+            # The bank let it go first: nothing was taken, the fee is collected below.
+            record(ProcessingEvent.Kind.HOLD_LAPSED, None, note=HOLD_LAPSED_NOTE)
+        except payments.PaymentError as exc:
+            # Never fall through to the card: an unknown capture may still have taken it.
+            raise ProcessingError(str(exc)) from exc
+        except stripe.error.StripeError as exc:
+            raise ProcessingError(
+                getattr(exc, "user_message", None) or "Stripe refused the cleaning hold."
+            ) from exc
 
     try:
         if money.difference > 0 and collect == "invoice":
@@ -542,12 +563,47 @@ def process(
     return review
 
 
+HOLD_LAPSED_NOTE = "Cleaning hold had lapsed; charged normally"
+
+
+def _take_cleaning_from_hold(trip, money, record) -> bool:
+    """Take the trip's cleaning fee out of the order's cleaning hold (APC-95, spec §4):
+    the trip's cleaning lines, at most what the trip still owes (a fee the order already
+    paid is not taken twice), and at most the hold (`capture_hold`; Stripe lets the rest
+    go). Only while the hold is AUTHORIZED — one capture per hold. Records HOLD_CAPTURED
+    and returns True when money moved. `capture_hold`'s errors are the caller's."""
+    from apps.payments import holds
+    from apps.payments.models import Charge
+
+    from .models import ProcessingEvent, TripExtra
+
+    cleaning = sum(
+        (Decimal(e.amount) for e in trip.extras.all() if e.kind == TripExtra.Kind.CLEANING),
+        Decimal("0.00"),
+    )
+    due = min(cleaning, money.difference)
+    if due <= 0:
+        return False
+    hold = holds.current_hold(trip.lead)
+    if hold is None or hold.status != Charge.Status.AUTHORIZED:
+        return False
+    held = Decimal(hold.amount)
+    captured = holds.capture_hold(trip, due)
+    record(
+        ProcessingEvent.Kind.HOLD_CAPTURED,
+        captured.amount,
+        captured,
+        note=f"Cleaning fee ${captured.amount:,.2f} taken from the ${held:,.2f} hold",
+    )
+    return True
+
+
 def _after_lock(trip, user, *, keep_overtime_open: bool) -> None:
     """Outside the lock: the books follow the trip, the payable exists, the review tasks
     close. Each step is idempotent; a failure here never undoes the lock."""
     import logging
 
-    from apps.payments import ledger, payables
+    from apps.payments import holds, ledger, payables
     from apps.tasks import services as tasks
     from apps.tasks.models import Task
 
@@ -561,6 +617,12 @@ def _after_lock(trip, user, *, keep_overtime_open: bool) -> None:
         payables.ensure_payable(trip)
     except Exception:  # noqa: BLE001
         log.exception("payable for processed trip %s failed", trip.pk)
+    try:
+        # The last held trip processed lets the cleaning hold go (APC-95); the sweep
+        # releases any this misses.
+        holds.release_if_done(trip.lead)
+    except Exception:  # noqa: BLE001
+        log.exception("releasing the cleaning hold after trip %s failed", trip.pk)
     # In order: closing ops_review opens overtime_invoiced (opens_after), which processing
     # has just settled too — so it is looked up again after, not loaded up front.
     kinds = ["ops_review"] if keep_overtime_open else ["ops_review", "overtime_invoiced"]

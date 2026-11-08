@@ -1299,3 +1299,48 @@ def test_links_and_receipts_share_one_batch(ready) -> None:
     ):
         assert qbo_receipts.sync_pending() == 2
     assert _paths(req) == ["salesreceipt", "salesreceipt"]
+
+
+# --- APC-95: a captured cleaning hold is a card charge like a trip charge -------------------
+
+
+def _captured_hold(**kwargs):
+    defaults = {
+        "kind": Charge.Kind.HOLD,
+        "amount": Decimal("250.00"),
+        "note": "Cleaning fee from the hold",
+        "stripe_payment_intent_id": "pi_hold",
+    }
+    return _card_charge(**{**defaults, **kwargs})
+
+
+def test_captured_hold_pushes_a_sales_receipt(ready) -> None:
+    hold = _captured_hold()
+    assert [c.pk for c in qbo_receipts.pending_receipts("123", START)] == [hold.pk]
+    with patch(REQ, return_value=_receipt(total=250)) as req:
+        assert qbo_receipts.sync_pending() == 1
+    args, kwargs = req.call_args
+    assert args == ("POST", "salesreceipt")
+    assert kwargs["params"]["requestid"] == f"apc-s{hold.pk}-create"
+    (line,) = kwargs["json"]["Line"]
+    trip = hold.reservation
+    assert line["Amount"] == "250.00"
+    assert line["Description"].startswith(f"Cleaning fee from the hold · Trip #{trip.reference} · ")
+    hold.refresh_from_db()
+    assert hold.qbo_sync_state == SyncState.SYNCED
+
+
+@pytest.mark.parametrize(
+    "status", [Charge.Status.AUTHORIZED, Charge.Status.RELEASED, Charge.Status.EXPIRED]
+)
+def test_a_hold_that_moved_no_money_never_pushes(ready, status) -> None:
+    _captured_hold(status=status)
+    assert qbo_receipts.pending_receipts("123", START) == []
+
+
+def test_a_failed_hold_receipt_alerts_as_a_receipt(ready) -> None:
+    hold = _captured_hold()
+    with patch(REQ, return_value=_receipt(total=650)):
+        assert qbo_receipts.sync_pending() == 0
+    name = hold.reservation.lead.contact.name
+    assert _alerts().get().title == f"QuickBooks receipt failed: R-{hold.pk} {name}"

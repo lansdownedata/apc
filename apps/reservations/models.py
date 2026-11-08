@@ -1221,7 +1221,8 @@ class TripReview(TimeStampedModel):
 
 class ProcessingEvent(TimeStampedModel):
     """One step in a trip's processing history (APC-102, spec §4.6): processed, unlocked,
-    charged, refunded, a pay link sent, a charge added. Append-only."""
+    charged, refunded, a pay link sent, a charge added, the cleaning hold captured or found
+    lapsed (APC-95). Append-only."""
 
     class Kind(models.TextChoices):
         PROCESSED = "processed", "Processed"
@@ -1230,6 +1231,10 @@ class ProcessingEvent(TimeStampedModel):
         REFUNDED = "refunded", "Refunded"
         PAY_LINK_SENT = "pay_link_sent", "Payment link sent"
         CHARGE_ADDED = "charge_added", "Charge added"
+        # APC-95: the trip's cleaning fee taken from the order's card hold, or the hold
+        # found already let go by the bank (the fee was then collected the normal way).
+        HOLD_CAPTURED = "hold_captured", "Cleaning hold captured"
+        HOLD_LAPSED = "hold_lapsed", "Cleaning hold lapsed"
 
     review = models.ForeignKey(TripReview, related_name="events", on_delete=models.CASCADE)
     kind = models.CharField(max_length=20, choices=Kind.choices)

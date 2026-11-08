@@ -581,7 +581,7 @@ def charge_qbo_sync(request, pk):
     charge = get_object_or_404(
         Charge.objects.select_related("reservation__lead__contact"),
         pk=pk,
-        kind__in=(Charge.Kind.TRIP, Charge.Kind.REFUND),
+        kind__in=(Charge.Kind.TRIP, Charge.Kind.HOLD, Charge.Kind.REFUND),
         reservation__isnull=False,
     )
     if not qbo.is_connected():

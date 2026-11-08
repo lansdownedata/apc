@@ -121,3 +121,12 @@ def test_charge_sync_404_for_deposit(accountant) -> None:
     assert accountant.post(_url(deposit)).status_code == 404
     no_trip = ChargeFactory(kind=Charge.Kind.TRIP)
     assert accountant.post(_url(no_trip)).status_code == 404
+
+
+def test_charge_sync_retries_a_captured_cleaning_hold(accountant) -> None:
+    hold = _card_charge(kind=Charge.Kind.HOLD, note="Cleaning fee from the hold")
+    with patch(REQ, side_effect=[_prefs(), _receipt()]) as req:
+        resp = accountant.post(_url(hold))
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "synced"
+    assert [c.args[1] for c in req.call_args_list] == ["preferences", "salesreceipt"]

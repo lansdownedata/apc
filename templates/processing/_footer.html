@@ -1,4 +1,4 @@
-{% load humanize json_filters %}
+{% load humanize json_filters time_filters %}
 {% comment %}
   The processing footer (APC-102): what the trip owes, and the one way forward. Every
   choice confirms through $store.modal and posts `expected`, the difference shown here, so a
@@ -24,6 +24,11 @@
   {% comment %} Save errors from the pane above (times, overtime, issues) land here: the old
      footer that showed them is replaced in processing mode. {% endcomment %}
   <p x-show="error" x-cloak class="mb-2 text-[12px] text-rose-600" x-text="error"></p>
+  {% if hold.status == 'succeeded' %}
+  <p class="mb-2 text-[12px] text-muted">Cleaning hold captured ${{ hold.amount|floatformat:2|intcomma }} on {{ hold.captured_at|trip_clock_tz:trip }}.</p>
+  {% elif hold and not review.is_processed %}
+  <p class="mb-2 text-[12px] text-muted">Cleaning hold ${{ hold.amount|floatformat:2|intcomma }} is on the card. A cleaning fee comes out of it first.</p>
+  {% endif %}
   {% if review.is_processed %}
     <div class="flex items-center gap-2.5 flex-wrap">
       <span class="text-[12px] text-muted">Processed. Times and charges are locked.</span>

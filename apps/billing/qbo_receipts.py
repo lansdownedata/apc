@@ -226,9 +226,9 @@ def push_customer(link: CustomerLink) -> bool:
 
 
 def _card_receipts():
-    """Charges that are card receipts at all: a succeeded trip charge, or a card refund (blank
-    on older rows = the card), on a processed trip. Deposits, balances, final bills and
-    offline refunds never go."""
+    """Charges that are card receipts at all: a succeeded trip charge or cleaning hold captured
+    for the trip (APC-95), or a card refund (blank on older rows = the card), on a processed
+    trip. Deposits, balances, final bills, uncaptured holds and offline refunds never go."""
     from apps.payments.models import Charge
 
     card_refund = Q(kind=Charge.Kind.REFUND, refund_method__in=("", Charge.RefundMethod.CARD))
@@ -236,7 +236,7 @@ def _card_receipts():
         status=Charge.Status.SUCCEEDED,
         reservation__isnull=False,
         reservation__review__processed_at__isnull=False,
-    ).filter(Q(kind=Charge.Kind.TRIP) | card_refund)
+    ).filter(Q(kind__in=(Charge.Kind.TRIP, Charge.Kind.HOLD)) | card_refund)
 
 
 def _window_cut(start: date) -> datetime:
@@ -493,7 +493,7 @@ def _receipt_link(charge) -> tuple[_Link, str, object]:
 
     # Sparse: a Retry's update never blanks what the bookkeeper added, nor QuickBooks' own
     # DocNumber (we send none).
-    if charge.kind == Charge.Kind.TRIP:
+    if charge.kind != Charge.Kind.REFUND:
         link = _Link(charge, "salesreceipt", "SalesReceipt", sparse=True)
         return link, "receipt", sales_receipt_payload
     link = _Link(charge, "refundreceipt", "RefundReceipt", sparse=True)
