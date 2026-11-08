@@ -19,6 +19,18 @@ def test_fixed_text_and_blank_lines_kept():
     assert render("Hi\n\nBye", {}) == "Hi\n\nBye"
 
 
+def test_dropped_line_between_blank_lines_leaves_one_blank_line():
+    assert render("a\n\n{v}\n\nb", {"v": ""}) == "a\n\nb"
+
+
+def test_several_dropped_lines_between_blank_lines_leave_one_blank_line():
+    assert render("a\n\n{v}\n{w}\n\nb", {"v": "", "w": ""}) == "a\n\nb"
+
+
+def test_double_blank_line_in_fixed_text_kept():
+    assert render("a\n\n\nb\n{v}", {"v": ""}) == "a\n\n\nb"
+
+
 def test_escaped_braces_are_not_placeholders():
     assert render("{{literal}}\n{v}", {"v": ""}) == "{literal}"
 
@@ -62,6 +74,9 @@ def test_every_template_keeps_fixed_lines():
     for body in _bodies():
         ctx = {name: "" for _, name, _, _ in string.Formatter().parse(body) if name}
         out = render(body, ctx).split("\n")
-        fixed = [ln for ln in body.split("\n") if "{" not in ln and "}" not in ln]
+        # Blank lines are spacing: a pair around dropped lines collapses to one.
+        fixed = [ln for ln in body.split("\n") if ln.strip() and "{" not in ln and "}" not in ln]
         it = iter(out)
         assert all(ln in it for ln in fixed), body
+        if "\n\n\n" not in body:
+            assert "\n\n\n" not in "\n".join(out), body

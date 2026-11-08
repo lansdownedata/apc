@@ -766,15 +766,22 @@ def render(text: str, ctx: dict[str, str]) -> str:
     """Render a template with str.format, dropping lines whose fields are all blank.
 
     A line is omitted only if it has at least one placeholder and every placeholder renders
-    to an empty string (after strip). Lines with fixed text only, and blank lines, are kept.
+    to an empty string (after strip). Lines with fixed text only, and blank lines, are kept,
+    except that dropping lines from between two blank lines leaves one blank line, not two.
     """
     formatter = string.Formatter()
     kept = []
+    dropped = False
     for line in text.split("\n"):
         fields = [f for f in formatter.parse(line) if f[1] is not None]
         rendered = line.format(**ctx)
         if fields and all(not _render_field(f, ctx).strip() for f in fields):
+            dropped = True
             continue
+        if dropped and not rendered.strip() and kept and not kept[-1].strip():
+            dropped = False
+            continue
+        dropped = False
         kept.append(rendered)
     return "\n".join(kept)
 
