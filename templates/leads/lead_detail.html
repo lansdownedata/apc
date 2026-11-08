@@ -159,6 +159,9 @@
           <span class="flex items-center gap-1 shrink-0">
             <i class="ti ti-calendar-plus text-[14px]"></i> Created <span class="num text-ink">{{ lead.created_at|date:"M j, Y" }}</span>
           </span>
+          <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:order' lead.pk %}', title: 'Order history' })" class="inline-flex items-center gap-1 text-muted hover:text-ink transition-colors focus-gold rounded">
+            <i class="ti ti-history text-[14px]"></i> History
+          </button>
         </div>
       </div>
       <div class="flex flex-col items-end gap-2.5">
@@ -359,7 +362,7 @@
   {% if wedding_state %}{% include "leads/_wedding_details_editor.html" %}{% endif %}
   {% comment %} The driver chip on each trip line opens this — the same drawer, and the same
      assign/farm-out implementation, that the dispatch board uses. {% endcomment %}
-  {% if lead.status == 'booked' %}{% include "components/drawer.html" with drawer_title="Assign trip" %}{% endif %}
+  {% include "components/drawer.html" with drawer_title="Assign trip" %}
   {% include "leads/_copy_dates_modal.html" %}
 
 </div>

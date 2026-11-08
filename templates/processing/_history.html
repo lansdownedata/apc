@@ -52,6 +52,12 @@
   {% endif %}
 </section>
 {% endif %}
+<section class="px-6 py-3 border-t border-line">
+  <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:trip' trip.pk %}', title: 'Trip history' })"
+          class="inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded">
+    <i class="ti ti-history text-[14px]"></i> Full history
+  </button>
+</section>
 {% if events %}
 <section class="px-6 py-4 border-t border-line">
   <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">History</p>

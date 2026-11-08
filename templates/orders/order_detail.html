@@ -39,6 +39,10 @@
       {% if lead.on_account %}<div class="text-[12.5px] text-ink mt-0.5">Billed to {{ lead.billed_to_label }}</div>{% endif %}
     </div>
     <span class="ml-auto num font-display text-[20px] font-semibold text-ink">${{ lead.quote_total|floatformat:2|intcomma }}</span>
+    <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:order' lead.pk %}', title: 'Order history' })"
+            class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5 focus-gold">
+      <i class="ti ti-history text-[14px]"></i> History
+    </button>
     <a href="{% url 'lead_detail' lead.pk %}"
        class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-lg px-3 py-1.5 ring-1 ring-line bg-surface hover:bg-black/5">
       <i class="ti ti-file-invoice text-[14px]"></i> Open quote

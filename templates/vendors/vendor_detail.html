@@ -27,9 +27,14 @@
         {% for vt in vendor.vehicle_types.all %}<span class="inline-block px-2 py-0.5 rounded-full bg-surface2 ring-1 ring-line">{{ vt.name }}</span>{% endfor %}
       </div>
     </div>
+    <div class="flex items-center gap-2 shrink-0">
+    <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:profile' 'vendor' vendor.pk %}', title: 'Vendor history' })" class="btn-ghost inline-flex items-center gap-1.5 text-[12.5px] font-medium text-ink rounded-full px-3.5 py-2 ring-1 ring-line hover:bg-surface2 focus-gold">
+      <i class="ti ti-history text-[14px]"></i> History
+    </button>
     <a href="{% url 'vendor_edit' vendor.pk %}" class="btn-gold text-[12.5px] font-semibold rounded-full px-3.5 py-2 shrink-0">
       <i class="ti ti-pencil text-[14px]"></i> Edit
     </a>
+    </div>
   </div>
 
   {% if vendor.banner %}
@@ -129,4 +134,5 @@
     </div>
   </div>
 </div>
+  {% include "components/drawer.html" with drawer_title="History" %}
 {% endblock %}

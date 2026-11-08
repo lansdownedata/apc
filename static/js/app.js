@@ -222,7 +222,10 @@ function drawer() {
       } catch (e) {
         this.body = "";
         this.open = false;
-        Alpine.store("toast").push({ type: "danger", title: "Could not open that trip" });
+        Alpine.store("toast").push({
+          type: "danger",
+          title: title ? `Could not load ${title}` : "Could not open that trip",
+        });
       }
     },
     close() {

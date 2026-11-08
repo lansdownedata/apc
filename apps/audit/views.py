@@ -65,7 +65,10 @@ def _trip_panel(pk: int) -> Panel:
 
 def _trip_label(trip: dict) -> str:
     """`Nov 14 · Airport transfer`; the trip type when it has no service."""
-    service = trip["service_type__name"] or Reservation.TripType(trip["trip_type"]).label
+    kind = trip["trip_type"]
+    service = trip["service_type__name"] or dict(Reservation.TripType.choices).get(
+        kind, kind or "Trip"
+    )
     day = dateformat.format(trip["pickup_date"], "M j") if trip["pickup_date"] else ""
     return " · ".join(part for part in (day, service) if part)
 
@@ -75,7 +78,9 @@ def _order_panel(pk: int) -> Panel:
     trips = {
         trip["pk"]: trip
         for trip in Reservation.objects.filter(lead_id=pk)
-        .order_by(F("pickup_date").asc(nulls_last=True), "pickup_time", "pk")
+        .order_by(
+            F("pickup_date").asc(nulls_last=True), F("pickup_time").asc(nulls_last=True), "pk"
+        )
         .values("pk", "pickup_timezone", "pickup_date", "trip_type", "service_type__name")
     }
     earliest = next(iter(trips.values()), None)
