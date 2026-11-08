@@ -20,7 +20,7 @@
       </button>
     {% endif %}
   </div>
-  <p class="text-[12px] text-muted mt-1">{{ billing_account.terms_label }}</p>
+  <p class="text-[12px] text-muted mt-1">{{ billing_account_terms_label }}</p>
 
   {% if qbo_connected and billing_account.qbo_sync_state == 'error' and billing_account.qbo_sync_error %}
     <p class="text-[11.5px] text-rose-600 mt-1">{{ billing_account.qbo_sync_error }}</p>

@@ -2,8 +2,8 @@
 {% comment %}
   billing/_group_row.html — one account group: who an invoice is made out to.
 
-  Requires `group` and `account` (the row reads the account's terms to decide whether its
-  own are worth showing). Phase 3's order-side group picker reuses this row.
+  Requires `group` as `billing_context` hands it out (with `terms_note` and `term_choices`,
+  so the row looks nothing up) and `account`.
 {% endcomment %}
 <li class="px-5 py-3.5 flex flex-wrap items-center gap-x-4 gap-y-1">
   <div class="min-w-0 flex-1">
@@ -15,10 +15,11 @@
     </div>
     <div class="text-[11.5px] text-muted mt-0.5">
       {% if group.invoice_email %}{{ group.invoice_email }}{% else %}No invoice email yet{% endif %}
-      {% comment %} Only when they actually differ from the account's. A group may be set
+      {% comment %} Only when they read differently from the account's. A group may be set
          explicitly to the same terms it would have inherited; repeating them on the row
-         tells the office nothing. {% endcomment %}
-      {% if group.terms and group.terms != account.terms %} &middot; {{ group.terms_label }}{% endif %}
+         tells the office nothing. `terms_note` comes from billing_context, already blank
+         then, so the row looks nothing up (APC-96). {% endcomment %}
+      {% if group.terms_note %} &middot; {{ group.terms_note }}{% endif %}
       {% if group.po_required %} &middot; PO number required{% endif %}
     </div>
     {% if qbo_connected and group.qbo_sync_state == 'error' and group.qbo_sync_error %}

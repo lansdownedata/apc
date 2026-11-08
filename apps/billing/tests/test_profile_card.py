@@ -105,10 +105,14 @@ def _row(group, account) -> str:
     """One group row on its own.
 
     Counting a phrase across the whole page cannot answer this: the modals' terms picker
-    lists every option, so "Net 30" is on the page whatever the rows say.
+    lists every option, so "Net 30" is on the page whatever the rows say. The group comes
+    from `billing_context`, as on the page: it hands each row its terms note (APC-96).
     """
     from django.template.loader import render_to_string
 
+    from apps.billing.selectors import billing_context
+
+    group = next(g for g in billing_context(account.contact)["billing_groups"] if g == group)
     return render_to_string("billing/_group_row.html", {"group": group, "account": account})
 
 
@@ -255,3 +259,48 @@ def test_the_card_costs_no_query_per_group(client, agent):
         _profile(client, big.contact)
 
     assert len(ten_groups) <= len(one_group)
+
+
+def test_the_card_costs_no_query_per_group_with_their_own_quickbooks_terms(client, agent):
+    """APC-96: groups carrying their own terms, some QuickBooks names and some it lacks,
+    connected. One group or ten, the profile costs the same, and each row reads its label."""
+    from unittest.mock import patch
+
+    from apps.billing.models import AccountGroup, QboTerm
+
+    for qbo_id, name in (("1", "Net 30"), ("2", "Net 45"), ("3", "Net 60"), ("4", "Due now")):
+        QboTerm.objects.create(realm_id="123", qbo_id=qbo_id, name=name)
+    own = ["Net 45", "Net 60", "Due now", "Gone A", "Gone B", "Gone C", "Net 45", "net_15"]
+
+    def build(contact, count):
+        account = _account(contact=contact, terms="Net 30")
+        for i in range(count):
+            services.add_group(account, name=f"Team {i}", terms=own[i % len(own)])
+        return account
+
+    with (
+        patch("apps.billing.qbo_sync.current_realm", return_value="123"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        small = build(ContactFactory(), 1)
+        _profile(client, small.contact)  # warm anything cached per-process
+        with CaptureQueriesContext(connection) as one_group:
+            _profile(client, small.contact)
+
+        big = build(ContactFactory(), 10)
+        AccountGroup.objects.filter(account=big, name="Team 9").update(terms="Net 30")
+        with CaptureQueriesContext(connection) as ten_groups:
+            body = _profile(client, big.contact)
+
+    assert len(ten_groups) == len(one_group)
+    for label in ("Net 45", "Net 60", "Due now", "Gone A", "Gone B", "Gone C", "Net 15"):
+        assert f"&middot; {label}" in body, label
+    # Team 9's own "Net 30" reads the same as the account's: not repeated on its row
+    assert body.count("&middot; Net 30") == 0
+
+
+def test_a_group_whose_term_differs_only_in_spelling_does_not_repeat_it(client, agent):
+    """`net_30` on the group and QuickBooks' "Net 30" on the account read the same."""
+    account = _account(terms="Net 30")
+    services.add_group(account, name="Events", terms="net_30")
+    assert "&middot; Net 30" not in _profile(client, account.contact)

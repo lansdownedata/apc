@@ -180,24 +180,31 @@ def _terms_pickers(account, groups: list) -> dict:
     One list for the account modal and one per group: each always carries that record's
     stored value, so a term QuickBooks lacks shows selected instead of the first option. The
     group modal is shared by every group, so each row hands its own list to openGroup(),
-    and add-group gets the list with no current value. A record whose value is already
-    offered reuses the shared list: the queries don't grow with the groups.
+    and add-group gets the list with no current value.
+
+    The base list once, then every stored value's label in one batch (`terms.labels`): no
+    query per group. Each group also gets `terms_note`, its own terms' label only when it
+    reads differently from the account's (`net_30` and "Net 30" read the same).
     """
     base = terms_module.choices()
-    offered = {value for value, _ in base}
+    account_terms = account.terms if account else ""
+    label_for = terms_module.labels([account_terms, *(g.terms for g in groups)])
+    account_label = label_for.get(account_terms, "")
 
     def for_value(current: str) -> list[tuple[str, str]]:
-        return base if not current or current in offered else terms_module.choices(current)
+        return terms_module.offer(base, current, label_for.get(current, ""))
 
-    account_terms = account.terms if account else ""
     account_options = for_value(account_terms)
-    inherit = ("", f"Same as the account — {account.terms_label}") if account else ("", "")
+    inherit = ("", f"Same as the account — {account_label}") if account else ("", "")
     for group in groups:
         group.term_choices = [inherit, *for_value(group.terms)]
+        own = label_for.get(group.terms, "")
+        group.terms_note = own if own.lower() != account_label.lower() else ""
     return {
         "billing_terms": account_options,
         "billing_group_terms": [inherit, *base],
         "billing_default_terms": account_terms or _default_terms(account_options),
+        "billing_account_terms_label": account_label,
     }
 
 
@@ -286,9 +293,8 @@ def paid_by_context(lead) -> dict:
 
     groups = groups_for_lead(lead)
     group = lead.billing_group
-    # One resolve per distinct term, not per group (APC-96).
-    used = {g.effective_terms for g in [*groups, *([group] if group else [])]}
-    labels = {value: terms_module.resolve(value).label for value in used}
+    # Every group's label in one batch, not a lookup per group (APC-96).
+    labels = terms_module.labels(g.effective_terms for g in [*groups, *([group] if group else [])])
     order_invoices: list = []
     uninvoiced = 0
     if lead.on_account:

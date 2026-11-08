@@ -159,15 +159,15 @@ def ready_accounts(filters: BillingFilters) -> list[AccountRow]:
     groups by name; trips in pickup order)."""
     accounts: dict[int, AccountRow] = {}
     groups: dict[int, GroupRow] = {}
-    labels: dict[str, str] = {}
-    for trip in _with_route(list(ready_queryset(filters))):
+    trips = _with_route(list(ready_queryset(filters)))
+    # Every group's label in one batch, not a lookup per group (APC-96).
+    labels = terms_module.labels(t.lead.billing_group.effective_terms for t in trips)
+    for trip in trips:
         group = trip.lead.billing_group
         row = groups.get(group.pk)
         if row is None:
-            value = group.effective_terms
-            if value not in labels:
-                labels[value] = terms_module.resolve(value).label
-            row = groups[group.pk] = GroupRow(group=group, terms_label=labels[value])
+            label = labels[group.effective_terms]
+            row = groups[group.pk] = GroupRow(group=group, terms_label=label)
             account = group.account
             accounts.setdefault(account.pk, AccountRow(account=account)).groups.append(row)
         row.trips.append(trip)

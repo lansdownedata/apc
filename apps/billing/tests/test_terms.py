@@ -105,3 +105,14 @@ def test_choices_keeps_the_stored_code_over_a_same_named_quickbooks_term():
     assert got == [("Net 45", "Net 45"), ("net_30", "Net 30")]
     assert [label for _, label in got].count("Net 30") == 1
     assert terms.resolve("net_30").value == "net_30"
+
+
+def test_labels_match_resolve_in_one_batch(django_assert_max_num_queries):
+    _term("3", "Net 30")
+    _term("4", "Net 45")
+    values = ["net_30", "net_15", "Net 45", "net 45", "Gone", ""]
+    with django_assert_max_num_queries(2):  # the realm, then the company's term names
+        got = terms.labels(values)
+    assert got == {value: terms.resolve(value).label for value in values}
+    assert got["net 45"] == "Net 45"
+    assert terms.labels([]) == {}

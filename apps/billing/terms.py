@@ -7,6 +7,7 @@ screen, the sync and the due-date math read it through `resolve`, so they cannot
 from __future__ import annotations
 
 import calendar
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -102,6 +103,32 @@ def resolve(value: str) -> ResolvedTerm:
     return ResolvedTerm(value, match.name, match.qbo_id, rule)
 
 
+def labels(values: Iterable[str]) -> dict[str, str]:
+    """`resolve(v).label` for many values in one read of the company's term names, so a
+    screen listing many records costs the same as one. Nothing is read for no values."""
+    wanted = set(values)
+    if not wanted:
+        return {}
+    names = {}
+    if any(is_quickbooks_name(v) for v in wanted if v):
+        # The first in the model's own order wins, as `resolve`'s `.first()` does.
+        for name in _usable().values_list("name", flat=True):
+            names.setdefault(name.lower(), name)
+    return {
+        v: (Terms(v).label if not is_quickbooks_name(v) else names.get(v.lower(), v)) if v else ""
+        for v in wanted
+    }
+
+
+def offer(options: list[tuple[str, str]], current: str, label: str) -> list[tuple[str, str]]:
+    """`options` plus the record's stored value, when it isn't offered already: it replaces
+    the entry with the same label (a legacy code keeps its code) and goes last."""
+    if not current or current in {value for value, _ in options}:
+        return options
+    rest = [(v, lbl) for v, lbl in options if lbl.lower() != label.lower()]
+    return [*rest, (current, label)]
+
+
 def due(value: str, invoice_date: date) -> date:
     rule = resolve(value).rule or TermRule("STANDARD", days=UNKNOWN_DAYS)
     return rule.due(invoice_date)
@@ -118,7 +145,5 @@ def choices(current: str = "") -> list[tuple[str, str]]:
     )
     options = [(n, n) for n in names] or list(Terms.choices)
     if current and current not in {value for value, _ in options}:
-        label = resolve(current).label
-        options = [(v, lbl) for v, lbl in options if lbl.lower() != label.lower()]
-        options.append((current, label))
+        options = offer(options, current, resolve(current).label)
     return options
