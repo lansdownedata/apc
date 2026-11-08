@@ -22,6 +22,7 @@
          class="flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold">
         <i class="ti ti-chart-bar text-[15px]"></i> Performance
       </a>
+      {% if request.user.is_owner_admin %}{% include "imports/_excel_menu.html" with screen="vendors" noun="vendors" count=export_count query=export_query %}{% endif %}
       <a href="{% url 'vendor_create' %}"
          class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2">
         <i class="ti ti-plus text-[15px]"></i> New vendor

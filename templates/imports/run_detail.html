@@ -1,43 +1,190 @@
 {% extends "base.html" %}
-{% block title %}Import{% endblock %}
+{% load humanize %}
 {% block content %}
-<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
-  <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">{{ run.filename }}</h1>
-  <p class="text-[12.5px] text-muted mt-1">
-    {{ run.created_at|date:"M j, Y g:i A T" }}{% if run.user %} · {{ run.user.get_full_name|default:run.user.email }}{% endif %}
+{% comment %}
+An import's preview, and after Apply its result (APC-141, spec §9.1). Exceptions first and the
+number before the detail: one line of counts, then Errors → Warnings → New → Updated → Unchanged,
+each left out when empty. The error count is the screen's one accent. The action bar is sticky at
+the bottom so Apply stays in reach while scrolling a long preview; the section headers stick to the top.
+{% endcomment %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 pt-6">
+
+  <a href="{% url 'import_history' %}?screen={{ run.screen }}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink focus-visible:text-ink focus-visible:outline-none mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Import history</a>
+
+  {% if run.status == "failed" %}
+  <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">This file couldn't be imported</h1>
+  <p class="text-[13.5px] text-danger mt-2">{{ run.error }}</p>
+  {% else %}
+  <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight num">
+    {% if counts.errors %}<span class="text-danger">{{ counts.errors|intcomma }} error{{ counts.errors|pluralize }}</span>{% endif %}
+    {% if counts.new %}{% if counts.errors %}<span class="text-muted font-normal"> · </span>{% endif %}{{ counts.new|intcomma }} new{% endif %}
+    {% if counts.updated %}{% if counts.errors or counts.new %}<span class="text-muted font-normal"> · </span>{% endif %}{{ counts.updated|intcomma }} updated{% endif %}
+    {% if counts.unchanged %}{% if counts.errors or counts.new or counts.updated %}<span class="text-muted font-normal"> · </span>{% endif %}{{ counts.unchanged|intcomma }} unchanged{% endif %}
+  </h1>
+  {% endif %}
+
+  <p class="text-[12.5px] text-muted mt-1.5">
+    {{ run.filename }} · {% if run.user %}{{ run.user.get_full_name|default:run.user.email }} · {% endif %}{{ run.created_at|date:"M j, Y g:i A T" }}{% if run.status == "previewed" and not expired %} · <span class="text-ink font-medium">Nothing has been saved yet.</span>{% endif %}
   </p>
-  {% if run.status == "failed" %}<p class="mt-3 text-[13px]">{{ run.error }}</p>{% endif %}
-  {% if expired %}<p class="mt-3 text-[13px]">This preview has expired. Upload the file again.</p>{% endif %}
-  {% if run.status == "previewed" and not expired %}
-  <form method="post" action="{% url 'import_confirm' run.pk %}" class="mt-3">
-    {% csrf_token %}
-    <button type="submit" class="btn-gold" {% if not applicable %}disabled{% endif %}>Apply {{ applicable }} rows</button>
-  </form>
+  {% if run.status != "failed" %}
+  {% if counts.examples or run.preview_counts.ignored_columns %}
+  <p class="text-[12.5px] text-muted mt-1">
+    {% if counts.examples %}{{ counts.examples }} example row{{ counts.examples|pluralize }} ignored{% endif %}{% if counts.examples and run.preview_counts.ignored_columns %} · {% endif %}{% if run.preview_counts.ignored_columns %}Columns not on the template were ignored: {{ run.preview_counts.ignored_columns|join:", " }}{% endif %}
+  </p>
   {% endif %}
+  {% if differs_count %}
+  <p class="text-[13px] text-ink font-medium mt-3">{{ differs_count }} row{{ differs_count|pluralize }} came out differently from the preview — someone changed these records in between.</p>
+  {% endif %}
+  {% endif %}
+
   {% if errors %}
-  <section class="mt-6"><h2 class="text-[14px] font-semibold">Errors</h2>
-    {% for row in errors %}<p class="text-[13px]">{{ row.row }} · {{ row.label|default:row.key }} · {{ row.reason }}</p>{% endfor %}
+  <section class="mt-8" data-section="errors">
+    <h2 class="text-[13px] font-semibold text-ink mb-1">Errors <span class="text-muted font-normal num">{{ errors|length }}</span></h2>
+    <table class="w-full text-[12.5px]">
+      <thead class="sticky top-0 z-10 bg-paper">
+        <tr class="text-left text-muted">
+          <th scope="col" class="font-medium py-2 pr-4 w-14">Row</th>
+          <th scope="col" class="font-medium py-2 pr-4 w-1/3">Name</th>
+          <th scope="col" class="font-medium py-2">Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in errors %}
+        <tr class="border-t border-line/60 align-top">
+          <td class="py-2.5 pr-4 num text-muted">{{ row.row }}</td>
+          <td class="py-2.5 pr-4 break-words"><span class="text-ink">{{ row.label|default:"—" }}</span>{% if row.key %}<span class="block text-[11.5px] text-muted break-all">{{ row.key }}</span>{% endif %}</td>
+          <td class="py-2.5 text-ink">{{ row.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
   {% endif %}
+
   {% if warnings %}
-  <section class="mt-6"><h2 class="text-[14px] font-semibold">Warnings</h2>
-    {% for row in warnings %}{% for w in row.warnings %}<p class="text-[13px]">{{ row.row }} · {{ row.label }} · {{ w }}</p>{% endfor %}{% endfor %}
+  <section class="mt-8" data-section="warnings">
+    <h2 class="text-[13px] font-semibold text-ink mb-1">Warnings <span class="text-muted font-normal num">{{ warnings|length }}</span></h2>
+    <table class="w-full text-[12.5px]">
+      <thead class="sticky top-0 z-10 bg-paper">
+        <tr class="text-left text-muted">
+          <th scope="col" class="font-medium py-2 pr-4 w-14">Row</th>
+          <th scope="col" class="font-medium py-2 pr-4 w-1/3">Name</th>
+          <th scope="col" class="font-medium py-2">Warning</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in warnings %}
+        <tr class="border-t border-line/60 align-top">
+          <td class="py-2.5 pr-4 num text-muted">{{ row.row }}</td>
+          <td class="py-2.5 pr-4 break-words"><span class="text-ink">{{ row.label|default:"—" }}</span>{% if row.key %}<span class="block text-[11.5px] text-muted break-all">{{ row.key }}</span>{% endif %}</td>
+          <td class="py-2.5 text-ink">{% for warning in row.warnings %}<span class="block">{{ warning }}</span>{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
   {% endif %}
+
   {% if new %}
-  <section class="mt-6"><h2 class="text-[14px] font-semibold">New</h2>
-    {% for row in new %}<p class="text-[13px]">{{ row.row }} · {{ row.label }} · {{ row.key }}</p>{% endfor %}
+  <section class="mt-8" data-section="new">
+    <h2 class="text-[13px] font-semibold text-ink mb-1">New <span class="text-muted font-normal num">{{ new|length }}</span></h2>
+    <table class="w-full text-[12.5px]">
+      <thead class="sticky top-0 z-10 bg-paper">
+        <tr class="text-left text-muted">
+          <th scope="col" class="font-medium py-2 pr-4 w-14">Row</th>
+          <th scope="col" class="font-medium py-2 pr-4">Name</th>
+          <th scope="col" class="font-medium py-2 pr-4">Email</th>
+          <th scope="col" class="font-medium py-2">Phone</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in new %}
+        <tr class="border-t border-line/60 align-top">
+          <td class="py-2.5 pr-4 num text-muted">{{ row.row }}</td>
+          <td class="py-2.5 pr-4 text-ink break-words">{{ row.label }}{% if row.differs %}<span class="block text-[11.5px] text-muted">Previewed as {{ row.preview_outcome }}</span>{% endif %}</td>
+          <td class="py-2.5 pr-4 text-muted break-all">{{ row.email|default:"—" }}</td>
+          <td class="py-2.5 text-muted num">{{ row.phone|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
   {% endif %}
+
   {% if updated %}
-  <section class="mt-6"><h2 class="text-[14px] font-semibold">Updated</h2>
-    {% for row in updated %}<p class="text-[13px]">{{ row.row }} · {{ row.label }}{% for c in row.changes %} · {{ c.0 }}: {{ c.1 }} → {{ c.2 }}{% endfor %}</p>{% endfor %}
+  <section class="mt-8" data-section="updated">
+    <h2 class="text-[13px] font-semibold text-ink mb-1">Updated <span class="text-muted font-normal num">{{ updated|length }}</span></h2>
+    <table class="w-full text-[12.5px]">
+      <thead class="sticky top-0 z-10 bg-paper">
+        <tr class="text-left text-muted">
+          <th scope="col" class="font-medium py-2 pr-4 w-14">Row</th>
+          <th scope="col" class="font-medium py-2 pr-4 w-1/3">Name</th>
+          <th scope="col" class="font-medium py-2">Changes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in updated %}
+        <tr class="border-t border-line/60 align-top">
+          <td class="py-2.5 pr-4 num text-muted">{{ row.row }}</td>
+          <td class="py-2.5 pr-4 break-words"><span class="text-ink">{{ row.label }}</span>{% if row.key %}<span class="block text-[11.5px] text-muted break-all">{{ row.key }}</span>{% endif %}{% if row.differs %}<span class="block text-[11.5px] text-muted">Previewed as {{ row.preview_outcome }}</span>{% endif %}</td>
+          <td class="py-2.5 text-ink break-words">{% for column, old, value in row.changes %}<span class="block"><span class="text-muted">{{ column }}: {{ old|default:"—" }} →</span> {{ value }}</span>{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
   {% endif %}
+
   {% if unchanged %}
-  <section class="mt-6"><h2 class="text-[14px] font-semibold">Unchanged</h2>
-    <p class="text-[13px]">{{ unchanged|length }} rows</p>
+  <section class="mt-8" data-section="unchanged" x-data="{ shown: false }">
+    <button type="button" @click="shown = !shown" :aria-expanded="shown.toString()" aria-controls="import-unchanged"
+            class="inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink rounded hover:text-goldd focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+      Unchanged <span class="text-muted font-normal num">{{ unchanged|length }}</span>
+      <i class="ti ti-chevron-down text-[13px] text-muted transition-transform" :class="shown && 'rotate-180'"></i>
+    </button>
+    <table id="import-unchanged" x-show="shown" x-cloak class="w-full text-[12.5px] mt-1">
+      <thead class="sticky top-0 z-10 bg-paper">
+        <tr class="text-left text-muted">
+          <th scope="col" class="font-medium py-2 pr-4 w-14">Row</th>
+          <th scope="col" class="font-medium py-2 pr-4 w-1/3">Name</th>
+          <th scope="col" class="font-medium py-2">Matched by</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in unchanged %}
+        <tr class="border-t border-line/60 align-top">
+          <td class="py-2.5 pr-4 num text-muted">{{ row.row }}</td>
+          <td class="py-2.5 pr-4 text-ink break-words">{{ row.label }}{% if row.differs %}<span class="block text-[11.5px] text-muted">Previewed as {{ row.preview_outcome }}</span>{% endif %}</td>
+          <td class="py-2.5 text-muted break-all">{{ row.key }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
+  {% endif %}
+
+  {% if run.status == "failed" %}
+  <div class="pb-6"></div>
+  {% else %}
+  <div class="sticky bottom-0 z-20 mt-8 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 bg-paper/95 backdrop-blur border-t border-line flex flex-wrap items-center gap-x-4 gap-y-2">
+    {% if run.status == "applied" %}
+    <p class="text-[12.5px] text-muted">Applied {{ run.applied_at|date:"M j, Y g:i A T" }}{% if run.user %} by {{ run.user.get_full_name|default:run.user.email }}{% endif %}</p>
+    {% else %}
+    <form id="import-apply-form" method="post" action="{% url 'import_confirm' run.pk %}" class="hidden">{% csrf_token %}</form>
+    <button type="button" data-apply x-data {% if not applicable or expired %}disabled{% endif %}
+            @click="$store.modal.confirm({ variant: 'gold', title: 'Apply {{ applicable|intcomma }} row{{ applicable|pluralize }}?', message: '{{ counts.new|intcomma }} new, {{ counts.updated|intcomma }} updated.{% if counts.errors %} {{ counts.errors|intcomma }} row{{ counts.errors|pluralize }} with errors will be skipped.{% endif %}', confirmText: 'Apply', onConfirm: () => { document.getElementById('import-apply-form').submit(); return new Promise(() => {}); } })"
+            class="btn-gold text-[12.5px] font-semibold rounded-full px-4 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2">
+      Apply {{ applicable|intcomma }} row{{ applicable|pluralize }}
+    </button>
+    {% if expired %}<p class="text-[12.5px] text-ink">This preview has expired. Upload the file again.</p>{% endif %}
+    {% endif %}
+    {% if errors %}
+    <a href="{% url 'import_errors' run.pk %}"
+       class="flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold">
+      <i class="ti ti-download text-[15px]"></i> Download error rows
+    </a>
+    {% endif %}
+  </div>
   {% endif %}
 </div>
 {% endblock %}

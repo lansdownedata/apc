@@ -6,6 +6,7 @@ from django.core.paginator import Paginator
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import content_disposition_header
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import owner_admin_required
@@ -19,10 +20,59 @@ PAGE_SIZE = 50
 NEED_XLSX = "Choose a .xlsx file to upload."
 
 
+# How an export's filters read on the history page (spec §4.3).
+FILTER_LABELS = {
+    "scope": {"customers": "Customers", "all": "All contacts"},
+    "status": {"active": "Active", "inactive": "Archived", "all": "All"},
+}
+
+
 def _xlsx(content: bytes, filename: str) -> HttpResponse:
+    """A workbook download; the name is quoted (or RFC 5987-encoded) whatever was uploaded."""
     response = HttpResponse(content, content_type=XLSX)
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Disposition"] = content_disposition_header(True, filename)
     return response
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n:,} {noun}{'' if n == 1 else 's'}"
+
+
+def _result(run: ImportRun) -> str:
+    """The history page's Result cell: what an import did (or would do), or what an export
+    pulled and through which filters — "Exported 1,204 contacts — Customers, search 'acme'"."""
+    if run.kind == ImportRun.Kind.EXPORT:
+        noun = get_screen(run.screen).noun.removesuffix("s")
+        text = f"Exported {_plural(run.counts.get('rows', 0), noun)}"
+        parts = [
+            labels.get(run.filters[key], run.filters[key])
+            for key, labels in FILTER_LABELS.items()
+            if run.filters.get(key)
+        ]
+        if run.filters.get("q"):
+            parts.append(f"search '{run.filters['q']}'")
+        return f"{text} — {', '.join(parts)}" if parts else text
+    if run.status == ImportRun.Status.FAILED:
+        return run.error
+    counts = run.counts if run.status == ImportRun.Status.APPLIED else run.preview_counts
+    parts = [f"{counts.get(k, 0):,} {k}" for k in ("new", "updated") if counts.get(k)]
+    if counts.get("errors"):
+        parts.append(_plural(counts["errors"], "error"))
+    return " · ".join(parts) or "No changes"
+
+
+def _chip(run: ImportRun) -> str:
+    """A status chip only when the run did not apply (spec §9.2)."""
+    if run.status == ImportRun.Status.FAILED:
+        return "Failed"
+    if run.status == ImportRun.Status.PREVIEWED:
+        return "Expired" if run.is_expired else "Preview — not applied"
+    return ""
+
+
+def _cell(row: dict, column: str) -> str:
+    """A new row's value for `column`, from its changes (a new row lists every set cell)."""
+    return next((new for name, _old, new in row.get("changes", []) if name == column), "")
 
 
 @login_required
@@ -36,6 +86,8 @@ def history(request: HttpRequest) -> HttpResponse:
     else:
         screen_filter = ""
     page_obj = Paginator(runs, PAGE_SIZE).get_page(request.GET.get("page"))
+    for run in page_obj.object_list:
+        run.result, run.chip = _result(run), _chip(run)
     return render(
         request,
         "imports/history.html",
@@ -99,13 +151,18 @@ def _import_run_or_404(pk: int) -> ImportRun:
 def run_detail(request: HttpRequest, pk: int) -> HttpResponse:
     run = _import_run_or_404(pk)
     rows = run.rows
-    new = [r for r in rows if r["outcome"] == "new"]
+    new = [
+        r | {"email": _cell(r, "Email"), "phone": _cell(r, "Phone")}
+        for r in rows
+        if r["outcome"] == "new"
+    ]
     updated = [r for r in rows if r["outcome"] == "updated"]
     return render(
         request,
         "imports/run_detail.html",
         {
             "run": run,
+            "counts": run.counts if run.status == ImportRun.Status.APPLIED else run.preview_counts,
             "screen": get_screen(run.screen),
             "errors": [r for r in rows if r["outcome"] == "error"],
             "warnings": [r for r in rows if r.get("warnings")],

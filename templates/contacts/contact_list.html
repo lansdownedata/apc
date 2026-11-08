@@ -22,6 +22,7 @@
       <input name="q" value="{{ q }}" placeholder="Search name, company, phone, email…" class="bg-transparent text-[12.5px] outline-none w-full placeholder:text-muted/70">
       <input type="hidden" name="scope" value="{{ scope }}">
     </div>
+    {% if request.user.is_owner_admin %}{% include "imports/_excel_menu.html" with screen="contacts" noun="contacts" count=export_count query=export_query %}{% endif %}
     <button type="button" class="btn-gold flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2"
             @click="addContactOpen = true">
       <i class="ti ti-plus text-[15px]"></i> Add contact

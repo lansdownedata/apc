@@ -795,6 +795,77 @@ function billToAccount(opts) {
 }
 window.billToAccount = billToAccount;
 
+/* -------------------------------------------------- Excel import / export (APC-141) */
+/* The "Excel" menu on the Contacts and Vendors headers — templates/imports/_excel_menu.html.
+   Import opens the shared modal with the server-rendered upload body; the upload answers with
+   the run page's URL (the preview) or one sentence saying what is wrong with the file. */
+function excelMenu(opts) {
+  return {
+    open: false,
+    toggle() {
+      this.open = !this.open;
+      if (this.open) this.$nextTick(() => this.items()[0]?.focus());
+    },
+    close(refocus = false) {
+      if (!this.open) return;
+      this.open = false;
+      if (refocus) this.$refs.button.focus();
+    },
+    items() {
+      return [...this.$refs.menu.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])')];
+    },
+    move(step) {
+      const items = this.items();
+      const at = items.indexOf(document.activeElement);
+      items[(at + step + items.length) % items.length]?.focus();
+    },
+    openImport() {
+      this.close();
+      Alpine.store("modal").show({
+        title: "Import " + opts.noun,
+        html: document.getElementById("import-modal-body-" + opts.screen).innerHTML,
+        variant: "gold",
+        confirmText: "Upload and preview",
+        onConfirm: () => uploadWorkbook(opts.uploadUrl),
+      });
+    },
+  };
+}
+window.excelMenu = excelMenu;
+
+/* The modal's onConfirm. A rejection keeps the modal open (no file, network failure). The
+   other two outcomes never settle: accept() closes the modal once the promise settles, so
+   success keeps the spinner up while the run page loads, and a file error leaves the danger
+   alert (which has replaced the upload body by then) up until its own "Got it". */
+async function uploadWorkbook(url) {
+  const file = document.getElementById("import-file")?.files[0];
+  const toast = Alpine.store("toast");
+  if (!file) {
+    toast.push({ type: "danger", title: "Choose a .xlsx file first." });
+    throw new Error("No file chosen");
+  }
+  const body = new FormData();
+  body.append("file", file);
+  let data;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "X-CSRFToken": getCookie("csrftoken") },
+      body,
+    });
+    data = await resp.json();
+  } catch (e) {
+    toast.push({ type: "danger", title: "Couldn't upload that file", message: "Check your connection and try again." });
+    throw e;
+  }
+  if (data.ok) {
+    window.location = data.url;
+  } else {
+    Alpine.store("modal").alert({ title: "Couldn't read that file", message: data.error, variant: "danger" });
+  }
+  return new Promise(() => {});
+}
+
 /* -------------------------------------------------- cancel & refund (APC-127) */
 /* "Cancel & refund" on the money card: pick the trips to cancel; each shows what comes
    back to the card for it. A trip whose pickup has passed is greyed unless the row says

@@ -23,6 +23,7 @@ from django.db.models.functions import Coalesce
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.addresses.models import Address
@@ -108,6 +109,8 @@ def contact_list(request: HttpRequest) -> HttpResponse:
             "total_ltv": total_ltv,
             "q": query,
             "scope": scope,
+            "export_count": len(rows),
+            "export_query": urlencode({"scope": scope, "q": query}),
             "scope_tabs": [("customers", "Customers"), ("all", "All contacts")],
             "channels": Channel.choices,
             "company_names": company_names,

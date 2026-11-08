@@ -13,6 +13,7 @@ from django.db.models import Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
@@ -94,6 +95,8 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
             "archived_count": archived_count,
             "q": query,
             "status_filter": status_filter,
+            "export_count": len(attention) + len(roster),
+            "export_query": urlencode({"status": status_filter, "q": query}),
             "status_options": _STATUS_FILTERS,
         },
     )
