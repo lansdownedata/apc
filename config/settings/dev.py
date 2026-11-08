@@ -21,3 +21,6 @@ INTERNAL_IPS = ["127.0.0.1"]
 EMAIL_BACKEND = env(  # noqa: F405
     "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
 )
+
+# File-based mail for local end-to-end runs: each message lands as a file you can open.
+EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default=str(BASE_DIR / ".local-mail"))  # noqa: F405
