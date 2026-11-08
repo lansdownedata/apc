@@ -195,15 +195,14 @@ def test_redate_reads_each_order_once():
 
     _order()
     _order()
-    table = Lead._meta.db_table
+    table = connection.ops.quote_name(Lead._meta.db_table)
+    pk = connection.ops.quote_name("id")
 
     with CaptureQueriesContext(connection) as ctx:
         schedule.redate({KEY})
 
     refetches = [
-        q["sql"]
-        for q in ctx.captured_queries
-        if f"FROM `{table}` WHERE `{table}`.`id` = " in q["sql"]
+        q["sql"] for q in ctx.captured_queries if f"FROM {table} WHERE {table}.{pk} = " in q["sql"]
     ]
     # The orders are read in one batch; reschedule re-dates the instances it is given.
     assert refetches == []

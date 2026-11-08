@@ -2158,7 +2158,7 @@ function messageEditor(state = {}) {
       }
       const text = this.smsText !== null ? this.smsText : box.value;
       const { chars: n, texts, unicode } = smsSegments(text);
-      const note = unicode ? " (special characters: 70 per text)" : "";
+      const note = unicode ? " (special characters: fewer per text)" : "";
       counter.textContent = `${n} character${n === 1 ? "" : "s"} · ${texts} text${texts === 1 ? "" : "s"}${note}`;
     },
     async refreshPreview() {
