@@ -9,7 +9,7 @@
       {% csrf_token %}
       {% include "components/form_field.html" with field=form.name %}
       {% if form.protected %}<p class="text-[11.5px] text-muted -mt-2">Other is the default for uploads, so its name and active setting are fixed.</p>{% endif %}
-            {% include "components/form_field.html" with field=form.sort_order %}
+      {% include "components/form_field.html" with field=form.sort_order %}
       <div class="flex items-center gap-2">
         {{ form.required }}
         <label for="{{ form.required.id_for_label }}" class="text-[12.5px] text-ink">Required — every affiliate is expected to have one</label>
