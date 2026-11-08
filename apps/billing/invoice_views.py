@@ -18,9 +18,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.permissions import payment_access_required
+from apps.integrations import qbo
 
-from . import invoices
+from . import invoices, qbo_invoices
 from .models import AccountGroup, Invoice, Terms
+from .qbo_sync import SyncPaused
 
 # An invoice date outside this window is a typo, not a backdated or forward invoice.
 EARLIEST_INVOICE_DATE = date(2020, 1, 1)
@@ -38,6 +40,14 @@ def _filter_params(filters: invoices.BillingFilters) -> dict[str, str]:
         "from": filters.date_from.isoformat() if filters.date_from else "",
         "to": filters.date_to.isoformat() if filters.date_to else "",
     }
+
+
+def _with_sync(rows: list[Invoice]) -> list[Invoice]:
+    """Attach each invoice's QuickBooks row state as `.sync` (None while disconnected)."""
+    connected = qbo.is_connected()
+    for invoice in rows:
+        invoice.sync = qbo_invoices.sync_state(invoice, connected=connected)
+    return rows
 
 
 @login_required
@@ -64,7 +74,7 @@ def billing_list(request: HttpRequest) -> HttpResponse:
             "due_preview": invoices.due_date(today, terms),
             "default_po": pos[0] if pos else "",
             "mixed_po": len({po for po in pos if po}) > 1,
-            "invoices": invoices.open_invoices(group),
+            "invoices": _with_sync(invoices.open_invoices(group)),
             "draft": {
                 "trips": [
                     {"id": t.pk, "amount": f"{t.line_total:.2f}", "po": po}
@@ -135,3 +145,33 @@ def invoice_void(request: HttpRequest, pk: int) -> JsonResponse:
     except invoices.InvoiceError as exc:
         return _bad(str(exc))
     return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def invoice_sync(request: HttpRequest, pk: int) -> JsonResponse:
+    """Retry one invoice's QuickBooks push now; a person asked, so this call may wait."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    if not qbo.is_connected():
+        return _bad("QuickBooks isn't connected.")
+    push = (
+        qbo_invoices.push_void
+        if invoice.status == Invoice.Status.VOID
+        else (qbo_invoices.push_invoice)
+    )
+    try:
+        push(invoice)
+    except qbo.QboNotConnected as exc:
+        return _bad(str(exc))
+    except SyncPaused:
+        return _bad("QuickBooks couldn't be reached. Try again in a minute.", status=502)
+    invoice.refresh_from_db()
+    return JsonResponse(
+        {
+            "ok": True,
+            "state": invoice.qbo_sync_state,
+            "error": invoice.qbo_sync_error,
+            "number": invoice.number,
+        }
+    )

@@ -7,10 +7,16 @@
 <div id="invoice-{{ invoice.pk }}" class="rounded-lg px-3 py-3 mb-2 bg-surface2/60{% if invoice.pk == highlight %} ring-2 ring-gold/40{% endif %}"{% if invoice.pk == highlight %} x-init="$el.scrollIntoView({ block: 'nearest' })"{% endif %}>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
     <span class="font-semibold text-ink">{{ invoice.label }}</span>
-    <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">QuickBooks: Not sent yet</span>
+    {% include "billing/_sync_chip.html" with record=invoice synced_label="In QuickBooks" %}
+    {% if invoice.sync and invoice.sync.state == 'not_synced' and not invoice.sync.error %}
+    <span class="text-[11.5px] text-muted">Not sent yet</span>
+    {% endif %}
     <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
   </div>
   <p class="text-[11.5px] text-muted num">Dated {{ invoice.invoice_date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}{% if invoice.po_number %} · PO {{ invoice.po_number }}{% endif %}</p>
+  {% if invoice.sync and invoice.sync.state == 'error' %}
+  <p class="text-[11.5px] text-rose-600 mt-1">{{ invoice.sync.error }}</p>
+  {% endif %}
   <div class="mt-1.5 flex flex-wrap items-start gap-2">
     <details class="flex-1 min-w-0">
       <summary class="cursor-pointer text-[12px] font-medium text-muted hover:text-ink focus-gold">{{ invoice.lines.all|length }} trip{{ invoice.lines.all|length|pluralize }}</summary>
@@ -23,6 +29,10 @@
         {% endfor %}
       </div>
     </details>
+    {% if user.has_payments_access and invoice.sync and invoice.sync.state == 'error' %}
+    <button type="button" class="shrink-0 text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5"
+            @click="retryQboSync('{{ invoice.sync.sync_url }}')">Retry</button>
+    {% endif %}
     {% if user.has_payments_access %}
     <button type="button" class="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50"
             @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }})">Void</button>

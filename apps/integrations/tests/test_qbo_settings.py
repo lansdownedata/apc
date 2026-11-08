@@ -283,7 +283,10 @@ def test_saving_the_account_choice(owner):
     config = QboAccountMapping.load()
     assert (config.expense_account, config.payment_account) == (expense, bank)
     html = owner.get(reverse("quickbooks_settings")).content.decode()
-    assert "won't go to QuickBooks until" not in html
+    assert (
+        "Affiliate bills won't go to QuickBooks until both accounts and a start date are chosen."
+        not in html
+    )
 
 
 @override_settings(**QBO)

@@ -569,7 +569,9 @@ def test_sync_state_none_when_disconnected():
 
 def test_sync_state_when_connected():
     invoice = InvoiceFactory(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Nope")
-    with patch("django.urls.reverse", return_value="/sync/") as reverse:
-        state = qbo_invoices.sync_state(invoice, connected=True)
-    reverse.assert_called_once_with("billing_invoice_sync", args=[invoice.pk])
-    assert state == {"state": SyncState.ERROR, "error": "Nope", "sync_url": "/sync/"}
+    state = qbo_invoices.sync_state(invoice, connected=True)
+    assert state == {
+        "state": SyncState.ERROR,
+        "error": "Nope",
+        "sync_url": f"/portal/billing/invoices/{invoice.pk}/sync/",
+    }

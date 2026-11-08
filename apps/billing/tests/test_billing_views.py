@@ -1,7 +1,7 @@
 """APC-106 — the Customer Billing screen, its create/void endpoints and the nav count."""
 
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -12,8 +12,13 @@ from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
 from apps.billing import invoices
-from apps.billing.factories import AccountGroupFactory
-from apps.billing.models import Invoice
+from apps.billing.factories import (
+    AccountGroupFactory,
+    InvoiceFactory,
+    InvoiceLineFactory,
+    QboItemFactory,
+)
+from apps.billing.models import Invoice, QboAccountMapping, SyncState
 from apps.billing.tests._helpers import _processed_trip
 
 pytestmark = pytest.mark.django_db
@@ -330,8 +335,138 @@ def test_page_highlights_the_invoice_just_made(accountant) -> None:
     html = resp.content.decode()
     assert resp.context["invoices"] == [invoice]
     assert f">{invoice.label}<" in html
-    assert ">Not sent yet<" not in html
-    assert "QuickBooks: Not sent yet" in html
+    assert "Not sent yet" not in html and "In QuickBooks" not in html
     assert "ring-2 ring-gold/40" in html
     assert reverse("billing_invoice_void", args=[invoice.pk]) in html
     assert "Create invoice from 1 trip<" in html
+
+
+# --- APC-107: the invoice row's QuickBooks state, number and Retry -------------------------
+
+CONNECTED = "apps.integrations.qbo.is_connected"
+QBO_REQUEST = "apps.integrations.qbo.request"
+
+
+@pytest.fixture
+def mapping():
+    config = QboAccountMapping.load()
+    config.trip_item = QboItemFactory(realm_id="123", qbo_id="9")
+    config.customer_docs_from = date(2026, 1, 1)
+    config.save()
+    return config
+
+
+@pytest.fixture
+def realm():
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.billing.qbo_sync.current_realm", return_value="123"),
+    ):
+        yield
+
+
+def _open_invoice(**fields):
+    group = AccountGroupFactory(qbo_id="55", qbo_realm_id="123")
+    invoice = InvoiceFactory(
+        group=group,
+        invoice_date=date(2026, 3, 1),
+        due_date=date(2026, 3, 31),
+        total="920.00",
+        **fields,
+    )
+    InvoiceLineFactory(invoice=invoice, description="Trip", amount="920.00")
+    return invoice
+
+
+def _qbo_answer() -> dict:
+    line = {"DetailType": "SalesItemLineDetail", "Amount": 920.0}
+    return {
+        "Invoice": {
+            "Id": "900",
+            "SyncToken": "0",
+            "DocNumber": "1042",
+            "TotalAmt": 920.0,
+            "Line": [line, {"DetailType": "SubTotalLineDetail", "Amount": 920.0}],
+        }
+    }
+
+
+def test_row_shows_label_chip_and_retry_on_error(accountant) -> None:
+    invoice = _open_invoice(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Customer is inactive.")
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Customer is inactive." in html
+    assert ">Retry<" in html
+    assert reverse("billing_invoice_sync", args=[invoice.pk]) in html
+    assert "Not sent yet" not in html
+
+    invoice.qbo_sync_state, invoice.qbo_sync_error, invoice.number = SyncState.SYNCED, "", "1042"
+    invoice.save()
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "In QuickBooks" in html and "Invoice 1042" in html
+    assert ">Retry<" not in html
+
+    invoice.qbo_sync_state, invoice.number = SyncState.NOT_SYNCED, ""
+    invoice.save()
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Not sent yet" in html
+
+
+def test_retry_is_hidden_without_payments_access(staff) -> None:
+    invoice = _open_invoice(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Customer is inactive.")
+    with patch(CONNECTED, return_value=True):
+        html = staff.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Customer is inactive." in html
+    assert ">Retry<" not in html
+
+
+def test_row_without_connection_shows_no_quickbooks_text(accountant) -> None:
+    invoice = _open_invoice(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Customer is inactive.")
+    with patch(CONNECTED, return_value=False):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert f'id="invoice-{invoice.pk}"' in html
+    assert "In QuickBooks" not in html and "Not synced" not in html
+    assert "Not sent yet" not in html
+    assert "Customer is inactive." not in html
+    assert ">Retry<" not in html
+
+
+def test_sync_endpoint_pushes_now(accountant, mapping, realm) -> None:
+    invoice = _open_invoice()
+    with patch(CONNECTED, return_value=True), patch(QBO_REQUEST, return_value=_qbo_answer()):
+        resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "state": "synced", "error": "", "number": "1042"}
+    invoice.refresh_from_db()
+    assert invoice.number == "1042" and invoice.qbo_sync_state == SyncState.SYNCED
+
+
+def test_sync_endpoint_400_when_not_connected(accountant) -> None:
+    invoice = _open_invoice()
+    with patch(CONNECTED, return_value=False):
+        resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
+    assert resp.status_code == 400
+
+
+def test_sync_endpoint_gated(staff, client) -> None:
+    invoice = _open_invoice()
+    url = reverse("billing_invoice_sync", args=[invoice.pk])
+    assert staff.post(url).status_code == 403
+    client.logout()
+    resp = client.post(url)
+    assert resp.status_code == 302 and "login" in resp["Location"]
+
+
+def test_sync_endpoint_502_on_outage(accountant, mapping, realm) -> None:
+    from apps.integrations import qbo
+
+    invoice = _open_invoice()
+    with (
+        patch(CONNECTED, return_value=True),
+        patch(QBO_REQUEST, side_effect=qbo.QboAPIError(503, "down")),
+    ):
+        resp = accountant.post(reverse("billing_invoice_sync", args=[invoice.pk]))
+    assert resp.status_code == 502
+    assert resp.json()["error"] == "QuickBooks couldn't be reached. Try again in a minute."
