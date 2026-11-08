@@ -248,3 +248,23 @@ def test_completing_a_farmed_out_trip_stamps_no_driver_pay():
     review.refresh_from_db()
     assert review.driver_pay_amount is None
     assert review.driver_hourly_rate is None
+
+
+# --- APC-139: the lock names its own row -----------------------------------------------------
+
+
+def test_complete_review_lock_names_only_the_review_row():
+    """Same rule as the farm-in and billing locks: a FOR UPDATE that joins must name its
+    table, so it stays legal on Postgres whatever the join's nullability."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    trip = _trip()
+    review = _review(trip, minutes_over=30)
+    with CaptureQueriesContext(connection) as ctx:
+        reviews.complete_review(review, user=UserFactory())
+    joined_locks = [
+        q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"] and " JOIN " in q["sql"]
+    ]
+    assert joined_locks, "the review lock with its reservation join was not exercised"
+    assert all("FOR UPDATE OF" in sql for sql in joined_locks)

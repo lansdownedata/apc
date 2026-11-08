@@ -211,7 +211,7 @@ def send_receipt(charge_id: int) -> bool:
     try:
         with transaction.atomic():
             charge = (
-                Charge.objects.select_for_update()
+                Charge.objects.select_for_update(of=("self",))  # reservation is nullable
                 .select_related("reservation__lead__contact")
                 .filter(pk=charge_id)
                 .first()

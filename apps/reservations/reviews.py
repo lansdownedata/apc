@@ -362,7 +362,9 @@ def complete_review(review: TripReview, *, user) -> TripReview:
 
     with transaction.atomic():
         review = (
-            TripReview.objects.select_for_update().select_related("reservation").get(pk=review.pk)
+            TripReview.objects.select_for_update(of=("self",))
+            .select_related("reservation")
+            .get(pk=review.pk)
         )
         if review.is_complete:
             raise ReviewError("This review is already complete.")

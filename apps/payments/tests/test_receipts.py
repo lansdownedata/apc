@@ -596,3 +596,24 @@ def test_a_price_raised_after_booking_reads_as_a_change():
     charge = _charge(trip, Decimal("200.00"))
 
     assert receipts.receipt_context(charge)["explanation"] == "change"
+
+
+# --- APC-139: the lock names its own row -----------------------------------------------------
+
+
+def test_send_receipt_lock_names_only_the_charge_row(django_capture_on_commit_callbacks):
+    """Charge.reservation is nullable, so the receipt's lock joins an outer join; Postgres
+    refuses a plain FOR UPDATE there. The lock must be `FOR UPDATE OF` the charge alone."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    trip = _trip()
+    _paid(trip)
+    _overtime(trip)
+    with CaptureQueriesContext(connection) as ctx, django_capture_on_commit_callbacks(execute=True):
+        _charge(trip)
+    joined_locks = [
+        q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"] and " JOIN " in q["sql"]
+    ]
+    assert joined_locks, "the receipt's charge lock was not exercised"
+    assert all("FOR UPDATE OF" in sql for sql in joined_locks)

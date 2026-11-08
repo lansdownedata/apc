@@ -180,7 +180,13 @@ def delete_group(group: AccountGroup) -> None:
 def _locked_lead(lead):
     from apps.leads.models import Lead
 
-    return Lead.objects.select_for_update().select_related("contact__company").get(pk=lead.pk)
+    # `of=("self",)`: Postgres refuses a plain FOR UPDATE on the nullable side of an
+    # outer join, and contact__company is nullable (APC-139).
+    return (
+        Lead.objects.select_for_update(of=("self",))
+        .select_related("contact__company")
+        .get(pk=lead.pk)
+    )
 
 
 def _refuse_to_account(lead, group: AccountGroup, po_number: str) -> None:

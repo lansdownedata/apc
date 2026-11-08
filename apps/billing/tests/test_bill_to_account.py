@@ -324,3 +324,22 @@ def test_the_current_group_is_still_offered_after_the_billing_contact_changes():
     lead = Lead.objects.get(pk=lead.pk)
     lead.contact = ContactFactory()  # the account no longer belongs to the booking contact
     assert group in selectors.groups_for_lead(lead)
+
+
+# --- APC-139: the lock names its own row -----------------------------------------------------
+
+
+def test_bill_to_account_lock_names_only_the_lead_row(django_assert_max_num_queries):
+    """Postgres refuses FOR UPDATE on the nullable side of an outer join; the lead lock
+    joins contact__company (nullable), so it must be `FOR UPDATE OF` the lead alone."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    lead, group = _order()
+    with CaptureQueriesContext(connection) as ctx:
+        services.bill_to_account(lead, group, po_number="", user=None)
+    joined_locks = [
+        q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"] and " JOIN " in q["sql"]
+    ]
+    assert joined_locks, "the lead lock with its contact join was not exercised"
+    assert all("FOR UPDATE OF" in sql for sql in joined_locks)
