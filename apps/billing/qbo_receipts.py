@@ -439,23 +439,63 @@ def _receipt_link(charge) -> tuple[_Link, str, object]:
     return _Link(charge, "refundreceipt", "RefundReceipt"), "refund receipt", refund_receipt_payload
 
 
+# The charge fields a receipt payload reads. The receipt sender bumps `updated_at` on the
+# same row (receipt_attempted_at / _sent_at / _skipped_at) while a push may be in flight, so
+# "nothing changed mid-push" is decided on these, not on `updated_at` alone.
+_PAYLOAD_FIELDS = (
+    "amount",
+    "kind",
+    "status",
+    "note",
+    "card_last4",
+    "stripe_payment_intent_id",
+    "stripe_refund_id",
+    "refund_method",
+    "reservation_id",
+)
+
+
+def _payload_state(charge) -> dict:
+    return {name: getattr(charge, name) for name in _PAYLOAD_FIELDS}
+
+
+def _settle(charge, sent: dict) -> bool:
+    """QuickBooks returned what we sent but `_push` saw `updated_at` move. SYNCED when none of
+    the fields the payload read changed (checked in the UPDATE itself); otherwise NOT_SYNCED,
+    clearing any old sentence, for a person's Retry to send the new figures."""
+    from apps.payments.models import Charge
+
+    rows = Charge.objects.filter(pk=charge.pk)
+    settled = rows.filter(**sent).update(qbo_sync_state=SyncState.SYNCED, qbo_sync_error="")
+    if not settled:
+        rows.update(qbo_sync_state=SyncState.NOT_SYNCED, qbo_sync_error="")
+    charge.refresh_from_db()
+    return bool(settled)
+
+
 def _push_receipt(charge, realm: str) -> bool:
     """Create (or, on a Retry, update) the receipt. One QuickBooks holds differently is ERROR
     naming both figures and alerts once; the hourly run never sends it again."""
     link, what, build = _receipt_link(charge)
     mismatch = ""
+    matched = False
     already_failed = charge.qbo_sync_state == SyncState.ERROR
+    sent = _payload_state(charge)
 
     def matches(obj: dict, body: dict) -> bool:
-        nonlocal mismatch
+        nonlocal mismatch, matched
         if receipt_matches(obj, body):
+            matched = True
             return True
         mismatch = _mismatch(obj, body, charge, what)
         return False
 
     in_step = _push(link, lambda: build(charge, realm), matches=matches, what=what)
-    if mismatch and charge.qbo_id and charge.qbo_sync_state == SyncState.NOT_SYNCED:
+    linked = bool(charge.qbo_id) and charge.qbo_realm_id == realm
+    if mismatch and linked and charge.qbo_sync_state == SyncState.NOT_SYNCED:
         _fail(link, mismatch, alert=not already_failed)
+    elif matched and linked and not in_step:
+        return _settle(charge, sent)
     return in_step
 
 
@@ -553,9 +593,8 @@ def _blocked(start: date | None) -> bool:
     return start is None or trip_item_ref() is None or deposit_account_ref() is None
 
 
-def _push_customers(rows: list, realm: str) -> int:
-    """Give every contact here with no usable customer a link (one per contact), then push up
-    to SYNC_BATCH links. Returns how many landed."""
+def _ensure_links(rows: list, realm: str) -> None:
+    """Give every contact here with no usable customer a link: one per contact."""
     waiting = {}
     for charge in rows:
         contact = _contact(charge)
@@ -563,13 +602,12 @@ def _push_customers(rows: list, realm: str) -> int:
             waiting[contact.pk] = contact
     for contact in waiting.values():
         ensure_link(contact)
-    return sum(push_customer(link) for link in pending_links(realm)[:SYNC_BATCH])
 
 
 def sync_pending() -> int:
-    """Push card customers, then up to SYNC_BATCH card receipts in pk order. Returns how many
-    landed. A missing setting marks every pending receipt and alerts once. Stops quietly on an
-    outage, a rate limit or a lost connection; nothing is marked."""
+    """Push card customers, then card receipts in pk order: up to SYNC_BATCH Intuit pushes in
+    all. Returns how many landed. A missing setting marks every pending receipt and alerts
+    once. Stops quietly on an outage, a rate limit or a lost connection; nothing is marked."""
     if not qbo.is_connected():
         return 0
     realm = current_realm()
@@ -582,7 +620,12 @@ def sync_pending() -> int:
         if rows and _blocked(start):
             blocked = _block(rows, start)
             return pushed
-        pushed += _push_customers(rows, realm)
+        _ensure_links(rows, realm)
+        for link in pending_links(realm):
+            if attempted >= SYNC_BATCH:
+                return pushed
+            attempted += 1
+            pushed += push_customer(link)
         # Re-read: a customer pushed just now lets its receipts go in the same run.
         for charge in pending_receipts(realm, start):
             if customer_ref(_contact(charge), realm) is None:

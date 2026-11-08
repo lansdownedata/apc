@@ -1048,3 +1048,82 @@ def test_sync_state_when_connected(ready) -> None:
     }
     with patch("django.urls.reverse", return_value="/sync/"):
         assert qbo_receipts.sync_state(charge, connected=True, start=None)["before_start"] is False
+
+
+def _answer_after(change, response):
+    """A `qbo.request` that lets another writer touch the charge while Intuit answers."""
+
+    def request(*args, **kwargs):
+        change()
+        return response
+
+    return request
+
+
+def test_receipt_sender_bump_during_push_still_marks_synced(ready) -> None:
+    charge = _card_charge()
+
+    def receipt_sender() -> None:
+        now = timezone.now() + timedelta(seconds=1)
+        Charge.objects.filter(pk=charge.pk).update(receipt_attempted_at=now, updated_at=now)
+
+    with patch(REQ, side_effect=_answer_after(receipt_sender, _receipt())):
+        assert qbo_receipts.sync_pending() == 1
+    charge.refresh_from_db()
+    assert (charge.qbo_id, charge.qbo_sync_state, charge.qbo_sync_error) == (
+        "900",
+        SyncState.SYNCED,
+        "",
+    )
+
+
+def test_receipt_sender_bump_clears_a_stale_error_on_retry(ready) -> None:
+    charge = _card_charge(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Old sentence")
+
+    def receipt_sender() -> None:
+        now = timezone.now() + timedelta(seconds=1)
+        Charge.objects.filter(pk=charge.pk).update(receipt_sent_at=now, updated_at=now)
+
+    with patch(REQ, side_effect=_answer_after(receipt_sender, _receipt())):
+        assert qbo_receipts.push_receipt(charge) is True
+    charge.refresh_from_db()
+    assert (charge.qbo_sync_state, charge.qbo_sync_error) == (SyncState.SYNCED, "")
+
+
+def test_real_change_during_push_stays_not_synced(ready) -> None:
+    charge = _card_charge()
+
+    def edit() -> None:
+        now = timezone.now() + timedelta(seconds=1)
+        Charge.objects.filter(pk=charge.pk).update(amount=Decimal("650.00"), updated_at=now)
+
+    with patch(REQ, side_effect=_answer_after(edit, _receipt())):
+        assert qbo_receipts.sync_pending() == 0
+    charge.refresh_from_db()
+    assert (charge.qbo_id, charge.qbo_sync_state) == ("900", SyncState.NOT_SYNCED)
+    assert not _alerts().exists()
+
+
+def test_links_and_receipts_share_one_batch(ready) -> None:
+    charges = [_card_charge() for _ in range(3)]
+    for charge in charges[:2]:
+        CustomerLink.objects.filter(contact=charge.reservation.lead.contact).delete()
+    names = [charge.reservation.lead.contact.name for charge in charges[:2]]
+    answers = [
+        {"Customer": _customer(id_="61", name=names[0])},
+        {"Customer": _customer(id_="62", name=names[1])},
+        _receipt(),
+    ]
+    with (
+        patch.object(qbo_receipts, "SYNC_BATCH", 3),
+        patch(REQ, side_effect=answers) as req,
+    ):
+        assert qbo_receipts.sync_pending() == 3
+    assert _paths(req) == ["customer", "customer", "salesreceipt"]
+    # The next run carries on with the receipts left.
+    with (
+        patch.object(qbo_receipts, "SYNC_BATCH", 3),
+        patch(REQ, side_effect=[_receipt(id_="901"), _receipt(id_="902")]) as req,
+    ):
+        assert qbo_receipts.sync_pending() == 2
+    assert _paths(req) == ["salesreceipt", "salesreceipt"]
