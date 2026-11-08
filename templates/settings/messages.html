@@ -52,10 +52,10 @@
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2 w-full sm:w-auto sm:shrink-0 pt-1">
       <button type="button" @click="editQuiet()" x-text="quietLabel" class="text-[12.5px] text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">{{ quiet_label }}</button>
       <span class="inline-flex items-center gap-2">
-        <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'All messaging on' : 'All messaging off'">{% if master_on %}All messaging on{% else %}All messaging off{% endif %}</span>
+        <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-muted'" x-text="on ? 'All messaging on' : 'All messaging off'">{% if master_on %}All messaging on{% else %}All messaging off{% endif %}</span>
         <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if master_on %}true{% else %}false{% endif %}" aria-label="Master messaging switch" @click="flip()" :disabled="busy"
                 class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"
-                :class="on ? 'bg-emerald-600' : 'bg-slate-300'">
+                :class="on ? 'bg-gold hover:bg-goldd' : 'bg-slate-300 hover:bg-slate-400'">
           <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
         </button>
       </span>
@@ -127,7 +127,7 @@
           {% if item.has_switch %}
           <button type="button" role="switch" :aria-checked="on.toString()" aria-checked="{% if item.row.enabled %}true{% else %}false{% endif %}" aria-label="{{ item.name }} switch" @click="flip()" :disabled="busy"
                   class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed"
-                  :class="on ? 'bg-emerald-600' : 'bg-slate-300'">
+                  :class="on ? 'bg-gold hover:bg-goldd' : 'bg-slate-300 hover:bg-slate-400'">
             <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform" :class="on ? 'translate-x-4' : 'translate-x-0.5'"></span>
           </button>
           {% else %}

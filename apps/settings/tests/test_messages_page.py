@@ -154,3 +154,12 @@ def test_header_actions_wrap_at_phone_width(client):
     tag = html[html.rindex("<div", 0, group) : html.index(">", group)]
     assert "w-full" in tag and "sm:w-auto" in tag and "sm:shrink-0" in tag
     assert " shrink-0" not in tag.replace("sm:shrink-0", "")
+
+
+def test_switches_use_the_one_accent_and_have_a_hover(client):
+    _admin(client)
+    seed()
+    html = _get(client)
+    assert "bg-emerald-600" not in html
+    assert "'text-ink' : 'text-muted'" in html
+    assert html.count("'bg-gold hover:bg-goldd' : 'bg-slate-300 hover:bg-slate-400'") >= 2
