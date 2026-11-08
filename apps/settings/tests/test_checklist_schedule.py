@@ -191,3 +191,14 @@ def test_preview_refuses_a_due_type_it_cannot_describe():
     with patch("apps.tasks.schedule.apply_schedule", stub):
         with pytest.raises(ValueError, match="unknown due type Unknown"):
             schedule.preview("ops_review", "standard", 24, "hours", now=FIXED)
+
+
+def test_farm_in_final_balance_row_says_when_it_opens(client):
+    _owner(client)
+
+    html = client.get(reverse("checklist_schedule")).content.decode()
+
+    row = html.split('data-key="final_balance_paid" data-variant="farm_in"')[1].split("data-key=")[
+        0
+    ]
+    assert "Opens when the trip ends." in row

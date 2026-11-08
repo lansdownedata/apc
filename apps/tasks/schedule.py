@@ -103,6 +103,7 @@ def _units(key: str, variant: str) -> tuple[str, ...]:
 
 
 _BALANCE_NOTE = "Opens when the balance is charged (30 days before pickup)."
+_FARM_BALANCE_NOTE = "Opens when the trip ends."
 _RENEWAL_NOTE = "Opens 30 days before expiry."
 
 
@@ -145,12 +146,14 @@ def _build_rows() -> tuple[ScheduleRow, ...]:
         "final_balance_paid": _BALANCE_NOTE,
         "insurance_renewal": _RENEWAL_NOTE,
     }
+    # The farm-in clock opens its balance task differently (`FARM_IN`).
+    farm_notes = {"final_balance_paid": _FARM_BALANCE_NOTE}
     rows = []
     for group, keys in groups:
         for key in keys:
             variants = (STANDARD, FARM) if key in FARM_IN else (STANDARD,)
             for variant in variants:
-                note = notes.get(key, "") if variant == STANDARD else ""
+                note = (notes if variant == STANDARD else farm_notes).get(key, "")
                 anchor, units = _anchor(key, variant), _units(key, variant)
                 rows.append(ScheduleRow(key, variant, group, anchor, units, note))
     return tuple(rows)
