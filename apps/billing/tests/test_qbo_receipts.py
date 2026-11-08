@@ -1,7 +1,8 @@
 """APC-108 — QuickBooks card customers, Sales Receipts and Refund Receipts."""
 
 import json
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +13,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.billing import qbo_receipts
 from apps.billing.factories import BillingAccountFactory, CustomerLinkFactory
+from apps.billing.invoices import line_description
 from apps.billing.models import CustomerLink, QboAccountMapping, SyncState
 from apps.contacts.factories import ContactFactory
 from apps.contacts.models import Contact
@@ -19,6 +21,7 @@ from apps.integrations import qbo
 from apps.notifications.models import Notification
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
 from apps.payments.models import Charge
+from apps.payments.qbo_bills import _Refused
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import TripReview
 
@@ -393,3 +396,145 @@ def test_push_customer_skips_when_the_account_is_the_customer() -> None:
     CustomerLink.objects.filter(pk=link.pk).update(qbo_id="55", qbo_realm_id="123")
     with patch(REQ, return_value={"Customer": _customer()}):
         assert qbo_receipts.push_customer(link) is True
+
+
+# --- payloads ---
+
+DEPOSIT = {"value": "35"}
+
+
+@pytest.fixture
+def receipt_mapping():
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+    ):
+        yield _receipt_mapping()
+
+
+def _receipt_mapping():
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccount
+
+    config = QboAccountMapping.load()
+    config.trip_item = QboItemFactory(realm_id="123", qbo_id="9")
+    config.sales_deposit_account = QboAccount.objects.create(
+        realm_id="123", qbo_id="35", name="Undeposited Funds", account_type="Other Current Asset"
+    )
+    config.save()
+    return config
+
+
+def _card_charge(*, kind=Charge.Kind.TRIP, **kwargs):
+    from apps.billing.tests._helpers import _processed_trip
+
+    trip = _processed_trip(accountant=UserFactory())
+    CustomerLinkFactory(contact=trip.lead.contact, qbo_id="77", qbo_realm_id="123")
+    defaults = {
+        "kind": kind,
+        "status": Charge.Status.SUCCEEDED,
+        "reservation": trip,
+        "amount": Decimal("600.00"),
+        "stripe_payment_intent_id": "pi_123",
+        "card_last4": "4242",
+    }
+    return ChargeFactory(**{**defaults, **kwargs})
+
+
+def test_sales_receipt_payload_exact(receipt_mapping) -> None:
+    charge = _card_charge()
+    trip = charge.reservation
+    body = qbo_receipts.sales_receipt_payload(charge, "123")
+    assert body == {
+        "CustomerRef": {"value": "77"},
+        "TxnDate": qbo_receipts.txn_date(charge).isoformat(),
+        "DepositToAccountRef": DEPOSIT,
+        "PaymentRefNum": "pi_123",
+        "PrivateNote": f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk}",
+        "Line": [
+            {
+                "DetailType": "SalesItemLineDetail",
+                "Amount": "600.00",
+                "Description": f"{line_description(trip)} · card ••4242 · receipt R-{charge.pk}",
+                "SalesItemLineDetail": {"ItemRef": {"value": "9"}, "Qty": 1, "UnitPrice": "600.00"},
+            }
+        ],
+    }
+    assert "PaymentMethodRef" not in body
+    assert "DocNumber" not in body
+
+
+def test_refund_receipt_payload_exact(receipt_mapping) -> None:
+    charge = _card_charge(
+        kind=Charge.Kind.REFUND,
+        amount=Decimal("100.00"),
+        note="Trip cancelled",
+        stripe_payment_intent_id="",
+        stripe_refund_id="re_" + "x" * 30,
+    )
+    trip = charge.reservation
+    assert qbo_receipts.refund_receipt_payload(charge, "123") == {
+        "CustomerRef": {"value": "77"},
+        "TxnDate": qbo_receipts.txn_date(charge).isoformat(),
+        "DepositToAccountRef": DEPOSIT,
+        "PaymentRefNum": ("re_" + "x" * 30)[:21],
+        "PrivateNote": f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk}",
+        "Line": [
+            {
+                "DetailType": "SalesItemLineDetail",
+                "Amount": "100.00",
+                "Description": f"Refund · Trip cancelled · {trip.reference}",
+                "SalesItemLineDetail": {"ItemRef": {"value": "9"}, "Qty": 1, "UnitPrice": "100.00"},
+            }
+        ],
+    }
+
+
+def test_txn_date_is_the_trip_local_date() -> None:
+    charge = _card_charge()
+    charge.created_at = datetime(2026, 3, 2, 4, 30, tzinfo=UTC)
+    charge.reservation.pickup_timezone = "America/New_York"
+    assert qbo_receipts.txn_date(charge) == date(2026, 3, 1)
+
+
+def test_card_segment_omitted_when_last4_blank(receipt_mapping) -> None:
+    charge = _card_charge(card_last4="")
+    line = qbo_receipts.sales_receipt_payload(charge, "123")["Line"][0]
+    assert "card" not in line["Description"]
+    assert line["Description"].endswith(f" · receipt R-{charge.pk}")
+
+
+def test_payment_ref_omitted_when_blank(receipt_mapping) -> None:
+    charge = _card_charge(stripe_payment_intent_id="")
+    assert "PaymentRefNum" not in qbo_receipts.sales_receipt_payload(charge, "123")
+
+
+@pytest.mark.parametrize("missing", ["item", "account", "customer"])
+def test_payload_refuses_without_item_account_or_customer(receipt_mapping, missing) -> None:
+    charge = _card_charge()
+    if missing == "item":
+        receipt_mapping.trip_item = None
+        receipt_mapping.save()
+    elif missing == "account":
+        receipt_mapping.sales_deposit_account = None
+        receipt_mapping.save()
+    else:
+        CustomerLink.objects.all().delete()
+    for build in (qbo_receipts.sales_receipt_payload, qbo_receipts.refund_receipt_payload):
+        with pytest.raises(_Refused) as caught:
+            build(charge, "123")
+        assert caught.value.alert is False
+
+
+def test_receipt_matches_ignores_subtotal_line() -> None:
+    body = {"Line": [{"Amount": "600.00"}]}
+    obj = {
+        "TotalAmt": 600,
+        "Line": [
+            {"DetailType": "SalesItemLineDetail"},
+            {"DetailType": "SubTotalLineDetail"},
+        ],
+    }
+    assert qbo_receipts.receipt_matches(obj, body)
+    obj["Line"].append({"DetailType": "SalesItemLineDetail"})
+    assert not qbo_receipts.receipt_matches(obj, body)
+    assert not qbo_receipts.receipt_matches({**obj, "TotalAmt": 599}, body)

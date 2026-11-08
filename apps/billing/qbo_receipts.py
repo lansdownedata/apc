@@ -16,13 +16,28 @@ requestids, leases, one alert per failure, SYNCED only when nothing changed mid-
 from __future__ import annotations
 
 import re
+from datetime import date
+from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.db.models import Exists, OuterRef, Q
 
+from apps.billing.invoices import line_description
 from apps.billing.models import AccountGroup, BillingAccount, CustomerLink
+from apps.billing.qbo_invoices import DESCRIPTION_MAX, ITEM_LINE, NO_TRIP_ITEM, trip_item_ref
 from apps.billing.qbo_sync import DUPLICATE_NAME, _fault_code, current_realm
 from apps.integrations import qbo
-from apps.payments.qbo_bills import _leased, _Link, _push, _quoted, _Refused, _send, _stale
+from apps.payments.qbo_bills import (
+    _leased,
+    _Link,
+    _push,
+    _quoted,
+    _Refused,
+    _same_total,
+    _send,
+    _stale,
+    deposit_account_ref,
+)
 
 # QuickBooks' limit for a Customer's DisplayName.
 DISPLAY_NAME_MAX = 100
@@ -207,6 +222,80 @@ def pending_links(realm: str):
 
 
 # --- payloads ------------------------------------------------------------------------------------
+
+NO_DEPOSIT_ACCOUNT = (
+    "Waiting: choose the deposit account for card payments in Settings \u2192 QuickBooks."
+)
+WAITING_FOR_CUSTOMER = "Waiting for the customer in QuickBooks."
+# QuickBooks' limit for PaymentRefNum.
+PAYMENT_REF_MAX = 21
+
+
+def txn_date(charge) -> date:
+    """The receipt's date: when the charge was made, on the calendar of the trip's own zone."""
+    zone = ZoneInfo(charge.reservation.pickup_timezone or "America/New_York")
+    return charge.created_at.astimezone(zone).date()
+
+
+def _receipt_base(charge, realm: str, ref_number: str) -> tuple[dict, dict, str]:
+    """The keys both receipts share, the item ref and the trip reference. Raises `_Refused`
+    (no alert: the cause is shared by every receipt) until the item, the deposit account and
+    the customer are all in QuickBooks."""
+    item = trip_item_ref()
+    if item is None:
+        raise _Refused(NO_TRIP_ITEM, alert=False)
+    deposit = deposit_account_ref()
+    if deposit is None:
+        raise _Refused(NO_DEPOSIT_ACCOUNT, alert=False)
+    trip = charge.reservation
+    customer = customer_ref(trip.lead.contact, realm)
+    if customer is None:
+        raise _Refused(WAITING_FOR_CUSTOMER, alert=False)
+    body = {
+        "CustomerRef": customer,
+        "TxnDate": txn_date(charge).isoformat(),
+        "DepositToAccountRef": deposit,
+    }
+    if ref_number:
+        body["PaymentRefNum"] = ref_number[:PAYMENT_REF_MAX]
+    body["PrivateNote"] = (
+        f"{trip.reference} \u00b7 order {trip.lead.quote_no} \u00b7 receipt R-{charge.pk}"
+    )
+    return body, item, trip.reference
+
+
+def _item_line(charge, item: dict, description: str) -> dict:
+    amount = f"{charge.amount:.2f}"
+    return {
+        "DetailType": ITEM_LINE,
+        "Amount": amount,
+        "Description": description[:DESCRIPTION_MAX],
+        "SalesItemLineDetail": {"ItemRef": item, "Qty": 1, "UnitPrice": amount},
+    }
+
+
+def sales_receipt_payload(charge, realm: str) -> dict:
+    """The QuickBooks Sales Receipt body for a succeeded card charge. No PaymentMethodRef and
+    no DocNumber: QuickBooks numbers it, and the receipt id rides on the note and line."""
+    body, item, _ = _receipt_base(charge, realm, charge.stripe_payment_intent_id)
+    card = f" \u00b7 card \u2022\u2022{charge.card_last4}" if charge.card_last4 else ""
+    description = f"{line_description(charge.reservation)}{card} \u00b7 receipt R-{charge.pk}"
+    body["Line"] = [_item_line(charge, item, description)]
+    return body
+
+
+def refund_receipt_payload(charge, realm: str) -> dict:
+    """The QuickBooks Refund Receipt body for a succeeded card refund."""
+    body, item, reference = _receipt_base(charge, realm, charge.stripe_refund_id)
+    description = f"Refund \u00b7 {charge.note or 'Refund'} \u00b7 {reference}"
+    body["Line"] = [_item_line(charge, item, description)]
+    return body
+
+
+def receipt_matches(obj: dict, body: dict) -> bool:
+    """What QuickBooks holds is what we sent: the same total and exactly one item line."""
+    lines = [row for row in obj.get("Line", []) if row.get("DetailType") == ITEM_LINE]
+    return len(lines) == 1 and _same_total(obj, Decimal(body["Line"][0]["Amount"]))
 
 
 # --- the push ------------------------------------------------------------------------------------
