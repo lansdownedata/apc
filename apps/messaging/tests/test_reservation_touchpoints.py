@@ -698,3 +698,20 @@ def test_the_grouped_body_lists_every_trip_in_the_day():
     )
     assert "Dulles International" in email_body
     assert "Reagan National" in email_body
+
+
+def test_message_context_has_tz_for_eastern_trip():
+    from datetime import date, time
+
+    from apps.messaging.touchpoint_templates import build_context
+
+    lead = _booked_lead()
+    res = ReservationFactory(
+        lead=lead,
+        pickup_date=date(2026, 7, 14),
+        pickup_time=time(14, 0),
+        pickup_timezone="America/New_York",  # equals settings.TIME_ZONE
+    )
+    ctx = build_context(lead, res)
+    assert ctx["trip_pickup_tz"] == "EDT"
+    assert ctx["trip_pickup_time"].endswith(" EDT")

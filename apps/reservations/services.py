@@ -173,7 +173,7 @@ def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> 
         "quote_no": lead.quote_no,
         "pickup_date": f"{pickup_at:%A, %B %-d, %Y}" if pickup_at else "",
         "pickup_time": (
-            f"{pickup_at:%-I:%M %p} {reservation.pickup_tz_abbrev}".strip()
+            f"{pickup_at:%-I:%M %p} {reservation.pickup_tz_label}".strip()
             if pickup_at and reservation.pickup_time is not None
             else ""
         ),

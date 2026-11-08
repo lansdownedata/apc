@@ -1203,7 +1203,7 @@ def test_one_trip_keeps_the_singular_confirmation_text():
         sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip))
 
     (sms,) = _bodies(send, "phone")
-    assert f"Your trip on {NOV_14:%b %d, %Y} at 10:00 AM is coming up. Please" in sms
+    assert f"Your trip on {NOV_14:%b %d, %Y} at 10:00 AM EST is coming up. Please" in sms
 
 
 def test_two_trips_one_day_confirmation_text_names_both_times():
@@ -1216,7 +1216,7 @@ def test_two_trips_one_day_confirmation_text_names_both_times():
 
     (sms,) = _bodies(send, "phone")
     assert (
-        f"Your trips on {NOV_14:%b %d, %Y} at 10:00 AM and 4:00 PM are coming up. Please"
+        f"Your trips on {NOV_14:%b %d, %Y} at 10:00 AM EST and 4:00 PM EST are coming up. Please"
     ) in sms
 
 

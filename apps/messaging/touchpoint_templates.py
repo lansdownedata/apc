@@ -531,7 +531,7 @@ def _clock(reservation) -> str:
     pickup_at = reservation.pickup_at
     if pickup_at is None or reservation.pickup_time is None:
         return ""
-    return f"{pickup_at:%-I:%M %p} {reservation.pickup_tz_abbrev}".strip()
+    return f"{pickup_at:%-I:%M %p} {reservation.pickup_tz_label}".strip()
 
 
 def _and(items: list[str]) -> str:
@@ -592,7 +592,7 @@ def _trip_context(reservation) -> dict[str, str]:
     if pickup_at is not None:
         ctx["trip_pickup_date"] = f"{pickup_at:%b %d, %Y}"
         if reservation.pickup_time is not None:
-            ctx["trip_pickup_tz"] = reservation.pickup_tz_abbrev
+            ctx["trip_pickup_tz"] = reservation.pickup_tz_label
             ctx["trip_pickup_time"] = _clock(reservation)
     ctx.update(day_when([reservation]))
 

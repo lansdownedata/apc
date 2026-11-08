@@ -135,3 +135,28 @@ def test_refresh_re_resolves_when_the_pickup_address_changes():
     assert res.refresh_pickup_timezone() is True
     res.refresh_from_db()
     assert res.pickup_timezone == "America/Los_Angeles"
+
+
+def test_label_always_has_abbreviation():
+    res = TransferReservationFactory(
+        pickup_date=date(2026, 7, 14),
+        pickup_time=time(7, 30),
+        pickup_timezone="America/New_York",
+    )
+    assert res.pickup_tz_label == "EDT"
+
+
+def test_label_follows_dst():
+    res = TransferReservationFactory(
+        pickup_date=date(2027, 1, 14),
+        pickup_time=time(7, 30),
+        pickup_timezone="America/New_York",
+    )
+    assert res.pickup_tz_label == "EST"
+
+
+def test_label_falls_back_to_time_zone():
+    res = TransferReservationFactory(
+        pickup_date=date(2026, 7, 14), pickup_time=time(7, 30), pickup_timezone=""
+    )
+    assert res.pickup_tz_label == "EDT"

@@ -47,7 +47,7 @@ def test_json_attr_encodes_dicts_and_escapes_for_attributes():
     assert "<" not in out and '"' not in out
 
 
-def test_pickup_clock_omits_abbrev_in_the_project_zone():
+def test_pickup_clock_filter_unchanged_for_local_zone():
     res = TransferReservationFactory(
         pickup_date=date(2026, 9, 14),
         pickup_time=time(7, 30),

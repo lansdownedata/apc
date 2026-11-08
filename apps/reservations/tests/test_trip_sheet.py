@@ -157,3 +157,12 @@ def test_a_flightless_trip_has_no_flight_lines():
     trip = _trip(stops=["A", "B"])
     assert trip_sheet_context(trip)["flight_lines"] == []
     assert "Flight:" not in trip_sheet_text(trip)
+
+
+def test_affiliate_offer_context_has_tz():
+    from datetime import date, time
+
+    trip = _trip(
+        pickup_date=date(2026, 7, 14), pickup_time=time(14, 0), pickup_timezone="America/New_York"
+    )
+    assert trip_sheet_context(trip, affiliate=True)["pickup_time"] == "2:00 PM EDT"
