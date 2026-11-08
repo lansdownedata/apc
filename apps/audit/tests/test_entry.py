@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.audit import registry
 from apps.audit.models import AuditEntry
+from apps.contacts.factories import ContactFactory
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripReview
 
@@ -118,3 +119,39 @@ def test_an_explicit_key_named_like_a_reverse_relation_is_kept():
     )
 
     assert entry.changes == {"named_passengers": ["", "Ana Ruiz"]}
+
+
+@pytest.mark.parametrize("pair", [["None", ""], ["", "None"], [None, ""], ["", ""]])
+def test_a_blank_to_blank_pair_is_no_change(pair):
+    """`Contact.email` going None → "" is no change anyone made; it would read "— → —"."""
+    contact = ContactFactory()
+
+    entry = AuditEntry.objects.log_create(
+        contact, action=AuditEntry.Action.UPDATE, changes={"email": pair}
+    )
+
+    assert entry is None
+
+
+def test_a_blank_pair_is_dropped_and_the_real_change_beside_it_kept():
+    contact = ContactFactory(name="Ana")
+
+    entry = AuditEntry.objects.log_create(
+        contact,
+        action=AuditEntry.Action.UPDATE,
+        changes={"email": ["None", ""], "name": ["Ana", "Ana Ruiz"]},
+    )
+
+    assert entry.changes == {"name": ["Ana", "Ana Ruiz"]}
+
+
+def test_a_blank_pair_under_an_explicit_key_is_kept():
+    """A removed stop that had no address reads `route.2: ["", None]`; only the model's own
+    columns lose blank pairs."""
+    r = ReservationFactory()
+
+    entry = AuditEntry.objects.log_create(
+        r, action=AuditEntry.Action.UPDATE, changes={"route.2": ["", None]}
+    )
+
+    assert entry.changes == {"route.2": ["", None]}

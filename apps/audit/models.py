@@ -13,6 +13,8 @@ from django.db import models
 
 from . import context, registry
 
+BLANK = (None, "None", "")
+
 
 class AuditEntryManager(LogEntryManager):
     """Stamps parents, a cheap label and the frame's who/through-what on every entry.
@@ -37,12 +39,15 @@ class AuditEntryManager(LogEntryManager):
         """Drop pairs that differ only as text: auditlog compares `str()`s, so an editor
         assigning Decimal("185") over a stored 185.00 would read as a change. Only the
         model's own columns are compared; any other key (a reverse relation's name used by an
-        explicit entry, e.g. `named_passengers`) is kept as given."""
+        explicit entry, e.g. `named_passengers`) is kept as given. A column blank on both
+        sides (None, auditlog's "None", "") is no change either: it would read "— → —"."""
         kept = {}
         for name, (old, new) in changes.items():
             try:
                 field = instance._meta.get_field(name)
-                same = field.concrete and field.to_python(old) == field.to_python(new)
+                same = field.concrete and (
+                    (old in BLANK and new in BLANK) or field.to_python(old) == field.to_python(new)
+                )
             except (FieldDoesNotExist, ValidationError, TypeError, ValueError):
                 same = False
             if not same:
@@ -85,7 +90,7 @@ class AuditEntryManager(LogEntryManager):
 
 
 class AuditEntry(AbstractLogEntry):
-    source = models.CharField(max_length=80, blank=True, db_index=True)
+    source = models.CharField(max_length=255, blank=True, db_index=True)
     trip_id = models.BigIntegerField(null=True, db_index=True)
     order_id = models.BigIntegerField(null=True, db_index=True)
     profile = models.CharField(max_length=40, blank=True, db_index=True)

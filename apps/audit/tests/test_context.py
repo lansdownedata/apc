@@ -111,3 +111,18 @@ def test_no_frame_otherwise_is_system(monkeypatch):
 def test_no_frame_has_no_cid(settings):
     assert settings.AUDITLOG_CID_HEADER is None
     assert current_cid() is None
+
+
+def test_a_source_longer_than_its_column_is_clipped_and_the_save_still_succeeds():
+    """An import names its file in the source (§4.4); a 255-character filename must not fail
+    the business row's save on a strict database."""
+    long_source = "import: " + "x" * 292
+    assert len(long_source) == 300
+
+    with audit_context(source=long_source):
+        reservation = ReservationFactory()
+
+    entry = _entries(reservation).get()
+    max_length = AuditEntry._meta.get_field("source").max_length
+    assert max_length == 255
+    assert entry.source == long_source[:max_length]

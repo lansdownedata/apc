@@ -69,16 +69,24 @@ def _value(value: Any) -> Any:
     return value() if callable(value) else value
 
 
+def _clip(source: str) -> str:
+    """The source cut to its column: a long import filename or request path must not fail
+    the business save (auditlog re-raises a logging error, spec §7)."""
+    from .models import AuditEntry
+
+    return str(source)[: AuditEntry._meta.get_field("source").max_length]
+
+
 def resolve() -> tuple[User | None, str, str]:
     """`(actor, actor_email, source)` for the entry being written now."""
     frame = _frame.get()
     if frame is None:
-        return None, "", fallback_source()
+        return None, "", _clip(fallback_source())
     if frame.resolved is None:
         actor = _value(frame.actor)
         actor_email = _value(frame.actor_email) or (getattr(actor, "email", "") if actor else "")
         # A source that comes out blank would leave an entry saying nothing (or fail the
         # save on the NOT NULL column), so it falls back like a frameless write.
         source = _value(frame.source) or fallback_source()
-        frame.resolved = (actor, actor_email or "", source)
+        frame.resolved = (actor, actor_email or "", _clip(source))
     return frame.resolved
