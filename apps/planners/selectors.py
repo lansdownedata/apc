@@ -4,6 +4,7 @@ an attribute someone reaches for later — the fields simply aren't there."""
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -59,8 +60,17 @@ def _wedding_date(lead: Lead, trips) -> date | None:
 
 
 def _home_zone(trips) -> str:
-    first = _first(trips)
-    return (first.pickup_timezone if first else "") or ""
+    """The zone most of the day runs in — not the earliest pickup's, which is often an
+    out-of-town leg (family flying in) and would flag every local trip as 'away'. Ties go
+    to the earliest trip."""
+    dated = sorted(
+        (t for t in trips if t.pickup_date is not None and t.pickup_timezone),
+        key=lambda t: (t.pickup_date, t.pickup_time or time.min, t.pk),
+    )
+    if not dated:
+        return ""
+    counts = Counter(t.pickup_timezone for t in dated)
+    return max(dated, key=lambda t: counts[t.pickup_timezone]).pickup_timezone
 
 
 def _summary(lead: Lead, *, now, grace) -> dict:

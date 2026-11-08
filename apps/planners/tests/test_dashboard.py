@@ -194,6 +194,16 @@ def test_every_leg_shows_its_own_timezone_abbreviation(client, planner):
     assert re.search(rf"7:00 AM.*?{chi}", html, re.S)
 
 
+def test_home_zone_is_where_most_of_the_day_runs_not_the_earliest_pickup(client, planner):
+    """APC-98: an early out-of-town leg (family flying in from Nashville) must not become
+    the wedding's own zone and flag every DC pickup as 'another time zone'."""
+    lead, _ = _wedding(planner, trips=3)
+    _trip(lead, zone=CHI, at=time(7, 0), day=_day(29), service="Family travel")
+    html = _page(client, lead)
+    assert html.count("not the wedding&rsquo;s own time zone") == 1
+    assert re.search(r"7:00 AM.*?CST.*?not the wedding&rsquo;s own time zone", html, re.S)
+
+
 def test_before_any_trips_exist_the_day_is_being_built(client, planner):
     lead, _ = _wedding(planner, trips=0)
     html = _page(client, lead)
