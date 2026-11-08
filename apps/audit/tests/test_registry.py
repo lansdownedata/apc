@@ -357,6 +357,10 @@ def test_parents_and_label_never_raise_on_minimal_instance(model):
     assert isinstance(registry.label(instance), str)
 
 
+def test_payable_with_a_cached_empty_assignment_has_no_parents():
+    assert registry.parents(AffiliatePayable(assignment=None)) == {}
+
+
 def test_two_hop_parents_survive_a_deleted_parent():
     """A child whose parent row is gone (a cascade delete logging its children) files the
     entry under what it still knows, without raising."""
@@ -506,3 +510,7 @@ def test_secret_never_in_changes():
 
 def test_planner_request_sentence():
     assert registry.spec_for(PlannerRequest).sentences == {"create": 'Planner request: "{about}"'}
+
+
+def test_charge_plan_is_not_tracked():
+    assert "plan" in registry.effective_exclude(Charge)

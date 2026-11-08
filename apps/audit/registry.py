@@ -136,6 +136,8 @@ def _payable_parents(payable: Model) -> dict:
     field = payable._meta.get_field("assignment")
     if field.is_cached(payable):
         assignment = field.get_cached_value(payable)
+        if assignment is None:
+            return {}
         reservation_id, vendor_id = assignment.reservation_id, assignment.vendor_id
         lead_id = _through(assignment, "reservation__lead_id")
     elif payable.assignment_id is None:
@@ -288,6 +290,7 @@ SPECS: list[ModelSpec] = [
     ModelSpec(
         model="payments.Charge",
         exclude=(
+            "plan",
             "stripe_client_secret",
             "stripe_payment_intent_id",
             "stripe_refund_id",
