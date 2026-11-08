@@ -236,7 +236,14 @@ SPECS: list[ModelSpec] = [
     ),
     ModelSpec(
         model="contacts.Contact",
-        exclude=("la_account_id", "podium_contact_uid", "stripe_customer_id"),
+        # The address FKs: track_address logs the slot's fields (spec §3.4, Ruling 26).
+        exclude=(
+            "la_account_id",
+            "podium_contact_uid",
+            "stripe_customer_id",
+            "primary_address",
+            "billing_address",
+        ),
         parents=lambda contact: {"profile": _profile("contact", contact.pk)},
         label=lambda contact: contact.name,
     ),
@@ -266,7 +273,7 @@ SPECS: list[ModelSpec] = [
     ),
     ModelSpec(
         model="vendors.Vendor",
-        exclude=("qbo_push_started_at",),
+        exclude=("qbo_push_started_at", "address"),  # address: track_address (Ruling 26)
         qbo=True,
         m2m=frozenset({"vehicle_types"}),
         parents=lambda vendor: {"profile": _profile("vendor", vendor.pk)},

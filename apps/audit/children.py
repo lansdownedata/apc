@@ -130,10 +130,12 @@ def track_children(
 
 
 def _address_values(address: Address | None) -> dict[str, str]:
-    """The compared fields; with no address yet, what a new Address starts with (so a first
-    address that leaves the default country alone logs no country change)."""
+    """The compared fields; with no address yet, each one blank (spec §3.4 "old side blank").
+    Every field is a non-null CharField, so blank is "", and a field left empty logs
+    nothing. The model's defaults would not do: the widget posts country "US" over the
+    default "United States", a change nobody made."""
     if address is None:
-        return {name: Address._meta.get_field(name).get_default() for name in ADDRESS_FIELDS}
+        return dict.fromkeys(ADDRESS_FIELDS, "")
     return {name: getattr(address, name) for name in ADDRESS_FIELDS}
 
 
@@ -142,10 +144,10 @@ def track_address(owner: Model, *, slot: str) -> Iterator[None]:
     """Log what the block did to the address in `owner.<slot>` as one entry on the owner.
 
     The block may write a different Address instance than the owner holds, so the slot is
-    re-read from the database afterwards. A first address reads as the model's defaults
-    before. The owner's own FK change, when the slot is filled for the first time, is
-    auditlog's entry on the owner's save and is not repeated here. Nothing is written under
-    auditlog's `disable_auditlog()`.
+    re-read from the database afterwards. A first address reads blank before. The owner's
+    FK to the address is excluded from the trail (Ruling 26), so these field lines are the
+    whole record of a first address. Nothing is written under auditlog's
+    `disable_auditlog()`.
     """
     if auditlog_disabled.get():
         yield

@@ -363,29 +363,53 @@ def test_contact_address_update_logs_slot_fields(staff):
 
 
 def test_first_address_old_side_blank(staff):
-    """Blank before, except fields with a model default: no country was posted, so the
-    country the new Address defaults to is no change."""
+    """Blank before, every field (spec §3.4, Ruling 24): the widget posts country "US", so a
+    first address logs `["", "US"]`, and the fields left empty log nothing."""
     contact = ContactFactory()
     assert contact.billing_address_id is None
 
     staff.post(
         reverse("contact_address_update", args=[contact.pk, "billing"]),
-        {"line1": "14 Beacon St", "city": "Boston"},
+        {"line1": "14 Beacon St", "line2": "", "city": "Boston", "country": "US"},
     )
 
     (entry,) = _address_entries(Contact, contact, "billing_address.")
     assert entry.changes == {
         "billing_address.line1": ["", "14 Beacon St"],
         "billing_address.city": ["", "Boston"],
+        "billing_address.country": ["", "US"],
     }
-    # Pointing the contact at its new Address is auditlog's own entry on the save, not ours.
-    contact.refresh_from_db()
-    fk = [
-        e
-        for e in _entries(Contact, object_id=contact.pk, action=UPDATE)
-        if "billing_address" in e.changes
+
+
+@pytest.mark.parametrize("slot", ["primary", "billing"])
+def test_a_first_contact_address_logs_only_its_field_lines(staff, slot):
+    """The owner's FK is excluded (Ruling 26): it would render through the Address's current
+    text, contradicting these lines after a later edit."""
+    contact = ContactFactory()
+    seen = set(AuditEntry.objects.values_list("pk", flat=True))
+
+    staff.post(
+        reverse("contact_address_update", args=[contact.pk, slot]),
+        {"line1": "14 Beacon St", "country": "US"},
+    )
+
+    new = AuditEntry.objects.exclude(pk__in=seen)
+    keys = {key for e in new for key in e.changes or {}}
+    assert keys == {f"{slot}_address.line1", f"{slot}_address.country"}
+
+
+def test_a_first_vendor_address_logs_only_its_field_lines(staff):
+    vendor = VendorFactory(address=None)
+    seen = set(AuditEntry.objects.values_list("pk", flat=True))
+
+    staff.post(
+        reverse("vendor_address_update", args=[vendor.pk]), {"city": "Reston", "country": "US"}
+    )
+
+    new = AuditEntry.objects.exclude(pk__in=seen)
+    assert [e.changes for e in new] == [
+        {"address.city": ["", "Reston"], "address.country": ["", "US"]}
     ]
-    assert [e.changes["billing_address"][1] for e in fk] == [str(contact.billing_address_id)]
 
 
 def test_vendor_address_update_logs(staff):
@@ -410,7 +434,7 @@ def test_unchanged_address_post_logs_nothing(staff):
     assert not AuditEntry.objects.exclude(pk__in=seen).exists()
 
 
-def test_first_address_posting_a_country_logs_it_from_the_default(staff):
+def test_first_address_posting_a_country_logs_it_from_blank(staff):
     contact = ContactFactory()
 
     staff.post(
@@ -421,7 +445,7 @@ def test_first_address_posting_a_country_logs_it_from_the_default(staff):
     (entry,) = _address_entries(Contact, contact, "primary_address.")
     assert entry.changes == {
         "primary_address.city": ["", "Toronto"],
-        "primary_address.country": ["United States", "Canada"],
+        "primary_address.country": ["", "Canada"],
     }
 
 

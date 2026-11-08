@@ -514,3 +514,10 @@ def test_planner_request_sentence():
 
 def test_charge_plan_is_not_tracked():
     assert "plan" in registry.effective_exclude(Charge)
+
+
+def test_owner_address_foreign_keys_are_not_tracked():
+    """track_address logs the address on its owner (Ruling 26); the FK itself would render
+    through the Address's current text, contradicting those lines after a later edit."""
+    assert {"primary_address", "billing_address"} <= set(registry.effective_exclude(Contact))
+    assert "address" in registry.effective_exclude(Vendor)
