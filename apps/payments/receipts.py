@@ -47,7 +47,7 @@ def is_receipt(charge: Charge) -> bool:
         and charge.receipt_parent_id is None
         and charge.reservation_id is not None
         and charge.status == Charge.Status.SUCCEEDED
-        and charge.kind in (Charge.Kind.TRIP, Charge.Kind.REFUND)
+        and charge.kind in (Charge.Kind.TRIP, Charge.Kind.HOLD, Charge.Kind.REFUND)
     )
 
 

@@ -515,6 +515,16 @@ REGISTRY: tuple[TaskKind, ...] = (
         applies=_never,
     ),
     TaskKind(
+        # APC-95. The cleaning hold could not be placed (no card on file, or declined); the
+        # note says which. Opened only by `payments.holds`, once per order; the trip runs.
+        key="cleaning_hold_failed",
+        label="Cleaning hold not placed",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpenBusinessDays(days=1),
+        applies=_never,
+    ),
+    TaskKind(
         # APC-71. One per affiliate policy; closes itself when a policy with a later expiry
         # is uploaded (see `vendor_tasks`). Opens where the vendor page's "expiring" colour
         # starts; due the morning it expires.

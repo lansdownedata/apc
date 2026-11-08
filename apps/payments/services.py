@@ -621,6 +621,10 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
 # A charge of these kinds newly succeeding is a message event (spec C section 3).
 _PAID_EVENTS = {Charge.Kind.DEPOSIT: "deposit_paid", Charge.Kind.BALANCE: "balance_paid"}
 
+# Money for one trip: a trip charge, or a cleaning hold captured for a trip (APC-95), which
+# posts, recognises and receipts exactly as a trip charge does.
+TRIP_MONEY_KINDS = (Charge.Kind.TRIP, Charge.Kind.HOLD)
+
 
 def _metadata(intent) -> dict:
     """Stripe objects are dict-like; a test double may not be."""
@@ -674,7 +678,7 @@ def _settle(
         _post_final(plan, charge, payment_intent_id)
         return None, False
     is_deposit = charge.kind == Charge.Kind.DEPOSIT
-    is_trip = charge.kind == Charge.Kind.TRIP
+    is_trip = charge.kind in TRIP_MONEY_KINDS
     receipt_now = False
     charge.status = Charge.Status.SUCCEEDED
     # A trip charge is processing's money: its receipt is due from now (APC-103).
@@ -695,6 +699,8 @@ def _settle(
         or (
             "Deposit captured"
             if is_deposit
+            else f"Cleaning fee from the hold ({charge.reservation})"
+            if is_trip and charge.kind == Charge.Kind.HOLD
             else f"Trip charge ({charge.reservation})"
             if is_trip
             else "Card payment"
@@ -761,7 +767,7 @@ def record_payment(
     sync_plan_from_collected(plan)
     if charge.kind == Charge.Kind.FINAL:
         _close_overtime_invoiced(plan.lead)
-    elif charge.kind == Charge.Kind.TRIP and charge.reservation_id:
+    elif charge.kind in TRIP_MONEY_KINDS and charge.reservation_id:
         _close_overtime_invoiced(plan.lead, reservation_id=charge.reservation_id)
         # The trip's revenue follows its live total (spec 2026-10-25 §4.4): a charge on an
         # already-recognised trip moves the new money out of deferred into revenue.

@@ -125,6 +125,10 @@ class Charge(QboSyncedModel, TimeStampedModel):
         # A processed trip's difference against what the order prepaid for it (APC-101,
         # spec 2026-10-25 §4.4). Always carries `reservation`.
         TRIP = "trip", "Trip charge"
+        # The order's one cleaning hold (APC-95, spec 2026-10-27 §4): a manual-capture
+        # authorization for the highest cleaning fee. Captured for a dirty trip it carries
+        # that trip and posts like a trip charge; otherwise it never moves money.
+        HOLD = "hold", "Cleaning hold"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

@@ -44,6 +44,8 @@ class Notification(TimeStampedModel):
         FARM_IN_SENT_BACK = "farm_in_sent_back", "Farm-in sent back"
         FARM_IN_UPDATED = "farm_in_updated", "Farm-in updated"
         FARM_IN_PUSH_FAILED = "farm_in_push_failed", "Farm-in status push failed"
+        # The cleaning hold could not be placed: no card, or the card declined (APC-95).
+        HOLD_FAILED = "hold_failed", "Cleaning hold not placed"
 
     # Every notification is about an order, except a vendor task's escalation (APC-71).
     lead = models.ForeignKey(
