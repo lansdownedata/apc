@@ -58,19 +58,23 @@ class PortalResource(ModelResource):
         super().__init__(**kwargs)
         self.notes: dict[int, dict] = {}
         self.duplicates: dict[int, str] = {}
+        self._created: set[int] = set()
         self._parsed: dict = {}
         self._dry_run = False
 
-    def import_data(self, dataset, dry_run=False, **kwargs):
-        self._dry_run = dry_run
-        return super().import_data(dataset, dry_run=dry_run, **kwargs)
+    @classmethod
+    def export_queryset(cls, queryset):
+        """`queryset` with what the export's dehydrate methods read joined or prefetched."""
+        return queryset
 
     def before_import(self, dataset, **kwargs) -> None:
-        """One pass over the file: a later row with an earlier row's key is an error.
+        """Start a run (one resource may preview, then apply), then one pass over the file:
+        a later row with an earlier row's key is an error.
 
         The key is what the row matches by — the email (case-insensitive) when there is one,
         else the phone (by E.164, or as typed when it doesn't parse).
         """
+        self.notes, self.duplicates, self._created = {}, {}, set()
         first: dict[tuple[str, str], int] = {}
         for values in dataset.dict:
             email = cell(values, "Email").strip().lower()
@@ -90,8 +94,16 @@ class PortalResource(ModelResource):
         n = row_no(row)
         self.notes[n] = {"key": "", "warnings": [], "changes": []}
         self._parsed = {}
+        self._dry_run = bool(kwargs.get("dry_run"))
         if n in self.duplicates:
             raise ValidationError(self.duplicates[n])
+
+    def after_init_instance(self, instance, new, row, **kwargs) -> None:
+        self._parsed["new"] = new
+
+    def after_save_instance(self, instance, row, **kwargs) -> None:
+        if self._parsed.get("new"):
+            self._created.add(instance.pk)
 
     def import_field(self, field, instance, row, is_m2m=False, **kwargs):
         """A blank cell leaves the saved value alone: an import never clears."""
@@ -133,9 +145,17 @@ class PortalResource(ModelResource):
             if _blank(value):
                 continue
             field = model_fields.get(column.name)
-            shown = self._display(instance, field) if field else value.strip()
+            shown = (
+                self._display(instance, field)
+                if field
+                else self.display_virtual(column.name, value)
+            )
             changes.append([column.name, "", shown])
         return changes
+
+    def display_virtual(self, column: str, value: str) -> str:
+        """A non-blank virtual cell as a new row's change shows it; a screen may format it."""
+        return value.strip()
 
     def model_changes(self, original, instance) -> list[list[str]]:
         changes = []
@@ -172,7 +192,9 @@ class PortalResource(ModelResource):
                 "reason": self.describe(row_result.validation_error, columns),
                 "values": {k: v for k, v in values.items() if k != ROW_COLUMN},
             }
-        object_id = None if kind == "new" and self._dry_run else row_result.object_id
+        # A dry run rolls back what it created: no link may point at it.
+        created_here = self._dry_run and row_result.object_id in self._created
+        object_id = None if created_here else row_result.object_id
         return out | {
             "object_id": object_id,
             "changes": note.get("changes", []),
