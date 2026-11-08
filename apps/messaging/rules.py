@@ -14,21 +14,24 @@ from typing import Literal
 from django.conf import settings
 from django.utils import timezone
 
+from apps.reservations.models import Reservation
+
 from . import defaults, fields, triggers
 from .models import MessageTemplate, NotificationConfig, TouchPoint
 from .recipients import Recipient, _person, resolve
 
 logger = logging.getLogger(__name__)
 
+_Trip = Reservation.TripStatus
 # Trip statuses at which the customer may be told who is driving: from Dispatched onward.
 DRIVER_MESSAGE_STATUSES = frozenset(
     {
-        "dispatched",
-        "dispatched_non_la",
-        "on_the_way",
-        "circling",
-        "arrived",
-        "customer_in_car",
+        _Trip.DISPATCHED,
+        _Trip.DISPATCHED_NON_LA,
+        _Trip.ON_THE_WAY,
+        _Trip.CIRCLING,
+        _Trip.ARRIVED,
+        _Trip.CUSTOMER_IN_CAR,
     }
 )
 
