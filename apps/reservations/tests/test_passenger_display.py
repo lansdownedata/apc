@@ -11,8 +11,9 @@ pytestmark = pytest.mark.django_db
 QUERY_BUDGET = (
     # lead detail, 5 trips x 3 passengers; 43 before the message history (+1 fixed query),
     # +1 (APC-136) for the header's GNet requests badge, one COUNT on every page,
-    # +1 (APC-136) for the workspace's GNet envelope lookup.
-    46
+    # +1 (APC-136) for the workspace's GNet envelope lookup,
+    # +1 (APC-106) for the nav's Billing badge, one COUNT on every page.
+    47
 )
 
 

@@ -111,6 +111,11 @@ class GroupRow:
     trips: list[Reservation] = field(default_factory=list)
     total: Decimal = Decimal("0")
 
+    @property
+    def terms_label(self) -> str:
+        """ "Net 30": the group's own terms, else its account's."""
+        return Terms(self.group.effective_terms).label
+
 
 @dataclass
 class AccountRow:

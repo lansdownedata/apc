@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+{% comment %}
+  Customer Billing (APC-106, spec 2026-10-25 §7). Processed trips billed to an account,
+  accounts and their groups on the left, the picked group's ready trips and open invoices on
+  the right. Selection is the ?group= query string, like Trip Processing's ?trip=.
+{% endcomment %}
+<div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6 h-[calc(100vh-3rem)] flex flex-col"
+     x-data="{ shown: {% if request.GET.group %}{{ group.pk|default:'null' }}{% else %}null{% endif %}, open: {} }">
+  <div class="flex flex-wrap items-end gap-3 mb-4 shrink-0">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink">Customer Billing</h1>
+      <p class="text-[12.5px] text-muted">Processed trips billed to an account, gathered into invoices one line per trip.</p>
+    </div>
+    <form method="get" class="w-full lg:w-auto lg:ml-auto grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2" aria-label="Filter ready trips">
+      <label class="col-span-2 flex items-center gap-2 ring-1 ring-line rounded-lg px-3 py-2 bg-surface focus-within:ring-gold transition sm:w-56">
+        <i class="ti ti-search text-[15px] text-muted" aria-hidden="true"></i>
+        <input type="text" name="q" value="{{ filters.q }}" placeholder="Customer or trip #" aria-label="Find a customer or trip"
+               class="flex-1 min-w-0 text-[12.5px] outline-none bg-transparent placeholder:text-muted/70">
+      </label>
+      <div class="sm:w-32"><input type="text" name="from" class="field text-[12px]" data-flatpickr data-fp-past value="{{ filters.date_from|date:'Y-m-d' }}" placeholder="From" aria-label="Pickups from"></div>
+      <div class="sm:w-32"><input type="text" name="to" class="field text-[12px]" data-flatpickr data-fp-past value="{{ filters.date_to|date:'Y-m-d' }}" placeholder="To" aria-label="Pickups to"></div>
+      <button type="submit" class="col-span-2 sm:col-span-1 text-[12px] font-semibold px-3 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50">Filter</button>
+      <p class="col-span-2 sm:basis-full text-[11px] text-muted sm:text-right">Pickups in each trip's own date</p>
+    </form>
+  </div>
+
+  <div class="card flex-1 min-h-0 overflow-hidden flex">
+    <!-- accounts pane -->
+    <div class="w-full sm:w-[300px] shrink-0 border-r border-line flex flex-col" :class="shown ? 'hidden sm:flex' : 'flex'">
+      <div class="px-4 py-3 border-b border-line text-[12px] text-muted num">{{ ready_count }} trip{{ ready_count|pluralize }} ready to invoice</div>
+      <div class="flex-1 overflow-y-auto">
+        {% for a in accounts %}
+        <div class="border-b border-line/70" x-init="open[{{ a.account.pk }}] = {% if group and group.account_id == a.account.pk %}true{% else %}false{% endif %}">
+          <button type="button" class="w-full flex items-center gap-2.5 px-4 py-3 text-left hover:bg-surface2 focus-gold"
+                  @click="open[{{ a.account.pk }}] = !open[{{ a.account.pk }}]" :aria-expanded="open[{{ a.account.pk }}] ? 'true' : 'false'">
+            <i class="ti ti-chevron-right text-[14px] text-muted transition-transform" :class="open[{{ a.account.pk }}] && 'rotate-90'" aria-hidden="true"></i>
+            <span class="min-w-0 flex-1 text-[13px] font-semibold text-ink truncate">{{ a.account.name }}</span>
+            <span class="num text-[12px] font-semibold text-ink shrink-0">${{ a.total|floatformat:2|intcomma }} ready</span>
+          </button>
+          <div x-show="open[{{ a.account.pk }}]" x-cloak class="pb-2">
+            {% for g in a.groups %}
+            <a href="?group={{ g.group.pk }}{% if filters.q %}&q={{ filters.q|urlencode }}{% endif %}{% if filters.date_from %}&from={{ filters.date_from|date:'Y-m-d' }}{% endif %}{% if filters.date_to %}&to={{ filters.date_to|date:'Y-m-d' }}{% endif %}"
+               @click="shown = {{ g.group.pk }}"
+               class="block pl-10 pr-4 py-2 transition-colors focus-gold {% if group.pk == g.group.pk %}bg-goldl/60{% else %}hover:bg-surface2{% endif %}"{% if group.pk == g.group.pk %} aria-current="true"{% endif %}>
+              <span class="block text-[12.5px] font-medium text-ink truncate">{{ g.group.name }}</span>
+              <span class="block text-[11.5px] text-muted truncate">{{ g.trips|length }} trip{{ g.trips|length|pluralize }} · {{ g.terms_label }} · {{ g.group.invoice_email|default:"No invoice email yet" }}</span>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% empty %}
+        <div class="px-4 py-8 text-center text-[13px] text-muted"><i class="ti ti-circle-check text-[22px] block mb-1 text-emerald-600" aria-hidden="true"></i>Nothing is ready to invoice.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- group pane -->
+    <div class="flex-1 flex flex-col min-w-0" :class="shown ? 'flex' : 'hidden sm:flex'">
+      {% if group %}
+        {% include "billing/_group_pane.html" %}
+      {% else %}
+        <div class="flex-1 grid place-items-center text-center px-6">
+          <div><i class="ti ti-file-invoice text-[28px] text-muted block mb-2" aria-hidden="true"></i><p class="text-[13px] text-muted">Nothing is ready to invoice.</p></div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_extra %}
+{% if group %}
+{{ draft|json_script:"billing-draft" }}
+<script>
+/* invoiceDraft: the Customer Billing pane (APC-106). The ticked trips drive the count, the
+ * total and the QuickBooks preview; Create and Void confirm through $store.modal and post
+ * form-encoded; success reloads, because the list and the invoices are server-rendered. */
+function invoiceDraft(dataId, createUrl) {
+  const data = JSON.parse(document.getElementById(dataId)?.textContent || "{}");
+  const trips = data.trips || [];
+  const amounts = Object.fromEntries(trips.map((t) => [t.id, Number(t.amount)]));
+  const money = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const plural = (n) => (n === 1 ? "1 trip" : `${n} trips`);
+  return {
+    picked: trips.map((t) => t.id),
+    count: trips.length,
+    po: data.defaultPo || "",
+    memo: "",
+    invoiceDate: "",
+    busy: false,
+    init() {
+      this.invoiceDate = this.$refs.invoiceDate?.value || "";
+    },
+    isPicked(id) {
+      return this.picked.includes(id);
+    },
+    get total() {
+      return this.picked.reduce((sum, id) => sum + (amounts[id] || 0), 0);
+    },
+    get totalLabel() {
+      return money(this.total);
+    },
+    get summary() {
+      return `${this.picked.length} of ${this.count} selected · ${this.totalLabel}`;
+    },
+    get createLabel() {
+      return `Create invoice from ${plural(this.picked.length)}`;
+    },
+    get due() {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(this.invoiceDate || "");
+      if (!m) return "";
+      const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + (data.termDays || 0)));
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+    },
+    create() {
+      if (!this.picked.length) return;
+      const n = this.picked.length;
+      Alpine.store("modal").confirm({
+        title: "Create this invoice?",
+        message: `${plural(n)}, ${this.totalLabel}, made out to ${data.group}${this.due ? `, due ${this.due}` : ""}. Once made it isn't edited: a wrong invoice is voided and made again.`,
+        variant: "gold",
+        confirmText: "Create invoice",
+        onConfirm: async () => {
+          this.busy = true;
+          try {
+            const body = this.picked.map((id) => ["trip_ids", String(id)]);
+            body.push(["invoice_date", this.invoiceDate], ["po_number", this.po], ["memo", this.memo]);
+            const json = await postForm(createUrl, body);
+            window.location = json.redirect;
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+          } finally {
+            this.busy = false;
+          }
+        },
+      });
+    },
+    voidInvoice(url, label) {
+      Alpine.store("modal").show({
+        title: `Void ${label}?`,
+        message: "Its trips go back to ready to invoice.",
+        html:
+          '<label for="void-reason" class="block text-[12.5px] font-medium text-ink">Why it is voided</label>' +
+          '<input id="void-reason" type="text" class="field mt-1.5" maxlength="255" required>',
+        variant: "danger",
+        confirmText: "Void invoice",
+        showCancel: true,
+        onConfirm: async () => {
+          const reason = (document.getElementById("void-reason")?.value || "").trim();
+          if (!reason) {
+            Alpine.store("toast").push({ type: "danger", title: "Say why the invoice is voided." });
+            // A rejected promise keeps the modal open with what was typed.
+            throw new Error("reason required");
+          }
+          try {
+            await postForm(url, { reason });
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+            throw e;
+          }
+          window.location.reload();
+        },
+      });
+    },
+  };
+}
+window.invoiceDraft = invoiceDraft;
+</script>
+{% endif %}
+{% endblock %}

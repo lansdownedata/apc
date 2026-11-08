@@ -1,0 +1,30 @@
+{% load humanize json_filters %}
+{% comment %}
+  One open invoice (APC-106): number (blank until QuickBooks gives it one), dates, total, its
+  trips behind a disclosure, and Void for payments access. `highlight` is the ?invoice= just made.
+{% endcomment %}
+<div id="invoice-{{ invoice.pk }}" class="rounded-lg px-3 py-3 mb-2 bg-surface2/60{% if invoice.pk == highlight %} ring-2 ring-gold/40{% endif %}"{% if invoice.pk == highlight %} x-init="$el.scrollIntoView({ block: 'nearest' })"{% endif %}>
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <span class="font-semibold text-ink">{% if invoice.number %}Invoice {{ invoice.number }}{% else %}Not sent yet{% endif %}</span>
+    <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">QuickBooks: Not sent</span>
+    <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
+  </div>
+  <p class="text-[11.5px] text-muted num">Dated {{ invoice.invoice_date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}{% if invoice.po_number %} · PO {{ invoice.po_number }}{% endif %}</p>
+  <div class="mt-1.5 flex flex-wrap items-start gap-2">
+    <details class="flex-1 min-w-0">
+      <summary class="cursor-pointer text-[12px] font-medium text-muted hover:text-ink focus-gold">{{ invoice.lines.all|length }} trip{{ invoice.lines.all|length|pluralize }}</summary>
+      <div class="mt-2 grid gap-2">
+        {% for line in invoice.lines.all %}
+        <div class="flex items-start gap-3">
+          <p class="flex-1 min-w-0 text-[12px] text-ink whitespace-pre-line break-words">{{ line.description }}</p>
+          <span class="num text-[12px] text-ink shrink-0">${{ line.amount|floatformat:2|intcomma }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% if user.has_payments_access %}
+    <button type="button" class="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50"
+            @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }})">Void</button>
+    {% endif %}
+  </div>
+</div>

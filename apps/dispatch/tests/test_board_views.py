@@ -162,7 +162,8 @@ def test_week_query_count_stays_flat(logged_in_client, django_assert_max_num_que
     # constant, not per trip.
     # +1 (APC-100): the editor's cleaning-fee default reads TaskConfig once. Constant.
     # +1 (APC-136): the header's GNet requests badge, one COUNT on every page. Constant.
-    with django_assert_max_num_queries(22):
+    # +1 (APC-106): the nav's Billing badge, one COUNT on every page. Constant.
+    with django_assert_max_num_queries(23):
         logged_in_client.get(reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat()})
 
 

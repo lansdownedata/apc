@@ -5,6 +5,7 @@ from pathlib import Path
 from django.conf import settings
 from django.utils.functional import SimpleLazyObject
 
+from apps.billing import invoices
 from apps.core import outbound
 from apps.core.us_states import US_STATES
 from apps.dispatch import farm_in_drawer
@@ -130,4 +131,6 @@ def chrome(request):
         "qbo_connected": SimpleLazyObject(_qbo_connected),
         # GNet requests awaiting a decision (APC-136): the header icon's badge, one COUNT.
         "farm_in_pending": SimpleLazyObject(farm_in_drawer.pending_count),
+        # Processed trips on an account not yet on an invoice (APC-106): the Billing badge.
+        "billing_ready": SimpleLazyObject(invoices.ready_count),
     }

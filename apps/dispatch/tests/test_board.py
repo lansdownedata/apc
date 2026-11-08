@@ -264,7 +264,8 @@ def test_board_query_count_does_not_grow_with_trips(
     # +2 for the green-lit task prefetches (APC-56) — constant, not per trip.
     # +1 (APC-100): the editor's cleaning-fee default reads TaskConfig once. Constant.
     # +1 (APC-136): the header's GNet requests badge, one COUNT on every page. Constant.
-    with django_assert_max_num_queries(22):
+    # +1 (APC-106): the nav's Billing badge, one COUNT on every page. Constant.
+    with django_assert_max_num_queries(23):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
 
 
@@ -368,7 +369,8 @@ def test_board_flight_joins_keep_the_query_bound(logged_in_client, django_assert
     # +2 for the green-lit task prefetches (APC-56) — constant, not per trip.
     # +1 (APC-100): the editor's cleaning-fee default reads TaskConfig once. Constant.
     # +1 (APC-136): the header's GNet requests badge, one COUNT on every page. Constant.
-    with django_assert_max_num_queries(22):
+    # +1 (APC-106): the nav's Billing badge, one COUNT on every page. Constant.
+    with django_assert_max_num_queries(23):
         logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
 
 

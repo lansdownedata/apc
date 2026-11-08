@@ -101,5 +101,6 @@ def test_list_is_query_flat(client, django_user_model, django_assert_max_num_que
     for _ in range(6):
         v = VendorFactory()
         _cover(v, days=200)
-    with django_assert_max_num_queries(10):
+    # +1 (APC-106): the nav's Billing badge, one COUNT on every page.
+    with django_assert_max_num_queries(11):
         client.get(reverse("vendor_list"))
