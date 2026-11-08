@@ -5,6 +5,7 @@ before pickup lands here and gets confirmed by hand.
 """
 
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core import mail
@@ -19,7 +20,15 @@ from apps.reservations.factories import ReservationFactory
 
 pytestmark = pytest.mark.django_db
 
-TOMORROW = timezone.localdate() + timedelta(days=1)
+# The clock is pinned at noon so "tomorrow" is the same day whenever the suite runs (APC-116).
+NOON = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
+TOMORROW = NOON.date() + timedelta(days=1)
+
+
+@pytest.fixture(autouse=True)
+def _noon():
+    with patch("django.utils.timezone.now", return_value=NOON):
+        yield
 
 
 def _trip(**kw):
