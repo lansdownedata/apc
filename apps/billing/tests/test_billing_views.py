@@ -544,3 +544,183 @@ def test_retry_on_a_waiting_void_needs_payments_access(staff) -> None:
         html = staff.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
     assert "Voids waiting for QuickBooks" in html
     assert "retryQboSync(" not in html
+
+
+# --- APC-109: Edit and Void and replace on the row -----------------------------------------
+
+
+def _made(accountant, group=None, **fields):
+    """An open invoice over one real processed trip, made the way the page makes one."""
+    group = group or AccountGroupFactory(name="Events Team")
+    trip = _processed_trip(group, accountant=accountant.user)
+    invoice = invoices.create_invoice(
+        group,
+        [trip.pk],
+        invoice_date=date(2026, 11, 1),
+        po_number="4471",
+        memo="Nov",
+        user=accountant.user,
+    )
+    if fields:
+        Invoice.objects.filter(pk=invoice.pk).update(**fields)
+        invoice.refresh_from_db()
+    return invoice
+
+
+def _close_books(through: date) -> None:
+    QboAccountMapping.objects.update_or_create(pk=1, defaults={"book_close_date": through})
+
+
+def test_edit_endpoint_updates_and_redirects(accountant) -> None:
+    invoice = _made(accountant)
+    url = reverse("billing_invoice_edit", args=[invoice.pk])
+    resp = accountant.post(
+        url,
+        {"invoice_date": "2026-11-05", "po_number": " 4480 ", "memo": "Fixed", "q": "Ana"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert f"group={invoice.group_id}" in body["redirect"]
+    assert f"invoice={invoice.pk}" in body["redirect"] and "q=Ana" in body["redirect"]
+    invoice.refresh_from_db()
+    assert (invoice.invoice_date, invoice.po_number, invoice.memo) == (
+        date(2026, 11, 5),
+        "4480",
+        "Fixed",
+    )
+    assert invoice.edited_by == accountant.user
+    refused = accountant.post(
+        url, {"invoice_date": "2026-11-05", "po_number": "9" * 65, "memo": "Fixed"}
+    )
+    assert refused.status_code == 400
+    assert refused.json() == {
+        "ok": False,
+        "error": "The PO number is too long (64 characters at most).",
+    }
+
+
+def test_replace_endpoint_creates_new_and_highlights_it(accountant) -> None:
+    old = _made(accountant, number="1042")
+    url = reverse("billing_invoice_replace", args=[old.pk])
+    missing = accountant.post(url, {"reason": "  ", "invoice_date": "2026-11-05"})
+    assert missing.status_code == 400
+    assert missing.json()["error"] == "Say why the invoice is voided."
+    old.refresh_from_db()
+    assert old.status == Invoice.Status.OPEN
+
+    resp = accountant.post(url, {"reason": "Wrong PO", "po_number": "", "memo": ""})
+    assert resp.status_code == 200
+    old.refresh_from_db()
+    new = old.replaced_by
+    assert old.status == Invoice.Status.VOID and new is not None
+    assert resp.json() == {
+        "ok": True,
+        "redirect": f"{reverse('billing')}?group={old.group_id}&invoice={new.pk}",
+    }
+    # The date defaults to today, the PO carries over, the memo names the old invoice.
+    assert new.invoice_date == timezone.localdate()
+    assert (new.po_number, new.memo) == ("4471", "Replaces Invoice 1042")
+
+
+def test_endpoints_gated(client) -> None:
+    accountant = UserFactory(can_manage_payments=True)
+    client.force_login(accountant)
+    client.user = accountant
+    invoice = _made(client)
+    client.logout()
+    for name in ("billing_invoice_edit", "billing_invoice_replace"):
+        url = reverse(name, args=[invoice.pk])
+        data = {"reason": "x", "invoice_date": "2026-11-05", "po_number": "1", "memo": "x"}
+        anonymous = client.post(url, data)
+        assert anonymous.status_code == 302
+        assert reverse("login") in anonymous["Location"]
+        client.force_login(UserFactory())
+        assert client.post(url, data).status_code == 403
+        client.logout()
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.Status.OPEN and invoice.edited_at is None
+
+
+def test_bad_date_400(accountant) -> None:
+    invoice = _made(accountant)
+    for name in ("billing_invoice_edit", "billing_invoice_replace"):
+        url = reverse(name, args=[invoice.pk])
+        for bad in ("next tuesday", "2019-12-31"):
+            resp = accountant.post(url, {"reason": "Wrong PO", "invoice_date": bad})
+            assert resp.status_code == 400
+            assert resp.json() == {"ok": False, "error": "Enter a valid invoice date."}
+    # Edit has no default date: a missing one is refused too.
+    resp = accountant.post(reverse("billing_invoice_edit", args=[invoice.pk]), {"memo": "x"})
+    assert resp.json() == {"ok": False, "error": "Enter a valid invoice date."}
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.Status.OPEN and invoice.edited_at is None
+
+
+def test_closed_period_rows_hide_actions_and_show_tag(accountant) -> None:
+    closed = _made(accountant)
+    current = _made(accountant, group=closed.group)
+    Invoice.objects.filter(pk=current.pk).update(invoice_date=date(2026, 11, 10))
+    _close_books(date(2026, 11, 3))
+    resp = accountant.get(reverse("billing"), {"group": closed.group_id})
+    html = resp.content.decode()
+    assert resp.context["book_close_date"] == date(2026, 11, 3)
+    assert html.count("In a closed period") == 1
+    for name in ("billing_invoice_edit", "billing_invoice_replace", "billing_invoice_void"):
+        assert reverse(name, args=[closed.pk]) not in html
+        assert reverse(name, args=[current.pk]) in html
+    assert ">Edit<" in html and ">Void and replace<" in html
+
+
+def test_row_actions_need_payments_access(staff) -> None:
+    accountant = UserFactory(can_manage_payments=True)
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = invoices.create_invoice(
+        group, [trip.pk], invoice_date=date(2026, 11, 1), po_number="", memo="", user=accountant
+    )
+    html = staff.get(reverse("billing"), {"group": group.pk}).content.decode()
+    assert f'id="invoice-{invoice.pk}"' in html
+    assert ">Edit<" not in html and ">Void and replace<" not in html
+
+
+def test_row_shows_edited_and_replaced_links(accountant) -> None:
+    accountant.user.first_name = "Ana"
+    accountant.user.save()
+    old = _made(accountant, number="1042", qbo_id="900", qbo_realm_id="123")
+    with patch("apps.billing.qbo_sync.current_realm", return_value="123"):
+        new = invoices.void_and_replace(
+            old,
+            reason="Wrong PO",
+            invoice_date=date(2026, 11, 5),
+            po_number="",
+            memo="",
+            user=accountant.user,
+        )
+    invoices.edit_invoice(
+        new, invoice_date=date(2026, 11, 6), po_number="4471", memo="Fixed", user=accountant.user
+    )
+    new.refresh_from_db()
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": old.group_id}).content.decode()
+    edited = timezone.localtime(new.edited_at)
+    assert f"Edited {edited:%b} {edited.day} by Ana" in html
+    base = f"{reverse('billing')}?group={old.group_id}&amp;invoice="
+    assert f'href="{base}{old.pk}"' in html and "Replaces Invoice 1042" in html
+    # The old one waits in "Voids waiting for QuickBooks" and points at its replacement.
+    assert "Voids waiting for QuickBooks" in html
+    assert f'href="{base}{new.pk}"' in html and f"Replaced by {new.label}" in html
+
+
+def test_edit_modal_fields_prefilled(accountant) -> None:
+    group = AccountGroupFactory(po_required=True)
+    invoice = _made(accountant, group=group, memo='Say "hi" <b>')
+    html = accountant.get(reverse("billing"), {"group": group.pk}).content.decode()
+    assert 'data-date="2026-11-01"' in html
+    assert 'data-po="4471"' in html
+    assert 'data-memo="Say &quot;hi&quot; &lt;b&gt;"' in html
+    assert 'data-po-required="true"' in html
+    assert f'data-label="{invoice.label}"' in html
+    assert f'data-edit-url="{reverse("billing_invoice_edit", args=[invoice.pk])}"' in html
+    assert f'data-replace-url="{reverse("billing_invoice_replace", args=[invoice.pk])}"' in html
+    assert 'Say "hi" <b>' not in html

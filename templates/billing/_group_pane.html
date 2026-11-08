@@ -100,7 +100,7 @@
       <div id="void-{{ invoice.pk }}" class="flex flex-wrap items-start gap-x-3 gap-y-1 py-2">
         <div class="flex-1 min-w-0">
           <p class="text-[12.5px] font-medium text-ink">{{ invoice.label }}</p>
-          <p class="text-[11.5px] text-muted num">Voided {{ invoice.voided_at|date:"M j, Y" }}</p>
+          <p class="text-[11.5px] text-muted num">Voided {{ invoice.voided_at|date:"M j, Y" }}{% if invoice.replaced_by %} · <a href="{% url 'billing' %}?group={{ invoice.group_id }}&amp;invoice={{ invoice.replaced_by.pk }}" class="hover:text-ink underline-offset-2 hover:underline focus-gold rounded">Replaced by {{ invoice.replaced_by.label }}</a>{% endif %}</p>
           {% if invoice.sync.state == 'error' %}
           <p class="text-[11.5px] text-rose-600 mt-1">{{ invoice.sync.error }}</p>
           {% endif %}

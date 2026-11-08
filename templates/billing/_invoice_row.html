@@ -2,7 +2,8 @@
 {% comment %}
   One open invoice (APC-106): its label (the draft # until QuickBooks gives it a number, the
   same name the unlock and add-charge refusals use), dates, total, its trips behind a
-  disclosure, and Void for payments access. `highlight` is the ?invoice= just made.
+  disclosure, and Edit / Void and replace / Void for payments access (APC-109). A row in a
+  closed period (`invoice.closed`) is read-only. `highlight` is the ?invoice= just made.
 {% endcomment %}
 <div id="invoice-{{ invoice.pk }}" class="rounded-lg px-3 py-3 mb-2 bg-surface2/60{% if invoice.pk == highlight %} ring-2 ring-gold/40{% endif %}"{% if invoice.pk == highlight %} x-init="$el.scrollIntoView({ block: 'nearest' })"{% endif %}>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -14,6 +15,9 @@
     <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
   </div>
   <p class="text-[11.5px] text-muted num">Dated {{ invoice.invoice_date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}{% if invoice.po_number %} · PO {{ invoice.po_number }}{% endif %}</p>
+  {% if invoice.edited_at or invoice.replaces %}
+  <p class="text-[11.5px] text-muted">{% if invoice.edited_at %}Edited {{ invoice.edited_at|date:"M j" }}{% if invoice.edited_by %} by {{ invoice.edited_by.first_name|default:invoice.edited_by.email }}{% endif %}{% endif %}{% if invoice.edited_at and invoice.replaces %} · {% endif %}{% if invoice.replaces %}<a href="{% url 'billing' %}?group={{ invoice.group_id }}&amp;invoice={{ invoice.replaces.pk }}" class="hover:text-ink underline-offset-2 hover:underline focus-gold rounded">Replaces {{ invoice.replaces.label }}</a>{% endif %}</p>
+  {% endif %}
   {% if invoice.sync and invoice.sync.state == 'error' %}
   <p class="text-[11.5px] text-rose-600 mt-1">{{ invoice.sync.error }}</p>
   {% endif %}
@@ -33,9 +37,20 @@
     <button type="button" class="shrink-0 text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5"
             @click="retryQboSync('{{ invoice.sync.sync_url }}')">Retry</button>
     {% endif %}
-    {% if user.has_payments_access %}
-    <button type="button" class="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50"
-            @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }}, {% if invoice.qbo_id %}true{% else %}false{% endif %})">Void</button>
+    {% if invoice.closed %}
+    <span class="shrink-0 text-[11.5px] text-muted px-2 py-1.5">In a closed period</span>
+    {% elif user.has_payments_access %}
+    <div class="shrink-0 flex items-center gap-1" data-invoice-actions data-label="{{ invoice.label }}"
+         data-edit-url="{% url 'billing_invoice_edit' invoice.pk %}" data-replace-url="{% url 'billing_invoice_replace' invoice.pk %}"
+         data-date="{{ invoice.invoice_date|date:'Y-m-d' }}" data-po="{{ invoice.po_number }}" data-memo="{{ invoice.memo }}"
+         data-po-required="{% if group.po_required %}true{% else %}false{% endif %}">
+      <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5 disabled:opacity-50"
+              @click="editInvoice($el.closest('[data-invoice-actions]').dataset)">Edit</button>
+      <button type="button" class="text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5 disabled:opacity-50"
+              @click="replaceInvoice($el.closest('[data-invoice-actions]').dataset)">Void and replace</button>
+      <button type="button" class="text-[12px] font-medium px-3 py-1.5 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50"
+              @click="voidInvoice('{% url 'billing_invoice_void' invoice.pk %}', {{ invoice.label|json_string }}, {% if invoice.qbo_id %}true{% else %}false{% endif %})">Void</button>
+    </div>
     {% endif %}
   </div>
 </div>

@@ -2,7 +2,7 @@
 gathered into invoices one line per trip. Accounts and groups on the left, the picked
 group's ready trips and open invoices on the right.
 
-Reads are open to staff; creating and voiding an invoice need payments access.
+Reads are open to staff; creating, editing and voiding an invoice need payments access.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ from apps.accounts.permissions import payment_access_required
 from apps.integrations import qbo
 
 from . import invoices, qbo_invoices
-from .models import AccountGroup, Invoice, Terms
+from .invoices import EARLIEST_INVOICE_DATE
+from .models import AccountGroup, Invoice, QboAccountMapping, Terms
 from .qbo_sync import SyncPaused
 
 # An invoice date outside this window is a typo, not a backdated or forward invoice.
-EARLIEST_INVOICE_DATE = date(2020, 1, 1)
 LATEST_INVOICE_DAYS_AHEAD = 365
 
 
@@ -49,6 +49,26 @@ def _with_sync(rows: list[Invoice], *, connected: bool, start) -> list[Invoice]:
     return rows
 
 
+def _with_corrections(rows: list[Invoice], config: QboAccountMapping) -> None:
+    """Attach `.closed` (in a closed period: read-only on the row) and `.replaces` (the invoice
+    this one was issued in place of, or None) to each row, in one query for all of them."""
+    replaced = (
+        {old.replaced_by_id: old for old in Invoice.objects.filter(replaced_by__in=rows)}
+        if rows
+        else {}
+    )
+    for invoice in rows:
+        invoice.closed = invoices.closed_in_quickbooks(invoice, config)
+        invoice.replaces = replaced.get(invoice.pk)
+
+
+def _billing_url(group_id: int, invoice_id: int, request: HttpRequest) -> str:
+    """The Billing page on `group`, highlighting `invoice`, keeping the page's filters."""
+    kept = _filter_params(invoices.BillingFilters.from_query(request.POST))
+    query = {"group": group_id, "invoice": invoice_id, **{k: v for k, v in kept.items() if v}}
+    return f"{reverse('billing')}?{urlencode(query)}"
+
+
 @login_required
 @require_GET
 def billing_list(request: HttpRequest) -> HttpResponse:
@@ -60,6 +80,8 @@ def billing_list(request: HttpRequest) -> HttpResponse:
     else:
         group = accounts[0].groups[0].group if accounts else None
     today = timezone.localdate()
+    # Read, never created on a GET: no settings row yet means no closing date.
+    config = QboAccountMapping.objects.filter(pk=1).first() or QboAccountMapping()
     pane: dict = {}
     if group is not None:
         trips = invoices.group_ready_trips(group, filters)
@@ -68,6 +90,10 @@ def billing_list(request: HttpRequest) -> HttpResponse:
         connected = qbo.is_connected()
         start = qbo_invoices.customer_docs_from() if connected else None
         synced = {"connected": connected, "start": start}
+        open_rows = _with_sync(invoices.open_invoices(group), **synced)
+        # Only while connected: a void can't reach QuickBooks without the connection.
+        waiting = _with_sync(invoices.voids_waiting(group), **synced) if connected else []
+        _with_corrections(open_rows + waiting, config)
         pane = {
             "trips": trips,
             "trip_lines": [(t, invoices.line_description(t)) for t in trips],
@@ -76,17 +102,15 @@ def billing_list(request: HttpRequest) -> HttpResponse:
             "due_preview": invoices.due_date(today, terms),
             "default_po": pos[0] if pos else "",
             "mixed_po": len({po for po in pos if po}) > 1,
-            "invoices": _with_sync(invoices.open_invoices(group), **synced),
-            # Only while connected: a void can't reach QuickBooks without the connection.
-            "voids_waiting": (
-                _with_sync(invoices.voids_waiting(group), **synced) if connected else []
-            ),
+            "invoices": open_rows,
+            "voids_waiting": waiting,
             "draft": {
                 "trips": [
                     {"id": t.pk, "amount": f"{t.line_total:.2f}", "po": po}
                     for t, po in zip(trips, pos, strict=True)
                 ],
                 "termDays": invoices.TERM_DAYS[terms],
+                "today": today.isoformat(),
                 "group": group.name,
                 "filters": _filter_params(filters),
             },
@@ -106,6 +130,7 @@ def billing_list(request: HttpRequest) -> HttpResponse:
             "today": today,
             "ready_count": sum(len(g.trips) for a in accounts for g in a.groups),
             "highlight": int(raw_invoice) if raw_invoice.isdigit() else None,
+            "book_close_date": config.book_close_date,
             **pane,
         },
     )
@@ -136,9 +161,7 @@ def invoice_create(request: HttpRequest, pk: int) -> JsonResponse:
     except invoices.InvoiceError as exc:
         return _bad(str(exc))
     # The page's filters ride along so the reload lands on the same list.
-    kept = _filter_params(invoices.BillingFilters.from_query(request.POST))
-    query = {"group": pk, "invoice": invoice.pk, **{k: v for k, v in kept.items() if v}}
-    return JsonResponse({"ok": True, "redirect": f"{reverse('billing')}?{urlencode(query)}"})
+    return JsonResponse({"ok": True, "redirect": _billing_url(pk, invoice.pk, request)})
 
 
 @login_required
@@ -151,6 +174,57 @@ def invoice_void(request: HttpRequest, pk: int) -> JsonResponse:
     except invoices.InvoiceError as exc:
         return _bad(str(exc))
     return JsonResponse({"ok": True})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def invoice_edit(request: HttpRequest, pk: int) -> JsonResponse:
+    """Correct an open invoice's date, PO and memo (APC-109)."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    try:
+        invoice_date = date.fromisoformat(request.POST.get("invoice_date", ""))
+    except ValueError:
+        return _bad("Enter a valid invoice date.")
+    try:
+        invoice = invoices.edit_invoice(
+            invoice,
+            invoice_date=invoice_date,
+            po_number=request.POST.get("po_number", ""),
+            memo=request.POST.get("memo", ""),
+            user=request.user,
+        )
+    except invoices.InvoiceError as exc:
+        return _bad(str(exc))
+    return JsonResponse(
+        {"ok": True, "redirect": _billing_url(invoice.group_id, invoice.pk, request)}
+    )
+
+
+@login_required
+@payment_access_required
+@require_POST
+def invoice_replace(request: HttpRequest, pk: int) -> JsonResponse:
+    """Void an open invoice and issue a new one from the same trips; the reload highlights
+    the new one (APC-109). The new date defaults to today."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    raw_date = request.POST.get("invoice_date", "").strip()
+    try:
+        invoice_date = date.fromisoformat(raw_date) if raw_date else timezone.localdate()
+    except ValueError:
+        return _bad("Enter a valid invoice date.")
+    try:
+        new = invoices.void_and_replace(
+            invoice,
+            reason=request.POST.get("reason", ""),
+            invoice_date=invoice_date,
+            po_number=request.POST.get("po_number", ""),
+            memo=request.POST.get("memo", ""),
+            user=request.user,
+        )
+    except invoices.InvoiceError as exc:
+        return _bad(str(exc))
+    return JsonResponse({"ok": True, "redirect": _billing_url(new.group_id, new.pk, request)})
 
 
 @login_required

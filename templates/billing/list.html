@@ -77,8 +77,9 @@
 <script>
 /* invoiceDraft: the Customer Billing pane (APC-106). The ticked trips drive the count, the
  * total and the QuickBooks preview, and, until the agent types in it, the PO field (the
- * first ticked trip's PO). Create and Void confirm through $store.modal and post
- * form-encoded; success reloads, because the list and the invoices are server-rendered. */
+ * first ticked trip's PO). Create, Edit, Void and Void and replace confirm through
+ * $store.modal and post form-encoded; success reloads, because the list and the invoices are
+ * server-rendered. Edit and Void and replace read the row's data-* attributes (APC-109). */
 function invoiceDraft(dataId, createUrl) {
   const data = JSON.parse(document.getElementById(dataId)?.textContent || "{}");
   const trips = data.trips || [];
@@ -87,6 +88,30 @@ function invoiceDraft(dataId, createUrl) {
   const filters = data.filters || {};
   const money = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const plural = (n) => (n === 1 ? "1 trip" : `${n} trips`);
+  const filterBody = () => ["q", "from", "to"].map((key) => [key, filters[key] || ""]);
+  const field = (id) => (document.getElementById(id)?.value || "").trim();
+  const input = (id, label, attrs) =>
+    `<div><label for="${id}" class="block text-[12.5px] font-medium text-ink">${label}</label>` +
+    `<input id="${id}" type="text" class="field mt-1.5" ${attrs}></div>`;
+  /* x-html only redraws when the string changes: a counter makes every opening fresh, so a
+   * cancelled modal's typing never shows up the next time. */
+  let opens = 0;
+  const form = (fields) => {
+    const html = `<div class="grid gap-3 mt-1" data-open="${++opens}">${fields.join("")}</div>`;
+    setTimeout(() => window.initFlatpickr && window.initFlatpickr(document), 60);
+    return html;
+  };
+  const post = async (url, body) => {
+    try {
+      const json = await postForm(url, [...body, ...filterBody()]);
+      window.location = json.redirect;
+    } catch (e) {
+      Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+      // A rejected promise keeps the modal open with what was typed.
+      throw e;
+    }
+  };
+  const poLabel = (row) => (row.poRequired === "true" ? "PO number (required)" : "PO number");
   return {
     picked: trips.map((t) => t.id),
     count: trips.length,
@@ -142,7 +167,7 @@ function invoiceDraft(dataId, createUrl) {
           try {
             const body = this.picked.map((id) => ["trip_ids", String(id)]);
             body.push(["invoice_date", this.invoiceDate], ["po_number", this.po], ["memo", this.memo]);
-            for (const key of ["q", "from", "to"]) body.push([key, filters[key] || ""]);
+            body.push(...filterBody());
             const json = await postForm(createUrl, body);
             window.location = json.redirect;
           } catch (e) {
@@ -178,6 +203,56 @@ function invoiceDraft(dataId, createUrl) {
             throw e;
           }
           window.location.reload();
+        },
+      });
+    },
+    /* Correct an open invoice's date, PO and memo; lines and total stay. */
+    editInvoice(row) {
+      Alpine.store("modal").show({
+        title: `Edit ${row.label}`,
+        message: "The lines and the total stay as they are; the due date follows the date.",
+        html: form([
+          input("inv-edit-date", "Invoice date", `data-flatpickr data-fp-past value="${escapeHtml(row.date)}"`),
+          input("inv-edit-po", poLabel(row), `maxlength="64" value="${escapeHtml(row.po)}"`),
+          input("inv-edit-memo", "Memo", `maxlength="255" value="${escapeHtml(row.memo)}"`),
+        ]),
+        variant: "gold",
+        confirmText: "Save changes",
+        showCancel: true,
+        onConfirm: () =>
+          post(row.editUrl, [
+            ["invoice_date", field("inv-edit-date")],
+            ["po_number", field("inv-edit-po")],
+            ["memo", field("inv-edit-memo")],
+          ]),
+      });
+    },
+    /* Void the invoice and issue a new one from the same trips; the reload highlights it. */
+    replaceInvoice(row) {
+      Alpine.store("modal").show({
+        title: `Void and replace ${row.label}?`,
+        message: `${row.label} is voided and a new invoice is made from the same trips.`,
+        html: form([
+          input("inv-replace-reason", "Why it is voided", 'maxlength="255" required'),
+          input("inv-replace-date", "New invoice date", `data-flatpickr data-fp-past value="${escapeHtml(data.today || "")}"`),
+          input("inv-replace-po", poLabel(row), `maxlength="64" value="${escapeHtml(row.po)}"`),
+          input("inv-replace-memo", "Memo", `maxlength="255" placeholder="${escapeHtml(`Replaces ${row.label}`)}"`),
+        ]),
+        variant: "danger",
+        confirmText: "Void and replace",
+        showCancel: true,
+        onConfirm: () => {
+          const reason = field("inv-replace-reason");
+          if (!reason) {
+            Alpine.store("toast").push({ type: "danger", title: "Say why the invoice is voided." });
+            return Promise.reject(new Error("reason required"));
+          }
+          return post(row.replaceUrl, [
+            ["reason", reason],
+            ["invoice_date", field("inv-replace-date")],
+            ["po_number", field("inv-replace-po")],
+            ["memo", field("inv-replace-memo")],
+          ]);
         },
       });
     },

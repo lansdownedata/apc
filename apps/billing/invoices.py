@@ -199,6 +199,7 @@ def group_ready_trips(group: AccountGroup, filters: BillingFilters) -> list[Rese
 def open_invoices(group: AccountGroup) -> list[Invoice]:
     return list(
         Invoice.objects.filter(group=group, status=Invoice.Status.OPEN)
+        .select_related("edited_by")
         .prefetch_related("lines__reservation__stops")
         .order_by("-invoice_date", "-pk")
     )
@@ -209,6 +210,7 @@ def voids_waiting(group: AccountGroup) -> list[Invoice]:
     whose create never reached QuickBooks has nothing there to void."""
     return list(
         Invoice.objects.filter(group=group, status=Invoice.Status.VOID)
+        .select_related("replaced_by")
         .exclude(qbo_void_requested_at=None)
         .exclude(qbo_id="")
         .exclude(qbo_sync_state=SyncState.SYNCED)
@@ -319,19 +321,20 @@ EARLIEST_INVOICE_DATE = date(2020, 1, 1)
 CLOSED_PERIOD_MESSAGE = "In a closed period. Correct it with a credit memo or a new invoice."
 
 
-def in_closed_period(doc_date: date | None) -> bool:
-    """Is `doc_date` on or before the date the books are closed through in QuickBooks?"""
+def in_closed_period(doc_date: date | None, config: QboAccountMapping | None = None) -> bool:
+    """Is `doc_date` on or before the date the books are closed through in QuickBooks? Pass
+    an already loaded `config` to check many dates without a query each."""
     if doc_date is None:
         return False
-    closed = QboAccountMapping.load().book_close_date
+    closed = (config or QboAccountMapping.load()).book_close_date
     return closed is not None and doc_date <= closed
 
 
-def closed_in_quickbooks(invoice: Invoice) -> bool:
+def closed_in_quickbooks(invoice: Invoice, config: QboAccountMapping | None = None) -> bool:
     """Is the invoice in a closed period by its own date or by the date QuickBooks holds it
     under (an edit that hasn't reached QuickBooks yet)? The earlier one decides."""
     dates = [d for d in (invoice.invoice_date, invoice.qbo_txn_date) if d]
-    return in_closed_period(min(dates, default=None))
+    return in_closed_period(min(dates, default=None), config)
 
 
 def _edit_note(invoice: Invoice, invoice_date: date, po: str, memo: str) -> str:
@@ -346,12 +349,12 @@ def _edit_note(invoice: Invoice, invoice_date: date, po: str, memo: str) -> str:
     return " · ".join(parts)[:255]
 
 
-def edit_invoice(
-    invoice: Invoice, *, invoice_date: date, po_number: str, memo: str, user
-) -> Invoice:
-    """Correct an open invoice's date, PO and memo. Lines and total never change; the due date
-    follows the new date. Refused when the invoice or its new date is in a closed period. An
-    edit of an invoice already in QuickBooks is queued to go there (APC-109)."""
+def _validate_edit_fields(
+    group: AccountGroup, invoice_date: date, po_number: str, memo: str
+) -> tuple[str, str]:
+    """The checks an edit and a replacement share: the date inside the window create allows,
+    the PO and memo within their columns, a PO when the group needs one. Returns the stripped
+    PO and memo."""
     if not EARLIEST_INVOICE_DATE <= invoice_date <= timezone.localdate() + timedelta(days=365):
         raise InvoiceError("Enter a valid invoice date.")
     po = (po_number or "").strip()
@@ -360,6 +363,17 @@ def edit_invoice(
         raise InvoiceError("The PO number is too long (64 characters at most).")
     if len(memo) > 255:
         raise InvoiceError("The memo is too long (255 characters at most).")
+    if group.po_required and not po:
+        raise InvoiceError("This group needs a PO number.")
+    return po, memo
+
+
+def edit_invoice(
+    invoice: Invoice, *, invoice_date: date, po_number: str, memo: str, user
+) -> Invoice:
+    """Correct an open invoice's date, PO and memo. Lines and total never change; the due date
+    follows the new date. Refused when the invoice or its new date is in a closed period. An
+    edit of an invoice already in QuickBooks is queued to go there (APC-109)."""
     with transaction.atomic():
         invoice = (
             Invoice.objects.select_for_update(of=("self",))
@@ -368,8 +382,7 @@ def edit_invoice(
         )
         if invoice.status != Invoice.Status.OPEN:
             raise InvoiceError("Only an open invoice can be edited.")
-        if invoice.group.po_required and not po:
-            raise InvoiceError("This group needs a PO number.")
+        po, memo = _validate_edit_fields(invoice.group, invoice_date, po_number, memo)
         if closed_in_quickbooks(invoice) or in_closed_period(invoice_date):
             raise InvoiceError(CLOSED_PERIOD_MESSAGE)
         linked = bool(invoice.qbo_id) and invoice.qbo_realm_id == qbo_sync.current_realm()
@@ -412,7 +425,10 @@ def void_and_replace(
         )
         if old.status != Invoice.Status.OPEN:
             raise InvoiceError("Only an open invoice can be voided and replaced.")
-        if in_closed_period(old.invoice_date):
+        po, memo = _validate_edit_fields(
+            old.group, invoice_date, (po_number or "").strip() or old.po_number, memo
+        )
+        if closed_in_quickbooks(old) or in_closed_period(invoice_date):
             raise InvoiceError(CLOSED_PERIOD_MESSAGE)
         trip_ids = list(old.lines.values_list("reservation_id", flat=True))
         old = void_invoice(old, reason=reason, user=user)
@@ -420,7 +436,7 @@ def void_and_replace(
             old.group,
             trip_ids,
             invoice_date=invoice_date,
-            po_number=(po_number or "").strip() or old.po_number,
+            po_number=po,
             memo=memo or f"Replaces {old.label}",
             user=user,
         )

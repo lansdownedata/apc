@@ -336,3 +336,88 @@ def test_unlock_message_says_void_and_replace(accountant) -> None:
     with pytest.raises(processing.ProcessingError) as err:
         processing.unlock(trips[0], user=accountant, reason="price check")
     assert str(err.value) == f"On {old.label}. Void and replace it to change the price."
+
+
+def _still_open(old) -> None:
+    old.refresh_from_db()
+    assert old.status == Invoice.Status.OPEN
+    assert old.lines.count() == 2
+    assert old.replaced_by is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"invoice_date": date(2019, 12, 31)}, "Enter a valid invoice date."),
+        (
+            {"invoice_date": timezone.localdate() + timedelta(days=366)},
+            "Enter a valid invoice date.",
+        ),
+        ({"po_number": "9" * 65}, "The PO number is too long (64 characters at most)."),
+        ({"memo": "m" * 256}, "The memo is too long (255 characters at most)."),
+    ],
+)
+def test_replace_validates_its_fields_like_edit(accountant, fields, message) -> None:
+    import re
+
+    old, _ = _invoiced(accountant)
+    before = Invoice.objects.count()
+    with pytest.raises(invoices.InvoiceError, match=re.escape(message)):
+        _replace(old, accountant, **fields)
+    _still_open(old)
+    assert Invoice.objects.count() == before
+
+
+def test_replace_needs_a_po_when_the_group_requires_one(accountant) -> None:
+    group = AccountGroupFactory(terms="net_30", po_required=True)
+    old, _ = _invoiced(accountant, group=group, po_number="")
+    with pytest.raises(invoices.InvoiceError, match="This group needs a PO number."):
+        _replace(old, accountant, po_number="  ")
+    _still_open(old)
+    # The old invoice's PO carries over when none is given.
+    old.po_number = "4471"
+    old.save()
+    assert _replace(old, accountant, po_number="").po_number == "4471"
+
+
+def test_replace_refused_when_the_new_date_is_in_a_closed_period(accountant) -> None:
+    old, _ = _invoiced(accountant, invoice_date=date(2026, 11, 10), due_date=date(2026, 12, 10))
+    _close_books(date(2026, 11, 3))
+    with pytest.raises(invoices.InvoiceError, match=invoices.CLOSED_PERIOD_MESSAGE):
+        _replace(old, accountant, invoice_date=date(2026, 11, 2))
+    _still_open(old)
+    assert _replace(old, accountant, invoice_date=date(2026, 11, 4)).invoice_date == date(
+        2026, 11, 4
+    )
+
+
+def test_replace_refused_when_quickbooks_holds_it_in_a_closed_period(accountant) -> None:
+    # Edited here to Nov 10, but QuickBooks still has it on Nov 1, inside the closed period.
+    old, _ = _invoiced(
+        accountant,
+        invoice_date=date(2026, 11, 10),
+        qbo_txn_date=date(2026, 11, 1),
+        qbo_id="900",
+        qbo_realm_id="123",
+    )
+    _close_books(date(2026, 11, 3))
+    with (
+        patch(REALM, return_value="123"),
+        pytest.raises(invoices.InvoiceError, match=invoices.CLOSED_PERIOD_MESSAGE),
+    ):
+        _replace(old, accountant, invoice_date=date(2026, 11, 12))
+    _still_open(old)
+
+
+def test_closed_in_quickbooks_takes_a_loaded_config() -> None:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    invoice = _invoice()
+    _close_books(date(2026, 11, 3))
+    config = QboAccountMapping.load()
+    with CaptureQueriesContext(connection) as queries:
+        assert invoices.closed_in_quickbooks(invoice, config) is True
+    assert len(queries) == 0
+    config.book_close_date = date(2026, 10, 31)
+    assert invoices.closed_in_quickbooks(invoice, config) is False
