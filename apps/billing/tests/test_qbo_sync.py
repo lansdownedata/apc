@@ -25,6 +25,12 @@ def connected():
         yield
 
 
+@pytest.fixture
+def company():
+    with patch("apps.billing.qbo_sync.current_realm", return_value="123"):
+        yield "123"
+
+
 def _account(name="Ridgeline Partners", group="Accounts Payable", **kw):
     QboTerm.objects.get_or_create(qbo_id="3", defaults={"name": "Net 30", "active": True})
     return services.create_account(ContactFactory(), name=name, group_name=group, **kw)
@@ -274,8 +280,8 @@ def test_a_connection_lost_mid_run_stops_the_run_and_marks_nothing():
 # --- terms ----------------------------------------------------------------------------------
 
 
-def test_refreshing_terms_caches_quickbooks_terms_and_retires_missing_ones():
-    QboTerm.objects.create(qbo_id="99", name="Old term", active=True)
+def test_refreshing_terms_caches_quickbooks_terms_and_retires_missing_ones(company):
+    QboTerm.objects.create(realm_id=company, qbo_id="99", name="Old term", active=True)
     response = {
         "QueryResponse": {
             "Term": [
@@ -313,7 +319,7 @@ from apps.accounts.models import User  # noqa: E402
 from apps.core.cron import JOBS  # noqa: E402
 
 
-def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending():
+def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending(company):
     _account()
     terms = {"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30", "Active": True}]}}
 
@@ -940,7 +946,7 @@ def _set_realm(realm: str) -> None:
     cred.save()
 
 
-def test_refresh_terms_caches_due_rules():
+def test_refresh_terms_caches_due_rules(company):
     response = {
         "QueryResponse": {
             "Term": [
@@ -968,7 +974,7 @@ def test_refresh_terms_caches_due_rules():
     assert dated.due_days is None
 
 
-def test_refresh_terms_tolerates_missing_rule_fields():
+def test_refresh_terms_tolerates_missing_rule_fields(company):
     response = {
         "QueryResponse": {
             "Term": [
@@ -1039,3 +1045,11 @@ def test_migration_fills_the_realm_of_existing_terms_from_the_credential():
     finally:
         executor = MigrationExecutor(connection)
         executor.migrate(executor.loader.graph.leaf_nodes())
+
+
+def test_refresh_terms_refuses_without_a_company():
+    with patch("apps.billing.qbo_sync.current_realm", return_value=""), patch(REQ) as req:
+        with pytest.raises(qbo.QboNotConnected):
+            qbo_sync.refresh_terms()
+    req.assert_not_called()
+    assert not QboTerm.objects.exists()

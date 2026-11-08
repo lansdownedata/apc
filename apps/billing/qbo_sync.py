@@ -34,7 +34,8 @@ from django.utils import timezone
 
 from apps.integrations import qbo
 
-from .models import AccountGroup, BillingAccount, QboTerm, SyncState, Terms
+from . import terms as terms_module
+from .models import AccountGroup, BillingAccount, QboTerm, SyncState
 
 logger = logging.getLogger(__name__)
 
@@ -93,29 +94,23 @@ def _who(record) -> str:
     return record.name
 
 
-def _label(term: str) -> str:
-    return Terms(term).label if term in Terms.values else term
-
-
 def _usable_terms():
     """Active terms cached for the connected company — another company's ids mean nothing."""
     return QboTerm.objects.filter(realm_id=current_realm(), active=True)
 
 
 def term_ref(term: str) -> dict | None:
-    """Our term matched to a cached QuickBooks term by name, or None — never a guess."""
-    if not term:
-        return None
-    match = _usable_terms().filter(name__iexact=_label(term)).first()
-    return {"value": match.qbo_id} if match else None
+    """Our term matched to a cached QuickBooks term by the resolver, or None — never a guess."""
+    qbo_id = terms_module.resolve(term).qbo_id
+    return {"value": qbo_id} if qbo_id else None
 
 
 def unmatched_terms() -> list[str]:
     """Terms our accounts and groups actually use that QuickBooks has no term for."""
-    names = {n.lower() for n in _usable_terms().values_list("name", flat=True)}
     used = set(BillingAccount.objects.values_list("terms", flat=True))
     used |= set(AccountGroup.objects.exclude(terms="").values_list("terms", flat=True))
-    return [label for value, label in Terms.choices if value in used and label.lower() not in names]
+    resolved = (terms_module.resolve(value) for value in used if value)
+    return sorted({r.label for r in resolved if r.qbo_id is None})
 
 
 def _terms_of(record) -> str:
@@ -135,8 +130,9 @@ def payload(record) -> dict:
     if terms:
         ref = term_ref(terms)
         if ref is None:
+            label = terms_module.resolve(terms).label
             raise _Refused(
-                f"QuickBooks has no “{_label(terms)}” term. Add it in QuickBooks, refresh the terms"
+                f"QuickBooks has no “{label}” term. Add it in QuickBooks, refresh the terms"
                 " in Settings, then retry."
             )
         body["SalesTermRef"] = ref
@@ -348,9 +344,11 @@ def _rule(term: dict, key: str) -> int | None:
 def refresh_terms() -> int:
     """Cache the company's payment terms and their due rules; a term no longer in QuickBooks
     is retired, not deleted — only within this company. Returns how many active terms there are."""
+    realm = current_realm()
+    if not realm:
+        raise qbo.QboNotConnected("No QuickBooks company is connected.")
     rows = qbo.request("GET", "query", params={"query": "select * from Term"})
     terms = rows.get("QueryResponse", {}).get("Term", [])
-    realm = current_realm()
     seen = []
     for term in terms:
         QboTerm.objects.update_or_create(

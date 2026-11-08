@@ -14,6 +14,7 @@ from apps.reservations.models import Reservation, Stop
 from apps.reservations.processing import _day, _reference_pk, _short, _with_route
 
 from . import qbo_sync
+from . import terms as terms_module
 from .models import (
     AccountGroup,
     BillingAccount,
@@ -26,24 +27,13 @@ from .models import (
 
 # --- Terms ---------------------------------------------------------------------------------
 
-TERM_DAYS: dict[str, int] = {
-    Terms.DUE_ON_RECEIPT: 0,
-    Terms.NET_15: 15,
-    Terms.NET_30: 30,
-    Terms.NET_45: 45,
-}
-
-
-def days(terms: str) -> int:
-    """Days from the invoice date to the due date for a payment-terms value."""
-    try:
-        return TERM_DAYS[terms]
-    except KeyError:
-        raise ValueError(f"Unknown payment terms {terms!r}") from None
+TERM_DAYS = (
+    terms_module.TERM_DAYS
+)  # legacy-code fallback, read by invoice_views until APC-96 task 3
 
 
 def due_date(invoice_date: date, terms: str) -> date:
-    return invoice_date + timedelta(days=days(terms))
+    return terms_module.due(terms, invoice_date)
 
 
 # --- Line text -----------------------------------------------------------------------------

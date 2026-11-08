@@ -1,0 +1,119 @@
+"""One resolver for payment terms (APC-96): label, QuickBooks id and due date.
+
+A stored term is either a legacy `Terms` code or an exact QuickBooks term name. Every
+screen, the sync and the due-date math read it through `resolve`, so they cannot disagree.
+"""
+
+from __future__ import annotations
+
+import calendar
+from dataclasses import dataclass
+from datetime import date, timedelta
+
+from apps.integrations import qbo
+
+from .models import QboTerm, Terms
+
+# Legacy codes: days to due when QuickBooks has no matching term carrying its own rule.
+TERM_DAYS: dict[str, int] = {
+    Terms.DUE_ON_RECEIPT: 0,
+    Terms.NET_15: 15,
+    Terms.NET_30: 30,
+    Terms.NET_45: 45,
+}
+UNKNOWN_DAYS = 30
+
+
+def _realm() -> str:
+    # Looked up through qbo_sync at call time (a lazy import: qbo_sync imports this module).
+    from . import qbo_sync
+
+    return qbo_sync.current_realm()
+
+
+def _usable():
+    return QboTerm.objects.filter(realm_id=_realm(), active=True)
+
+
+def _add_months(year: int, month: int, extra: int) -> tuple[int, int]:
+    index = year * 12 + (month - 1) + extra
+    return index // 12, index % 12 + 1
+
+
+@dataclass(frozen=True)
+class TermRule:
+    kind: str  # "STANDARD" or "DATE_DRIVEN"
+    days: int = 0
+    day_of_month: int = 0
+    cutoff: int = 0
+
+    def due(self, invoice_date: date) -> date:
+        """STANDARD: invoice date plus `days`. DATE_DRIVEN: the `day_of_month` of the invoice
+        month, or of the next month when the invoice day is past `cutoff` (if set); the day is
+        clamped to the month's length. Semantics unverified on the sandbox."""
+        if self.kind != "DATE_DRIVEN":
+            return invoice_date + timedelta(days=self.days)
+        extra = 1 if self.cutoff > 0 and invoice_date.day > self.cutoff else 0
+        year, month = _add_months(invoice_date.year, invoice_date.month, extra)
+        return date(year, month, min(self.day_of_month, calendar.monthrange(year, month)[1]))
+
+
+@dataclass(frozen=True)
+class ResolvedTerm:
+    value: str
+    label: str
+    qbo_id: str | None
+    rule: TermRule | None
+
+
+def _rule_of(term: QboTerm) -> TermRule | None:
+    if term.term_type == "DATE_DRIVEN":
+        if term.day_of_month_due:
+            return TermRule(
+                "DATE_DRIVEN",
+                day_of_month=term.day_of_month_due,
+                cutoff=term.due_next_month_days or 0,
+            )
+        return TermRule("STANDARD", days=UNKNOWN_DAYS)
+    if term.due_days is not None:
+        return TermRule("STANDARD", days=term.due_days)
+    return None
+
+
+def is_quickbooks_name(value: str) -> bool:
+    """True for a stored value that is not one of the legacy codes."""
+    return value not in Terms.values
+
+
+def resolve(value: str) -> ResolvedTerm:
+    if not value:
+        return ResolvedTerm("", "", None, None)
+    if not is_quickbooks_name(value):
+        label = Terms(value).label
+        match = _usable().filter(name__iexact=label).first()
+        rule = (match and _rule_of(match)) or TermRule("STANDARD", days=TERM_DAYS[value])
+        return ResolvedTerm(value, label, match.qbo_id if match else None, rule)
+    match = _usable().filter(name__iexact=value).first()
+    if match is None:
+        return ResolvedTerm(value, value, None, TermRule("STANDARD", days=UNKNOWN_DAYS))
+    rule = _rule_of(match) or TermRule("STANDARD", days=UNKNOWN_DAYS)
+    return ResolvedTerm(value, match.name, match.qbo_id, rule)
+
+
+def due(value: str, invoice_date: date) -> date:
+    rule = resolve(value).rule or TermRule("STANDARD", days=UNKNOWN_DAYS)
+    return rule.due(invoice_date)
+
+
+def choices(current: str = "") -> list[tuple[str, str]]:
+    """The picker's options: the company's own QuickBooks terms when connected and cached,
+    else the legacy list. The record's current value is always present."""
+    names = (
+        list(_usable().order_by("name").values_list("name", flat=True))
+        if (qbo.is_connected())
+        else []
+    )
+    options = [(n, n) for n in names] or list(Terms.choices)
+    if current and current not in {value for value, _ in options}:
+        options.append((current, resolve(current).label))
+    return options
