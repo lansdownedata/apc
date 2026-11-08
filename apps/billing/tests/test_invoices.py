@@ -1,6 +1,7 @@
 """Invoice and InvoiceLine (APC-106): a trip is on at most one invoice, and a group that
 has been invoiced cannot be removed."""
 
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
@@ -367,7 +368,7 @@ def test_unlock_refuses_an_invoiced_trip(accountant) -> None:
     group = AccountGroupFactory()
     trip = _processed_trip(group, accountant=accountant)
     invoice = _create(group, [trip])
-    with pytest.raises(processing.ProcessingError, match=f"On {invoice.label}. Void it"):
+    with pytest.raises(processing.ProcessingError, match=re.escape(f"On {invoice.label}. Void it")):
         processing.unlock(trip, user=accountant, reason="price check")
     assert TripReview.objects.get(reservation=trip).is_processed
 
