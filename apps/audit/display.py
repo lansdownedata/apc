@@ -8,6 +8,7 @@ related model for the whole page.
 
 from __future__ import annotations
 
+import logging
 import re
 import string
 from collections import defaultdict
@@ -32,6 +33,8 @@ from apps.audit import registry
 
 if TYPE_CHECKING:
     from .models import AuditEntry
+
+logger = logging.getLogger(__name__)
 
 DASH = "—"
 BLANK = (None, "", "None")
@@ -59,7 +62,13 @@ ANCHORS = frozenset(
         "vendors.vendor",
     }
 )
-CREATED = {"reservations.reservation": "Created the trip", "leads.lead": "Created the order"}
+CREATED = {
+    "reservations.reservation": "Created the trip",
+    "leads.lead": "Created the order",
+    "contacts.contact": "Created the contact",
+    "contacts.company": "Created the company",
+    "vendors.vendor": "Created the vendor",
+}
 NOUNS = {"reservations.tripextra": "extra "}
 
 ROUTE_KEY = re.compile(r"route\.(\d+)(?:\.(\w+))?")
@@ -241,10 +250,12 @@ def format_value(
     show_abbr: bool = True,
     at: datetime | date | None = None,
     refund: bool = False,
+    entry_pk: int | None = None,
 ) -> str:
     """One stored value as it reads on screen (spec §6.3). `at` is the entry's time (for
     a zone's abbreviation on that day); `refund` shows a refund charge's amount negative.
-    A value that won't parse is shown as stored rather than breaking the panel."""
+    A value that won't parse is shown as stored rather than breaking the panel, and logged
+    with `entry_pk` so the bad row can be found."""
     if raw in BLANK:
         return DASH
     raw = str(raw)
@@ -261,6 +272,12 @@ def format_value(
             f, raw, zone=zone, fk_names=fk_names, show_abbr=show_abbr, at=at, refund=refund
         )
     except Exception:  # history is read-only: the stored text beats a 500
+        logger.exception(
+            "History value failed to render: entry %s, %s.%s",
+            entry_pk,
+            model._meta.label_lower,
+            field_name,
+        )
         return raw
 
 
@@ -416,6 +433,11 @@ def entry_lines(
         else:
             lines = []
     except Exception:  # history is read-only: a plain line beats a 500
+        logger.exception(
+            "History entry failed to render: entry %s, keys %s",
+            entry.pk,
+            sorted(entry.changes) if isinstance(entry.changes, dict) else entry.changes,
+        )
         lines = [_say(f"Changed {entry.object_repr}")]
     for line in lines:
         line.prefix = trip_prefix
@@ -435,14 +457,16 @@ def _texts(values: list) -> list[str]:
 
 def _invoice(entry: AuditEntry, model: type[models.Model], side: int, fk_names: dict) -> str:
     raw = _side(entry.changes or {}, "invoice", side)
-    return format_value(model, "invoice", raw, zone="", fk_names=fk_names)
+    return format_value(model, "invoice", raw, zone="", fk_names=fk_names, entry_pk=entry.pk)
 
 
 def _created(entry: AuditEntry, model: type[models.Model], fk_names: dict) -> Line:
     label = model._meta.label_lower
     changes = entry.changes or {}
     if label == "billing.invoiceline":
-        amount = format_value(model, "amount", _side(changes, "amount", 1), zone="", fk_names={})
+        amount = format_value(
+            model, "amount", _side(changes, "amount", 1), zone="", fk_names={}, entry_pk=entry.pk
+        )
         return _say(f"Invoiced on {_invoice(entry, model, 1, fk_names)} {amount}")
     spec = registry.spec_for(model)
     if spec and "create" in spec.sentences:
@@ -507,7 +531,7 @@ def _updated(
         elif isinstance(value, dict):
             lines.append(_m2m(model, key, value))
         elif isinstance(value, list) and len(value) == 2:
-            line = _pair(model, key, value, zones, at, fk_names, refund)
+            line = _pair(model, key, value, zones, at, fk_names, refund, entry.pk)
             if not line.sentence:
                 line.label = f"{named}{line.label}"
             lines.append(line)
@@ -528,6 +552,7 @@ def _pair(
     at: datetime | date,
     fk_names: dict,
     refund: bool,
+    entry_pk: int | None = None,
 ) -> Line:
     old, new = value
     if route := ROUTE_KEY.fullmatch(key):
@@ -542,7 +567,7 @@ def _pair(
             texts = _texts(value)
         else:
             texts = [
-                format_value(stop, part, v, zone=z, fk_names=fk_names, at=at)
+                format_value(stop, part, v, zone=z, fk_names=fk_names, at=at, entry_pk=entry_pk)
                 for v, z in zip(value, zones, strict=True)
             ]
     elif address := ADDRESS_KEY.fullmatch(key):
@@ -552,7 +577,9 @@ def _pair(
     else:
         label = registry.field_label(model, key)
         texts = [
-            format_value(model, key, v, zone=z, fk_names=fk_names, at=at, refund=refund)
+            format_value(
+                model, key, v, zone=z, fk_names=fk_names, at=at, refund=refund, entry_pk=entry_pk
+            )
             for v, z in zip(value, zones, strict=True)
         ]
     long = any(len(text) > LONG_TEXT for text in texts)

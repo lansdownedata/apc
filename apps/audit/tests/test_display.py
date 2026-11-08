@@ -1,5 +1,6 @@
 """How the trail reads in the History drawer (spec §6.2, §6.3; §9 group 7)."""
 
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -7,6 +8,7 @@ import pytest
 from django.conf import settings
 
 from apps.accounts.factories import UserFactory
+from apps.audit import display
 from apps.audit.display import (
     Line,
     entry_lines,
@@ -21,7 +23,7 @@ from apps.audit.display import (
 from apps.audit.factories import AuditEntryFactory
 from apps.audit.models import AuditEntry
 from apps.billing.models import InvoiceLine
-from apps.contacts.models import Contact, ContactPhone
+from apps.contacts.models import Company, Contact, ContactPhone
 from apps.dispatch.models import Assignment
 from apps.leads.factories import ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
@@ -592,3 +594,56 @@ def test_malformed_stored_values_degrade_instead_of_failing(model, changes, acti
         (group,) = group_entries(rows, zone_for=lambda e, z=zone: z, fk_names=names)
         for line in group.lines:
             assert all(isinstance(v, str) for v in (line.label, line.old, line.new, line.sentence))
+
+
+# --- final review: fallbacks log, own-subject creates ---
+
+
+def test_a_value_that_fails_to_render_is_logged_with_its_entry_and_field(monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad value")
+
+    monkeypatch.setattr(display, "_by_kind", boom)
+    row = AuditEntryFactory(changes={"rate": ["1", "2"]}, timestamp=JAN)
+
+    with caplog.at_level(logging.ERROR, logger="apps.audit.display"):
+        (line,) = entry_lines(row, zone=NY, fk_names={})
+
+    assert (line.old, line.new) == ("1", "2")
+    assert len(caplog.records) == 2  # the old and the new side
+    for record in caplog.records:
+        assert record.name == "apps.audit.display"
+        assert record.exc_info is not None
+        assert f"entry {row.pk}" in record.getMessage()
+        assert "rate" in record.getMessage()
+
+
+def test_an_entry_that_fails_to_render_is_logged_with_its_pk_and_keys(monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad entry")
+
+    monkeypatch.setattr(display, "_updated", boom)
+    row = AuditEntryFactory(changes={"rate": ["1", "2"]}, timestamp=JAN, object_repr="AP-1")
+
+    with caplog.at_level(logging.ERROR, logger="apps.audit.display"):
+        (line,) = entry_lines(row, zone=NY, fk_names={})
+
+    assert line.sentence == "Changed AP-1"
+    (record,) = caplog.records
+    assert record.name == "apps.audit.display"
+    assert record.exc_info is not None
+    assert f"entry {row.pk}" in record.getMessage()
+    assert "rate" in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    ("model", "sentence"),
+    [
+        (Contact, "Created the contact"),
+        (Company, "Created the company"),
+        (Vendor, "Created the vendor"),
+    ],
+)
+def test_a_profile_subjects_own_create_reads_created_the_subject(model, sentence):
+    line = _one({"name": ["None", "Theo Nakamura"]}, model=model, action=CREATE)
+    assert line.sentence == sentence
