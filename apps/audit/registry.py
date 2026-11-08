@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Any
 
 from auditlog.models import DEFAULT_OBJECT_REPR
@@ -18,6 +17,8 @@ from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured, ObjectDoesNotExist
 from django.db.models import Model
 from django.utils.text import capfirst
+
+from apps.audit.display import money
 
 # Every registered model is a TimeStampedModel. auditlog's own setting for this
 # (AUDITLOG_EXCLUDE_TRACKING_FIELDS) refuses to load without AUDITLOG_INCLUDE_ALL_MODELS,
@@ -89,10 +90,6 @@ def _profile(kind: str, pk: int | None) -> str | None:
     return None if pk is None else f"{kind}:{pk}"
 
 
-def _money(amount: Any) -> str:
-    return f"${Decimal(str(amount or 0)):,.2f}"
-
-
 def _reservation_parents(reservation: Model) -> dict:
     return {"trip_id": reservation.pk, "order_id": reservation.lead_id}
 
@@ -119,7 +116,7 @@ def _vendor_child_parents(row: Model) -> dict:
 
 
 def _extra_label(extra: Model) -> str:
-    return f"{extra.label or extra.get_kind_display()} {_money(extra.amount)}"
+    return f"{extra.label or extra.get_kind_display()} {money(extra.amount)}"
 
 
 def _assignment_label(assignment: Model) -> str:
@@ -132,6 +129,43 @@ def _lead_contact_label(row: Model) -> str:
     contact_field = row._meta.get_field("contact")
     contact = contact_field.get_cached_value(row) if contact_field.is_cached(row) else None
     return f"{role}: {contact.name}" if contact is not None else role
+
+
+def _payable_parents(payable: Model) -> dict:
+    """Trip, order and vendor through the assignment: one query when it is not loaded."""
+    field = payable._meta.get_field("assignment")
+    if field.is_cached(payable):
+        assignment = field.get_cached_value(payable)
+        reservation_id, vendor_id = assignment.reservation_id, assignment.vendor_id
+        lead_id = _through(assignment, "reservation__lead_id")
+    elif payable.assignment_id is None:
+        return {}
+    else:
+        row = (
+            field.related_model._base_manager.filter(pk=payable.assignment_id)
+            .values_list("reservation_id", "vendor_id", "reservation__lead_id")
+            .first()
+        )
+        if row is None:
+            return {}
+        reservation_id, vendor_id, lead_id = row
+    return {
+        "trip_id": reservation_id,
+        "order_id": lead_id,
+        "profile": _profile("vendor", vendor_id),
+    }
+
+
+def _invoice_contact(invoice: Model) -> str | None:
+    return _profile("contact", _through(invoice, "group__account__contact_id"))
+
+
+def _invoice_line_parents(line: Model) -> dict:
+    return {
+        "trip_id": line.reservation_id,
+        "order_id": _through(line, "reservation__lead_id"),
+        "profile": _profile("contact", _through(line, "invoice__group__account__contact_id")),
+    }
 
 
 SPECS: list[ModelSpec] = [
@@ -250,6 +284,69 @@ SPECS: list[ModelSpec] = [
         exclude=("uploaded_by",),
         parents=_vendor_child_parents,
         label=lambda document: document.label,
+    ),
+    ModelSpec(
+        model="payments.Charge",
+        exclude=(
+            "stripe_client_secret",
+            "stripe_payment_intent_id",
+            "stripe_refund_id",
+            "idempotency_key",
+            "attempt_no",
+            "attempted_at",
+            "authorized_at",
+            "capture_expires_at",
+            "captured_at",
+            "overtime_amount",
+            "overtime_gratuity",
+            "receipt_due_at",
+            "receipt_sent_at",
+            "receipt_message_id",
+            "receipt_lines",
+            "receipt_parent",
+            "receipt_attempted_at",
+            "receipt_skipped_at",
+        ),
+        qbo=True,
+        parents=lambda charge: {
+            "trip_id": charge.reservation_id,
+            "order_id": _through(charge, "plan__lead_id"),
+        },
+        label=lambda charge: f"{charge.get_kind_display()} {money(charge.amount)}",
+    ),
+    ModelSpec(
+        model="payments.AffiliatePayable",
+        exclude=("approved_by", "approved_at", "paid_at", "invoice_received_at"),
+        qbo=True,
+        parents=_payable_parents,
+        label=lambda payable: "Vendor bill",
+    ),
+    ModelSpec(
+        model="billing.Invoice",
+        exclude=(
+            "number",
+            "created_by",
+            "voided_by",
+            "voided_at",
+            "edited_by",
+            "edited_at",
+            "edit_note",
+        ),
+        qbo=True,
+        parents=lambda invoice: {"profile": _invoice_contact(invoice)},
+        label=lambda invoice: invoice.label,
+    ),
+    ModelSpec(
+        model="billing.InvoiceLine",
+        parents=_invoice_line_parents,
+        label=lambda line: f"Invoice line {money(line.amount)}",
+    ),
+    ModelSpec(
+        model="planners.PlannerRequest",
+        exclude=("message", "task"),
+        parents=_order_child_parents,
+        label=lambda request: f"Planner request: {request.about}",
+        sentences={"create": 'Planner request: "{about}"'},
     ),
 ]
 

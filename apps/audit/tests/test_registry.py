@@ -1,7 +1,10 @@
 """The registry (spec §3.1, §3.5, §4.2): what each operational model logs, and where."""
 
+import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -11,17 +14,24 @@ from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
 from apps.audit import registry
+from apps.audit.display import money
 from apps.audit.models import AuditEntry
-from apps.billing.factories import AccountGroupFactory, BillingAccountFactory
-from apps.billing.models import AccountGroup, BillingAccount, SyncState
+from apps.billing.factories import (
+    AccountGroupFactory,
+    BillingAccountFactory,
+    InvoiceFactory,
+    InvoiceLineFactory,
+)
+from apps.billing.models import AccountGroup, BillingAccount, Invoice, InvoiceLine, SyncState
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.contacts.models import Company, Contact, ContactPhone
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead, LeadContact
-from apps.payments.factories import PaymentPlanFactory
-from apps.payments.models import PaymentPlan
+from apps.payments.factories import ChargeFactory, PaymentPlanFactory
+from apps.payments.models import AffiliatePayable, Charge, PaymentPlan
+from apps.planners.models import PlannerAccount, PlannerRequest
 from apps.reservations.factories import ReservationFactory, TripExtraFactory
 from apps.reservations.models import Reservation, TripExtra
 from apps.vendors.factories import (
@@ -45,6 +55,18 @@ def _entries(instance: Model, action: int | None = None):
 def _lead_contact() -> LeadContact:
     return LeadContact.objects.create(
         lead=LeadFactory(), contact=ContactFactory(), role=LeadContact.Role.COUPLE
+    )
+
+
+def _payable() -> AffiliatePayable:
+    return AffiliatePayable.objects.create(assignment=AssignmentFactory(), expected_amount=350)
+
+
+def _planner_request() -> PlannerRequest:
+    return PlannerRequest.objects.create(
+        account=PlannerAccount.objects.create(contact=ContactFactory(), email="w@plans.test"),
+        lead=LeadFactory(),
+        about="Saturday run",
     )
 
 
@@ -94,6 +116,15 @@ CASES: dict[str, Case] = {
     "vendors.VendorDocument": Case(
         VendorDocumentFactory, ("label", "COI 2027"), ("uploaded_by", UserFactory)
     ),
+    "payments.Charge": Case(
+        ChargeFactory, ("note", "Late fee"), ("stripe_client_secret", "pi_x_secret_y")
+    ),
+    "payments.AffiliatePayable": Case(
+        _payable, ("invoice_number", "INV-7"), ("approved_at", timezone.now)
+    ),
+    "billing.Invoice": Case(InvoiceFactory, ("po_number", "PO-9"), ("edit_note", "Changed PO")),
+    "billing.InvoiceLine": Case(InvoiceLineFactory, ("description", "Airport run"), None),
+    "planners.PlannerRequest": Case(_planner_request, ("about", "Sunday run"), None),
 }
 
 
@@ -310,6 +341,11 @@ MINIMAL: dict[str, Callable[[], Model]] = {
     "vendors.VendorDriver": VendorDriver,
     "vendors.VendorInsurance": VendorInsurance,
     "vendors.VendorDocument": VendorDocument,
+    "payments.Charge": Charge,
+    "payments.AffiliatePayable": AffiliatePayable,
+    "billing.Invoice": Invoice,
+    "billing.InvoiceLine": InvoiceLine,
+    "planners.PlannerRequest": PlannerRequest,
 }
 
 
@@ -329,3 +365,144 @@ def test_two_hop_parents_survive_a_deleted_parent():
 
     orphan_group = AccountGroup(account_id=BillingAccountFactory().pk + 10_000)
     assert registry.parents(orphan_group) == {}
+
+
+def test_money_formats_dollars_with_separators():
+    assert money(Decimal("1250")) == "$1,250.00"
+    assert money("450") == "$450.00"
+    assert money(None) == "$0.00"
+
+
+def test_money_parents_and_labels():
+    deposit = ChargeFactory(kind=Charge.Kind.DEPOSIT, amount=Decimal("450"))
+    assert _parents(deposit) == {
+        "trip_id": None,
+        "order_id": deposit.plan.lead_id,
+        "profile": "",
+    }
+    assert registry.label(deposit) == "Deposit $450.00"
+
+    reservation = ReservationFactory()
+    trip = ChargeFactory(
+        plan=PaymentPlanFactory(lead=reservation.lead),
+        kind=Charge.Kind.TRIP,
+        reservation=reservation,
+        amount=Decimal("1250"),
+    )
+    assert _parents(trip) == {
+        "trip_id": reservation.pk,
+        "order_id": reservation.lead_id,
+        "profile": "",
+    }
+    assert registry.label(trip) == "Trip charge $1,250.00"
+
+    payable = _payable()
+    assignment = payable.assignment
+    assert _parents(payable) == {
+        "trip_id": assignment.reservation_id,
+        "order_id": assignment.reservation.lead_id,
+        "profile": f"vendor:{assignment.vendor_id}",
+    }
+    assert registry.label(payable) == "Vendor bill"
+
+    invoice = InvoiceFactory()
+    assert _parents(invoice) == {
+        "trip_id": None,
+        "order_id": None,
+        "profile": f"contact:{invoice.group.account.contact_id}",
+    }
+    assert registry.label(invoice) == f"Invoice (draft #{invoice.pk})"
+
+    line = InvoiceLineFactory(invoice=invoice, amount=Decimal("450"))
+    assert _parents(line) == {
+        "trip_id": line.reservation_id,
+        "order_id": line.reservation.lead_id,
+        "profile": f"contact:{invoice.group.account.contact_id}",
+    }
+    assert registry.label(line) == "Invoice line $450.00"
+
+    request = _planner_request()
+    assert _parents(request) == {"trip_id": None, "order_id": request.lead_id, "profile": ""}
+    assert registry.label(request) == "Planner request: Saturday run"
+
+
+def test_money_parents_read_one_query_per_hop_when_not_loaded(django_assert_num_queries):
+    made = ChargeFactory()
+    charge = Charge.objects.get(pk=made.pk)
+    with django_assert_num_queries(1):
+        assert registry.parents(charge) == {"order_id": made.plan.lead_id}
+
+    payable = AffiliatePayable.objects.get(pk=_payable().pk)
+    with django_assert_num_queries(1):
+        assert set(registry.parents(payable)) == {"trip_id", "order_id", "profile"}
+
+    invoice = Invoice.objects.get(pk=InvoiceFactory().pk)
+    with django_assert_num_queries(1):
+        assert set(registry.parents(invoice)) == {"profile"}
+
+    line = InvoiceLine.objects.get(pk=InvoiceLineFactory().pk)
+    with django_assert_num_queries(2):
+        assert set(registry.parents(line)) == {"trip_id", "order_id", "profile"}
+
+
+def test_invoice_who_when_not_tracked():
+    user = UserFactory()
+    invoice = InvoiceFactory(created_by=user, number="1042")
+    assert not {"created_by", "number"} & set(_entries(invoice, 0).get().changes)
+
+    invoice.voided_by = user
+    invoice.voided_at = timezone.now()
+    invoice.edited_by = user
+    invoice.edited_at = timezone.now()
+    invoice.edit_note = "x"
+    invoice.number = "1043"
+    invoice.void_reason = "Wrong trip"
+    invoice.save()
+
+    [entry] = _entries(invoice, AuditEntry.Action.UPDATE)
+    assert set(entry.changes) == {"void_reason"}
+
+
+def test_payable_who_when_not_tracked():
+    payable = _payable()
+    payable.status = AffiliatePayable.Status.APPROVED
+    payable.approved_by = UserFactory()
+    payable.approved_at = timezone.now()
+    payable.paid_at = timezone.now()
+    payable.invoice_received_at = timezone.now()
+    payable.save()
+
+    [entry] = _entries(payable, AuditEntry.Action.UPDATE)
+    assert set(entry.changes) == {"status"}
+
+
+def test_no_secret_or_integration_field_tracked():
+    pattern = re.compile(r"secret|token|password", re.IGNORECASE)
+    for spec in registry.SPECS:
+        model = registry.model_of(spec)
+        excluded = set(registry.effective_exclude(model))
+        for column in model._meta.concrete_fields:
+            risky = (
+                pattern.search(column.name)
+                or column.name.startswith(("stripe_", "qbo_"))
+                or column.name == "idempotency_key"
+            )
+            if risky:
+                assert column.name in excluded, f"{spec.model}.{column.name} is tracked"
+    assert "stripe_client_secret" in registry.effective_exclude(Charge)
+
+
+def test_secret_never_in_changes():
+    charge = ChargeFactory(stripe_client_secret="pi_x_secret_y")
+    charge.stripe_client_secret = "pi_z_secret_w"
+    charge.note = "Changed"
+    charge.save()
+
+    entries = _entries(charge)
+    assert entries.count() == 2
+    for entry in entries:
+        assert "secret" not in json.dumps(entry.changes).lower()
+
+
+def test_planner_request_sentence():
+    assert registry.spec_for(PlannerRequest).sentences == {"create": 'Planner request: "{about}"'}
