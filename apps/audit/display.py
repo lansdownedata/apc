@@ -15,9 +15,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from functools import cache
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from auditlog.models import AbstractLogEntry
 from django.apps import apps
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
@@ -34,7 +36,8 @@ if TYPE_CHECKING:
 DASH = "—"
 BLANK = (None, "", "None")
 LONG_TEXT = 80
-CREATE, UPDATE, DELETE = 0, 1, 2
+Action = AbstractLogEntry.Action
+TimeAt = Callable[["AuditEntry"], datetime | date | None]
 
 WEBHOOKS = {
     "stripe": "Stripe",
@@ -60,16 +63,6 @@ CREATED = {"reservations.reservation": "Created the trip", "leads.lead": "Create
 NOUNS = {"reservations.tripextra": "extra "}
 
 ROUTE_KEY = re.compile(r"route\.(\d+)(?:\.(\w+))?")
-ROUTE_FIELDS = (
-    "address",
-    "name",
-    "note",
-    "scheduled_time",
-    "airport",
-    "airline",
-    "flight_number",
-    "flight_direction",
-)
 ROUTE_LABELS = {"scheduled_time": "time"}
 # Already their human `str()` when stored (children.py), so never resolved as FKs.
 ROUTE_TEXT = frozenset({"airport", "airline"})
@@ -79,7 +72,7 @@ ADDRESS_SLOTS = {
     "billing_address": "Billing address",
     "address": "Address",
 }
-ADDRESS_FIELDS = {
+ADDRESS_LABELS = {
     "landmark_name": "Place name",
     "line1": "Street",
     "line2": "Street line 2",
@@ -89,6 +82,15 @@ ADDRESS_FIELDS = {
     "country": "Country",
 }
 ADDRESS_KEY = re.compile(rf"({'|'.join(ADDRESS_SLOTS)})\.(\w+)")
+
+
+@cache
+def _tracked_fields() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """`(route fields, address fields)` in the order `children` compares them. Imported
+    late: `children` imports `.models`, which imports the registry, which imports this."""
+    from .children import ADDRESS_FIELDS, ROUTE_FIELDS
+
+    return ROUTE_FIELDS, ADDRESS_FIELDS
 
 
 @dataclass
@@ -186,11 +188,21 @@ def _trim(amount: Decimal) -> str:
     return f"{amount.normalize():f}"
 
 
-def _time(raw: str, zone: str, at: datetime | None, show_abbr: bool) -> str:
-    """A wall-clock time in `zone`; the abbreviation is the zone's on the entry's day."""
+def _moment(at: datetime | date | None, tz: ZoneInfo) -> datetime:
+    """`at` as an instant in `tz`: a datetime converted (naive = UTC), a date as noon that
+    day in `tz`, None as now."""
+    if at is None:
+        at = timezone.now()
+    if isinstance(at, datetime):
+        return (at if at.tzinfo else at.replace(tzinfo=UTC)).astimezone(tz)
+    return datetime.combine(at, time(12, 0), tzinfo=tz)
+
+
+def _time(raw: str, zone: str, at: datetime | date | None, show_abbr: bool) -> str:
+    """A wall-clock time in `zone`, abbreviated as the zone reads on `at`'s day (the
+    trip's pickup date when the caller knows it, else the entry's time)."""
     tz = _zone(zone)
-    day = (at or timezone.now()).astimezone(tz).date()
-    local = datetime.combine(day, time.fromisoformat(raw), tzinfo=tz)
+    local = datetime.combine(_moment(at, tz).date(), time.fromisoformat(raw), tzinfo=tz)
     return _abbr(dateformat.format(local, "g:i A"), local, show_abbr)
 
 
@@ -203,12 +215,12 @@ def _datetime(raw: str, zone: str, show_abbr: bool) -> str:
     return _abbr(dateformat.format(local, "M j, g:i A"), local, show_abbr)
 
 
-def _zone_abbr(raw: str, at: datetime | None) -> str:
+def _zone_abbr(raw: str, at: datetime | date | None) -> str:
     try:
         tz = ZoneInfo(raw)
     except (ZoneInfoNotFoundError, ValueError):
         return raw
-    return (at or timezone.now()).astimezone(tz).tzname() or raw
+    return _moment(at, tz).tzname() or raw
 
 
 def _fk(model: type[models.Model], name: str) -> models.Field | None:
@@ -227,7 +239,7 @@ def format_value(
     zone: str,
     fk_names: dict,
     show_abbr: bool = True,
-    at: datetime | None = None,
+    at: datetime | date | None = None,
     refund: bool = False,
 ) -> str:
     """One stored value as it reads on screen (spec §6.3). `at` is the entry's time (for
@@ -236,19 +248,19 @@ def format_value(
     if raw in BLANK:
         return DASH
     raw = str(raw)
-    if field_name == "pickup_timezone":
-        return _zone_abbr(raw, at)
     try:
-        f = model._meta.get_field(field_name)
-    except FieldDoesNotExist:
-        return raw
-    if not f.concrete:  # a reverse relation's name used as a key (`named_passengers`)
-        return raw
-    try:
+        if field_name == "pickup_timezone":
+            return _zone_abbr(raw, at)
+        try:
+            f = model._meta.get_field(field_name)
+        except FieldDoesNotExist:
+            return raw
+        if not f.concrete:  # a reverse relation's name used as a key (`named_passengers`)
+            return raw
         return _by_kind(
             f, raw, zone=zone, fk_names=fk_names, show_abbr=show_abbr, at=at, refund=refund
         )
-    except (ValueError, ArithmeticError, ValidationError, TypeError):
+    except Exception:  # history is read-only: the stored text beats a 500
         return raw
 
 
@@ -363,12 +375,13 @@ def _sort_key(model: type[models.Model], key: str) -> tuple:
     names = [f.name for f in model._meta.fields]
     if key in names:
         return (0, names.index(key), 0, "")
+    route_fields, address_fields = _tracked_fields()
     if route := ROUTE_KEY.fullmatch(key):
         part = route[2]
-        return (1, int(route[1]), ROUTE_FIELDS.index(part) + 1 if part in ROUTE_FIELDS else 0, "")
+        return (1, int(route[1]), route_fields.index(part) + 1 if part in route_fields else 0, "")
     if address := ADDRESS_KEY.fullmatch(key):
         slot, part = address.groups()
-        fields = list(ADDRESS_FIELDS)
+        fields = list(address_fields)
         return (
             2,
             list(ADDRESS_SLOTS).index(slot),
@@ -379,27 +392,49 @@ def _sort_key(model: type[models.Model], key: str) -> tuple:
 
 
 def entry_lines(
-    entry: AuditEntry, *, zone: str, fk_names: dict, trip_prefix: str = ""
+    entry: AuditEntry,
+    *,
+    zone: str,
+    fk_names: dict,
+    trip_prefix: str = "",
+    time_at: TimeAt | None = None,
 ) -> list[Line]:
-    """The lines one entry reads as, in `zone` (spec §6.2)."""
+    """The lines one entry reads as, in `zone` (spec §6.2). `time_at(entry)` gives the day
+    a trip's times are abbreviated on (its pickup date); None, or a None result, uses the
+    entry's own time. A malformed entry reads as one plain line instead of failing."""
+    at = (time_at(entry) if time_at else None) or entry.timestamp
     model = _model(entry)
-    if model is None:
+    try:
+        if model is None:
+            lines = [_say(f"Changed {entry.object_repr}")]
+        elif entry.action == Action.CREATE:
+            lines = [_created(entry, model, fk_names)]
+        elif entry.action == Action.DELETE:
+            lines = [_removed(entry, model, fk_names)]
+        elif entry.action == Action.UPDATE:
+            lines = _updated(entry, model, zone, fk_names, at)
+        else:
+            lines = []
+    except Exception:  # history is read-only: a plain line beats a 500
         lines = [_say(f"Changed {entry.object_repr}")]
-    elif entry.action == CREATE:
-        lines = [_created(entry, model, fk_names)]
-    elif entry.action == DELETE:
-        lines = [_removed(entry, model, fk_names)]
-    elif entry.action == UPDATE:
-        lines = _updated(entry, model, zone, fk_names)
-    else:
-        lines = []
     for line in lines:
         line.prefix = trip_prefix
     return lines
 
 
+def _side(changes: dict, key: str, side: int) -> Any:
+    """One side of a stored `[old, new]` pair; None when the value isn't such a pair."""
+    pair = changes.get(key)
+    return pair[side] if isinstance(pair, list) and len(pair) == 2 else None
+
+
+def _texts(values: list) -> list[str]:
+    """Values shown as stored: free text, or names already resolved when written."""
+    return [DASH if v in BLANK else str(v) for v in values]
+
+
 def _invoice(entry: AuditEntry, model: type[models.Model], side: int, fk_names: dict) -> str:
-    raw = (entry.changes or {}).get("invoice", [None, None])[side]
+    raw = _side(entry.changes or {}, "invoice", side)
     return format_value(model, "invoice", raw, zone="", fk_names=fk_names)
 
 
@@ -407,7 +442,7 @@ def _created(entry: AuditEntry, model: type[models.Model], fk_names: dict) -> Li
     label = model._meta.label_lower
     changes = entry.changes or {}
     if label == "billing.invoiceline":
-        amount = money((changes.get("amount") or [None, 0])[1] or 0)
+        amount = format_value(model, "amount", _side(changes, "amount", 1), zone="", fk_names={})
         return _say(f"Invoiced on {_invoice(entry, model, 1, fk_names)} {amount}")
     spec = registry.spec_for(model)
     if spec and "create" in spec.sentences:
@@ -427,28 +462,35 @@ def _route_set(changes: dict) -> list[str] | None:
     whole = {
         int(m[1]): v
         for k, v in changes.items()
-        if (m := ROUTE_KEY.fullmatch(k)) and m[2] is None and isinstance(v, list)
+        if (m := ROUTE_KEY.fullmatch(k)) and m[2] is None and isinstance(v, list) and len(v) == 2
     }
     if 1 not in whole or any(old not in BLANK for old, _ in whole.values()):
         return None
-    return [str(whole[n][1]) for n in sorted(whole)]
+    return _texts([whole[n][1] for n in sorted(whole)])
 
 
-def _updated(entry: AuditEntry, model: type[models.Model], zone: str, fk_names: dict) -> list[Line]:
+def _updated(
+    entry: AuditEntry,
+    model: type[models.Model],
+    zone: str,
+    fk_names: dict,
+    at: datetime | date,
+) -> list[Line]:
     changes = entry.changes or {}
     spec = registry.spec_for(model)
     new_values = _new_values(changes)
     fired: dict[str, str] = {}
     for stamp, template in (spec.sentences if spec else {}).items():
-        pair = changes.get(stamp)
-        if isinstance(pair, list) and pair[0] in BLANK and pair[1] not in BLANK:
+        old, new = _side(changes, stamp, 0), _side(changes, stamp, 1)
+        if stamp in changes and old in BLANK and new not in BLANK:
             fired[stamp] = template.format_map(new_values)
     absorbed = {name for stamp in fired for name in _placeholders(spec.sentences[stamp])}
 
     # A trip whose zone changed in this entry: old values in the old zone, new in the new.
     zones = (zone, zone)
-    if isinstance(tz := changes.get("pickup_timezone"), list):
-        zones = (str(tz[0]) if tz[0] not in BLANK else "", str(tz[1]) if tz[1] not in BLANK else "")
+    if "pickup_timezone" in changes:
+        old, new = _side(changes, "pickup_timezone", 0), _side(changes, "pickup_timezone", 1)
+        zones = ("" if old in BLANK else str(old), "" if new in BLANK else str(new))
 
     route = _route_set(changes)
     named = "" if model._meta.label_lower in ANCHORS else f"{entry.object_repr} · "
@@ -465,7 +507,7 @@ def _updated(entry: AuditEntry, model: type[models.Model], zone: str, fk_names: 
         elif isinstance(value, dict):
             lines.append(_m2m(model, key, value))
         elif isinstance(value, list) and len(value) == 2:
-            line = _pair(model, key, value, zones, entry.timestamp, fk_names, refund)
+            line = _pair(model, key, value, zones, at, fk_names, refund)
             if not line.sentence:
                 line.label = f"{named}{line.label}"
             lines.append(line)
@@ -483,7 +525,7 @@ def _pair(
     key: str,
     value: list,
     zones: tuple[str, str],
-    at: datetime,
+    at: datetime | date,
     fk_names: dict,
     refund: bool,
 ) -> Line:
@@ -491,11 +533,13 @@ def _pair(
     if route := ROUTE_KEY.fullmatch(key):
         n, part = route.groups()
         if part is None:
-            return _say(f"Added stop {n}: {new}" if old in BLANK else f"Removed stop {n}: {old}")
+            if old in BLANK:
+                return _say(f"Added stop {n}: {_texts([new])[0]}")
+            return _say(f"Removed stop {n}: {_texts([old])[0]}")
         stop = apps.get_model("reservations", "Stop")
         label = f"Stop {n} {ROUTE_LABELS.get(part) or _verbose(stop, part)}"
         if part in ROUTE_TEXT:
-            texts = [DASH if v in BLANK else str(v) for v in value]
+            texts = _texts(value)
         else:
             texts = [
                 format_value(stop, part, v, zone=z, fk_names=fk_names, at=at)
@@ -503,8 +547,8 @@ def _pair(
             ]
     elif address := ADDRESS_KEY.fullmatch(key):
         slot, part = address.groups()
-        label = f"{ADDRESS_SLOTS[slot]} · {ADDRESS_FIELDS.get(part) or capfirst(part)}"
-        texts = [DASH if v in BLANK else str(v) for v in value]
+        label = f"{ADDRESS_SLOTS[slot]} · {ADDRESS_LABELS.get(part) or capfirst(part)}"
+        texts = _texts(value)
     else:
         label = registry.field_label(model, key)
         texts = [
@@ -531,10 +575,13 @@ def group_entries(
     zone_for: Callable[[AuditEntry], str],
     fk_names: dict,
     prefix_for: Callable[[AuditEntry], str] = lambda entry: "",
+    time_at: TimeAt | None = None,
+    panel_zone: str | None = None,
 ) -> list[Group]:
     """Entries come newest first. Consecutive ones sharing a `cid` (one request, job or
     import) merge into one group; inside it the lines read in the order they happened.
-    `day` is the date in the group's zone, for the day headings."""
+    Each group's clock is in its own zone; `day` (the heading) is in `panel_zone` when
+    given, so an order spanning zones keeps its headings in order, else the group's."""
     runs: list[list[AuditEntry]] = []
     for entry in entries:
         if runs and entry.cid and runs[-1][0].cid == entry.cid:
@@ -550,7 +597,11 @@ def group_entries(
             line
             for entry in reversed(run)
             for line in entry_lines(
-                entry, zone=zone_for(entry), fk_names=fk_names, trip_prefix=prefix_for(entry)
+                entry,
+                zone=zone_for(entry),
+                fk_names=fk_names,
+                trip_prefix=prefix_for(entry),
+                time_at=time_at,
             )
         ]
         groups.append(
@@ -560,7 +611,7 @@ def group_entries(
                 zone=zone,
                 automatic=is_automatic(head),
                 lines=lines,
-                day=when.date(),
+                day=head.timestamp.astimezone(_zone(panel_zone or zone)).date(),
             )
         )
     return groups

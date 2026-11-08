@@ -524,3 +524,71 @@ def test_entries_auditlog_actually_wrote_read_cleanly():
     assert by_label["Pickup date"].new == "Sat Nov 14"
     assert by_label["Pickup time"].new.endswith(("PM EST", "PM EDT"))
     assert "Confirmed the trip" in [line.sentence for line in lines]
+
+
+# --- fix round 1: trip-date abbreviations, panel-zone headings, degrade don't fail ---
+
+JULY = date(2026, 7, 4)
+
+
+def test_a_july_pickup_edited_in_january_reads_edt_with_time_at():
+    row = AuditEntryFactory(
+        changes={"pickup_time": ["19:30:00", "20:00:00"], "pickup_timezone": [LA, NY]},
+        timestamp=JAN,
+    )
+    lines = entry_lines(row, zone=NY, fk_names={}, time_at=lambda e: JULY)
+    by_label = {line.label: (line.old, line.new) for line in lines}
+    assert by_label["Pickup time"] == ("7:30 PM PDT", "8:00 PM EDT")
+    assert by_label["Time zone"] == ("PDT", "EDT")
+    (group,) = group_entries([row], zone_for=lambda e: NY, fk_names={}, time_at=lambda e: JULY)
+    assert group.lines[0].new == "8:00 PM EDT"
+
+
+def test_time_at_returning_none_falls_back_to_the_entry_time():
+    row = AuditEntryFactory(changes={"pickup_time": ["19:30:00", "20:00:00"]}, timestamp=JAN)
+    (line,) = entry_lines(row, zone=NY, fk_names={}, time_at=lambda e: None)
+    assert line.new == "8:00 PM EST"
+
+
+def test_a_date_at_does_not_raise():
+    assert _value(Reservation, "pickup_time", "19:30:00", at=JULY) == "7:30 PM EDT"
+    assert _value(Reservation, "pickup_timezone", NY, at=JULY) == "EDT"
+    assert _value(Reservation, "pickup_time", "19:30:00", at=date(2026, 1, 4)) == "7:30 PM EST"
+
+
+def test_day_headings_follow_the_panel_zone_while_clocks_keep_their_own():
+    late_west = datetime(2026, 1, 15, 6, 30, tzinfo=UTC)  # Jan 14 10:30 PM PST, Jan 15 in ET
+    row = AuditEntryFactory(changes={"rate": ["1", "2"]}, timestamp=late_west)
+    (own,) = group_entries([row], zone_for=lambda e: LA, fk_names={})
+    assert own.day == date(2026, 1, 14)
+    (paneled,) = group_entries([row], zone_for=lambda e: LA, fk_names={}, panel_zone=NY)
+    assert paneled.day == date(2026, 1, 15)
+    assert paneled.clock == "10:30 PM PST" and paneled.zone == LA
+
+
+@pytest.mark.parametrize(
+    ("model", "changes", "action"),
+    [
+        (Reservation, {"rate": ["abc", "1,2"]}, UPDATE),
+        (Reservation, {"hours": ["NaNx", "2"]}, UPDATE),
+        (Reservation, {"pickup_time": ["25:99", "noon"]}, UPDATE),
+        (Reservation, {"pickup_date": ["2026-13-45", "soon"]}, UPDATE),
+        (Reservation, {"customer_confirmed_at": ["2026-01-15 03:30:00", "yesterday"]}, UPDATE),
+        (Reservation, {"pickup_timezone": ["Mars/Olympus", "America/New_York"]}, UPDATE),
+        (Reservation, {"trip_status": ["unassigned", "teleported"]}, UPDATE),
+        (Reservation, {"vehicle": ["abc", "12x"]}, UPDATE),
+        (InvoiceLine, {"invoice": ["None", "7"], "amount": ["None", "None"]}, CREATE),
+        (InvoiceLine, {"invoice": ["None", "7"], "amount": "None"}, CREATE),
+        (Reservation, {"route.1": "garbage", "route.2": [None]}, UPDATE),
+        (Reservation, {"route.1": [None], "route.2": [None, "BOS"]}, UPDATE),
+        (Reservation, {"route.1.scheduled_time": ["nope", None]}, UPDATE),
+        (Reservation, {"accepted_terms_at": "None"}, UPDATE),
+    ],
+)
+def test_malformed_stored_values_degrade_instead_of_failing(model, changes, action):
+    rows = [AuditEntryFactory(model=model, changes=changes, action=action, timestamp=JAN)]
+    names = resolve_fks(fk_targets(rows))
+    for zone in (NY, "Mars/Olympus"):
+        (group,) = group_entries(rows, zone_for=lambda e, z=zone: z, fk_names=names)
+        for line in group.lines:
+            assert all(isinstance(v, str) for v in (line.label, line.old, line.new, line.sentence))
