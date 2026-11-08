@@ -3882,6 +3882,13 @@ function initTomSelects(root = document) {
       };
     }
     new TomSelect(el, options);
+    const ts = el.tomselect;
+    for (const target of [ts?.control, ts?.control_input]) {
+      if (!target) continue;
+      for (const attr of ["aria-label", "aria-labelledby"]) {
+        if (el.hasAttribute(attr)) target.setAttribute(attr, el.getAttribute(attr));
+      }
+    }
   });
 }
 document.addEventListener("DOMContentLoaded", () => { initTomSelects(); initAutogrow(); });
