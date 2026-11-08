@@ -172,9 +172,10 @@ def _balance_failed(intent) -> None:
         ).exists()
     )
     if pi_id:
-        plan.charges.filter(stripe_payment_intent_id=pi_id).update(
-            status=Charge.Status.FAILED, failure_reason=reason
-        )
+        for charge in plan.charges.filter(stripe_payment_intent_id=pi_id):
+            charge.status = Charge.Status.FAILED
+            charge.failure_reason = reason
+            charge.save(update_fields=["status", "failure_reason", "updated_at"])
     if not already_failed:
         # An inline off-session decline already raised this alert; the webhook that follows
         # it is the same decline, not a second one.

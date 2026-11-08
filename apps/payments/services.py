@@ -1078,10 +1078,10 @@ def _cancel(lead, trips, *, whole: bool) -> None:
     from apps.reservations.models import Reservation
 
     pks = [t.pk for t in trips]
-    Reservation.objects.filter(pk__in=pks).update(
-        trip_status=Reservation.TripStatus.CANCELLED,
-        revenue_status=Reservation.RevenueStatus.REVERSED,
-    )
+    for trip in trips:
+        trip.trip_status = Reservation.TripStatus.CANCELLED
+        trip.revenue_status = Reservation.RevenueStatus.REVERSED
+        trip.save(update_fields=["trip_status", "revenue_status", "updated_at"])
     _report_cancels_to_gnet(trips)
     # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
     # them would be unreachable — pull it here while we still know the trip died.
