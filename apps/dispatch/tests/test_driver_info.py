@@ -179,3 +179,25 @@ def test_saving_driver_info_clears_the_evaluate_gap():
     )
 
     assert monitoring.K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, now)
+
+
+def test_set_driver_info_reads_the_alert_config_once_for_the_stamp_and_the_message():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.dispatch.models import DispatchAlertConfig
+
+    trip = _trip()
+    set_trip_status(trip, "dispatched")
+    a = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
+    DispatchAlertConfig.load()  # the singleton exists, so each read is one SELECT
+    table = DispatchAlertConfig._meta.db_table
+
+    with CaptureQueriesContext(connection) as ctx:
+        services.set_driver_info(
+            a, name="Sam Rivera", cell="+15715551212", vehicle_desc="", vehicle_number=""
+        )
+
+    reads = [q["sql"] for q in ctx.captured_queries if table in q["sql"]]
+    # One for the stamp and the driver message, one for the trip's tasks (`load_facts`).
+    assert len(reads) == 2, reads

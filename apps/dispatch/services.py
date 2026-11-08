@@ -415,12 +415,13 @@ def set_driver_info(
     assignment.vehicle_desc = vehicle_desc
     assignment.vehicle_number = vehicle_number
     fields = ["driver_name", "driver_cell", "vehicle_desc", "vehicle_number", "updated_at"]
-    if assignment.stamp_driver_info(DispatchAlertConfig.load()):
+    config = DispatchAlertConfig.load()
+    if assignment.stamp_driver_info(config):
         fields.append("driver_info_at")
     assignment.save(update_fields=fields)
     from apps.messaging import events
 
-    events.sync_waiting(assignment.reservation)
+    events.sync_waiting(assignment.reservation, dispatch_config=config)
     _sync_tasks(assignment.reservation)
     return assignment
 

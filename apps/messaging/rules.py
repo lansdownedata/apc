@@ -276,9 +276,10 @@ def types_match(
     return any(trip_matches(t, types) for t in trips)
 
 
-def ready(reservation, waits_for: str) -> bool:
+def ready(reservation, waits_for: str, *, dispatch_config=None) -> bool:
     """Whether a waiting row's condition holds now. A cancelled trip is never ready, and
-    neither is a condition this module doesn't know."""
+    neither is a condition this module doesn't know. ``dispatch_config`` is the
+    `DispatchAlertConfig` a caller already read."""
     from apps.dispatch.models import DispatchAlertConfig
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.dispatch.services import driver_details_ready
@@ -288,7 +289,9 @@ def ready(reservation, waits_for: str) -> bool:
     if reservation.trip_status not in DRIVER_MESSAGE_STATUSES:
         return False
     assignment = confirmed_assignment(reservation)
-    return assignment is not None and driver_details_ready(assignment, DispatchAlertConfig.load())
+    if assignment is None:
+        return False
+    return driver_details_ready(assignment, dispatch_config or DispatchAlertConfig.load())
 
 
 def _uses_site_link(row: MessageTemplate) -> bool:

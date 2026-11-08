@@ -389,13 +389,13 @@ _DRIVER_TRIGGERS = ("pickup_dispatched", "driver_changed")
 _DRIVER_KINDS = ("driver_released", "driver_updated")
 
 
-def _maybe_driver_changed(lead, reservation) -> None:
+def _maybe_driver_changed(lead, reservation, *, dispatch_config=None) -> None:
     """The driver details on file differ from the last ones the customer was sent: emit
     `driver_changed` (as the old `_maybe_update`). A send made before details were
     recorded is unknown and never counts as a change. A send that reached anyone counts,
     even one still holding its texts for quiet hours: its email went with the details it
     carries."""
-    if not rules.ready(reservation, "dispatched_with_driver"):
+    if not rules.ready(reservation, "dispatched_with_driver", dispatch_config=dispatch_config):
         return
     rows = MessageTemplate.objects.filter(trigger__in=_DRIVER_TRIGGERS)
     reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
@@ -418,6 +418,7 @@ def sync_waiting(
     only: MessageTemplate | None = None,
     master: bool | None = None,
     send_inline: bool = True,
+    dispatch_config=None,
 ) -> None:
     """Queue, or re-date, every row that waits for the trip to be Dispatched with its
     driver's details (as the old `sync_driver_message`).
@@ -428,7 +429,8 @@ def sync_waiting(
     held; a sent one is left alone, and a change of driver after it emits `driver_changed`.
     Nothing happens once the pickup has passed. ``only`` limits it to that one row and skips
     the driver-change check (the editor queueing the row it saved); ``master`` is the master
-    switch already read; ``send_inline`` False leaves what is due to the cron (the editor).
+    switch already read; ``send_inline`` False leaves what is due to the cron (the editor);
+    ``dispatch_config`` is the `DispatchAlertConfig` already read (`set_driver_info`).
     """
     from apps.reservations.models import Reservation
 
@@ -463,7 +465,9 @@ def sync_waiting(
         def ready(row: MessageTemplate) -> bool:
             waits_for = catalog.get(row.trigger).waits_for
             if waits_for not in readiness:
-                readiness[waits_for] = rules.ready(locked, waits_for)
+                readiness[waits_for] = rules.ready(
+                    locked, waits_for, dispatch_config=dispatch_config
+                )
             return readiness[waits_for]
 
         any_sent = False
@@ -509,7 +513,7 @@ def sync_waiting(
                 continue
             queued_now.append(_create(row, lead, locked, at))
         if only is None and any_sent and locked.trip_status in rules.DRIVER_MESSAGE_STATUSES:
-            _maybe_driver_changed(lead, locked)
+            _maybe_driver_changed(lead, locked, dispatch_config=dispatch_config)
     if send_inline:
         _send_on_commit(queued_now)
 
