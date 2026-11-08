@@ -287,11 +287,13 @@ def evaluate(task: Task) -> Task:
     return task
 
 
-def reschedule(lead: Lead) -> int:
+def reschedule(lead: Lead, *, fresh: bool = False) -> int:
     """Re-date `lead`'s unresolved tasks after a pickup moved. Closed tasks keep their
     history; an already-open task keeps its open time; `escalated_tier` is left alone, so
-    a task pushed back out of overdue won't re-alert for a tier it already raised."""
-    lead = Lead.objects.get(pk=lead.pk)
+    a task pushed back out of overdue won't re-alert for a tier it already raised.
+    ``fresh`` says the caller just read `lead` from the database, so it isn't read again."""
+    if not fresh:
+        lead = Lead.objects.get(pk=lead.pk)
     facts = load_facts([lead])[lead.pk]
     trips = {t.pk: t for t in facts.trips}
     now = timezone.now()

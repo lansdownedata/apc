@@ -174,10 +174,10 @@ def test_one_lead_failing_does_not_stop_the_rest(caplog):
     bad = leads[1]
     real = services.reschedule
 
-    def flaky(lead):
+    def flaky(lead, **kwargs):
         if lead.pk == bad.pk:
             raise RuntimeError("boom")
-        return real(lead)
+        return real(lead, **kwargs)
 
     with patch.object(services, "reschedule", side_effect=flaky):
         count = schedule.save({KEY: (5, "days")}, user=UserFactory())
@@ -187,3 +187,23 @@ def test_one_lead_failing_does_not_stop_the_rest(caplog):
         assert due == _pickup(lead).astimezone(UTC) - timedelta(days=5)
     assert count == 2
     assert f"lead {bad.pk}" in caplog.text
+
+
+def test_redate_reads_each_order_once():
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _order()
+    _order()
+    table = Lead._meta.db_table
+
+    with CaptureQueriesContext(connection) as ctx:
+        schedule.redate({KEY})
+
+    refetches = [
+        q["sql"]
+        for q in ctx.captured_queries
+        if f"FROM `{table}` WHERE `{table}`.`id` = " in q["sql"]
+    ]
+    # The orders are read in one batch; reschedule re-dates the instances it is given.
+    assert refetches == []

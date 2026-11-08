@@ -237,7 +237,7 @@ def redate(keys: set[Key]) -> int:
         )
         for lead in Lead.objects.filter(pk__in=list(leads)):
             try:
-                total += services.reschedule(lead)
+                total += services.reschedule(lead, fresh=True)
             except Exception:
                 logger.exception("schedule re-date failed for lead %s", lead.pk)
     if vendor_tasks.KIND in kinds:
