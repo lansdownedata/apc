@@ -76,23 +76,37 @@
 {{ draft|json_script:"billing-draft" }}
 <script>
 /* invoiceDraft: the Customer Billing pane (APC-106). The ticked trips drive the count, the
- * total and the QuickBooks preview; Create and Void confirm through $store.modal and post
+ * total and the QuickBooks preview, and, until the agent types in it, the PO field (the
+ * first ticked trip's PO). Create and Void confirm through $store.modal and post
  * form-encoded; success reloads, because the list and the invoices are server-rendered. */
 function invoiceDraft(dataId, createUrl) {
   const data = JSON.parse(document.getElementById(dataId)?.textContent || "{}");
   const trips = data.trips || [];
   const amounts = Object.fromEntries(trips.map((t) => [t.id, Number(t.amount)]));
+  const pos = Object.fromEntries(trips.map((t) => [t.id, t.po || ""]));
+  const filters = data.filters || {};
   const money = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const plural = (n) => (n === 1 ? "1 trip" : `${n} trips`);
   return {
     picked: trips.map((t) => t.id),
     count: trips.length,
-    po: data.defaultPo || "",
+    po: trips.length ? pos[trips[0].id] : "",
+    poEdited: false,
     memo: "",
     invoiceDate: "",
     busy: false,
     init() {
       this.invoiceDate = this.$refs.invoiceDate?.value || "";
+      this.$watch("picked", () => {
+        if (!this.poEdited) this.po = this.pickedPos[0] || "";
+      });
+    },
+    /* The ticked trips' POs in pickup order (the draft's order, not the order they were ticked). */
+    get pickedPos() {
+      return trips.filter((t) => this.picked.includes(t.id)).map((t) => pos[t.id]);
+    },
+    get mixedPo() {
+      return new Set(this.pickedPos.filter(Boolean)).size > 1;
     },
     isPicked(id) {
       return this.picked.includes(id);
@@ -128,6 +142,7 @@ function invoiceDraft(dataId, createUrl) {
           try {
             const body = this.picked.map((id) => ["trip_ids", String(id)]);
             body.push(["invoice_date", this.invoiceDate], ["po_number", this.po], ["memo", this.memo]);
+            for (const key of ["q", "from", "to"]) body.push([key, filters[key] || ""]);
             const json = await postForm(createUrl, body);
             window.location = json.redirect;
           } catch (e) {

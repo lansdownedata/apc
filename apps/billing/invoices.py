@@ -82,7 +82,13 @@ def line_description(trip) -> str:
     if discount > 0:
         figure += f" (after {_money(discount)} discount)"
     gratuity = f"Gratuity {_money(trip.gratuity)}" if trip.gratuity > 0 else ""
-    route = " → ".join(_short(s) for s in (stops[0], stops[-1])) if stops else ""
+    route = (
+        f"{_short(stops[0])} → {_short(stops[-1])}"
+        if len(stops) > 1
+        else _short(stops[0])
+        if stops
+        else ""
+    )
     tail = [route, figure, gratuity, f"Total {_money(trip.line_total)}"]
     return "\n".join(" · ".join(part for part in line if part) for line in (head, tail))
 

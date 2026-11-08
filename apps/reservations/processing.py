@@ -631,6 +631,11 @@ def add_charge(
     review = review_of(trip)
     if review is None or not review.is_processed:
         raise ProcessingError("Add a charge from a processed trip; otherwise edit the price.")
+    from apps.billing.models import InvoiceLine
+
+    line = InvoiceLine.objects.filter(reservation=trip).select_related("invoice").first()
+    if line is not None:
+        raise ProcessingError(f"On {line.invoice.label}. Void it, then add the charge.")
     label = (label or "").strip()[:80]
     if not label:
         raise ProcessingError("Say what the charge is for.")

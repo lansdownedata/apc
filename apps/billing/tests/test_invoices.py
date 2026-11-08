@@ -110,6 +110,19 @@ def test_line_description_overtime_discount_transfer_no_vehicle() -> None:
     assert second.endswith(f"Total ${trip.line_total:,.2f}")
 
 
+def test_line_description_single_stop_has_no_arrow() -> None:
+    trip = _trip(
+        [("Union Station", "50 Massachusetts Ave NE")],
+        trip_type=Reservation.TripType.HOURLY,
+        rate=100,
+        hours=4,
+        min_hours=0,
+    )
+    second = invoices.line_description(trip).split("\n")[1]
+    assert "→" not in second
+    assert second.startswith("Union Station · Trip $")
+
+
 @pytest.mark.parametrize(("hours", "wording"), [(2, "+ 2 hrs overtime"), (1, "+ 1 hr overtime")])
 def test_overtime_hours_wording(hours: int, wording: str) -> None:
     trip = _trip(
@@ -382,3 +395,34 @@ def test_unlock_allowed_after_void(accountant) -> None:
     invoices.void_invoice(invoice, reason="test", user=accountant)
     review = processing.unlock(trip, user=accountant, reason="price check")
     assert not review.is_processed
+
+
+def test_add_charge_refuses_an_invoiced_trip(accountant) -> None:
+    from apps.reservations import processing
+    from apps.reservations.models import TripExtra
+
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = _create(group, [trip])
+    before = Reservation.objects.get(pk=trip.pk).line_total
+    with pytest.raises(
+        processing.ProcessingError,
+        match=re.escape(f"On {invoice.label}. Void it, then add the charge."),
+    ):
+        processing.add_charge(
+            trip, user=accountant, amount="50", label="Stain on the seat", collect="invoice"
+        )
+    assert not TripExtra.objects.filter(reservation=trip).exists()
+    assert Reservation.objects.get(pk=trip.pk).line_total == before
+
+
+def test_invoice_admin_keeps_the_frozen_fields_read_only(rf) -> None:
+    from django.contrib.admin.sites import site
+
+    model_admin = site._registry[Invoice]
+    invoice = InvoiceFactory()
+    request = rf.get("/")
+    request.user = UserFactory(is_superuser=True, is_staff=True)
+    readonly = set(model_admin.get_readonly_fields(request, invoice))
+    assert {"status", "total", "group", "number"} <= readonly
+    assert model_admin.list_select_related == ("group__account",)

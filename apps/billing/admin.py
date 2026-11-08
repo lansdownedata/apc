@@ -112,4 +112,11 @@ class InvoiceAdmin(admin.ModelAdmin):
     list_display = ("pk", "number", "group", "invoice_date", "due_date", "total", "status")
     list_filter = ("status",)
     search_fields = ("number", "group__name", "group__account__name")
+    list_select_related = ("group__account",)
     inlines = [InvoiceLineInline]
+
+    def get_readonly_fields(self, request, obj=None):
+        """Lines and the total are frozen at creation; status changes go through void."""
+        if obj is None:
+            return self.readonly_fields
+        return (*self.readonly_fields, "status", "total", "group", "number")

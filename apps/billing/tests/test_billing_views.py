@@ -1,6 +1,7 @@
 """APC-106 — the Customer Billing screen, its create/void endpoints and the nav count."""
 
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -194,18 +195,37 @@ def test_nav_shows_billing_count(staff) -> None:
     assert 'data-billing-badge="1"' in html
 
 
+def _group_with_open_invoice(accountant, *, ready: int, invoiced: int):
+    group = AccountGroupFactory()
+    on_invoice = [_processed_trip(group, accountant=accountant.user) for _ in range(invoiced)]
+    invoices.create_invoice(
+        group,
+        [t.pk for t in on_invoice],
+        invoice_date=timezone.localdate(),
+        po_number="",
+        memo="",
+        user=accountant.user,
+    )
+    for _ in range(ready):
+        _processed_trip(group, accountant=accountant.user)
+    return group
+
+
 def test_page_query_count_is_flat(accountant) -> None:
-    _processed_trip(accountant=accountant.user)
+    small = _group_with_open_invoice(accountant, ready=1, invoiced=1)
     with CaptureQueriesContext(connection) as one:
-        assert accountant.get(reverse("billing")).status_code == 200
-    for _ in range(4):
+        assert accountant.get(reverse("billing"), {"group": small.pk}).status_code == 200
+    big = _group_with_open_invoice(accountant, ready=5, invoiced=2)
+    for _ in range(3):
         group = AccountGroupFactory()
         for _ in range(5):
             _processed_trip(group, accountant=accountant.user)
     with CaptureQueriesContext(connection) as many:
-        resp = accountant.get(reverse("billing"))
+        resp = accountant.get(reverse("billing"), {"group": big.pk})
     assert resp.status_code == 200
     assert sum(len(g.trips) for a in resp.context["accounts"] for g in a.groups) == 21
+    assert len(resp.context["trips"]) == 5
+    assert [i.lines.count() for i in resp.context["invoices"]] == [2]
     assert len(many) == len(one)
 
 
@@ -218,6 +238,75 @@ def test_draft_data_is_safe_json(accountant) -> None:
     data = json.loads(payload)
     assert [t["id"] for t in data["trips"]] == [first.pk, second.pk]
     assert data["termDays"] == 30
+
+
+def test_draft_carries_each_trips_po(accountant) -> None:
+    from apps.leads.models import Lead
+
+    group, first, second = _two_ready(accountant)
+    Lead.objects.filter(pk=second.lead_id).update(po_number="PO-9")
+    resp = accountant.get(reverse("billing"), {"group": group.pk})
+    trips = resp.context["draft"]["trips"]
+    assert [(t["id"], t["po"]) for t in trips] == [(first.pk, ""), (second.pk, "PO-9")]
+    assert "These trips carry different PO numbers." in resp.content.decode()
+
+
+def test_draft_carries_the_page_filters(accountant) -> None:
+    group, first, _ = _two_ready(accountant)
+    resp = accountant.get(reverse("billing"), {"group": group.pk, "q": first.reference})
+    assert resp.context["draft"]["filters"] == {"q": first.reference, "from": "", "to": ""}
+
+
+def test_create_redirect_keeps_the_filters(accountant) -> None:
+    group, first, _ = _two_ready(accountant)
+    resp = accountant.post(
+        reverse("billing_invoice_create", args=[group.pk]),
+        {
+            "trip_ids": [first.pk],
+            "invoice_date": timezone.localdate().isoformat(),
+            "q": "Smith & Co",
+            "from": "2026-01-02",
+            "to": "not a date",
+        },
+    )
+    invoice = Invoice.objects.get()
+    assert resp.json()["redirect"] == (
+        f"{reverse('billing')}?group={group.pk}&invoice={invoice.pk}&q=Smith+%26+Co&from=2026-01-02"
+    )
+
+
+@pytest.mark.parametrize(
+    ("offset", "ok"),
+    [(365, True), (366, False)],
+)
+def test_create_bounds_the_invoice_date_ahead(accountant, offset: int, ok: bool) -> None:
+    group, first, _ = _two_ready(accountant)
+    day = timezone.localdate() + timedelta(days=offset)
+    resp = accountant.post(
+        reverse("billing_invoice_create", args=[group.pk]),
+        {"trip_ids": [first.pk], "invoice_date": day.isoformat()},
+    )
+    if ok:
+        assert resp.json()["ok"] is True
+    else:
+        assert resp.status_code == 400
+        assert resp.json() == {"ok": False, "error": "Enter a valid invoice date."}
+    assert Invoice.objects.count() == (1 if ok else 0)
+
+
+@pytest.mark.parametrize(("day", "ok"), [("2020-01-01", True), ("2019-12-31", False)])
+def test_create_bounds_the_invoice_date_behind(accountant, day: str, ok: bool) -> None:
+    group, first, _ = _two_ready(accountant)
+    resp = accountant.post(
+        reverse("billing_invoice_create", args=[group.pk]),
+        {"trip_ids": [first.pk], "invoice_date": day},
+    )
+    if ok:
+        assert resp.json()["ok"] is True
+    else:
+        assert resp.status_code == 400
+        assert resp.json() == {"ok": False, "error": "Enter a valid invoice date."}
+    assert Invoice.objects.count() == (1 if ok else 0)
 
 
 def test_group_row_terms_label() -> None:
@@ -240,7 +329,9 @@ def test_page_highlights_the_invoice_just_made(accountant) -> None:
     resp = accountant.get(reverse("billing"), {"group": group.pk, "invoice": invoice.pk})
     html = resp.content.decode()
     assert resp.context["invoices"] == [invoice]
-    assert "Not sent yet" in html and "QuickBooks: Not sent" in html
+    assert f">{invoice.label}<" in html
+    assert ">Not sent yet<" not in html
+    assert "QuickBooks: Not sent yet" in html
     assert "ring-2 ring-gold/40" in html
     assert reverse("billing_invoice_void", args=[invoice.pk]) in html
     assert "Create invoice from 1 trip<" in html

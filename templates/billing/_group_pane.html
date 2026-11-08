@@ -43,7 +43,8 @@
         </div>
         <div>
           <label for="inv-po" class="block text-[12px] font-medium text-ink mb-1">PO number{% if group.po_required %} <span class="text-muted font-normal">required</span>{% endif %}</label>
-          <input id="inv-po" type="text" class="field" maxlength="64" value="{{ default_po }}" x-model="po"{% if group.po_required %} required{% endif %}>
+          <input id="inv-po" type="text" class="field" maxlength="64" value="{{ default_po }}" x-model="po" @input="poEdited = true"{% if group.po_required %} required{% endif %}>
+          <p class="mt-1 text-[11.5px] text-amber-700" x-show="mixedPo"{% if not mixed_po %} x-cloak{% endif %}>These trips carry different PO numbers.</p>
         </div>
         <div>
           <label for="inv-memo" class="block text-[12px] font-medium text-ink mb-1">Memo</label>

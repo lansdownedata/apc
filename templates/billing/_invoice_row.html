@@ -1,12 +1,13 @@
 {% load humanize json_filters %}
 {% comment %}
-  One open invoice (APC-106): number (blank until QuickBooks gives it one), dates, total, its
-  trips behind a disclosure, and Void for payments access. `highlight` is the ?invoice= just made.
+  One open invoice (APC-106): its label (the draft # until QuickBooks gives it a number, the
+  same name the unlock and add-charge refusals use), dates, total, its trips behind a
+  disclosure, and Void for payments access. `highlight` is the ?invoice= just made.
 {% endcomment %}
 <div id="invoice-{{ invoice.pk }}" class="rounded-lg px-3 py-3 mb-2 bg-surface2/60{% if invoice.pk == highlight %} ring-2 ring-gold/40{% endif %}"{% if invoice.pk == highlight %} x-init="$el.scrollIntoView({ block: 'nearest' })"{% endif %}>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-    <span class="font-semibold text-ink">{% if invoice.number %}Invoice {{ invoice.number }}{% else %}Not sent yet{% endif %}</span>
-    <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">QuickBooks: Not sent</span>
+    <span class="font-semibold text-ink">{{ invoice.label }}</span>
+    <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">QuickBooks: Not sent yet</span>
     <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
   </div>
   <p class="text-[11.5px] text-muted num">Dated {{ invoice.invoice_date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}{% if invoice.po_number %} · PO {{ invoice.po_number }}{% endif %}</p>

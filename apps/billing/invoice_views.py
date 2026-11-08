@@ -7,7 +7,8 @@ Reads are open to staff; creating and voiding an invoice need payments access.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -21,9 +22,22 @@ from apps.accounts.permissions import payment_access_required
 from . import invoices
 from .models import AccountGroup, Invoice, Terms
 
+# An invoice date outside this window is a typo, not a backdated or forward invoice.
+EARLIEST_INVOICE_DATE = date(2020, 1, 1)
+LATEST_INVOICE_DAYS_AHEAD = 365
+
 
 def _bad(message: str, status: int = 400) -> JsonResponse:
     return JsonResponse({"ok": False, "error": message}, status=status)
+
+
+def _filter_params(filters: invoices.BillingFilters) -> dict[str, str]:
+    """The page's filters as query-string values, blank ones included."""
+    return {
+        "q": filters.q,
+        "from": filters.date_from.isoformat() if filters.date_from else "",
+        "to": filters.date_to.isoformat() if filters.date_to else "",
+    }
 
 
 @login_required
@@ -41,19 +55,24 @@ def billing_list(request: HttpRequest) -> HttpResponse:
     if group is not None:
         trips = invoices.group_ready_trips(group, filters)
         terms = group.effective_terms
+        pos = [(t.lead.po_number or "").strip() for t in trips]
         pane = {
             "trips": trips,
             "trip_lines": [(t, invoices.line_description(t)) for t in trips],
             "terms_label": dict(Terms.choices)[terms],
             "term_days": invoices.TERM_DAYS[terms],
             "due_preview": invoices.due_date(today, terms),
-            "default_po": trips[0].lead.po_number if trips else "",
+            "default_po": pos[0] if pos else "",
+            "mixed_po": len({po for po in pos if po}) > 1,
             "invoices": invoices.open_invoices(group),
             "draft": {
-                "trips": [{"id": t.pk, "amount": f"{t.line_total:.2f}"} for t in trips],
-                "defaultPo": trips[0].lead.po_number if trips else "",
+                "trips": [
+                    {"id": t.pk, "amount": f"{t.line_total:.2f}", "po": po}
+                    for t, po in zip(trips, pos, strict=True)
+                ],
                 "termDays": invoices.TERM_DAYS[terms],
                 "group": group.name,
+                "filters": _filter_params(filters),
             },
         }
     raw_invoice = request.GET.get("invoice", "")
@@ -85,6 +104,9 @@ def invoice_create(request: HttpRequest, pk: int) -> JsonResponse:
         invoice_date = date.fromisoformat(request.POST.get("invoice_date", ""))
     except ValueError:
         return _bad("Enter a valid invoice date.")
+    latest = timezone.localdate() + timedelta(days=LATEST_INVOICE_DAYS_AHEAD)
+    if not EARLIEST_INVOICE_DATE <= invoice_date <= latest:
+        return _bad("Enter a valid invoice date.")
     trip_ids = [int(raw) for raw in request.POST.getlist("trip_ids") if raw.isdigit()]
     try:
         invoice = invoices.create_invoice(
@@ -97,9 +119,10 @@ def invoice_create(request: HttpRequest, pk: int) -> JsonResponse:
         )
     except invoices.InvoiceError as exc:
         return _bad(str(exc))
-    return JsonResponse(
-        {"ok": True, "redirect": f"{reverse('billing')}?group={pk}&invoice={invoice.pk}"}
-    )
+    # The page's filters ride along so the reload lands on the same list.
+    kept = _filter_params(invoices.BillingFilters.from_query(request.POST))
+    query = {"group": pk, "invoice": invoice.pk, **{k: v for k, v in kept.items() if v}}
+    return JsonResponse({"ok": True, "redirect": f"{reverse('billing')}?{urlencode(query)}"})
 
 
 @login_required
