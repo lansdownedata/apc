@@ -391,7 +391,8 @@ def test_apply_to_group_reads_the_source_route_once_not_once_per_sibling():
     three, nine = cost(3), cost(9)
     assert (nine - three) % 6 == 0
     per_sibling = (nine - three) // 6
-    assert per_sibling == 3  # its own update, one stop-delete, one bulk_create
+    # its own update, one stop-delete, one bulk_create
+    assert per_sibling == 4  # +1 SELECT: audit log of the Reservation save reads the old row
 
 
 def test_apply_to_group_returns_the_siblings_it_updated():
