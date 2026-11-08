@@ -39,6 +39,12 @@
       {% if lead.on_account %}
         <span class="font-semibold text-ink">Billing account</span>
         <span class="text-muted">&middot; {{ lead.billed_to_label }}</span>
+        {% for invoice in order_invoices %}
+        <span class="text-muted">&middot; <a href="{% url 'billing' %}?group={{ invoice.group_id }}&amp;invoice={{ invoice.pk }}" class="text-goldd hover:underline focus-visible:underline">{{ invoice.label }}</a> &middot; ${{ invoice.total|floatformat:"2g" }} &middot; due {{ invoice.due_date|date:"M j" }}</span>
+        {% endfor %}
+        {% if uninvoiced_processed %}
+        <span class="text-muted">&middot; {{ uninvoiced_processed }} trip{{ uninvoiced_processed|pluralize }} not yet invoiced</span>
+        {% endif %}
       {% else %}
         <span class="font-semibold text-ink">Card</span>
         <span class="text-muted">&middot; {% if payment %}{{ payment.deposit_pct }}% deposit, balance 30 days before pickup{% else %}deposit and balance by card{% endif %}</span>

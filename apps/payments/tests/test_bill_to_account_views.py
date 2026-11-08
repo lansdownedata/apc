@@ -1,12 +1,16 @@
 """APC-105: choosing how an order is paid, from its money card (staff only, payments access)."""
 
+from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
+from apps.billing import invoices
 from apps.billing import services as billing
+from apps.billing.tests._helpers import _processed_trip
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments.factories import PaymentPlanFactory
@@ -27,6 +31,11 @@ def _quiet():
 def cashier(client):
     client.force_login(UserFactory(can_manage_payments=True))
     return client
+
+
+@pytest.fixture
+def accountant():
+    return UserFactory(can_manage_payments=True)
 
 
 @pytest.fixture
@@ -176,7 +185,8 @@ def test_the_order_page_query_count_does_not_grow_with_an_account(cashier):
     with CaptureQueriesContext(connection) as account:
         cashier.get(reverse("order_detail", args=[lead.pk]))
 
-    assert len(account) <= len(card)
+    # an account order adds the money card's two invoice queries, and nothing per trip
+    assert len(account) <= len(card) + 2
 
 
 def test_the_orders_list_says_on_account(cashier):
@@ -213,4 +223,42 @@ def test_the_workspace_query_count_does_not_grow_with_an_account(cashier):
     with CaptureQueriesContext(connection) as account:
         cashier.get(reverse("lead_detail", args=[lead.pk]))
 
-    assert len(account) <= len(card)
+    # an account order adds the money card's two invoice queries, and nothing per trip
+    assert len(account) <= len(card) + 2
+
+
+@pytest.fixture
+def _no_stripe(settings):
+    settings.STRIPE_SECRET_KEY = ""
+
+
+def test_money_card_lists_the_orders_invoices(cashier, accountant, _no_stripe):
+    first = _processed_trip(accountant=accountant)
+    lead = first.lead
+    _processed_trip(accountant=accountant, lead=lead)
+    invoice = invoices.create_invoice(
+        lead.billing_group,
+        [first.pk],
+        invoice_date=date(2026, 11, 1),
+        po_number="",
+        memo="",
+        user=accountant,
+    )
+    invoice.total = Decimal("1104.00")
+    invoice.due_date = date(2026, 12, 1)
+    invoice.save(update_fields=["total", "due_date"])
+    response = cashier.get(reverse("lead_detail", args=[lead.pk]))
+    html = response.content.decode()
+    assert response.context["order_invoices"] == [invoice]
+    assert response.context["uninvoiced_processed"] == 1
+    assert f"{invoice.label}</a> &middot; $1,104.00 &middot; due Dec 1" in html
+    assert f"{reverse('billing')}?group={lead.billing_group_id}&amp;invoice={invoice.pk}" in html
+    assert "1 trip not yet invoiced" in html
+
+
+def test_money_card_card_order_has_no_invoice_line(cashier):
+    lead, _ = _order(account=False)
+    response = cashier.get(reverse("lead_detail", args=[lead.pk]))
+    assert response.context["order_invoices"] == []
+    assert response.context["uninvoiced_processed"] == 0
+    assert "not yet invoiced" not in response.content.decode()

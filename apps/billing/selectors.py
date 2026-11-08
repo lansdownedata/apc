@@ -217,9 +217,25 @@ def _terms_label(code: str) -> str:
 def paid_by_context(lead) -> dict:
     """The money card's "Paid by" line and its picker (APC-105): the groups this order may
     bill to, and the rows the picker draws (built in JS, so as plain data)."""
+    from .models import Invoice
+
     groups = groups_for_lead(lead)
     group = lead.billing_group
+    order_invoices: list = []
+    uninvoiced = 0
+    if lead.on_account:
+        order_invoices = list(
+            Invoice.objects.filter(lines__reservation__lead=lead, status=Invoice.Status.OPEN)
+            .select_related("group")
+            .distinct()
+            .order_by("-invoice_date", "-pk")
+        )
+        uninvoiced = lead.reservations.filter(
+            review__processed_at__isnull=False, invoice_line__isnull=True
+        ).count()
     return {
+        "order_invoices": order_invoices,
+        "uninvoiced_processed": uninvoiced,
         "billing_groups": groups,
         "billed_group": group,
         "billed_terms": _terms_label(group.effective_terms) if group else "",

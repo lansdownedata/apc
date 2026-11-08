@@ -17,12 +17,15 @@ from apps.reservations.models import Reservation
 def _processed_trip(group=None, *, accountant, **kw) -> Reservation:
     """A finished trip of a booked order billed to `group` (a new one if omitted), already
     processed to "invoice": exactly what Customer Billing offers for invoicing.
-    `pickup_date` and `contact` may be overridden."""
-    lead = LeadFactory(
-        status=Lead.Status.BOOKED, contact=kw.pop("contact", None) or ContactFactory()
-    )
-    lead.billing_group = group or AccountGroupFactory(account__contact=lead.contact)
-    lead.save(update_fields=["billing_group"])
+    `pickup_date` and `contact` may be overridden; `lead` adds the trip to an existing order
+    (its billing group is kept)."""
+    lead = kw.pop("lead", None)
+    if lead is None:
+        lead = LeadFactory(
+            status=Lead.Status.BOOKED, contact=kw.pop("contact", None) or ContactFactory()
+        )
+        lead.billing_group = group or AccountGroupFactory(account__contact=lead.contact)
+        lead.save(update_fields=["billing_group"])
     trip = ReservationFactory(
         lead=lead,
         trip_status=Reservation.TripStatus.DONE,
