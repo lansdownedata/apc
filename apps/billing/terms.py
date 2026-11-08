@@ -60,6 +60,22 @@ class TermRule:
         year, month = _add_months(invoice_date.year, invoice_date.month, extra)
         return date(year, month, min(self.day_of_month, calendar.monthrange(year, month)[1]))
 
+    def describe(self) -> str:
+        """The rule in words, for Settings: "30 days", "Due on receipt", "15th of the month"."""
+        if self.kind != "DATE_DRIVEN":
+            if self.days == 0:
+                return "Due on receipt"
+            return f"{self.days} day" if self.days == 1 else f"{self.days} days"
+        text = f"{_ordinal(self.day_of_month)} of the month"
+        if self.cutoff > 0:
+            text += f", next month after the {_ordinal(self.cutoff)}"
+        return text
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
 
 @dataclass(frozen=True)
 class ResolvedTerm:
@@ -81,6 +97,12 @@ def _rule_of(term: QboTerm) -> TermRule | None:
     if term.due_days is not None:
         return TermRule("STANDARD", days=term.due_days)
     return None
+
+
+def rule_label(term: QboTerm) -> str:
+    """A cached term's due rule in words, or "" when QuickBooks gave none."""
+    rule = _rule_of(term)
+    return rule.describe() if rule else ""
 
 
 def is_quickbooks_name(value: str) -> bool:

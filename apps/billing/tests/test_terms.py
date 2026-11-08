@@ -116,3 +116,34 @@ def test_labels_match_resolve_in_one_batch(django_assert_max_num_queries):
     assert got == {value: terms.resolve(value).label for value in values}
     assert got["net 45"] == "Net 45"
     assert terms.labels([]) == {}
+
+
+@pytest.mark.parametrize(
+    ("rule", "text"),
+    [
+        (terms.TermRule("STANDARD", days=0), "Due on receipt"),
+        (terms.TermRule("STANDARD", days=1), "1 day"),
+        (terms.TermRule("STANDARD", days=30), "30 days"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=1), "1st of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=2), "2nd of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=3), "3rd of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=11), "11th of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=12), "12th of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=13), "13th of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=21), "21st of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=22), "22nd of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=23), "23rd of the month"),
+        (terms.TermRule("DATE_DRIVEN", day_of_month=31), "31st of the month"),
+        (
+            terms.TermRule("DATE_DRIVEN", day_of_month=15, cutoff=10),
+            "15th of the month, next month after the 10th",
+        ),
+    ],
+)
+def test_rule_label(rule, text):
+    assert rule.describe() == text
+
+
+def test_rule_label_of_a_term_without_a_rule_is_blank():
+    assert terms.rule_label(_term()) == ""
+    assert terms.rule_label(_term("4", "Net 15", term_type="STANDARD", due_days=15)) == "15 days"

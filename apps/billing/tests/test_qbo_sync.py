@@ -429,6 +429,31 @@ def test_settings_lists_terms_quickbooks_lacks_and_can_refresh_them(client):
     assert resp.status_code == 302
 
 
+def test_payment_terms_card_shows_each_terms_rule(client, company):
+    from django.test import override_settings
+
+    QboTerm.objects.create(
+        realm_id="123", qbo_id="3", name="Net 30", term_type="STANDARD", due_days=30
+    )
+    QboTerm.objects.create(
+        realm_id="123",
+        qbo_id="9",
+        name="15th",
+        term_type="DATE_DRIVEN",
+        day_of_month_due=15,
+        due_next_month_days=10,
+    )
+    QboTerm.objects.create(realm_id="999", qbo_id="7", name="Elsewhere", due_days=5)
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    with override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"):
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+
+    assert "Net 30 (30 days)" in html
+    assert "15th (15th of the month, next month after the 10th)" in html
+    assert "Elsewhere" not in html
+
+
 def test_disconnecting_quickbooks_leaves_every_local_record_intact():
     account = _account()
     account.qbo_id = "58"

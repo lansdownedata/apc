@@ -979,7 +979,7 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
     from django.conf import settings as dj_settings
 
     from apps.billing import qbo_sync
-    from apps.billing.models import QboTerm
+    from apps.billing import terms as terms_module
     from apps.integrations.models import QboCredential
 
     qbo = _qbo_or_404()
@@ -994,7 +994,10 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
             "connected": qbo.is_connected(),
             "environment": dj_settings.QBO_ENVIRONMENT,
             # APC-42: the company's terms we match against, and ours that it lacks.
-            "qbo_terms": list(QboTerm.objects.filter(active=True)),
+            "qbo_terms": [
+                (term.name, terms_module.rule_label(term))
+                for term in qbo_sync._usable_terms().order_by("name")
+            ],
             "unmatched_terms": qbo_sync.unmatched_terms(),
             **_qbo_accounts_context(),
             **_qbo_customer_docs_context(),
