@@ -143,3 +143,14 @@ def test_toggle_refuses_a_staff_click_row(client):
     assert client.post(reverse("message_toggle", args=[row.key])).status_code == 400
     row.refresh_from_db()
     assert row.enabled is True
+
+
+def test_header_actions_wrap_at_phone_width(client):
+    """APC-116: a fixed-width action group (shrink-0) overflowed a 375px screen and clipped
+    the New message button; it must be able to take the full row on phones."""
+    _admin(client)
+    html = _get(client)
+    group = html.index("flex flex-wrap items-center gap-x-4 gap-y-2")
+    tag = html[html.rindex("<div", 0, group) : html.index(">", group)]
+    assert "w-full" in tag and "sm:w-auto" in tag and "sm:shrink-0" in tag
+    assert " shrink-0" not in tag.replace("sm:shrink-0", "")

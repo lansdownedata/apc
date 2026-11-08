@@ -49,7 +49,7 @@
       <h1 class="font-display text-[21px] font-semibold text-ink tracking-tight mb-1">Messages</h1>
       <p class="text-[12.5px] text-muted">Every text and email the app sends. Open one to change who gets it, when, and what it says.</p>
     </div>
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 shrink-0 pt-1">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 w-full sm:w-auto sm:shrink-0 pt-1">
       <button type="button" @click="editQuiet()" x-text="quietLabel" class="text-[12.5px] text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors">{{ quiet_label }}</button>
       <span class="inline-flex items-center gap-2">
         <span class="text-[12.5px] font-semibold" :class="on ? 'text-ink' : 'text-rose-600'" x-text="on ? 'All messaging on' : 'All messaging off'">{% if master_on %}All messaging on{% else %}All messaging off{% endif %}</span>
