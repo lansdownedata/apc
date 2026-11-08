@@ -40,6 +40,15 @@ def same_number(stored: str, typed: str, e164: str | None) -> bool:
     return bool(stored) and (typed == stored or e164 == stored or typed == phone_display(stored))
 
 
+def export_phone(stored: str | None) -> str:
+    """A phone for the export: an E.164 number formatted for reading, anything else exactly
+    as stored, so a legacy raw number still matches on re-import (`202-555-0143` written
+    as `(202) 555-0143` would match nothing and create a duplicate)."""
+    if not stored:
+        return ""
+    return phone_display(stored) if to_e164(stored) == stored else stored
+
+
 def _blank(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 

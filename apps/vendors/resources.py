@@ -15,7 +15,7 @@ from apps.imports.address import (
     clean_address,
     write_address,
 )
-from apps.imports.resources import PortalResource, cell, row_no, same_number
+from apps.imports.resources import PortalResource, cell, export_phone, row_no, same_number
 from apps.imports.xlsx import Column
 from apps.leads.models import VehicleType
 from apps.tasks import vendor_tasks
@@ -135,7 +135,7 @@ class VendorResource(PortalResource):
     # --- export --------------------------------------------------------------------------
 
     def dehydrate_phone(self, vendor: Vendor) -> str:
-        return phone_display(vendor.phone)
+        return export_phone(vendor.phone)
 
     def dehydrate_status(self, vendor: Vendor) -> str:
         return vendor.get_status_display()

@@ -13,7 +13,6 @@ from django.db import IntegrityError
 from django.db.models import (
     Count,
     DecimalField,
-    Exists,
     Max,
     OuterRef,
     Subquery,
@@ -37,7 +36,7 @@ from apps.payments.models import PaymentPlan
 from apps.planners import selectors as planner_selectors
 from apps.tasks import schedule as task_schedule
 
-from . import services
+from . import selectors, services
 from .models import Company, Contact, ContactPhone
 
 # Type-ahead results the modal shows at once — more than this is a search, not a pick.
@@ -73,7 +72,12 @@ def contact_list(request: HttpRequest) -> HttpResponse:
         .values("total")
     )
 
-    contacts = Contact.objects.annotate(
+    # The row set (scope + search) is the selector's, shared with the Excel export. `trips`
+    # is guarded by distinct=True and LTV by its Subquery, so the annotations never
+    # multiply rows.
+    scope = selectors.clean_scope(request.GET.get("scope", "customers"))
+    query = request.GET.get("q", "").strip()
+    contacts = selectors.directory(scope, query).annotate(
         trips=Count("leads__reservations", distinct=True),
         lifetime_value=Coalesce(
             Subquery(booked_ltv, output_field=_LTV_FIELD),
@@ -83,23 +87,6 @@ def contact_list(request: HttpRequest) -> HttpResponse:
         last_message_at=Max("conversation__messages__created_at"),
         latest_lead_id=Max("leads__id"),
     )
-
-    # Derived customer filter: a contact with no leads has no LTV, no trips, and nothing
-    # the directory's columns are for. Every stranger who texts the main business number
-    # becomes a Contact, so the default view would otherwise fill with wrong numbers.
-    #
-    # Exists, NOT .filter(leads__isnull=False) — the latter joins the leads table and
-    # lists a three-quote customer three times. `trips` is already guarded by
-    # distinct=True and LTV by its Subquery, so only the row set would be wrong.
-    scope = request.GET.get("scope", "customers")
-    if scope != "all":
-        scope = "customers"
-        contacts = contacts.filter(Exists(Lead.objects.filter(contact=OuterRef("pk"))))
-
-    query = request.GET.get("q", "").strip()
-    if query:
-        # Same matching rule as the booking modal's type-ahead — see ContactManager.search.
-        contacts = contacts.filter(pk__in=Contact.objects.search(query).values("pk"))
 
     rows = list(contacts)
     for c in rows:

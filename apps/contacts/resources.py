@@ -17,7 +17,7 @@ from apps.imports.address import (
     clean_address,
     write_address,
 )
-from apps.imports.resources import PortalResource, cell, row_no, same_number
+from apps.imports.resources import PortalResource, cell, export_phone, row_no, same_number
 from apps.imports.xlsx import Column
 
 from . import services
@@ -75,9 +75,9 @@ def parse_other_phones(text: str) -> list[tuple[str, str, str | None, str]]:
     return items
 
 
-def phone_with_label(number: str, label: str) -> str:
+def phone_with_label(number: str, label: str, *, show=phone_display) -> str:
     """`(202) 555-0199 (Work)`, or the bare number when there is no label."""
-    shown = phone_display(number)
+    shown = show(number)
     return f"{shown} ({ContactPhone.Label(label).label})" if label else shown
 
 
@@ -136,7 +136,7 @@ class ContactResource(PortalResource):
     # --- export --------------------------------------------------------------------------
 
     def dehydrate_phone(self, contact: Contact) -> str:
-        return phone_display(contact.phone)
+        return export_phone(contact.phone)
 
     def dehydrate_other_phones(self, contact: Contact) -> str:
         """The numbers that aren't the texting one, oldest first. Reads `phones.all()` so the
@@ -145,7 +145,9 @@ class ContactResource(PortalResource):
             (row for row in contact.phones.all() if not row.texting),
             key=lambda row: (row.created_at, row.pk),
         )
-        return ", ".join(phone_with_label(row.number, row.label) for row in others)
+        return ", ".join(
+            phone_with_label(row.number, row.label, show=export_phone) for row in others
+        )
 
     def dehydrate_company(self, contact: Contact) -> str:
         return contact.company.name if contact.company_id else ""
