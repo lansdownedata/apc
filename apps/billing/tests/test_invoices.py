@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.billing import invoices, services
 from apps.billing.factories import AccountGroupFactory, InvoiceFactory, InvoiceLineFactory
-from apps.billing.models import Invoice
+from apps.billing.models import Invoice, SyncState
 from apps.billing.tests._helpers import _processed_trip
 from apps.contacts.factories import ContactFactory
 from apps.leads.factories import VehicleTypeFactory
@@ -357,12 +357,24 @@ def test_void_needs_reason() -> None:
         invoices.void_invoice(InvoiceFactory(), reason="  ", user=None)
 
 
-def test_void_refuses_an_invoice_in_quickbooks() -> None:
-    invoice = InvoiceFactory(qbo_id="7")
-    with pytest.raises(invoices.InvoiceError, match="Voiding it there is APC-107."):
-        invoices.void_invoice(invoice, reason="oops", user=None)
+def test_void_of_a_synced_invoice_queues_the_quickbooks_void() -> None:
+    invoice = InvoiceFactory(qbo_id="7", qbo_sync_state=SyncState.ERROR, qbo_sync_error="Old")
+    InvoiceLineFactory(invoice=invoice)
+    invoices.void_invoice(invoice, reason="oops", user=None)
     invoice.refresh_from_db()
-    assert invoice.status == Invoice.Status.OPEN
+    assert invoice.status == Invoice.Status.VOID
+    assert invoice.void_reason == "oops"
+    assert not invoice.lines.exists()
+    assert invoice.qbo_void_requested_at is not None
+    assert invoice.qbo_sync_state == SyncState.NOT_SYNCED
+    assert invoice.qbo_sync_error == ""
+
+
+def test_void_of_an_unsent_invoice_queues_nothing() -> None:
+    invoice = InvoiceFactory()
+    invoices.void_invoice(invoice, reason="oops", user=None)
+    invoice.refresh_from_db()
+    assert invoice.qbo_void_requested_at is None
 
 
 def test_invoicing_posts_nothing(accountant) -> None:

@@ -168,7 +168,7 @@ class _Refused(Exception):
         self.by_quickbooks = by_quickbooks
 
 
-_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p", "attachment": "f"}
+_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p", "attachment": "f", "invoice": "i"}
 
 
 @dataclass
@@ -277,6 +277,14 @@ def _alert(link: _Link, message: str) -> None:
             vendor=record,
             kind=Notification.Kind.SYNC_FAILED,
             title=f"QuickBooks sync failed: {record.name}",
+            detail=message,
+        )
+        return
+    if link.entity == "invoice":
+        Notification.notify(
+            None,
+            Notification.Kind.SYNC_FAILED,
+            title=f"QuickBooks invoice failed: {record.group}",
             detail=message,
         )
         return
@@ -1053,8 +1061,9 @@ def push_attachment(payable: AffiliatePayable) -> bool:
 
 def run_hourly() -> int:
     """The `retry-qbo-sync` cron: customers first (APC-42: terms, accounts, groups), then the
-    chart of accounts, then vendors, bills and payments. A failed accounts refresh doesn't stop
-    the push: the cached choice still stands. Does nothing without a live connection."""
+    chart of accounts, then vendors, bills and payments, then customer invoices (APC-107). A
+    failed accounts refresh doesn't stop the push: the cached choice still stands. Does nothing
+    without a live connection."""
     if not qbo.is_connected():
         return 0
     pushed = customers.run_hourly()
@@ -1068,7 +1077,7 @@ def run_hourly() -> int:
         qbo_invoices.refresh_items()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
-    return pushed + sync_pending()
+    return pushed + sync_pending() + qbo_invoices.sync_pending()
 
 
 def sync_state(payable: AffiliatePayable, *, connected: bool | None = None) -> dict | None:
