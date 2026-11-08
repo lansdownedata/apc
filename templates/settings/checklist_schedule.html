@@ -22,8 +22,8 @@
       <div class="divide-y divide-line">
         {% for item in group.items %}
         <div class="py-3 first:pt-0 last:pb-0{% if item.row.variant == 'farm_in' %} pl-5{% endif %}"
-             {% if not item.follows_message %}data-row{% endif %} data-key="{{ item.row.key }}" data-variant="{{ item.row.variant }}"
-             data-default-amount="{{ item.default_amount }}" data-default-unit="{{ item.default_unit }}">
+             data-key="{{ item.row.key }}" data-variant="{{ item.row.variant }}"
+             {% if not item.follows_message %}data-row data-default-amount="{{ item.default_amount }}" data-default-unit="{{ item.default_unit }}"{% endif %}>
           <div class="grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
             <div class="min-w-0">
               {% if item.row.variant == 'farm_in' %}

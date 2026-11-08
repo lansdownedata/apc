@@ -202,3 +202,12 @@ def test_farm_in_final_balance_row_says_when_it_opens(client):
         0
     ]
     assert "Opens when the trip ends." in row
+
+
+def test_message_driven_row_carries_no_empty_reset_defaults(client):
+    _owner(client)
+
+    html = client.get(reverse("checklist_schedule")).content.decode()
+
+    assert 'data-default-amount=""' not in html
+    assert 'data-default-unit=""' not in html
