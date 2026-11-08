@@ -194,6 +194,42 @@ def test_the_cleaning_box_mentions_the_hold_only_while_holds_are_on(client):
     assert "and a hold of $250.00 is placed on my card" in on
 
 
+def _holds_on():
+    cfg = TaskConfig.load()
+    cfg.hold_enabled = True
+    cfg.save()
+
+
+HOLD_SENTENCE = "One hold for the highest of these"
+HOLD_CLAUSE = "and a hold of $250.00 is placed on my card"
+
+
+def test_a_wedding_billed_to_an_account_is_never_told_of_a_hold(client):
+    from apps.billing.factories import AccountGroupFactory
+
+    _fee("250")
+    res = _wedding_res()
+    lead = res.lead
+    lead.billing_group = AccountGroupFactory(account__contact=lead.contact)
+    lead.save(update_fields=["billing_group"])
+    _holds_on()
+
+    body = client.get(_wedding_url(res)).content.decode()
+
+    assert 'name="ack_cleaning"' in body and "$250.00 cleaning fee" in body
+    assert HOLD_SENTENCE not in body and HOLD_CLAUSE not in body
+
+
+def test_a_held_card_wedding_is_told_of_the_hold_in_both_places(client):
+    _fee("250")
+    res = _wedding_res()
+    _holds_on()
+
+    body = client.get(_wedding_url(res)).content.decode()
+
+    assert HOLD_SENTENCE in body and HOLD_CLAUSE in body
+
+
 def test_a_wedding_with_no_fee_shows_only_the_overtime_box(client):
     _fee("0")
     res = _wedding_res()

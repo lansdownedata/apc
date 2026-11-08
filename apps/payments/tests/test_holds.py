@@ -277,7 +277,7 @@ def test_capture_takes_min_of_line_and_hold_and_posts_once():
     captured_intent = _intent(status="succeeded", amount=50000)
 
     with patch.object(stripe.PaymentIntent, "capture", return_value=captured_intent) as capture:
-        charge = holds.capture_hold(trip, Decimal("250.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("250.00"))
 
     capture.assert_called_once_with(
         "pi_hold", amount_to_capture=25000, idempotency_key=f"{hold.idempotency_key}-capture"
@@ -307,7 +307,7 @@ def test_capture_above_the_hold_takes_only_the_hold():
     with patch.object(
         stripe.PaymentIntent, "capture", return_value=_intent(status="succeeded")
     ) as capture:
-        charge = holds.capture_hold(trip, Decimal("650.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("650.00"))
     assert capture.call_args.kwargs["amount_to_capture"] == 50000
     assert charge.amount == Decimal("500.00")
 
@@ -373,7 +373,7 @@ def test_a_captured_hold_is_the_trips_receipt():
 
     _lead, _plan, (trip,), _hold = _placed("500.00")
     with patch.object(stripe.PaymentIntent, "capture", return_value=_intent(status="succeeded")):
-        charge = holds.capture_hold(trip, Decimal("250.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("250.00"))
     charge.refresh_from_db()
     assert charge.receipt_due_at is not None
     assert receipts.is_receipt(charge)
@@ -555,7 +555,7 @@ def test_a_capture_whose_reply_was_lost_recovers_and_posts_once():
         patch.object(stripe.PaymentIntent, "retrieve", return_value=captured),
     ):
         # Asked for 400; Stripe took 250 (the first, lost capture): Stripe's figure wins.
-        charge = holds.capture_hold(trip, Decimal("400.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("400.00"))
 
     charge.refresh_from_db()
     assert (charge.status, charge.amount, charge.reservation) == (
@@ -605,7 +605,7 @@ def test_a_capture_already_taken_at_stripe_is_finished_not_taken_again():
         patch.object(stripe.PaymentIntent, "capture") as capture,
         patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent(status="succeeded")),
     ):
-        charge = holds.capture_hold(trip, Decimal("400.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("400.00"))
 
     capture.assert_not_called()
     charge.refresh_from_db()
@@ -659,7 +659,7 @@ def test_a_later_capture_adopts_a_hold_the_webhook_saw_captured():
         ),
         patch("apps.payments.receipts.queue") as queue,
     ):
-        charge = holds.capture_hold(trip, Decimal("400.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("400.00"))
 
     capture.assert_not_called()
     charge.refresh_from_db()
@@ -695,7 +695,7 @@ def test_a_succeeded_webhook_racing_the_capture_still_books_the_trip():
         ),
         patch("apps.payments.receipts.queue") as queue,
     ):
-        charge = holds.capture_hold(trip, Decimal("250.00"))
+        charge, _now = holds.capture_hold(trip, Decimal("250.00"))
 
     charge.refresh_from_db()
     assert (charge.status, charge.amount, charge.reservation) == (
@@ -797,3 +797,106 @@ def test_capturing_a_hold_no_longer_on_the_card_says_why(status, error):
             holds.capture_hold(trips[0], Decimal("250.00"))
 
     capture.assert_not_called()
+
+
+# --- whole-branch review: adopting a capture, overlapping placement --------------------------
+
+
+def test_second_trip_waking_after_first_capture_commit_is_hold_used():
+    """Trip A's capture committed its tag (captured, booked to A) and released the locks
+    before its books; trip B, waiting on the plan lock, must not take A's charge as its own."""
+    lead, plan, trips, hold = _placed("500.00", "250.00")
+    Charge.objects.filter(pk=hold.pk).update(
+        captured_at=timezone.now(), reservation=trips[0], amount=Decimal("300.00")
+    )
+
+    with (
+        patch.object(
+            stripe.PaymentIntent, "retrieve", return_value=_intent(status="succeeded", amount=30000)
+        ),
+        patch.object(stripe.PaymentIntent, "capture") as capture,
+    ):
+        with pytest.raises(holds.HoldUsed):
+            holds.capture_hold(trips[1], Decimal("100.00"))
+
+    capture.assert_not_called()
+    hold.refresh_from_db()
+    assert (hold.status, hold.reservation) == (Charge.Status.AUTHORIZED, trips[0])
+    assert not JournalEntry.objects.filter(charge=hold).exists()
+
+
+def test_capture_says_whether_this_call_did_the_capture():
+    lead, plan, (trip,), hold = _placed("500.00")
+    # A first submit of the trip tagged it and stopped before the books.
+    Charge.objects.filter(pk=hold.pk).update(
+        captured_at=timezone.now(), reservation=trip, amount=Decimal("250.00")
+    )
+    with (
+        patch.object(
+            stripe.PaymentIntent, "retrieve", return_value=_intent(status="succeeded", amount=25000)
+        ),
+        patch.object(stripe.PaymentIntent, "capture") as capture,
+    ):
+        charge, captured_now = holds.capture_hold(trip, Decimal("250.00"))
+
+    capture.assert_not_called()
+    assert captured_now is False
+    charge.refresh_from_db()
+    assert (charge.status, charge.reservation) == (Charge.Status.SUCCEEDED, trip)
+
+    other_lead, _p, (fresh_trip,), _h = _placed("500.00")
+    with patch.object(stripe.PaymentIntent, "capture", return_value=_intent(status="succeeded")):
+        _charge, captured_now = holds.capture_hold(fresh_trip, Decimal("250.00"))
+    assert captured_now is True
+
+
+def test_a_capture_stripe_reports_without_a_trip_is_adopted_as_this_calls():
+    """The webhook saw the capture with no trip yet: the trip that books it records it."""
+    lead, plan, (trip,), hold = _placed("500.00")
+    Charge.objects.filter(pk=hold.pk).update(captured_at=timezone.now())
+    with patch.object(
+        stripe.PaymentIntent, "retrieve", return_value=_intent(status="succeeded", amount=50000)
+    ):
+        charge, captured_now = holds.capture_hold(trip, Decimal("250.00"))
+    assert captured_now is True
+    charge.refresh_from_db()
+    assert charge.reservation == trip
+
+
+def test_an_overlapping_run_cannot_fail_a_live_authorization():
+    """Run 1 is mid-create when run 2 finishes the hold; run 1's late decline must not turn
+    the live authorization into FAILED (or open a task)."""
+    lead, plan, _trips = _order("500.00")
+    with patch.object(
+        stripe.PaymentIntent, "create", side_effect=stripe.error.APIConnectionError("down")
+    ):
+        hold = holds.place_hold(lead, now=NOW)
+    assert hold.status == Charge.Status.PENDING
+
+    def create(**kwargs):
+        Charge.objects.filter(pk=hold.pk).update(
+            status=Charge.Status.AUTHORIZED, stripe_payment_intent_id="pi_other"
+        )
+        raise stripe.error.CardError("Your card was declined.", "card", "card_declined")
+
+    with patch.object(stripe.PaymentIntent, "create", side_effect=create):
+        result = holds.place_hold(lead, now=NOW)
+
+    hold.refresh_from_db()
+    assert (hold.status, hold.stripe_payment_intent_id) == (Charge.Status.AUTHORIZED, "pi_other")
+    assert result.status == Charge.Status.AUTHORIZED
+    assert not Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()
+
+
+def test_a_key_still_in_flight_at_stripe_is_transient():
+    lead, plan, _trips = _order("500.00")
+    in_use = stripe.error.IdempotencyError(
+        "There is currently another in-progress request using this Idempotent Key.",
+        http_status=409,
+    )
+    with patch.object(stripe.PaymentIntent, "create", side_effect=in_use):
+        hold = holds.place_hold(lead, now=NOW)
+
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.PENDING
+    assert not Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()

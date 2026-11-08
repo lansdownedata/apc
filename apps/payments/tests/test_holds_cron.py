@@ -27,7 +27,7 @@ from apps.payments import holds, services
 from apps.payments.factories import PaymentPlanFactory
 from apps.payments.models import Charge
 from apps.reservations.factories import ReservationFactory
-from apps.reservations.models import Reservation
+from apps.reservations.models import Reservation, TripReview
 from apps.tasks.models import Task, TaskConfig
 
 pytestmark = pytest.mark.django_db
@@ -168,29 +168,93 @@ def test_dst_change_day_is_covered():
     assert _hold_rows(lead).get().status == Charge.Status.AUTHORIZED
 
 
-def test_switch_off_places_nothing():
+def _switch_off():
     config = TaskConfig.load()
     config.hold_enabled = False
     config.save()
-    lead, _plan, _trips = _order("500.00")
 
-    processed, create = _run(_at(DAY, time(9, 0)))
 
-    assert (processed, create.call_count) == (0, 0)
+def test_switch_off_places_nothing_but_still_sweeps():
+    # A live hold placed while the switch was on is never orphaned by turning it off.
+    held, _plan, (trip,), hold = _placed("500.00")
+    trip.trip_status = Reservation.TripStatus.CANCELLED
+    trip.save(update_fields=["trip_status"])
+    _switch_off()
+    lead, _plan2, _trips2 = _order("500.00")
+
+    with patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        processed, create = _run(_at(DAY, time(9, 0)))
+
+    assert (processed, create.call_count) == (1, 0)
     assert not _hold_rows(lead).exists()
+    cancel.assert_called_once_with("pi_hold")
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.RELEASED
+
+
+def test_switch_off_drops_a_pending_hold_instead_of_resending_it():
+    lead, _plan, _trips = _order("500.00")
+    with patch.object(
+        stripe.PaymentIntent, "create", side_effect=stripe.error.APIConnectionError("no route")
+    ):
+        hold = holds.place_hold(lead, now=_at(DAY, time(3, 0)))
+    assert hold.status == Charge.Status.PENDING
+    _switch_off()
+
+    with patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        processed, create = _run(_at(DAY, time(4, 0)))
+
+    assert (processed, create.call_count) == (1, 0)
+    cancel.assert_not_called()  # no intent id: nothing at Stripe to cancel
+    hold.refresh_from_db()
+    assert (hold.status, hold.note) == (Charge.Status.RELEASED, "holds switched off")
+    assert not Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()
 
 
 def test_order_already_over_is_not_held():
-    # One trip on the 1st, release after 3 days: the hold could live until the 4th.
+    # One trip on the 1st: from the 2nd on it is behind us, in any run.
     over, _plan, _trips = _order("500.00", day=date(2026, 11, 1))
-    assert holds.due_for_placement(_at(date(2026, 11, 5), time(10, 0))) == []
+    for day in (date(2026, 11, 2), date(2026, 11, 4), date(2026, 11, 5)):
+        assert holds.due_for_placement(_at(day, time(10, 0))) == []
 
-    processed, create = _run(_at(date(2026, 11, 5), time(10, 0)))
+    processed, create = _run(_at(date(2026, 11, 2), time(10, 0)))
     assert (processed, create.call_count) == (0, 0)
     assert not _hold_rows(over).exists()
 
-    # Still inside the window: placed late rather than never.
-    assert holds.due_for_placement(_at(date(2026, 11, 4), time(10, 0))) == [over]
+
+def test_a_past_dated_order_is_not_held_at_go_live():
+    # Switched on mid-order: the first held trip was yesterday, the next is tomorrow.
+    midway, _plan, _trips = _order("500.00", "500.00", "500.00", day=DAY - timedelta(days=1))
+    # A same-day order booked after the placement time still is.
+    late, _plan2, _trips2 = _order("500.00")
+
+    assert holds.due_for_placement(_at(DAY, time(14, 0))) == [late]
+
+
+def test_an_order_whose_held_trips_are_all_processed_is_not_held():
+    lead, _plan, (trip,) = _order("500.00")
+    TripReview.objects.update_or_create(
+        reservation=trip, defaults={"processed_at": _at(DAY, time(1, 0))}
+    )
+    assert holds.due_for_placement(_at(DAY, time(4, 0))) == []
+
+
+def test_sweep_releases_when_every_held_trip_is_processed():
+    lead, _plan, (first, second), hold = _placed("500.00", "250.00")
+    TripReview.objects.update_or_create(
+        reservation=first, defaults={"processed_at": _at(DAY, time(20, 0))}
+    )
+
+    with patch.object(stripe.PaymentIntent, "cancel") as cancel:
+        assert holds.sweep(_at(DAY, time(21, 0))) == 0
+        TripReview.objects.update_or_create(
+            reservation=second, defaults={"processed_at": _at(DAY + timedelta(days=1), time(20, 0))}
+        )
+        assert holds.sweep(_at(DAY + timedelta(days=1), time(21, 0))) == 1
+
+    cancel.assert_called_once_with("pi_hold")
+    hold.refresh_from_db()
+    assert (hold.status, hold.note) == (Charge.Status.RELEASED, "all held trips processed")
 
 
 def test_due_for_placement_skips_unheld_and_already_held_orders():
@@ -207,12 +271,12 @@ def test_due_for_placement_skips_unheld_and_already_held_orders():
 def test_due_for_placement_is_a_fixed_number_of_queries(django_assert_max_num_queries):
     for _ in range(4):
         _order("500.00", "250.00")
-    config = TaskConfig.load()
+    TaskConfig.load()
     with django_assert_max_num_queries(6):
         due = holds.due_for_placement(_at(DAY, time(3, 0)))
     assert len(due) == 4
     # One row per order from the database, whatever plan it picks (2 held trips each).
-    rows = list(holds._candidates(_at(DAY, time(3, 0)), config.hold_release_days))
+    rows = list(holds._candidates(_at(DAY, time(3, 0))))
     assert len(rows) == len({lead.pk for lead in rows}) == 4
 
 
@@ -341,7 +405,10 @@ def test_sweep_cancels_a_pending_intent_only_while_it_is_still_pending():
     Charge.objects.filter(pk=stale.pk).update(status=Charge.Status.AUTHORIZED)
 
     with patch.object(stripe.PaymentIntent, "cancel") as cancel:
-        assert holds._settle_pending(lead, stale, _at(DAY, time(12, 0)), needed=False) == 0
+        settled = holds._settle_pending(
+            lead, stale, _at(DAY, time(12, 0)), needed=False, enabled=True
+        )
+    assert settled == 0
 
     cancel.assert_not_called()
     stale.refresh_from_db()

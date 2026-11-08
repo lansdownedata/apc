@@ -317,9 +317,11 @@ def fee_terms_context(lead: Lead, config=None) -> dict:
 
     `fees` is `[(type name, fee), ...]`, highest first, one entry per type, types with no
     fee left out. `hold` is `Decimal("0")` when no trip is in a held vehicle; `hold_on` is
-    the Tasks screen's "Place cleaning holds" switch.
+    whether a hold will be placed: the Tasks screen's "Place cleaning holds" switch, on an
+    order that is held at all (`holds.eligible`: not billed to an account, not farmed in).
     """
     from apps.dispatch.selectors import CANCELLED_STATUSES
+    from apps.payments import holds
     from apps.tasks.models import TaskConfig
 
     config = config or TaskConfig.load()
@@ -332,9 +334,10 @@ def fee_terms_context(lead: Lead, config=None) -> dict:
     )
     fees = [(name, Decimal(fee)) for name, fee in rows]
     hold = fees[0][1] if fees else Decimal("0")
-    # The hold is mentioned only while holds are placed: a customer is never told about a
-    # hold the switch keeps from happening.
-    return {"fees": fees, "hold": hold, "hold_on": bool(config.hold_enabled), "config": config}
+    # The hold is mentioned only while one will be placed: a customer is never told about a
+    # hold the switch, or the way the order is paid, keeps from happening.
+    hold_on = bool(config.hold_enabled) and holds.eligible(lead)
+    return {"fees": fees, "hold": hold, "hold_on": hold_on, "config": config}
 
 
 def fee_terms_html(lead: Lead, config=None) -> str:

@@ -581,3 +581,25 @@ def test_a_pay_link_with_outbound_off_is_refused_before_the_capture(agent, setti
     capture.assert_not_called()
     hold.refresh_from_db()
     assert hold.status == Charge.Status.AUTHORIZED
+
+
+def test_a_double_submit_of_one_trip_records_one_capture(agent):
+    """The first submit captured and tagged the hold for this trip, then lost the race to
+    its own books; the second submit finishes the books but is not a second capture."""
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, "250.00")
+    Charge.objects.filter(pk=hold.pk).update(
+        captured_at=timezone.now(), reservation=trip, amount=Decimal("250.00")
+    )
+
+    with (
+        patch.object(stripe.PaymentIntent, "capture", side_effect=_never) as capture,
+        patch.object(stripe.PaymentIntent, "create", side_effect=_never),
+        patch.object(stripe.PaymentIntent, "retrieve", return_value=_intent()),
+    ):
+        review = processing.process(trip, user=agent, expected="250.00", collect="card")
+
+    capture.assert_not_called()
+    assert review.is_processed and _diff(trip) == Decimal("0.00")
+    assert ProcessingEvent.Kind.HOLD_CAPTURED not in _kinds(trip)
+    assert JournalEntry.objects.filter(charge=hold).count() == 1

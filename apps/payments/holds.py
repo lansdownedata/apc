@@ -148,21 +148,33 @@ def place_hold(lead, *, now=None) -> Charge | None:
             )
         else:
             intent = _create_intent(plan, charge)
-    except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
+    except (
+        stripe.error.CardError,
+        stripe.error.InvalidRequestError,
+        stripe.error.IdempotencyError,
+    ) as exc:
+        if _in_flight(exc):
+            # An overlapping run's create under the same key is still at Stripe: its
+            # answer settles the row, or the next run reads it back.
+            logger.warning("cleaning hold: charge %s create still in flight", charge.pk)
+            return charge
+        if isinstance(exc, stripe.error.IdempotencyError):
+            # The key was reused for a different request: the re-send can never finish.
+            logger.error("cleaning hold: idempotency conflict for charge %s: %s", charge.pk, exc)
+            return _unplaceable(lead, charge, "idempotency conflict")
         # The card said no, or the saved card is gone: a decline, recorded and not retried.
         reason = (getattr(exc, "user_message", None) or str(exc))[:255]
         return _fail(lead, charge, reason, f"{DECLINED_NOTE}: {reason}", note=DECLINED_NOTE)
-    except stripe.error.IdempotencyError as exc:
-        # The key was reused for a different request: the re-send can never finish.
-        logger.error("cleaning hold: idempotency conflict for charge %s: %s", charge.pk, exc)
-        return _unplaceable(lead, charge, "idempotency conflict")
     except stripe.error.StripeError:
         logger.exception("cleaning hold: Stripe unreachable for charge %s", charge.pk)
         return charge
 
+    # Every write from here on is conditional on the row still being PENDING: an
+    # overlapping run (a cron retry on timeout) may have settled it while Stripe answered.
     if charge.stripe_payment_intent_id != intent.id:
+        if not _while_pending(charge, stripe_payment_intent_id=intent.id):
+            return _reread(charge)
         charge.stripe_payment_intent_id = intent.id
-        charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
     state = getattr(intent, "status", "")
     if state in ("canceled", "succeeded"):
         # Not a hold any more, and nothing this job can turn back into one.
@@ -176,23 +188,49 @@ def place_hold(lead, *, now=None) -> Charge | None:
             getattr(intent, "status", ""),
         )
         return charge
-    charge.status = Charge.Status.AUTHORIZED
-    charge.authorized_at = now
-    charge.capture_expires_at = _capture_before(intent) or now + timedelta(
-        days=services.AUTH_HOLD_DAYS
-    )
-    charge.save(update_fields=["status", "authorized_at", "capture_expires_at", "updated_at"])
+    expires = _capture_before(intent) or now + timedelta(days=services.AUTH_HOLD_DAYS)
+    if not _while_pending(
+        charge, status=Charge.Status.AUTHORIZED, authorized_at=now, capture_expires_at=expires
+    ):
+        return _reread(charge)
+    charge.refresh_from_db()
     services._snapshot_plan_card(plan, charge)
     return charge
 
 
+def _while_pending(charge: Charge, **fields) -> bool:
+    """Write `fields` only if the row is still PENDING; whether it was."""
+    updated = Charge.objects.filter(pk=charge.pk, status=Charge.Status.PENDING).update(
+        updated_at=timezone.now(), **fields
+    )
+    return bool(updated)
+
+
+def _reread(charge: Charge) -> Charge:
+    """Another run settled the row first: its answer stands."""
+    charge.refresh_from_db()
+    logger.info("cleaning hold: charge %s already settled as %s", charge.pk, charge.status)
+    return charge
+
+
+def _in_flight(exc: stripe.error.StripeError) -> bool:
+    """Stripe refused the create because a request under the same idempotency key is still
+    running (409, `idempotency_key_in_use`): transient, not a decline or a conflict."""
+    body = getattr(exc, "json_body", None) or {}
+    error = body.get("error") if isinstance(body, dict) else None
+    code = getattr(exc, "code", None) or (error or {}).get("code")
+    return getattr(exc, "http_status", None) == 409 or code == "idempotency_key_in_use"
+
+
 def _fail(lead, charge: Charge, reason: str, title: str, *, note: str) -> Charge:
     """Record the hold FAILED (the cron stops trying it) and tell staff, once. `note` is
-    `DECLINED_NOTE` or `UNPLACEABLE_NOTE`, so the money card can tell the two apart."""
-    charge.status = Charge.Status.FAILED
-    charge.failure_reason = reason[:255]
-    charge.note = note
-    charge.save(update_fields=["status", "failure_reason", "note", "updated_at"])
+    `DECLINED_NOTE` or `UNPLACEABLE_NOTE`, so the money card can tell the two apart. Only a
+    row still PENDING: one an overlapping run already authorized is left as it is."""
+    if not _while_pending(
+        charge, status=Charge.Status.FAILED, failure_reason=reason[:255], note=note
+    ):
+        return _reread(charge)
+    charge.refresh_from_db()
     _hold_failed(lead, title, reason[:255])
     return charge
 
@@ -262,12 +300,18 @@ def _hold_failed(lead, title: str, reason: str) -> None:
 # --- capturing, releasing, expiry ------------------------------------------------------------
 
 
-def capture_hold(trip, amount) -> Charge:
+def capture_hold(trip, amount) -> tuple[Charge, bool]:
     """Take the cleaning fee for `trip` out of the hold: `min(amount, hold)` is captured
     (Stripe lets the rest go), the row is tagged with the trip and posted like a trip charge.
-    One capture per hold: a hold already captured (or none) raises `HoldUsed`; one let go
-    (EXPIRED, RELEASED, or released by the bank under us, then marked EXPIRED) raises
-    `HoldLapsed`. Both are `PaymentError`s that took nothing: charge the card instead."""
+    One capture per hold: a hold already captured (or none, or one captured for another
+    trip) raises `HoldUsed`; one let go (EXPIRED, RELEASED, or released by the bank under
+    us, then marked EXPIRED) raises `HoldLapsed`. Both are `PaymentError`s that took
+    nothing: charge the card instead.
+
+    Returns the charge and whether this call took the money for the trip: it captured, or
+    adopted a capture Stripe reported with no trip. False when an earlier call for this
+    same trip had already captured and tagged it (a double submit), which only finishes
+    the books, so the caller records the capture once."""
     lead = trip.lead
     intent = None
     with transaction.atomic():
@@ -286,6 +330,7 @@ def capture_hold(trip, amount) -> Charge:
         if hold.status != Charge.Status.AUTHORIZED:
             # EXPIRED or RELEASED between our read and the lock: let go, nothing taken.
             raise HoldLapsed("The cleaning hold was let go; charge the card instead.")
+        captured_now = True
         if hold.captured_at is None:
             take = min(Decimal(amount), Decimal(hold.amount)).quantize(Decimal("0.01"))
             if take <= services.ZERO:
@@ -303,15 +348,22 @@ def capture_hold(trip, amount) -> Charge:
             # them, or seen by the webhook with no trip to book it against. This trip
             # adopts it, for what Stripe took.
             expired = False
+            if hold.reservation_id not in (None, trip.pk):
+                # Another trip's capture committed its tag and let go of the locks before
+                # its books: that money is that trip's, not ours.
+                raise HoldUsed("The cleaning hold was taken for another trip.")
             if hold.reservation_id is None:
                 _tag(hold, trip, Decimal(hold.amount))
+            else:
+                captured_now = False
     if expired:
         mark_expired(hold)
         raise HoldLapsed("The bank released the cleaning hold; charge the card instead.")
     # The one reconcile every money path shares: SUCCEEDED and the ledger entry, once.
-    return services.record_payment(
+    charge = services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
     )
+    return charge, captured_now
 
 
 def _tag(hold: Charge, trip, amount: Decimal) -> None:
@@ -499,23 +551,35 @@ def _over(trips: list, now: datetime, release_days: int) -> bool:
     return last.pickup_date + timedelta(days=release_days) < _today(last, now)
 
 
+def _all_processed(trips: list) -> bool:
+    """Every one of these held trips has been through Trip Processing (each trip's review
+    comes with the prefetch)."""
+    return bool(trips) and all(
+        getattr(getattr(t, "review", None), "processed_at", None) is not None for t in trips
+    )
+
+
 def _with_trips(queryset, prefix: str = ""):
     from apps.reservations.models import Reservation
 
     return queryset.prefetch_related(
-        Prefetch(f"{prefix}reservations", queryset=Reservation.objects.select_related("vehicle"))
+        Prefetch(
+            f"{prefix}reservations",
+            queryset=Reservation.objects.select_related("vehicle", "review"),
+        )
     )
 
 
-def _candidates(now: datetime, release_days: int):
-    """Booked card orders with a live held trip dated inside the window every zone's
-    "today" can fall in, and no HOLD row yet (in any state). One row per order."""
+def _candidates(now: datetime):
+    """Booked card orders with a live held trip that may be today somewhere and none that
+    is behind us everywhere, and no HOLD row yet (in any state). One row per order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
     from apps.reservations.models import Reservation
 
+    # Local dates sit within a day of UTC's, in every zone.
     latest = (now + timedelta(days=1)).date()
-    earliest = (now - timedelta(days=1)).date() - timedelta(days=release_days)
+    earliest = (now - timedelta(days=1)).date()
     held = Reservation.objects.filter(lead=OuterRef("pk"), vehicle__cleaning_fee__gt=0).exclude(
         trip_status__in=CANCELLED_STATUSES
     )
@@ -524,7 +588,7 @@ def _candidates(now: datetime, release_days: int):
     return _with_trips(
         Lead.objects.filter(status=Lead.Status.BOOKED, billing_group__isnull=True)
         .filter(Exists(held.filter(pickup_date__lte=latest)))
-        .filter(Exists(held.filter(pickup_date__gte=earliest)))
+        .exclude(Exists(held.filter(pickup_date__lt=earliest)))
         .exclude(Exists(Charge.objects.filter(plan__lead=OuterRef("pk"), kind=Charge.Kind.HOLD)))
         .select_related("contact__company")
         .order_by("pk")
@@ -533,32 +597,38 @@ def _candidates(now: datetime, release_days: int):
 
 
 def due_for_placement(now: datetime) -> list[Lead]:
-    """The `_candidates` whose placement moment has come: `hold_place_time` on the first
-    held trip's day, in that trip's zone (or any time after it), unless the order is
-    already over (`_over`) or farmed in.
+    """The `_candidates` whose placement moment has come: the first held trip is today in
+    its own zone and `hold_place_time` has passed there. Only on that day: an order whose
+    first held trip is already behind us (switched on mid-order, at go-live) is never held,
+    while one booked late on the day still is. Farmed-in orders, and orders whose every
+    held trip is already processed, are skipped.
 
-    The database narrows by date across every zone at once (local dates sit within a day of
-    UTC's); the exact rule is checked per order in Python. A fixed handful of queries."""
+    The database narrows by date across every zone at once; the exact rule is checked per
+    order in Python. A fixed handful of queries."""
     from apps.tasks.models import TaskConfig
 
     config = TaskConfig.load()
     due = []
-    for lead in _candidates(now, config.hold_release_days):
-        trips = _dated(_live_held(lead))
-        if not trips or lead.is_farm_in or _over(trips, now, config.hold_release_days):
+    for lead in _candidates(now):
+        live = _live_held(lead)
+        trips = _dated(live)
+        if not trips or lead.is_farm_in or _all_processed(live):
             continue
         first = trips[0]
+        if first.pickup_date != _today(first, now):
+            continue
         if now >= datetime.combine(first.pickup_date, config.hold_place_time, _zone(first)):
             due.append(lead)
     return due
 
 
 def sweep(now: datetime) -> int:
-    """Settle every hold still open (PENDING or AUTHORIZED). Returns how many changed or
-    were flagged. One order's failure is logged and the sweep carries on."""
+    """Settle every hold still open (PENDING or AUTHORIZED), whatever the switch: a hold
+    placed while it was on is never left behind by turning it off. Returns how many changed
+    or were flagged. One order's failure is logged and the sweep carries on."""
     from apps.tasks.models import TaskConfig
 
-    release_days = TaskConfig.load().hold_release_days
+    config = TaskConfig.load()
     rows = _with_trips(
         Charge.objects.filter(
             kind=Charge.Kind.HOLD, status__in=(Charge.Status.PENDING, Charge.Status.AUTHORIZED)
@@ -570,13 +640,13 @@ def sweep(now: datetime) -> int:
     swept = 0
     for hold in rows:
         try:
-            swept += _sweep_one(hold, now, release_days)
+            swept += _sweep_one(hold, now, config)
         except Exception:
             logger.exception("cleaning hold: sweep failed for charge %s", hold.pk)
     return swept
 
 
-def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
+def _sweep_one(hold: Charge, now: datetime, config) -> int:
     from apps.leads.models import Lead
 
     lead = hold.plan.lead
@@ -590,7 +660,7 @@ def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
         and bool(live)
     )
     if hold.status == Charge.Status.PENDING:
-        return _settle_pending(lead, hold, now, needed)
+        return _settle_pending(lead, hold, now, needed=needed, enabled=config.hold_enabled)
     if hold.captured_at is not None:
         # Money moved at Stripe: never released or expired. If no trip took it up, the
         # books are missing it, and a person books it.
@@ -600,7 +670,10 @@ def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
     trips = _dated(live)
     if not needed:
         reason = "order cancelled" if lead.status != Lead.Status.BOOKED else "no held trip left"
-    elif trips and _over(trips, now, release_days):
+    elif _all_processed(live):
+        # Processing releases it after the last clean trip; this catches any it missed.
+        reason = "all held trips processed"
+    elif trips and _over(trips, now, config.hold_release_days):
         reason = "unused after the last held trip"
     else:
         return 0
@@ -608,12 +681,15 @@ def _sweep_one(hold: Charge, now: datetime, release_days: int) -> int:
     return int(release_hold(lead, reason=reason).status != Charge.Status.AUTHORIZED)
 
 
-def _settle_pending(lead, hold: Charge, now: datetime, needed: bool) -> int:
-    """A hold Stripe has not finished answering for. With nothing left to hold for it is
-    let go quietly (`_drop_pending`); otherwise `place_hold` re-sends or reads it back, and
-    one still unanswered after the card-hold window is given up as FAILED."""
+def _settle_pending(lead, hold: Charge, now: datetime, *, needed: bool, enabled: bool) -> int:
+    """A hold Stripe has not finished answering for. With nothing left to hold for, or with
+    holds switched off, it is let go quietly (`_drop_pending`); otherwise `place_hold`
+    re-sends or reads it back, and one still unanswered after the card-hold window is given
+    up as FAILED."""
     if not needed:
-        return _drop_pending(hold)
+        return _drop_pending(hold, note="no held trip left")
+    if not enabled:
+        return _drop_pending(hold, note="holds switched off")
     place_hold(lead, now=now)
     hold.refresh_from_db()
     if hold.status != Charge.Status.PENDING:
@@ -624,8 +700,8 @@ def _settle_pending(lead, hold: Charge, now: datetime, needed: bool) -> int:
     return 0
 
 
-def _drop_pending(hold: Charge) -> int:
-    """RELEASED, with no task or alert: the order no longer needs a hold. An intent Stripe
+def _drop_pending(hold: Charge, *, note: str) -> int:
+    """RELEASED, with no task or alert: the order no longer gets a hold. An intent Stripe
     created is cancelled first. Under the plan lock and only while the row is still
     PENDING, since overlapping runs (a cron retry on timeout) may have settled it."""
     with transaction.atomic():
@@ -641,7 +717,7 @@ def _drop_pending(hold: Charge) -> int:
                     logger.exception("cleaning hold: could not cancel pending charge %s", hold.pk)
                     return 0
         hold.status = Charge.Status.RELEASED
-        hold.note = "no held trip left"
+        hold.note = note
         hold.save(update_fields=["status", "note", "updated_at"])
     return 1
 
@@ -670,16 +746,16 @@ def _flag_unbooked(lead) -> int:
 
 
 def run_cron(now: datetime | None = None) -> int:
-    """The hourly `cleaning-holds` job: the sweep, then placement. Nothing at all while
-    `hold_enabled` is off. Each order on its own: one failure is logged, never stops the
-    run. Returns holds swept plus holds placed (AUTHORIZED this run)."""
+    """The hourly `cleaning-holds` job: the sweep, then placement. The sweep always runs;
+    `hold_enabled` gates placement only. Each order on its own: one failure is logged,
+    never stops the run. Returns holds swept plus holds placed (AUTHORIZED this run)."""
     from apps.tasks.models import TaskConfig
 
-    if not TaskConfig.load().hold_enabled:
-        return 0
     now = now or timezone.now()
     # Sweep first, so a hold this run leaves PENDING waits for the next run's retry.
     processed = sweep(now)
+    if not TaskConfig.load().hold_enabled:
+        return processed
     for lead in due_for_placement(now):
         try:
             hold = place_hold(lead, now=now)

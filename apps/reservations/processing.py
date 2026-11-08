@@ -622,8 +622,10 @@ def _take_cleaning_from_hold(trip, money, record) -> bool:
     """Take the trip's cleaning fee out of the order's cleaning hold (APC-95, spec §4):
     the trip's cleaning lines, at most what the trip still owes (a fee the order already
     paid is not taken twice), and at most the hold (`capture_hold`; Stripe lets the rest
-    go). Only while the hold is AUTHORIZED — one capture per hold. Records HOLD_CAPTURED
-    and returns True when money moved. `capture_hold`'s errors are the caller's."""
+    go). Only while the hold is AUTHORIZED — one capture per hold. Returns True when money
+    moved for the trip, and records HOLD_CAPTURED only when this call took it (a double
+    submit finishing the first one's books records nothing). `capture_hold`'s errors are
+    the caller's."""
     from apps.payments import holds
     from apps.payments.models import Charge
 
@@ -640,13 +642,14 @@ def _take_cleaning_from_hold(trip, money, record) -> bool:
     if hold is None or hold.status != Charge.Status.AUTHORIZED:
         return False
     held = Decimal(hold.amount)
-    captured = holds.capture_hold(trip, due)
-    record(
-        ProcessingEvent.Kind.HOLD_CAPTURED,
-        captured.amount,
-        captured,
-        note=f"Cleaning fee ${captured.amount:,.2f} taken from the ${held:,.2f} hold",
-    )
+    captured, captured_now = holds.capture_hold(trip, due)
+    if captured_now:
+        record(
+            ProcessingEvent.Kind.HOLD_CAPTURED,
+            captured.amount,
+            captured,
+            note=f"Cleaning fee ${captured.amount:,.2f} taken from the ${held:,.2f} hold",
+        )
     return True
 
 
