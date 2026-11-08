@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 
 from django.db.models import Q
 from django.utils import timezone
@@ -45,6 +46,19 @@ SYNC_BATCH = 25
 _DUPLICATE_MESSAGE = (
     "QuickBooks already has a customer with this name. Rename it here or there, then retry."
 )
+
+
+class PushBudget:
+    """How long one cron run keeps starting pushes. Each pass stops starting new ones once it
+    has run out, so a slow Intuit can't hold the cron's request past its timeout; what is
+    left goes on the next run."""
+
+    def __init__(self, seconds: float = 20) -> None:
+        self.seconds = seconds
+        self.started = time.monotonic()
+
+    def expired(self) -> bool:
+        return time.monotonic() - self.started >= self.seconds
 
 
 class SyncPaused(Exception):

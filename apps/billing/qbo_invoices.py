@@ -11,13 +11,14 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, When
 from django.utils import timezone
 
 from apps.billing.models import Invoice, InvoiceLine, QboAccountMapping, QboItem, SyncState
 from apps.billing.qbo_sync import (
     STALE_OBJECT,
     SYNC_BATCH,
+    PushBudget,
     SyncPaused,
     _fault_code,
     _transient,
@@ -200,10 +201,22 @@ def invoice_matches(obj: dict, body: dict) -> bool:
 # --- the push ------------------------------------------------------------------------------------
 
 
+def unsent_first(rows, prefix: str = "qbo_"):
+    """Not-yet-sent rows ahead of refused ones, each in pk order: a pile of refusals retried
+    every hour never starves a new record out of the batch."""
+    refused = Case(
+        When(**{f"{prefix}sync_state": SyncState.ERROR}, then=Value(1)),
+        default=Value(0),
+        output_field=IntegerField(),
+    )
+    return rows.alias(refused_rank=refused).order_by("refused_rank", "pk")
+
+
 def pending_invoices(realm: str, start: date | None, *, linked: bool = False):
-    """Open invoices not in step with this company, once their group is in it. Those dated
-    before `start` are never sent (no error); with no start date (None) every one comes back,
-    for the run to mark as waiting on it. An invoice with no lines is never sent.
+    """Open invoices not in step with this company, once their group is in it, not yet sent
+    ahead of refused (`unsent_first`). Those dated before `start` are never sent (no error);
+    with no start date (None) every one comes back, for the run to mark as waiting on it. An
+    invoice with no lines is never sent.
 
     One already in this company is left out unless `linked`: our invoices are never edited,
     so the hourly run never updates one (a mismatch would rewrite it every hour); only a
@@ -219,7 +232,7 @@ def pending_invoices(realm: str, start: date | None, *, linked: bool = False):
         rows = rows.exclude(~Q(qbo_id="") & Q(qbo_realm_id=realm))
     if start is not None:
         rows = rows.filter(invoice_date__gte=start)
-    return rows.select_related("group").order_by("pk")
+    return unsent_first(rows.select_related("group"))
 
 
 def pending_voids(realm: str):
@@ -394,10 +407,11 @@ def _alert_blocked(message: str) -> None:
     )
 
 
-def sync_pending() -> int:
-    """Push up to SYNC_BATCH invoices and voids that aren't in step: creates in pk order, then
-    voids (a void never needs the start date or the item). Returns how many landed. Stops
-    quietly on an outage, a rate limit or a lost connection; nothing is marked."""
+def sync_pending(budget: PushBudget | None = None) -> int:
+    """Push up to SYNC_BATCH invoices and voids that aren't in step: creates (not yet sent
+    first), then voids (a void never needs the start date or the item), starting none once
+    `budget` has run out (None: no time limit). Returns how many landed. Stops quietly on an
+    outage, a rate limit or a lost connection; nothing is marked."""
     if not qbo.is_connected():
         return 0
     realm = current_realm()
@@ -413,12 +427,12 @@ def sync_pending() -> int:
             blocked = NO_TRIP_ITEM if _block_all(rows, NO_TRIP_ITEM) else ""
         else:
             for invoice in rows:
-                if attempted >= SYNC_BATCH:
+                if attempted >= SYNC_BATCH or (budget and budget.expired()):
                     return pushed
                 attempted += 1
                 pushed += push_invoice(invoice)
         for invoice in pending_voids(realm):
-            if attempted >= SYNC_BATCH:
+            if attempted >= SYNC_BATCH or (budget and budget.expired()):
                 return pushed
             attempted += 1
             pushed += push_void(invoice)
@@ -434,9 +448,9 @@ _UNSET = object()
 
 
 def sync_state(invoice: Invoice, *, connected: bool | None = None, start=_UNSET) -> dict | None:
-    """What the invoice row shows: its state, its sentence, where Retry posts and whether it
-    is dated before the start date (so never sent). None while QuickBooks isn't connected.
-    Pass `connected` and `start` when building many."""
+    """What the invoice row shows: its state, its sentence, where Retry posts, whether it is
+    dated before the start date (so never sent) and whether it changed here since it was sent.
+    None while QuickBooks isn't connected. Pass `connected` and `start` when building many."""
     from django.urls import reverse
 
     if connected is None:
@@ -450,4 +464,15 @@ def sync_state(invoice: Invoice, *, connected: bool | None = None, start=_UNSET)
         "error": invoice.qbo_sync_error,
         "sync_url": reverse("billing_invoice_sync", args=[invoice.pk]),
         "before_start": start is not None and invoice.invoice_date < start,
+        "changed": changed_since_sent(invoice),
     }
+
+
+def changed_since_sent(record) -> bool:
+    """In QuickBooks, then changed here (NOT_SYNCED with nothing refused): the hourly run
+    leaves it, and a person's Retry sends the change."""
+    return (
+        bool(record.qbo_id)
+        and record.qbo_sync_state == SyncState.NOT_SYNCED
+        and not record.qbo_sync_error
+    )

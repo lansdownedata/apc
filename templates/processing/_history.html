@@ -16,7 +16,7 @@
     {% if c.sync %}
     <span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
       {% include "billing/_sync_chip.html" with record=c synced_label="In QuickBooks" %}
-      {% if c.sync.state == 'not_synced' and not c.sync.error %}<span class="text-[11.5px] text-muted">{% if c.sync.before_start %}Before the QuickBooks start date{% else %}Not sent yet{% endif %}</span>{% endif %}
+      {% if c.sync.state == 'not_synced' and not c.sync.error %}<span class="text-[11.5px] text-muted">{% if c.sync.before_start %}Before the QuickBooks start date{% elif c.sync.changed %}Changed since it was sent{% else %}Not sent yet{% endif %}</span>{% endif %}
       {% if c.sync.state == 'error' %}<span class="text-[11.5px] text-rose-600">{{ c.sync.error }}</span>{% endif %}
       {% if user.has_payments_access and c.sync.state != 'synced' and not c.sync.before_start %}<button type="button" class="text-[11.5px] font-semibold text-goldd hover:text-gold focus-gold rounded px-1" @click="retryQboSync('{{ c.sync.sync_url }}')">Retry</button>{% endif %}
     </span>

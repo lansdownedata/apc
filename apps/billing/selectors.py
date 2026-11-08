@@ -148,9 +148,7 @@ def qbo_customer_line(contact) -> dict | None:
     """APC-108: the "QuickBooks customer" line on the Billing card — the billing account's
     Customer when that carries the contact's card receipts, else the contact's own link and its
     state. None while QuickBooks isn't connected, or when the contact has neither a link nor a
-    card receipt to carry."""
-    from apps.payments.models import Charge
-
+    card receipt that goes to QuickBooks (processed on or after the start date)."""
     from . import qbo_receipts
     from .models import CustomerLink
     from .qbo_sync import current_realm
@@ -161,14 +159,11 @@ def qbo_customer_line(contact) -> dict | None:
     if link is None:
         if qbo_receipts.customer_ref(contact, current_realm()) is not None:
             return {"uses_account": True}
-        carries = Charge.objects.filter(
-            status=Charge.Status.SUCCEEDED,
-            kind__in=(Charge.Kind.TRIP, Charge.Kind.REFUND),
-            reservation__review__processed_at__isnull=False,
-            reservation__lead__contact=contact,
-        ).exists()
-        if not carries:
+        if not qbo_receipts.carries_receipts(contact):
             return None
+        if contact.billing_accounts.exists():
+            # The account becomes its customer once the hourly run pushes it here.
+            return {"uses_account": True}
     return {
         "uses_account": False,
         "link": link,

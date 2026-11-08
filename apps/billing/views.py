@@ -14,7 +14,7 @@ QuickBooks sync land on the same ones.
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, JsonResponse
+from django.http import Http404, HttpRequest, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_POST
 
@@ -23,7 +23,7 @@ from apps.contacts.models import Contact
 
 from . import services
 from .forms import AccountForm, GroupForm, NewAccountForm
-from .models import AccountGroup, BillingAccount
+from .models import AccountGroup, BillingAccount, CustomerLink
 
 
 def _invalid(form) -> JsonResponse:
@@ -285,6 +285,9 @@ def customer_sync(request: HttpRequest, pk: int) -> JsonResponse:
     from . import qbo_receipts, qbo_sync
 
     contact = get_object_or_404(Contact, pk=pk)
+    has_link = CustomerLink.objects.filter(contact=contact).exists()
+    if not has_link and not qbo_receipts.carries_receipts(contact):
+        raise Http404  # no customer and no card receipt that would need one
     if not qbo.is_connected():
         return JsonResponse({"ok": False, "error": "QuickBooks isn't connected."}, status=400)
     link = qbo_receipts.ensure_link(contact)

@@ -561,6 +561,29 @@ def test_run_stops_at_the_batch(mapping):
     assert req.call_count == 1
 
 
+def test_run_stops_when_the_time_budget_runs_out(mapping):
+    first = _open_invoice()
+    _open_invoice()
+
+    class AfterOnePush:
+        def expired(self) -> bool:
+            return req.call_count >= 1
+
+    with patch(REQ, return_value=_sent(first)) as req:
+        assert qbo_invoices.sync_pending(AfterOnePush()) == 1
+    assert req.call_count == 1
+
+
+def test_pending_invoices_put_unsent_ahead_of_refused(mapping):
+    refused = _open_invoice()
+    Invoice.objects.filter(pk=refused.pk).update(
+        qbo_sync_state=SyncState.ERROR, qbo_sync_error="Inactive"
+    )
+    unsent = _open_invoice()
+    pending = list(qbo_invoices.pending_invoices("123", START))
+    assert [i.pk for i in pending] == [unsent.pk, refused.pk]
+
+
 def test_void_pushes_operation_void(mapping):
     invoice = _pushed(_open_invoice())
     invoices.void_invoice(invoice, reason="Wrong PO", user=None)
@@ -721,7 +744,16 @@ def test_sync_state_when_connected():
         "error": "Nope",
         "sync_url": f"/portal/billing/invoices/{invoice.pk}/sync/",
         "before_start": False,
+        "changed": False,
     }
+
+
+def test_sync_state_says_a_sent_invoice_changed():
+    invoice = InvoiceFactory(qbo_id="900", qbo_realm_id="123")
+    assert qbo_invoices.sync_state(invoice, connected=True)["changed"] is True
+    invoice.qbo_sync_state = SyncState.SYNCED
+    assert qbo_invoices.sync_state(invoice, connected=True)["changed"] is False
+    assert qbo_invoices.sync_state(InvoiceFactory(), connected=True)["changed"] is False
 
 
 def test_sync_state_before_the_start_date(mapping):

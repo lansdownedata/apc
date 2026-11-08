@@ -48,6 +48,7 @@ from apps.billing.qbo_sync import (
     DUPLICATE_NAME,
     STALE_OBJECT,
     SYNC_BATCH,
+    PushBudget,
     SyncPaused,
     _digest,
     _errors,
@@ -200,7 +201,9 @@ class _Link:
     entity: str  # the API path: "vendor" · "bill" · "billpayment"
     key: str  # the response key: "Vendor" · "Bill" · "BillPayment"
     prefix: str = "qbo_"
-    sparse: bool = False  # Intuit documents sparse updates for Vendor; Bill/BillPayment go whole
+    # Intuit documents sparse updates for Vendor, Customer and the receipts; Bill/BillPayment
+    # go whole.
+    sparse: bool = False
 
     def get(self, field: str):
         return getattr(self.record, self.prefix + field)
@@ -459,6 +462,8 @@ def _link_existing_vendor(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict
     rows = qbo.request("GET", "query", params={"query": query})
     found = rows.get("QueryResponse", {}).get("Vendor", [])
     if len(found) != 1:
+        # QuickBooks did refuse the create: a rename then goes under a new requestid.
+        customers.refused_by_quickbooks(vendor)
         raise _Refused(
             f"QuickBooks already has a name like “{vendor.name}” (it may differ in case or"
             " spacing). Rename the vendor here or there, then retry."
@@ -949,11 +954,11 @@ def _alert_blocked(message: str) -> None:
     )
 
 
-def sync_pending() -> int:
+def sync_pending(budget: PushBudget | None = None) -> int:
     """Push up to SYNC_BATCH vendors, bills, bill payments and invoice files that aren't in
-    step, in that order (each waits for the one it hangs off). Returns how many were pushed.
-    Stops quietly on an outage, a rate limit or a lost connection — nothing is marked, the
-    next run carries on."""
+    step, in that order (each waits for the one it hangs off), starting none once `budget`
+    has run out (None: no time limit). Returns how many were pushed. Stops quietly on an
+    outage, a rate limit or a lost connection — nothing is marked, the next run carries on."""
     if not qbo.is_connected():
         return 0
     realm = customers.current_realm()
@@ -962,7 +967,7 @@ def sync_pending() -> int:
     blocked: list[str] = []  # newly blocked by a missing setting: alert once for the run
     try:
         for vendor in pending_vendors(realm, start):
-            if attempted >= SYNC_BATCH:
+            if attempted >= SYNC_BATCH or (budget and budget.expired()):
                 return pushed
             attempted += 1
             pushed += push_vendor(vendor)
@@ -982,7 +987,7 @@ def sync_pending() -> int:
             for payable in bills:
                 if not _in_company(payable.assignment.vendor, realm):
                     continue  # waits for its vendor
-                if attempted >= SYNC_BATCH:
+                if attempted >= SYNC_BATCH or (budget and budget.expired()):
                     return pushed
                 attempted += 1
                 pushed += push_bill(payable)
@@ -995,7 +1000,7 @@ def sync_pending() -> int:
                 blocked.append(_NO_PAYMENT_ACCOUNT)
         else:
             for payable in payments:
-                if attempted >= SYNC_BATCH:
+                if attempted >= SYNC_BATCH or (budget and budget.expired()):
                     return pushed
                 attempted += 1
                 pushed += push_payment(payable)
@@ -1003,7 +1008,7 @@ def sync_pending() -> int:
         for payable in pending_attachments(realm):
             if not in_window(payable, start):
                 continue
-            if attempted >= SYNC_BATCH:
+            if attempted >= SYNC_BATCH or (budget and budget.expired()):
                 return pushed
             attempted += 1
             pushed += push_attachment(payable)
@@ -1100,9 +1105,9 @@ def run_hourly() -> int:
     """The `retry-qbo-sync` cron: customers first (APC-42: terms, accounts, groups), then the
     chart of accounts, then vendors, bills and payments, then card customers and receipts
     (APC-108), then customer invoices (APC-107). A failed accounts refresh doesn't stop the
-    push: the cached choice still stands. The receipts and invoices passes each run whatever
-    the other did, so one failing never stops the next or the cron. Does nothing without a
-    live connection."""
+    push: the cached choice still stands. The bills, receipts and invoices passes share one
+    PushBudget and each runs whatever the others did, so one failing never stops the next or
+    the cron. Does nothing without a live connection."""
     if not qbo.is_connected():
         return 0
     pushed = customers.run_hourly()
@@ -1116,13 +1121,14 @@ def run_hourly() -> int:
         qbo_invoices.refresh_items()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
-    pushed += sync_pending()
+    budget = PushBudget(seconds=20)
     for name, run in (
+        ("bill", sync_pending),
         ("receipt", qbo_receipts.sync_pending),
         ("invoice", qbo_invoices.sync_pending),
     ):
         try:
-            pushed += run()
+            pushed += run(budget)
         except Exception:  # one pass never stops the next
             logger.exception("QuickBooks %s sync failed", name)
     return pushed

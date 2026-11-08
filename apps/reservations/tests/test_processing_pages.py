@@ -441,6 +441,12 @@ def test_processed_pane_shows_receipt_state_per_charge(accountant):
             "qbo_sync_error": "Customer is inactive.",
         },
         deposit={"kind": Charge.Kind.DEPOSIT, "status": Charge.Status.SUCCEEDED},
+        changed={
+            "kind": Charge.Kind.TRIP,
+            "status": Charge.Status.SUCCEEDED,
+            "qbo_id": "900",
+            "qbo_sync_state": "not_synced",
+        },
         declined={
             "kind": Charge.Kind.TRIP,
             "status": Charge.Status.FAILED,
@@ -458,6 +464,8 @@ def test_processed_pane_shows_receipt_state_per_charge(accountant):
     assert reverse("charge_qbo_sync", args=[made["synced"].pk]) not in body
     assert reverse("charge_qbo_sync", args=[made["deposit"].pk]) not in body
     assert body.count("Not sent yet") == 0
+    assert body.count("Changed since it was sent") == 1
+    assert reverse("charge_qbo_sync", args=[made["changed"].pk]) in body
     assert "Declined row sentence." not in body
     assert reverse("charge_qbo_sync", args=[made["declined"].pk]) not in body
 

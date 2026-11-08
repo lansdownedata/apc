@@ -113,8 +113,11 @@
       Every trip is one line on this product or service. Only documents dated on or after the start
       date go, so past billing isn't back-dated into the books.
     </p>
-    {% if customer_docs_unset %}
-      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Customer documents won't go to QuickBooks until a product/service, a deposit account and a start date are chosen.</p>
+    {% if invoices_unset %}
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Invoices won't go to QuickBooks until a product/service and a start date are chosen.</p>
+    {% endif %}
+    {% if receipts_unset %}
+      <p class="text-[12.5px] rounded-lg px-3 py-2 mb-3 chip-warn">Card receipts won't go to QuickBooks until a deposit account is chosen.</p>
     {% endif %}
     <form method="post" action="{% url 'quickbooks_customer_docs' %}" class="grid gap-3">{% csrf_token %}
       <label class="block"><span class="block text-[12px] font-medium text-ink mb-1">Product/Service for trip charges</span>

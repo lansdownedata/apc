@@ -314,6 +314,40 @@ def test_a_vendor_name_held_by_a_customer_is_a_readable_error_and_one_alert():
     assert alert.vendor_id == vendor.pk and "Capital Coach" in alert.title
 
 
+def test_a_refused_vendor_takeover_moves_the_create_requestid():
+    vendor = _payable().assignment.vendor
+    with patch(REQ, side_effect=[_fault("6240"), {"QueryResponse": {}}]):
+        assert qbo_bills.push_vendor(vendor) is False
+    vendor.refresh_from_db()
+    assert vendor.qbo_create_attempt == 1
+
+    # Renamed here or there: the next create is a new request, not the refused one replayed.
+    with patch(REQ, return_value=_vendor()) as req:
+        assert qbo_bills.push_vendor(vendor) is True
+    assert req.call_args.kwargs["params"]["requestid"] == f"apc-v{vendor.pk}-create1"
+
+
+def test_the_run_stops_starting_pushes_when_its_time_is_up():
+    _map()
+    _payable(vendor=_linked_vendor())
+    second = VendorFactory(
+        name="Second Coach",
+        qbo_id="57",
+        qbo_sync_token="0",
+        qbo_realm_id=REALM,
+        qbo_sync_state=SyncState.SYNCED,
+    )
+    _payable(vendor=second, number="INV-78")
+
+    class AfterOnePush:
+        def expired(self) -> bool:
+            return req.call_count >= 1
+
+    with patch(REQ, return_value=_bill()) as req:
+        assert qbo_bills.sync_pending(AfterOnePush()) == 1
+    assert [c.args[1] for c in req.call_args_list] == ["bill"]
+
+
 def test_a_name_lookup_escapes_apostrophes():
     vendor = _payable(vendor=VendorFactory(name="O'Hare Limo")).assignment.vendor
     calls = [_fault("6240"), {"QueryResponse": {}}]

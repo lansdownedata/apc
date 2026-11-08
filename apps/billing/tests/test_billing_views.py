@@ -412,6 +412,15 @@ def test_row_shows_label_chip_and_retry_on_error(accountant) -> None:
     with patch(CONNECTED, return_value=True):
         html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
     assert "Not sent yet" in html
+    assert "Changed since it was sent" not in html
+
+    # Sent, then changed here: it says so, and a person's Retry sends the change.
+    invoice.qbo_id = "900"
+    invoice.save()
+    with patch(CONNECTED, return_value=True):
+        html = accountant.get(reverse("billing"), {"group": invoice.group_id}).content.decode()
+    assert "Changed since it was sent" in html and "Not sent yet" not in html
+    assert ">Retry<" in html
 
 
 def test_retry_is_hidden_without_payments_access(staff) -> None:

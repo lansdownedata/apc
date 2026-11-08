@@ -665,6 +665,16 @@ def test_a_local_refusal_after_a_lost_create_keeps_the_create_request_id():
     assert req.call_args.kwargs["params"]["requestid"] == first
 
 
+def test_a_push_budget_runs_out_after_its_seconds():
+    from unittest.mock import patch as patched
+
+    with patched("apps.billing.qbo_sync.time.monotonic", side_effect=[100.0, 119.9, 120.0]):
+        budget = qbo_sync.PushBudget(seconds=20)
+        assert budget.expired() is False
+        assert budget.expired() is True
+    assert qbo_sync.PushBudget().seconds == 20
+
+
 def test_a_refusal_from_quickbooks_moves_the_create_to_a_new_request_id_once():
     account = _account()
     with patch(REQ, side_effect=_fault("6240")) as req:
@@ -683,6 +693,12 @@ def _owner(client):
     from apps.accounts.models import User
 
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+
+INVOICES_UNSET = (
+    "Invoices won't go to QuickBooks until a product/service and a start date are chosen."
+)
+RECEIPTS_UNSET = "Card receipts won't go to QuickBooks until a deposit account is chosen."
 
 
 def test_customer_docs_card_renders_and_saves(client):
@@ -710,7 +726,9 @@ def test_customer_docs_card_renders_and_saves(client):
         )
     config = QboAccountMapping.load()
     assert config.trip_item == item and config.customer_docs_from == date(2026, 12, 1)
-    assert "Saved. Open invoices go out on the next sync." in resp.content.decode()
+    assert "Saved. Open invoices and card receipts go out on the next sync." in (
+        resp.content.decode()
+    )
 
 
 def test_customer_docs_card_shows_copy_and_warning(client):
@@ -724,9 +742,7 @@ def test_customer_docs_card_shows_copy_and_warning(client):
         html = client.get(reverse("quickbooks_settings")).content.decode()
     assert "Customer documents" in html
     assert "Every trip is one line on this product or service." in html
-    assert "Customer documents won&#x27;t go to QuickBooks until" in html or (
-        "Customer documents won't go to QuickBooks until" in html
-    )
+    assert INVOICES_UNSET in html and RECEIPTS_UNSET in html
     assert "No products or services read yet." in html
 
 
@@ -818,7 +834,9 @@ def test_customer_docs_card_saves_the_deposit_account(client):
             follow=True,
         )
     assert QboAccountMapping.load().sales_deposit_account == deposit
-    assert "Saved. Open invoices go out on the next sync." in resp.content.decode()
+    assert "Saved. Open invoices and card receipts go out on the next sync." in (
+        resp.content.decode()
+    )
 
 
 def test_customer_docs_rejects_a_non_deposit_account(client):
@@ -843,18 +861,34 @@ def test_customer_docs_rejects_a_non_deposit_account(client):
             follow=True,
         )
     assert QboAccountMapping.load().sales_deposit_account is None
-    assert "the deposit account for card payments" in resp.content.decode()
+    # Invoices are set up, so the save stands; only card receipts still wait.
+    html = resp.content.decode()
+    assert (
+        "Saved. Open invoices go out on the next sync; card receipts wait for a deposit account."
+        in html
+    )
 
 
-def test_customer_docs_unset_chip_names_all_three(client):
+def test_customer_docs_unset_chips_per_document_type(client):
     from django.test import override_settings
 
+    from apps.billing.models import QboAccountMapping
+
     _owner(client)
-    with (
+    page = (
         override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"),
         patch("apps.integrations.qbo.is_connected", return_value=True),
-    ):
+        patch("apps.payments.qbo_bills.customers.current_realm", return_value="123"),
+    )
+    with page[0], page[1], page[2]:
         html = client.get(reverse("quickbooks_settings")).content.decode()
-    assert "a product/service, a deposit account and a start date are chosen." in html
+    assert INVOICES_UNSET in html and RECEIPTS_UNSET in html
+
+    config = QboAccountMapping.load()
+    config.sales_deposit_account = _deposit_account()
+    config.save()
+    with page[0], page[1], page[2]:
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+    assert INVOICES_UNSET in html and RECEIPTS_UNSET not in html
     assert "Deposit account for card payments" in html
     assert 'name="sales_deposit_account"' in html

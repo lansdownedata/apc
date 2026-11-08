@@ -9,7 +9,7 @@
     <span class="font-semibold text-ink">{{ invoice.label }}</span>
     {% include "billing/_sync_chip.html" with record=invoice synced_label="In QuickBooks" %}
     {% if invoice.sync and invoice.sync.state == 'not_synced' and not invoice.sync.error %}
-    <span class="text-[11.5px] text-muted">{% if invoice.sync.before_start %}Before the QuickBooks start date{% else %}Not sent yet{% endif %}</span>
+    <span class="text-[11.5px] text-muted">{% if invoice.sync.before_start %}Before the QuickBooks start date{% elif invoice.sync.changed %}Changed since it was sent{% else %}Not sent yet{% endif %}</span>
     {% endif %}
     <span class="ml-auto num font-semibold text-ink">${{ invoice.total|floatformat:2|intcomma }}</span>
   </div>
@@ -29,7 +29,7 @@
         {% endfor %}
       </div>
     </details>
-    {% if user.has_payments_access and invoice.sync and invoice.sync.state == 'error' %}
+    {% if user.has_payments_access and invoice.sync.state == 'error' or user.has_payments_access and invoice.sync.changed %}
     <button type="button" class="shrink-0 text-[12px] font-semibold text-goldd hover:text-gold focus-gold rounded px-2 py-1.5"
             @click="retryQboSync('{{ invoice.sync.sync_url }}')">Retry</button>
     {% endif %}

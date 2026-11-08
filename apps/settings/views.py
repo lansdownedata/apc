@@ -1038,7 +1038,10 @@ def _qbo_customer_docs_context() -> dict:
         "deposit_choices": qbo_bills.deposit_choices(),
         "deposit_selected": deposit,
         "customer_docs_from": config.customer_docs_from,
-        "customer_docs_unset": not (item and deposit and config.customer_docs_from),
+        # Per document type: invoices need the item and the start date; card receipts need
+        # those and the deposit account, so their own chip names only the account.
+        "invoices_unset": not (item and config.customer_docs_from),
+        "receipts_unset": not deposit,
     }
 
 
@@ -1124,13 +1127,19 @@ def quickbooks_customer_docs(request: HttpRequest) -> HttpResponse:
     except ValueError:  # well-formed but impossible, like Feb 30
         config.customer_docs_from = None
     config.save()
-    if config.trip_item and config.sales_deposit_account and config.customer_docs_from:
-        messages.success(request, "Saved. Open invoices go out on the next sync.")
-    else:
+    if not (config.trip_item and config.customer_docs_from):
         messages.error(
             request,
             "Choose the Product/Service for trip charges, the deposit account for card payments "
             "and the date customer documents start from.",
+        )
+    elif config.sales_deposit_account:
+        messages.success(request, "Saved. Open invoices and card receipts go out on the next sync.")
+    else:
+        messages.success(
+            request,
+            "Saved. Open invoices go out on the next sync; card receipts wait for a deposit "
+            "account.",
         )
     return redirect("quickbooks_settings")
 

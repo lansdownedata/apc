@@ -11,6 +11,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 from apps.billing.models import CustomerLink, SyncState
+from apps.billing.qbo_receipts import _display_name
 from apps.contacts.models import Contact
 
 _FIELDS = ("name", "email", "phone")
@@ -39,8 +40,9 @@ def remember_customer_fields(sender, instance: Contact, raw: bool = False, **kwa
 
 @receiver(post_save, sender=Contact, dispatch_uid="billing-contact-qbo-requeue")
 def requeue_customer(sender, instance: Contact, raw: bool = False, **kwargs) -> None:
-    """A changed name, email or phone re-queues the link. `updated_at` moves too, so a push in
-    flight with the old values never marks it SYNCED."""
+    """A changed name, email or phone re-queues the link, clearing any old sentence (the next
+    push says what is wrong now). `updated_at` moves too, so a push in flight with the old
+    values never marks it SYNCED."""
     before = getattr(instance, "_qbo_before", None)
     instance._qbo_before = None
     if raw or before is None:
@@ -49,7 +51,8 @@ def requeue_customer(sender, instance: Contact, raw: bool = False, **kwargs) -> 
     if _values(instance.name, instance.email, instance.phone) == values:
         return
     CustomerLink.objects.filter(pk=link_pk).update(
-        display_name=instance.name.strip()[:100],
+        display_name=_display_name(instance),
         qbo_sync_state=SyncState.NOT_SYNCED,
+        qbo_sync_error="",
         updated_at=timezone.now(),
     )

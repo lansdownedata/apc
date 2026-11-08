@@ -448,13 +448,24 @@ def _connected():
     return patch("apps.integrations.qbo.is_connected", return_value=True)
 
 
-def _with_receipt(contact) -> None:
+def _with_receipt(contact, *, start=None) -> None:
+    """A card receipt for `contact` on a trip processed today, with customer documents going
+    to QuickBooks from `start` (30 days ago by default)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.billing.factories import AccountGroupFactory
+    from apps.billing.models import QboAccountMapping
     from apps.billing.tests._helpers import _processed_trip
     from apps.payments.factories import ChargeFactory
     from apps.payments.models import Charge
 
-    trip = _processed_trip(accountant=UserFactory(), contact=contact)
+    trip = _processed_trip(AccountGroupFactory(), accountant=UserFactory(), contact=contact)
     ChargeFactory(kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED, reservation=trip)
+    config = QboAccountMapping.load()
+    config.customer_docs_from = start or timezone.localdate() - timedelta(days=30)
+    config.save(update_fields=["customer_docs_from"])
 
 
 def test_billing_card_shows_customer_link_state(client, biller):
@@ -481,6 +492,15 @@ def test_billing_card_shows_customer_link_state(client, biller):
     quiet = ContactFactory()
     with _connected():
         assert "QuickBooks customer" not in _profile(client, quiet)
+    # Its only receipt is before the start date: never sent, so no customer line either.
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    early = ContactFactory()
+    _with_receipt(early, start=timezone.localdate() + timedelta(days=1))
+    with _connected():
+        assert "QuickBooks customer" not in _profile(client, early)
     with patch_connected(False):
         assert "QuickBooks customer" not in _profile(client, contact)
 
@@ -503,6 +523,19 @@ def test_billing_card_says_account_customer_is_used(client, biller):
     )
     assert reverse("billing_customer_sync", args=[account.contact.pk]) not in body
 
+    # Its account isn't in QuickBooks yet but will be the customer: no link, no Retry.
+    waiting = ContactFactory()
+    _with_receipt(waiting)
+    from apps.billing.factories import BillingAccountFactory
+
+    BillingAccountFactory(contact=waiting)
+    with _connected(), patch_realm():
+        body = _profile(client, waiting)
+    assert "billing account&#x27;s QuickBooks customer" in body or (
+        "billing account's QuickBooks customer" in body
+    )
+    assert reverse("billing_customer_sync", args=[waiting.pk]) not in body
+
 
 def patch_realm():
     from unittest.mock import patch
@@ -516,7 +549,14 @@ def test_customer_sync_endpoint_gated_and_pushes(client, biller):
     from apps.billing.models import CustomerLink
     from apps.integrations import qbo
 
+    quiet = ContactFactory()
+    with _connected(), patch_realm():
+        # No receipt to carry and no link: nothing to retry.
+        assert client.post(reverse("billing_customer_sync", args=[quiet.pk])).status_code == 404
+    assert not CustomerLink.objects.exists()
+
     contact = ContactFactory(name="Ada Lovelace")
+    _with_receipt(contact)
     url = reverse("billing_customer_sync", args=[contact.pk])
     answer = {"Customer": {"Id": "55", "SyncToken": "0", "DisplayName": "Ada Lovelace"}}
     with (

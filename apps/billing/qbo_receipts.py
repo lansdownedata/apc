@@ -3,13 +3,15 @@
 Outbound only, on the APC-74 push machinery in `apps.payments.qbo_bills` (deterministic
 requestids, leases, one alert per failure, SYNCED only when nothing changed mid-push).
 
-* A card-paying contact becomes a QuickBooks **Customer** through its `CustomerLink`. A contact
-  who owns a `BillingAccount` already in QuickBooks reuses that Customer and never gets a link —
-  unless a link was pushed first, which then stays its customer (no second one is made).
+* A card-paying contact becomes a QuickBooks **Customer** through its `CustomerLink`, once it
+  has a card receipt to carry (processed on or after the start date). A contact who owns a
+  `BillingAccount` reuses that account's Customer (waiting while the account isn't in this
+  company yet) and never gets a link — unless a link was pushed first, which then stays its
+  customer (no second one is made).
 * A name QuickBooks already has is taken over only when it is exactly one Customer, no other
-  record here carries it, and it has the same email (with none on either side, the same phone
-  or none): two people can share a name, and a wrong takeover would put one person's receipts
-  on another's customer.
+  record here carries it, and it has the same email (with none on either side, the same last
+  ten phone digits or no phone): two people can share a name, and a wrong takeover would put
+  one person's receipts on another's customer.
 * Never call this inside an outer transaction — the client's token refresh is durable.
 """
 
@@ -30,10 +32,20 @@ from apps.billing.qbo_invoices import (
     ITEM_LINE,
     NO_START_DATE,
     NO_TRIP_ITEM,
+    changed_since_sent,
     customer_docs_from,
     trip_item_ref,
+    unsent_first,
 )
-from apps.billing.qbo_sync import DUPLICATE_NAME, SYNC_BATCH, SyncPaused, _fault_code, current_realm
+from apps.billing.qbo_sync import (
+    DUPLICATE_NAME,
+    SYNC_BATCH,
+    PushBudget,
+    SyncPaused,
+    _fault_code,
+    current_realm,
+    refused_by_quickbooks,
+)
 from apps.integrations import qbo
 from apps.payments.qbo_bills import (
     _cents,
@@ -96,12 +108,13 @@ def customer_ref(contact, realm: str) -> dict | None:
 
 
 def ensure_link(contact) -> CustomerLink | None:
-    """The contact's link, made if it needs one. None (and nothing made) when its billing
-    account's Customer is in this company and it has no link of its own."""
+    """The contact's link, made if it needs one. None (and nothing made) while the contact owns
+    a billing account and has no link of its own: that account is its Customer, or will be once
+    the hourly run pushes it to this company."""
     link = _link_of(contact)
     if link is not None:
         return link
-    if _account_customer(contact, current_realm()) is not None:
+    if contact.billing_accounts.exists():
         return None
     link, _ = CustomerLink.objects.get_or_create(
         contact=contact, defaults={"display_name": _display_name(contact)}
@@ -110,20 +123,10 @@ def ensure_link(contact) -> CustomerLink | None:
 
 
 def customer_payload(link: CustomerLink) -> dict:
-    contact = link.contact
-    body = {"DisplayName": link.display_name}
-    # On an update an empty value clears the old one; leaving the key out would keep a
-    # removed address or number in QuickBooks.
-    if contact.email or link.qbo_id:
-        body["PrimaryEmailAddr"] = {"Address": contact.email or ""}
-    if contact.phone or link.qbo_id:
-        body["PrimaryPhone"] = {"FreeFormNumber": contact.phone or ""}
-    return body
-
-
-def _takeover_payload(link: CustomerLink) -> dict:
-    """Taking over a customer the bookkeeper already made: our name and only what we actually
-    have — never a blank over their email or phone."""
+    """Our name and only what we actually have. A blank is left out, never sent, on a create,
+    an update or a takeover alike: the bookkeeper may keep the customer's email or phone in
+    QuickBooks, and a contact with none here must never clear it there (a sparse update keeps
+    what it leaves out)."""
     contact = link.contact
     body = {"DisplayName": link.display_name}
     if contact.email:
@@ -138,7 +141,8 @@ def _email(value) -> str:
 
 
 def _digits(value) -> str:
-    return re.sub(r"\D", "", value or "")
+    """The last ten digits: "+1 (555) 555-0100" and "555-555-0100" are one number."""
+    return re.sub(r"\D", "", value or "")[-10:]
 
 
 def _held(found: dict, key: str, field: str) -> str:
@@ -148,7 +152,8 @@ def _held(found: dict, key: str, field: str) -> str:
 
 def _same_person(found: dict, contact) -> bool:
     """The Customer QuickBooks holds under this name is our contact: the same email, ignoring
-    case. With no email on either side, the same phone digits, or no phone on either side."""
+    case. With no email on either side, the same last ten phone digits, or no phone on either
+    side."""
     theirs, ours = _email(_held(found, "PrimaryEmailAddr", "Address")), _email(contact.email)
     if theirs or ours:
         return theirs == ours
@@ -181,13 +186,15 @@ def _take_over_customer(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict:
         or not _same_person(found[0], record.contact)
         or _held_here(str(found[0]["Id"]), current_realm(), record)
     ):
+        # QuickBooks did refuse the create: a rename then goes under a new requestid.
+        refused_by_quickbooks(record)
         raise _Refused(
             f"QuickBooks already has a name like “{record.display_name}” (it may differ in"
             " case or spacing). Rename the customer here or there, then retry."
         )
     link.put("id", str(found[0]["Id"]))
     link.put("sync_token", str(found[0]["SyncToken"]))
-    return _send(link, _takeover_payload(record))
+    return _send(link, customer_payload(record))
 
 
 def _push_customer(record: CustomerLink) -> bool:
@@ -206,39 +213,75 @@ def _push_customer(record: CustomerLink) -> bool:
 def push_customer(link: CustomerLink) -> bool:
     """Create, take over or update the contact's QuickBooks Customer, holding the link's lease.
     True when it is now in step; False (no call) while another push has it, or while the
-    contact's billing account is its Customer here. Raises SyncPaused / QboNotConnected."""
+    contact owns a billing account and the link was never pushed here (the account is its
+    Customer, as in `ensure_link`). Raises SyncPaused / QboNotConnected."""
     with _leased(CustomerLink, link.pk, "qbo_push_started_at") as mine:
         if not mine:
             return False
         link.refresh_from_db()
         realm = current_realm()
-        if not _linked_here(link, realm) and _account_customer(link.contact, realm):
+        if not _linked_here(link, realm) and link.contact.billing_accounts.exists():
             return False  # the billing account's Customer is this contact's: none of its own
         return _push_customer(link)
 
 
-def pending_links(realm: str):
-    """Links not in step with this company whose contact has a card receipt to carry: a
-    succeeded trip charge or refund on a processed trip. One not pushed here whose contact's
-    billing account is in this company is left out — that account is its customer."""
+def _card_receipts():
+    """Charges that are card receipts at all: a succeeded trip charge, or a card refund (blank
+    on older rows = the card), on a processed trip. Deposits, balances, final bills and
+    offline refunds never go."""
     from apps.payments.models import Charge
 
-    candidates = Charge.objects.filter(
+    card_refund = Q(kind=Charge.Kind.REFUND, refund_method__in=("", Charge.RefundMethod.CARD))
+    return Charge.objects.filter(
         status=Charge.Status.SUCCEEDED,
-        kind__in=(Charge.Kind.TRIP, Charge.Kind.REFUND),
         reservation__isnull=False,
         reservation__review__processed_at__isnull=False,
-        reservation__lead__contact=OuterRef("contact"),
+    ).filter(Q(kind=Charge.Kind.TRIP) | card_refund)
+
+
+def _window_cut(start: date) -> datetime:
+    """A coarse SQL cut for the start date: no zone is a day from UTC. `_on_or_after` decides."""
+    return datetime.combine(start - timedelta(days=1), time.min, tzinfo=UTC)
+
+
+def _carrying(start: date | None, contacts) -> set[int]:
+    """Of `contacts` (pks, or a `values("contact_id")` queryset), those with a card receipt
+    processed on or after `start` by its trip's calendar. None of them with no start date."""
+    if start is None:
+        return set()
+    rows = _card_receipts().filter(
+        reservation__review__processed_at__gte=_window_cut(start),
+        reservation__lead__contact__in=contacts,
     )
-    accounts = BillingAccount.objects.filter(contact=OuterRef("contact"), qbo_realm_id=realm)
+    found: set[int] = set()
+    for contact_id, processed_at, zone in rows.values_list(
+        "reservation__lead__contact_id",
+        "reservation__review__processed_at",
+        "reservation__pickup_timezone",
+    ):
+        if contact_id not in found and _on_or_after(processed_at, zone, start):
+            found.add(contact_id)
+    return found
+
+
+def carries_receipts(contact) -> bool:
+    """The contact has a card receipt that goes to QuickBooks (inside the start date), so a
+    QuickBooks customer of its own is worth making."""
+    return contact.pk in _carrying(customer_docs_from(), [contact.pk])
+
+
+def pending_links(realm: str, start: date | None):
+    """Links not in step with this company whose contact has a card receipt to carry: a
+    succeeded trip charge or card refund on a trip processed on or after `start` (none while
+    it's None). Not yet sent ahead of refused (`unsent_first`). One not pushed here whose
+    contact owns a billing account is left out — that account is its customer."""
+    accounts = BillingAccount.objects.filter(contact=OuterRef("contact"))
     linked_here = ~Q(qbo_id="") & Q(qbo_realm_id=realm)
-    return (
-        CustomerLink.objects.filter(_stale("qbo_", realm))
-        .filter(Exists(candidates))
-        .filter(linked_here | ~Exists(accounts.exclude(qbo_id="")))
-        .select_related("contact")
-        .order_by("pk")
+    stale = CustomerLink.objects.filter(_stale("qbo_", realm)).filter(
+        linked_here | ~Exists(accounts)
     )
+    carrying = _carrying(start, stale.values("contact_id"))
+    return unsent_first(stale.filter(contact_id__in=carrying).select_related("contact"))
 
 
 # --- payloads ------------------------------------------------------------------------------------
@@ -251,13 +294,26 @@ WAITING_FOR_CUSTOMER = "Waiting for the customer in QuickBooks."
 PAYMENT_REF_MAX = 21
 
 
-def _trip_zone(trip) -> ZoneInfo:
-    """The trip's own zone. One that isn't a real zone refuses this record, not the run."""
-    name = trip.pickup_timezone or "America/New_York"
+def _zone(name: str) -> ZoneInfo:
+    """A trip's own zone. One that isn't a real zone refuses this record, not the run."""
+    name = name or "America/New_York"
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         raise _Refused(f"This trip's timezone isn't valid: {name}.") from None
+
+
+def _trip_zone(trip) -> ZoneInfo:
+    return _zone(trip.pickup_timezone)
+
+
+def _on_or_after(processed_at: datetime, zone: str, start: date) -> bool:
+    """Processed on or after `start` on the trip's calendar (the manifest rule). A trip whose
+    zone isn't valid is in, so its push says so on the row."""
+    try:
+        return processed_at.astimezone(_zone(zone)).date() >= start
+    except _Refused:
+        return True
 
 
 def txn_date(charge) -> date:
@@ -284,11 +340,13 @@ def _receipt_base(charge, realm: str, ref_number: str) -> tuple[dict, dict, str]
         "TxnDate": txn_date(charge).isoformat(),
         "DepositToAccountRef": deposit,
     }
+    note = f"{trip.reference} \u00b7 order {trip.lead.quote_no} \u00b7 receipt R-{charge.pk}"
     if ref_number:
-        body["PaymentRefNum"] = ref_number[:PAYMENT_REF_MAX]
-    body["PrivateNote"] = (
-        f"{trip.reference} \u00b7 order {trip.lead.quote_no} \u00b7 receipt R-{charge.pk}"
-    )
+        # Stripe ids share their head ("pi_3…", "re_3…"): the tail is what tells two apart.
+        # The whole id rides on the note.
+        body["PaymentRefNum"] = ref_number[-PAYMENT_REF_MAX:]
+        note = f"{note} \u00b7 {ref_number}"
+    body["PrivateNote"] = note[:DESCRIPTION_MAX]
     return body, item, trip.reference
 
 
@@ -302,12 +360,26 @@ def _item_line(charge, item: dict, description: str) -> dict:
     }
 
 
+def _trip_details(trip) -> str:
+    """The first line of the trip's invoice description without its "Trip #…" head: kind,
+    date and vehicle. No money: a receipt's amount is the charge's, not the trip's."""
+    head = line_description(trip).split("\n", 1)[0]
+    return head.removeprefix(f"Trip #{trip.reference}").removeprefix(" \u00b7 ")
+
+
 def sales_receipt_payload(charge, realm: str) -> dict:
     """The QuickBooks Sales Receipt body for a succeeded card charge. No PaymentMethodRef and
-    no DocNumber: QuickBooks numbers it, and the receipt id rides on the note and line."""
-    body, item, _ = _receipt_base(charge, realm, charge.stripe_payment_intent_id)
-    card = f" \u00b7 card \u2022\u2022{charge.card_last4}" if charge.card_last4 else ""
-    description = f"{line_description(charge.reservation)}{card} \u00b7 receipt R-{charge.pk}"
+    no DocNumber: QuickBooks numbers it, and the receipt id rides on the note and line. The
+    line names the charge (its note, or "Trip charge") and the trip, never a trip figure."""
+    body, item, reference = _receipt_base(charge, realm, charge.stripe_payment_intent_id)
+    parts = [
+        charge.note or "Trip charge",
+        f"Trip #{reference}",
+        _trip_details(charge.reservation),
+        f"card \u2022\u2022{charge.card_last4}" if charge.card_last4 else "",
+        f"receipt R-{charge.pk}",
+    ]
+    description = " \u00b7 ".join(part for part in parts if part)
     body["Line"] = [_item_line(charge, item, description)]
     return body
 
@@ -315,7 +387,7 @@ def sales_receipt_payload(charge, realm: str) -> dict:
 def refund_receipt_payload(charge, realm: str) -> dict:
     """The QuickBooks Refund Receipt body for a succeeded card refund."""
     body, item, reference = _receipt_base(charge, realm, charge.stripe_refund_id)
-    description = f"Refund \u00b7 {charge.note or 'Refund'} \u00b7 {reference}"
+    description = f"Refund \u00b7 {charge.note or 'card refund'} \u00b7 Trip #{reference}"
     body["Line"] = [_item_line(charge, item, description)]
     return body
 
@@ -337,22 +409,10 @@ def _refresh(charge) -> None:
 
 
 def _receipts(realm: str, *, linked: bool = False):
-    """Charges that are card receipts not in step with this company: a succeeded trip charge,
-    or a card refund (blank on older rows = the card), on a processed trip. Deposits, balances
-    and final bills never go. One already in this company is left out unless `linked`: the
-    portal never edits a receipt, so only a person's Retry sends one again."""
-    from apps.payments.models import Charge
-
-    card_refund = Q(kind=Charge.Kind.REFUND, refund_method__in=("", Charge.RefundMethod.CARD))
-    rows = (
-        Charge.objects.filter(
-            status=Charge.Status.SUCCEEDED,
-            reservation__isnull=False,
-            reservation__review__processed_at__isnull=False,
-        )
-        .filter(Q(kind=Charge.Kind.TRIP) | card_refund)
-        .filter(_stale("qbo_", realm))
-    )
+    """Card receipts (`_card_receipts`) not in step with this company. One already in this
+    company is left out unless `linked`: the portal never edits a receipt, so only a person's
+    Retry sends one again."""
+    rows = _card_receipts().filter(_stale("qbo_", realm))
     if not linked:
         rows = rows.exclude(~Q(qbo_id="") & Q(qbo_realm_id=realm))
     return rows
@@ -367,37 +427,32 @@ def _processed_on(charge) -> date | None:
 
 
 def _in_window(charge, start: date) -> bool:
-    """Processed on or after `start`. A trip whose zone isn't valid is in, so its push says
-    so on the row."""
-    try:
-        processed = _processed_on(charge)
-    except _Refused:
-        return True
-    return processed is not None and processed >= start
+    """Processed on or after `start` (`_on_or_after`)."""
+    review = getattr(charge.reservation, "review", None) if charge.reservation_id else None
+    if review is None or review.processed_at is None:
+        return False
+    return _on_or_after(review.processed_at, charge.reservation.pickup_timezone, start)
 
 
 def pending_receipts(realm: str, start: date | None, *, linked: bool = False) -> list:
-    """Card receipts to send, in pk order, each loaded with everything its payload reads (no
-    query per charge). Those processed before `start` are never sent and say nothing; with no
-    start date (None) every one comes back, for the run to mark as waiting on it."""
+    """Card receipts to send, not yet sent ahead of refused (`unsent_first`), each loaded with
+    everything its payload reads (no query per charge). Those processed before `start` are
+    never sent and say nothing; with no start date (None) every one comes back, for the run to
+    mark as waiting on it."""
     from apps.reservations.models import Stop
 
     rows = _receipts(realm, linked=linked)
     if start is not None:
-        # A coarse SQL cut (no zone is a day from UTC); `_in_window` decides.
-        cut = datetime.combine(start - timedelta(days=1), time.min, tzinfo=UTC)
-        rows = rows.filter(reservation__review__processed_at__gte=cut)
-    rows = (
+        rows = rows.filter(reservation__review__processed_at__gte=_window_cut(start))
+    rows = unsent_first(
         rows.select_related(
             "reservation__vehicle",
             "reservation__lead__contact__qbo_customer",
             "reservation__review",
-        )
-        .prefetch_related(
+        ).prefetch_related(
             Prefetch("reservation__stops", queryset=Stop.objects.order_by("sequence")),
             "reservation__lead__contact__billing_accounts",
         )
-        .order_by("pk")
     )
     return [row for row in rows if start is None or _in_window(row, start)]
 
@@ -434,9 +489,13 @@ def _receipt_link(charge) -> tuple[_Link, str, object]:
     """The charge's QuickBooks object, what staff call it, and its payload builder."""
     from apps.payments.models import Charge
 
+    # Sparse: a Retry's update never blanks what the bookkeeper added, nor QuickBooks' own
+    # DocNumber (we send none).
     if charge.kind == Charge.Kind.TRIP:
-        return _Link(charge, "salesreceipt", "SalesReceipt"), "receipt", sales_receipt_payload
-    return _Link(charge, "refundreceipt", "RefundReceipt"), "refund receipt", refund_receipt_payload
+        link = _Link(charge, "salesreceipt", "SalesReceipt", sparse=True)
+        return link, "receipt", sales_receipt_payload
+    link = _Link(charge, "refundreceipt", "RefundReceipt", sparse=True)
+    return link, "refund receipt", refund_receipt_payload
 
 
 # The charge fields a receipt payload reads. The receipt sender bumps `updated_at` on the
@@ -604,9 +663,10 @@ def _ensure_links(rows: list, realm: str) -> None:
         ensure_link(contact)
 
 
-def sync_pending() -> int:
-    """Push card customers, then card receipts in pk order: up to SYNC_BATCH Intuit pushes in
-    all. Returns how many landed. A missing setting marks every pending receipt and alerts
+def sync_pending(budget: PushBudget | None = None) -> int:
+    """Push card customers, then card receipts (each not yet sent ahead of refused): up to
+    SYNC_BATCH Intuit pushes in all, starting none once `budget` has run out (None: no time
+    limit). Returns how many landed. A missing setting marks every pending receipt and alerts
     once. Stops quietly on an outage, a rate limit or a lost connection; nothing is marked."""
     if not qbo.is_connected():
         return 0
@@ -621,8 +681,8 @@ def sync_pending() -> int:
             blocked = _block(rows, start)
             return pushed
         _ensure_links(rows, realm)
-        for link in pending_links(realm):
-            if attempted >= SYNC_BATCH:
+        for link in pending_links(realm, start):
+            if attempted >= SYNC_BATCH or (budget and budget.expired()):
                 return pushed
             attempted += 1
             pushed += push_customer(link)
@@ -630,7 +690,7 @@ def sync_pending() -> int:
         for charge in pending_receipts(realm, start):
             if customer_ref(_contact(charge), realm) is None:
                 continue  # waits for its customer
-            if attempted >= SYNC_BATCH:
+            if attempted >= SYNC_BATCH or (budget and budget.expired()):
                 return pushed
             attempted += 1
             pushed += push_receipt(charge)
@@ -646,9 +706,10 @@ _UNSET = object()
 
 
 def sync_state(charge, *, connected: bool | None = None, start=_UNSET) -> dict | None:
-    """What the charge row shows: its state, its sentence, where Retry posts and whether its
-    trip was processed before the start date (so never sent). None while QuickBooks isn't
-    connected. Pass `connected` and `start` when building many."""
+    """What the charge row shows: its state, its sentence, where Retry posts, whether its trip
+    was processed before the start date (so never sent) and whether it changed here since it
+    was sent. None while QuickBooks isn't connected. Pass `connected` and `start` when building
+    many."""
     from django.urls import reverse
 
     if connected is None:
@@ -669,4 +730,5 @@ def sync_state(charge, *, connected: bool | None = None, start=_UNSET) -> dict |
         "error": charge.qbo_sync_error,
         "sync_url": reverse("charge_qbo_sync", args=[charge.pk]),
         "before_start": before,
+        "changed": changed_since_sent(charge),
     }

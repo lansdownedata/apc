@@ -92,13 +92,9 @@ def test_customer_payload_shape() -> None:
     }
     bare = _link(name="Grace Hopper", email=None, phone="")
     assert qbo_receipts.customer_payload(bare) == {"DisplayName": "Grace Hopper"}
-    # On an update a removed email or number is cleared in QuickBooks, not kept.
+    # On an update a blank here never clears what the bookkeeper has in QuickBooks.
     bare.qbo_id = "9"
-    assert qbo_receipts.customer_payload(bare) == {
-        "DisplayName": "Grace Hopper",
-        "PrimaryEmailAddr": {"Address": ""},
-        "PrimaryPhone": {"FreeFormNumber": ""},
-    }
+    assert qbo_receipts.customer_payload(bare) == {"DisplayName": "Grace Hopper"}
 
 
 def test_customer_ref_uses_billing_account_when_no_link() -> None:
@@ -109,6 +105,16 @@ def test_customer_ref_uses_billing_account_when_no_link() -> None:
     assert not CustomerLink.objects.filter(contact=contact).exists()
     # An account in another company is no use here: the contact gets a link of its own.
     assert qbo_receipts.customer_ref(contact, "999") is None
+
+
+def test_ensure_link_waits_for_a_billing_account_not_yet_in_quickbooks() -> None:
+    account = BillingAccountFactory()
+    assert qbo_receipts.ensure_link(account.contact) is None
+    # In another company only: the hourly run pushes it to this one, then it is the customer.
+    account.qbo_id, account.qbo_realm_id = "77", "999"
+    account.save(update_fields=["qbo_id", "qbo_realm_id"])
+    assert qbo_receipts.ensure_link(account.contact) is None
+    assert not CustomerLink.objects.exists()
 
 
 def test_ensure_link_creates_one_for_a_card_contact() -> None:
@@ -206,6 +212,19 @@ def test_duplicate_name_takeover_requires_matching_email(ours, theirs) -> None:
     assert _alerts().count() == 1
 
 
+def test_refused_takeover_moves_the_create_requestid() -> None:
+    link = _link(email="ada@example.com")
+    found = {"QueryResponse": {"Customer": [_customer(email="someone@else.com")]}}
+    with patch(REQ, side_effect=[_fault("6240"), found]):
+        assert qbo_receipts.push_customer(link) is False
+    link.refresh_from_db()
+    assert link.qbo_create_attempt == 1
+    # Renamed here or there: the next create is a new request, not the refused one replayed.
+    with patch(REQ, return_value={"Customer": _customer()}) as req:
+        assert qbo_receipts.push_customer(link) is True
+    assert req.call_args.kwargs["params"]["requestid"] == f"apc-c{link.pk}-create1"
+
+
 @pytest.mark.parametrize("matches", [0, 2])
 def test_duplicate_name_with_two_matches_refuses(matches) -> None:
     link = _link()
@@ -240,11 +259,14 @@ def test_push_customer_refuses_while_leased() -> None:
         assert qbo_receipts.push_customer(link) is True
 
 
-def _candidate(contact, *, kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED, processed=True):
-    trip = ReservationFactory(lead__contact=contact)
-    TripReview.objects.create(reservation=trip, processed_at=timezone.now() if processed else None)
+def _candidate(
+    contact, *, kind=Charge.Kind.TRIP, status=Charge.Status.SUCCEEDED, processed=True, **kwargs
+):
+    trip = ReservationFactory(lead__contact=contact, pickup_timezone="America/New_York")
+    when = processed if isinstance(processed, datetime) else timezone.now()
+    TripReview.objects.create(reservation=trip, processed_at=when if processed else None)
     plan = PaymentPlanFactory(lead=trip.lead)
-    return ChargeFactory(plan=plan, reservation=trip, kind=kind, status=status)
+    return ChargeFactory(plan=plan, reservation=trip, kind=kind, status=status, **kwargs)
 
 
 def test_pending_links_only_with_receipt_candidates() -> None:
@@ -276,9 +298,16 @@ def test_pending_links_only_with_receipt_candidates() -> None:
     covered = _link(email=None, name="Covered")
     _candidate(covered.contact)
     BillingAccountFactory(contact=covered.contact, qbo_id="78", qbo_realm_id="123")
+    # Its only receipt is on a trip processed before the start date: never sent, so no customer.
+    early = _link(email=None, name="Early")
+    _candidate(early.contact, processed=timezone.now() - timedelta(days=60))
+    offline = _link(email=None, name="Offline")
+    _candidate(offline.contact, kind=Charge.Kind.REFUND, refund_method=Charge.RefundMethod.ZELLE)
 
-    names = list(qbo_receipts.pending_links("123").values_list("display_name", flat=True))
-    assert names == ["Trip", "Refund", "Refused", "Elsewhere", "Edited"]
+    names = list(qbo_receipts.pending_links("123", START).values_list("display_name", flat=True))
+    # Not sent before refused (each in pk order), so refusals never starve a new customer.
+    assert names == ["Trip", "Refund", "Elsewhere", "Edited", "Refused"]
+    assert not qbo_receipts.pending_links("123", None).exists()
 
 
 def test_contact_edit_requeues_the_link(client) -> None:
@@ -359,6 +388,7 @@ def test_takeover_allows_a_customer_held_in_another_company() -> None:
     "ours, theirs, linked",
     [
         ("+1 (555) 555-0100", "15555550100", True),
+        ("+15555550100", "(555) 555-0100", True),
         ("+15555550100", "+15555550199", False),
         ("+15555550100", None, False),
         ("", "+15555550100", False),
@@ -386,9 +416,12 @@ def test_booking_intake_rename_requeues_the_link() -> None:
     assert (link.display_name, link.qbo_sync_state) == ("Ada King", SyncState.NOT_SYNCED)
 
 
-def test_push_customer_skips_when_the_account_is_the_customer() -> None:
+@pytest.mark.parametrize("pushed", [True, False])
+def test_push_customer_skips_when_the_account_is_the_customer(pushed) -> None:
     link = _link()
-    BillingAccountFactory(contact=link.contact, qbo_id="77", qbo_realm_id="123")
+    # Not in QuickBooks yet, the account still becomes the customer: the link waits.
+    linked = {"qbo_id": "77", "qbo_realm_id": "123"} if pushed else {}
+    BillingAccountFactory(contact=link.contact, **linked)
     with patch(REQ) as req:
         assert qbo_receipts.push_customer(link) is False
     req.assert_not_called()
@@ -425,9 +458,12 @@ def _receipt_mapping():
 
 
 def _card_charge(*, kind=Charge.Kind.TRIP, **kwargs):
+    from apps.billing.factories import AccountGroupFactory
     from apps.billing.tests._helpers import _processed_trip
 
-    trip = _processed_trip(accountant=UserFactory())
+    # A card customer: the trip's billing group belongs to someone else's account, so the
+    # contact owns none (a billing account would be its QuickBooks customer instead).
+    trip = _processed_trip(AccountGroupFactory(), accountant=UserFactory())
     CustomerLinkFactory(
         contact=trip.lead.contact,
         qbo_id="77",
@@ -445,27 +481,53 @@ def _card_charge(*, kind=Charge.Kind.TRIP, **kwargs):
     return ChargeFactory(**{**defaults, **kwargs})
 
 
+PI = "pi_3QxYzAbCdEfGhIjKlMnOpQrStU"
+
+
+def _trip_details(trip) -> str:
+    """The first line of the invoice description without its "Trip #…" head: kind, date and
+    vehicle, never a money figure."""
+    head = line_description(trip).split("\n")[0]
+    assert head.startswith(f"Trip #{trip.reference} · ")
+    return head.split(" · ", 1)[1]
+
+
 def test_sales_receipt_payload_exact(receipt_mapping) -> None:
-    charge = _card_charge()
+    charge = _card_charge(stripe_payment_intent_id=PI)
     trip = charge.reservation
     body = qbo_receipts.sales_receipt_payload(charge, "123")
+    note = f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk} · {PI}"
+    description = (
+        f"Trip charge · Trip #{trip.reference} · {_trip_details(trip)} · card ••4242"
+        f" · receipt R-{charge.pk}"
+    )
     assert body == {
         "CustomerRef": {"value": "77"},
         "TxnDate": qbo_receipts.txn_date(charge).isoformat(),
         "DepositToAccountRef": DEPOSIT,
-        "PaymentRefNum": "pi_123",
-        "PrivateNote": f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk}",
+        # The distinctive tail: every intent id starts "pi_3…".
+        "PaymentRefNum": PI[-21:],
+        "PrivateNote": note,
         "Line": [
             {
                 "DetailType": "SalesItemLineDetail",
                 "Amount": "600.00",
-                "Description": f"{line_description(trip)} · card ••4242 · receipt R-{charge.pk}",
+                "Description": description,
                 "SalesItemLineDetail": {"ItemRef": {"value": "9"}, "Qty": 1, "UnitPrice": "600.00"},
             }
         ],
     }
     assert "PaymentMethodRef" not in body
     assert "DocNumber" not in body
+    # The amount is the charge's: no trip figure rides on the line.
+    assert "$" not in description and "Total" not in description
+
+
+def test_sales_receipt_line_names_the_charge(receipt_mapping) -> None:
+    charge = _card_charge(note="Overtime, 1 hr")
+    line = qbo_receipts.sales_receipt_payload(charge, "123")["Line"][0]
+    trip = charge.reservation
+    assert line["Description"].startswith(f"Overtime, 1 hr · Trip #{trip.reference} · ")
 
 
 def test_refund_receipt_payload_exact(receipt_mapping) -> None:
@@ -477,21 +539,27 @@ def test_refund_receipt_payload_exact(receipt_mapping) -> None:
         stripe_refund_id="re_" + "x" * 30,
     )
     trip = charge.reservation
+    refund_id = "re_" + "x" * 30
     assert qbo_receipts.refund_receipt_payload(charge, "123") == {
         "CustomerRef": {"value": "77"},
         "TxnDate": qbo_receipts.txn_date(charge).isoformat(),
         "DepositToAccountRef": DEPOSIT,
-        "PaymentRefNum": ("re_" + "x" * 30)[:21],
-        "PrivateNote": f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk}",
+        "PaymentRefNum": refund_id[-21:],
+        "PrivateNote": (
+            f"{trip.reference} · order {trip.lead.quote_no} · receipt R-{charge.pk} · {refund_id}"
+        ),
         "Line": [
             {
                 "DetailType": "SalesItemLineDetail",
                 "Amount": "100.00",
-                "Description": f"Refund · Trip cancelled · {trip.reference}",
+                "Description": f"Refund · Trip cancelled · Trip #{trip.reference}",
                 "SalesItemLineDetail": {"ItemRef": {"value": "9"}, "Qty": 1, "UnitPrice": "100.00"},
             }
         ],
     }
+    charge.note = ""
+    line = qbo_receipts.refund_receipt_payload(charge, "123")["Line"][0]
+    assert line["Description"] == f"Refund · card refund · Trip #{trip.reference}"
 
 
 def test_txn_date_is_the_trip_local_date() -> None:
@@ -510,7 +578,9 @@ def test_card_segment_omitted_when_last4_blank(receipt_mapping) -> None:
 
 def test_payment_ref_omitted_when_blank(receipt_mapping) -> None:
     charge = _card_charge(stripe_payment_intent_id="")
-    assert "PaymentRefNum" not in qbo_receipts.sales_receipt_payload(charge, "123")
+    body = qbo_receipts.sales_receipt_payload(charge, "123")
+    assert "PaymentRefNum" not in body
+    assert body["PrivateNote"].endswith(f" · receipt R-{charge.pk}")
 
 
 @pytest.mark.parametrize("missing", ["item", "account", "customer"])
@@ -656,6 +726,34 @@ def test_historical_charge_before_start_left_alone(ready) -> None:
     assert qbo_receipts.sync_state(charge, connected=True)["before_start"] is True
 
 
+def test_pending_receipts_put_unsent_ahead_of_refused(ready) -> None:
+    refused = _card_charge(qbo_sync_state=SyncState.ERROR, qbo_sync_error="Inactive")
+    unsent = _card_charge()
+    assert [c.pk for c in qbo_receipts.pending_receipts("123", START)] == [unsent.pk, refused.pk]
+
+
+def test_refused_links_never_starve_a_new_one(ready) -> None:
+    for n in range(30):
+        stuck = _link(
+            email=None, name=f"Stuck {n}", qbo_sync_state=SyncState.ERROR, qbo_sync_error="Bad"
+        )
+        _candidate(stuck.contact)
+    fresh = _link(email=None, name="Fresh")
+    _candidate(fresh.contact)
+
+    def answer(method, path, **kwargs):
+        if path != "customer":
+            return _receipt()
+        if kwargs["json"]["DisplayName"] == "Fresh":
+            return {"Customer": _customer(name="Fresh")}
+        raise _fault("6000", detail="Still bad")
+
+    with patch(REQ, side_effect=answer):
+        qbo_receipts.sync_pending()
+    fresh.refresh_from_db()
+    assert (fresh.qbo_id, fresh.qbo_sync_state) == ("55", SyncState.SYNCED)
+
+
 def test_window_follows_the_trip_calendar(ready) -> None:
     # 02:00 UTC on the start date is still the day before in New York: not sent.
     charge = _card_charge()
@@ -774,7 +872,7 @@ def test_billing_account_customer_needs_no_link(ready) -> None:
     charge = _card_charge()
     contact = charge.reservation.lead.contact
     CustomerLink.objects.filter(contact=contact).delete()
-    contact.billing_accounts.update(qbo_id="77", qbo_realm_id="123")
+    BillingAccountFactory(contact=contact, qbo_id="77", qbo_realm_id="123")
     with patch(REQ, return_value=_receipt()) as req:
         assert qbo_receipts.sync_pending() == 1
     assert _paths(req) == ["salesreceipt"]
@@ -841,7 +939,9 @@ def test_hourly_never_updates_a_linked_receipt(ready) -> None:
     with patch(REQ, return_value=_receipt(token="3")) as req:
         assert qbo_receipts.push_receipt(charge) is True
     body = req.call_args.kwargs["json"]
-    assert (body["Id"], body["SyncToken"]) == ("900", "2")
+    # Sparse: the bookkeeper's edits and QuickBooks' own DocNumber stay as they are.
+    assert (body["Id"], body["SyncToken"], body["sparse"]) == ("900", "2", True)
+    assert "DocNumber" not in body
     # Linked to another company: it goes to this one as new.
     elsewhere = _card_charge(qbo_id="5", qbo_realm_id="999", qbo_sync_state=SyncState.SYNCED)
     with patch(REQ, return_value=_receipt(id_="901")) as req:
@@ -921,6 +1021,50 @@ def test_run_hourly_isolated_passes() -> None:
         patch.object(qbo_invoices, "sync_pending", side_effect=RuntimeError("boom")),
     ):
         assert qbo_bills.run_hourly() == 2
+
+
+def test_run_hourly_shares_one_budget_and_survives_the_bills_pass() -> None:
+    from apps.billing import qbo_invoices
+    from apps.billing.qbo_sync import PushBudget
+    from apps.payments import qbo_bills
+
+    with (
+        patch("apps.billing.qbo_sync.run_hourly", return_value=0),
+        patch.object(qbo_bills, "refresh_accounts"),
+        patch.object(qbo_invoices, "refresh_items"),
+        patch.object(qbo_bills, "sync_pending", side_effect=RuntimeError("boom")) as bills,
+        patch.object(qbo_receipts, "sync_pending", return_value=2) as receipts,
+        patch.object(qbo_invoices, "sync_pending", return_value=1) as invoices,
+    ):
+        assert qbo_bills.run_hourly() == 3
+    budget = bills.call_args.args[0]
+    assert isinstance(budget, PushBudget) and budget.seconds == 20
+    assert receipts.call_args.args[0] is budget and invoices.call_args.args[0] is budget
+
+
+class _AfterOnePush:
+    """A run's time budget that runs out once Intuit has been called."""
+
+    def __init__(self, req) -> None:
+        self.req = req
+
+    def expired(self) -> bool:
+        return self.req.call_count >= 1
+
+
+def test_budget_stops_starting_receipt_pushes(ready) -> None:
+    _card_charge(), _card_charge()
+    with patch(REQ, return_value=_receipt()) as req:
+        assert qbo_receipts.sync_pending(_AfterOnePush(req)) == 1
+    assert req.call_count == 1
+
+
+def test_budget_stops_starting_customer_pushes(ready) -> None:
+    for charge in (_card_charge(), _card_charge()):
+        CustomerLink.objects.filter(contact=charge.reservation.lead.contact).delete()
+    with patch(REQ, return_value={"Customer": _customer()}) as req:
+        qbo_receipts.sync_pending(_AfterOnePush(req))
+    assert _paths(req) == ["customer"]
 
 
 def test_lease_refuses_concurrent_push(ready) -> None:
@@ -1040,8 +1184,18 @@ def test_sync_state_when_connected(ready) -> None:
         "error": "Nope",
         "sync_url": reverse("charge_qbo_sync", args=[charge.pk]),
         "before_start": False,
+        "changed": False,
     }
     assert qbo_receipts.sync_state(charge, connected=True, start=None)["before_start"] is False
+
+
+def test_sync_state_says_a_sent_receipt_changed(ready) -> None:
+    charge = _card_charge(qbo_id="900", qbo_realm_id="123")
+    assert qbo_receipts.sync_state(charge, connected=True)["changed"] is True
+    for state, error in ((SyncState.SYNCED, ""), (SyncState.ERROR, "Nope")):
+        charge.qbo_sync_state, charge.qbo_sync_error = state, error
+        assert qbo_receipts.sync_state(charge, connected=True)["changed"] is False
+    assert qbo_receipts.sync_state(_card_charge(), connected=True)["changed"] is False
 
 
 def _answer_after(change, response):
