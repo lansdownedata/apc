@@ -956,14 +956,25 @@ def test_the_hourly_job_does_customers_then_refreshes_accounts_then_pushes_bills
     )
     customer = {"Customer": {"Id": "58", "SyncToken": "0"}}
     group = {"Customer": {"Id": "59", "SyncToken": "0"}}
-    calls = [terms, customer, group, accounts, _vendor(), _bill(), _billpayment()]
+    items = {"QueryResponse": {"Item": []}}
+    calls = [terms, customer, group, accounts, items, _vendor(), _bill(), _billpayment()]
 
     with patch(REQ, side_effect=calls) as req:
         assert JOBS["retry-qbo-sync"]() == 5
 
     paths = [c.args[1] for c in req.call_args_list]
-    assert paths == ["query", "customer", "customer", "query", "vendor", "bill", "billpayment"]
+    assert paths == [
+        "query",
+        "customer",
+        "customer",
+        "query",
+        "query",
+        "vendor",
+        "bill",
+        "billpayment",
+    ]
     assert "from Account" in req.call_args_list[3].kwargs["params"]["query"]
+    assert "from Item" in req.call_args_list[4].kwargs["params"]["query"]
 
 
 def test_a_failed_accounts_refresh_still_pushes_with_the_cached_choice():
@@ -971,7 +982,21 @@ def test_a_failed_accounts_refresh_still_pushes_with_the_cached_choice():
     _payable(vendor=_linked_vendor())
     terms = {"QueryResponse": {"Term": []}}
 
-    with patch(REQ, side_effect=[terms, qbo.QboAPIError(503, "down"), _bill()]):
+    items = {"QueryResponse": {"Item": []}}
+    with patch(REQ, side_effect=[terms, qbo.QboAPIError(503, "down"), items, _bill()]):
+        assert JOBS["retry-qbo-sync"]() == 1
+
+
+def test_a_failed_items_refresh_still_pushes_with_the_cached_choice():
+    _map()
+    _payable(vendor=_linked_vendor())
+    terms = {"QueryResponse": {"Term": []}}
+    accounts = _accounts(
+        _acct("70", "Subcontracted transportation", "Cost of Goods Sold"),
+        _acct("35", "Checking", "Bank"),
+    )
+
+    with patch(REQ, side_effect=[terms, accounts, qbo.QboAPIError(503, "down"), _bill()]):
         assert JOBS["retry-qbo-sync"]() == 1
 
 

@@ -1062,6 +1062,12 @@ def run_hourly() -> int:
         refresh_accounts()
     except (qbo.QboAPIError, qbo.QboNotConnected):
         logger.warning("QuickBooks accounts refresh failed; pushing with the cached choice")
+    from apps.billing import qbo_invoices
+
+    try:
+        qbo_invoices.refresh_items()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        logger.warning("QuickBooks items refresh failed; pushing with the cached choice")
     return pushed + sync_pending()
 
 

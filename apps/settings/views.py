@@ -997,6 +997,7 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
             "qbo_terms": list(QboTerm.objects.filter(active=True)),
             "unmatched_terms": qbo_sync.unmatched_terms(),
             **_qbo_accounts_context(),
+            **_qbo_customer_docs_context(),
         },
     )
 
@@ -1017,6 +1018,22 @@ def _qbo_accounts_context() -> dict:
         "payment_selected": payment,
         "bills_from": config.bills_from,
         "accounts_unset": not (expense and payment and config.bills_from),
+    }
+
+
+def _qbo_customer_docs_context() -> dict:
+    """APC-107: the Product/Service every trip line posts to and the date customer documents
+    start from. A choice that's no longer an active item of this company reads as unset."""
+    from apps.billing import qbo_invoices
+    from apps.billing.models import QboAccountMapping
+
+    config = QboAccountMapping.load()
+    item = config.trip_item_id if qbo_invoices.trip_item_ref() else ""
+    return {
+        "item_choices": qbo_invoices.item_choices(),
+        "trip_item_selected": item,
+        "customer_docs_from": config.customer_docs_from,
+        "customer_docs_unset": not (item and config.customer_docs_from),
     }
 
 
@@ -1070,6 +1087,60 @@ def quickbooks_refresh_accounts(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Couldn't read QuickBooks' accounts. Try again in a minute.")
     else:
         messages.success(request, f"{count} expense and bank accounts read from QuickBooks.")
+    return redirect("quickbooks_settings")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_customer_docs(request: HttpRequest) -> HttpResponse:
+    """Save the Product/Service trip lines post to and the date customer documents start from.
+    Only an active item of the connected company is accepted; anything else (or a date that
+    doesn't parse) is left unset."""
+    from django.utils.dateparse import parse_date
+
+    from apps.billing import qbo_invoices
+    from apps.billing.models import QboAccountMapping, QboItem
+
+    _qbo_or_404()
+    raw = request.POST.get("trip_item", "")
+    allowed = {str(pk) for pk, _ in qbo_invoices.item_choices()}
+    config = QboAccountMapping.load()
+    config.trip_item = QboItem.objects.get(pk=raw) if raw in allowed else None
+    config.customer_docs_from = (
+        parse_date(request.POST.get("customer_docs_from", "").strip() or "") or None
+    )
+    config.save()
+    if config.trip_item and config.customer_docs_from:
+        messages.success(request, "Saved. Open invoices go out on the next sync.")
+    else:
+        messages.error(
+            request,
+            "Choose the Product/Service for trip charges and the date customer documents "
+            "start from.",
+        )
+    return redirect("quickbooks_settings")
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def quickbooks_refresh_items(request: HttpRequest) -> HttpResponse:
+    """Re-read the company's products and services now (the hourly sync does it too)."""
+    from apps.billing import qbo_invoices
+
+    qbo = _qbo_or_404()
+    if not qbo.is_connected():
+        messages.error(request, "Connect QuickBooks first.")
+        return redirect("quickbooks_settings")
+    try:
+        count = qbo_invoices.refresh_items()
+    except (qbo.QboAPIError, qbo.QboNotConnected):
+        messages.error(
+            request, "Couldn't read QuickBooks' products and services. Try again in a minute."
+        )
+    else:
+        messages.success(request, f"{count} products and services read from QuickBooks.")
     return redirect("quickbooks_settings")
 
 

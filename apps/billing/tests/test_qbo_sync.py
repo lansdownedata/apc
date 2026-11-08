@@ -319,7 +319,8 @@ def test_the_hourly_job_refreshes_terms_then_pushes_whatever_is_pending():
 
     # APC-74: the job then reads the chart of accounts and pushes affiliate bills (none here).
     accounts = {"QueryResponse": {"Account": []}}
-    with patch(REQ, side_effect=[terms, _created("58"), _created("59"), accounts]) as req:
+    items = {"QueryResponse": {"Item": []}}
+    with patch(REQ, side_effect=[terms, _created("58"), _created("59"), accounts, items]) as req:
         assert JOBS["retry-qbo-sync"]() == 2
 
     assert req.call_args_list[0].args == ("GET", "query")
@@ -673,3 +674,86 @@ def test_a_refusal_from_quickbooks_moves_the_create_to_a_new_request_id_once():
 
     assert first != second
     assert BillingAccount.objects.get(pk=account.pk).qbo_create_attempt == 2
+
+
+# --- APC-107: the Customer documents card ---------------------------------------------------
+
+
+def _owner(client):
+    from apps.accounts.models import User
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+
+def test_customer_docs_card_renders_and_saves(client):
+    from datetime import date
+
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    item = QboItemFactory(realm_id="123")
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+    ):
+        resp = client.post(
+            reverse("quickbooks_customer_docs"),
+            {"trip_item": item.pk, "customer_docs_from": "2026-12-01"},
+            follow=True,
+        )
+    config = QboAccountMapping.load()
+    assert config.trip_item == item and config.customer_docs_from == date(2026, 12, 1)
+    assert "Saved. Open invoices go out on the next sync." in resp.content.decode()
+
+
+def test_customer_docs_card_shows_copy_and_warning(client):
+    from django.test import override_settings
+
+    _owner(client)
+    with (
+        override_settings(QBO_CLIENT_ID="id", QBO_CLIENT_SECRET="secret"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        html = client.get(reverse("quickbooks_settings")).content.decode()
+    assert "Customer documents" in html
+    assert "Every trip is one line on this product or service." in html
+    assert "Customer documents won&#x27;t go to QuickBooks until" in html or (
+        "Customer documents won't go to QuickBooks until" in html
+    )
+    assert "No products or services read yet." in html
+
+
+def test_customer_docs_rejects_foreign_item(client):
+    from apps.billing.factories import QboItemFactory
+    from apps.billing.models import QboAccountMapping
+
+    _owner(client)
+    foreign = QboItemFactory(realm_id="999")
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+    ):
+        resp = client.post(
+            reverse("quickbooks_customer_docs"),
+            {"trip_item": foreign.pk, "customer_docs_from": "2026-12-01"},
+            follow=True,
+        )
+    assert QboAccountMapping.load().trip_item is None
+    assert "Choose the Product/Service for trip charges" in resp.content.decode()
+
+
+def test_refresh_items_endpoint(client):
+    from apps.billing.models import QboItem
+
+    _owner(client)
+    rows = {"QueryResponse": {"Item": [{"Id": "5", "Name": "Trip", "Type": "Service"}]}}
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.billing.qbo_invoices.qbo.request", return_value=rows),
+        patch("apps.settings.views._qbo_or_404", return_value=qbo),
+        patch.object(qbo, "is_connected", return_value=True),
+    ):
+        resp = client.post(reverse("quickbooks_refresh_items"), follow=True)
+    assert QboItem.objects.filter(qbo_id="5", active=True).exists()
+    assert "1 products and services read from QuickBooks." in resp.content.decode()

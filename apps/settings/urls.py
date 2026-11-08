@@ -22,6 +22,14 @@ urlpatterns = [
         name="quickbooks_refresh_accounts",
     ),
     path(
+        "quickbooks/customer-documents/",
+        views.quickbooks_customer_docs,
+        name="quickbooks_customer_docs",
+    ),
+    path(
+        "quickbooks/refresh-items/", views.quickbooks_refresh_items, name="quickbooks_refresh_items"
+    ),
+    path(
         "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
     ),
     path("messages/", views.messages_list, name="messages"),
