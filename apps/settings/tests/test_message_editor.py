@@ -398,6 +398,48 @@ class TestPreviewOrders:
         wedding.reservations.update(service_type=wedding_type)
         assert editor.preview_orders("pickup", [wedding_type]) == [wedding]
 
+    def test_a_match_older_than_200_orders_is_still_found(self):
+        wedding_type = ServiceTypeFactory(name=WEDDING_SERVICE_NAME)
+        old = _booked_lead(service_type=wedding_type)
+        contact = ContactFactory()
+        Lead.objects.bulk_create(
+            [Lead(contact=contact, status=Lead.Status.BOOKED) for _ in range(200)]
+        )
+        assert editor.preview_orders("pickup", [wedding_type]) == [old]
+
+    def test_query_count_does_not_grow_with_the_orders(self):
+        def count():
+            with CaptureQueriesContext(connection) as ctx:
+                editor.preview_orders("pickup_dispatched", limit=50)
+            return len(ctx.captured_queries)
+
+        _booked_lead()
+        few = count()
+        for _ in range(4):
+            _booked_lead()
+        assert count() == few
+
+    def test_driver_messages_list_orders_with_driver_details_first(self):
+        from apps.dispatch.factories import AssignmentFactory
+        from apps.dispatch.models import Assignment
+
+        farmed = _booked_lead("Farmed")
+        in_house = _booked_lead("In house")
+        plain = _booked_lead("Plain")
+        offered = _booked_lead("Offered")
+        AssignmentFactory(
+            reservation=farmed.reservations.get(),
+            status=Assignment.Status.CONFIRMED,
+            driver_name="Sam Rivera",
+        )
+        AssignmentFactory(reservation=in_house.reservations.get(), in_house=True)
+        AssignmentFactory(
+            reservation=offered.reservations.get(),
+            status=Assignment.Status.OFFERED,
+            driver_name="Not yet",
+        )
+        assert editor.preview_orders("pickup_dispatched") == [in_house, farmed, offered, plain]
+
     def test_limit(self):
         for i in range(3):
             _booked_lead(f"P{i}")

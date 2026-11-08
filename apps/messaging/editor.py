@@ -507,8 +507,6 @@ def behaviour(trigger_key: str, *, combines: bool = True) -> list[str]:
 
 # --- preview ---------------------------------------------------------------------------
 
-_PREVIEW_SCAN = 200
-
 
 def _live_trips(lead) -> list:
     from apps.dispatch.selectors import CANCELLED_STATUSES
@@ -530,6 +528,24 @@ def _wants_driver(trigger) -> bool:
     return "Driver" in trigger.field_groups
 
 
+def _trip_types_q(types: list):
+    """`rules.trip_matches` as a filter on trips: one of these service types, a Wedding type
+    also matching the legacy wedding-builder legs (`is_wedding_trip`)."""
+    from django.db.models import Q
+
+    from apps.leads.models import ServiceType
+    from apps.public.services import WEDDING_SERVICE_NAME
+
+    def is_wedding(name: str) -> bool:
+        return name.strip().lower() == WEDDING_SERVICE_NAME.lower()
+
+    q = Q(service_type_id__in=[st.pk for st in types if not is_wedding(st.name)])
+    if any(is_wedding(st.name) for st in types):
+        wedding_ids = [st.pk for st in ServiceType.objects.all() if is_wedding(st.name)]
+        q |= ~Q(source_leg_id="") | Q(service_type_id__in=wedding_ids)
+    return q
+
+
 def preview_orders(trigger_key: str, service_types=(), limit: int = 20, *, key: str = "") -> list:
     """Booked orders to preview a message against, newest first.
 
@@ -537,17 +553,46 @@ def preview_orders(trigger_key: str, service_types=(), limit: int = 20, *, key: 
     as `rules.matches`): a trip-level trigger needs a live trip, chosen service types a
     live trip of one of them. ``key`` names the seeded message being previewed, so its own
     matching applies (the wedding thank-you also goes to an order with a wedding name). A
-    trigger with driver fields lists orders with driver details on file first."""
+    trigger with driver fields lists orders with driver details on file first. The matching
+    and the ordering are done by the database, so any order can be found, however old."""
+    from django.db.models import Exists, OuterRef, Q
+
+    from apps.dispatch.models import Assignment
+    from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
+    from apps.reservations.models import Reservation
 
     trigger = triggers.get(trigger_key)
     types = list(service_types)
     wedding_name = rules.wedding_name_counts(
         MessageTemplate(key=key, trigger=trigger_key, seeded=bool(key))
     )
-    candidates = (
-        Lead.objects.filter(status=Lead.Status.BOOKED)
-        .select_related("contact")
+    live = Reservation.objects.filter(lead=OuterRef("pk")).exclude(
+        trip_status__in=CANCELLED_STATUSES
+    )
+    leads = Lead.objects.filter(status=Lead.Status.BOOKED)
+    if types:
+        offered = Q(Exists(live.filter(_trip_types_q(types))))
+        if wedding_name and trigger.level != "trip":
+            offered |= ~Q(wedding_name="")
+        leads = leads.filter(offered)
+    elif trigger.level == "trip":
+        leads = leads.filter(Exists(live))
+    order = ["-created_at", "-pk"]
+    if _wants_driver(trigger):
+        # `_has_driver_info` on any live trip: confirmed coverage with an in-house driver or
+        # a farmed-out driver's name.
+        driver = (
+            Assignment.objects.filter(
+                reservation__lead=OuterRef("pk"), status=Assignment.Status.CONFIRMED
+            )
+            .exclude(reservation__trip_status__in=CANCELLED_STATUSES)
+            .filter(Q(driver__isnull=False) | ~Q(driver_name=""))
+        )
+        leads = leads.annotate(has_driver=Exists(driver))
+        order.insert(0, "-has_driver")
+    return list(
+        leads.select_related("contact")
         .prefetch_related(
             "reservations__stops",
             "reservations__vehicle",
@@ -555,21 +600,8 @@ def preview_orders(trigger_key: str, service_types=(), limit: int = 20, *, key: 
             "reservations__assignments__driver",
             "reservations__assignments__vendor",
         )
-        .order_by("-created_at", "-pk")[:_PREVIEW_SCAN]
+        .order_by(*order)[:limit]
     )
-    leads = []
-    for lead in candidates:
-        if trigger.level == "trip":
-            offered = any(
-                rules.types_match(types, lead, trip, trip_level=True) for trip in _live_trips(lead)
-            )
-        else:
-            offered = rules.types_match(types, lead, trip_level=False, wedding_name=wedding_name)
-        if offered:
-            leads.append(lead)
-    if _wants_driver(trigger):
-        leads.sort(key=lambda lead: not any(_has_driver_info(r) for r in _live_trips(lead)))
-    return leads[:limit]
 
 
 def preview_trip(trigger_key: str, lead, service_types=()):
