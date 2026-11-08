@@ -179,7 +179,16 @@ class _Refused(Exception):
         self.by_quickbooks = by_quickbooks
 
 
-_TAGS = {"vendor": "v", "bill": "b", "billpayment": "p", "attachment": "f", "invoice": "i"}
+_TAGS = {
+    "vendor": "v",
+    "bill": "b",
+    "billpayment": "p",
+    "attachment": "f",
+    "invoice": "i",
+    "customer": "c",
+    "salesreceipt": "s",
+    "refundreceipt": "r",
+}
 
 
 @dataclass
@@ -297,6 +306,14 @@ def _alert(link: _Link, message: str) -> None:
         else:
             title = f"QuickBooks invoice failed: {record.label}: {record.group}"
         Notification.notify(None, Notification.Kind.SYNC_FAILED, title=title, detail=message)
+        return
+    if link.entity == "customer":
+        Notification.notify(
+            None,
+            Notification.Kind.SYNC_FAILED,
+            title=f"QuickBooks customer failed: {record.contact.name}",
+            detail=message,
+        )
         return
     what = {"bill": "bill", "billpayment": "bill payment", "attachment": "invoice file"}[
         link.entity

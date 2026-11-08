@@ -29,6 +29,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
 from apps.billing import selectors as billing_selectors
+from apps.billing.models import CustomerLink, SyncState
 from apps.core.choices import Channel
 from apps.core.templatetags.phone_filters import phone_display
 from apps.leads.models import Lead
@@ -257,13 +258,33 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+def _qbo_fields(contact: Contact) -> tuple[str, str, str]:
+    """What a card contact's QuickBooks customer carries (APC-108)."""
+    return (contact.name, contact.email or "", contact.phone)
+
+
+def _requeue_qbo_customer(contact: Contact, before: tuple[str, str, str]) -> None:
+    """A changed name, email or phone goes to the contact's QuickBooks customer on the next
+    push (APC-108), as a vendor's does (APC-74). Nothing is sent from here."""
+    if _qbo_fields(contact) == before:
+        return
+    link = CustomerLink.objects.filter(contact=contact).first()
+    if link is None:
+        return
+    link.display_name = contact.name.strip()[:100]
+    link.qbo_sync_state = SyncState.NOT_SYNCED
+    link.save(update_fields=["display_name", "qbo_sync_state", "updated_at"])
+
+
 def _phone_result(contact: Contact, action) -> JsonResponse:
     """Run one phone change and answer with the whole list, or the reason it can't."""
+    before = _qbo_fields(contact)
     try:
         action()
     except services.PhoneError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
     contact.refresh_from_db()
+    _requeue_qbo_customer(contact, before)
     return JsonResponse({"ok": True, "phones": _phones_payload(contact)})
 
 
@@ -321,6 +342,7 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
     Phone numbers are not here: they have their own endpoints (`contact_phone_*`).
     """
     contact = get_object_or_404(Contact, pk=pk)
+    before = _qbo_fields(contact)
     if "name" in request.POST and not request.POST.get("name", "").strip():
         return JsonResponse({"ok": False, "error": "Name cannot be blank."}, status=400)
     if "email" in request.POST:
@@ -358,6 +380,7 @@ def contact_update(request: HttpRequest, pk: int) -> HttpResponse:
                 {"ok": False, "error": "That email is already used by another contact."},
                 status=400,
             )
+        _requeue_qbo_customer(contact, before)
     if contact.company_id != company_was:
         from apps.tasks import services as task_services
 
