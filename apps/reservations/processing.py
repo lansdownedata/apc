@@ -589,6 +589,11 @@ def unlock(trip, *, user, reason: str) -> TripReview:
     trip = _fresh(trip)
     if trip.lead.status != "booked":
         raise ProcessingError("Only a booked order's trips can be unlocked.")
+    from apps.billing.models import InvoiceLine
+
+    line = InvoiceLine.objects.filter(reservation=trip).select_related("invoice").first()
+    if line is not None:
+        raise ProcessingError(f"On {line.invoice.label}. Void it to change this trip.")
     # The price is about to change: an old pay link must not stay collectable.
     _cancel_open_links(trip)
     with transaction.atomic():

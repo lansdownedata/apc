@@ -359,3 +359,25 @@ def test_invoicing_posts_nothing(accountant) -> None:
     assert ledger.order_balances(trip.lead) == before
     invoices.void_invoice(invoice, reason="redo", user=accountant)
     assert ledger.order_balances(trip.lead) == before
+
+
+def test_unlock_refuses_an_invoiced_trip(accountant) -> None:
+    from apps.reservations import processing
+
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = _create(group, [trip])
+    with pytest.raises(processing.ProcessingError, match=f"On {invoice.label}. Void it"):
+        processing.unlock(trip, user=accountant, reason="price check")
+    assert TripReview.objects.get(reservation=trip).is_processed
+
+
+def test_unlock_allowed_after_void(accountant) -> None:
+    from apps.reservations import processing
+
+    group = AccountGroupFactory()
+    trip = _processed_trip(group, accountant=accountant)
+    invoice = _create(group, [trip])
+    invoices.void_invoice(invoice, reason="test", user=accountant)
+    review = processing.unlock(trip, user=accountant, reason="price check")
+    assert not review.is_processed
