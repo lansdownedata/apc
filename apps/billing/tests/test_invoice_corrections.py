@@ -175,6 +175,11 @@ def test_local_void_refused_in_closed_period_only_when_linked() -> None:
         linked.refresh_from_db()
         assert linked.status == Invoice.Status.OPEN
         assert linked.qbo_void_requested_at is None
+    # Disconnected (no company to compare): one with a QuickBooks id counts as there.
+    with patch(REALM, return_value=""):
+        with pytest.raises(invoices.InvoiceError, match=re.escape(invoices.CLOSED_PERIOD_MESSAGE)):
+            invoices.void_invoice(linked, reason="Wrong PO", user=None)
+    with patch(REALM, return_value="123"):
         # Never in this company's books: voided here, QuickBooks has nothing of it to close.
         for invoice in (unsent, elsewhere):
             assert invoices.void_invoice(invoice, reason="Wrong PO", user=None).status == (
@@ -185,6 +190,26 @@ def test_local_void_refused_in_closed_period_only_when_linked() -> None:
         assert invoices.void_invoice(linked, reason="Wrong PO", user=None).status == (
             Invoice.Status.VOID
         )
+
+
+def test_linked_invoice_cannot_be_dated_before_the_start_date() -> None:
+    import re
+
+    QboAccountMapping.objects.update_or_create(
+        pk=1, defaults={"customer_docs_from": date(2026, 11, 1)}
+    )
+    linked = _invoice(qbo_id="55", qbo_realm_id="123")
+    unsent = _invoice()
+    message = (
+        "Invoices already in QuickBooks can't be dated before the QuickBooks start date "
+        "(Nov 1, 2026)."
+    )
+    with patch(REALM, return_value="123"):
+        with pytest.raises(invoices.InvoiceError, match=re.escape(message)):
+            _edit(linked, invoice_date=date(2026, 10, 31))
+        assert _edit(linked, invoice_date=date(2026, 11, 2)).invoice_date == date(2026, 11, 2)
+        # Never sent: before the start date it simply stays out of QuickBooks.
+        assert _edit(unsent, invoice_date=date(2026, 10, 31)).invoice_date == date(2026, 10, 31)
 
 
 @pytest.fixture

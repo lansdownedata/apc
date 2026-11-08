@@ -180,6 +180,9 @@ class Invoice(QboSyncedModel, TimeStampedModel):
     edit_note = models.CharField(max_length=255, blank=True)
     # Set when an edit of an invoice already in QuickBooks must be sent there too.
     qbo_edit_requested_at = models.DateTimeField(null=True, blank=True)
+    # The date QuickBooks holds the invoice under, from its last answer: what its closed
+    # period is judged by until an edit lands there (APC-109).
+    qbo_txn_date = models.DateField(null=True, blank=True)
 
     class Meta(TimeStampedModel.Meta):
         ordering = ["-invoice_date", "-pk"]

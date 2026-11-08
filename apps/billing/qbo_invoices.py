@@ -15,7 +15,7 @@ from django.db.models import Case, Exists, IntegerField, OuterRef, Q, Value, Whe
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from apps.billing.invoices import CLOSED_PERIOD_MESSAGE, in_closed_period
+from apps.billing.invoices import CLOSED_PERIOD_MESSAGE, closed_in_quickbooks
 from apps.billing.models import Invoice, InvoiceLine, QboAccountMapping, QboItem, SyncState
 from apps.billing.qbo_sync import (
     STALE_OBJECT,
@@ -106,8 +106,9 @@ def refresh_preferences() -> date | None:
     """Cache the date the books are closed through in QuickBooks (APC-109). None, and the
     cached date cleared, when QuickBooks has none or sends one that isn't a date."""
     prefs = qbo.request("GET", "preferences")
-    info = (prefs.get("Preferences") or {}).get("AccountingInfoPrefs") or {}
-    raw = info.get("BookCloseDate")
+    section = prefs.get("Preferences") if isinstance(prefs, dict) else None
+    info = section.get("AccountingInfoPrefs") if isinstance(section, dict) else None
+    raw = info.get("BookCloseDate") if isinstance(info, dict) else None
     try:
         closed = parse_date(raw) if isinstance(raw, str) else None
     except ValueError:  # well-formed but impossible, like Feb 30
@@ -128,7 +129,8 @@ def customer_docs_from() -> date | None:
 ITEM_LINE = "SalesItemLineDetail"
 # QuickBooks' limit for a line Description and for PrivateNote.
 DESCRIPTION_MAX = 4000
-# QuickBooks' limit for DocNumber (we send none; QuickBooks numbers the invoice itself).
+# QuickBooks' limit for DocNumber. A create sends none (QuickBooks numbers the invoice); an
+# update is the whole object, so it sends back the number QuickBooks gave.
 DOC_NUMBER_MAX = 21
 
 NO_TRIP_ITEM = "Waiting: choose the Product/Service for trip charges in Settings \u2192 QuickBooks."
@@ -145,7 +147,8 @@ def _money(amount) -> str:
 
 def invoice_payload(invoice: Invoice, realm: str) -> dict:
     """The QuickBooks Invoice body for one of our invoices. Optional keys are left out when
-    blank. The PO rides on the note and on the first line's description."""
+    blank. The PO rides on the note and on the first line's description. An update (already in
+    this company) carries its number, since a whole-object update keeps only what it sends."""
     item = trip_item_ref()
     if item is None:
         raise _Refused(NO_TRIP_ITEM, alert=False)
@@ -187,6 +190,8 @@ def invoice_payload(invoice: Invoice, realm: str) -> dict:
     note = " \u00b7 ".join(part for part in (po, invoice.memo) if part)
     if note:
         body["PrivateNote"] = note[:DESCRIPTION_MAX]
+    if _linked_here(invoice, realm) and invoice.number:
+        body["DocNumber"] = invoice.number
     return body
 
 
@@ -285,21 +290,25 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
     back onto ours. One QuickBooks holds differently (sales tax on the item, most likely) is
     ERROR with both figures and alerts once; the hourly run never sends it again.
 
-    An update (an edit, APC-109) goes whole with its SyncToken, never inside a closed period:
-    that is ERROR with no call. A create is QuickBooks' call whatever its date. An edit saved
-    while the create was in flight is queued as an update once the create lands."""
+    An update (an edit, APC-109) goes whole with its SyncToken, never while its date or the date
+    QuickBooks holds is in a closed period: that is ERROR with no call. A create is QuickBooks'
+    call whatever its date. A create that lands holding other values than ours (an edit saved
+    while it was in flight, or a replay of an earlier attempt) is queued as an update."""
     returned: dict = {}
+    sent: dict = {}
     mismatch = ""
     already_failed = invoice.qbo_sync_state == SyncState.ERROR
+    stamp = invoice.qbo_edit_requested_at
     link = _Link(invoice, "invoice", "Invoice")
     creating = not _linked_here(invoice, realm)
-    if not creating and in_closed_period(invoice.invoice_date):
+    if not creating and closed_in_quickbooks(invoice):
         _fail(link, CLOSED_PERIOD_MESSAGE)
         return False
 
     def matches(obj: dict, body: dict) -> bool:
         nonlocal mismatch
         returned.update(obj)
+        sent.update(body)
         if invoice_matches(obj, body):
             return True
         mismatch = _mismatch(obj, body, invoice)
@@ -311,10 +320,27 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
     if number and number != invoice.number:
         Invoice.objects.filter(pk=invoice.pk).update(number=number)
         invoice.number = number
+    held = _txn_date(returned)
+    if held is not None and held != invoice.qbo_txn_date:
+        Invoice.objects.filter(pk=invoice.pk).update(qbo_txn_date=held)
+        invoice.qbo_txn_date = held
     # Voided while QuickBooks was making it: the void follows it there, whatever it totals.
     linked = invoice.qbo_id and invoice.status == Invoice.Status.OPEN
     if mismatch and linked and invoice.qbo_sync_state == SyncState.NOT_SYNCED:
         _fail(link, mismatch, alert=not already_failed)
+        # The edit did land; only a person's Retry sends it again. An edit saved during the
+        # push wrote a newer stamp, and that one still goes.
+        Invoice.objects.filter(pk=invoice.pk, qbo_edit_requested_at=stamp).update(
+            qbo_edit_requested_at=None
+        )
+        invoice.refresh_from_db(fields=["qbo_edit_requested_at"])
+    elif creating and linked and returned and _stale_values(returned, sent):
+        # A replay of an earlier attempt, made before our last edit: the edit follows.
+        Invoice.objects.filter(pk=invoice.pk).update(
+            qbo_sync_state=SyncState.NOT_SYNCED, qbo_sync_error=""
+        )
+        _queue_update(invoice)
+        return False
     elif in_step:
         # Only while still SYNCED: an edit committing now sets NOT_SYNCED and a new stamp.
         Invoice.objects.filter(pk=invoice.pk, qbo_sync_state=SyncState.SYNCED).exclude(
@@ -323,11 +349,33 @@ def _push_invoice(invoice: Invoice, realm: str) -> bool:
         invoice.refresh_from_db(fields=["qbo_edit_requested_at"])
     elif creating and linked and invoice.qbo_sync_state == SyncState.NOT_SYNCED:
         # Landed, but changed here while QuickBooks made it: the change goes as an update.
-        Invoice.objects.filter(
-            pk=invoice.pk, qbo_sync_state=SyncState.NOT_SYNCED, qbo_edit_requested_at=None
-        ).update(qbo_edit_requested_at=timezone.now())
-        invoice.refresh_from_db(fields=["qbo_edit_requested_at"])
+        _queue_update(invoice)
     return in_step
+
+
+def _txn_date(obj: dict) -> date | None:
+    """The date QuickBooks holds an invoice under, from its answer (None when absent or odd)."""
+    raw = obj.get("TxnDate")
+    try:
+        return parse_date(raw) if isinstance(raw, str) else None
+    except ValueError:
+        return None
+
+
+def _stale_values(obj: dict, body: dict) -> bool:
+    """QuickBooks answered a create with another date or note than we sent: it replayed an
+    attempt made before an edit."""
+    return obj.get("TxnDate") != body.get("TxnDate") or obj.get("PrivateNote", "") != body.get(
+        "PrivateNote", ""
+    )
+
+
+def _queue_update(invoice: Invoice) -> None:
+    """Stamp a landed invoice NOT_SYNCED with no stamp yet so the next run sends it whole."""
+    Invoice.objects.filter(
+        pk=invoice.pk, qbo_sync_state=SyncState.NOT_SYNCED, qbo_edit_requested_at=None
+    ).update(qbo_edit_requested_at=timezone.now())
+    invoice.refresh_from_db(fields=["qbo_sync_state", "qbo_sync_error", "qbo_edit_requested_at"])
 
 
 def push_invoice(invoice: Invoice) -> bool:
@@ -377,9 +425,10 @@ def _void(invoice: Invoice) -> dict:
 
 
 def _push_void(invoice: Invoice) -> bool:
-    """Void the QuickBooks invoice, never inside a closed period: that is ERROR with no call."""
+    """Void the QuickBooks invoice, never while its date or the date QuickBooks holds is in a
+    closed period: that is ERROR with no call."""
     link = _Link(invoice, "invoice", "Invoice")
-    if in_closed_period(invoice.invoice_date):
+    if closed_in_quickbooks(invoice):
         _fail(link, CLOSED_PERIOD_MESSAGE)
         return False
     try:

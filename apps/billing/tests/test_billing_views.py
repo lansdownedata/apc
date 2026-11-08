@@ -385,6 +385,7 @@ def _qbo_answer() -> dict:
             "Id": "900",
             "SyncToken": "0",
             "DocNumber": "1042",
+            "TxnDate": "2026-03-01",
             "TotalAmt": 920.0,
             "Line": [line, {"DetailType": "SubTotalLineDetail", "Amount": 920.0}],
         }

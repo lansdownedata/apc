@@ -167,6 +167,12 @@ def test_payload_shape_exact():
         ],
     }
     assert "DocNumber" not in body
+    # An update is the whole object, so it carries the number QuickBooks gave it.
+    invoice.qbo_id, invoice.qbo_realm_id, invoice.number = "900", "123", "1042"
+    assert qbo_invoices.invoice_payload(invoice, "123")["DocNumber"] == "1042"
+    # Linked in another company only: a create here, never that company's number.
+    invoice.qbo_realm_id = "999"
+    assert "DocNumber" not in qbo_invoices.invoice_payload(invoice, "123")
 
 
 def test_payload_without_term_po_email_memo():
@@ -262,21 +268,26 @@ def _open_invoice(*, amounts=("920.00", "184.00"), invoice_date=date(2026, 3, 1)
 
 
 def _sent(invoice, *, doc="1042", qbo_id="900", token="0"):
-    """What QuickBooks answers a create with: our item lines plus its own subtotal line."""
+    """What QuickBooks answers a create with: our item lines plus its own subtotal line, and
+    the invoice's date and note as they stand now."""
     lines = [
         {"DetailType": "SalesItemLineDetail", "Amount": float(line.amount)}
         for line in invoice.lines.order_by("pk")
     ]
     total = sum(line["Amount"] for line in lines)
-    return {
-        "Invoice": {
-            "Id": qbo_id,
-            "SyncToken": token,
-            "DocNumber": doc,
-            "TotalAmt": total,
-            "Line": [*lines, {"DetailType": "SubTotalLineDetail", "Amount": total}],
-        }
+    answer = {
+        "Id": qbo_id,
+        "SyncToken": token,
+        "DocNumber": doc,
+        "TxnDate": invoice.invoice_date.isoformat(),
+        "TotalAmt": total,
+        "Line": [*lines, {"DetailType": "SubTotalLineDetail", "Amount": total}],
     }
+    po = f"PO {invoice.po_number}" if invoice.po_number else ""
+    note = " · ".join(part for part in (po, invoice.memo) if part)
+    if note:
+        answer["PrivateNote"] = note
+    return {"Invoice": answer}
 
 
 def _fault(code, message="", status=400, detail=""):
@@ -782,7 +793,13 @@ def test_refresh_preferences_reads_book_close_date():
         assert qbo_invoices.refresh_preferences() == date(2026, 10, 31)
     req.assert_called_once_with("GET", "preferences")
     assert QboAccountMapping.load().book_close_date == date(2026, 10, 31)
-    malformed = (_prefs("31/10/2026"), _prefs("2026-02-30"), _prefs(20261031))
+    malformed = (
+        _prefs("31/10/2026"),
+        _prefs("2026-02-30"),
+        _prefs(20261031),
+        {"Preferences": []},
+        {"Preferences": {"AccountingInfoPrefs": "2026-10-31"}},
+    )
     absent = (_prefs(), {}, {"Preferences": None}, {"Preferences": {"AccountingInfoPrefs": None}})
     for answer in (*absent, *malformed):
         QboAccountMapping.objects.filter(pk=1).update(book_close_date=date(2026, 10, 31))
@@ -799,7 +816,9 @@ def _edit(invoice, **kw):
 
 def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
     invoice = _pushed(_open_invoice())
+    assert invoice.qbo_txn_date == date(2026, 3, 1)
     _edit(invoice, invoice_date=date(2026, 3, 5), memo="Fixed")
+    invoice.refresh_from_db()
     with patch(REQ, return_value=_sent(invoice, token="1")) as req:
         assert qbo_invoices.sync_pending() == 1
     req.assert_called_once()
@@ -809,7 +828,8 @@ def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
         "requestid": f"apc-{qbo_bills._digest(body)}-i{invoice.pk}-u0"[:50]
     }
     assert (body["Id"], body["SyncToken"]) == ("900", "0")
-    assert "sparse" not in body and "DocNumber" not in body
+    assert "sparse" not in body
+    assert body["DocNumber"] == "1042"
     assert body["TxnDate"] == "2026-03-05"
     assert body["PrivateNote"] == "Fixed"
     assert len(body["Line"]) == 2
@@ -817,7 +837,62 @@ def test_edited_invoice_is_pushed_as_whole_update_and_stamp_cleared(mapping):
     assert invoice.qbo_sync_state == SyncState.SYNCED
     assert invoice.qbo_sync_token == "1"
     assert invoice.qbo_edit_requested_at is None
+    assert invoice.qbo_txn_date == date(2026, 3, 5)
     assert list(qbo_invoices.pending_invoices("123", START)) == []
+
+
+def test_mismatched_update_is_not_resent_hourly(mapping):
+    invoice = _pushed(_open_invoice())
+    _edit(invoice, memo="Fixed")
+    invoice.refresh_from_db()
+    with patch(REQ, return_value=_taxed(invoice, 1170.24)) as req:
+        assert qbo_invoices.sync_pending() == 0
+        assert qbo_invoices.sync_pending() == 0
+    assert req.call_count == 1
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error.startswith("QuickBooks totals this invoice $1,170.24")
+    assert invoice.qbo_edit_requested_at is None
+    assert _alerts().count() == 1
+
+
+def test_update_refused_when_the_date_quickbooks_holds_is_closed(mapping):
+    invoice = _pushed(_open_invoice(invoice_date=date(2026, 10, 30)))
+    _edit(invoice, invoice_date=date(2026, 11, 2))
+    _close_books(mapping, date(2026, 10, 31))
+    with patch(REQ) as req:
+        assert qbo_invoices.sync_pending() == 0
+    req.assert_not_called()
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.ERROR
+    assert invoice.qbo_sync_error == invoices.CLOSED_PERIOD_MESSAGE
+    # Nor can it be voided here: QuickBooks still holds it in October.
+    with pytest.raises(invoices.InvoiceError, match="In a closed period"):
+        invoices.void_invoice(invoice, reason="Wrong date", user=None)
+
+
+@pytest.mark.parametrize("change", [{"invoice_date": date(2026, 3, 9)}, {"memo": "Fixed"}])
+def test_replayed_create_with_old_values_is_followed_by_an_update(mapping, change):
+    invoice = _open_invoice()
+    replay = _sent(invoice)  # what QuickBooks made from an attempt whose answer was lost
+    _edit(invoice, **change)
+    invoice.refresh_from_db()
+    with patch(REQ, return_value=replay):
+        assert qbo_invoices.push_invoice(invoice) is False
+    invoice.refresh_from_db()
+    assert (invoice.qbo_id, invoice.number) == ("900", "1042")
+    assert (invoice.qbo_sync_state, invoice.qbo_sync_error) == (SyncState.NOT_SYNCED, "")
+    assert invoice.qbo_edit_requested_at is not None
+    assert invoice.qbo_txn_date == date(2026, 3, 1)
+    with patch(REQ, return_value=_sent(invoice, token="1")) as req:
+        assert qbo_invoices.sync_pending() == 1
+    body = req.call_args.kwargs["json"]
+    assert body["Id"] == "900"
+    assert body["TxnDate"] == invoice.invoice_date.isoformat()
+    assert body.get("PrivateNote", "") == invoice.memo
+    invoice.refresh_from_db()
+    assert invoice.qbo_sync_state == SyncState.SYNCED
+    assert invoice.qbo_edit_requested_at is None
 
 
 def test_edit_during_create_is_pushed_as_an_update_afterwards(mapping):

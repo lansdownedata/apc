@@ -297,12 +297,11 @@ def void_invoice(invoice: Invoice, *, reason: str, user) -> Invoice:
         invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status == Invoice.Status.VOID:
             raise InvoiceError("This invoice is already void.")
-        if (
-            invoice.qbo_id
-            and invoice.qbo_realm_id == qbo_sync.current_realm()
-            and in_closed_period(invoice.invoice_date)
-        ):
-            raise InvoiceError(CLOSED_PERIOD_MESSAGE)
+        if invoice.qbo_id and closed_in_quickbooks(invoice):
+            # Disconnected (no company to compare): one with a QuickBooks id counts as there.
+            realm = qbo_sync.current_realm()
+            if not realm or invoice.qbo_realm_id == realm:
+                raise InvoiceError(CLOSED_PERIOD_MESSAGE)
         if invoice.qbo_id or invoice.qbo_push_started_at:
             invoice.qbo_void_requested_at = timezone.now()
             invoice.qbo_sync_state = SyncState.NOT_SYNCED
@@ -326,6 +325,13 @@ def in_closed_period(doc_date: date | None) -> bool:
         return False
     closed = QboAccountMapping.load().book_close_date
     return closed is not None and doc_date <= closed
+
+
+def closed_in_quickbooks(invoice: Invoice) -> bool:
+    """Is the invoice in a closed period by its own date or by the date QuickBooks holds it
+    under (an edit that hasn't reached QuickBooks yet)? The earlier one decides."""
+    dates = [d for d in (invoice.invoice_date, invoice.qbo_txn_date) if d]
+    return in_closed_period(min(dates, default=None))
 
 
 def _edit_note(invoice: Invoice, invoice_date: date, po: str, memo: str) -> str:
@@ -364,8 +370,15 @@ def edit_invoice(
             raise InvoiceError("Only an open invoice can be edited.")
         if invoice.group.po_required and not po:
             raise InvoiceError("This group needs a PO number.")
-        if in_closed_period(invoice.invoice_date) or in_closed_period(invoice_date):
+        if closed_in_quickbooks(invoice) or in_closed_period(invoice_date):
             raise InvoiceError(CLOSED_PERIOD_MESSAGE)
+        linked = bool(invoice.qbo_id) and invoice.qbo_realm_id == qbo_sync.current_realm()
+        start = QboAccountMapping.load().customer_docs_from
+        if linked and start is not None and invoice_date < start:
+            raise InvoiceError(
+                "Invoices already in QuickBooks can't be dated before the QuickBooks start "
+                f"date ({start:%b %-d, %Y})."
+            )
         note = _edit_note(invoice, invoice_date, po, memo)
         if not note:
             return invoice
@@ -377,7 +390,7 @@ def edit_invoice(
         invoice.edited_at = now
         invoice.edited_by = user
         invoice.edit_note = note
-        if invoice.qbo_id and invoice.qbo_realm_id == qbo_sync.current_realm():
+        if linked:
             invoice.qbo_edit_requested_at = now
             invoice.qbo_sync_state = SyncState.NOT_SYNCED
             invoice.qbo_sync_error = ""
