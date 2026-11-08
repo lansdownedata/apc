@@ -67,7 +67,7 @@ def _day_context(trips, contact_name: str) -> dict:
         "ack_error": False,
         "feedback_orders": _feedback_orders(trips),
         "feedback_error": "",
-        "wedding": False,
+        "fees_block": False,
         "trips_confirmed": False,
     }
     # Once every order on the page has run, there's nothing left to confirm.
@@ -105,16 +105,19 @@ def trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
 
 
 @require_http_methods(["GET", "POST"])
-def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
-    """APC-94 — a wedding's confirmation, sent to the billing contact. Same page as
+def order_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
+    """APC-94 / APC-95 — the order-keyed confirmation, sent to the billing contact of a
+    wedding or of any held order (a vehicle with a cleaning fee). Same page as
     `trip_confirm`, scoped to the one order, plus the cleaning-fee / overtime
-    acknowledgment. A day whose trips were confirmed before the fees existed still shows
-    the acknowledgment (without the details box) so it can be given late."""
+    acknowledgment: the per-type fees and the overtime rule, both boxes required (only the
+    overtime one when no vehicle carries a fee). A day whose trips were confirmed before
+    the fees existed still shows the acknowledgment (without the details box) so it can be
+    given late. Served at `trip/o/` and, for links already sent, at `trip/w/`."""
     from apps.leads import services as lead_services
     from apps.leads.models import Lead
 
     try:
-        lead, day = ack.read_wedding_day_ack_token(token)
+        lead, day = ack.read_order_day_ack_token(token)
     except (BadSignature, Lead.DoesNotExist):
         raise Http404 from None
 
@@ -123,9 +126,10 @@ def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
     fees_pending = lead.fees_acknowledged_at is None
     terms = lead_services.fee_terms_context(lead)
     ctx.update(
-        wedding=True,
+        # The fee block: every order this page serves (a wedding with no fee keeps its
+        # overtime rule), or one whose vehicles carry a fee.
+        fees_block=lead.is_wedding or bool(terms["fees"]),
         trips_confirmed=ctx["confirmed"],
-        confirmed=ctx["confirmed"] and not fees_pending,
         hold=terms["hold"],
         hold_on=terms["hold_on"],
         fee_terms=lead_services.fee_terms_html(lead, terms["config"]),
@@ -133,18 +137,20 @@ def wedding_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
         fees_acknowledged_on=lead.fees_acknowledged_on,
         fee_ack_error=False,
     )
+    fees_owed = ctx["fees_block"] and fees_pending
+    ctx["confirmed"] = ctx["confirmed"] and not fees_owed
     if request.method == "POST" and request.POST.get("form") == "feedback":
-        return _submit_feedback(request, token, ctx, page="wedding_trip_confirm")
+        return _submit_feedback(request, token, ctx, page="order_trip_confirm")
     if request.method == "POST" and trips:
         boxes = ["ack_overtime"] + (["ack_cleaning"] if ctx["hold"] else [])
         ctx["ack_error"] = not ctx["trips_confirmed"] and not request.POST.get("ack")
-        ctx["fee_ack_error"] = fees_pending and not all(request.POST.get(b) for b in boxes)
+        ctx["fee_ack_error"] = fees_owed and not all(request.POST.get(b) for b in boxes)
         if ctx["ack_error"] or ctx["fee_ack_error"]:
             return render(request, "public/trip_confirm.html", ctx)
-        if fees_pending:
+        if fees_owed:
             lead_services.acknowledge_fees(lead, ip=client_ip(request))
         confirm_trip_day(trips)
-        return redirect("wedding_trip_confirm", token=token)
+        return redirect("order_trip_confirm", token=token)
     return render(request, "public/trip_confirm.html", ctx)
 
 

@@ -95,6 +95,8 @@ def order_detail(request, lead_id):
             # The same trip editor the quote workspace opens, fed identically.
             **reservation_editor.editor_context(request, lead, reservations),
             **reports.authorized_hold(lead),
+            # The cleaning hold's line on the money card (APC-95).
+            **reports.cleaning_hold(lead),
             "payment": plan,
             "balances": reports.order_balances_with_remaining(lead),
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,

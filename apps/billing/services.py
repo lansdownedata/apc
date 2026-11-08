@@ -191,9 +191,18 @@ def _locked_lead(lead):
     )
 
 
-def _refuse_to_account(lead, group: AccountGroup, po_number: str) -> None:
+HOLD_ON_CARD = (
+    "A cleaning hold is on the card; it is released when the order is billed to an account."
+)
+
+
+def _refuse_to_account(lead, group: AccountGroup, po_number: str, *, locked: bool = False) -> None:
     """Every rule that keeps an order off an account. Run before the Stripe calls and again
-    under the lock, so a payment landing in between is still caught."""
+    under the lock (`locked`), so a payment landing in between is still caught.
+
+    A cleaning hold (APC-95) is no refusal before the Stripe calls: `bill_to_account`
+    releases it, since an account order is never held (spec §2). Under the lock one still
+    on the card refuses; one captured at Stripe and not yet booked to a trip always does."""
     from apps.leads.models import Lead
     from apps.payments import ledger
     from apps.payments.models import Charge
@@ -204,12 +213,25 @@ def _refuse_to_account(lead, group: AccountGroup, po_number: str) -> None:
     if lead.status == Lead.Status.LOST:
         raise BillingError("A lost order can't be billed to an account.")
     plan = getattr(lead, "payment", None)
-    held = plan is not None and plan.charges.filter(status=Charge.Status.AUTHORIZED).exists()
+    authorized = (
+        plan.charges.filter(status=Charge.Status.AUTHORIZED)
+        if plan is not None
+        else Charge.objects.none()
+    )
+    held = authorized.exclude(kind=Charge.Kind.HOLD).exists()
     if lead.status == Lead.Status.ENGAGED or held:
         # A booked order can carry a hold too (a direct booking's pay link, APC-26).
         raise BillingError(
             "The customer's deposit is on hold on their card. Confirm or cancel it first."
         )
+    cleaning = authorized.filter(kind=Charge.Kind.HOLD)
+    if cleaning.filter(captured_at__isnull=False).exists():
+        raise BillingError(
+            "The cleaning hold was taken at Stripe and isn't booked to a trip yet. "
+            "Process that trip first, then bill to account."
+        )
+    if locked and cleaning.exists():
+        raise BillingError(f"{HOLD_ON_CARD} Try again.")
     if group.pk not in {g.pk for g in selectors.groups_for_lead(lead)}:
         raise BillingError(f"{group.name} isn't one of this customer's billing groups.")
     if group.po_required and not po_number:
@@ -232,17 +254,23 @@ def bill_to_account(lead, group: AccountGroup, *, po_number: str, user) -> objec
     lock (a Stripe cancel can't be rolled back, so its row must not be either); then the
     rules run again under the lock and the order is switched.
     """
+    from apps.payments import holds
     from apps.payments import services as payments
 
     po_number = (po_number or "").strip()
     _refuse_to_account(lead, group, po_number)
+    try:
+        # An account order is never held (APC-95): its cleaning hold goes first.
+        holds.release_hold(lead, reason="billed to an account")
+    except payments.PaymentError as exc:
+        raise BillingError(f"{HOLD_ON_CARD} Stripe couldn't release it; try again.") from exc
     try:
         payments.close_open_intents(lead)
     except payments.PaymentError as exc:
         raise BillingError(str(exc)) from exc
     with transaction.atomic():
         lead = _locked_lead(lead)
-        _refuse_to_account(lead, group, po_number)
+        _refuse_to_account(lead, group, po_number, locked=True)
         lead.billing_group, lead.po_number = group, po_number
         lead.save(update_fields=["billing_group", "po_number", "updated_at"])
         transaction.on_commit(lambda: _resync_tasks(lead))

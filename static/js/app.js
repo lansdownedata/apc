@@ -1159,6 +1159,37 @@ function processingPane(opts) {
 }
 window.processingPane = processingPane;
 
+/* Photos on a trip review (APC-95): the picked images go up as one multipart POST (postForm
+   only sends text), then the pane reloads to show them; a refusal is a toast. */
+function reviewPhotos(url) {
+  return {
+    busy: false,
+    async upload(input) {
+      const files = Array.from(input.files || []);
+      if (!files.length || this.busy) return;
+      const body = new FormData();
+      files.forEach((file) => body.append("photos", file));
+      this.busy = true;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+          body,
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok || json.ok === false) throw new Error(json.error || "The photos didn't upload.");
+        window.location.reload();
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "The photos didn't upload." });
+      } finally {
+        this.busy = false;
+        input.value = "";
+      }
+    },
+  };
+}
+window.reviewPhotos = reviewPhotos;
+
 /* One trip's vendor invoice on the Needs vendor bill view (APC-104): the trip pane's form
    (components/payable_invoice_form.html) posting to payable_invoice. Approve and Mark paid
    stay on the trip's pane; once saved, the row says so and the trip leaves the view. */

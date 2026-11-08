@@ -266,6 +266,8 @@ def lead_detail(request, pk):
         or any(reservation_services.is_wedding_trip(r) for r in reservations),
         # The held deposit + its deadline, for the Confirm/Cancel controls (APC-26).
         **payment_reports.authorized_hold(lead),
+        # The cleaning hold's line on the money card (APC-95).
+        **payment_reports.cleaning_hold(lead),
         "wedding_open": request.GET.get("wedding") == "1",
         "reservations": reservations,
         "la_sync_rows": la_sync_rows,

@@ -343,3 +343,80 @@ def test_bill_to_account_lock_names_only_the_lead_row(django_assert_max_num_quer
     ]
     assert joined_locks, "the lead lock with its contact join was not exercised"
     assert all("FOR UPDATE OF" in sql for sql in joined_locks)
+
+
+# --- the cleaning hold (APC-95) ----------------------------------------------------------
+# Spec §2: an order billed to an account is never held. Moving one releases its hold.
+
+
+def _cleaning_hold(lead, **kw):
+    from apps.payments.factories import PaymentPlanFactory
+    from apps.payments.models import Charge
+
+    plan = PaymentPlanFactory(lead=lead)
+    return plan.charges.create(
+        kind=Charge.Kind.HOLD,
+        amount=Decimal("500.00"),
+        status=Charge.Status.AUTHORIZED,
+        stripe_payment_intent_id="pi_hold",
+        idempotency_key="k-hold",
+        note="Cleaning hold",
+        **kw,
+    )
+
+
+def test_bill_to_account_releases_the_cleaning_hold():
+    from unittest.mock import patch
+
+    from apps.payments.models import Charge
+
+    lead, group = _order()
+    hold = _cleaning_hold(lead)
+
+    with patch("apps.payments.services._stripe") as stripe:
+        services.bill_to_account(lead, group, po_number="", user=None)
+
+    stripe.return_value.PaymentIntent.cancel.assert_called_once_with("pi_hold")
+    hold.refresh_from_db()
+    assert (hold.status, hold.note) == (Charge.Status.RELEASED, "billed to an account")
+    assert Lead.objects.get(pk=lead.pk).on_account
+
+
+def test_a_cleaning_hold_stripe_will_not_release_stops_the_switch():
+    from unittest.mock import MagicMock, patch
+
+    import stripe as stripe_lib
+
+    from apps.payments.models import Charge
+
+    lead, group = _order()
+    hold = _cleaning_hold(lead)
+
+    with patch("apps.payments.services._stripe") as stripe:
+        stripe.return_value.PaymentIntent.cancel.side_effect = stripe_lib.error.APIConnectionError(
+            "x"
+        )
+        stripe.return_value.PaymentIntent.retrieve.return_value = MagicMock(
+            status="requires_capture"
+        )
+        with pytest.raises(BillingError, match="A cleaning hold is on the card"):
+            services.bill_to_account(lead, group, po_number="", user=None)
+
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.AUTHORIZED
+    assert not Lead.objects.get(pk=lead.pk).on_account
+
+
+def test_a_cleaning_hold_captured_at_stripe_stops_the_switch():
+    """Money moved at Stripe and no trip has booked it yet: never billed twice."""
+    from unittest.mock import patch
+
+    lead, group = _order()
+    _cleaning_hold(lead, captured_at=timezone.now())
+
+    with patch("apps.payments.services._stripe") as stripe:
+        with pytest.raises(BillingError, match="cleaning hold was taken"):
+            services.bill_to_account(lead, group, po_number="", user=None)
+
+    stripe.return_value.PaymentIntent.cancel.assert_not_called()
+    assert not Lead.objects.get(pk=lead.pk).on_account

@@ -32,9 +32,9 @@ from apps.payments.views import stripe_webhook
 from apps.public.sitemaps import StaticViewSitemap
 from apps.reservations.public_views import (
     affiliate_trip_confirm,
+    order_trip_confirm,
     trip_confirm,
     wedding_details,
-    wedding_trip_confirm,
 )
 from apps.tasks import views as task_views
 
@@ -91,7 +91,9 @@ urlpatterns = [
     # reservation-lifecycle acknowledgement pages (token-keyed, no login) — APC-18/19/20
     path("trip/<str:token>/", trip_confirm, name="trip_confirm"),
     path("trip/affiliate/<str:token>/", affiliate_trip_confirm, name="affiliate_trip_confirm"),
-    path("trip/w/<str:token>/", wedding_trip_confirm, name="wedding_trip_confirm"),
+    path("trip/o/<str:token>/", order_trip_confirm, name="order_trip_confirm"),
+    # The APC-94 wedding route: links already sent still open (same token, same page).
+    path("trip/w/<str:token>/", order_trip_confirm, name="wedding_trip_confirm"),
     path("wedding/<str:token>/details/", wedding_details, name="wedding_details"),
     # integrations + webhooks + cron — unchanged
     path("integrations/", include("apps.integrations.urls")),

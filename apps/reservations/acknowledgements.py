@@ -41,16 +41,18 @@ def trip_day_ack_url(contact, day, *, base_url: str = "") -> str:
     return f"{base_url}{reverse('trip_confirm', args=[token])}"
 
 
-# --- wedding trip confirmation + fee acknowledgment (APC-94) -----------------------------
-# Keyed on the order + the date, not the booking contact: the wedding's confirmation goes
-# to the billing contact and carries the cleaning-fee / overtime acknowledgment, so it must
-# never share a link with the booker's other orders that day (a planner holding the
-# booker's link would otherwise be able to acknowledge for the couple).
-def make_wedding_day_ack_token(lead, day) -> str:
+# --- order-keyed trip confirmation + fee acknowledgment (APC-94 weddings, APC-95 held) ----
+# Keyed on the order + the date, not the booking contact: a wedding's confirmation, and any
+# held order's (a vehicle with a cleaning fee), goes to the billing contact and carries the
+# cleaning-fee / overtime acknowledgment, so it must never share a link with the booker's
+# other orders that day (a planner holding the booker's link would otherwise be able to
+# acknowledge for the payer). The salt is the original wedding one: links already sent
+# keep working.
+def make_order_day_ack_token(lead, day) -> str:
     return signing.dumps({"lead": lead.pk, "date": day.isoformat()}, salt=_WEDDING_DAY_ACK_SALT)
 
 
-def read_wedding_day_ack_token(token: str):
+def read_order_day_ack_token(token: str):
     """Returns ``(lead, date)``. Raises BadSignature on a forged or foreign token."""
     from apps.leads.models import Lead
 
@@ -58,9 +60,15 @@ def read_wedding_day_ack_token(token: str):
     return Lead.objects.get(pk=data["lead"]), date.fromisoformat(data["date"])
 
 
-def wedding_day_ack_url(lead, day, *, base_url: str = "") -> str:
-    token = make_wedding_day_ack_token(lead, day)
-    return f"{base_url}{reverse('wedding_trip_confirm', args=[token])}"
+def order_day_ack_url(lead, day, *, base_url: str = "") -> str:
+    token = make_order_day_ack_token(lead, day)
+    return f"{base_url}{reverse('order_trip_confirm', args=[token])}"
+
+
+# The APC-94 names, for callers and tests written against them.
+make_wedding_day_ack_token = make_order_day_ack_token
+read_wedding_day_ack_token = read_order_day_ack_token
+wedding_day_ack_url = order_day_ack_url
 
 
 # --- affiliate trip confirmation (APC-20) -----------------------------------------------

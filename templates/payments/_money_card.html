@@ -6,8 +6,9 @@
   Shared by the quote workspace (leads/lead_detail.html) and the order page
   (orders/order_detail.html) so an order's money reads the same in sales and in ops.
   Requires from the view: lead, payment, balances, ledger_entries, reservations, charges,
-  stripe_pk, the authorized-hold keys (payments.reports.authorized_hold) and the "Paid by"
-  keys (billing.selectors.paid_by_context). The actions inside gate themselves on
+  stripe_pk, the authorized-hold keys (payments.reports.authorized_hold), the cleaning-hold
+  keys (payments.reports.cleaning_hold) and the "Paid by" keys
+  (billing.selectors.paid_by_context). The actions inside gate themselves on
   `user.has_payments_access`.
 {% endcomment %}
   <!-- Payments & Ledger -->
@@ -23,7 +24,7 @@
         <button type="button" class="text-[12px] font-medium text-goldd hover:underline focus-visible:underline disabled:opacity-50" :disabled="busy" @click="send()" x-text="busy ? 'Sending…' : 'Send terms link'">Send terms link</button>
       </span>
       {% endif %}
-      {% if lead.is_wedding %}
+      {% if lead.is_wedding or hold_eligible %}
         {% if lead.fees_acknowledged_at %}
         <span class="text-[12px] text-muted ml-3" title="The billing contact acknowledged the cleaning fee and the overtime rule on the 72-hour confirmation">· Cleaning fee and overtime acknowledged {{ lead.fees_acknowledged_on }} · v{{ lead.fees_acknowledged_version }}</span>
         {% elif lead.status == 'booked' %}
@@ -150,6 +151,10 @@
         </div>
       {% else %}
         <p class="text-[12.5px] text-muted">No deposit requested yet — a 50% deposit plan is created when the quote is sent.</p>
+      {% endif %}
+      {% if hold_state %}
+      {% comment %} APC-95: the order's one cleaning hold. Times read in the first held trip's zone. {% endcomment %}
+      <p class="text-[12px] mt-3 {% if hold_state == 'declined' or hold_state == 'not placed' %}text-rose-600{% else %}text-muted{% endif %}">Cleaning hold{% if hold_amount %} ${{ hold_amount|floatformat:2|intcomma }}{% endif %}{% if hold_card %} · {{ hold_card }}{% endif %}{% if hold_placed_at %} · placed {{ hold_placed_at }} {{ hold_tz_label }}{% endif %}{% if hold_detail %} — {{ hold_detail }}{% endif %}</p>
       {% endif %}
     </div>
 

@@ -952,8 +952,9 @@ def test_run_cost_per_row_is_constant():
 # Measured at 101 for ten rows, about nine each: claim it; one read of its own and its day's
 # Deliveries; the confirmation's day group (read once per send) with its stops; the old
 # engine's sends that day; two Delivery inserts; the TouchPoint save; and for half the rows
-# the message pointer. The batch itself costs about ten.
-PER_ROW = 9
+# the message pointer. The batch itself costs about ten. APC-95 adds one read per
+# confirmation: whether its order is held (a cleaning-fee vehicle), cached for the send.
+PER_ROW = 10
 QUERY_BUDGET = 10 * PER_ROW + 15
 
 

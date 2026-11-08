@@ -1235,6 +1235,8 @@ class ProcessingEvent(TimeStampedModel):
         # found already let go by the bank (the fee was then collected the normal way).
         HOLD_CAPTURED = "hold_captured", "Cleaning hold captured"
         HOLD_LAPSED = "hold_lapsed", "Cleaning hold lapsed"
+        # Another trip on the order captured the hold first (one capture per hold).
+        HOLD_USED = "hold_used", "Cleaning hold already used"
 
     review = models.ForeignKey(TripReview, related_name="events", on_delete=models.CASCADE)
     kind = models.CharField(max_length=20, choices=Kind.choices)
@@ -1256,6 +1258,28 @@ class ProcessingEvent(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()} · {self.review.reservation.reference}"
+
+
+class TripReviewPhoto(TimeStampedModel):
+    """A photo kept on a trip's review (APC-95, spec §5): the evidence for a cleaning fee,
+    added from the processing pane. Images only; stored on the default storage (S3 in
+    prod)."""
+
+    review = models.ForeignKey(TripReview, related_name="photos", on_delete=models.CASCADE)
+    image = models.ImageField(upload_to="trip-reviews/%Y/%m/")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta:
+        ordering = ("created_at", "pk")
+
+    def __str__(self) -> str:
+        return f"Photo · {self.review.reservation.reference}"
 
 
 def _local_display(moment: datetime | None) -> str:

@@ -476,3 +476,108 @@ def test_the_hold_row_carries_its_quickbooks_state_in_the_pane(client, agent):
     assert "Customer is inactive." in body
     assert reverse("charge_qbo_sync", args=[hold.pk]) in body
     assert qbo_receipts.sync_state(hold, connected=True) is not None
+
+
+# --- Task 5 ride-alongs ----------------------------------------------------------------------
+
+
+def test_a_hold_another_trip_just_used_falls_through_to_the_card(agent):
+    """Two trips on one order processed at once: the other won the capture. This trip's
+    read of the hold was AUTHORIZED, the locked re-read is not, so its fee goes on the card
+    the normal way instead of stopping the processing."""
+    lead, plan, (first, second), hold = _order(2)
+    first = _dirty(first, "250.00")
+    stale = Charge.objects.get(pk=hold.pk)
+    hold.status = Charge.Status.SUCCEEDED
+    hold.reservation = second
+    hold.captured_at = timezone.now()
+    hold.save(update_fields=["status", "reservation", "captured_at"])
+
+    with (
+        patch("apps.payments.holds.current_hold", return_value=stale),
+        patch.object(stripe.PaymentIntent, "capture", side_effect=_never) as capture,
+        patch.object(
+            stripe.PaymentIntent, "create", return_value=_intent("pi_trip", amount=25000)
+        ) as create,
+        patch.object(
+            stripe.PaymentIntent, "retrieve", return_value=_intent("pi_trip", amount=25000)
+        ),
+    ):
+        review = processing.process(first, user=agent, expected="250.00", collect="card")
+
+    capture.assert_not_called()
+    assert create.call_args.kwargs["amount"] == 25000
+    assert review.is_processed and _diff(first) == Decimal("0.00")
+    assert _kinds(first) == ["hold_used", "charged", "processed"]
+    assert review.events.first().note == "Cleaning hold already used; charged normally"
+    hold.refresh_from_db()
+    assert hold.reservation == second
+
+
+def test_history_shows_when_the_hold_was_captured_not_placed(client, agent):
+    client.force_login(agent)
+    lead, plan, trip, hold = _captured(agent)
+    placed = timezone.now() - timedelta(days=2)
+    Charge.objects.filter(pk=hold.pk).update(created_at=placed)
+    hold.refresh_from_db()
+
+    body = client.get(reverse("processing"), {"trip": trip.pk, "view": "processed"})
+    body = body.content.decode()
+
+    def clock(moment):
+        local = timezone.localtime(moment, ZoneInfo(trip.pickup_timezone))
+        return f"{local:%b} {local.day}, {local:%-I:%M %p}"
+
+    charges = body.split("Charges on this trip", 1)[1].split("History", 1)[0]
+    assert clock(hold.captured_at) in charges
+    assert clock(placed) not in charges
+
+
+def test_retrying_the_trip_after_a_capture_charges_only_the_remainder(agent):
+    """$650 line: the $500 capture succeeds, the $150 card charge is declined. The retry
+    owes $150, charges that, and never captures again."""
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, "650.00")
+    declined = stripe.error.CardError("Your card was declined.", "card", "card_declined")
+
+    with (
+        patch.object(stripe.PaymentIntent, "capture", return_value=_intent(amount=50000)),
+        patch.object(stripe.PaymentIntent, "create", side_effect=declined),
+    ):
+        with pytest.raises(processing.ProcessingError):
+            processing.process(trip, user=agent, expected="650.00", collect="card")
+
+    hold.refresh_from_db()
+    assert (hold.status, hold.amount) == ("succeeded", Decimal("500.00"))
+    assert _diff(trip) == Decimal("150.00")
+    assert not TripReview.objects.get(reservation=trip).is_processed
+
+    with (
+        patch.object(stripe.PaymentIntent, "capture", side_effect=_never) as capture,
+        patch.object(
+            stripe.PaymentIntent, "create", return_value=_intent("pi_trip2", amount=15000)
+        ) as create,
+        patch.object(
+            stripe.PaymentIntent, "retrieve", return_value=_intent("pi_trip2", amount=15000)
+        ),
+    ):
+        review = processing.process(trip, user=agent, expected="150.00", collect="card")
+
+    capture.assert_not_called()
+    assert create.call_args.kwargs["amount"] == 15000
+    assert review.is_processed and _diff(trip) == Decimal("0.00")
+    assert JournalEntry.objects.filter(charge=hold).count() == 1
+
+
+def test_a_pay_link_with_outbound_off_is_refused_before_the_capture(agent, settings):
+    settings.OUTBOUND_ENABLED = False
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, "650.00")
+
+    with patch.object(stripe.PaymentIntent, "capture", side_effect=_never) as capture:
+        with pytest.raises(processing.ProcessingError, match="Outbound messaging is off"):
+            processing.process(trip, user=agent, expected="650.00", collect="link")
+
+    capture.assert_not_called()
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.AUTHORIZED

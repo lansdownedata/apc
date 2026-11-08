@@ -99,9 +99,10 @@ _DESCRIPTIONS: dict[str, list[str]] = {
     ],
     **{
         key: [
-            "Weddings go to the billing contact only, with the acknowledgment link",
-            "A wedding's notice never stands in for the booker's other trips that day",
-            "Skips a day already confirmed (for a wedding, once the fees are acknowledged too)",
+            "Weddings and orders with a cleaning-fee vehicle go to the billing contact only,"
+            " with the acknowledgment link",
+            "Their notice never stands in for the booker's other trips that day",
+            "Skips a day already confirmed (for those orders, once the fees are acknowledged too)",
         ]
         for key in CONFIRMS
     },
@@ -223,6 +224,29 @@ def _is_wedding(reservation) -> bool:
     from apps.reservations.services import is_wedding_trip
 
     return is_wedding_trip(reservation)
+
+
+def _order_keyed(reservation, cache: dict | None = None) -> bool:
+    """A trip confirmed through its order's own link, by the billing contact, with the fee
+    acknowledgment: a wedding's (APC-94), or any held order's (APC-95, a vehicle with a
+    cleaning fee on a booked card order). `cache` (lead id → held) spares a read per trip
+    when a caller asks for many trips."""
+    from apps.payments import holds
+
+    if _is_wedding(reservation):
+        return True
+    if cache is not None and reservation.lead_id in cache:
+        return cache[reservation.lead_id]
+    held = holds.eligible(reservation.lead)
+    if cache is not None:
+        cache[reservation.lead_id] = held
+    return held
+
+
+def _held_cache(tp: TouchPoint) -> dict | None:
+    """`_order_keyed`'s cache for one send (the sender's `send_cache`), None outside one."""
+    cache = getattr(tp, "send_cache", None)
+    return cache.setdefault("held", {}) if cache is not None else None
 
 
 def confirmed_assignment(reservation):
@@ -376,9 +400,9 @@ def _review_hold_reason(lead) -> str:
 
 
 def confirm_group(tp: TouchPoint) -> list:
-    """The trips one customer confirmation covers. A wedding's covers its own order that
-    day; any other covers the rest of the booker's day, wedding trips left out, so the two
-    never stand in for each other.
+    """The trips one customer confirmation covers. An order-keyed one (a wedding or a held
+    order, `_order_keyed`) covers its own order that day; any other covers the rest of the
+    booker's day, order-keyed trips left out, so the two never stand in for each other.
 
     Read once per send: the sender gives the TouchPoint a `send_cache` dict for the length
     of one `deliver`, which this fills; without one it is read fresh every time."""
@@ -388,10 +412,13 @@ def confirm_group(tp: TouchPoint) -> list:
     if cache is not None and "confirm_group" in cache:
         return cache["confirm_group"]
     day = tp.reservation.pickup_date
-    if _is_wedding(tp.reservation):
+    held = _held_cache(tp)
+    if held is None:
+        held = {}
+    if _order_keyed(tp.reservation, held):
         group = wedding_day_group(tp.lead, day)
     else:
-        group = [t for t in trip_day_group(tp.lead.contact, day) if not _is_wedding(t)]
+        group = [t for t in trip_day_group(tp.lead.contact, day) if not _order_keyed(t, held)]
     if cache is not None:
         cache["confirm_group"] = group
     return group
@@ -399,7 +426,9 @@ def confirm_group(tp: TouchPoint) -> list:
 
 def _day_confirmed(tp: TouchPoint) -> bool:
     group = confirm_group(tp)
-    fees_owed = _is_wedding(tp.reservation) and tp.lead.fees_acknowledged_at is None
+    fees_owed = tp.lead.fees_acknowledged_at is None and _order_keyed(
+        tp.reservation, _held_cache(tp)
+    )
     return bool(group) and all(t.customer_confirmed_at is not None for t in group) and not fees_owed
 
 
@@ -590,15 +619,16 @@ def recipients_for(
 ) -> list[Recipient]:
     """The resolved recipients after the built-in override.
 
-    A wedding's trip confirmations go to the billing contact only (APC-94): that page
-    carries the fee acknowledgment the client wants from whoever pays, and a planner's tick
-    must never count as the customer's. A farmed-in order keeps its operator (spec section 4).
+    A wedding's or a held order's trip confirmations go to the billing contact only (APC-94,
+    APC-95): that page carries the fee acknowledgment the client wants from whoever pays,
+    and a planner's tick must never count as the customer's. A farmed-in order keeps its
+    operator (spec section 4).
     """
     if (
         has_built_ins(row)
         and row.key in CONFIRMS
         and tp.reservation is not None
-        and _is_wedding(tp.reservation)
+        and _order_keyed(tp.reservation, _held_cache(tp))
         and not tp.lead.is_farm_in
     ):
         return [_person(tp.lead.effective_billing_contact, "billing contact")]
@@ -622,11 +652,11 @@ def _billing_else_booking(lead, resolved: list[Recipient]) -> list[Recipient]:
 
 def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
     """What a send on a combining trigger is keyed on per address: the trip's local pickup
-    date for a row that combines (`combines_per_day`), a wedding's confirmation adding its
-    order; the trip as well for one that sends per trip. The wedding details request is
-    keyed on its order alone: its answers belong to the order, so the first leg's send
-    covers every leg, whatever day each is on (APC-124). Empty for a row whose trigger
-    doesn't combine."""
+    date for a row that combines (`combines_per_day`), an order-keyed confirmation (a
+    wedding's or a held order's) adding its order; the trip as well for one that sends per
+    trip. The wedding details request is keyed on its order alone: its answers belong to the
+    order, so the first leg's send covers every leg, whatever day each is on (APC-124).
+    Empty for a row whose trigger doesn't combine."""
     trigger = triggers.CATALOG.get(row.trigger)
     res = tp.reservation
     if trigger is None or not trigger.combine or res is None or res.pickup_date is None:
@@ -636,7 +666,7 @@ def combine_key(tp: TouchPoint, row: MessageTemplate) -> str:
     day = res.pickup_date.isoformat()
     if not combines_per_day(row):
         return f"{day}:trip:{res.pk}"
-    if has_built_ins(row) and row.key in CONFIRMS and _is_wedding(res):
+    if has_built_ins(row) and row.key in CONFIRMS and _order_keyed(res, _held_cache(tp)):
         return f"{day}:wedding:{tp.lead_id}"
     return day
 
@@ -646,8 +676,8 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
     from apps.leads.services import make_pay_page_url, make_quote_page_url
     from apps.reservations.acknowledgements import (
         affiliate_ack_url,
+        order_day_ack_url,
         trip_day_ack_url,
-        wedding_day_ack_url,
         wedding_details_url,
     )
 
@@ -670,7 +700,7 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
         assignment = confirmed_assignment(res)
         if assignment is not None:
             ctx["ack_link"] = affiliate_ack_url(assignment, base_url=base_url)
-    elif key in CONFIRMS and _is_wedding(res):
-        ctx["confirm_link"] = wedding_day_ack_url(lead, res.pickup_date, base_url=base_url)
+    elif key in CONFIRMS and _order_keyed(res, _held_cache(tp)):
+        ctx["confirm_link"] = order_day_ack_url(lead, res.pickup_date, base_url=base_url)
     elif row.audience != row.Audience.AFFILIATE:
         ctx["confirm_link"] = trip_day_ack_url(lead.contact, res.pickup_date, base_url=base_url)

@@ -9,4 +9,5 @@ urlpatterns = [
     path("trip/<int:pk>/charge/", views.processing_add_charge, name="processing_add_charge"),
     path("trip/<int:pk>/refund/", views.processing_refund, name="processing_refund"),
     path("trip/<int:pk>/status/", views.processing_set_status, name="processing_set_status"),
+    path("trip/<int:pk>/photos/", views.processing_photos, name="processing_photos"),
 ]

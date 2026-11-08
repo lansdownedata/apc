@@ -203,6 +203,9 @@ def _pane(request, trip) -> dict:
     allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
     return {
         "hold": _hold_for(trip),
+        # APC-95: a cleaning fee's evidence, kept on the review.
+        "photos": list(review.photos.select_related("uploaded_by")),
+        "can_add_photos": processing.has_cleaning_line(trip),
         "review": review,
         "prepaid": allocation,
         "paid_for_trip": money.allocated,
@@ -347,6 +350,19 @@ def processing_refund(request: HttpRequest, pk: int) -> JsonResponse:
         amount=refunded,
     )
     return JsonResponse({"ok": True, "amount": f"{refunded:.2f}"})
+
+
+@login_required
+@payment_access_required
+@require_POST
+def processing_photos(request: HttpRequest, pk: int) -> JsonResponse:
+    """Photos for a trip with a cleaning fee (APC-95, spec §5): several images at once."""
+    trip = _trip(pk)
+    try:
+        photos = processing.add_photos(trip, request.FILES.getlist("photos"), user=request.user)
+    except processing.ProcessingError as exc:
+        return _bad(str(exc))
+    return JsonResponse({"ok": True, "count": len(photos)})
 
 
 @login_required

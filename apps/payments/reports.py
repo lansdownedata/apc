@@ -163,6 +163,121 @@ def authorized_hold(lead, now=None) -> dict:
     }
 
 
+def cleaning_hold(lead) -> dict:
+    """The order's cleaning hold on the money card (APC-95, spec §5), flattened like
+    `authorized_hold`: the amount, the card, when it was placed (in the first held trip's
+    zone, with its abbreviation) and what became of it. `hold_state` is one of "placed",
+    "pending", "released", "captured", "expired", "declined" (the card said no) and
+    "not placed" (no card on file, or a hold Stripe would not make); `hold_detail` is the
+    sentence after the dash. Every value is blank for an order with no hold.
+
+    `hold_eligible` says whether the order is held at all, so the card can show the fee
+    acknowledgment the held order's confirmation asks for."""
+    from . import holds
+
+    blank = {
+        "hold_amount": None,
+        "hold_card": "",
+        "hold_placed_at": "",
+        "hold_tz_label": "",
+        "hold_state": "",
+        "hold_detail": "",
+    }
+    eligible = holds.eligible(lead)
+    hold = holds.any_hold(lead)
+    if hold is None:
+        if not eligible or not _hold_task_open(lead):
+            return {**blank, "hold_eligible": eligible}
+        # No card on file: no row was made, only the task.
+        return {
+            **blank,
+            "hold_amount": holds.hold_amount(lead),
+            "hold_state": "not placed",
+            "hold_detail": "could not be placed: no card on file",
+            "hold_eligible": eligible,
+        }
+    state, detail = _hold_outcome(hold)
+    placed, tz_label = "", ""
+    if hold.authorized_at is not None:
+        placed, tz_label = _in_trip_zone(hold.authorized_at, _first_trip(lead))
+    return {
+        # A captured row carries what was taken; the line then leads with the capture.
+        "hold_amount": None if state == "captured" else hold.amount,
+        "hold_card": _card_label(hold),
+        "hold_placed_at": placed,
+        "hold_tz_label": tz_label,
+        "hold_state": state,
+        "hold_detail": detail,
+        "hold_eligible": eligible,
+    }
+
+
+def _hold_task_open(lead) -> bool:
+    from apps.tasks.models import Task
+
+    from . import holds
+
+    return Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()
+
+
+def _hold_outcome(hold: Charge) -> tuple[str, str]:
+    from . import holds
+
+    S = Charge.Status
+    if hold.status == S.PENDING:
+        return "pending", "waiting on Stripe"
+    if hold.status == S.AUTHORIZED and hold.captured_at is None:
+        return "placed", ""
+    if hold.status == S.AUTHORIZED:
+        return "captured", f"captured ${hold.amount:,.2f}, not yet booked to a trip"
+    if hold.status == S.SUCCEEDED:
+        trip = f" for trip {hold.reservation.reference}" if hold.reservation_id else ""
+        return "captured", f"captured ${hold.amount:,.2f}{trip}"
+    if hold.status == S.RELEASED:
+        why = hold.note if hold.note and hold.note != "Cleaning hold" else ""
+        return "released", f"released: {why}" if why else "released"
+    if hold.status == S.EXPIRED:
+        return "expired", "expired at the bank"
+    reason = hold.failure_reason or "unknown reason"
+    if hold.note == holds.DECLINED_NOTE:
+        return "declined", f"declined: {reason}"
+    return "not placed", f"could not be placed: {reason}"
+
+
+def _first_trip(lead):
+    """The trip whose zone the hold's times read in: the first held trip, else the
+    order's first trip (its held trips may all be cancelled by now)."""
+    from . import holds
+
+    held = holds.held_trips(lead)
+    if held:
+        return held[0]
+    return lead.reservations.order_by("pickup_date", "pickup_time", "pk").first()
+
+
+def _in_trip_zone(moment, trip) -> tuple[str, str]:
+    """`("Nov 8, 3:02 AM", "PST")`: `moment` on the trip's wall clock, and that zone's
+    abbreviation at that moment. A blank or unknown zone is TIME_ZONE."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from django.utils import dateformat
+
+    try:
+        zone = ZoneInfo((trip.pickup_timezone if trip else "") or settings.TIME_ZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo(settings.TIME_ZONE)
+    local = moment.astimezone(zone)
+    return dateformat.format(local, "M j, g:i A"), local.tzname() or ""
+
+
+def _card_label(hold: Charge) -> str:
+    """The card the hold sits on: the row's own snapshot, else the plan's card."""
+    brand, last4 = hold.card_brand, hold.card_last4
+    if not last4:
+        brand, last4 = hold.plan.card_brand, hold.plan.card_last4
+    return f"{brand.title()} ••{last4}" if last4 else ""
+
+
 def unpaid_deposit_leads(today: date | None = None):
     """Booked orders whose deposit isn't paid and whose earliest pickup is inside the
     balance window (`today + BALANCE_CHARGE_DAYS_BEFORE`), annotated with `earliest`.

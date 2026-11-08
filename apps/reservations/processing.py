@@ -453,6 +453,12 @@ def process(
     if money.difference > 0 and collect not in ("card", "link", "invoice"):
         # Before the hold is touched: a capture must never be the only step that ran.
         raise ProcessingError("Charge the card or send a payment link.")
+    if money.difference > 0 and collect == "link":
+        from apps.core import outbound
+
+        # The same: a link that can't be sent must stop us before any capture.
+        if not outbound.enabled():
+            raise ProcessingError(outbound.OFF_MESSAGE)
 
     if not on_account:
         try:
@@ -462,6 +468,10 @@ def process(
         except holds.HoldLapsed:
             # The bank let it go first: nothing was taken, the fee is collected below.
             record(ProcessingEvent.Kind.HOLD_LAPSED, None, note=HOLD_LAPSED_NOTE)
+        except holds.HoldUsed:
+            # Another trip on the order captured it between our read and the lock: nothing
+            # was taken by us, the fee is collected below.
+            record(ProcessingEvent.Kind.HOLD_USED, None, note=HOLD_USED_NOTE)
         except payments.PaymentError as exc:
             # Never fall through to the card: an unknown capture may still have taken it.
             raise ProcessingError(str(exc)) from exc
@@ -479,10 +489,7 @@ def process(
                 charge = trip_money.charge_trip(trip, money.difference)
                 record(ProcessingEvent.Kind.CHARGED, money.difference, charge)
             elif collect == "link":
-                from apps.core import outbound
-
-                if not outbound.enabled():
-                    raise ProcessingError(outbound.OFF_MESSAGE)
+                # Outbound was checked before the hold step.
                 trip_money.open_trip_intent(trip, money.difference)
                 payments.send_pay_link(trip.lead, base_url=base_url, sender_name=sender_name)
                 record(ProcessingEvent.Kind.PAY_LINK_SENT, money.difference)
@@ -563,7 +570,52 @@ def process(
     return review
 
 
+PHOTO_MAX_BYTES = 10 * 1024 * 1024
+
+
+def has_cleaning_line(trip) -> bool:
+    """The trip carries a cleaning-fee line (APC-95): its review can then take photos."""
+    from .models import TripExtra
+
+    return any(e.kind == TripExtra.Kind.CLEANING for e in trip.extras.all())
+
+
+def add_photos(trip, files, *, user) -> list:
+    """Keep `files` on the trip's review as photos (APC-95, spec §5). Only on a trip with a
+    cleaning-fee line; images only (Pillow must read each one), at most `PHOTO_MAX_BYTES`
+    each. One bad file refuses the whole batch, so nothing half-uploads."""
+    from django import forms
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+
+    from . import reviews
+    from .models import TripReviewPhoto
+
+    if not workable(trip):
+        raise ProcessingError("This trip can't be processed.")
+    if not files:
+        raise ProcessingError("Choose one or more photos.")
+    if not has_cleaning_line(trip):
+        raise ProcessingError("Photos go with a cleaning fee. Add the cleaning fee first.")
+    field = forms.ImageField()
+    for upload in files:
+        if upload.size > PHOTO_MAX_BYTES:
+            raise ProcessingError(f"{upload.name} is over 10 MB.")
+        try:
+            field.clean(upload)
+        except ValidationError:
+            raise ProcessingError(f"{upload.name} isn't an image. Photos only.") from None
+        upload.seek(0)
+    review = reviews.review_for(trip)
+    with transaction.atomic():
+        return [
+            TripReviewPhoto.objects.create(review=review, image=upload, uploaded_by=user)
+            for upload in files
+        ]
+
+
 HOLD_LAPSED_NOTE = "Cleaning hold had lapsed; charged normally"
+HOLD_USED_NOTE = "Cleaning hold already used; charged normally"
 
 
 def _take_cleaning_from_hold(trip, money, record) -> bool:

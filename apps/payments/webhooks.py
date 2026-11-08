@@ -59,6 +59,10 @@ def process_stripe_event(event) -> None:
         _payment_authorized(obj)
     elif etype == "payment_intent.payment_failed":
         _balance_failed(obj)
+    elif etype == "payment_intent.canceled":
+        # APC-95: only a cleaning hold reads this. Both endpoints (dev + prod) must
+        # subscribe to it, or a hold the bank drops stays AUTHORIZED until the sweep.
+        _hold_canceled(obj)
 
 
 def _payment_authorized(intent) -> None:
@@ -108,6 +112,27 @@ def _payment_succeeded(intent) -> None:
             services.record_payment(plan, intent["id"], kind=kind)
     except Exception:
         logger.exception("Payment reconcile failed for intent %s", intent.get("id"))
+
+
+def _hold_canceled(intent) -> None:
+    """The issuer (or Stripe) let a cleaning hold go before we captured it: EXPIRED, so a
+    cleaning fee found later is charged the normal way. `holds.mark_expired` leaves a hold
+    we released or captured ourselves as it is (our own cancel fires this event too)."""
+    if (intent.get("metadata") or {}).get("kind") != Charge.Kind.HOLD:
+        return
+    pi_id = intent.get("id")
+    if not pi_id:
+        return
+    from . import holds
+
+    hold = Charge.objects.filter(kind=Charge.Kind.HOLD, stripe_payment_intent_id=pi_id).first()
+    if hold is None:
+        return
+    with transaction.atomic():
+        # The plan first, as `release_hold` and `capture_hold` take it: a release still
+        # inside its Stripe call finishes before this reads the row, so RELEASED holds.
+        PaymentPlan.objects.select_for_update().get(pk=hold.plan_id)
+        holds.mark_expired(Charge.objects.select_for_update().get(pk=hold.pk))
 
 
 def _balance_failed(intent) -> None:

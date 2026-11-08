@@ -37,11 +37,21 @@ logger = logging.getLogger(__name__)
 
 TASK_KIND = "cleaning_hold_failed"
 UNBOOKED_TASK_KIND = "cleaning_hold_unbooked"
+# A FAILED row's note says which failure it was: the card said no, or the hold could never
+# be made (an intent Stripe would not leave awaiting capture, a key conflict, no answer).
+DECLINED_NOTE = "Cleaning hold declined"
+UNPLACEABLE_NOTE = "Cleaning hold could not be placed"
 
 
 class HoldLapsed(services.PaymentError):
     """The bank let the hold go before we captured it: nothing was taken, so the fee is
     collected the normal way."""
+
+
+class HoldUsed(services.PaymentError):
+    """No AUTHORIZED hold to capture by the time the row was locked (another trip on the
+    order captured it first, or it was released): nothing was taken by this call, so the
+    fee is collected the normal way."""
 
 
 # --- which orders are held ------------------------------------------------------------------
@@ -64,11 +74,12 @@ def eligible(lead) -> bool:
     """Booked, a card order (not farmed in, not billed to an account), with a held trip."""
     from apps.leads.models import Lead
 
+    # The free checks first, then one read for the trips; the company only for a held one.
     return (
         lead.status == Lead.Status.BOOKED
-        and not lead.is_farm_in
         and not lead.on_account
         and bool(held_trips(lead))
+        and not lead.is_farm_in
     )
 
 
@@ -139,7 +150,7 @@ def place_hold(lead, *, now=None) -> Charge | None:
     except (stripe.error.CardError, stripe.error.InvalidRequestError) as exc:
         # The card said no, or the saved card is gone: a decline, recorded and not retried.
         reason = (getattr(exc, "user_message", None) or str(exc))[:255]
-        return _fail(lead, charge, reason, f"Cleaning hold declined: {reason}")
+        return _fail(lead, charge, reason, f"{DECLINED_NOTE}: {reason}", note=DECLINED_NOTE)
     except stripe.error.IdempotencyError as exc:
         # The key was reused for a different request: the re-send can never finish.
         logger.error("cleaning hold: idempotency conflict for charge %s: %s", charge.pk, exc)
@@ -174,17 +185,19 @@ def place_hold(lead, *, now=None) -> Charge | None:
     return charge
 
 
-def _fail(lead, charge: Charge, reason: str, title: str) -> Charge:
-    """Record the hold FAILED (the cron stops trying it) and tell staff, once."""
+def _fail(lead, charge: Charge, reason: str, title: str, *, note: str) -> Charge:
+    """Record the hold FAILED (the cron stops trying it) and tell staff, once. `note` is
+    `DECLINED_NOTE` or `UNPLACEABLE_NOTE`, so the money card can tell the two apart."""
     charge.status = Charge.Status.FAILED
     charge.failure_reason = reason[:255]
-    charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    charge.note = note
+    charge.save(update_fields=["status", "failure_reason", "note", "updated_at"])
     _hold_failed(lead, title, reason[:255])
     return charge
 
 
 def _unplaceable(lead, charge: Charge, state: str) -> Charge:
-    return _fail(lead, charge, state, f"Cleaning hold could not be placed: {state}")
+    return _fail(lead, charge, state, f"{UNPLACEABLE_NOTE}: {state}", note=UNPLACEABLE_NOTE)
 
 
 def _create_intent(plan: PaymentPlan, charge: Charge):
@@ -251,8 +264,9 @@ def _hold_failed(lead, title: str, reason: str) -> None:
 def capture_hold(trip, amount) -> Charge:
     """Take the cleaning fee for `trip` out of the hold: `min(amount, hold)` is captured
     (Stripe lets the rest go), the row is tagged with the trip and posted like a trip charge.
-    One capture per hold: anything but an AUTHORIZED hold raises `PaymentError`, and so does
-    a hold the bank already released (it is marked EXPIRED; charge the card instead)."""
+    One capture per hold: anything but an AUTHORIZED hold raises `HoldUsed`, and a hold the
+    bank already released raises `HoldLapsed` (it is marked EXPIRED). Both are
+    `PaymentError`s that took nothing: charge the card instead."""
     lead = trip.lead
     intent = None
     with transaction.atomic():
@@ -267,7 +281,7 @@ def capture_hold(trip, amount) -> Charge:
             .first()
         )
         if hold is None or hold.status != Charge.Status.AUTHORIZED:
-            raise services.PaymentError("No cleaning hold to capture.")
+            raise HoldUsed("No cleaning hold to capture.")
         if hold.captured_at is None:
             take = min(Decimal(amount), Decimal(hold.amount)).quantize(Decimal("0.01"))
             if take <= services.ZERO:

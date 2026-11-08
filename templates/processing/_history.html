@@ -12,7 +12,7 @@
   {% for c in trip_charges %}
   <div class="flex items-baseline gap-3 py-1">
     <span class="flex-1">{{ c.get_kind_display }}{% if c.note %} · {{ c.note }}{% endif %}{% if c.status != 'succeeded' %} <span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-ring">{{ c.get_status_display }}</span>{% endif %}</span>
-    <span class="text-[11.5px] text-muted num">{{ c.created_at|trip_clock:trip }}{% if c.kind == 'refund' and c.refund_method and c.refund_method != 'card' %} · {{ c.get_refund_method_display }}{% if c.reference %} {{ c.reference }}{% endif %}{% elif c.card_last4 %} · ••{{ c.card_last4 }}{% endif %}</span>
+    <span class="text-[11.5px] text-muted num">{% if c.kind == 'hold' and c.captured_at %}{{ c.captured_at|trip_clock:trip }}{% else %}{{ c.created_at|trip_clock:trip }}{% endif %}{% if c.kind == 'refund' and c.refund_method and c.refund_method != 'card' %} · {{ c.get_refund_method_display }}{% if c.reference %} {{ c.reference }}{% endif %}{% elif c.card_last4 %} · ••{{ c.card_last4 }}{% endif %}</span>
     {% if c.sync %}
     <span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
       {% include "billing/_sync_chip.html" with record=c synced_label="In QuickBooks" %}
@@ -25,6 +25,31 @@
     <span class="num w-24 text-right {% if c.kind == 'refund' %}text-rose-600{% endif %}">{% if c.kind == 'refund' %}−{% endif %}${{ c.amount|floatformat:2|intcomma }}</span>
   </div>
   {% endfor %}
+</section>
+{% endif %}
+{% if photos or can_add_photos and can_pay %}
+{% comment %} APC-95: the cleaning fee's evidence. Adding needs a cleaning-fee line and payments access. {% endcomment %}
+<section class="px-6 py-4 border-t border-line"{% if can_add_photos and can_pay %} x-data="reviewPhotos('{% url 'processing_photos' trip.pk %}')"{% endif %}>
+  <div class="flex items-center gap-3 mb-2">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted">Photos</p>
+    {% if can_add_photos and can_pay %}
+    <label class="ml-auto text-[12px] font-semibold rounded-lg px-2.5 py-1 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-within:ring-gold cursor-pointer" :class="busy && 'opacity-50 pointer-events-none'">
+      <input type="file" name="photos" multiple accept="image/*" class="sr-only" :disabled="busy" @change="upload($event.target)">
+      <span x-text="busy ? 'Uploading…' : 'Add photos'">Add photos</span>
+    </label>
+    {% endif %}
+  </div>
+  {% if photos %}
+  <div class="flex flex-wrap gap-2">
+    {% for photo in photos %}
+    <a href="{{ photo.image.url }}" target="_blank" rel="noopener" class="block rounded-lg focus-gold" title="Added {{ photo.created_at|trip_clock:trip }}{% if photo.uploaded_by %} by {% firstof photo.uploaded_by.get_full_name photo.uploaded_by.username %}{% endif %}">
+      <img src="{{ photo.image.url }}" alt="Trip photo {{ forloop.counter }}" loading="lazy" class="w-16 h-16 object-cover rounded-lg ring-1 ring-line">
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-[12.5px] text-muted">Optional. Photos of the vehicle back the cleaning fee.</p>
+  {% endif %}
 </section>
 {% endif %}
 {% if events %}

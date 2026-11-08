@@ -352,7 +352,7 @@ def test_a_wedding_confirmation_goes_to_the_billing_contact():
     assert send.call_args.kwargs["identifier"] == "+15715550002"
     body = send.call_args.kwargs["body"]
     assert "Pat" in body and "Casey" not in body  # greets who it is sent to
-    assert "https://apc.example.com/trip/w/" in body  # the wedding's own link
+    assert "https://apc.example.com/trip/o/" in body  # the order-keyed link (APC-95)
 
 
 @override_settings(PUBLIC_BASE_URL="https://apc.example.com")
