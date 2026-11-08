@@ -31,6 +31,7 @@ TOO_MANY_ROWS = (
     "This file has {n:,} rows. Import at most 1,000 at a time — split it into smaller files."
 )
 NO_ROWS = "This file has no rows to import."
+UPLOAD_MISSING = "The uploaded file couldn't be found. Upload it again."
 ROW_CRASHED = "Something went wrong reading row {row}. Nothing was saved."
 FILE_CRASHED = "Something went wrong reading this file. Nothing was saved."
 ALREADY_APPLIED = "This import was already applied."
@@ -109,12 +110,15 @@ def _import(run: ImportRun, screen: Screen, parsed: ParsedSheet, *, dry_run: boo
 def preview(run: ImportRun) -> None:
     """Dry-run the uploaded file and store its outcomes; a file problem fails the run."""
     screen = get_screen(run.screen)
-    if run.file.size > MAX_BYTES:
-        return _fail(run, TOO_BIG)
     try:
+        if run.file.size > MAX_BYTES:
+            return _fail(run, TOO_BIG)
         parsed = _read(run, screen)
     except FileError as exc:
         return _fail(run, str(exc))
+    except OSError:  # the stored object is gone
+        logger.warning("Import run %s: uploaded file missing from storage", run.pk)
+        return _fail(run, UPLOAD_MISSING)
     total = len(parsed.dataset) + len(parsed.row_errors)
     if total > MAX_ROWS:
         return _fail(run, TOO_MANY_ROWS.format(n=total))
@@ -171,9 +175,14 @@ def apply(run_pk: int) -> ImportRun:
 
 
 def export_rows(screen: Screen, filters, user) -> tuple[ImportRun, bytes]:
-    """The rows the screen shows for `filters`, as a workbook; every export is logged."""
+    """The rows the screen shows for `filters`, as a workbook; every export is logged.
+
+    The rows are evaluated once, as a list: handed a prefetched queryset, the library pages
+    it by IMPORT_EXPORT_CHUNK_SIZE (a COUNT, a page and a prefetch per chunk), so the query
+    count would grow with N and offset paging could skip or repeat a row edited mid-export.
+    """
     filters = screen.clean_filters(filters)
-    dataset = screen.resource().export(queryset=screen.queryset(filters))
+    dataset = screen.resource().export(queryset=list(screen.queryset(filters)))
     content = write_workbook(screen.spec(), dataset)
     run = ImportRun.objects.create(
         kind=ImportRun.Kind.EXPORT,

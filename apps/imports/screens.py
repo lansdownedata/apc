@@ -62,8 +62,8 @@ class Screen:
         return cleaned | {key: (raw.get(key) or "").strip() for key in rest}
 
     def queryset(self, filters) -> QuerySet:
-        """The rows the screen shows for `filters`, joined for the export, ordered by name."""
-        filters = self.clean_filters(filters)
+        """The rows the screen shows for `filters` (as `clean_filters` returns them), joined
+        for the export, ordered by name."""
         rows = self.directory(*(filters[key] for key in self.filter_keys))
         return self.resource.export_queryset(rows).order_by(Lower("name"), "pk")
 

@@ -251,6 +251,16 @@ def test_apply_refuses_applied_and_expired(fields, age, message):
     assert run.status == fields.get("status", ImportRun.Status.PREVIEWED)
 
 
+def test_preview_of_a_file_gone_from_storage_fails():
+    run = _upload(_sheet(["Name", "Email"], [["Sam", "sam@acme.test"]]))
+    default_storage.delete(run.file.name)
+    services.preview(run)
+    run.refresh_from_db()
+    assert run.status == ImportRun.Status.FAILED
+    assert run.error == "The uploaded file couldn't be found. Upload it again."
+    assert not Contact.objects.exists()
+
+
 @pytest.mark.parametrize("how", ["blanked", "gone-from-storage"])
 def test_apply_refuses_when_file_was_purged(how):
     run = _previewed(["Name", "Email"], [["Sam", "sam@acme.test"]])
@@ -393,15 +403,37 @@ def _contacts_with_everything(n: int) -> None:
         ContactPhone.objects.create(contact=contact, number=f"+1617555{1000 + i}")
 
 
+def _vendors_with_everything(n: int) -> None:
+    types = [VehicleTypeFactory(name=name) for name in ("Sedan", "SUV")]
+    for i in range(n):
+        vendor = VendorFactory(
+            email=f"v{i}@acme.test", address=AddressFactory(line1=f"{i} Main St")
+        )
+        vendor.vehicle_types.set(types)
+
+
 @pytest.mark.parametrize("n", [5, 20])
-def test_export_query_count_is_fixed(django_assert_num_queries, n):
-    _contacts_with_everything(n)
+@pytest.mark.parametrize(
+    ("screen", "make", "filters", "queries"),
+    [
+        # Contacts with company + address, their phones, the run's insert.
+        ("contacts", _contacts_with_everything, {"scope": "all"}, 3),
+        # Vendors with address, their vehicle types, the Accepted values types, the insert.
+        ("vendors", _vendors_with_everything, {"status": "all"}, 4),
+    ],
+)
+def test_export_query_count_is_fixed(
+    settings, django_assert_num_queries, screen, make, filters, queries, n
+):
+    """Fixed for any N, straddling the library's export chunk size (it pages a prefetched
+    queryset by chunk: a COUNT, a page and a prefetch per chunk)."""
+    settings.IMPORT_EXPORT_CHUNK_SIZE = 2
+    make(n)
     user = UserFactory()
-    screen = get_screen("contacts")
-    # Count, contacts with company + address, phones, then the run's insert.
-    with django_assert_num_queries(4):
-        run, _ = services.export_rows(screen, {"scope": "all"}, user)
+    with django_assert_num_queries(queries):
+        run, content = services.export_rows(get_screen(screen), filters, user)
     assert run.counts == {"rows": n}
+    assert len(_names(content, screen)) == n
 
 
 # --- round trip (spec §3.3, §5.3, §6.1, §11) ------------------------------------------------
