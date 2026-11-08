@@ -6,17 +6,20 @@ requestids, leases, one alert per failure, SYNCED only when nothing changed mid-
 * A card-paying contact becomes a QuickBooks **Customer** through its `CustomerLink`. A contact
   who owns a `BillingAccount` already in QuickBooks reuses that Customer and never gets a link —
   unless a link was pushed first, which then stays its customer (no second one is made).
-* A name QuickBooks already has is taken over only when it is exactly one Customer with the
-  same email (or both have none): two people can share a name, and a wrong takeover would put
-  one person's receipts on another's customer.
+* A name QuickBooks already has is taken over only when it is exactly one Customer, no other
+  record here carries it, and it has the same email (with none on either side, the same phone
+  or none): two people can share a name, and a wrong takeover would put one person's receipts
+  on another's customer.
 * Never call this inside an outer transaction — the client's token refresh is durable.
 """
 
 from __future__ import annotations
 
+import re
+
 from django.db.models import Exists, OuterRef, Q
 
-from apps.billing.models import BillingAccount, CustomerLink
+from apps.billing.models import AccountGroup, BillingAccount, CustomerLink
 from apps.billing.qbo_sync import DUPLICATE_NAME, _fault_code, current_realm
 from apps.integrations import qbo
 from apps.payments.qbo_bills import _leased, _Link, _push, _quoted, _Refused, _send, _stale
@@ -99,12 +102,33 @@ def _email(value) -> str:
     return (value or "").strip().lower()
 
 
+def _digits(value) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
+def _held(found: dict, key: str, field: str) -> str:
+    value = found.get(key)
+    return (value.get(field) if isinstance(value, dict) else "") or ""
+
+
 def _same_person(found: dict, contact) -> bool:
     """The Customer QuickBooks holds under this name is our contact: the same email, ignoring
-    case, or neither has one."""
-    held = found.get("PrimaryEmailAddr")
-    theirs = _email(held.get("Address") if isinstance(held, dict) else "")
-    return theirs == _email(contact.email)
+    case. With no email on either side, the same phone digits, or no phone on either side."""
+    theirs, ours = _email(_held(found, "PrimaryEmailAddr", "Address")), _email(contact.email)
+    if theirs or ours:
+        return theirs == ours
+    return _digits(_held(found, "PrimaryPhone", "FreeFormNumber")) == _digits(contact.phone)
+
+
+def _held_here(qbo_id: str, realm: str, link: CustomerLink) -> bool:
+    """Another record in this company already carries this Customer: a second link, a billing
+    account or a group. Taking it over would merge two of our customers into one."""
+    mine = {"qbo_id": qbo_id, "qbo_realm_id": realm}
+    return (
+        CustomerLink.objects.filter(**mine).exclude(pk=link.pk).exists()
+        or BillingAccount.objects.filter(**mine).exists()
+        or AccountGroup.objects.filter(**mine).exists()
+    )
 
 
 def _take_over_customer(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict:
@@ -117,7 +141,11 @@ def _take_over_customer(link: _Link, exc: qbo.QboAPIError, body: dict) -> dict:
     query = f"select * from Customer where DisplayName = {_quoted(record.display_name)}"
     rows = qbo.request("GET", "query", params={"query": query})
     found = rows.get("QueryResponse", {}).get("Customer", [])
-    if len(found) != 1 or not _same_person(found[0], record.contact):
+    if (
+        len(found) != 1
+        or not _same_person(found[0], record.contact)
+        or _held_here(str(found[0]["Id"]), current_realm(), record)
+    ):
         raise _Refused(
             f"QuickBooks already has a name like “{record.display_name}” (it may differ in"
             " case or spacing). Rename the customer here or there, then retry."
@@ -142,12 +170,15 @@ def _push_customer(record: CustomerLink) -> bool:
 
 def push_customer(link: CustomerLink) -> bool:
     """Create, take over or update the contact's QuickBooks Customer, holding the link's lease.
-    True when it is now in step; False (no call) while another push has it. Raises
-    SyncPaused / QboNotConnected."""
+    True when it is now in step; False (no call) while another push has it, or while the
+    contact's billing account is its Customer here. Raises SyncPaused / QboNotConnected."""
     with _leased(CustomerLink, link.pk, "qbo_push_started_at") as mine:
         if not mine:
             return False
         link.refresh_from_db()
+        realm = current_realm()
+        if not _linked_here(link, realm) and _account_customer(link.contact, realm):
+            return False  # the billing account's Customer is this contact's: none of its own
         return _push_customer(link)
 
 

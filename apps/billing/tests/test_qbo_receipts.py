@@ -14,6 +14,7 @@ from apps.billing import qbo_receipts
 from apps.billing.factories import BillingAccountFactory, CustomerLinkFactory
 from apps.billing.models import CustomerLink, QboAccountMapping, SyncState
 from apps.contacts.factories import ContactFactory
+from apps.contacts.models import Contact
 from apps.integrations import qbo
 from apps.notifications.models import Notification
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
@@ -309,3 +310,86 @@ def test_contact_edit_without_a_link_creates_none(client) -> None:
     client.force_login(UserFactory())
     client.post(reverse("contact_update", args=[contact.pk]), {"name": "Ada King"})
     assert not CustomerLink.objects.exists()
+
+
+def test_takeover_refuses_a_customer_already_linked_here() -> None:
+    first = _link(email=None, phone="")
+    with patch(REQ, return_value={"Customer": _customer()}):
+        assert qbo_receipts.push_customer(first) is True
+    second = _link(email=None, phone="")
+    found = {"QueryResponse": {"Customer": [_customer()]}}
+    with patch(REQ, side_effect=[_fault("6240"), found]) as req:
+        assert qbo_receipts.push_customer(second) is False
+    assert req.call_count == 2
+    second.refresh_from_db()
+    assert (second.qbo_id, second.qbo_sync_state) == ("", SyncState.ERROR)
+    assert second.qbo_sync_error == REFUSAL
+    first.refresh_from_db()
+    assert (first.qbo_id, first.qbo_sync_state) == ("55", SyncState.SYNCED)
+
+
+@pytest.mark.parametrize("holder", ["account", "group"])
+def test_takeover_refuses_a_customer_held_by_billing(holder) -> None:
+    from apps.billing.factories import AccountGroupFactory
+
+    if holder == "account":
+        BillingAccountFactory(qbo_id="55", qbo_realm_id="123")
+    else:
+        AccountGroupFactory(qbo_id="55", qbo_realm_id="123")
+    link = _link()
+    found = {"QueryResponse": {"Customer": [_customer(email="ada@example.com")]}}
+    with patch(REQ, side_effect=[_fault("6240"), found]):
+        assert qbo_receipts.push_customer(link) is False
+    link.refresh_from_db()
+    assert (link.qbo_id, link.qbo_sync_error) == ("", REFUSAL)
+
+
+def test_takeover_allows_a_customer_held_in_another_company() -> None:
+    _link(name="Other", email=None, qbo_id="55", qbo_realm_id="999")
+    link = _link()
+    found = {"QueryResponse": {"Customer": [_customer(email="ada@example.com")]}}
+    with patch(REQ, side_effect=[_fault("6240"), found, {"Customer": _customer()}]):
+        assert qbo_receipts.push_customer(link) is True
+
+
+@pytest.mark.parametrize(
+    "ours, theirs, linked",
+    [
+        ("+1 (555) 555-0100", "15555550100", True),
+        ("+15555550100", "+15555550199", False),
+        ("+15555550100", None, False),
+        ("", "+15555550100", False),
+    ],
+)
+def test_both_blank_emails_require_matching_phones(ours, theirs, linked) -> None:
+    link = _link(email=None, phone=ours)
+    customer = _customer()
+    if theirs is not None:
+        customer["PrimaryPhone"] = {"FreeFormNumber": theirs}
+    found = {"QueryResponse": {"Customer": [customer]}}
+    with patch(REQ, side_effect=[_fault("6240"), found, {"Customer": _customer()}]):
+        assert qbo_receipts.push_customer(link) is linked
+    link.refresh_from_db()
+    assert link.qbo_sync_error == ("" if linked else REFUSAL)
+
+
+def test_booking_intake_rename_requeues_the_link() -> None:
+    link = _link(qbo_id="55", qbo_realm_id="123", qbo_sync_state=SyncState.SYNCED)
+    found = Contact.objects.match_or_create(
+        name="Ada King", phone="", email="ada@example.com", channel=link.contact.channel
+    )
+    assert found == link.contact
+    link.refresh_from_db()
+    assert (link.display_name, link.qbo_sync_state) == ("Ada King", SyncState.NOT_SYNCED)
+
+
+def test_push_customer_skips_when_the_account_is_the_customer() -> None:
+    link = _link()
+    BillingAccountFactory(contact=link.contact, qbo_id="77", qbo_realm_id="123")
+    with patch(REQ) as req:
+        assert qbo_receipts.push_customer(link) is False
+    req.assert_not_called()
+    # Pushed here first: it stays the customer and its edits still go.
+    CustomerLink.objects.filter(pk=link.pk).update(qbo_id="55", qbo_realm_id="123")
+    with patch(REQ, return_value={"Customer": _customer()}):
+        assert qbo_receipts.push_customer(link) is True

@@ -40,7 +40,8 @@ def test_saving_other_fields_does_not_touch_the_numbers(django_assert_num_querie
     contact = Contact.objects.create(name="Ada", phone="+16175550207")
     contact = Contact.objects.get(pk=contact.pk)
     contact.name = "Ada Lovelace"
-    with django_assert_num_queries(1):
+    # The save, plus billing's one look for a QuickBooks customer to re-queue (APC-108).
+    with django_assert_num_queries(2):
         contact.save(update_fields=["name", "updated_at"])
 
 
