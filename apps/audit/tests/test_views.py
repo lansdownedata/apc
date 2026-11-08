@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from html.parser import HTMLParser
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -277,7 +278,7 @@ def test_hide_automatic_keeps_customer_rows(staff):
     assert "Stripe" not in people
     # The All / People pair reloads the fragment through the drawer.
     assert f"{base}?auto=0" in everything
-    assert f"url: '{base}'" in people
+    assert f'data-url="{base}"' in people
 
 
 def test_long_text_reads_as_edited_with_a_toggle(staff):
@@ -441,3 +442,29 @@ def test_time_field_in_a_route_is_in_the_trip_zone(staff):
 
     assert "Stop 2 time" in body
     assert "9:30 AM EDT" in body
+
+
+def test_history_urls_cannot_break_out_of_their_js_strings():
+    """Autoescape doesn't guard a JS string inside an attribute: the browser decodes `&#x27;`
+    back to a quote before Alpine reads it. So the URLs live in data-* attributes, where
+    autoescape does hold, and no Alpine expression carries them (Ruling 27)."""
+
+    class Attrs(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attrs: list[tuple[str, str]] = []
+
+        def handle_starttag(self, tag, attrs):
+            self.attrs += [(k, v) for k, v in attrs if v]
+
+    evil = "/portal/history/trip/1/?a=');alert(1)//\"><b>"
+    html = render_to_string(
+        "audit/_history.html",
+        {"older_url": evil, "all_url": evil, "people_url": evil, "groups": [], "rows": []},
+    )
+    parser = Attrs()
+    parser.feed(html)
+
+    carrying = [(k, v) for k, v in parser.attrs if "alert" in v]
+    assert carrying == [("data-older-url", evil), ("data-url", evil), ("data-url", evil)]
+    assert "<b>" not in html

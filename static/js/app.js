@@ -239,11 +239,15 @@ window.drawer = drawer;
 
 /* History drawer (APC-140): "Show older" fetches the next page's groups (?part=1) and appends
  * them to the list; the response's X-History-Next header is the page after it ("" = none). */
-function auditOlder(url) {
+function auditOlder() {
   return {
-    url,
+    url: "",
     busy: false,
     failed: false,
+    init() {
+      // From a data attribute, not interpolated into the x-data expression.
+      this.url = this.$el.dataset.olderUrl || "";
+    },
     async more() {
       this.busy = true;
       this.failed = false;
