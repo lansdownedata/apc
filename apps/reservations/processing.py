@@ -593,7 +593,7 @@ def unlock(trip, *, user, reason: str) -> TripReview:
 
     line = InvoiceLine.objects.filter(reservation=trip).select_related("invoice").first()
     if line is not None:
-        raise ProcessingError(f"On {line.invoice.label}. Void it to change this trip.")
+        raise ProcessingError(f"On {line.invoice.label}. Void and replace it to change the price.")
     # The price is about to change: an old pay link must not stay collectable.
     _cancel_open_links(trip)
     with transaction.atomic():

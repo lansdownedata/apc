@@ -393,7 +393,9 @@ def test_unlock_refuses_an_invoiced_trip(accountant) -> None:
     group = AccountGroupFactory()
     trip = _processed_trip(group, accountant=accountant)
     invoice = _create(group, [trip])
-    with pytest.raises(processing.ProcessingError, match=re.escape(f"On {invoice.label}. Void it")):
+    with pytest.raises(
+        processing.ProcessingError, match=re.escape(f"On {invoice.label}. Void and replace it")
+    ):
         processing.unlock(trip, user=accountant, reason="price check")
     assert TripReview.objects.get(reservation=trip).is_processed
 

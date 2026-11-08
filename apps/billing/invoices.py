@@ -375,3 +375,34 @@ def edit_invoice(
             invoice.qbo_sync_error = ""
         invoice.save()
     return invoice
+
+
+def void_and_replace(
+    invoice: Invoice, *, reason: str, invoice_date: date, po_number: str, memo: str, user
+) -> Invoice:
+    """Void an open invoice and issue a new one from the same trips, all or nothing: if the
+    new invoice is refused the old one stays open. The old invoice points at its replacement;
+    the void queues the QuickBooks void when the old one is there (APC-109)."""
+    with transaction.atomic():
+        old = (
+            Invoice.objects.select_for_update(of=("self",))
+            .select_related("group")
+            .get(pk=invoice.pk)
+        )
+        if old.status != Invoice.Status.OPEN:
+            raise InvoiceError("Only an open invoice can be voided and replaced.")
+        if in_closed_period(old.invoice_date):
+            raise InvoiceError(CLOSED_PERIOD_MESSAGE)
+        trip_ids = list(old.lines.values_list("reservation_id", flat=True))
+        old = void_invoice(old, reason=reason, user=user)
+        new = create_invoice(
+            old.group,
+            trip_ids,
+            invoice_date=invoice_date,
+            po_number=(po_number or "").strip() or old.po_number,
+            memo=memo or f"Replaces {old.label}",
+            user=user,
+        )
+        old.replaced_by = new
+        old.save(update_fields=["replaced_by"])
+    return new

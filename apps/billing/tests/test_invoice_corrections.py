@@ -8,9 +8,18 @@ import pytest
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
-from apps.billing import invoices
-from apps.billing.factories import AccountGroupFactory, InvoiceFactory, InvoiceLineFactory
+from apps.billing import invoices, qbo_invoices
+from apps.billing.factories import (
+    AccountGroupFactory,
+    InvoiceFactory,
+    InvoiceLineFactory,
+    QboItemFactory,
+)
 from apps.billing.models import Invoice, QboAccountMapping, SyncState
+from apps.billing.tests._helpers import _processed_trip
+from apps.billing.tests.test_qbo_invoices import _fault
+from apps.notifications.models import Notification
+from apps.reservations import processing
 
 pytestmark = pytest.mark.django_db
 
@@ -151,3 +160,129 @@ def test_edit_refused_on_void_invoice() -> None:
     invoice = _invoice(status=Invoice.Status.VOID)
     with pytest.raises(invoices.InvoiceError, match="Only an open invoice can be edited."):
         _edit(invoice, memo="x")
+
+
+@pytest.fixture
+def accountant():
+    return UserFactory(can_manage_payments=True)
+
+
+@pytest.fixture(autouse=True)
+def _quiet(settings):
+    settings.STRIPE_SECRET_KEY = ""
+    with patch("apps.integrations.la_sync.push_lead_bookings"):
+        yield
+
+
+def _invoiced(accountant, *, group=None, **kw):
+    """An open invoice over two real processed trips."""
+    group = group or AccountGroupFactory(terms="net_30")
+    trips = [_processed_trip(group, accountant=accountant) for _ in range(2)]
+    invoice = invoices.create_invoice(
+        group,
+        [t.pk for t in trips],
+        invoice_date=date(2026, 11, 1),
+        po_number="4471",
+        memo="Nov",
+        user=accountant,
+    )
+    if kw:
+        Invoice.objects.filter(pk=invoice.pk).update(**kw)
+        invoice.refresh_from_db()
+    return invoice, trips
+
+
+def _replace(invoice, user, **kw):
+    args = {"reason": "Wrong PO", "invoice_date": date(2026, 11, 5), "po_number": "", "memo": ""}
+    args.update(kw)
+    return invoices.void_and_replace(invoice, user=user, **args)
+
+
+def test_replace_voids_and_recreates_linked_both_ways(accountant) -> None:
+    old, trips = _invoiced(accountant, qbo_id="900", qbo_realm_id="123", number="1042")
+    new = _replace(old, accountant)
+    old.refresh_from_db()
+    assert old.status == Invoice.Status.VOID
+    assert old.void_reason == "Wrong PO"
+    assert old.replaced_by == new
+    assert not old.lines.exists()
+    assert new.status == Invoice.Status.OPEN
+    assert set(new.lines.values_list("reservation_id", flat=True)) == {t.pk for t in trips}
+    assert new.invoice_date == date(2026, 11, 5)
+    assert new.memo == "Replaces Invoice 1042"
+    assert new.po_number == "4471"
+    assert old.qbo_void_requested_at is not None
+
+
+def test_replace_keeps_given_po_and_memo(accountant) -> None:
+    old, _ = _invoiced(accountant)
+    new = _replace(old, accountant, po_number="9", memo="Fixed")
+    assert (new.po_number, new.memo) == ("9", "Fixed")
+
+
+def test_replace_refused_in_closed_period(accountant) -> None:
+    old, _ = _invoiced(accountant)
+    _close_books(date(2026, 11, 1))
+    with pytest.raises(invoices.InvoiceError, match=invoices.CLOSED_PERIOD_MESSAGE):
+        _replace(old, accountant)
+    old.refresh_from_db()
+    assert old.status == Invoice.Status.OPEN
+    assert old.lines.count() == 2
+
+
+def test_replace_refused_on_void_invoice(accountant) -> None:
+    old, _ = _invoiced(accountant)
+    invoices.void_invoice(old, reason="x", user=accountant)
+    with pytest.raises(invoices.InvoiceError, match="open"):
+        _replace(old, accountant)
+
+
+def test_replace_rolls_back_when_create_refused(accountant) -> None:
+    old, _ = _invoiced(accountant)
+    before = Invoice.objects.count()
+    with (
+        patch("apps.billing.invoices.create_invoice", side_effect=invoices.InvoiceError("no")),
+        pytest.raises(invoices.InvoiceError),
+    ):
+        _replace(old, accountant)
+    old.refresh_from_db()
+    assert old.status == Invoice.Status.OPEN
+    assert old.lines.count() == 2
+    assert old.replaced_by is None
+    assert Invoice.objects.count() == before
+
+
+def test_replace_survives_a_refused_quickbooks_void(accountant) -> None:
+    group = AccountGroupFactory(terms="net_30", qbo_id="55", qbo_realm_id="123")
+    old, _ = _invoiced(
+        accountant, group=group, qbo_id="900", qbo_realm_id="123", qbo_sync_token="0", number="1042"
+    )
+    config = QboAccountMapping.load()
+    config.trip_item = QboItemFactory(realm_id="123", qbo_id="9")
+    config.customer_docs_from = date(2026, 1, 1)
+    config.save()
+    refusal = _fault("6000", "A business validation error has occurred", detail="It has a payment")
+    with (
+        patch("apps.billing.qbo_invoices.current_realm", return_value="123"),
+        patch("apps.billing.qbo_sync.current_realm", return_value="123"),
+        patch("apps.integrations.qbo.is_connected", return_value=True),
+    ):
+        new = _replace(old, accountant)
+        old.refresh_from_db()
+        with patch("apps.billing.qbo_invoices.qbo.request", side_effect=refusal):
+            qbo_invoices.push_void(old)
+        old.refresh_from_db()
+        assert old.qbo_sync_state == SyncState.ERROR
+        assert old.qbo_sync_error == "QuickBooks didn't accept this void: It has a payment"
+        assert invoices.voids_waiting(group) == [old]
+        assert Notification.objects.filter(kind=Notification.Kind.SYNC_FAILED).count() == 1
+        new.refresh_from_db()
+        assert new.status == Invoice.Status.OPEN
+        assert new in list(qbo_invoices.pending_invoices("123", date(2026, 1, 1)))
+
+
+def test_unlock_message_says_void_and_replace(accountant) -> None:
+    old, trips = _invoiced(accountant)
+    with pytest.raises(processing.ProcessingError) as err:
+        processing.unlock(trips[0], user=accountant, reason="price check")
+    assert str(err.value) == f"On {old.label}. Void and replace it to change the price."
