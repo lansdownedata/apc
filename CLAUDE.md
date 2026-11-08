@@ -104,7 +104,6 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
 - **Auth:** `django.contrib.auth.urls`; `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` set.
 - **Components:** `templates/components/` — `modal.html`, `toasts.html`,
   `searchable_select.html`, `status_badge.html`.
-- **Demo data:** `python manage.py seed_demo [--fresh]`.
 
 ---
 
