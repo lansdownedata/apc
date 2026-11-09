@@ -35,6 +35,10 @@
             <i class="ti ti-users text-[14px]"></i>
             {{ members|length }} contact{{ members|length|pluralize }}
           </span>
+          <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:profile' 'company' company.pk %}', title: 'Company history' })"
+                  class="inline-flex items-center gap-1 shrink-0 hover:text-ink transition-colors focus-gold rounded">
+            <i class="ti ti-history text-[14px]"></i> History
+          </button>
         </div>
       </div>
       <div class="flex items-center gap-5 sm:gap-7">
@@ -144,4 +148,5 @@
   </div>
 
 </div>
+  {% include "components/drawer.html" with drawer_title="History" %}
 {% endblock %}

@@ -1,0 +1,38 @@
+{% comment %}
+  One page of History groups (spec §6.2): the drawer body includes it, and "Show older"
+  appends it on its own (?part=1). Headings and groups are siblings in one list, so each
+  sticky day heading covers the one before it as the list scrolls under the drawer header.
+{% endcomment %}
+{% for heading, group in rows %}
+  {% if heading %}
+    <h3 class="sticky top-16 -mx-5 px-5 py-3 bg-surface text-[11px] font-semibold uppercase tracking-wide text-muted">{{ heading }}</h3>
+  {% endif %}
+  <section class="mt-1 mb-5">
+    <p class="text-[13px]"><span class="text-ink font-medium">{{ group.who }}</span> <span class="text-muted num">· {{ group.clock }}</span></p>
+    <ul class="mt-1.5 space-y-1 text-[12.5px]">
+      {% for line in group.lines %}
+        {% if line.sentence %}
+          <li class="text-ink">{% if line.prefix %}<span class="text-muted">{{ line.prefix }} · </span>{% endif %}{{ line.sentence }}</li>
+        {% elif line.long %}
+          <li x-data="{ show: false }">
+            <div class="flex gap-3">
+              <span class="w-40 shrink-0 text-muted">{% if line.prefix %}<span class="block">{{ line.prefix }}</span>{% endif %}{{ line.label }} edited</span>
+              <button type="button" @click="show = !show" :aria-expanded="show"
+                      class="font-semibold text-goldd hover:underline focus-visible:outline-none focus-visible:underline disabled:opacity-50"
+                      x-text="show ? 'Hide' : 'Show'">Show</button>
+            </div>
+            <div x-show="show" x-cloak class="mt-1 space-y-1 break-words">
+              <p class="text-muted whitespace-pre-line">{{ line.old }}</p>
+              <p class="text-ink whitespace-pre-line">{{ line.new }}</p>
+            </div>
+          </li>
+        {% else %}
+          <li class="flex gap-3">
+            <span class="w-40 shrink-0 text-muted">{% if line.prefix %}<span class="block">{{ line.prefix }}</span>{% endif %}{{ line.label }}</span>
+            <span class="min-w-0 break-words num"><span class="text-muted">{{ line.old }}</span> <span class="text-muted" aria-hidden="true">→</span><span class="sr-only">to</span> <span class="text-ink">{{ line.new }}</span></span>
+          </li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  </section>
+{% endfor %}

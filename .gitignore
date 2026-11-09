@@ -46,3 +46,4 @@ CLAUDE.local.md
 # SDD / agent scratch (session-local, never commit)
 .superpowers/
 .claude/
+.local-mail/

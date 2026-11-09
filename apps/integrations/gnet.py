@@ -45,8 +45,8 @@ RESNO_PREFIX = "apc-"
 # unretryable, same as any other GnetAPIError.
 TRANSPORT_FAILED = 0
 
-# This project's six seeded VehicleType.name values (apps/core/management/commands/
-# seed_demo.py) -> GNet's standardized, allowlisted preferredVehicleType codes
+# This project's six seeded VehicleType.name values (apps/reservations/migrations/
+# 0003_seed_vehicles.py) -> GNet's standardized, allowlisted preferredVehicleType codes
 # (GNET-CONNECTION-GUIDE.md §3, src/lib/gnet/vehicle-types.ts in the gateway repo).
 # There is NO bare "VAN" code — vans are always qualified (VAN_MINI, VAN_12, ...) —
 # which is why "Sprinter Van" maps to SPRINTER rather than any VAN_* code.

@@ -103,6 +103,10 @@
           <i class="ti ti-checklist text-[15px]"></i>{% if not res.green_lit and res.task_blockers %}<span class="text-[10.5px] font-semibold num">{{ res.task_blockers|length }}</span>{% endif %}
         </button>
         {% endif %}
+        <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:trip' res.pk %}', title: 'Trip history' })"
+                class="p-1 text-muted hover:text-ink transition-colors focus-gold rounded" title="Trip history" aria-label="Trip history">
+          <i class="ti ti-history text-[15px]"></i>
+        </button>
         <button type="button" @click="$dispatch('reservation-edit', { id: {{ res.pk }} })"
                 class="p-1 text-muted hover:text-ink transition-colors" title="{% if line.is_group %}Edit all {{ line.size }} trips{% else %}Edit reservation{% endif %}">
           <i class="ti ti-pencil text-[15px]"></i>
@@ -226,6 +230,10 @@
       {% endif %}
       {% if member.coverage %}{% include "components/coverage_chip.html" with res=member %}{% endif %}
       <span class="ml-auto num text-ink">${{ member.line_total|floatformat:2|intcomma }}</span>
+      <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:trip' member.pk %}', title: 'Trip history' })"
+              class="p-1 text-muted hover:text-ink transition-colors focus-gold rounded" title="Trip history" aria-label="Trip history">
+        <i class="ti ti-history text-[14px]"></i>
+      </button>
       <button type="button" @click="$dispatch('reservation-edit', { id: {{ member.pk }} })"
               class="p-1 text-muted hover:text-ink transition-colors" title="Edit this vehicle">
         <i class="ti ti-pencil text-[14px]"></i>

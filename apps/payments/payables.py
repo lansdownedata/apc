@@ -83,11 +83,14 @@ def ensure_payables(lead) -> list[AffiliatePayable]:
     if not missing:
         return []
     config = TaskConfig.load()
-    rows = [
-        AffiliatePayable(assignment=a, expected_amount=expected_for(a, config=config))
-        for a in missing
-    ]
-    return AffiliatePayable.objects.bulk_create(rows, ignore_conflicts=True)
+    created = []
+    for a in missing:
+        payable, made = AffiliatePayable.objects.get_or_create(
+            assignment=a, defaults={"expected_amount": expected_for(a, config=config)}
+        )
+        if made:
+            created.append(payable)
+    return created
 
 
 def ensure_payable(trip) -> AffiliatePayable | None:
@@ -114,11 +117,10 @@ def ensure_payable(trip) -> AffiliatePayable | None:
     existing = AffiliatePayable.objects.filter(assignment=assignment).first()
     if existing is not None:
         return existing
-    AffiliatePayable.objects.bulk_create(
-        [AffiliatePayable(assignment=assignment, expected_amount=expected_for(assignment))],
-        ignore_conflicts=True,
+    payable, _ = AffiliatePayable.objects.get_or_create(
+        assignment=assignment, defaults={"expected_amount": expected_for(assignment)}
     )
-    return AffiliatePayable.objects.get(assignment=assignment)
+    return payable
 
 
 def refresh_for_trip(trip) -> AffiliatePayable | None:

@@ -73,6 +73,10 @@
             <i class="ti ti-mail text-[15px] text-goldd"></i>Email
           </a>
           {% endif %}
+          <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:profile' 'contact' contact.pk %}', title: 'Contact history' })"
+                  class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold">
+            <i class="ti ti-history text-[15px] text-goldd"></i>History
+          </button>
           <button type="button" @click="newLeadIntent = 'lead'; newLeadOpen = true"
                   class="btn-gold focus-gold inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-semibold">
             <i class="ti ti-plus text-[14px]"></i>New lead
@@ -350,4 +354,5 @@
       </section>
   </div>
 </div>
+  {% include "components/drawer.html" with drawer_title="History" %}
 {% endblock %}
