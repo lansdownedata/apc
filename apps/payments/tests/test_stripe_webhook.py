@@ -6,6 +6,10 @@ no-ops on anything already reconciled — the off-session charges in `services` 
 post their own ledger entry inline, yet still emit this event.
 """
 
+import hashlib
+import hmac
+import json
+import time
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -28,6 +32,11 @@ def _pi_event(lead_id, *, kind="deposit", pi="pi_1", charge_id=None):
         "type": "payment_intent.succeeded",
         "data": {"object": {"id": pi, "metadata": metadata}},
     }
+
+
+def _as_event(payload):
+    """What `construct_event` really returns: a `stripe.Event`, not a dict."""
+    return stripe.Event.construct_from(payload, "sk_test")
 
 
 def _intent(pi="pi_1", amount=133500, metadata=None):
@@ -215,7 +224,7 @@ def test_view_returns_200_on_valid_signature(client):
     with (
         patch(
             "apps.payments.views.stripe.Webhook.construct_event",
-            return_value=_pi_event(plan.lead_id),
+            return_value=_as_event(_pi_event(plan.lead_id)),
         ),
         patch.object(webhooks.services.stripe.PaymentIntent, "retrieve", return_value=_intent()),
         patch("apps.integrations.la_sync.push_lead_bookings"),
@@ -238,7 +247,7 @@ def test_a_redelivered_event_is_handled_once(client):
     plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
     event = {"id": "evt_1", **_pi_event(plan.lead_id)}
     with (
-        patch("apps.payments.views.stripe.Webhook.construct_event", return_value=event),
+        patch("apps.payments.views.stripe.Webhook.construct_event", return_value=_as_event(event)),
         patch("apps.payments.views.webhooks.process_stripe_event") as handle,
     ):
         for _ in range(2):
@@ -260,7 +269,7 @@ def test_la_push_crash_never_breaks_stripe_200(client):
     with (
         patch(
             "apps.payments.views.stripe.Webhook.construct_event",
-            return_value=_pi_event(plan.lead_id),
+            return_value=_as_event(_pi_event(plan.lead_id)),
         ),
         patch.object(webhooks.services.stripe.PaymentIntent, "retrieve", return_value=_intent()),
         patch(
@@ -275,6 +284,165 @@ def test_la_push_crash_never_breaks_stripe_200(client):
             HTTP_STRIPE_SIGNATURE="t=1,v1=abc",
         )
     assert resp.status_code == 200
+
+
+# --- real stripe-python objects ----------------------------------------------------------
+# stripe-python 15 objects are not dicts: `.get`, `dict(obj)` and iteration raise. Every
+# test above hands the handler plain dicts and MagicMocks, so none of them could see it.
+# These sign a real payload with a test secret, so `construct_event` itself runs and returns
+# a genuine `stripe.Event`, and Stripe's reads come back as genuine `stripe.PaymentIntent`s.
+
+WHSEC = "whsec_test_real_objects"
+
+
+def _signed_post(client, settings, etype, obj, *, evt="evt_real_1"):
+    settings.STRIPE_WEBHOOK_SECRET = WHSEC
+    body = json.dumps(
+        {
+            "id": evt,
+            "object": "event",
+            "type": etype,
+            "livemode": False,
+            "created": 1,
+            "data": {"object": {"object": "payment_intent", **obj}},
+        }
+    ).encode()
+    stamp = int(time.time())
+    sig = hmac.new(WHSEC.encode(), f"{stamp}.".encode() + body, hashlib.sha256).hexdigest()
+    return client.post(
+        "/webhooks/stripe/",
+        data=body,
+        content_type="application/json",
+        HTTP_STRIPE_SIGNATURE=f"t={stamp},v1={sig}",
+    )
+
+
+def _real_intent(pi, *, status, amount, metadata):
+    return stripe.PaymentIntent.construct_from(
+        {
+            "id": pi,
+            "object": "payment_intent",
+            "status": status,
+            "amount": amount,
+            "amount_received": amount if status == "succeeded" else 0,
+            "metadata": metadata,
+            "payment_method": {
+                "id": "pm_1",
+                "object": "payment_method",
+                "customer": None,
+                "card": {"brand": "visa", "last4": "4242", "exp_month": 12, "exp_year": 2030},
+            },
+        },
+        "sk_test_real_objects",
+    )
+
+
+def _logged(evt="evt_real_1"):
+    from apps.payments.models import StripeEvent
+
+    return StripeEvent.objects.get(event_id=evt)
+
+
+def test_real_event_canceled_hold_is_logged_processed_and_expires_the_hold(client, settings):
+    """APC-95's path: the bank drops a cleaning hold."""
+    plan = PaymentPlanFactory(lead__status=Lead.Status.BOOKED)
+    hold = plan.charges.create(
+        kind=Charge.Kind.HOLD,
+        amount=Decimal("500.00"),
+        status=Charge.Status.AUTHORIZED,
+        stripe_payment_intent_id="pi_hold",
+        idempotency_key=f"hold-{plan.pk}",
+    )
+    metadata = {"lead_id": str(plan.lead_id), "kind": "hold", "charge_id": str(hold.pk)}
+
+    resp = _signed_post(
+        client,
+        settings,
+        "payment_intent.canceled",
+        {"id": "pi_hold", "status": "canceled", "metadata": metadata},
+    )
+
+    assert resp.status_code == 200
+    logged = _logged()
+    assert logged.processed is True
+    assert logged.event_type == "payment_intent.canceled"
+    assert logged.payload["data"]["object"]["metadata"] == metadata
+    hold.refresh_from_db()
+    assert hold.status == Charge.Status.EXPIRED
+
+
+def test_real_event_amount_capturable_updated_records_the_deposit_hold(client, settings):
+    """APC-26's path: the only signal that the customer paid at checkout."""
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    plan.lead.status = Lead.Status.QUOTED
+    plan.lead.save(update_fields=["status"])
+    metadata = {"lead_id": str(plan.lead_id), "kind": "deposit"}
+    intent = _real_intent("pi_dep", status="requires_capture", amount=133500, metadata=metadata)
+
+    with patch.object(webhooks.services.stripe.PaymentIntent, "retrieve", return_value=intent):
+        resp = _signed_post(
+            client,
+            settings,
+            "payment_intent.amount_capturable_updated",
+            {"id": "pi_dep", "status": "requires_capture", "metadata": metadata},
+        )
+
+    assert resp.status_code == 200
+    assert _logged().processed is True
+    plan.refresh_from_db()
+    plan.lead.refresh_from_db()
+    assert plan.deposit_status == PaymentPlan.DepositStatus.AUTHORIZED
+    assert plan.lead.status == Lead.Status.ENGAGED
+    assert plan.card_last4 == "4242"
+
+
+def test_real_event_succeeded_books_the_deposit(client, settings):
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    metadata = {"lead_id": str(plan.lead_id), "kind": "deposit"}
+    intent = _real_intent("pi_paid", status="succeeded", amount=133500, metadata=metadata)
+
+    with (
+        patch.object(webhooks.services.stripe.PaymentIntent, "retrieve", return_value=intent),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        resp = _signed_post(
+            client,
+            settings,
+            "payment_intent.succeeded",
+            {"id": "pi_paid", "status": "succeeded", "metadata": metadata},
+        )
+
+    assert resp.status_code == 200
+    assert _logged().processed is True
+    plan.refresh_from_db()
+    assert plan.deposit_status == PaymentPlan.DepositStatus.PAID
+    assert plan.charges.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.SUCCEEDED).exists()
+
+
+def test_a_real_intent_still_finds_its_charge_by_metadata_charge_id():
+    """APC-126's race guard, read from a genuine `stripe.PaymentIntent`. Its `metadata` is a
+    StripeObject, not a dict; read as `{}` the `charge_id` is lost and `record_payment` (the
+    reconcile cron, the inline off-session charges, the webhook) mints a second charge and a
+    second ledger entry for the same money."""
+    plan = PaymentPlanFactory(quote_total=Decimal("2670.00"))
+    charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=Decimal("500.00"))
+    intent = _real_intent(
+        "pi_race",
+        status="succeeded",
+        amount=50000,
+        metadata={"lead_id": str(plan.lead_id), "kind": "balance", "charge_id": str(charge.pk)},
+    )
+
+    with (
+        patch.object(webhooks.services.stripe.PaymentIntent, "retrieve", return_value=intent),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        webhooks.services.record_payment(plan, "pi_race", kind=Charge.Kind.BALANCE)
+
+    charge.refresh_from_db()
+    assert charge.stripe_payment_intent_id == "pi_race"
+    assert charge.status == Charge.Status.SUCCEEDED
+    assert plan.charges.filter(kind=Charge.Kind.BALANCE).count() == 1
 
 
 def test_view_returns_400_on_bad_signature(client):

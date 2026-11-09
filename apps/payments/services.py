@@ -636,8 +636,11 @@ TRIP_MONEY_KINDS = (Charge.Kind.TRIP, Charge.Kind.HOLD)
 
 
 def _metadata(intent) -> dict:
-    """Stripe objects are dict-like; a test double may not be."""
+    """The intent's metadata as a plain dict. A stripe-python 15 `StripeObject` is not a dict,
+    so it is converted; a test double's dict passes through, anything else reads as none."""
     metadata = getattr(intent, "metadata", None)
+    if isinstance(metadata, stripe.StripeObject):
+        return metadata.to_dict()
     return metadata if isinstance(metadata, dict) else {}
 
 

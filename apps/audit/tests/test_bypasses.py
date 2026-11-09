@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+import stripe
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import QuerySet
 
@@ -62,7 +63,10 @@ def test_payment_failed_webhook_logs_failed_with_stripe_source(client):
             }
         },
     }
-    with patch("apps.payments.views.stripe.Webhook.construct_event", return_value=event):
+    with patch(
+        "apps.payments.views.stripe.Webhook.construct_event",
+        return_value=stripe.Event.construct_from(event, "sk_test"),
+    ):
         resp = client.post(
             "/webhooks/stripe/",
             data=b"{}",

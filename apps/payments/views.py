@@ -31,13 +31,16 @@ from .models import AffiliatePayable
 
 @csrf_exempt
 def stripe_webhook(request):
-    """Verify the Stripe signature, then reconcile the event."""
+    """Verify the Stripe signature, then reconcile the event.
+
+    The handler gets plain data: a stripe-python 15 `Event` is not a dict (`.get`,
+    `dict(event)` raise), and `to_dict()` converts it all the way down."""
     sig = request.META.get("HTTP_STRIPE_SIGNATURE", "")
     try:
         event = stripe.Webhook.construct_event(request.body, sig, settings.STRIPE_WEBHOOK_SECRET)
     except (ValueError, stripe.error.SignatureVerificationError):
         return HttpResponseBadRequest("Invalid signature.")
-    webhooks.handle_delivery(event)
+    webhooks.handle_delivery(event.to_dict())
     return HttpResponse(status=200)
 
 

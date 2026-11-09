@@ -10,7 +10,7 @@ django-environ>=0.11,<0.13
 
 # --- Integrations ---
 requests>=2.32,<3.0          # Zapier / LimoAnywhere / Podium HTTP
-stripe>=10.0                 # deposits + off-session balance charges
+stripe>=15.5,<16             # deposits + balances; 15 objects are not dicts (to_dict at the edge)
 cryptography>=43,<46         # encrypt LA customer passwords at rest
 django-anymail[postmark]>=12,<16  # Postmark email backend (quotes + confirmations)
 
