@@ -28,6 +28,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.audit.children import track_address
 from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.core.templatetags.phone_filters import phone_display
@@ -468,11 +469,12 @@ def contact_address_update(request: HttpRequest, pk: int, slot: str) -> HttpResp
         raise Http404("Unknown address slot.")
     contact = get_object_or_404(Contact, pk=pk)
     fk = f"{slot}_address"
-    address = getattr(contact, fk)
-    if address is None:
-        address = Address.objects.create()
-        setattr(contact, fk, address)
-        contact.save(update_fields=[fk, "updated_at"])
+    with track_address(contact, slot=fk):
+        address = getattr(contact, fk)
+        if address is None:
+            address = Address.objects.create()
+            setattr(contact, fk, address)
+            contact.save(update_fields=[fk, "updated_at"])
 
-    apply_posted_address(address, request.POST)
+        apply_posted_address(address, request.POST)
     return JsonResponse({"ok": True, "address_id": address.pk})

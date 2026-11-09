@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from apps.audit.children import track_children
+
 from .models import FlightDirection, Reservation, Stop
 
 
@@ -29,31 +31,34 @@ def reverse_route(reservation: Reservation, *, propagate: bool = False) -> Reser
     `propagate=True` fans the reversed route onto the rest of a linked set (APC-14) so a
     "×4" coach group stays four identical trips.
     """
-    stops = list(reservation.stops.order_by("sequence"))
-    last = len(stops) - 1
-    for i, stop in enumerate(stops):
-        stop.sequence = last - i
+    with track_children(reservation, route=True):
+        stops = list(reservation.stops.order_by("sequence"))
+        last = len(stops) - 1
+        for i, stop in enumerate(stops):
+            stop.sequence = last - i
 
-    for stop in stops:
-        before = stop.flight_direction
-        if stop.airport_id is None:
-            stop.flight_direction = ""
-        elif stop.sequence == 0:
-            stop.flight_direction = FlightDirection.ARRIVAL
-        elif stop.sequence == last:
-            stop.flight_direction = FlightDirection.DEPARTURE
-        # a middle airport stop keeps its chosen side
-        if stop.flight_direction != before:
-            stop.flight_id = None
+        for stop in stops:
+            before = stop.flight_direction
+            if stop.airport_id is None:
+                stop.flight_direction = ""
+            elif stop.sequence == 0:
+                stop.flight_direction = FlightDirection.ARRIVAL
+            elif stop.sequence == last:
+                stop.flight_direction = FlightDirection.DEPARTURE
+            # a middle airport stop keeps its chosen side
+            if stop.flight_direction != before:
+                stop.flight_id = None
 
-        if stop.sequence == 0:
-            stop.scheduled_time = reservation.pickup_time
-        elif stop.sequence == last:
-            stop.scheduled_time = reservation.dropoff_time
-        else:
-            stop.scheduled_time = None
+            if stop.sequence == 0:
+                stop.scheduled_time = reservation.pickup_time
+            elif stop.sequence == last:
+                stop.scheduled_time = reservation.dropoff_time
+            else:
+                stop.scheduled_time = None
 
-    Stop.objects.bulk_update(stops, ["sequence", "flight_direction", "flight_id", "scheduled_time"])
+        Stop.objects.bulk_update(
+            stops, ["sequence", "flight_direction", "flight_id", "scheduled_time"]
+        )
     reservation.refresh_pickup_timezone()
 
     if propagate and reservation.group_key is not None:

@@ -188,4 +188,11 @@
       {% endfor %}
     </div>
   {% endif %}
+
+  <div class="mt-5 pt-3">
+    <button type="button" @click="$dispatch('drawer-open', { url: '{% url 'audit:trip' trip.pk %}', title: 'Trip history' })"
+            class="inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded">
+      <i class="ti ti-history text-[14px]"></i> History
+    </button>
+  </div>
 </div>

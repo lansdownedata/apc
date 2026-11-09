@@ -22,6 +22,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.audit.explicit import record_update
 from apps.core import outbound
 from apps.messaging import events, rendering, sender
 from apps.messaging.models import Delivery
@@ -300,12 +301,10 @@ def terms_version() -> str:
 def accept_terms(lead: Lead) -> bool:
     """Stamp the customer's acceptance the first time; never overwrite it. Returns whether
     this call stamped. Conditional UPDATE so two racing requests can't both stamp."""
-    stamped = (
-        type(lead)
-        .objects.filter(pk=lead.pk, accepted_terms_at__isnull=True)
-        .update(accepted_terms_at=timezone.now(), accepted_terms_version=terms_version())
-    )
+    stamp = {"accepted_terms_at": timezone.now(), "accepted_terms_version": terms_version()}
+    stamped = type(lead).objects.filter(pk=lead.pk, accepted_terms_at__isnull=True).update(**stamp)
     if stamped:
+        record_update(lead, **stamp)
         lead.refresh_from_db(fields=["accepted_terms_at", "accepted_terms_version"])
     return bool(stamped)
 
@@ -354,16 +353,16 @@ def fee_terms_version(lead: Lead, config=None) -> str:
 def acknowledge_fees(lead: Lead, *, ip: str) -> bool:
     """Stamp the billing contact's acknowledgment of the cleaning fee and overtime rule the
     first time; never overwrite it. Returns whether this call stamped."""
+    stamp = {
+        "fees_acknowledged_at": timezone.now(),
+        "fees_acknowledged_ip": ip or None,
+        "fees_acknowledged_version": fee_terms_version(lead),
+    }
     stamped = (
-        type(lead)
-        .objects.filter(pk=lead.pk, fees_acknowledged_at__isnull=True)
-        .update(
-            fees_acknowledged_at=timezone.now(),
-            fees_acknowledged_ip=ip or None,
-            fees_acknowledged_version=fee_terms_version(lead),
-        )
+        type(lead).objects.filter(pk=lead.pk, fees_acknowledged_at__isnull=True).update(**stamp)
     )
     if stamped:
+        record_update(lead, **stamp)
         lead.refresh_from_db(
             fields=["fees_acknowledged_at", "fees_acknowledged_ip", "fees_acknowledged_version"]
         )

@@ -186,15 +186,24 @@ function shell() {
 }
 window.shell = shell;
 
-/* Right-side drawer — fetches an HTML fragment and shows it beside the page. */
+/* Right-side drawer — fetches an HTML fragment and shows it beside the page. Its heading is
+ * the include's drawer_title (data-title); an open that passes its own `title` (History)
+ * heads that one open, and the next open without one goes back to the include's. */
 function drawer() {
   return {
     open: false,
     body: "",
+    title: "",
+    defaultTitle: "",
+    init() {
+      this.defaultTitle = this.$root.dataset.title || "Details";
+      this.title = this.defaultTitle;
+    },
     /* Set when an action inside changed what the page behind shows, but the drawer stayed
      * open to carry on (a reassign). Closing then re-reads the page instead. */
     stale: false,
-    async load(url, stale = false, scrollTo = "") {
+    async load(url, stale = false, scrollTo = "", title = "") {
+      this.title = title || this.defaultTitle;
       this.stale = this.stale || stale;
       this.body = '<p class="text-muted text-[13px]">Loading…</p>';
       this.open = true;
@@ -213,7 +222,10 @@ function drawer() {
       } catch (e) {
         this.body = "";
         this.open = false;
-        Alpine.store("toast").push({ type: "danger", title: "Could not open that trip" });
+        Alpine.store("toast").push({
+          type: "danger",
+          title: title ? `Could not load ${title}` : "Could not open that trip",
+        });
       }
     },
     close() {
@@ -224,6 +236,35 @@ function drawer() {
   };
 }
 window.drawer = drawer;
+
+/* History drawer (APC-140): "Show older" fetches the next page's groups (?part=1) and appends
+ * them to the list; the response's X-History-Next header is the page after it ("" = none). */
+function auditOlder() {
+  return {
+    url: "",
+    busy: false,
+    failed: false,
+    init() {
+      // From a data attribute, not interpolated into the x-data expression.
+      this.url = this.$el.dataset.olderUrl || "";
+    },
+    async more() {
+      this.busy = true;
+      this.failed = false;
+      try {
+        const resp = await fetch(this.url, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+        if (!resp.ok) throw new Error(resp.status);
+        this.$refs.list.insertAdjacentHTML("beforeend", await resp.text());
+        this.url = resp.headers.get("X-History-Next") || "";
+      } catch (e) {
+        this.failed = true;
+      } finally {
+        this.busy = false;
+      }
+    },
+  };
+}
+window.auditOlder = auditOlder;
 
 /* GNet requests drawer (APC-136) — the shell-level inbox over farm-in requests. Its body is
  * the server fragment (dispatch/_farm_in_rows.html); markup injected with x-html carries no

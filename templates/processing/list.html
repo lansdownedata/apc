@@ -115,6 +115,7 @@
       {% endif %}
     </div>
   </div>
+  {% include "components/drawer.html" with drawer_title="Details" %}
   {% if filters.view != 'bills' %}{% include "leads/_reservation_editor.html" %}{% endif %}
 </div>
 {% endblock %}

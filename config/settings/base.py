@@ -34,6 +34,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "anymail",  # ESP email backend (Postmark) — see the email section below
+    "auditlog",  # change trail (APC-140); entries land in apps.audit's swapped AuditEntry
 ]
 # Local apps — the Lead Manager domain (see docs ERD/scope).
 LOCAL_APPS = [
@@ -56,6 +57,7 @@ LOCAL_APPS = [
     "apps.tasks",
     "apps.planners",
     "apps.public",
+    "apps.audit",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -65,6 +67,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.audit.middleware.AuditMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -312,6 +315,18 @@ ANYMAIL = {
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL", default="All Pro Charter <reservations@allprocharter.com>"
 )
+
+# ---------------------------------------------------------------- audit log (APC-140)
+# Entries land in apps.audit's AuditEntry (auditlog's swappable model), so auditlog's own
+# migrations record without creating a table. Actor, source and the correlation id come
+# from apps.audit.context's frame, never a request header; the stock middleware is not used.
+AUDITLOG_LOGENTRY_MODEL = "audit.AuditEntry"
+AUDITLOG_CID_GETTER = "apps.audit.context.current_cid"
+AUDITLOG_CID_HEADER = None
+AUDITLOG_DISABLE_ON_RAW_SAVE = True  # no entries from loaddata
+AUDITLOG_STORE_JSON_CHANGES = False  # True fails on Decimal/date with the default encoder
+AUDITLOG_USE_FK_STRING_REPRESENTATION = False  # store pks; a name costs a query per FK
+AUDITLOG_DISABLE_REMOTE_ADDR = True  # X-Forwarded-For's first hop is client-supplied
 
 # ---------------------------------------------------------------- logging
 LOGGING = {

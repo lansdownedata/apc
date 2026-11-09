@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 
 from apps.addresses.models import Airline, Airport
+from apps.audit.children import track_children
 from apps.contacts.models import Company, Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
@@ -65,7 +66,8 @@ def build(payload: dict, company: Company, *, summary: Summary) -> tuple[Lead, R
     )
     _apply_rate_card(reservation, summary)
     reservation.save()
-    _write_stops_and_passengers(reservation, payload, summary)
+    with track_children(reservation, route=True, passengers=True):
+        _write_stops_and_passengers(reservation, payload, summary)
     return lead, reservation
 
 
@@ -93,9 +95,10 @@ def apply_update(reservation: Reservation, lead: Lead, payload: dict, *, summary
         _apply_rate_card(reservation, summary)
         fields += _RATE_CARD_FIELDS
     reservation.save(update_fields=fields)
-    reservation.stops.all().delete()
-    reservation.named_passengers.all().delete()
-    _write_stops_and_passengers(reservation, payload, summary)
+    with track_children(reservation, route=True, passengers=True):
+        reservation.stops.all().delete()
+        reservation.named_passengers.all().delete()
+        _write_stops_and_passengers(reservation, payload, summary)
 
 
 def _res_no(payload: dict) -> str:

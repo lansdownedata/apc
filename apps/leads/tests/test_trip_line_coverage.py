@@ -72,7 +72,7 @@ def test_a_quote_has_no_driver_section_to_offer(client, agent):
     trip = _trip(lead)
     body = _workspace(client, lead)
     assert reverse("dispatch_assign_panel", args=[trip.pk]) not in body
-    assert "data-drawer" not in body
+    # APC-140: the drawer itself is on every workspace now (History opens in it).
 
 
 def test_the_sales_actions_stay_on_the_quote_workspace(client, agent):

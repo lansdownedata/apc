@@ -22,6 +22,8 @@ from decimal import Decimal
 from django.db.models import F, Prefetch
 from django.utils import timezone as dj_timezone
 
+from apps.audit.explicit import record_update
+
 from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent, round_to_dime
 
 
@@ -170,9 +172,21 @@ def confirm_trip_day(trips) -> int:
     pending = [t.pk for t in trips if t.customer_confirmed_at is None]
     if not pending:
         return 0
-    return Reservation.objects.filter(pk__in=pending, customer_confirmed_at__isnull=True).update(
-        customer_confirmed_at=dj_timezone.now(), updated_at=dj_timezone.now()
+    now = dj_timezone.now()
+    stamped = Reservation.objects.filter(pk__in=pending, customer_confirmed_at__isnull=True).update(
+        customer_confirmed_at=now, updated_at=now
     )
+    if stamped:
+        # Which trips this call won: a racing call stamps its own `now`, so only ours match.
+        won = set(
+            Reservation.objects.filter(pk__in=pending, customer_confirmed_at=now).values_list(
+                "pk", flat=True
+            )
+        )
+        for trip in trips:
+            if trip.pk in won:
+                record_update(trip, customer_confirmed_at=now)
+    return stamped
 
 
 def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> dict:

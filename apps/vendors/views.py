@@ -19,6 +19,7 @@ from django.views.decorators.http import require_POST
 from apps.accounts.permissions import payment_access_required
 from apps.addresses.models import Address
 from apps.addresses.smart_address import apply_posted_address
+from apps.audit.children import track_address
 from apps.billing.models import SyncState
 from apps.payments import payables
 from apps.payments.models import AffiliatePayable
@@ -271,13 +272,14 @@ def vendor_address_update(request: HttpRequest, pk: int) -> JsonResponse:
     """Auto-save endpoint for the smart-address widget — lazily creates the vendor's
     Address on first save and writes the posted fields (mirrors contact_address_update)."""
     vendor = get_object_or_404(Vendor, pk=pk)
-    address = vendor.address
-    if address is None:
-        address = Address.objects.create()
-        vendor.address = address
-        vendor.save(update_fields=["address", "updated_at"])
+    with track_address(vendor, slot="address"):
+        address = vendor.address
+        if address is None:
+            address = Address.objects.create()
+            vendor.address = address
+            vendor.save(update_fields=["address", "updated_at"])
 
-    apply_posted_address(address, request.POST)
+        apply_posted_address(address, request.POST)
     return JsonResponse({"ok": True, "address_id": address.pk})
 
 
