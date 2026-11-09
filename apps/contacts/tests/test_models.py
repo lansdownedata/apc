@@ -87,3 +87,24 @@ def test_match_or_create_keeps_unparseable_input_verbatim(db):
     """Never silently discard the only contact detail we hold."""
     contact = Contact.objects.match_or_create(name="Jerry", phone="(734) 069-1777")
     assert contact.phone == "(734) 069-1777"
+
+
+def test_find_by_phone_uses_find_match_phone_rules():
+    older = ContactFactory(email="a@acme.test", phone="+12025550143")
+    newer = ContactFactory(email=None, phone="(202) 555-0199")
+    newer.phones.create(number="+12025550143")
+    assert Contact.objects.find_by_phone("(202) 555-0143") == newer
+    assert Contact.objects.find_by_phone("") is None
+    assert older.pk != newer.pk
+
+
+def test_find_by_phone_without_email_skips_contacts_with_one():
+    ContactFactory(email="pat@other.test", phone="+12025550143")
+    assert Contact.objects.find_by_phone("(202) 555-0143", without_email=True) is None
+    texter = ContactFactory(email=None, phone="+12025550143")
+    assert Contact.objects.find_by_phone("(202) 555-0143", without_email=True) == texter
+
+
+def test_find_by_phone_matches_legacy_raw_numbers():
+    legacy = ContactFactory(email=None, phone="555-0199 ext 4")
+    assert Contact.objects.find_by_phone("555-0199 ext 4", without_email=True) == legacy

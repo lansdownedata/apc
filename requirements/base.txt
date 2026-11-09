@@ -18,6 +18,7 @@ django-anymail[postmark]>=12,<16  # Postmark email backend (quotes + confirmatio
 Pillow>=11.0,<13.0           # required by ImageField (vehicle-type photos)
 phonenumbers>=8.13,<10       # E.164 normalization for contact dedupe
 timezonefinder>=8.2,<9       # offline coordinate → IANA; no network in the save path
+django-import-export[xlsx]>=4.4,<4.5   # contacts/vendors .xlsx import + export (APC-141)
 
 # --- Audit ---
 django-auditlog==3.4.2        # change trail (APC-140); pinned: AuditEntryManager._write copies its log_create

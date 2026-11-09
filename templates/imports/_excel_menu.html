@@ -1,0 +1,63 @@
+{% load humanize %}
+{% comment %}
+The Excel menu on the Contacts and Vendors headers (APC-141, spec §4.1). Owner-admins only: the
+caller wraps the include in `request.user.is_owner_admin`. On Contacts it sits inside the search
+<form method="get">, so every control here is type="button" or a link — nothing submits that form.
+Include with screen, noun, count (rows the list shows now) and query (its urlencoded filters).
+The <template> is the upload modal's body; excelMenu() (static/js/app.js) copies it into $store.modal.
+{% endcomment %}
+<div class="relative" x-data="excelMenu({ screen: '{{ screen|escapejs }}', noun: '{{ noun|escapejs }}', uploadUrl: '{% url 'import_upload' screen %}' })"
+     @click.outside="close()" @keydown.escape.window="open && close(true)">
+  <button type="button" x-ref="button" @click="toggle()"
+          aria-haspopup="menu" :aria-expanded="open.toString()" aria-controls="excel-menu-{{ screen }}"
+          class="flex items-center gap-1.5 text-[12.5px] font-semibold rounded-full px-3.5 py-2 ring-1 ring-line bg-surface hover:bg-surface2 text-ink focus-gold">
+    <i class="ti ti-file-spreadsheet text-[15px]"></i> Excel
+  </button>
+  <div x-show="open" x-cloak x-transition x-ref="menu" id="excel-menu-{{ screen }}" role="menu" aria-label="Excel"
+       @keydown.arrow-down.prevent="move(1)" @keydown.arrow-up.prevent="move(-1)"
+       class="absolute right-0 mt-2 w-56 bg-surface rounded-xl shadow-2xl ring-1 ring-line py-1.5 z-40 text-left">
+    {% if count %}
+    <a role="menuitem" href="{% url 'import_export' screen %}?{{ query }}" @click="close()"
+       class="flex items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-ink hover:bg-surface2 focus-visible:bg-surface2 focus-visible:outline-none">
+      <i class="ti ti-download text-[15px] text-muted"></i> Export these {{ count|intcomma }}
+    </a>
+    {% else %}
+    <span role="menuitem" aria-disabled="true" class="flex items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-muted/60 cursor-not-allowed">
+      <i class="ti ti-download text-[15px]"></i> Export these 0
+    </span>
+    {% endif %}
+    <a role="menuitem" href="{% url 'import_template' screen %}" @click="close()"
+       class="flex items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-ink hover:bg-surface2 focus-visible:bg-surface2 focus-visible:outline-none">
+      <i class="ti ti-table-down text-[15px] text-muted"></i> Download template
+    </a>
+    <button type="button" role="menuitem" @click="openImport()"
+            class="w-full flex items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-ink hover:bg-surface2 focus-visible:bg-surface2 focus-visible:outline-none">
+      <i class="ti ti-upload text-[15px] text-muted"></i> Import from Excel…
+    </button>
+    <a role="menuitem" href="{% url 'import_history' %}?screen={{ screen }}"
+       class="flex items-center gap-2.5 px-3.5 py-2 text-[12.5px] text-ink hover:bg-surface2 focus-visible:bg-surface2 focus-visible:outline-none">
+      <i class="ti ti-history text-[15px] text-muted"></i> Import history
+    </a>
+  </div>
+
+  <template id="import-modal-body-{{ screen }}">
+    <div class="mt-3 grid gap-3 text-left" x-data="{ name: '', dragging: false }">
+      <label class="group relative flex items-center gap-3 rounded-2xl border border-dashed border-line bg-surface2/40 px-4 py-3 cursor-pointer transition-colors hover:border-gold/60 hover:bg-surface2/70 focus-within:border-gold focus-within:ring-4 focus-within:ring-gold/25"
+             :class="dragging && 'border-gold ring-4 ring-gold/25 bg-surface2/70'"
+             @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false"
+             @drop.prevent="dragging = false; $refs.file.files = $event.dataTransfer.files; name = $refs.file.files[0]?.name || ''">
+        <input type="file" id="import-file" name="file" accept=".xlsx" class="sr-only" x-ref="file"
+               @change="name = $event.target.files[0]?.name || ''">
+        <span class="shrink-0 grid place-items-center w-9 h-9 rounded-full bg-goldl text-goldd ring-1 ring-gold/25">
+          <i class="ti text-[18px]" :class="name ? 'ti-file-check' : 'ti-upload'"></i>
+        </span>
+        <span class="min-w-0 flex-1">
+          <span x-show="!name" class="block text-[13px] text-ink">Drop a .xlsx file, or <span class="text-goldd font-medium group-hover:underline">browse</span></span>
+          <span x-show="name" x-cloak class="block text-[13px] font-medium text-ink truncate" x-text="name"></span>
+          <span class="block text-[11.5px] text-muted">Nothing is saved until you apply the preview.</span>
+        </span>
+      </label>
+      <a href="{% url 'import_template' screen %}" class="justify-self-start text-[12.5px] font-medium text-goldd hover:underline focus-visible:underline focus-visible:outline-none">Download the template</a>
+    </div>
+  </template>
+</div>

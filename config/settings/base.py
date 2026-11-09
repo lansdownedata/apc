@@ -33,6 +33,7 @@ DJANGO_APPS = [
 ]
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "import_export",  # APC-141: contacts/vendors import + export
     "anymail",  # ESP email backend (Postmark) — see the email section below
     "auditlog",  # change trail (APC-140); entries land in apps.audit's swapped AuditEntry
 ]
@@ -57,6 +58,7 @@ LOCAL_APPS = [
     "apps.tasks",
     "apps.planners",
     "apps.public",
+    "apps.imports",
     "apps.audit",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -335,3 +337,6 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": env("DJANGO_LOG_LEVEL", default="INFO")},
 }
+
+# APC-141: wrap each import in a transaction (the resources also set it per-resource).
+IMPORT_EXPORT_USE_TRANSACTIONS = True

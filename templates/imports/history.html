@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+{% comment %}
+Every import and export on Contacts and Vendors, newest first (APC-141, spec §9.2). An import
+opens its run page; an export has no page — its Result says what was pulled, through which filters.
+A chip appears only when an import did not apply.
+{% endcomment %}
+<div class="max-w-[1100px] mx-auto px-4 sm:px-6 py-6">
+
+  <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+    <div>
+      <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Import history</h1>
+      <p class="text-[12.5px] text-muted mt-1">Imports and exports of contacts and vendors, newest first.</p>
+    </div>
+    <form method="get" class="w-full sm:w-48">
+      {% include "components/searchable_select.html" with name="screen" field_id="f-screen" options=screens selected=screen_filter empty_label="All screens" autosubmit=1 search="off" aria_label="Screen" %}
+    </form>
+  </div>
+
+  {% if runs %}
+  <table class="w-full text-[12.5px]">
+    <thead class="sticky top-0 z-10 bg-paper">
+      <tr class="text-left text-muted">
+        <th scope="col" class="font-medium py-2 pr-4">When</th>
+        <th scope="col" class="font-medium py-2 pr-4">Who</th>
+        <th scope="col" class="font-medium py-2 pr-4">File</th>
+        <th scope="col" class="font-medium py-2">Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr class="border-t border-line/60 align-top">
+        <td class="py-2.5 pr-4 text-muted num whitespace-nowrap">{{ r.created_at|date:"M j, Y g:i A T" }}</td>
+        <td class="py-2.5 pr-4 text-ink">{% if r.user %}{{ r.user.get_full_name|default:r.user.email }}{% else %}—{% endif %}</td>
+        <td class="py-2.5 pr-4 break-all">
+          {% if r.kind == "import" %}
+          <a href="{% url 'import_run' r.pk %}" class="font-medium text-ink hover:text-goldd hover:underline focus-gold rounded">{{ r.filename }}</a>
+          {% else %}
+          <span class="text-ink">{{ r.filename }}</span>
+          {% endif %}
+        </td>
+        <td class="py-2.5 text-ink">
+          {{ r.result }}
+          {% if r.chip %}<span class="ml-1.5 inline-flex items-center text-[10.5px] font-semibold px-1.5 py-0.5 rounded ring-1 ring-inset ring-line text-muted whitespace-nowrap">{{ r.chip }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if page_obj.has_other_pages %}
+  <nav class="flex items-center justify-between gap-3 mt-4 text-[12.5px]" aria-label="Pages">
+    {% if page_obj.has_previous %}
+    <a href="?{% if screen_filter %}screen={{ screen_filter }}&amp;{% endif %}page={{ page_obj.previous_page_number }}" class="inline-flex items-center gap-1 font-medium text-ink rounded hover:text-goldd focus-gold"><i class="ti ti-chevron-left text-[14px]"></i> Newer</a>
+    {% else %}<span></span>{% endif %}
+    <span class="text-muted num">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a href="?{% if screen_filter %}screen={{ screen_filter }}&amp;{% endif %}page={{ page_obj.next_page_number }}" class="inline-flex items-center gap-1 font-medium text-ink rounded hover:text-goldd focus-gold">Older <i class="ti ti-chevron-right text-[14px]"></i></a>
+    {% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+  {% else %}
+  <p class="text-[13px] text-muted py-12 text-center">No imports yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

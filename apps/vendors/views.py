@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import csv
-import re
 
 from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import models
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
 
 from apps.accounts.permissions import payment_access_required
@@ -26,7 +26,7 @@ from apps.payments.models import AffiliatePayable
 from apps.reservations import processing
 from apps.tasks import vendor_tasks
 
-from . import compliance, performance
+from . import compliance, performance, selectors
 from .forms import VendorDocumentForm, VendorDriverForm, VendorForm, VendorInsuranceForm
 from .models import (
     INSURANCE_SEVERITY,
@@ -45,7 +45,10 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
     """Directory. Active vendors split into a needs-attention strip (lapsed / expiring /
     missing coverage) and a healthy roster; inactive vendors are archived — hidden unless
     the status filter asks for them."""
-    vendors = Vendor.objects.prefetch_related(
+    # Every vendor the search matches (the selector's rule, shared with the Excel export);
+    # the status filter is applied below, by the split, so the archived count stays right.
+    query = request.GET.get("q", "").strip()
+    vendors = selectors.directory("all", query).prefetch_related(
         "vehicle_types",
         Prefetch(
             "policies",
@@ -53,19 +56,7 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
         ),
     )
 
-    query = request.GET.get("q", "").strip()
-    if query:
-        lookup = (
-            Q(name__icontains=query) | Q(contact_name__icontains=query) | Q(email__icontains=query)
-        )
-        digits = re.sub(r"\D", "", query)
-        if len(digits) >= 3:
-            lookup |= Q(phone__icontains=digits)
-        vendors = vendors.filter(lookup)
-
-    status_filter = request.GET.get("status", "active").strip() or "active"
-    if status_filter not in {"active", "inactive", "all"}:
-        status_filter = "active"
+    status_filter = selectors.clean_status(request.GET.get("status", "active"))
 
     rows = list(vendors)
     for v in rows:
@@ -105,6 +96,8 @@ def vendor_list(request: HttpRequest) -> HttpResponse:
             "archived_count": archived_count,
             "q": query,
             "status_filter": status_filter,
+            "export_count": len(attention) + len(roster),
+            "export_query": urlencode({"status": status_filter, "q": query}),
             "status_options": _STATUS_FILTERS,
         },
     )

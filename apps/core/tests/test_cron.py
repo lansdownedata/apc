@@ -66,6 +66,7 @@ def test_registry_contains_all_jobs():
         "run-tasks",
         "gnet-farm-in",
         "cleaning-holds",
+        "purge-import-files",
     }
 
 

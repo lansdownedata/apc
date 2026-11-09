@@ -14,6 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.dispatch import farm_in_push, monitoring
+from apps.imports import services as import_services
 from apps.integrations import la_sync
 from apps.messaging import sender
 from apps.payments import holds, qbo_bills, tasks
@@ -42,6 +43,9 @@ JOBS: dict[str, Callable[[], int]] = {
     # APC-95: place each held order's cleaning hold on its first held trip's day, and sweep
     # unused, expired and unbooked holds (hourly; needs a cron-job.org entry).
     "cleaning-holds": holds.run_cron,
+    # APC-141: delete uploaded import workbooks after 3 days; run rows are kept (daily; needs a
+    # cron-job.org entry).
+    "purge-import-files": import_services.purge_files,
 }
 
 
