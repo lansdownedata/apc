@@ -813,10 +813,11 @@ def test_import_sends_nothing():
 
 # A row that changes Notes and adds a phone measured 9 queries (savepoint + release, match, phones
 # on file, the email constraint check, billing pre_save, update, add_phone's lookup + insert), the
-# run 6 more (50 rows: 456, 100: 906).
+# run 6 more (50 rows: 456, 100: 906). The APC-140 audit trail adds 2 per updated row (auditlog's
+# read of the stored row + the entry insert): 100 rows measured 1,206.
 # 100 rows must fit the same constants as 50: the cost per row does not grow with the file.
 QUERY_BASE = 10
-QUERY_PER_ROW = 10
+QUERY_PER_ROW = 12
 
 
 @pytest.mark.parametrize("n", [50, 100])

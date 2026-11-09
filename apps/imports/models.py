@@ -38,6 +38,14 @@ class ImportRun(TimeStampedModel):
     rows = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
     applied_at = models.DateTimeField(null=True, blank=True)
+    # Who pressed Apply: any owner-admin may apply another's preview. `user` stays the uploader.
+    applied_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
 
     class Meta:
         ordering = ["-created_at"]

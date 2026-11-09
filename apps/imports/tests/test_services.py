@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models.functions import Lower
@@ -15,6 +16,7 @@ from openpyxl import load_workbook
 
 from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AddressFactory
+from apps.audit.models import AuditEntry
 from apps.contacts import selectors as contact_selectors
 from apps.contacts import services as contact_services
 from apps.contacts.factories import CompanyFactory, ContactFactory
@@ -195,7 +197,7 @@ def test_apply_writes_and_records():
         ["Name", "Email"],
         [["Jordan Smith", "jordan@acme.test"], ["Sam", "sam@acme.test"], ["Nobody", ""]],
     )
-    applied = services.apply(run.pk)
+    applied = services.apply(run.pk, user=run.user)
     assert applied.pk == run.pk
     run.refresh_from_db()
     assert run.status == ImportRun.Status.APPLIED
@@ -214,11 +216,58 @@ def test_apply_writes_and_records():
     assert run.preview_counts["new"] == 1
 
 
+def _import_entries(run: ImportRun, model) -> list[AuditEntry]:
+    kind = ContentType.objects.get_for_model(model)
+    return list(AuditEntry.objects.filter(cid=f"import-{run.pk}", content_type=kind))
+
+
+def test_apply_credits_whoever_pressed_apply():
+    uploader, applier = UserFactory(), UserFactory()
+    run = _upload(_sheet(["Name", "Email"], [["Sam", "sam@acme.test"]]), user=uploader)
+    services.preview(run)
+    services.apply(run.pk, user=applier)
+    run.refresh_from_db()
+    assert (run.user, run.applied_by) == (uploader, applier)
+
+
+def test_apply_writes_its_changes_to_the_audit_trail_under_the_run():
+    applier = UserFactory()
+    jordan = ContactFactory(name="Jordan", email="jordan@acme.test", phone="")
+    run = _previewed(
+        ["Name", "Email", "City"],
+        [["Jordan Smith", "jordan@acme.test", "Boston"], ["Sam", "sam@acme.test", ""]],
+    )
+    assert not _import_entries(run, Contact)  # the dry run's entries roll back with it
+    services.apply(run.pk, user=applier)
+    entries = _import_entries(run, Contact)
+    assert {(e.actor_id, e.source) for e in entries} == {(applier.pk, "import: people.xlsx")}
+    jordan_changes = {}
+    for entry in entries:
+        if entry.object_pk == str(jordan.pk):
+            jordan_changes |= entry.changes
+    assert jordan_changes["name"] == ["Jordan", "Jordan Smith"]
+    assert jordan_changes["primary_address.city"][1] == "Boston"
+    sam = Contact.objects.get(email="sam@acme.test")
+    assert any(e.object_pk == str(sam.pk) and e.action == AuditEntry.Action.CREATE for e in entries)
+
+
+def test_vendor_import_logs_its_address_on_the_vendor():
+    VendorFactory(name="Acme Limo", email="ops@acme.test")
+    run = _previewed(
+        ["Name", "Email", "City"], [["Acme Limo", "ops@acme.test", "Denver"]], screen="vendors"
+    )
+    services.apply(run.pk, user=UserFactory())
+    changes = {}
+    for entry in _import_entries(run, Vendor):
+        changes |= entry.changes
+    assert changes["address.city"][1] == "Denver"
+
+
 def test_apply_revalidates_against_current_data():
     run = _previewed(["Name", "Email"], [["Jordan Smith", "jordan@acme.test"]])
     assert run.rows[0]["outcome"] == "new"
     ContactFactory(name="Jordan", email="jordan@acme.test", phone="")
-    services.apply(run.pk)
+    services.apply(run.pk, user=run.user)
     run.refresh_from_db()
     row = run.rows[0]
     assert row["outcome"] == "updated"
@@ -244,7 +293,7 @@ def test_apply_refuses_applied_and_expired(fields, age, message):
     run = _upload(_sheet(["Name", "Email"], [["Sam", "sam@acme.test"]]), **fields)
     ImportRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - age)
     with pytest.raises(services.ApplyRefused) as refused:
-        services.apply(run.pk)
+        services.apply(run.pk, user=run.user)
     assert str(refused.value) == message
     assert not Contact.objects.exists()
     run.refresh_from_db()
@@ -270,7 +319,7 @@ def test_apply_refuses_when_file_was_purged(how):
     else:
         default_storage.delete(run.file.name)
     with pytest.raises(services.ApplyRefused) as refused:
-        services.apply(run.pk)
+        services.apply(run.pk, user=run.user)
     assert str(refused.value) == "This preview has expired. Upload the file again."
     assert not Contact.objects.exists()
 
@@ -300,7 +349,7 @@ def test_error_row_crash_fails_run_and_writes_nothing(monkeypatch, caplog, stage
     _crash_on_row(monkeypatch, 3)
     with caplog.at_level(logging.ERROR, logger="apps.imports.services"):
         if stage == "apply":
-            services.apply(run.pk)
+            services.apply(run.pk, user=run.user)
         else:
             services.preview(run)
     run.refresh_from_db()
@@ -321,7 +370,7 @@ def test_an_exception_escaping_the_library_fails_the_run(monkeypatch, caplog):
 
     monkeypatch.setattr(ContactResource, "import_data", explode)
     with caplog.at_level(logging.ERROR, logger="apps.imports.services"):
-        services.apply(run.pk)
+        services.apply(run.pk, user=run.user)
     run.refresh_from_db()
     assert run.status == ImportRun.Status.FAILED
     assert run.error == "Something went wrong reading this file. Nothing was saved."
@@ -502,7 +551,7 @@ def test_round_trip_is_all_unchanged(screen, fixtures, filters, total):
     assert [r["outcome"] for r in run.rows] == ["unchanged"] * total, run.rows
     assert run.preview_counts["errors"] == 0
     assert run.preview_counts["examples"] == 0
-    services.apply(run.pk)
+    services.apply(run.pk, user=run.user)
     run.refresh_from_db()
     assert run.counts["unchanged"] == total
     assert model.objects.count() == before

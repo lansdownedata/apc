@@ -21,7 +21,7 @@ ADDRESS_COLUMNS = {
 LOCATION_FIELDS = ("latitude", "longitude", "locationiq_place_id", "display_name")
 
 
-def _typed(row) -> dict[str, str]:
+def typed_cells(row) -> dict[str, str]:
     """The non-blank address cells of `row`, by Address field."""
     typed = {}
     for column, attr in ADDRESS_COLUMNS.items():
@@ -34,7 +34,7 @@ def _typed(row) -> dict[str, str]:
 def clean_address(row) -> None:
     """Raise the row's `ValidationError` for a cell longer than its field. Writes nothing."""
     columns = {attr: column for column, attr in ADDRESS_COLUMNS.items()}
-    for attr, value in _typed(row).items():
+    for attr, value in typed_cells(row).items():
         limit = Address._meta.get_field(attr).max_length
         try:
             MaxLengthValidator(limit)(value)
@@ -45,7 +45,7 @@ def clean_address(row) -> None:
 def address_changes(address: Address | None, row) -> list[list[str]]:
     """`[["Street", old, new], ...]` for the non-blank cells that differ from what is stored."""
     changes = []
-    typed = _typed(row)
+    typed = typed_cells(row)
     for column, attr in ADDRESS_COLUMNS.items():
         if attr not in typed:
             continue
@@ -66,7 +66,7 @@ def write_address(owner, slot: str, row) -> None:
     The caller saves `owner` (a new Address is only set on it). A changed text field clears
     the location data. Country is left as it is.
     """
-    typed = _typed(row)
+    typed = typed_cells(row)
     if not typed:
         return
     address = getattr(owner, slot)

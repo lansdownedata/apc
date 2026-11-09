@@ -13,6 +13,8 @@ import tablib
 from django.db import transaction
 from django.utils import timezone
 
+from apps.audit.context import audit_context
+
 from .models import ImportRun
 from .screens import Screen, get_screen
 from .xlsx import ROW_COLUMN, FileError, ParsedSheet, read_rows, write_workbook
@@ -137,9 +139,13 @@ def preview(run: ImportRun) -> None:
     run.save(update_fields=["rows", "preview_counts", "status", "error", "updated_at"])
 
 
-def apply(run_pk: int) -> ImportRun:
-    """Run a previewed import for real, once. Holds the run's row lock throughout, so a
-    double-click or a second tab gets "already applied" (spec §7)."""
+def apply(run_pk: int, *, user) -> ImportRun:
+    """Run a previewed import for real, once, as `user`. Holds the run's row lock throughout,
+    so a double-click or a second tab gets "already applied" (spec §7).
+
+    Every change lands in the audit trail credited to `user` under `cid` "import-<run id>"
+    (APC-140 §8), so `AuditEntry.objects.filter(cid="import-7")` is everything run 7 changed.
+    """
     with transaction.atomic():
         run = ImportRun.objects.select_for_update().get(pk=run_pk)
         if run.status == ImportRun.Status.APPLIED:
@@ -157,7 +163,10 @@ def apply(run_pk: int) -> ImportRun:
             _fail(run, str(exc))
             return run
         try:
-            rows = _import(run, screen, parsed, dry_run=False)
+            with audit_context(
+                actor=user, source=f"import: {run.filename}", cid=f"import-{run.pk}"
+            ):
+                rows = _import(run, screen, parsed, dry_run=False)
         except _Crashed as exc:
             _fail(run, str(exc))
             return run
@@ -169,8 +178,11 @@ def apply(run_pk: int) -> ImportRun:
         run.rows = rows
         run.counts = _counts(rows, parsed.examples)
         run.applied_at = timezone.now()
+        run.applied_by = user
         run.status = ImportRun.Status.APPLIED
-        run.save(update_fields=["rows", "counts", "applied_at", "status", "updated_at"])
+        run.save(
+            update_fields=["rows", "counts", "applied_at", "applied_by", "status", "updated_at"]
+        )
     return run
 
 

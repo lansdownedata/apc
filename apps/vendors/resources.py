@@ -93,6 +93,7 @@ class VendorImportLoader(BaseInstanceLoader):
 
 class VendorResource(PortalResource):
     COLUMNS = VENDOR_COLUMNS
+    ADDRESS_SLOT = "address"
 
     name = Field(attribute="name", column_name="Name")
     contact_name = Field(attribute="contact_name", column_name="Contact name")

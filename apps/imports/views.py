@@ -195,7 +195,7 @@ def run_detail(request: HttpRequest, pk: int) -> HttpResponse:
 def confirm(request: HttpRequest, pk: int) -> HttpResponse:
     _import_run_or_404(pk)
     try:
-        run = services.apply(pk)
+        run = services.apply(pk, user=request.user)
     except services.ApplyRefused as refused:
         messages.error(request, str(refused))
     else:

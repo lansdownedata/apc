@@ -353,7 +353,7 @@ def test_run_page_apply_disabled_when_nothing_applies(client, admin):
 def test_run_page_flags_differing_rows(client, admin):
     run = _previewed([["Ann Lee", "ann@acme.test"], ["Bob Lee", "bob@acme.test"]])
     Contact.objects.create(name="Ann Lee", email="ann@acme.test")
-    services.apply(run.pk)
+    services.apply(run.pk, user=run.user)
     body = client.get(reverse("import_run", args=[run.pk])).content.decode()
     assert "data-apply" not in body
     assert "Applied " in body and " by " in body
@@ -494,3 +494,15 @@ def test_upload_handler_explains_a_response_that_is_not_json():
     )
     assert "window.alert" not in body and "confirm(" not in body
     assert "return new Promise(() => {});" in body  # an alert stays up until its own button
+
+
+def test_run_page_names_who_applied_not_who_uploaded(client, admin):
+    uploader = UserFactory(first_name="Una", last_name="Loader")
+    run = _previewed([["Ann Lee", "ann@acme.test"]], user=uploader)
+    client.post(reverse("import_confirm", args=[run.pk]))
+    run.refresh_from_db()
+    assert run.applied_by == admin
+    body = client.get(reverse("import_run", args=[run.pk])).content.decode()
+    applied_line = re.search(r"Applied [^<]*</p>", body).group(0)
+    assert f"by {admin.get_full_name() or admin.email}" in applied_line
+    assert "Una Loader" not in applied_line

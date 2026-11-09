@@ -102,6 +102,7 @@ class ContactImportLoader(BaseInstanceLoader):
 
 class ContactResource(PortalResource):
     COLUMNS = CONTACT_COLUMNS
+    ADDRESS_SLOT = "primary_address"
 
     name = Field(attribute="name", column_name="Name")
     email = Field(attribute="email", column_name="Email")

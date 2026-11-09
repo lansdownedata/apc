@@ -14,9 +14,11 @@ from import_export.resources import ModelResource
 from import_export.results import RowResult
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
+from apps.audit.children import track_address
 from apps.core.phone import to_e164
 from apps.core.templatetags.phone_filters import phone_display
 
+from .address import typed_cells
 from .xlsx import ROW_COLUMN, Column
 
 OUTCOMES = {
@@ -75,6 +77,8 @@ class PortalResource(ModelResource):
     """Blank never clears, `changes` per row, duplicate keys in the file, §3.4 outcomes."""
 
     COLUMNS: ClassVar[tuple[Column, ...]] = ()
+    # The owner's Address FK the five address cells write to; its changes are logged on the owner.
+    ADDRESS_SLOT: ClassVar[str] = ""
 
     class Meta:
         use_bulk = False  # save() must run: Contact.save, billing + audit-log signals
@@ -94,6 +98,15 @@ class PortalResource(ModelResource):
         self._created: set[int] = set()
         self._parsed: dict = {}
         self._dry_run = False
+
+    def save_instance(self, instance, is_create, row, **kwargs) -> None:
+        """Wrapping the whole save covers both the address write in `before_save_instance` and
+        the owner's FK to a new address, so `track_address` sees the slot as it ends up."""
+        if not (self.ADDRESS_SLOT and typed_cells(row)):
+            super().save_instance(instance, is_create, row, **kwargs)
+            return
+        with track_address(instance, slot=self.ADDRESS_SLOT):
+            super().save_instance(instance, is_create, row, **kwargs)
 
     @classmethod
     def export_queryset(cls, queryset):
