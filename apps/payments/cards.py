@@ -76,7 +76,7 @@ def start_add_card(contact) -> str:
     secret for `stripe.confirmCardSetup`."""
     intent = _stripe().SetupIntent.create(
         customer=contact_customer(contact),
-        payment_method_types=["card"],
+        allowed_payment_method_types=["card"],
         usage="off_session",
         metadata={"contact_id": str(contact.pk)},
     )

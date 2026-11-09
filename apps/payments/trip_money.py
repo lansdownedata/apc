@@ -218,7 +218,7 @@ def charge_trip(trip, amount, *, note: str = "", lines=None) -> Charge:
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
-            payment_method_types=["card"],
+            allowed_payment_method_types=["card"],
             off_session=True,
             confirm=True,
             metadata={

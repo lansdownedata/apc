@@ -166,7 +166,7 @@ def open_intent_for(
         amount=_cents(amount),
         currency="usd",
         customer=customer,
-        payment_method_types=["card"],
+        allowed_payment_method_types=["card"],
         setup_future_usage="off_session",
         metadata=metadata,
         idempotency_key=charge.idempotency_key,
@@ -196,7 +196,7 @@ def charge_balance(plan: PaymentPlan) -> Charge:
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
-            payment_method_types=["card"],
+            allowed_payment_method_types=["card"],
             off_session=True,
             confirm=True,
             metadata={
@@ -1209,7 +1209,7 @@ def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
             currency="usd",
             customer=plan.stripe_customer_id,
             payment_method=plan.stripe_payment_method_id,
-            payment_method_types=["card"],
+            allowed_payment_method_types=["card"],
             off_session=True,
             confirm=True,
             metadata={

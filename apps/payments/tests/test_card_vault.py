@@ -123,7 +123,7 @@ def test_adding_a_card_starts_an_off_session_setup_intent_on_the_contacts_custom
         assert cards.start_add_card(contact) == "s_1"
 
     kwargs = create.call_args.kwargs
-    assert (kwargs["customer"], kwargs["usage"], kwargs["payment_method_types"]) == (
+    assert (kwargs["customer"], kwargs["usage"], kwargs["allowed_payment_method_types"]) == (
         "cus_contact",
         "off_session",
         ["card"],

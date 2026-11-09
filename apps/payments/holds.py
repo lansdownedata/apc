@@ -250,7 +250,7 @@ def _create_intent(plan: PaymentPlan, charge: Charge):
         currency="usd",
         customer=plan.stripe_customer_id,
         payment_method=plan.stripe_payment_method_id,
-        payment_method_types=["card"],
+        allowed_payment_method_types=["card"],
         off_session=True,
         confirm=True,
         capture_method="manual",

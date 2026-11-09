@@ -167,7 +167,7 @@ def test_place_hold_creates_one_authorized_row_and_calls_stripe_manual_capture()
     assert kwargs["capture_method"] == "manual"
     assert kwargs["off_session"] is True and kwargs["confirm"] is True
     assert (kwargs["customer"], kwargs["payment_method"]) == ("cus_1", "pm_1")
-    assert kwargs["payment_method_types"] == ["card"]
+    assert kwargs["allowed_payment_method_types"] == ["card"]
     assert kwargs["metadata"] == {
         "lead_id": str(lead.pk),
         "kind": "hold",
