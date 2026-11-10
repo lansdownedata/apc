@@ -31,6 +31,8 @@ def source_for(request: HttpRequest) -> str:
     """The audit `source` label for the request's route."""
     if request.path.startswith("/portal/"):
         return "portal"
+    if request.path.startswith("/admin/"):  # /admin/login/ is a redirect outside the admin
+        return "admin"
     match = getattr(request, "resolver_match", None)
     if match is None:
         return f"web: {request.path}"

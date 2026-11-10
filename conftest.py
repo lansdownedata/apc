@@ -94,3 +94,10 @@ def _empty_cache():
 def _quiet_hours_off(request, monkeypatch):
     if request.node.get_closest_marker("quiet_hours") is None:
         monkeypatch.setattr("apps.messaging.quiet.hold_until", lambda *_, **__: None)
+
+
+@pytest.fixture
+def two_factor_off(settings):
+    """Password-only sign-in, as before text-message codes. For tests that POST a password to
+    the staff or planner login and expect a session; `force_login` needs nothing."""
+    settings.TWO_FACTOR_ENABLED = False

@@ -8,7 +8,7 @@ from django.templatetags.static import static
 from django.urls import include, path, re_path
 from django.views.generic import RedirectView, TemplateView
 
-from apps.accounts.views import accept_invite
+from apps.accounts.views import StaffLoginView, accept_invite, login_code, login_code_resend
 from apps.core.cron import run_job
 from apps.integrations.views import (
     calendly_webhook,
@@ -69,8 +69,14 @@ staff_patterns = [
 ]
 
 urlpatterns = [
+    # The admin has no sign-in form of its own: it would skip the code step.
+    path("admin/login/", RedirectView.as_view(pattern_name="login", query_string=True)),
     path("admin/", admin.site.urls),
     path("healthz/", healthz, name="health"),
+    # Staff sign-in with the texted code; above the stock auth urls so these win.
+    path("portal/login/", StaffLoginView.as_view(), name="login"),
+    path("portal/login/code/", login_code, name="login_code"),
+    path("portal/login/code/resend/", login_code_resend, name="login_code_resend"),
     path("portal/", include("django.contrib.auth.urls")),  # /portal/login/, /portal/logout/, ...
     path("portal/", include(staff_patterns)),  # ← entire staff portal, auth-gated
     # public customer-facing quote page (token-keyed, no login) — unchanged
