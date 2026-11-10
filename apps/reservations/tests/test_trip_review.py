@@ -103,6 +103,33 @@ def test_actual_times_prefill_from_status_events():
     assert review.actual_dropoff_at == arrived + timedelta(hours=3, minutes=40)
 
 
+def _manual(trip, status, at):
+    event = TripStatusEvent.objects.create(
+        reservation=trip, status=status, source=TripStatusEvent.Source.MANUAL
+    )
+    TripStatusEvent.objects.filter(pk=event.pk).update(created_at=at)
+
+
+def test_a_done_marked_by_hand_days_later_leaves_the_drop_off_blank():
+    """PROC-02: marking a trip Done days after it ran must not make that moment its
+    actual drop-off, which reads as days of overtime. The dispatcher types it instead."""
+    trip = _finished_trip()
+    _manual(trip, Reservation.TripStatus.DONE, trip.pickup_at + timedelta(days=4))
+
+    review = reviews.review_for(trip)
+
+    assert review.actual_dropoff_at is None
+    assert review.suggested_overtime_minutes == 0
+
+
+def test_a_done_marked_by_hand_as_the_trip_ends_is_its_drop_off():
+    trip = _finished_trip()
+    done = trip.pickup_at + timedelta(hours=3, minutes=40)
+    _manual(trip, Reservation.TripStatus.DONE, done)
+
+    assert reviews.review_for(trip).actual_dropoff_at == done
+
+
 def test_customer_in_car_alone_is_the_pickup():
     trip = _finished_trip()
     in_car = datetime(2026, 9, 25, 22, 5, tzinfo=ZoneInfo("UTC"))
