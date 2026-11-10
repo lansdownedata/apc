@@ -1240,12 +1240,26 @@ function processingPane(opts) {
     },
     processCard() {
       if (this._undecided()) return;
+      /* Part or all of it may come out of the cleaning hold (or a capture processing adopts):
+       * say so rather than "charged now" (HOLD-07, HOLD-12). */
+      const fromHold = Number(opts.fromHold) || 0;
+      const fromCard = Number(opts.fromCard) || 0;
+      const verb = fromHold > 0 ? "Collect" : "Charge";
+      let message = `What the trip still owes, charged now to ${opts.card}.`;
+      if (fromHold > 0 && fromCard > 0) {
+        message = `$${opts.fromHold} from the cleaning hold, $${opts.fromCard} charged now to ${opts.card}.`;
+      } else if (fromHold > 0) {
+        message = "All of it from the cleaning hold; the card isn't charged again.";
+      }
       Alpine.store("modal").confirm({
-        title: `Charge $${opts.difference}?`,
-        message: `What the trip still owes, charged now to ${opts.card}. Then the trip is locked.`,
+        title: `${verb} $${opts.difference}?`,
+        message: `${message} Then the trip is locked.`,
         variant: "gold",
-        confirmText: `Charge $${opts.difference}`,
-        onConfirm: () => this._process({ collect: "card" }, `Charged $${opts.difference} and processed`),
+        confirmText: `${verb} $${opts.difference}`,
+        onConfirm: () => this._process(
+          { collect: "card" },
+          `${fromHold > 0 ? "Collected" : "Charged"} $${opts.difference} and processed`,
+        ),
       });
     },
     processLink() {

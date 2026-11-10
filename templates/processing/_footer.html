@@ -15,7 +15,10 @@
        methods: {{ refund_methods|json_attr }},
        {% comment %} The server refuses to process an undecided overtime suggestion; say so
           before a confirm is opened (PROC-02). {% endcomment %}
-       overtimeUndecided: {% if review.decided_at is None and review.suggested_overtime_minutes > 0 %}true{% else %}false{% endif %},
+       overtimeUndecided: {% if review.overtime_undecided %}true{% else %}false{% endif %},
+       {% comment %} What the cleaning hold pays and what the card is charged (HOLD-07). {% endcomment %}
+       fromHold: '{{ from_hold|floatformat:2 }}',
+       fromCard: '{{ from_card|floatformat:2 }}',
        urls: {
          process: '{% url 'processing_process' trip.pk %}',
          unlock: '{% url 'processing_unlock' trip.pk %}',
@@ -55,13 +58,13 @@
       {% if invoice_note and difference > 0 %}
       <span class="text-[12px] text-muted">{{ invoice_note }} Processing locks the customer side of this trip.</span>
       {% else %}
-      <span class="text-[12px] text-muted">{% if difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>.{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
+      <span class="text-[12px] text-muted">{% if difference > 0 and from_hold > 0 %}To collect <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>: ${{ from_hold|floatformat:2|intcomma }} from the cleaning hold{% if from_card > 0 %}, ${{ from_card|floatformat:2|intcomma }} charged to {{ card_label|default:"the card on file" }}.{% else %}; the card isn't charged again.{% endif %}{% elif difference > 0 %}To charge now <b class="num text-ink">${{ difference|floatformat:2|intcomma }}</b>.{% elif difference < 0 %}Overpaid by <b class="num text-ink">${{ owed_back|floatformat:2|intcomma }}</b>.{% else %}Nothing owed.{% endif %} Processing locks the customer side of this trip.</span>
       {% endif %}
       {% if can_pay %}
         {% if invoice_note and difference > 0 %}
           <button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processInvoice()">Process</button>
         {% elif difference > 0 %}
-          {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and charge ${{ difference|floatformat:2|intcomma }}</button>{% endif %}
+          {% if card_on_file %}<button type="button" class="ml-auto btn-gold text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50" :disabled="busy" @click="processCard()">Process and {% if from_hold > 0 %}collect{% else %}charge{% endif %} ${{ difference|floatformat:2|intcomma }}</button>{% endif %}
           <button type="button" class="{% if not card_on_file %}ml-auto {% endif %}text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processLink()">Process and send pay link</button>
         {% elif difference < 0 %}
           <button type="button" class="ml-auto text-[13px] font-medium px-3.5 py-2 rounded-lg ring-1 ring-line bg-surface hover:bg-surface2 focus-gold disabled:opacity-50" :disabled="busy" @click="processKeep()">Hold as credit</button>

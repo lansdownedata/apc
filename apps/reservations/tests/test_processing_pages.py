@@ -622,6 +622,50 @@ process.stdout.write(JSON.stringify(saved));
 """
 
 
+_SPLIT_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const out = [];
+const ctx = {
+  out,
+  Alpine: { store: (n) => (n === "modal"
+    ? { confirm: (o) => out.push([o.title, o.message, o.confirmText]) }
+    : { push() {} }) },
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + `
+  const base = { difference: "650.00", card: "Visa ••4242", urls: { process: "/p/" } };
+  processingPane({ ...base, fromHold: "500.00", fromCard: "150.00" }).processCard();
+  const all = { ...base, difference: "250.00", fromHold: "250.00", fromCard: "0.00" };
+  processingPane(all).processCard();
+  processingPane({ ...base, fromHold: "0.00", fromCard: "650.00" }).processCard();
+`, ctx);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_the_charge_confirm_says_what_the_hold_pays():
+    """HOLD-07 / HOLD-12: the confirm said "charged now to Visa ••4242" for money the
+    cleaning hold paid."""
+    split, all_hold, card_only = _node(_SPLIT_HARNESS, _js("processingPane"))
+    assert split == [
+        "Collect $650.00?",
+        "$500.00 from the cleaning hold, $150.00 charged now to Visa ••4242. "
+        "Then the trip is locked.",
+        "Collect $650.00",
+    ]
+    assert all_hold == [
+        "Collect $250.00?",
+        "All of it from the cleaning hold; the card isn't charged again. Then the trip is locked.",
+        "Collect $250.00",
+    ]
+    assert card_only == [
+        "Charge $650.00?",
+        "What the trip still owes, charged now to Visa ••4242. Then the trip is locked.",
+        "Charge $650.00",
+    ]
+
+
 def test_unticking_waive_goes_back_to_the_suggestion():
     """PROC-02: unticking Waive saved 0 billable minutes, the value the waive had left."""
     (saved,) = _node(_WAIVE_HARNESS, _js("tripReviewForm"))
