@@ -5071,10 +5071,11 @@ function contactPicker(opts = {}) {
       this.query = "";
       this.closeResults();
     },
-    /* Unlink keeps the fields: the usual reason to unlink is "same details, different
-     * person", so what's on screen is the start of a new customer. */
+    /* Unlink clears the linked customer's details too (LEAD-02): left on screen, their
+     * email or phone matched the new lead straight back to the customer just unlinked. */
     unlink() {
       this.selected = null;
+      for (const f of ["name", "company", "phone", "email"]) this.setField(f, "");
       this.$nextTick(() => this.fieldEl("name")?.focus());
     },
 

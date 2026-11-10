@@ -254,3 +254,62 @@ def test_lead_update_rejects_invalid_email(client):
     assert resp.json()["ok"] is False
     lead.contact.refresh_from_db()
     assert lead.contact.email == original_email
+
+
+def test_lead_create_refusal_names_the_field_by_its_label(client):
+    """LEAD-02: the toast read "phone: Enter a valid phone number." — the raw field name."""
+    from django.contrib.messages import get_messages
+
+    client.force_login(UserFactory())
+    resp = client.post(
+        reverse("lead_create"),
+        {"name": "Sarah Boyne", "phone": "12345", "email": "", "channel": "phone"},
+    )
+    (msg,) = [str(m) for m in get_messages(resp.wsgi_request)]
+    assert msg.startswith("Phone: ")
+    assert not Lead.objects.exists()
+
+
+# --- LEAD-02: Change on the new-lead modal unlinks the customer AND their details -------
+
+_UNLINK_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const fields = { name: "Tess", company: "Acme", phone: "+12025550141", email: "tess@x.test" };
+const ctx = {
+  fields,
+  document: { getElementById: (id) => {
+    const key = id.replace("nl-", "");
+    return { get value() { return fields[key]; }, set value(v) { fields[key] = v; },
+             focus() {} };
+  } },
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + `
+  const p = contactPicker({});
+  p.$nextTick = (fn) => fn();
+  p.selected = { name: "Tess" };
+  p.unlink();
+`, ctx);
+process.stdout.write(JSON.stringify(fields));
+"""
+
+
+def test_change_clears_the_linked_customers_details():
+    """After Change, the old customer's email stayed in the box, so the new lead still
+    matched that customer by email."""
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function contactPicker(")
+    source = js[start : js.index("window.contactPicker = contactPicker;", start)]
+    result = subprocess.run(
+        ["node", "-e", _UNLINK_HARNESS], input=source, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"name": "", "company": "", "phone": "", "email": ""}
