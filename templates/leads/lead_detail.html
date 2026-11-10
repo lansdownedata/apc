@@ -36,14 +36,7 @@
     Edit details' "could not save" error lands on this page and must not be swallowed. (Wider gap: messages posted before a redirect to any
     other portal page are still dropped — worth fixing centrally in base.html.)
   {% endcomment %}
-  {% if messages %}
-  {% for message in messages %}
-  <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mb-4 text-[13px]">
-    <span class="tone-ic"><i class="ti ti-alert-triangle text-[17px]"></i></span>
-    <span>{{ message }}</span>
-  </div>
-  {% endfor %}
-  {% endif %}
+  {% if messages %}{% include "components/inline_messages.html" %}{% endif %}
 
   {% include "leads/_wedding_summary.html" %}
   {% include "leads/_wedding_day_of_details.html" %}

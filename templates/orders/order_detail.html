@@ -21,12 +21,7 @@
     <i class="ti ti-arrow-left text-[15px]"></i> Orders
   </a>
 
-  {% if messages %}{% for message in messages %}
-  <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mb-4 text-[13px]">
-    <span class="tone-ic"><i class="ti ti-alert-triangle text-[17px]"></i></span>
-    <span>{{ message }}</span>
-  </div>
-  {% endfor %}{% endif %}
+  {% if messages %}{% include "components/inline_messages.html" %}{% endif %}
 
   {% comment %} Lead with the number and the customer, per the dashboards rule — the money
      is the card below, and the trips are the work. {% endcomment %}

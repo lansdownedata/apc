@@ -151,6 +151,8 @@ header, aside, main, .wash-gold {
 .tone-orange .tone-ic { color: rgb(var(--orange)); background: rgb(var(--orange) / .14); }
 .tone-warn { border:1px solid rgb(var(--warn) / .4); background: rgb(var(--warn-soft) / .5); }
 .tone-warn .tone-ic { color: rgb(var(--warn)); background: rgb(var(--warn) / .14); }
+.tone-ok { border:1px solid rgb(var(--ok) / .4); background: rgb(var(--ok-soft) / .5); }
+.tone-ok .tone-ic { color: rgb(var(--ok)); background: rgb(var(--ok) / .14); }
 /* theme-aware text colours (Tailwind has no warn/danger palette) — mirror .ins-* */
 .text-warn   { color: rgb(var(--warn)); }
 .text-danger { color: rgb(var(--danger)); }
