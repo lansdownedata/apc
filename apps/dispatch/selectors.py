@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -219,6 +220,27 @@ def offer_was_previewed(assignment: Assignment | None) -> bool:
     return assignment.gnet_events.filter(
         action=GnetEvent.Action.SEND_TRIP, result=GnetEvent.Result.PREVIEW
     ).exists()
+
+
+def gnet_send_failure(assignment: Assignment | None) -> str:
+    """Why this GNet offer never reached the affiliate, or "" when it did (GNET-02/04).
+
+    A failed send leaves the assignment OFFERED, so without this the card reads like an
+    offer the affiliate is looking at. A gateway refusal is stored as "<status>: <body>";
+    the body is the gateway's own JSON, so only the status is shown. A local refusal
+    (unmapped vehicle, no griddID) is already a sentence written for staff.
+    """
+    if assignment is None or assignment.channel != Assignment.Channel.GNET:
+        return ""
+    event = assignment.gnet_events.filter(
+        action=GnetEvent.Action.SEND_TRIP, result=GnetEvent.Result.ERROR
+    ).first()
+    if event is None:
+        return ""
+    status = re.match(r"(\d{3}):", event.response or "")
+    if status:
+        return f"the gateway refused it ({status.group(1)})."
+    return event.response or "the send failed."
 
 
 def vendor_options(trip: Reservation, *, search: str = "", limit: int | None = 8) -> list[dict]:

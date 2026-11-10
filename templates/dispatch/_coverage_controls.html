@@ -39,8 +39,13 @@
         {% if assignment.is_in_house %}<span class="num">{{ assignment.driver.driver_number }}</span> · {{ assignment.driver.name }}{% if assignment.vehicle %} · {{ assignment.vehicle.name }}{% endif %}{% else %}{{ assignment.vendor.name }}{% endif %}
       </p>
       <p class="text-[12px] text-muted mt-0.5">
-        {% if assignment.is_in_house %}{{ coverage_state|capfirst }} · In-house{% else %}{{ assignment.get_status_display }} · {{ assignment.get_channel_display }}{% endif %}
+        {% if assignment.is_in_house %}{{ coverage_state|capfirst }} · In-house{% elif send_failure %}Not sent · {{ assignment.get_channel_display }}{% else %}{{ assignment.get_status_display }} · {{ assignment.get_channel_display }}{% endif %}
       </p>
+      {% if send_failure %}
+        <p class="text-[11.5px] text-rose-600 mt-1">
+          Not sent to GNet: {{ send_failure }} No affiliate has seen this offer. Reassign to cover it another way.
+        </p>
+      {% endif %}
       {% if previewed %}
         <p class="text-[11.5px] text-rose-600 mt-1">
           Preview — not sent. GNet is disarmed, so no affiliate has seen this offer.
@@ -120,7 +125,7 @@
               :disabled="busy" @click="resolve('{% url 'dispatch_resolve' assignment.pk %}', 'decline')">Declined</button>
     </div>
     {% endif %}
-    {% if assignment.status == 'offered' and assignment.channel == 'gnet' %}
+    {% if assignment.status == 'offered' and assignment.channel == 'gnet' and not send_failure %}
       <p class="text-[11.5px] text-muted mt-2">
         This offer resolves when the affiliate answers over GNet. Reassigning releases it on the network.
       </p>
@@ -190,10 +195,15 @@
           <button type="button" class="btn-gold px-4 py-2 rounded-lg text-[13px] font-semibold"
                   :disabled="busy || !vendor || !canOffer"
                   @click="offerTo('{% url 'dispatch_offer' trip.pk %}')">Send offer</button>
+          {% comment %} Not for a GNet affiliate (GNET-02): it would record coverage on the
+             affiliate's behalf that the network never hears about. {% endcomment %}
           <button type="button" class="btn-ghost px-4 py-2 rounded-lg text-[13px] font-semibold ring-1 ring-line"
-                  :disabled="busy || !vendor"
+                  x-show="!vendorGnet" :disabled="busy || !vendor"
                   @click="offerTo('{% url 'dispatch_assign' trip.pk %}')">Mark assigned</button>
         </div>
+        <p class="text-[11.5px] text-muted" x-show="vendorGnet" x-cloak>
+          <span x-text="vendorName"></span> is on GNet, so the offer goes over GNet.
+        </p>
         <p class="text-[11.5px] text-rose-700" x-show="vendorAlert" x-cloak>
           <i class="ti ti-shield-x text-[13px]"></i> <span x-text="vendorAlert"></span> for this trip's date. You can still go ahead.
         </p>

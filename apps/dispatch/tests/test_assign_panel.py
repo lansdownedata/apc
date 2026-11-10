@@ -559,3 +559,129 @@ def test_refresh_pill_swaps_in_the_fresh_count_and_marks_the_board_stale():
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)
     assert out == {"fetched": ["/panel/7/"], "events": ["drawer-stale"], "pill": "2 open"}
+
+
+# --- GNET-02/04: a GNet send that failed does not read as a live offer -------------------
+
+
+def _failed_gnet_offer(trip, response):
+    from apps.dispatch.models import GnetEvent
+
+    a = AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="Grid Co", gnet_grid_id="gnet-1"),
+        channel=Assignment.Channel.GNET,
+        status=Assignment.Status.OFFERED,
+    )
+    GnetEvent.objects.create(
+        assignment=a,
+        action=GnetEvent.Action.SEND_TRIP,
+        result=GnetEvent.Result.ERROR,
+        response=response,
+        idempotency_key=f"send_trip-a{a.pk}",
+    )
+    return a
+
+
+def test_a_gateway_refusal_shows_not_sent_with_the_status(logged_in_client):
+    trip = _trip()
+    _failed_gnet_offer(trip, '503: {"error": "upstream unavailable"}')
+
+    body = _panel(logged_in_client, trip)
+
+    assert "Not sent to GNet" in body
+    assert "503" in body
+    assert "This offer resolves when the affiliate answers over GNet" not in body
+    assert "Offered · GNet" not in body
+    assert "Reassign" in body
+
+
+def test_a_local_refusal_shows_its_reason(logged_in_client):
+    trip = _trip()
+    _failed_gnet_offer(trip, "Party Bus has no matching GNet vehicle type yet.")
+
+    body = _panel(logged_in_client, trip)
+
+    assert "Not sent to GNet" in body
+    assert "Party Bus has no matching GNet vehicle type yet." in body
+
+
+def test_a_sent_gnet_offer_still_reads_as_live(logged_in_client):
+    trip = _trip()
+    AssignmentFactory(
+        reservation=trip,
+        vendor=VendorFactory(name="Grid Co", gnet_grid_id="gnet-1"),
+        channel=Assignment.Channel.GNET,
+        status=Assignment.Status.OFFERED,
+    )
+
+    body = _panel(logged_in_client, trip)
+
+    assert "Not sent to GNet" not in body
+    assert "This offer resolves when the affiliate answers over GNet" in body
+
+
+def test_unmapped_vehicle_refusal_names_no_code():
+    """The refusal lands in the notification tray, which staff read. It named a Python
+    constant and a file path."""
+    from apps.integrations import gnet
+
+    with pytest.raises(gnet.GnetNotConfigured) as exc:
+        gnet.vehicle_code(VehicleTypeFactory(name="Party Bus"))
+
+    message = str(exc.value)
+    assert "Party Bus" in message
+    assert "VEHICLE_TYPE_MAP" not in message
+    assert ".py" not in message
+
+
+# --- GNET-02: Mark assigned is not offered for a GNet affiliate --------------------------
+
+
+def test_mark_assigned_hides_for_a_gnet_affiliate(logged_in_client):
+    trip = _trip()
+    body = _panel(logged_in_client, trip)
+
+    mark = re.search(r"<button[^>]*>Mark assigned</button>", body, re.S).group(0)
+    assert "vendorGnet" in mark
+
+
+_PICK_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const ctx = {};
+vm.createContext(ctx);
+const c = vm.runInContext(input.source + "\\ncoverageControls({});", ctx);
+const out = [];
+for (const data of input.picks) {
+  c.onPick({ target: { name: "vendor", value: "7",
+    selectedOptions: [{ dataset: { data: JSON.stringify(data) } }] } });
+  out.push(c.vendorGnet);
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_picking_a_gnet_affiliate_sets_the_flag_mark_assigned_reads():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function coverageControls(")
+    source = js[start : js.index("window.coverageControls = coverageControls;", start)]
+    result = subprocess.run(
+        ["node", "-e", _PICK_HARNESS],
+        input=json.dumps(
+            {"source": source, "picks": [{"gnet": True, "email": ""}, {"email": "a@b.test"}]}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [True, False]

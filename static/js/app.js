@@ -616,6 +616,9 @@ function coverageControls(opts = {}) {
     canOffer: false,
     vendorAlert: "",
     vendorName: "",
+    // A GNet affiliate is offered over GNet only: Mark assigned would record coverage the
+    // network never hears about (GNET-02).
+    vendorGnet: false,
 
     /* One delegated listener rather than x-model on each picker: Tom Select fires a real
      * change event on the original <select>, and it bubbles. Binding x-model instead would
@@ -627,6 +630,7 @@ function coverageControls(opts = {}) {
         this.vendor = el.value;
         const data = this.optionData(el);
         this.canOffer = Boolean(data.email || data.gnet);
+        this.vendorGnet = Boolean(data.gnet);
         this.vendorAlert = data.alert || "";
         this.vendorName = data.label || "";
       }
