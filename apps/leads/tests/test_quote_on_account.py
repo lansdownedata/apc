@@ -4,6 +4,7 @@ No deposit and no pay step: the quote page's Book accepts the terms and books. B
 an account is chosen by staff only — the customer is never offered it.
 """
 
+import re
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -52,7 +53,10 @@ def _url(name, lead):
 def test_the_quote_page_offers_book_with_the_terms_and_no_deposit(client):
     html = client.get(_url("quote_page", _quote())).content.decode()
 
-    assert _url("quote_book_on_account", Lead.objects.get()) in html
+    # The token carries a timestamp, so a token minted here a second later differs from the
+    # page's; read the page's own and check it names this lead.
+    book = re.search(r'action="/quote/([^/"]+)/book-on-account/"', html)
+    assert book and services.read_deposit_token(book.group(1)) == Lead.objects.get()
     assert 'name="accept"' in html
     assert "row deposit" not in html
     assert "Book Now" not in html
