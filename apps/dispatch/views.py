@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Exists, OuterRef, Prefetch
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -503,16 +504,21 @@ def vendor_driver_create(request: HttpRequest, pk: int) -> JsonResponse:
 @login_required
 @require_POST
 def cancel_notice(request: HttpRequest, pk: int) -> JsonResponse:
-    """Send the affiliate the "this trip is off" note, on the dispatcher's say-so."""
+    """Send the affiliate the "this trip is off" note, on the dispatcher's say-so.
+
+    A failure is also queued as a flash message (DSP-05): the reassign that calls this
+    withdraws next and reloads the page, which wipes the client's toast before anyone has
+    read it. The reloaded page shows the flash instead, so the dispatcher knows to call.
+    """
     assignment = get_object_or_404(Assignment.objects.select_related("vendor"), pk=pk)
     if not outbound.enabled():
-        return JsonResponse({"ok": False, "error": outbound.OFF_MESSAGE}, status=409)
-    if not services.send_cancellation(assignment):
-        return JsonResponse(
-            {"ok": False, "error": "No email on file for that affiliate — call them."},
-            status=400,
-        )
-    return JsonResponse({"ok": True})
+        error, status = outbound.OFF_MESSAGE, 409
+    elif not services.send_cancellation(assignment):
+        error, status = "No email on file for that affiliate — call them.", 400
+    else:
+        return JsonResponse({"ok": True})
+    messages.error(request, error)
+    return JsonResponse({"ok": False, "error": error}, status=status)
 
 
 _RESOLVERS = {

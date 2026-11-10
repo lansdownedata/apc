@@ -226,3 +226,132 @@ def test_after_a_reassign_the_drawer_scrolls_to_choosing_who_covers_it(client, a
     trip.assignments.update(status=Assignment.Status.WITHDRAWN)
     body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
     assert "data-cover-pick" in body
+
+
+# --- DSP-05: a failed notice survives the reassign's reload ----------------------------
+# Reassign sends the notice, then withdraws, and the withdraw reloads the page. The notice
+# failure used to exist only as a client toast, so the reload wiped it before anyone read
+# it: the dispatcher believed the affiliate had been emailed. The failure is now also a
+# flash message, which the reloaded page shows (components/flash_messages.html).
+
+
+def _reassign(client, assignment) -> int:
+    """What confirmReassign does with the box ticked: notice first, then withdraw."""
+    notice = client.post(reverse("dispatch_cancel_notice", args=[assignment.pk]))
+    withdraw = client.post(
+        reverse("dispatch_resolve", args=[assignment.pk]), {"action": "withdraw"}
+    )
+    assert withdraw.json()["ok"] is True, "a failed notice never blocks the reassignment"
+    return notice.status_code
+
+
+def _flashes(client) -> str:
+    body = client.get(reverse("dispatch_board")).content.decode()
+    start = body.find('<template id="flash-messages">')
+    return body[start : body.index("</template>", start)] if start != -1 else ""
+
+
+def test_no_email_on_file_is_still_on_screen_after_the_reload(client, agent, mailoutbox):
+    a = _assignment(vendor=VendorFactory(name="No Mail Co", email=""))
+    assert _reassign(client, a) == 400
+    a.refresh_from_db()
+    assert a.status == Assignment.Status.WITHDRAWN
+    flashes = _flashes(client)
+    assert 'data-level="error"' in flashes
+    assert "No email on file for that affiliate — call them." in flashes
+    assert mailoutbox == []
+
+
+def test_outbound_off_is_still_on_screen_after_the_reload(client, agent, settings, mailoutbox):
+    settings.OUTBOUND_ENABLED = False
+    a = _assignment()
+    assert _reassign(client, a) == 409
+    assert 'data-level="error"' in _flashes(client)
+    assert mailoutbox == []
+
+
+def test_a_sent_notice_leaves_no_error_behind(client, agent, mailoutbox):
+    a = _assignment()
+    assert _reassign(client, a) == 200
+    assert len(mailoutbox) == 1
+    assert 'data-level="error"' not in _flashes(client)
+
+
+# The browser side of the same flow. There is no JS test runner in the repo: this runs the
+# real coverageControls.confirmReassign under node with the modal, fetch, the tick box and
+# the reload stubbed, and records what it posts. It covers the order of the two posts and
+# that the reload still happens after a failed notice; the flash itself is covered above.
+
+_REASSIGN_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const posted = [];
+const toasts = [];
+let modal = null;
+let reloaded = 0;
+class FormData { set() {} }
+const ctx = {
+  FormData,
+  getCookie: () => "csrf",
+  escapeHtml: (s) => s,
+  document: { getElementById: () => ({ checked: input.ticked }) },
+  window: { location: { reload: () => { reloaded += 1; } } },
+  Alpine: { store: (name) => (name === "modal"
+    ? { show: (o) => { modal = o; } }
+    : { push: (t) => toasts.push(t.title) }) },
+  fetch: async (url) => {
+    posted.push(url);
+    const body = url === "/notice/" ? input.notice : { ok: true };
+    return { json: async () => body };
+  },
+};
+vm.createContext(ctx);
+vm.runInContext(input.source + `
+  const c = coverageControls({});
+  c.$el = { closest: () => null };
+  c.confirmReassign("/resolve/", { cancelNoticeUrl: "/notice/", who: "Reston" });
+`, ctx);
+(async () => {
+  await modal.onConfirm();
+  process.stdout.write(JSON.stringify({ posted, toasts, reloaded }));
+})();
+"""
+
+
+def _confirm_reassign(ticked: bool, notice: dict) -> dict:
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path as _P
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (_P(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function coverageControls(")
+    source = js[start : js.index("window.coverageControls = coverageControls;", start)]
+    result = subprocess.run(
+        ["node", "-e", _REASSIGN_HARNESS],
+        input=json.dumps({"source": source, "ticked": ticked, "notice": notice}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_ticked_reassign_sends_the_notice_then_withdraws():
+    out = _confirm_reassign(True, {"ok": True})
+    assert out == {"posted": ["/notice/", "/resolve/"], "toasts": [], "reloaded": 1}
+
+
+def test_unticked_reassign_only_withdraws():
+    out = _confirm_reassign(False, {"ok": True})
+    assert out == {"posted": ["/resolve/"], "toasts": [], "reloaded": 1}
+
+
+def test_a_failed_notice_still_withdraws_and_reloads():
+    error = "No email on file for that affiliate — call them."
+    out = _confirm_reassign(True, {"ok": False, "error": error})
+    assert out == {"posted": ["/notice/", "/resolve/"], "toasts": [error], "reloaded": 1}
