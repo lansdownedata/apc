@@ -573,15 +573,16 @@ def _with_trips(queryset, prefix: str = ""):
     )
 
 
-def _candidates(now: datetime):
-    """Booked card orders with a live held trip that may be today somewhere and none that
-    is behind us everywhere, and no HOLD row yet (in any state). One row per order."""
+def _candidates(now: datetime, lead_hours: int = 0):
+    """Booked card orders with a live held trip that may be today somewhere (or within
+    `lead_hours` of now) and none that is behind us everywhere, and no HOLD row yet (in any
+    state). One row per order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
     from apps.reservations.models import Reservation
 
     # Local dates sit within a day of UTC's, in every zone.
-    latest = (now + timedelta(days=1)).date()
+    latest = (now + timedelta(days=1, hours=lead_hours)).date()
     earliest = (now - timedelta(days=1)).date()
     held = Reservation.objects.filter(lead=OuterRef("pk"), vehicle__cleaning_fee__gt=0).exclude(
         trip_status__in=CANCELLED_STATUSES
@@ -599,12 +600,24 @@ def _candidates(now: datetime):
     )
 
 
+def _placement_moment(first, config) -> datetime:
+    """When the order's hold is due: `hold_place_time` on the first held trip's day in its
+    own zone, or `hold_lead_hours` before its pickup, whichever comes first (Moe,
+    2026-11-10), so a 2:15 AM pickup is held the evening before rather than after it has
+    run. A trip with no pickup time has only the hold time. The hours are real hours
+    (counted in UTC), not wall-clock ones across a DST change."""
+    moment = datetime.combine(first.pickup_date, config.hold_place_time, _zone(first))
+    if first.pickup_time is None:
+        return moment
+    early = first.pickup_at.astimezone(UTC) - timedelta(hours=config.hold_lead_hours)
+    return min(moment, early)
+
+
 def due_for_placement(now: datetime) -> list[Lead]:
-    """The `_candidates` whose placement moment has come: the first held trip is today in
-    its own zone and `hold_place_time` has passed there. Only on that day: an order whose
-    first held trip is already behind us (switched on mid-order, at go-live) is never held,
-    while one booked late on the day still is. Farmed-in orders, and orders whose every
-    held trip is already processed, are skipped.
+    """The `_candidates` whose placement moment (`_placement_moment`) has come. An order
+    whose first held trip's day is already behind us in its zone (switched on mid-order, at
+    go-live) is never held, while one booked after its moment still is, on the next run.
+    Farmed-in orders, and orders whose every held trip is already processed, are skipped.
 
     The database narrows by date across every zone at once; the exact rule is checked per
     order in Python. A fixed handful of queries."""
@@ -612,15 +625,15 @@ def due_for_placement(now: datetime) -> list[Lead]:
 
     config = TaskConfig.load()
     due = []
-    for lead in _candidates(now):
+    for lead in _candidates(now, config.hold_lead_hours):
         live = _live_held(lead)
         trips = _dated(live)
         if not trips or lead.is_farm_in or _all_processed(live):
             continue
         first = trips[0]
-        if first.pickup_date != _today(first, now):
+        if first.pickup_date < _today(first, now):
             continue
-        if now >= datetime.combine(first.pickup_date, config.hold_place_time, _zone(first)):
+        if now >= _placement_moment(first, config):
             due.append(lead)
     return due
 

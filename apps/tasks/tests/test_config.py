@@ -84,6 +84,7 @@ def test_hold_switch_ships_off():
     assert cfg.hold_enabled is False
     assert cfg.hold_place_time == time(3, 0)
     assert cfg.hold_release_days == 3
+    assert cfg.hold_lead_hours == 6
     assert not hasattr(cfg, "cleaning_fee")  # the fee moved to each vehicle type
 
 
@@ -127,6 +128,7 @@ def test_owner_admin_can_save(client):
             "airport_international_grace_minutes": 45,
             "overtime_block_minutes": 30,
             "hold_place_time": "03:00",
+            "hold_lead_hours": 6,
             "hold_release_days": 3,
         },
     )
@@ -167,6 +169,7 @@ def test_tasks_screen_saves_hold_settings(client):
     assert "Place cleaning holds" in body
     assert "on the day of the order's first held trip (trip's local time)" in body
     assert "days after the order's last held trip" in body
+    assert "hours before the first held pickup, whichever is earlier" in body
     assert 'type="time"' in body
     assert "cleaning_fee" not in body  # the fee is set per vehicle type now
 
@@ -184,6 +187,7 @@ def test_tasks_screen_saves_hold_settings(client):
             "overtime_block_minutes": 60,
             "hold_enabled": "on",
             "hold_place_time": "04:30",
+            "hold_lead_hours": 8,
             "hold_release_days": 5,
         },
     )
@@ -192,7 +196,59 @@ def test_tasks_screen_saves_hold_settings(client):
     cfg = TaskConfig.load()
     assert cfg.hold_enabled is True
     assert cfg.hold_place_time == time(4, 30)
+    assert cfg.hold_lead_hours == 8
     assert cfg.hold_release_days == 5
+
+
+@pytest.mark.parametrize("hours", ["-1", "25", ""])
+def test_the_hold_lead_hours_must_be_0_to_24(client, hours):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    resp = client.post(
+        reverse("task_settings"),
+        {
+            "enabled": "on",
+            "overdue_grace_hours": 24,
+            "post_trip_grace_hours": 2,
+            "grace_large_minutes": 5,
+            "grace_standard_minutes": 15,
+            "transfer_grace_minutes": 15,
+            "airport_domestic_grace_minutes": 25,
+            "airport_international_grace_minutes": 50,
+            "overtime_block_minutes": 60,
+            "hold_place_time": "03:00",
+            "hold_lead_hours": hours,
+            "hold_release_days": 3,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert TaskConfig.load().hold_lead_hours == 6
+
+
+def test_zero_lead_hours_is_allowed(client):
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    resp = client.post(
+        reverse("task_settings"),
+        {
+            "enabled": "on",
+            "overdue_grace_hours": 24,
+            "post_trip_grace_hours": 2,
+            "grace_large_minutes": 5,
+            "grace_standard_minutes": 15,
+            "transfer_grace_minutes": 15,
+            "airport_domestic_grace_minutes": 25,
+            "airport_international_grace_minutes": 50,
+            "overtime_block_minutes": 60,
+            "hold_place_time": "03:00",
+            "hold_lead_hours": 0,
+            "hold_release_days": 3,
+        },
+    )
+
+    assert resp.status_code == 302
+    assert TaskConfig.load().hold_lead_hours == 0
 
 
 # --- the fee moves onto the vehicle types (APC-95) ----------------------------------------

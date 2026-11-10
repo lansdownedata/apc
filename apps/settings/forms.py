@@ -191,6 +191,7 @@ class TaskConfigForm(forms.ModelForm):
             "overtime_block_minutes",
             "hold_enabled",
             "hold_place_time",
+            "hold_lead_hours",
             "hold_release_days",
         ]
         widgets = {
@@ -210,6 +211,7 @@ class TaskConfigForm(forms.ModelForm):
             "hold_enabled": forms.CheckboxInput(attrs=_CHECK),
             # A native time input is fine here: it is not an option picker (CLAUDE.md).
             "hold_place_time": forms.TimeInput(attrs=_TIME, format="%H:%M"),
+            "hold_lead_hours": forms.NumberInput(attrs=_NUM | {"max": 24}),
             "hold_release_days": forms.NumberInput(attrs=_NUM),
         }
 

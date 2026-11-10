@@ -57,9 +57,9 @@ def _at(day: date, clock: time, zone: ZoneInfo = NY) -> datetime:
     return datetime.combine(day, clock, tzinfo=zone)
 
 
-def _order(*fees, day=DAY, zone="America/New_York", card=True):
+def _order(*fees, day=DAY, zone="America/New_York", card=True, at=time(9, 0)):
     """A booked card order with one trip per fee (each its own vehicle type), a day apart
-    starting on `day`."""
+    starting on `day`, each picking up at `at`."""
     lead = LeadFactory(status=Lead.Status.BOOKED)
     trips = []
     for i, fee in enumerate(fees or ("500.00",)):
@@ -69,7 +69,7 @@ def _order(*fees, day=DAY, zone="America/New_York", card=True):
                 lead=lead,
                 vehicle=vehicle,
                 pickup_date=day + timedelta(days=i),
-                pickup_time=time(9, 0),
+                pickup_time=at,
                 pickup_timezone=zone,
             )
         )
@@ -166,6 +166,76 @@ def test_dst_change_day_is_covered():
     processed, create = _run(_at(fall_back, time(3, 30)))
     assert (processed, create.call_count) == (1, 1)
     assert _hold_rows(lead).get().status == Charge.Status.AUTHORIZED
+
+
+# --- an early pickup: the hold time, or N hours before the pickup, whichever comes first ----
+
+
+def test_an_early_pickup_is_held_n_hours_before_it_the_evening_before():
+    """A 2:15 AM pickup: with N=6 the hold is due at 8:15 PM the evening before, not at the
+    3:00 AM hold time (which comes after the pickup)."""
+    lead, _plan, _trips = _order("500.00", at=time(2, 15))
+    eve = DAY - timedelta(days=1)
+
+    assert holds.due_for_placement(_at(eve, time(20, 14))) == []
+    assert holds.due_for_placement(_at(eve, time(20, 15))) == [lead]
+
+
+def test_a_mid_morning_pickup_is_still_held_at_the_hold_time():
+    lead, _plan, _trips = _order("500.00", at=time(10, 0))
+
+    assert holds.due_for_placement(_at(DAY, time(2, 59))) == []
+    assert holds.due_for_placement(_at(DAY, time(3, 0))) == [lead]
+
+
+def test_the_lead_hours_are_counted_in_the_trips_own_zone():
+    lead, _plan, _trips = _order("500.00", zone="America/Los_Angeles", at=time(2, 15))
+    eve = DAY - timedelta(days=1)
+
+    # 8:15 PM in New York is only 5:15 PM in Los Angeles: nine hours before the pickup.
+    assert holds.due_for_placement(_at(eve, time(20, 15))) == []
+    assert holds.due_for_placement(_at(eve, time(20, 15), LA)) == [lead]
+
+
+def test_the_lead_hours_come_from_the_setting():
+    lead, _plan, _trips = _order("500.00", at=time(2, 15))
+    config = TaskConfig.load()
+    config.hold_lead_hours = 2
+    config.save()
+
+    # Two hours before 2:15 AM is 0:15 AM on the day itself.
+    assert holds.due_for_placement(_at(DAY, time(0, 14))) == []
+    assert holds.due_for_placement(_at(DAY, time(0, 15))) == [lead]
+
+
+def test_an_early_pickup_held_the_evening_before_is_held_once():
+    lead, _plan, _trips = _order("500.00", at=time(2, 15))
+    eve = DAY - timedelta(days=1)
+
+    _first, create_first = _run(_at(eve, time(20, 15)))
+    second, create_second = _run(_at(eve, time(21, 15)))
+    third, create_third = _run(_at(DAY, time(3, 0)))
+
+    assert create_first.call_count == 1
+    assert (second, create_second.call_count, third, create_third.call_count) == (0, 0, 0, 0)
+    assert _hold_rows(lead).get().status == Charge.Status.AUTHORIZED
+
+
+def test_an_order_booked_after_its_moment_is_held_on_the_next_run():
+    eve = DAY - timedelta(days=1)
+    # The 8:15 PM moment passed before the order existed.
+    lead, _plan, _trips = _order("500.00", at=time(2, 15))
+
+    processed, create = _run(_at(eve, time(22, 0)))
+
+    assert (processed, create.call_count) == (1, 1)
+    assert _hold_rows(lead).get().status == Charge.Status.AUTHORIZED
+
+
+def test_a_trip_two_days_out_is_not_held_yet():
+    lead, _plan, _trips = _order("500.00", at=time(2, 15))
+
+    assert holds.due_for_placement(_at(DAY - timedelta(days=2), time(23, 0))) == []
 
 
 def _switch_off():

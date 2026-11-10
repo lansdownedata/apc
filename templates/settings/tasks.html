@@ -58,6 +58,14 @@
             {% for error in form.hold_place_time.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
           </div>
           <div>
+            <label for="{{ form.hold_lead_hours.id_for_label }}" class="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
+              <span>…or</span>
+              <span class="w-20">{{ form.hold_lead_hours }}</span>
+              <span>hours before the first held pickup, whichever is earlier.</span>
+            </label>
+            {% for error in form.hold_lead_hours.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+          </div>
+          <div>
             <label for="{{ form.hold_release_days.id_for_label }}" class="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
               <span>Release an unused hold no later than</span>
               <span class="w-20">{{ form.hold_release_days }}</span>

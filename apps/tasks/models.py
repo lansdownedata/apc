@@ -2,7 +2,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import OuterRef, Subquery
 from django.utils import dateformat, timezone
@@ -100,6 +100,15 @@ class TaskConfig(models.Model):
         "Place the hold at",
         default=time(3, 0),
         help_text="On the day of the order's first held trip, in the trip's local time.",
+    )
+    # Or this many hours before the first held pickup, whichever comes first, so a trip that
+    # picks up before the hold time is held before it runs (Moe, 2026-11-10). A hold lasts
+    # about 7 days, so placing it the evening before is safe.
+    hold_lead_hours = models.PositiveSmallIntegerField(
+        "Or this many hours before the first held pickup",
+        default=6,
+        validators=[MaxValueValidator(24)],
+        help_text="Whichever is earlier: the hold time or this many hours before pickup.",
     )
     hold_release_days = models.PositiveSmallIntegerField(
         "Release an unused hold no later than",
