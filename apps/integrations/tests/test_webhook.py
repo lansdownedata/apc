@@ -413,6 +413,14 @@ def test_echo_matching_code_body_is_skipped_without_uid():
     assert not Contact.objects.exists() and not Message.objects.exists()
 
 
+def test_a_code_echo_is_stored_without_its_text():
+    body = "All Pro Charter: your sign-in code is 123456. It expires in 10 minutes."
+    event = process_podium_webhook(_sent(uid="unknown", body=body))
+    event.refresh_from_db()
+    assert "123456" not in str(event.payload)
+    assert event.payload["data"]["uid"] == "unknown"
+
+
 def test_ordinary_outbound_echo_still_mirrors():
     process_podium_webhook(_sent(uid="plain-1", body="On our way!"))
     assert Message.objects.filter(podium_message_uid="plain-1", direction="out").count() == 1

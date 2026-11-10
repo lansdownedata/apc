@@ -75,10 +75,18 @@ def process_podium_webhook(payload: dict) -> PodiumEvent:
     if seen is not None:
         return seen
 
+    stored = payload
+    if event_type == PodiumEvent.EventType.MESSAGE_SENT and two_factor.is_code_echo(
+        data.get("uid", ""), data.get("body", "")
+    ):
+        # A sign-in text's body is the live code: keep the event, not the text.
+        redacted = {**data, "body": ""}
+        stored = {**payload, "data": redacted} if "data" in payload else redacted
+
     try:
         with transaction.atomic():
             event = PodiumEvent.objects.create(
-                event_type=event_type, payload=payload, event_uid=event_uid
+                event_type=event_type, payload=stored, event_uid=event_uid
             )
     except IntegrityError:
         # Lost the insert race against a concurrent retry — the winner already has it.
