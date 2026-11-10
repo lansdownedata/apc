@@ -222,6 +222,36 @@ def test_deactivated_mid_flow_is_refused(client, staff, sent_code):
     assert r.status_code == 302 and r.url == reverse("login")
     assert not _signed_in(client)
     assert two_factor.pending(_FakeRequest(client), "staff") is None
+    page = _page(client.get(r.url))
+    assert re.search(r'role="alert"[^>]*>\s*<span[^>]*>.*?</span>\s*<span>That username', page, re.S)
+
+
+def test_staff_code_page_is_never_cached(client, staff, sent_code):
+    sent_code()
+    r = client.get(reverse("login_code"))
+    assert "no-cache" in r["Cache-Control"] or "max-age=0" in r["Cache-Control"]
+    assert "no-cache" in client.post(reverse("login_code_resend"), {})["Cache-Control"]
+
+
+def test_a_timed_out_sign_in_says_so(client, staff, sent_code):
+    sent_code()
+    later = timezone.now() + timedelta(seconds=two_factor.PENDING_TTL + 1)
+    with patch(NOW, return_value=later):
+        r = client.get(reverse("login_code"))
+        assert r.status_code == 302 and r.url == reverse("login")
+        page = _page(client.get(r.url))
+    assert "Your sign-in timed out. Enter your password again." in page
+    assert 'role="alert"' in page
+    assert "timed out" not in _page(client.get(reverse("login")))
+
+
+def test_a_timed_out_resend_says_so_and_never_started_is_silent(client, staff, sent_code):
+    assert "timed out" not in _page(client.get(client.get(reverse("login_code")).url))
+    sent_code()
+    later = timezone.now() + timedelta(seconds=two_factor.PENDING_TTL + 1)
+    with patch(NOW, return_value=later):
+        r = client.post(reverse("login_code_resend"), {"channel": "sms"})
+        assert "Your sign-in timed out." in _page(client.get(r.url))
 
 
 def test_resend_sends_a_new_code_and_reports_the_limit(client, staff, texts):

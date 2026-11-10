@@ -7,6 +7,10 @@
 <p role="alert" class="mt-5 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">
   Too many attempts. Wait a few minutes and try again, or reset your password.
 </p>
+{% elif timed_out %}
+<p role="alert" class="mt-5 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] leading-relaxed text-rose-700 ring-1 ring-inset ring-rose-600/15">
+  Your sign-in timed out. Enter your password again.
+</p>
 {% elif error %}
 <p role="alert" class="mt-5 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] leading-relaxed text-rose-700 ring-1 ring-inset ring-rose-600/15">
   That email and password don't match. Try again, or reset your password.

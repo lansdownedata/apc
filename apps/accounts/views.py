@@ -13,6 +13,8 @@ from django.shortcuts import get_object_or_404, redirect, render, resolve_url
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
+from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from . import services, two_factor
@@ -218,6 +220,7 @@ def accept_invite(request, uidb64: str, token: str):
 # --- Staff sign-in with a texted code -------------------------------------------------------
 
 _WAIT_KEY = "two_factor_wait_staff"  # seconds until the next code, shown once on the code page
+_TIMED_OUT = "Your sign-in timed out. Enter your password again."
 _BAD_SIGN_IN = "That username and password don't match. Please try again."
 _VERDICT_ERRORS = {
     two_factor.Verdict.WRONG: "That code isn't right. Check it and try again.",
@@ -232,7 +235,9 @@ def _auth_backend() -> str:
     return backends[0] if backends else "django.contrib.auth.backends.ModelBackend"
 
 
-def _send(request: HttpRequest, subject: two_factor.Subject, *, prefer: str = "sms"):
+def _send(
+    request: HttpRequest, subject: two_factor.Subject, *, prefer: str = "sms"
+) -> two_factor.Delivery | None:
     """Send a code, remembering a resend-limit wait for the code page. Returns the Delivery,
     or None when the limit refused it (no new code exists then)."""
     try:
@@ -306,13 +311,22 @@ def _delivery_line(marker: two_factor.Pending, user: User) -> str:
     return "We couldn't send your code. Try again in a moment."
 
 
+def _no_marker(request: HttpRequest) -> HttpResponse:
+    """Where a visitor without a live pending sign-in goes; says so when theirs timed out."""
+    if two_factor.take_expired(request, "staff"):
+        messages.error(request, _TIMED_OUT)
+    return redirect("login")
+
+
+@sensitive_post_parameters("code")
+@never_cache
 def login_code(request: HttpRequest) -> HttpResponse:
     """Second sign-in step: the code that was texted (or emailed) after the password."""
     marker, user = _pending_user(request)
     if marker is None:
         if request.user.is_authenticated:
             return redirect(settings.LOGIN_REDIRECT_URL)
-        return redirect("login")
+        return _no_marker(request)
     if request.user.is_authenticated and request.user.pk == marker.pk:
         two_factor.clear(request, "staff")
         return redirect(settings.LOGIN_REDIRECT_URL)
@@ -348,12 +362,13 @@ def login_code(request: HttpRequest) -> HttpResponse:
     )
 
 
+@never_cache
 @require_POST
 def login_code_resend(request: HttpRequest) -> HttpResponse:
     """Send a fresh code by text, or by email when asked; the limits apply."""
     marker, user = _pending_user(request)
     if marker is None:
-        return redirect("login")
+        return _no_marker(request)
     if user is None:
         return _refuse(request)
     prefer = "email" if request.POST.get("channel") == "email" else "sms"

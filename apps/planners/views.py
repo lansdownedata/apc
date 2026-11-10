@@ -70,6 +70,8 @@ def _safe_url(request, target: str) -> str:
 
 def login(request: HttpRequest) -> HttpResponse:
     context = {"next": request.POST.get("next") or request.GET.get("next") or ""}
+    if request.session.pop(_TIMED_OUT_KEY, False):
+        context["timed_out"] = True
     if request.method == "POST":
         if _over(request, "login", LOGIN_FAILURE_LIMIT):
             return _page(request, "planners/login.html", {**context, "throttled": True}, 429)
@@ -144,6 +146,7 @@ def set_password(request: HttpRequest, uidb64: str, token: str) -> HttpResponse:
 # --- The texted sign-in code -----------------------------------------------------------------
 
 _WAIT_KEY = "two_factor_wait_planner"  # seconds until the next code, shown once on the code page
+_TIMED_OUT_KEY = "two_factor_timed_out_planner"  # shown once on the login page
 _FLASH_KEY = "two_factor_flash_planner"  # the set-password flash, held back until the code
 _VERDICT_ERRORS = {
     two_factor.Verdict.WRONG: "That code isn't right. Check it and try again.",
@@ -229,6 +232,13 @@ def _delivery_line(marker: two_factor.Pending, account: PlannerAccount) -> str:
     return "We couldn't send your code. Try again in a moment."
 
 
+def _no_marker(request: HttpRequest) -> HttpResponse:
+    """Back to the password step; the login page says so when the visitor's sign-in timed out."""
+    if two_factor.take_expired(request, "planner"):
+        request.session[_TIMED_OUT_KEY] = True
+    return redirect("planners:login")
+
+
 @sensitive_post_parameters("code")
 @never_cache
 def login_code(request: HttpRequest) -> HttpResponse:
@@ -236,7 +246,9 @@ def login_code(request: HttpRequest) -> HttpResponse:
     marker, account = _pending_account(request)
     signed_in = current_planner(request)
     if marker is None:
-        return redirect("planners:weddings" if signed_in else "planners:login")
+        if signed_in:
+            return redirect("planners:weddings")
+        return _no_marker(request)
     if signed_in is not None and signed_in.pk == marker.pk:
         two_factor.clear(request, "planner")
         return redirect("planners:weddings")
@@ -287,7 +299,7 @@ def login_code_resend(request: HttpRequest) -> HttpResponse:
     """Send a fresh code by text, or by email when asked; the limits apply."""
     marker, account = _pending_account(request)
     if marker is None:
-        return redirect("planners:login")
+        return _no_marker(request)
     if account is None:
         return _refuse(request, marker)
     prefer = "email" if request.POST.get("channel") == "email" else "sms"

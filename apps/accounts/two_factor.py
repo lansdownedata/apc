@@ -245,6 +245,15 @@ def _pending_key(kind: str) -> str:
     return f"two_factor_pending_{kind}"
 
 
+def take_expired(request, kind: str) -> bool:
+    """True once when a marker is still in the session but has outlived PENDING_TTL (the
+    visitor started and timed out, as opposed to never starting). Drops the stale marker."""
+    if _pending_key(kind) in request.session and pending(request, kind) is None:
+        clear(request, kind)
+        return True
+    return False
+
+
 def begin(request, subject: Subject, *, next_url: str, delivery: Delivery) -> None:
     """Mark the session as password-verified for this subject. Does not sign anyone in."""
     request.session[_pending_key(subject.kind)] = {

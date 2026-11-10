@@ -413,3 +413,23 @@ class _FakeRequest:
 
     def __init__(self, client) -> None:
         self.session = client.session
+
+
+def test_a_timed_out_planner_sign_in_says_so(client, planner, sent_code):
+    _password(client)
+    later = timezone.now() + timedelta(seconds=two_factor.PENDING_TTL + 1)
+    with patch(NOW, return_value=later):
+        r = client.get(reverse("planners:login_code"))
+        assert r.status_code == 302 and r.url == reverse("planners:login")
+        page = _page(client.get(r.url))
+    assert re.search(r'role="alert"[^>]*>\s*Your sign-in timed out\. Enter your password again\.', page)
+    assert "timed out" not in _page(client.get(reverse("planners:login")))
+
+
+def test_a_timed_out_planner_resend_says_so_and_never_started_is_silent(client, planner, sent_code):
+    assert "timed out" not in _page(client.get(client.get(reverse("planners:login_code")).url))
+    _password(client)
+    later = timezone.now() + timedelta(seconds=two_factor.PENDING_TTL + 1)
+    with patch(NOW, return_value=later):
+        r = client.post(reverse("planners:login_code_resend"), {"channel": "sms"})
+        assert "Your sign-in timed out." in _page(client.get(r.url))
