@@ -81,7 +81,7 @@
           {% empty %}
           <tr><td colspan="6" class="px-5 py-16 text-center text-muted">
             <i class="ti ti-address-book-off text-[28px] text-slate-300"></i>
-            <div class="mt-2 text-[13px]">No contacts match your search.</div>
+            <div class="mt-2 text-[13px]">{% if q %}No contacts match your search.{% elif scope == "customers" %}No customers yet. A contact becomes a customer with their first lead.{% else %}No contacts yet.{% endif %}</div>
           </td></tr>
           {% endfor %}
         </tbody>

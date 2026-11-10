@@ -3492,6 +3492,8 @@ function contactProfile(opts = {}) {
   return {
     updateUrl: opts.updateUrl,
     header: opts.header || {},
+    // Channel value -> label, for the header subline and the Details row.
+    channelLabels: opts.channelLabels || {},
     _saved: null,
     // Seed what's on the page as already saved, so the first autosave posts only what the
     // user changed. Posting every field from a stale tab would silently undo someone
@@ -3537,6 +3539,11 @@ function contactProfile(opts = {}) {
           this._saved = { ...this.header };
           Alpine.store("toast").push({ type: "success", title: "Saved" });
           return;
+        }
+        // Refused: put back what is actually saved, so the box doesn't keep showing a
+        // value the server turned down (CON-03).
+        for (const key of Object.keys(changed)) {
+          if (this._saved && key in this._saved) this.header[key] = this._saved[key];
         }
         r.json()
           .then((d) =>

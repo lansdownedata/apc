@@ -588,3 +588,14 @@ def test_thread_falls_back_to_phone_when_sender_name_unknown(client, agent):
     html = client.get(reverse("inbox"), {"conversation": convo.pk}).content.decode()
 
     assert "(703) 573-6008" in html
+
+
+def test_inbox_search_with_no_match_says_so(client, agent):
+    """CON-11: it said "No conversations yet." under a search."""
+    MessageFactory(conversation=ConversationFactory(contact=ContactFactory(name="Wanda")))
+    client.force_login(agent)
+
+    body = client.get(reverse("inbox"), {"q": "zzzz"}).content.decode()
+
+    assert "No conversations match your search." in body
+    assert "No conversations yet." not in body

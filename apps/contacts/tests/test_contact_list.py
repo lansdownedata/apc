@@ -232,3 +232,18 @@ def test_contact_with_no_company_or_email_does_not_render_none(logged_in_client)
     resp = logged_in_client.get(reverse("contact_list"))
 
     assert b">None<" not in resp.content
+
+
+# --- CON-01: an empty directory isn't a failed search ------------------------------------
+
+
+def test_an_empty_customers_tab_with_no_search_says_so(logged_in_client):
+    ContactFactory()  # a contact with no lead is not a customer
+    body = logged_in_client.get(reverse("contact_list")).content.decode()
+    assert "No contacts match your search." not in body
+    assert "No customers yet." in body
+
+
+def test_a_search_with_no_match_still_says_so(logged_in_client):
+    body = logged_in_client.get(reverse("contact_list"), {"q": "zzzz"}).content.decode()
+    assert "No contacts match your search." in body
