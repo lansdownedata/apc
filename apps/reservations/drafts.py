@@ -222,7 +222,11 @@ def parse_draft(payload: dict, *, grandfathered_airline_ids: frozenset[int] = fr
         raise DraftError(f"invalid trip type: {trip_type!r}")
 
     raw_stops = [s for s in (payload.get("stops") or []) if isinstance(s, dict)]
-    if len(raw_stops) < 2:
+    # The editor always posts two stop rows, so the ends must carry an address too: blank
+    # rows passed a count-only check and saved a trip going from '—' to '—' (LEAD-04).
+    if len(raw_stops) < 2 or not all(
+        str(s.get("address") or "").strip() for s in (raw_stops[0], raw_stops[-1])
+    ):
         raise DraftError("a reservation needs at least a pickup and a drop-off")
 
     try:

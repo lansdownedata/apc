@@ -38,6 +38,37 @@ def test_parse_rejects_too_few_stops():
         drafts.parse_draft(_payload(stops=[{"address": "only one"}]))
 
 
+@pytest.mark.parametrize(
+    "stops",
+    [
+        [{"address": "", "note": ""}, {"address": "", "note": ""}],
+        [{"address": "   ", "note": ""}, {"address": "The Ritz", "note": ""}],
+        [{"address": "Dulles", "note": ""}, {"address": "", "note": "back door"}],
+        [{"address": "Dulles"}, {"address": "Union Station"}, {"name": "The Ritz"}],
+    ],
+    ids=["both-blank", "blank-pickup", "blank-dropoff", "blank-last-of-three"],
+)
+def test_parse_rejects_a_pickup_or_drop_off_without_an_address(stops):
+    """LEAD-04: two blank stop rows passed the `len(stops) < 2` check, so the editor saved a
+    Transfer whose pickup and drop-off both rendered as '—'."""
+    with pytest.raises(DraftError, match="needs at least a pickup and a drop-off"):
+        drafts.parse_draft(_payload(stops=stops))
+
+
+def test_editor_save_of_a_trip_with_blank_stops_is_refused(client):
+    from django.urls import reverse
+
+    from apps.accounts.factories import UserFactory
+
+    lead = LeadFactory()
+    client.force_login(UserFactory())
+    payload = _payload(lead_id=lead.pk, stops=[{"address": ""}, {"address": ""}])
+    resp = client.post(reverse("reservation_save"), payload, content_type="application/json")
+    assert resp.status_code == 400
+    assert "needs at least a pickup and a drop-off" in resp.content.decode()
+    assert not Reservation.objects.filter(lead=lead).exists()
+
+
 def test_parse_rejects_negative_money():
     with pytest.raises(drafts.DraftError):
         drafts.parse_draft(_payload(rate=-5))
