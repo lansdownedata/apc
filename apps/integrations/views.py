@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 
+import requests
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -181,20 +182,26 @@ def podium_authorize(request):
 @owner_admin_required
 def podium_callback(request):
     """Handle Podium's redirect: validate state, exchange the code for tokens, then back to
-    Settings → Podium with a flash."""
-    if error := request.GET.get("error"):
-        messages.error(request, f"Podium did not connect: {error}")
-        return redirect("podium_settings")
-
+    Settings → Podium with a flash. The state is checked first, so a crafted link can't put
+    its own `error` text into a flash."""
     state = request.GET.get("state")
     if not state or state != request.session.pop(STATE_SESSION_KEY, None):
         return HttpResponseBadRequest("Invalid OAuth state.")
+
+    if error := request.GET.get("error"):
+        messages.error(request, f"Podium did not connect: {error}")
+        return redirect("podium_settings")
 
     code = request.GET.get("code")
     if not code:
         return HttpResponseBadRequest("Missing authorization code.")
 
-    services.exchange_code(code)
+    try:
+        services.exchange_code(code)
+    except (requests.RequestException, KeyError) as exc:
+        logger.warning("podium callback: token exchange failed (%r)", exc)
+        messages.error(request, "Podium did not connect. Try Connect again.")
+        return redirect("podium_settings")
     messages.success(request, "Podium connected.")
     return redirect("podium_settings")
 

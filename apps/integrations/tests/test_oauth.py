@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from django.contrib.messages import get_messages
 from django.urls import reverse
 
@@ -106,12 +107,60 @@ def test_callback_redirects_with_flash(owner):
 
 
 def test_callback_error_param_redirects_with_error_flash(owner):
-    resp = owner.get("/integrations/podium/callback/?error=access_denied")
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+
+    resp = owner.get("/integrations/podium/callback/?error=access_denied&state=st8")
 
     assert resp.status_code == 302
     assert resp["Location"] == reverse("podium_settings")
     assert [(m.level_tag, str(m)) for m in get_messages(resp.wsgi_request)] == [
         ("error", "Podium did not connect: access_denied")
+    ]
+    assert PodiumCredential.current() is None
+
+
+def test_callback_error_with_bad_state_is_400_and_no_flash(owner):
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+
+    resp = owner.get("/integrations/podium/callback/?error=x&state=wrong")
+
+    assert resp.status_code == 400
+    assert list(get_messages(resp.wsgi_request)) == []
+
+
+def test_callback_refused_code_is_a_flash_not_a_500(owner):
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+    refused = requests.Response()
+    refused.status_code = 400
+    with patch.object(services.requests, "post", side_effect=requests.HTTPError(response=refused)):
+        resp = owner.get("/integrations/podium/callback/?code=c&state=st8")
+
+    assert resp.status_code == 302
+    assert resp["Location"] == reverse("podium_settings")
+    assert [(m.level_tag, str(m)) for m in get_messages(resp.wsgi_request)] == [
+        ("error", "Podium did not connect. Try Connect again.")
+    ]
+    assert PodiumCredential.current() is None
+
+
+def test_callback_token_body_without_access_token_is_a_flash(owner):
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+    fake = MagicMock()
+    fake.json.return_value = {"error": "invalid_grant"}
+    with patch.object(services.requests, "post", return_value=fake):
+        resp = owner.get("/integrations/podium/callback/?code=c&state=st8")
+
+    assert resp.status_code == 302
+    assert [(m.level_tag, str(m)) for m in get_messages(resp.wsgi_request)] == [
+        ("error", "Podium did not connect. Try Connect again.")
     ]
     assert PodiumCredential.current() is None
 
