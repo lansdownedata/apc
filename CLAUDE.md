@@ -101,7 +101,7 @@ The authenticated UI is Django templates + Alpine + Tom Select, "executive chauf
   (`/contacts/`, LTV/trips/last-activity/search) is `apps.contacts`. Messaging inbox
   (`/inbox/`, Podium conversations + composer) and the reviews board (`/reviews/`, invite
   statuses + incoming ratings) are both in `apps.messaging`. All views `@login_required`.
-- **Auth:** `django.contrib.auth.urls`; `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` set.
+- **Auth:** `django.contrib.auth.urls`; `LOGIN_URL` / `LOGIN_REDIRECT_URL` / `LOGOUT_REDIRECT_URL` set. `/portal/login/` is `accounts.views.StaffLoginView`; staff and planner logins both require a texted code through `apps/accounts/two_factor.py` (Podium text, email backup, 30-day remembered device). `TWO_FACTOR_ENABLED` turns that off for local work only; tests that sign in by password use the `two_factor_off` fixture from root `conftest.py`.
 - **Components:** `templates/components/` — `modal.html`, `toasts.html`,
   `searchable_select.html`, `status_badge.html`.
 
