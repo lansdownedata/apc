@@ -518,6 +518,25 @@ function assignPanel(panelUrl = "") {
         window.location.reload();
       }
     },
+    /* The checklist re-fetches itself after Complete / Skip and says `tasks-changed`; the
+     * "N open" pill in this panel's header sits outside it, so it is re-read from the
+     * panel's own fragment, and the board's row pill catches up when the drawer closes. */
+    async refreshPill() {
+      if (!panelUrl) return;
+      try {
+        const resp = await fetch(panelUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+        if (resp.ok) {
+          const holder = document.createElement("div");
+          holder.innerHTML = await resp.text();
+          const fresh = holder.querySelector("[data-green-lit]");
+          const slot = this.$root.querySelector("[data-green-lit]");
+          if (fresh && slot) slot.innerHTML = fresh.innerHTML;
+        }
+      } catch (e) {
+        /* the pill is only a summary; the next open shows the right count */
+      }
+      window.dispatchEvent(new CustomEvent("drawer-stale"));
+    },
     post(url) {
       return this.send(url, {});
     },

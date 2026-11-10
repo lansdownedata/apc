@@ -4,7 +4,7 @@
 {% comment %} One shared Alpine scope for the whole fragment: the offer form lives in the
      {% else %} branch, the resolve buttons in the {% if assignment %} branch, but both need
      assignPanel()'s busy flag and post/resolve/confirmWithdraw methods. {% endcomment %}
-<div x-data="assignPanel('{% url 'dispatch_assign_panel' trip.pk %}')">
+<div x-data="assignPanel('{% url 'dispatch_assign_panel' trip.pk %}')" @tasks-changed.window="refreshPill()">
   {% comment %} Trip sheet — read-only, in the same sections as the reservation editor.
        `stops` is the view's prefetched list; never trip.pickup / trip.dropoff here. {% endcomment %}
   <div class="flex items-center gap-2 flex-wrap mb-4">
@@ -12,7 +12,7 @@
       #{{ trip.la_confirmation|default:trip.pk }}
     </span>
     {% include "dispatch/_coverage_badge.html" with coverage=coverage_state %}
-    {% include "components/green_lit_pill.html" %}
+    <span data-green-lit>{% include "components/green_lit_pill.html" %}</span>
     {% comment %} The same editor the quote and the order page open — the board mounts it
        once and it fetches this trip's draft when asked (reservation_draft). {% endcomment %}
     <button type="button" @click="$dispatch('reservation-edit', { id: {{ trip.pk }}, drawerUrl: '{% url 'dispatch_assign_panel' trip.pk %}' })"

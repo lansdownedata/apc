@@ -481,3 +481,81 @@ def test_panel_verified_flight_join_adds_no_query(logged_in_client, django_asser
     # +1 for the drawer's checklist (APC-54), +1 for the nav task badge (APC-53).
     with django_assert_max_num_queries(15):
         logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
+
+
+# --- DSP-02: the drawer's "N open" pill follows the checklist ----------------------------
+# The checklist re-fetches itself after Complete / Skip and announces `tasks-changed`; the
+# pill in the panel header sits outside it and stayed on the old count until a reload.
+
+
+def test_panel_listens_for_checklist_changes_and_wraps_its_pill(client):
+    from apps.accounts.factories import UserFactory
+
+    client.force_login(UserFactory())
+    trip = _trip()
+    body = client.get(reverse("dispatch_assign_panel", args=[trip.pk])).content.decode()
+
+    assert '@tasks-changed.window="refreshPill()"' in body
+    assert "data-green-lit" in body
+
+
+_PILL_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const fetched = [];
+const events = [];
+const slot = { innerHTML: "3 open" };
+const ctx = {
+  slot,
+  CustomEvent: class { constructor(type) { this.type = type; } },
+  window: { dispatchEvent: (e) => events.push(e.type) },
+  document: {
+    createElement: () => ({
+      set innerHTML(html) { this._html = html; },
+      querySelector: function () {
+        const m = /<span data-green-lit>([\\s\\S]*)<\\/span>/.exec(this._html);
+        return m ? { innerHTML: m[1] } : null;
+      },
+    }),
+  },
+  fetch: async (url) => {
+    fetched.push(url);
+    return { ok: true, text: async () => input.fragment };
+  },
+};
+vm.createContext(ctx);
+const p = vm.runInContext(input.source + `
+  const p = assignPanel("/panel/7/");
+  p.$root = { querySelector: () => slot };
+  p;
+`, ctx);
+p.refreshPill().then(() => {
+  process.stdout.write(JSON.stringify({ fetched, events, pill: slot.innerHTML }));
+});
+"""
+
+
+def test_refresh_pill_swaps_in_the_fresh_count_and_marks_the_board_stale():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function assignPanel(")
+    source = js[start : js.index("window.assignPanel = assignPanel;", start)]
+    result = subprocess.run(
+        ["node", "-e", _PILL_HARNESS],
+        input=json.dumps(
+            {"source": source, "fragment": "<div><span data-green-lit>2 open</span></div>"}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out == {"fetched": ["/panel/7/"], "events": ["drawer-stale"], "pill": "2 open"}

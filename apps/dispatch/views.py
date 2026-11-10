@@ -52,10 +52,14 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
     counts = selectors.strip_counts(trips)  # whole window, before the coverage filter
     exceptions = selectors.exception_tally(trips)
 
+    window_trips = trips
     if filters.coverage:
         trips = [t for t in trips if t.coverage == filters.coverage]
 
-    day_groups = selectors.day_groups(trips) if filters.is_multi_day else None
+    # The sub-headers count the whole day, like the strip above them (DSP-02).
+    day_groups = (
+        selectors.day_groups(trips, counts_from=window_trips) if filters.is_multi_day else None
+    )
 
     # Only customers who actually have a booked trip — keeps the picker relevant.
     customer_options = list(
@@ -90,6 +94,12 @@ def dispatch_board(request: HttpRequest) -> HttpResponse:
             "exceptions": exceptions,
             "today": timezone.localdate(),
             "active_filter": filters.coverage,
+            "filters_active": bool(
+                filters.coverage
+                or filters.vehicle_type_id
+                or filters.contact_id
+                or filters.group_key
+            ),
             "chips": chips,
             "farm_in_dispatch_count": farm_in_drawer.counts()["dispatch"],
             "view_links": [
