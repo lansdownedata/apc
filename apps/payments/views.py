@@ -129,6 +129,7 @@ def orders_list(request):
     orders = []
     for lead in leads:
         bals = ledger.order_balances(lead)
+        bals["refunds_paid"] = ledger.refunds_paid(lead)
         plan = getattr(lead, "payment", None)
         orders.append({"lead": lead, "balances": bals, "plan": plan})
     if status_filter == "failed":
@@ -141,8 +142,10 @@ def orders_list(request):
         ]
     summary = {
         key: sum((o["balances"][key] for o in orders), Decimal("0.00"))
-        for key in ("collected", "deferred", "recognized", "ar", "refunded")
+        for key in ("collected", "deferred", "recognized", "ar")
     }
+    # 'total refunded' on the strip: all cash refunded, not only earned revenue (PAY-15).
+    summary["refunded"] = sum((o["balances"]["refunds_paid"] for o in orders), Decimal("0.00"))
     return render(
         request,
         "orders/order_list.html",

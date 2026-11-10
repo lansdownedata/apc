@@ -67,3 +67,27 @@ def test_orders_finance_summary_totals(client):
     client.force_login(UserFactory())
     summary = client.get(reverse("orders_list")).context["summary"]
     assert summary["deferred"] == Decimal("1000.00")
+
+
+def test_refunds_strip_counts_every_refund_paid_back(client):
+    """PAY-15: a refund before the trip comes out of Customer Deposits, not the Refunds
+    contra account, yet it is still money handed back. The strip reads 'total refunded',
+    so it shows the cash refunded, whichever account the refund reversed."""
+    from decimal import Decimal
+
+    from apps.payments import ledger
+    from apps.payments.models import JournalEntry
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("115.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap-r",
+    )
+    ledger.post_refund(lead=lead, amount=Decimal("25.00"), idempotency_key="ref-r")
+
+    client.force_login(UserFactory())
+    resp = client.get(reverse("orders_list"))
+    assert resp.context["summary"]["refunded"] == Decimal("25.00")
+    assert "$25.00" in resp.content.decode()

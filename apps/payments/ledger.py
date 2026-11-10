@@ -76,7 +76,10 @@ def account_balance(lead, account) -> Decimal:
 
 
 def order_balances(lead) -> dict:
-    """Business-meaningful positive balances for an order."""
+    """Business-meaningful positive balances for an order.
+
+    `refunded` is the Refunds contra account: earned revenue given back. All the cash
+    refunded, deposits included, is `refunds_paid` (PAY-15)."""
     return {
         "collected": account_balance(lead, Account.CASH),
         "deferred": -account_balance(lead, Account.CUSTOMER_DEPOSITS),
@@ -84,6 +87,16 @@ def order_balances(lead) -> dict:
         "recognized": -account_balance(lead, Account.RECOGNIZED_REVENUE),
         "refunded": account_balance(lead, Account.REFUNDS),
     }
+
+
+def refunds_paid(lead) -> Decimal:
+    """Cash paid back to the customer: the Cash credits of every refund entry, including
+    money refunded out of Customer Deposits before a trip ran, which never reaches the
+    Refunds account."""
+    agg = JournalLine.objects.filter(
+        entry__lead=lead, entry__kind=JournalEntry.Kind.REFUND_ISSUED, account=Account.CASH
+    ).aggregate(d=Sum("debit"), c=Sum("credit"))
+    return (agg["c"] or ZERO) - (agg["d"] or ZERO)
 
 
 def post_capture(
