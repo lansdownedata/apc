@@ -273,9 +273,16 @@ def _review_report():
     assert task_reports.send_review_report() == 3
 
 
+def _listed(n: int, key: str) -> int:
+    """What a stamped report counts: its rows when it reaches someone, else 0, since the
+    rows wait for the next report that goes out (RPT-03)."""
+    row = MessageTemplate.objects.get(key=key)
+    return n if row.enabled and row.staff_emails else 0
+
+
 def _review_report_no_ratings():
     _finished_order("Dana Reyes")
-    assert task_reports.send_review_report() == 1
+    assert task_reports.send_review_report() == _listed(1, "review_report")
 
 
 def _review_report_empty():
@@ -298,7 +305,7 @@ def _complaint_report_two():
 
 def _complaint_report_one():
     _complain(_finished_order("Dana Reyes", days_ago=0), "Driver was rude", user=_logger())
-    assert task_reports.send_complaint_report() == 1
+    assert task_reports.send_complaint_report() == _listed(1, "complaint_report")
 
 
 def _complaint_report_empty():
