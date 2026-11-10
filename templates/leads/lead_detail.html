@@ -252,7 +252,9 @@
       </div>
       {% endif %}
 
-      {% if lead.status != 'lost' and not farm_in_is_pending %}
+      {% comment %} Not on a Booked order (LEAD-12): it is cancelled with Cancel order, and the
+         server refuses Mark lost there. Engaged keeps it (a policy question, left as is). {% endcomment %}
+      {% if lead.status != 'lost' and lead.status != 'booked' and not farm_in_is_pending %}
       <!-- Mark lost — hidden form + modal to collect reason -->
       <form id="form-mark-lost" method="post" action="{% url 'lead_mark_lost' lead.pk %}" class="hidden">
         {% csrf_token %}
