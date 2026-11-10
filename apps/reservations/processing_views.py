@@ -201,6 +201,7 @@ def _pane(request, trip) -> dict:
             else None
         )
     allocation = trip_money.allocation(trip.lead).get(trip.pk, 0)
+    from_hold, from_card = processing.hold_split(trip, money)
     return {
         "hold": _hold_for(trip),
         # APC-95: a cleaning fee's evidence, kept on the review.
@@ -219,6 +220,9 @@ def _pane(request, trip) -> dict:
         "needs_status": processing.needs_status(trip),
         "settable_statuses": [(s.value, s.label) for s in _SETTABLE],
         "difference": money.difference,
+        # What processing takes from the cleaning hold and what it charges the card.
+        "from_hold": from_hold,
+        "from_card": from_card,
         "owed_back": -money.difference if money.difference < 0 else 0,
         "price_lines": trip.price_lines(),
         "card_on_file": bool(plan and plan.stripe_payment_method_id),

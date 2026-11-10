@@ -412,6 +412,19 @@ def test_an_undecided_suggestion_must_be_decided_first(agent):
         processing.process(trip, user=agent, expected="0.00")
 
 
+def test_the_review_says_when_its_overtime_waits_on_a_decision():
+    """PROC-02: the pane reads this to refuse Process before opening the charge confirm."""
+    trip = _trip()
+    review = reviews.review_for(trip)
+    assert not review.overtime_undecided
+
+    review.suggested_overtime_minutes = 60
+    assert review.overtime_undecided
+
+    review.decided_at = timezone.now()
+    assert not review.overtime_undecided
+
+
 def test_a_stale_pane_is_refused(agent):
     trip = _trip()
     _paid(trip, extra_hours=Decimal("1"))
