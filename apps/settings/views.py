@@ -62,25 +62,29 @@ def settings_index(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _status(attention: list[Attention]) -> list[tuple[str, bool, str]]:
-    """(label, ok, text) for each switch, read off the attention list so the page asks once."""
+def _status(attention: list[Attention]) -> list[tuple[str, str, str]]:
+    """(label, tone, text) for each switch, read off the attention list so the page asks once.
+    `tone` is "ok", or the flagged attention row's severity ("warn" | "danger"), so a row and
+    its attention item always agree."""
     from apps.integrations import qbo
 
-    flagged = {a.key for a in attention}
+    flagged = {a.key: a.severity for a in attention}
     rows = [
-        ("Go-live", "not_live" not in flagged, "Live", "Not live"),
-        ("Automated messages", "messages_off" not in flagged, "On", "Off"),
-        ("Dispatch monitor", "dispatch_off" not in flagged, "On", "Off"),
-        ("Tasks", "tasks_off" not in flagged, "On", "Off"),
+        ("Go-live", "not_live", "Live", "Not live"),
+        ("Automated messages", "messages_off", "On", "Off"),
+        ("Dispatch monitor", "dispatch_off", "On", "Off"),
+        ("Tasks", "tasks_off", "On", "Off"),
     ]
     if qbo.enabled():
-        rows.append(("QuickBooks", "qbo" not in flagged, "Connected", "Not connected"))
+        rows.append(("QuickBooks", "qbo", "Connected", "Not connected"))
     if dj_settings.PODIUM_CLIENT_ID:
-        connected = "podium" not in flagged
-        location = _podium_location(PodiumCredential.current()) if connected else ""
+        location = "" if "podium" in flagged else _podium_location(PodiumCredential.current())
         on = f"Connected · {location}" if location else "Connected"
-        rows.append(("Podium", connected, on, "Not connected"))
-    return [(label, ok, on if ok else off) for label, ok, on, off in rows]
+        rows.append(("Podium", "podium", on, "Not connected"))
+    return [
+        (label, flagged[key], off) if key in flagged else (label, "ok", on)
+        for label, key, on, off in rows
+    ]
 
 
 def _podium_location(credential: PodiumCredential | None) -> str:

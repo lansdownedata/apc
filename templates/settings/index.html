@@ -2,7 +2,8 @@
 {% comment %}
 The Settings Overview: problems first, then the state of each switch. The settings menu does
 the navigating. Context: settings_attention (attention.Attention list, also reused by the menu tag for
-its dots) and status ((label, ok, text) tuples).
+its dots) and status ((label, tone, text) tuples;
+tone is "ok", "warn" or "danger").
 {% endcomment %}
 {% block content %}
 <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-6">
@@ -33,10 +34,10 @@ its dots) and status ((label, ok, text) tuples).
 
   <h2 class="font-display text-[15px] font-semibold text-ink mt-7 mb-2">Status</h2>
   <dl class="text-[12.5px]">
-    {% for label, ok, text in status %}
+    {% for label, tone, text in status %}
     <div class="flex items-center justify-between gap-4 py-2 border-b border-line">
       <dt class="text-ink">{{ label }}</dt>
-      <dd class="{% if ok %}text-ok{% else %}text-danger font-semibold{% endif %}">{{ text }}</dd>
+      <dd class="{% if tone == 'ok' %}text-ok{% elif tone == 'warn' %}text-warn font-semibold{% else %}text-danger font-semibold{% endif %}">{{ text }}</dd>
     </div>
     {% endfor %}
   </dl>

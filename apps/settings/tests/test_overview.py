@@ -155,12 +155,12 @@ def test_status_rows(owner, settings):
     resp = owner.get(reverse("settings_index"))
 
     assert resp.context["status"] == [
-        ("Go-live", False, "Not live"),
-        ("Automated messages", True, "On"),
-        ("Dispatch monitor", False, "Off"),
-        ("Tasks", True, "On"),
-        ("QuickBooks", True, "Connected"),
-        ("Podium", True, "Connected · loc-1"),
+        ("Go-live", "warn", "Not live"),
+        ("Automated messages", "ok", "On"),
+        ("Dispatch monitor", "danger", "Off"),
+        ("Tasks", "ok", "On"),
+        ("QuickBooks", "ok", "Connected"),
+        ("Podium", "ok", "Connected · loc-1"),
     ]
 
 
@@ -173,12 +173,12 @@ def test_status_rows_all_the_other_way(owner, settings):
     resp = owner.get(reverse("settings_index"))
 
     assert resp.context["status"] == [
-        ("Go-live", True, "Live"),
-        ("Automated messages", False, "Off"),
-        ("Dispatch monitor", True, "On"),
-        ("Tasks", False, "Off"),
-        ("QuickBooks", False, "Not connected"),
-        ("Podium", False, "Not connected"),
+        ("Go-live", "ok", "Live"),
+        ("Automated messages", "danger", "Off"),
+        ("Dispatch monitor", "ok", "On"),
+        ("Tasks", "danger", "Off"),
+        ("QuickBooks", "danger", "Not connected"),
+        ("Podium", "danger", "Not connected"),
     ]
 
 
@@ -202,7 +202,7 @@ def test_podium_status_falls_back_to_the_location_setting(owner, settings):
 
     status = owner.get(reverse("settings_index")).context["status"]
 
-    assert ("Podium", True, "Connected · loc-env") in status
+    assert ("Podium", "ok", "Connected · loc-env") in status
 
 
 def test_overview_names_its_list_settings_attention(owner):
@@ -214,13 +214,16 @@ def test_overview_names_its_list_settings_attention(owner):
 
 
 def test_status_text_colours(owner, settings):
+    """Not live is amber, like its attention row; every other off switch is red."""
     settings.OUTBOUND_ENABLED = False
+    _set(DispatchAlertConfig, False)
 
     html = _body(owner)
     status = html[html.index("Status</h2>") :]
 
-    assert "text-danger font-semibold" in status and ">Not live<" in status
-    assert "text-ok" in status and ">On<" in status
+    assert '<dd class="text-warn font-semibold">Not live</dd>' in status
+    assert '<dd class="text-danger font-semibold">Off</dd>' in status
+    assert '<dd class="text-ok">On</dd>' in status
 
 
 def test_overview_query_count(owner, settings, django_assert_max_num_queries):
