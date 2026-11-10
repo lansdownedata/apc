@@ -291,7 +291,12 @@ def _record_trip_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> C
     reason = (getattr(exc, "user_message", None) or str(exc))[:255]
     charge.status = Charge.Status.FAILED
     charge.failure_reason = reason
-    charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    charge.stripe_payment_intent_id = (
+        services.declined_intent_id(exc) or charge.stripe_payment_intent_id
+    )
+    charge.save(
+        update_fields=["status", "failure_reason", "stripe_payment_intent_id", "updated_at"]
+    )
     plan.fail_reason = reason
     plan.save(update_fields=["fail_reason", "updated_at"])
     lead = plan.lead

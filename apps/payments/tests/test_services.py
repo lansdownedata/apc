@@ -139,3 +139,64 @@ def test_a_blank_secret_key_refuses_before_the_request_leaves(settings):
             client.Customer.create(name="x", idempotency_key="k")
 
     sent.assert_not_called()
+
+
+def _declined(pi_id: str) -> stripe.error.CardError:
+    """An off-session decline as Stripe raises it: the error names the failed intent."""
+    return stripe.error.CardError(
+        "Your card was declined.",
+        None,
+        "card_declined",
+        json_body={
+            "error": {
+                "type": "card_error",
+                "code": "card_declined",
+                "message": "Your card was declined.",
+                "payment_intent": {"id": pi_id, "object": "payment_intent"},
+            }
+        },
+    )
+
+
+def test_an_inline_balance_decline_and_its_webhook_raise_one_alert():
+    """PAY-14: the failed row keeps the declined intent's id, so the webhook for the same
+    decline (payment_intent.payment_failed) recognises it and raises no second alert."""
+    from apps.notifications.models import Notification
+    from apps.payments import webhooks
+
+    plan = PaymentPlanFactory(
+        quote_total=Decimal("2670.00"), stripe_customer_id="cus_1", stripe_payment_method_id="pm_1"
+    )
+    with patch.object(
+        services.stripe.PaymentIntent, "create", side_effect=_declined("pi_declined")
+    ):
+        charge = services.charge_balance(plan)
+    assert charge.stripe_payment_intent_id == "pi_declined"
+
+    webhooks.process_stripe_event(
+        {
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_declined",
+                    "metadata": {"lead_id": str(plan.lead_id), "kind": "balance"},
+                    "last_payment_error": {"message": "Your card was declined."},
+                }
+            },
+        }
+    )
+
+    assert (
+        Notification.objects.filter(lead=plan.lead, kind=Notification.Kind.BALANCE_FAILED).count()
+        == 1
+    )
+
+
+def test_a_saved_card_decline_keeps_the_intent_id():
+    plan = PaymentPlanFactory(
+        quote_total=Decimal("2670.00"), stripe_customer_id="cus_1", stripe_payment_method_id="pm_1"
+    )
+    with patch.object(services.stripe.PaymentIntent, "create", side_effect=_declined("pi_d2")):
+        charge = services.charge_saved_card(plan, "50.00")
+    assert charge.status == Charge.Status.FAILED
+    assert charge.stripe_payment_intent_id == "pi_d2"

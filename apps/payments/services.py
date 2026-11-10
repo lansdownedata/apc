@@ -1288,11 +1288,25 @@ def _close_overtime_invoiced(lead, *, reservation_id: int | None = None) -> None
             continue
 
 
+def declined_intent_id(exc: Exception) -> str:
+    """The PaymentIntent a confirm-time decline names (`error.payment_intent`), or "".
+
+    Stored on the failed row so the `payment_intent.payment_failed` webhook for the same
+    decline finds it and raises no second alert (PAY-14)."""
+    intent = getattr(getattr(exc, "error", None), "payment_intent", None)
+    if isinstance(intent, dict):
+        return intent.get("id") or ""
+    return getattr(intent, "id", None) or ""
+
+
 def _record_failure(plan: PaymentPlan, charge: Charge, exc: Exception) -> Charge:
     reason = (getattr(exc, "user_message", None) or str(exc))[:255]
     charge.status = Charge.Status.FAILED
     charge.failure_reason = reason
-    charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    charge.stripe_payment_intent_id = declined_intent_id(exc) or charge.stripe_payment_intent_id
+    charge.save(
+        update_fields=["status", "failure_reason", "stripe_payment_intent_id", "updated_at"]
+    )
 
     plan.balance_status = PaymentPlan.BalanceStatus.FAILED
     plan.fail_reason = reason
