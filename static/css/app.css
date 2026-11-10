@@ -156,6 +156,7 @@ header, aside, main, .wash-gold {
 /* theme-aware text colours (Tailwind has no warn/danger palette) — mirror .ins-* */
 .text-warn   { color: rgb(var(--warn)); }
 .text-danger { color: rgb(var(--danger)); }
+.bg-danger   { background: rgb(var(--danger)); }
 
 /* gold-tinted active row / hover wash — now a Tailwind utility so `hover:wash-gold`
    works; see the plugins block in tailwind.config.js. The transition rule above

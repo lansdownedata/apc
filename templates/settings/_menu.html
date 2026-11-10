@@ -1,0 +1,42 @@
+{% comment %}
+The settings menu, rendered by {% settings_menu %} into the sidebar on every Settings page.
+Context: sections (menu.Section list), current (the menu.Item for this page, or None),
+flagged (url_name -> attention title; those items get a red dot).
+Filtering is settingsMenu() in static/js/app.js; it only toggles x-show, never builds markup.
+{% endcomment %}
+<div x-data="settingsMenu()" class="flex flex-col gap-0.5">
+  <a href="{% url 'dashboard' %}" title="Back to portal"
+     class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-slate-400">
+    <i class="ti ti-arrow-left text-[18px] shrink-0"></i>
+    <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Back to portal</span>
+  </a>
+
+  <input type="search" x-model="q" x-show="navOpen"
+         @keydown.enter.prevent="go()" @keydown.escape="q = ''"
+         aria-label="Search settings" placeholder="Search settings…" autocomplete="off"
+         class="w-full mt-1 mb-1 rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] text-slate-200 placeholder:text-slate-500 focus-gold">
+
+  {% for section in sections %}
+  <div data-settings-group class="flex flex-col gap-0.5">
+    {% if section.label %}
+    <div x-show="navOpen && groupMatches($el)" class="text-[10px] uppercase tracking-wider text-slate-500 px-2.5 mt-3 mb-1">{{ section.label }}</div>
+    {% endif %}
+    {% for item in section.items %}
+    <a href="{% url item.url_name %}" title="{{ item.label }}"
+       data-search="{{ item.label|lower }} {{ item.keywords }}"
+       x-show="!navOpen || matches($el)"
+       class="nav-item group relative flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if item == current %}nav-active{% else %}text-slate-400{% endif %}">
+      <i class="ti {{ item.icon }} text-[18px] shrink-0"></i>
+      <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">{{ item.label }}</span>
+      {% for url_name, title in flagged.items %}{% if url_name == item.url_name %}
+      <span role="img" aria-label="{{ title }}" title="{{ title }}"
+            class="w-1.5 h-1.5 rounded-full bg-danger shrink-0"
+            :class="navOpen ? '' : 'absolute top-2 left-6'"></span>
+      {% endif %}{% endfor %}
+    </a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <p x-show="navOpen && !anyMatch()" class="px-2.5 py-2 text-[12px] text-slate-500">No settings match</p>
+</div>

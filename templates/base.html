@@ -71,6 +71,7 @@
 
     <!-- nav -->
     <nav class="flex-1 min-h-0 overflow-y-auto scroll-dark px-2.5 mt-1 flex flex-col gap-0.5 text-[13px]">
+      {% block sidebar_nav %}
       <a href="{% url 'dashboard' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'dashboard' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-layout-dashboard text-[18px] shrink-0"></i>
@@ -171,6 +172,7 @@
         <span x-show="navOpen" class="text-[9px] tracking-wide uppercase text-slate-500 ring-1 ring-white/10 rounded px-1 py-0.5">Soon</span>
       </span>
       {% endfor %}
+      {% endblock %}
     </nav>
 
     <!-- integrations status -->

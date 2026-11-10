@@ -186,6 +186,27 @@ function shell() {
 }
 window.shell = shell;
 
+/* The settings menu (templates/settings/_menu.html): filters the server-rendered items by
+ * label + keywords (each item's data-search). Visibility only; it never builds markup. */
+function settingsMenu() {
+  return {
+    q: "",
+    _needle() { return this.q.trim().toLowerCase(); },
+    matches(el) { return el.dataset.search.includes(this._needle()); },
+    _items(scope) { return Array.from(scope.querySelectorAll("[data-search]")); },
+    groupMatches(el) {
+      return this._items(el.closest("[data-settings-group]")).some((a) => this.matches(a));
+    },
+    anyMatch() { return this._items(this.$root).some((a) => this.matches(a)); },
+    go() {
+      if (!this._needle()) return;
+      const first = this._items(this.$root).find((a) => this.matches(a));
+      if (first) window.location.href = first.href;
+    },
+  };
+}
+window.settingsMenu = settingsMenu;
+
 /* Right-side drawer — fetches an HTML fragment and shows it beside the page. Its heading is
  * the include's drawer_title (data-title); an open that passes its own `title` (History)
  * heads that one open, and the next open without one goes back to the include's. */
