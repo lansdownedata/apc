@@ -436,6 +436,25 @@ def test_inbox_send_podium_error_returns_502_with_message(client, agent):
     assert not Message.objects.filter(conversation=convo).exists()
 
 
+def test_inbox_send_podium_refusal_reads_cleanly(client, agent):
+    """CON-14: the toast showed Podium's raw JSON."""
+    convo = ConversationFactory(contact=ContactFactory(phone="555-123-4567"))
+    client.force_login(agent)
+    raw = (
+        '400 POST https://api.podium.com/v4/messages → {"code":"bad_request",'
+        '"message":"Contact opted out"}'
+    )
+
+    with patch("apps.messaging.views.podium.send_message", side_effect=PodiumAPIError(raw)):
+        resp = client.post(
+            reverse("inbox_send", args=[convo.pk]),
+            data=json.dumps({"body": "Hi", "channel": "sms"}),
+            content_type="application/json",
+        )
+
+    assert resp.json()["error"] == "Podium refused the message: Contact opted out"
+
+
 def test_inbox_send_podium_not_connected_returns_502_with_message(client, agent):
     convo = ConversationFactory(contact=ContactFactory(phone="555-123-4567"))
     client.force_login(agent)
@@ -569,3 +588,14 @@ def test_thread_falls_back_to_phone_when_sender_name_unknown(client, agent):
     html = client.get(reverse("inbox"), {"conversation": convo.pk}).content.decode()
 
     assert "(703) 573-6008" in html
+
+
+def test_inbox_search_with_no_match_says_so(client, agent):
+    """CON-11: it said "No conversations yet." under a search."""
+    MessageFactory(conversation=ConversationFactory(contact=ContactFactory(name="Wanda")))
+    client.force_login(agent)
+
+    body = client.get(reverse("inbox"), {"q": "zzzz"}).content.decode()
+
+    assert "No conversations match your search." in body
+    assert "No conversations yet." not in body

@@ -191,3 +191,84 @@ def test_board_requires_login(client):
 
     assert resp.status_code == 302
     assert "/portal/login/" in resp["Location"]
+
+
+# --- e2e run 2026-11-10: board polish (DSP-01, DSP-02) ---------------------------------
+
+
+def test_week_view_headers_are_not_sort_buttons(logged_in_client):
+    """DSP-01: Week/Range is grouped by day, so a column header can't reorder it. It
+    used to keep the arrow and the click, which changed the remembered sort and nothing
+    on screen."""
+    _trip(DAY)
+
+    resp = logged_in_client.get(reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat()})
+
+    body = resp.content.decode()
+    assert "sortBy(" not in body
+    assert "ti-caret-up-down" not in body
+
+
+def test_day_view_headers_still_sort(logged_in_client):
+    _trip(DAY)
+
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    assert "sortBy('pu')" in resp.content.decode()
+
+
+def test_exceptions_first_toggle_reports_its_state(logged_in_client):
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    assert ':aria-pressed="exceptionsFirst' in resp.content.decode()
+
+
+def test_day_view_with_a_filter_that_hides_every_trip_says_so(logged_in_client):
+    """DSP-01: "No trips on Thu Nov 12." read as an empty day when it was the filter."""
+    _trip(DAY)  # uncovered
+
+    resp = logged_in_client.get(
+        reverse("dispatch_board"), {"day": DAY.isoformat(), "f": "confirmed"}
+    )
+
+    body = resp.content.decode()
+    assert "No trips match these filters." in body
+    assert "No trips on " not in body
+
+
+def test_day_view_with_no_trips_and_no_filter_names_the_day(logged_in_client):
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    assert f"No trips on {DAY.strftime('%a %b')}" in resp.content.decode()
+
+
+def test_day_sub_header_counts_ignore_the_coverage_chip(logged_in_client):
+    """DSP-02: the top chips count the whole window; the day sub-headers recounted under
+    the chip filter, so the two disagreed on screen."""
+    covered = _trip(DAY)
+    services.assign_direct(covered, VendorFactory(), payout=1)
+    _trip(DAY)  # uncovered, same day
+
+    resp = logged_in_client.get(
+        reverse("dispatch_board"), {"view": "week", "day": DAY.isoformat(), "f": "uncovered"}
+    )
+
+    ((_, day_trips, day_counts),) = resp.context["day_groups"]
+    assert len(day_trips) == 1  # the rows are still narrowed
+    assert day_counts == {"uncovered": 1, "offered": 0, "confirmed": 1}
+
+
+def test_board_tab_title_names_the_app(logged_in_client):
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    assert "<title>Dispatch · All Pro Charter</title>" in resp.content.decode()
+
+
+def test_board_footer_pluralises_the_trip_count(logged_in_client):
+    _trip(DAY)
+
+    resp = logged_in_client.get(reverse("dispatch_board"), {"day": DAY.isoformat()})
+
+    body = resp.content.decode()
+    assert "1 trips" not in body.replace('<span x-text="shown">1</span>', "1")
+    assert "shown === 1" in body or "total === 1" in body

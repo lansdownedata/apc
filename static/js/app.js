@@ -382,6 +382,10 @@ function farmInDrawer() {
         if (root) {
           this.pending = Number(root.dataset.pending) || 0;
           window.dispatchEvent(new CustomEvent("farm-in-count", { detail: this.pending }));
+          // The dispatch board's "N GNet requests" chip (GNET-08).
+          window.dispatchEvent(
+            new CustomEvent("farm-in-dispatch-count", { detail: Number(root.dataset.dispatch) || 0 }),
+          );
         }
         this.paintRows();
         const focused = this.openRow && this.$refs.body.querySelector(`[data-fi="${this.openRow}"]`);
@@ -518,6 +522,25 @@ function assignPanel(panelUrl = "") {
         window.location.reload();
       }
     },
+    /* The checklist re-fetches itself after Complete / Skip and says `tasks-changed`; the
+     * "N open" pill in this panel's header sits outside it, so it is re-read from the
+     * panel's own fragment, and the board's row pill catches up when the drawer closes. */
+    async refreshPill() {
+      if (!panelUrl) return;
+      try {
+        const resp = await fetch(panelUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+        if (resp.ok) {
+          const holder = document.createElement("div");
+          holder.innerHTML = await resp.text();
+          const fresh = holder.querySelector("[data-green-lit]");
+          const slot = this.$root.querySelector("[data-green-lit]");
+          if (fresh && slot) slot.innerHTML = fresh.innerHTML;
+        }
+      } catch (e) {
+        /* the pill is only a summary; the next open shows the right count */
+      }
+      window.dispatchEvent(new CustomEvent("drawer-stale"));
+    },
     post(url) {
       return this.send(url, {});
     },
@@ -597,6 +620,9 @@ function coverageControls(opts = {}) {
     canOffer: false,
     vendorAlert: "",
     vendorName: "",
+    // A GNet affiliate is offered over GNet only: Mark assigned would record coverage the
+    // network never hears about (GNET-02).
+    vendorGnet: false,
 
     /* One delegated listener rather than x-model on each picker: Tom Select fires a real
      * change event on the original <select>, and it bubbles. Binding x-model instead would
@@ -608,6 +634,7 @@ function coverageControls(opts = {}) {
         this.vendor = el.value;
         const data = this.optionData(el);
         this.canOffer = Boolean(data.email || data.gnet);
+        this.vendorGnet = Boolean(data.gnet);
         this.vendorAlert = data.alert || "";
         this.vendorName = data.label || "";
       }
@@ -1181,7 +1208,18 @@ function processingPane(opts) {
     _process(data, done) {
       return this._post(opts.urls.process, { expected: opts.difference, ...data }, done).catch(() => {});
     },
+    /* The server's own refusal, said before any confirm opens (PROC-02): processing waits
+     * for someone to keep or change the overtime suggestion. */
+    _undecided() {
+      if (!opts.overtimeUndecided) return false;
+      Alpine.store("toast").push({
+        type: "danger",
+        title: "Decide the overtime first: keep or change the suggestion.",
+      });
+      return true;
+    },
     processNone() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Process this trip?",
         message: "Nothing is owed either way. Processing locks the customer side of the trip.",
@@ -1191,6 +1229,7 @@ function processingPane(opts) {
       });
     },
     processInvoice() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Process this trip?",
         message: `Nothing is charged: the $${opts.difference} goes on the account's next invoice. Processing locks the customer side of the trip.`,
@@ -1200,15 +1239,31 @@ function processingPane(opts) {
       });
     },
     processCard() {
+      if (this._undecided()) return;
+      /* Part or all of it may come out of the cleaning hold (or a capture processing adopts):
+       * say so rather than "charged now" (HOLD-07, HOLD-12). */
+      const fromHold = Number(opts.fromHold) || 0;
+      const fromCard = Number(opts.fromCard) || 0;
+      const verb = fromHold > 0 ? "Collect" : "Charge";
+      let message = `What the trip still owes, charged now to ${opts.card}.`;
+      if (fromHold > 0 && fromCard > 0) {
+        message = `$${opts.fromHold} from the cleaning hold, $${opts.fromCard} charged now to ${opts.card}.`;
+      } else if (fromHold > 0) {
+        message = "All of it from the cleaning hold; the card isn't charged again.";
+      }
       Alpine.store("modal").confirm({
-        title: `Charge $${opts.difference}?`,
-        message: `What the trip still owes, charged now to ${opts.card}. Then the trip is locked.`,
+        title: `${verb} $${opts.difference}?`,
+        message: `${message} Then the trip is locked.`,
         variant: "gold",
-        confirmText: `Charge $${opts.difference}`,
-        onConfirm: () => this._process({ collect: "card" }, `Charged $${opts.difference} and processed`),
+        confirmText: `${verb} $${opts.difference}`,
+        onConfirm: () => this._process(
+          { collect: "card" },
+          `${fromHold > 0 ? "Collected" : "Charged"} $${opts.difference} and processed`,
+        ),
       });
     },
     processLink() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Send the payment link?",
         message: `The customer gets a link to pay $${opts.difference} for this trip. The trip is locked now; the money lands when they pay.`,
@@ -1218,6 +1273,7 @@ function processingPane(opts) {
       });
     },
     processRefund() {
+      if (this._undecided()) return;
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Refund $${amount}?`,
@@ -1234,6 +1290,7 @@ function processingPane(opts) {
       });
     },
     processKeep() {
+      if (this._undecided()) return;
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Hold $${amount} as credit?`,
@@ -1430,6 +1487,8 @@ function tripReviewForm(opts) {
         this.error = "Give a reason for waiving the overtime.";
         return;
       }
+      // Unticking Waive goes back to the suggestion: the waive left billable at 0 (PROC-02).
+      if (!this.waived && this.state.waived) this.billable = this.state.suggested_minutes || 0;
       this._save({
         billable_minutes: this.waived ? 0 : (this.billable || 0),
         waived: this.waived ? "1" : "0",
@@ -3447,6 +3506,8 @@ function contactProfile(opts = {}) {
   return {
     updateUrl: opts.updateUrl,
     header: opts.header || {},
+    // Channel value -> label, for the header subline and the Details row.
+    channelLabels: opts.channelLabels || {},
     _saved: null,
     // Seed what's on the page as already saved, so the first autosave posts only what the
     // user changed. Posting every field from a stale tab would silently undo someone
@@ -3492,6 +3553,11 @@ function contactProfile(opts = {}) {
           this._saved = { ...this.header };
           Alpine.store("toast").push({ type: "success", title: "Saved" });
           return;
+        }
+        // Refused: put back what is actually saved, so the box doesn't keep showing a
+        // value the server turned down (CON-03).
+        for (const key of Object.keys(changed)) {
+          if (this._saved && key in this._saved) this.header[key] = this._saved[key];
         }
         r.json()
           .then((d) =>
@@ -4137,6 +4203,15 @@ function initTomSelects(root = document) {
     }
     new TomSelect(el, options);
     const ts = el.tomselect;
+    /* Enter in the search box picks or closes; it never submits the form around it. Tom
+       Select handles Enter itself when an option is highlighted (this listener runs after
+       its own); with nothing highlighted the keydown reached the browser's implicit
+       submission and posted the whole form (SET-19, the New vendor Vehicle types). */
+    ts?.control_input?.addEventListener?.("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (ts.isOpen && !ts.activeOption) ts.close();
+    });
     for (const target of [ts?.control, ts?.control_input]) {
       if (!target) continue;
       for (const attr of ["aria-label", "aria-labelledby"]) {
@@ -5017,10 +5092,11 @@ function contactPicker(opts = {}) {
       this.query = "";
       this.closeResults();
     },
-    /* Unlink keeps the fields: the usual reason to unlink is "same details, different
-     * person", so what's on screen is the start of a new customer. */
+    /* Unlink clears the linked customer's details too (LEAD-02): left on screen, their
+     * email or phone matched the new lead straight back to the customer just unlinked. */
     unlink() {
       this.selected = null;
+      for (const f of ["name", "company", "phone", "email"]) this.setField(f, "");
       this.$nextTick(() => this.fieldEl("name")?.focus());
     },
 

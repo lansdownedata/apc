@@ -24,7 +24,8 @@
          company: {{ contact.company.name|default_if_none:''|json_string }},
          channel: '{{ contact.channel }}',
          notes: {{ contact.notes|json_string }}
-       }
+       },
+       channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}}
      })">
 
   <a href="{% url 'contact_list' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors">
@@ -42,14 +43,15 @@
                  class="inline-edit -ml-2 w-full max-w-md px-2 py-0.5 font-display text-[26px] font-semibold leading-tight tracking-tight text-ink"
                  placeholder="Contact name">
           <p class="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-muted">
+            {% comment %} Follows the Details edits below (CON-03): the saved company keeps its
+               link; a company picked here shows as text until the page is reloaded. {% endcomment %}
             {% if contact.company %}
-              <a href="{% url 'company_detail' contact.company.pk %}" class="text-ink hover:text-goldd hover:underline">{{ contact.company.name }}</a>
-              {% if contact.company.is_affiliate_account %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-gold">Affiliate account</span>{% endif %}
-            {% else %}
-              <span>No company</span>
+              <a href="{% url 'company_detail' contact.company.pk %}" x-show="header.company === {{ contact.company.name|json_string }}" class="text-ink hover:text-goldd hover:underline">{{ contact.company.name }}</a>
+              {% if contact.company.is_affiliate_account %}<span x-show="header.company === {{ contact.company.name|json_string }}" class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full chip-gold">Affiliate account</span>{% endif %}
             {% endif %}
+            <span x-show="header.company !== {{ contact.company.name|default_if_none:''|json_string }}" x-text="header.company || 'No company'"{% if contact.company %} style="display:none"{% endif %}>No company</span>
             <span class="text-line">&bull;</span>
-            <span>Came in via {{ contact.get_channel_display }}</span>
+            <span x-text="'Came in via ' + (channelLabels[header.channel] || header.channel)">Came in via {{ contact.get_channel_display }}</span>
             <span class="text-line">&bull;</span>
             <span>Customer since {{ contact.created_at|date:"M j, Y" }}</span>
           </p>
@@ -159,7 +161,7 @@
       {% else %}
       <section class="card px-5 py-8 text-center">
         <p class="font-display text-[15px] font-semibold text-ink">No orders yet</p>
-        <p class="mt-1 text-[12.5px] text-muted">Quotes and bookings for {{ contact.name }} show up here.</p>
+        <p class="mt-1 text-[12.5px] text-muted">Quotes and bookings for <span x-text="header.name">{{ contact.name }}</span> show up here.</p>
       </section>
       {% endif %}
 
@@ -261,7 +263,7 @@
 
         <!-- details -->
         <div class="ts-compact"
-               x-data="{ edit: null, channelLabels: { {% for value, label in channels %}'{{ value }}': {{ label|json_string }}{% if not forloop.last %}, {% endif %}{% endfor %}} }">
+               x-data="{ edit: null }">
         <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted">Details</h3>
         <dl class="mt-1 divide-y divide-line/70 text-[13px]">
 

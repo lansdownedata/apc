@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% load humanize time_filters json_filters %}
-{% block title %}Dispatch{% endblock %}
 
 {% block content %}
 <div class="max-w-[1280px] mx-auto px-4 sm:px-6 py-6"
@@ -105,13 +104,17 @@
     </a>
     {% endfor %}
 
-    {% if farm_in_dispatch_count %}
-    <button type="button" data-farm-in-chip @click="$dispatch('farm-in-open', {tab:'pending', dispatch:true})"
-            class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2.5 py-1 rounded-full chip-gold ring-1 ring-gold/25 hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-gold">{{ farm_in_dispatch_count }} GNet requests</button>
-    {% endif %}
+    {% comment %} Always rendered, hidden at zero: the drawer announces the dispatch count
+       after every action (Request coverage, Send back), so the chip follows without a reload. {% endcomment %}
+    <button type="button" data-farm-in-chip x-data="{ n: {{ farm_in_dispatch_count|default:0 }} }" x-show="n"{% if not farm_in_dispatch_count %} x-cloak{% endif %}
+            @farm-in-dispatch-count.window="n = $event.detail"
+            @click="$dispatch('farm-in-open', {tab:'pending', dispatch:true})"
+            x-text="n === 1 ? '1 GNet request' : n + ' GNet requests'"
+            class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2.5 py-1 rounded-full chip-gold ring-1 ring-gold/25 hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-gold">{{ farm_in_dispatch_count }} GNet request{{ farm_in_dispatch_count|pluralize }}</button>
 
     <div class="flex items-center gap-1.5 ml-auto text-[12px]">
       <button type="button" x-show="sortable" @click="exceptionsFirst = !exceptionsFirst; savePrefs(); apply()"
+              :aria-pressed="exceptionsFirst ? 'true' : 'false'"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ring-1 transition"
               :class="exceptionsFirst ? 'bg-charcoal text-white ring-charcoal' : 'bg-surface text-muted ring-line hover:text-ink'">
         <i class="ti ti-alert-triangle text-[13px]"></i> Exceptions first
@@ -144,7 +147,7 @@
           <tr class="text-[10.5px] tracking-wide text-muted bg-surface2 [&>th]:font-semibold [&>th]:px-3 [&>th]:py-2 [&>th]:sticky [&>th]:top-0 [&>th]:z-20 [&>th]:bg-surface2 [&>th]:whitespace-nowrap">
             {% for key, label, align, sortable, width in columns %}
             <th class="{{ width }} {% if align == 'right' %}text-right{% else %}text-left{% endif %}{% if key == 'pu' %} !left-0 !z-30{% elif key == 'conf' %} !left-[100px] !z-30{% elif key == 'total' %} !right-0 !z-30 border-l border-line/60{% endif %}">
-              {% if sortable %}
+              {% if sortable and day_groups is None %}
               <button type="button" @click="sortBy('{{ key }}')"
                       class="inline-flex items-center gap-1 uppercase hover:text-ink {% if align == 'right' %}flex-row-reverse{% endif %}">
                 <span>{{ label }}</span>
@@ -174,7 +177,7 @@
               {% include "dispatch/_board_row.html" %}
             {% empty %}
             <tr><td colspan="12" class="!h-auto px-3 py-12 text-center text-muted">
-              No trips on {{ filters.start|date:"D M j" }}.
+              {% if filters_active %}No trips match these filters.{% else %}No trips on {{ filters.start|date:"D M j" }}.{% endif %}
             </td></tr>
             {% endfor %}
           {% endif %}
@@ -187,7 +190,7 @@
   </div>
 
   <p class="mt-2 text-[11px] text-muted">
-    <span x-text="shown">{{ trips|length }}</span><span x-show="shown !== total"> of <span x-text="total"></span></span> trips ·
+    <span x-text="shown">{{ trips|length }}</span><span x-show="shown !== total"> of <span x-text="total"></span></span> <span x-text="total === 1 ? 'trip' : 'trips'">trip{{ trips|length|pluralize }}</span> ·
     Times in each trip's pickup timezone · <span class="hidden sm:inline">click to select · ↑ ↓ to move · Enter or double-click to open</span>
   </p>
 

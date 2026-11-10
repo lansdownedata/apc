@@ -74,3 +74,18 @@ def test_non_json_mark_lost_on_booked_redirects_without_change(logged_in_client)
     assert resp.status_code in (302, 400)
     lead.refresh_from_db()
     assert lead.status == Lead.Status.BOOKED
+
+
+def test_a_booked_order_does_not_offer_mark_lost(logged_in_client):
+    """LEAD-12: Mark lost was offered on a Booked order, then refused on a bare 400 page.
+    A booked order is cancelled from the Orders console."""
+    booked = LeadFactory(status=Lead.Status.BOOKED)
+    page = logged_in_client.get(reverse("lead_detail", args=[booked.pk])).content.decode()
+    assert "form-mark-lost" not in page
+
+
+@pytest.mark.parametrize("status", [Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED])
+def test_open_leads_still_offer_mark_lost(logged_in_client, status):
+    lead = LeadFactory(status=status)
+    page = logged_in_client.get(reverse("lead_detail", args=[lead.pk])).content.decode()
+    assert "form-mark-lost" in page

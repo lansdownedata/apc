@@ -7,6 +7,7 @@ The Podium API call itself lives in `apps.integrations.podium`; these views stay
 from __future__ import annotations
 
 import json
+import logging
 from decimal import ROUND_HALF_UP
 
 from django.contrib.auth.decorators import login_required
@@ -26,6 +27,8 @@ from apps.leads.models import Lead
 from . import events, services
 from .models import Conversation, Message, Review
 from .sender import PODIUM_CHANNEL
+
+logger = logging.getLogger(__name__)
 
 # Podium calls the SMS channel "phone" — shared with apps.messaging.sender so the
 # mapping isn't duplicated (a divergent copy here is what caused SMS touch-points to be
@@ -172,7 +175,8 @@ def inbox_send(request, pk: int) -> JsonResponse:
             identifier=identifier, body=body, channel_type=CHANNEL_TYPE[channel]
         )
     except (PodiumAPIError, PodiumNotConnected) as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+        logger.warning("inbox send to conversation %s refused: %s", conversation.pk, exc)
+        return JsonResponse({"ok": False, "error": podium.describe_error(str(exc))}, status=502)
 
     uid = ""
     if isinstance(response, dict):

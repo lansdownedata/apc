@@ -46,7 +46,7 @@
           </div>
         </a>
         {% empty %}
-        <div class="px-4 py-6 text-[13px] text-muted">No conversations yet.</div>
+        <div class="px-4 py-6 text-[13px] text-muted">{% if q %}No conversations match your search.{% else %}No conversations yet.{% endif %}</div>
         {% endfor %}
       </div>
     </div>

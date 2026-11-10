@@ -50,3 +50,11 @@ def test_company_update_rejects_duplicate_name(client):
     resp = client.post(reverse("company_update", args=[other.pk]), {"name": "ACME"})
     assert resp.status_code == 400
     assert "already exists" in resp.json()["error"].lower()
+
+
+def test_company_page_titles_itself_with_the_companys_name(client):
+    """SET-04: the top bar read "Lead Manager" on a company's page."""
+    company = Company.objects.create(name="BigCo")
+    client.force_login(UserFactory())
+    resp = client.get(reverse("company_detail", args=[company.pk]))
+    assert resp.context["page_title"] == "BigCo"

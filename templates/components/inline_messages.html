@@ -1,0 +1,12 @@
+{% comment %}
+  Django flash messages drawn inline at the top of a page that shows its own (the lead and
+  order pages), styled per level: a confirmation reads as success, a refusal as danger,
+  anything else as a warning. Rendering them here marks them used, so flash_messages.html
+  does not repeat them as toasts.
+{% endcomment %}
+{% for message in messages %}
+<div class="tone {% if message.level_tag == 'error' %}tone-danger{% elif message.level_tag == 'success' %}tone-ok{% else %}tone-warn{% endif %} mb-4 text-[13px]">
+  <span class="tone-ic"><i class="ti {% if message.level_tag == 'success' %}ti-circle-check{% else %}ti-alert-triangle{% endif %} text-[17px]"></i></span>
+  <span>{{ message }}</span>
+</div>
+{% endfor %}

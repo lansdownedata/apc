@@ -36,14 +36,7 @@
     Edit details' "could not save" error lands on this page and must not be swallowed. (Wider gap: messages posted before a redirect to any
     other portal page are still dropped — worth fixing centrally in base.html.)
   {% endcomment %}
-  {% if messages %}
-  {% for message in messages %}
-  <div class="tone {% if message.level_tag == 'error' %}tone-danger{% else %}tone-warn{% endif %} mb-4 text-[13px]">
-    <span class="tone-ic"><i class="ti ti-alert-triangle text-[17px]"></i></span>
-    <span>{{ message }}</span>
-  </div>
-  {% endfor %}
-  {% endif %}
+  {% if messages %}{% include "components/inline_messages.html" %}{% endif %}
 
   {% include "leads/_wedding_summary.html" %}
   {% include "leads/_wedding_day_of_details.html" %}
@@ -259,7 +252,9 @@
       </div>
       {% endif %}
 
-      {% if lead.status != 'lost' and not farm_in_is_pending %}
+      {% comment %} Not on a Booked order (LEAD-12): it is cancelled with Cancel order, and the
+         server refuses Mark lost there. Engaged keeps it (a policy question, left as is). {% endcomment %}
+      {% if lead.status != 'lost' and lead.status != 'booked' and not farm_in_is_pending %}
       <!-- Mark lost — hidden form + modal to collect reason -->
       <form id="form-mark-lost" method="post" action="{% url 'lead_mark_lost' lead.pk %}" class="hidden">
         {% csrf_token %}

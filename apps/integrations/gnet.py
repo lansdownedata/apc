@@ -123,9 +123,11 @@ def vehicle_code(vehicle: VehicleType) -> str:
     try:
         return VEHICLE_TYPE_MAP[vehicle.name]
     except KeyError:
+        # Staff read this in the notification tray and on the coverage card, so it names
+        # the vehicle, not the mapping table (GNET-04).
         raise GnetNotConfigured(
-            f"No GNet vehicle-type mapping for {vehicle.name!r} — add it to "
-            "VEHICLE_TYPE_MAP in apps/integrations/gnet.py before farming this out."
+            f"{vehicle.name} has no matching GNet vehicle type yet, so it can't go out "
+            "over GNet. Offer it to an affiliate by email, or ask for the type to be mapped."
         ) from None
 
 

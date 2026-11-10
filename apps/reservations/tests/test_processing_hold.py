@@ -646,3 +646,48 @@ def test_pane_counts_an_outside_capture_processing_will_adopt(client, agent):
     trip = _dirty(trip, "650.00")
 
     assert _split(client, trip) == (Decimal("400.00"), Decimal("250.00"))
+
+
+# --- the footer says the hold pays, not "To charge now" (HOLD-07, HOLD-12; batch B13) -----
+
+
+def _footer(client, trip) -> str:
+    body = client.get(reverse("processing"), {"trip": trip.pk}).content.decode()
+    return body[body.index('x-data="processingPane(') :]
+
+
+def test_footer_names_the_hold_and_the_card_part(client, agent):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, "650.00")
+
+    footer = _footer(client, trip)
+
+    assert "$500.00 from the cleaning hold, $150.00 charged to Visa ••4242." in footer
+    assert "To charge now" not in footer
+    assert "fromHold: '500.00'" in footer and "fromCard: '150.00'" in footer
+    assert "Process and collect $650.00" in footer
+
+
+def test_footer_says_the_hold_covers_it_all(client, agent):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, "250.00")
+
+    footer = _footer(client, trip)
+
+    assert "$250.00 from the cleaning hold; the card isn't charged again." in footer
+    assert "To charge now" not in footer
+
+
+def test_footer_without_a_hold_still_says_charge_now(client, agent):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    hold.status = Charge.Status.RELEASED
+    hold.save(update_fields=["status"])
+    trip = _dirty(trip, "250.00")
+
+    footer = _footer(client, trip)
+
+    assert "To charge now" in footer
+    assert "Process and charge $250.00" in footer

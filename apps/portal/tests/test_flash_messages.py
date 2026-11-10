@@ -2,7 +2,7 @@
 
 Django only drains a message when a template iterates `messages`. Pages that don't render
 them inline leave the message queued in the session, and it then pops up on whatever
-page next does — e.g. "Edit insurance policy saved." appearing on an unrelated lead.
+page next does — e.g. "Insurance policy saved." appearing on an unrelated lead.
 """
 
 import pytest
@@ -43,14 +43,14 @@ def test_message_shows_on_the_page_it_redirects_to(client, agent):
     client.force_login(agent)
     resp = _edit_policy(client, VendorInsuranceFactory())
     assert resp.redirect_chain, "the edit should have saved and redirected"
-    assert "Edit insurance policy saved." in resp.content.decode()
+    assert "Insurance policy saved." in resp.content.decode()
 
 
 def test_message_does_not_leak_onto_a_later_page(client, agent):
     client.force_login(agent)
     _edit_policy(client, VendorInsuranceFactory())
     resp = client.get(reverse("lead_detail", args=[LeadFactory().pk]))
-    assert "Edit insurance policy saved." not in resp.content.decode()
+    assert "Insurance policy saved." not in resp.content.decode()
 
 
 def test_a_page_with_inline_messages_does_not_also_toast_them(client, agent):

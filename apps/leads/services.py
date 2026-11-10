@@ -24,6 +24,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.audit.explicit import record_update
 from apps.core import outbound
+from apps.integrations import podium
 from apps.messaging import events, rendering, sender
 from apps.messaging.models import Delivery
 from apps.payments.models import PaymentPlan
@@ -281,7 +282,12 @@ def send_quote(lead: Lead, *, base_url: str, channels: set[str] | None = None) -
         address = next((d.address for d in mine if d.status == Delivery.Status.SENT), "") or next(
             (p.phone if channel == "sms" else p.email for p in people), ""
         )
-        delivery[channel] = {"sent": ok, "recipient": address, "error": error or None}
+        # Staff read this in a toast: a Podium refusal reads as a sentence (CON-14).
+        delivery[channel] = {
+            "sent": ok,
+            "recipient": address,
+            "error": podium.describe_error(error) if error else None,
+        }
 
     return SendQuoteResult(
         ok=True, http_status=200, link=link, status=lead.status, delivery=delivery

@@ -558,6 +558,11 @@ class Reservation(TimeStampedModel):
             if not stop.airport_id or not (stop.airline_id or stop.flight_number):
                 continue
             if stop.flight_id is None:
+                # A tail number has no scheduled flight to verify (LEAD-05), so it never
+                # asks. Read only here: a private stop never has a Flight row, and the
+                # board, workspace and order page all join the stop's airline.
+                if stop.airline_id and stop.airline.is_private:
+                    continue
                 states.append("unverified")
                 continue
             state = stop.flight.pill_state

@@ -913,9 +913,14 @@ def quote_pay_complete(request, token: str) -> JsonResponse:
 def lead_create(request) -> HttpResponse:
     form = NewLeadForm(request.POST)
     if not form.is_valid():
+        # Named by the field's label, not its key (LEAD-02: "phone: Enter…").
         messages.error(
             request,
-            "; ".join(f"{k}: {e[0]}" for k, e in form.errors.items()) or "Could not create lead.",
+            "; ".join(
+                f"{form[k].label}: {e[0]}" if k in form.fields else e[0]
+                for k, e in form.errors.items()
+            )
+            or "Could not create lead.",
         )
         return redirect("lead_list")
     cd = form.cleaned_data

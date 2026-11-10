@@ -6,6 +6,7 @@ business calls: locations, messages, contacts. Higher-level orchestration
 """
 
 import logging
+import re
 
 import requests
 from django.conf import settings
@@ -33,6 +34,35 @@ class PodiumNotConnected(Exception):
 
 class PodiumAPIError(Exception):
     """A non-2xx response from the Podium API (carries status + body)."""
+
+
+# How `_request` words a refusal: "<status> <METHOD> <url> → <body>". The body is Podium's
+# JSON, cut to 600 characters, so it may not parse.
+_RAW_ERROR = re.compile(r"(\d{3}) (?:GET|POST|PUT|PATCH|DELETE) https?://\S+ → ")
+_REASON = re.compile(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def describe_error(text: str) -> str:
+    """`text` with every raw Podium refusal in it replaced by a sentence staff can read:
+    "Podium refused the message: Contact opted out" (CON-14, LEAD-15). Anything else comes
+    back as it was. For display only; log the raw text, which is what a fix needs."""
+    text = text or ""
+    found = list(_RAW_ERROR.finditer(text))
+    if not found:
+        return text
+    out = [text[: found[0].start()]]
+    for i, match in enumerate(found):
+        last = i + 1 == len(found)
+        body = text[match.end() : len(text) if last else found[i + 1].start()]
+        sep = ""
+        if not last and body.endswith("; "):  # how several sends' errors are joined
+            body, sep = body[:-2], "; "
+        reason = _REASON.search(body)
+        if reason:
+            out.append(f"Podium refused the message: {reason.group(1)}{sep}")
+        else:
+            out.append(f"Podium refused the message ({match.group(1)}).{sep}")
+    return "".join(out)
 
 
 def get_credential() -> PodiumCredential:

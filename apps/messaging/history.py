@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 
+from apps.integrations.podium import describe_error
+
 from .models import Delivery, TouchPoint
 from .sender import MISSING, NO_RECIPIENT
 
@@ -89,7 +91,14 @@ def for_lead(lead) -> list[HistoryRow]:
             when = tp.sent_at or tp.scheduled_for or tp.created_at
             group = _group(status, reason)
             row = HistoryRow(
-                name, when, label, "", status, reason, _when_display(when, zone), group
+                name,
+                when,
+                label,
+                "",
+                status,
+                describe_error(reason),
+                _when_display(when, zone),
+                group,
             )
             # A cancelled send sorts by when it was cancelled, not by the time it was due.
             rows.append((tp.updated_at if status == "Cancelled" else when, row))
@@ -116,7 +125,14 @@ def for_lead(lead) -> list[HistoryRow]:
             to = f"{who} · {d.get_channel_display()}" if d.recipient_label else who
             group = _group(status, reason)
             row = HistoryRow(
-                name, when, label, to, status, reason, _when_display(when, zone), group
+                name,
+                when,
+                label,
+                to,
+                status,
+                describe_error(reason),
+                _when_display(when, zone),
+                group,
             )
             rows.append((when, row))
     # Problems and upcoming sends oldest first; sent, then cancelled, newest first.

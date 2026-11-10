@@ -149,3 +149,70 @@ def test_channel_labels_use_json_string_escaping(logged_in_client):
     contact = ContactFactory()
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
     assert "'website': &quot;Website&quot;" in html
+
+
+def test_contact_page_titles_itself_with_the_contacts_name(client):
+    """SET-04: the top bar read "Lead Manager" on a contact's page."""
+    c = ContactFactory(name="Priya Anand")
+    client.force_login(UserFactory())
+    resp = client.get(reverse("contact_detail", args=[c.pk]))
+    assert resp.context["page_title"] == "Priya Anand"
+    assert "<title>Priya Anand · All Pro Charter</title>" in resp.content.decode()
+
+
+# --- CON-03: in-place edits show up in the header; a refused edit rolls back -------------
+
+
+def test_header_subline_follows_inline_edits(client):
+    from apps.contacts.models import Company
+
+    c = ContactFactory(name="Priya", company=Company.objects.create(name="BigCo"))
+    client.force_login(UserFactory())
+    body = client.get(reverse("contact_detail", args=[c.pk])).content.decode()
+
+    assert "x-text=\"'Came in via ' + (channelLabels[header.channel]" in body
+    assert "x-text=\"header.company || 'No company'\"" in body
+    assert 'x-text="header.name"' in body  # the empty-orders sentence
+
+
+_REFUSED_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const toasts = [];
+const ctx = {
+  toasts,
+  URLSearchParams,
+  getCookie: () => "csrf",
+  Alpine: { store: () => ({ push: (t) => toasts.push(t.title) }) },
+  fetch: async () => ({ ok: false, json: async () => ({ error: "That email is already used." }) }),
+};
+vm.createContext(ctx);
+const p = vm.runInContext(fs.readFileSync(0, "utf8") + `
+  const p = contactProfile({ updateUrl: "/u/", header: { name: "Priya", email: "me@x.test" } });
+  p.init();
+  p.header.email = "taken@x.test";
+  p;
+`, ctx);
+p.saveHeader();
+setTimeout(() => process.stdout.write(JSON.stringify({ email: p.header.email, toasts })), 20);
+"""
+
+
+def test_a_refused_edit_puts_the_saved_value_back():
+    """CON-03: after "That email is already used by another contact." the box kept the
+    rejected address until a reload."""
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index("function contactProfile(")
+    source = js[start : js.index("window.contactProfile = contactProfile;", start)]
+    result = subprocess.run(
+        ["node", "-e", _REFUSED_HARNESS], input=source, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"email": "me@x.test", "toasts": ["Could not save"]}
