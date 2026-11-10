@@ -174,11 +174,11 @@ def test_without_keys_the_menu_hides_it_and_the_screen_404s(owner):
 @override_settings(**QBO, PODIUM_CLIENT_ID="")
 def test_with_keys_the_overview_shows_the_connection_state(owner):
     resp = owner.get(reverse("settings_index"))
-    assert ("QuickBooks", False, "Not connected") in resp.context["status"]
+    assert ("QuickBooks", "danger", "Not connected") in resp.context["status"]
     assert "Not connected" in resp.content.decode()
     _live()
     resp = owner.get(reverse("settings_index"))
-    assert ("QuickBooks", True, "Connected") in resp.context["status"]
+    assert ("QuickBooks", "ok", "Connected") in resp.context["status"]
     assert "Not connected" not in resp.content.decode()
 
 
