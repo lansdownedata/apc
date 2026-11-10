@@ -311,3 +311,52 @@ def test_reconcile_recovers_an_authorization_whose_webhook_never_landed():
     plan.lead.refresh_from_db()
     assert charge.status == Charge.Status.AUTHORIZED
     assert plan.lead.status == Lead.Status.ENGAGED
+
+
+# --- a deposit paid on an order that is already booked (PAY-11) ----------------------
+
+
+def test_a_deposit_held_on_a_booked_order_is_captured_at_once():
+    """PAY-11: a direct booking (Book now) is already confirmed, so nobody will press
+    Confirm. Its deposit, paid through the pay link, is captured when the hold lands
+    instead of sitting authorized until the bank drops it."""
+    plan = _authorizable_plan()
+    plan.lead.status = Lead.Status.BOOKED
+    plan.lead.save(update_fields=["status"])
+    charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
+    charge.stripe_payment_intent_id = "pi_1"
+    charge.save(update_fields=["stripe_payment_intent_id"])
+
+    with (
+        patch.object(services.stripe.PaymentIntent, "capture") as capture,
+        patch.object(
+            services.stripe.PaymentIntent,
+            "retrieve",
+            side_effect=[_authorized_intent(), _captured_intent(), _captured_intent()],
+        ),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        services.record_authorization(plan, "pi_1")
+        # the webhook for the same hold arrives after the inline reconcile
+        services.record_authorization(plan, "pi_1")
+
+    capture.assert_called_once_with("pi_1")
+    plan.refresh_from_db()
+    charge.refresh_from_db()
+    plan.lead.refresh_from_db()
+    assert charge.status == Charge.Status.SUCCEEDED
+    assert plan.deposit_status == PaymentPlan.DepositStatus.PAID
+    assert plan.lead.status == Lead.Status.BOOKED
+    assert (
+        JournalEntry.objects.filter(lead=plan.lead, kind=JournalEntry.Kind.DEPOSIT_CAPTURED).count()
+        == 1
+    )
+
+
+def test_a_deposit_held_on_a_quoted_order_still_waits_for_confirm():
+    plan = _authorizable_plan()
+    with patch.object(services.stripe.PaymentIntent, "capture") as capture:
+        _authorize(plan)
+    capture.assert_not_called()
+    plan.lead.refresh_from_db()
+    assert plan.lead.status == Lead.Status.ENGAGED

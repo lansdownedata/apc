@@ -885,11 +885,30 @@ def record_authorization(plan: PaymentPlan, payment_intent_id: str) -> Charge:
         lead.save(update_fields=["status", "updated_at"])
         # The customer has done their part — stop the quote-chasing program.
         events.cancel(lead)
+    elif lead.status == Lead.Status.BOOKED:
+        # PAY-11: a direct booking is confirmed already; nobody will press Confirm, so the
+        # hold is taken now rather than left for the bank to drop.
+        return _capture_held_deposit(plan, charge)
     return charge
 
 
 def _authorized_deposit(plan: PaymentPlan) -> Charge | None:
     return plan.charges.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.AUTHORIZED).first()
+
+
+def _capture_held_deposit(plan: PaymentPlan, charge: Charge) -> Charge:
+    """Capture an authorized deposit and post it. The row is locked first, so the inline
+    reconcile and the webhook for the same hold capture it once between them."""
+    with transaction.atomic():
+        charge = Charge.objects.select_for_update().get(pk=charge.pk)
+        if charge.status != Charge.Status.AUTHORIZED:
+            return charge
+        _stripe().PaymentIntent.capture(charge.stripe_payment_intent_id)
+        charge.captured_at = timezone.now()
+        # PENDING so `record_payment`'s own guard does the ledger post exactly once.
+        charge.status = Charge.Status.PENDING
+        charge.save(update_fields=["captured_at", "status", "updated_at"])
+        return record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
 
 
 def confirm_order(lead, *, user=None) -> Charge:
@@ -914,13 +933,7 @@ def confirm_order(lead, *, user=None) -> Charge:
             return captured
         raise PaymentError("This order has no authorized deposit to capture.")
 
-    _stripe().PaymentIntent.capture(charge.stripe_payment_intent_id)
-    charge.captured_at = timezone.now()
-    charge.save(update_fields=["captured_at", "updated_at"])
-    # PENDING so `record_payment`'s own guard does the ledger post exactly once.
-    charge.status = Charge.Status.PENDING
-    charge.save(update_fields=["status", "updated_at"])
-    captured = record_payment(plan, charge.stripe_payment_intent_id, kind=Charge.Kind.DEPOSIT)
+    captured = _capture_held_deposit(plan, charge)
     # After book_lead, so the confirmation isn't swept up by its cancel.
     lead.refresh_from_db()
     events.emit("order_confirmed", lead)

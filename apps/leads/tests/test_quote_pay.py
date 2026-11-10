@@ -409,3 +409,20 @@ def test_paying_a_trip_link_tags_the_charge_with_the_trip_and_posts_once(client)
     assert link.status == Charge.Status.SUCCEEDED and link.reservation == trip
     assert JournalEntry.objects.filter(charge=link).count() == 1
     assert ledger.order_balances(lead)["collected"] == Decimal("1200.00")
+
+
+def test_success_page_on_a_booked_order_says_the_deposit_was_charged(client):
+    """PAY-11: a direct booking's deposit is captured when it lands, so the page must not
+    tell the customer nothing was charged and that we'll confirm availability."""
+    lead = _lead(status=Lead.Status.BOOKED)
+    plan = lead.payment
+    plan.deposit_status = plan.DepositStatus.PAID
+    plan.save(update_fields=["deposit_status"])
+    _collect(lead, "500.00")
+
+    resp = client.get(reverse("quote_deposit_success", args=[_tok(lead)]))
+
+    body = resp.content.decode()
+    assert "Deposit received" in body
+    assert "Nothing has been charged yet" not in body
+    assert "confirm availability" not in body

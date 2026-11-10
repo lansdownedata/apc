@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% if paid_in_full %}Payment received{% else %}Card authorized{% endif %} · All Pro Charter</title>
+<title>{% if paid_in_full %}Payment received{% elif deposit_paid %}Deposit received{% else %}Card authorized{% endif %} · All Pro Charter</title>
 <link rel="icon" href="{% static 'brand/favicon.svg' %}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{% static 'brand/apple-touch-icon.png' %}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,6 +35,15 @@
     {% if paid_in_full %}
       <h1>Payment received</h1>
       <p>Thank you — reservation {{ quote_no }} is now paid in full. You'll get a confirmation shortly.</p>
+    {% elif deposit_paid %}
+      <h1>Deposit received</h1>
+      <p>
+        Thank you — your deposit for reservation {{ quote_no }} has been charged and your trip
+        is booked.{% if balance_due %} The balance is due {{ balance_due|date:"F j, Y" }}.{% endif %}
+      </p>
+      <div class="amt">
+        Quote <b>{{ quote_no }}</b>{% if deposit_amount %} · deposit paid <b>${{ deposit_amount|floatformat:2|intcomma }}</b>{% endif %}
+      </div>
     {% else %}
       {% comment %}
         APC-26: the deposit is only *authorized* here — availability is confirmed by a

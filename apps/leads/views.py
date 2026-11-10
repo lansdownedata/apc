@@ -575,6 +575,8 @@ def quote_deposit_success(request, token: str) -> HttpResponse:
             "quote_no": lead.quote_no,
             "deposit_amount": plan.deposit_amount if plan else None,
             "paid_in_full": paid_in_full,
+            "deposit_paid": plan is not None and plan.deposit_status == plan.DepositStatus.PAID,
+            "balance_due": plan.balance_due_date if plan else None,
         },
     )
 
