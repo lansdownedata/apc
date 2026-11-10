@@ -10,9 +10,9 @@ path for a staff click, an invite or a report, sent inside the request (spec C s
 `send_report` is a staff report's way in, from its cron job. Inside quiet hours (`quiet`) a
 due text is queued until the window ends while its email goes now; a click is never held.
 
-Transport is today's: texts and customer/affiliate email through Podium, planner and staff
-email (and any trigger whose email goes by Postmark) through our own mail, in the branded
-layout (`rendering`). The review request keeps Podium's review invite. `OUTBOUND_ENABLED` is
+Transport: texts go through Podium; every email goes through our own mail (Postmark), in the
+branded layout (`rendering`), so emails no longer appear on the Podium conversation (Moe,
+2026-11-10). The review request keeps Podium's review invite. `OUTBOUND_ENABLED` is
 enforced inside both send primitives; `TOUCHPOINTS_ENABLED` and the master switch gate the
 batch as they always have, and never a click.
 """
@@ -64,7 +64,6 @@ _SENT_NOW = frozenset({"staff_click", "schedule"})
 COVERS = "_covers"
 
 _A = MessageTemplate.Audience
-_POSTMARK_AUDIENCES = frozenset({_A.PLANNER, _A.STAFF})
 # Triggers whose send records the driver details it carried, so a later change can be
 # compared against what the customer was told (`events.sync_waiting`).
 _DRIVER_TRIGGERS = frozenset({"pickup_dispatched", "driver_changed"})
@@ -93,7 +92,8 @@ class _Click:
     # The coverage the click is about (an offer, a cancellation): what the company and
     # driver recipient keys read (APC-129).
     assignment: object = None
-    # A Podium link's rule: each person is texted when they have a mobile, else emailed.
+    # The payment and terms links' rule: each person is texted when they have a mobile, else
+    # emailed.
     text_first: bool = False
 
 
@@ -337,21 +337,14 @@ def context(
 # --- transport -------------------------------------------------------------------------
 
 
-def _via_postmark(row: MessageTemplate) -> bool:
-    trigger = triggers.CATALOG.get(row.trigger)
-    return row.audience in _POSTMARK_AUDIENCES or (
-        trigger is not None and trigger.email_via == "postmark"
-    )
-
-
 def _address(person: Recipient, channel: str) -> str:
     """The address as it is sent: E.164 for a text, the email as stored."""
     return person.phone if channel == "sms" else person.email.strip()
 
 
 def _podium_text(row: MessageTemplate, channel: str, texts: dict[str, str]) -> str:
-    """The body a Podium send carries: the text, or the email as its subject line, a blank
-    line and the body (Podium email has no subject of its own)."""
+    """The plain text of a send: the text, or the email as its subject line, a blank line and
+    the body (what a link click records on the customer's conversation)."""
     if channel == "sms":
         return render(row.sms_body, texts)
     subject = render(row.subject, texts) if row.subject else ""
@@ -393,12 +386,12 @@ def _transport(
 ) -> str:
     """Send one rendered message; returns the provider's id. Raises a `_SEND_ERRORS`.
 
-    Our own mail goes out in the branded layout, the blocks' HTML in place
-    (`rendering`), with the inline logo only when ``logo`` asks for it; texts and Podium
-    email carry the blocks' plain text. ``tolerant``: see `_call`."""
+    Every email is our own mail in the branded layout, the blocks' HTML in place
+    (`rendering`), with the inline logo only when ``logo`` asks for it; a text goes through
+    Podium carrying the blocks' plain text. ``tolerant``: see `_call`."""
     blocks = blocks or {}
     texts = rendering.texts(ctx, blocks)
-    if channel == "email" and _via_postmark(row):
+    if channel == "email":
         logo = rendering.logo_path() if logo else None
         subject, layout = rendering.layout_context(
             row, ctx, blocks, logo_cid="logo" if logo else "", preheader=preheader
@@ -417,13 +410,12 @@ def _transport(
         if provider_id is None:
             raise _NotSent("Email not sent")
         return provider_id
-    body = _podium_text(row, channel, texts)
     resp = _call(
         podium.send_message,
         tolerant=tolerant,
         identifier=address,
         channel_type=PODIUM_CHANNEL[channel],
-        body=body,
+        body=_podium_text(row, channel, texts),
     )
     return _uid(resp)
 
@@ -608,7 +600,10 @@ def _finish(
             tp.sent_at = timezone.now()
             fields_.append("sent_at")
             if not tp.podium_message_uid:
-                tp.podium_message_uid = next((d.provider_id for d in sent_now), "")
+                # A text's Podium id; an email's (our own mail's) stays on its Delivery.
+                tp.podium_message_uid = next(
+                    (d.provider_id for d in sent_now if d.channel == "sms"), ""
+                )
                 fields_.append("podium_message_uid")
             if _stamp_driver(tp, row):
                 fields_.append("driver_details")
@@ -1037,7 +1032,8 @@ def send_now(
     channels to the ones the user picked; ``logo`` attaches the masthead logo (only the
     quote and the affiliate offer carry it today); ``preheader`` is the email's inbox
     preview line; ``assignment`` is the coverage an affiliate click is about;
-    ``text_first`` texts each person who has a mobile and emails the rest (a Podium link).
+    ``text_first`` texts each person who has a mobile and emails the rest (the payment and
+    terms links).
 
     Gated as today's button sends are: `OUTBOUND_ENABLED` refuses anything but staff mail,
     which goes as `internal`; the row's own switch applies; `TOUCHPOINTS_ENABLED` and the

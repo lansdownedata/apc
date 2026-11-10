@@ -299,14 +299,16 @@ def test_inline_send_failure_does_not_break_the_save(
     client, live, django_capture_on_commit_callbacks
 ):
     """Dispatched 3 hours out with the driver on file: the driver message is due now and
-    goes out inline. Podium refusing it never reaches the dispatcher: the status is saved,
-    the TouchPoint is FAILED with Podium's error (the cron does not retry FAILED rows)."""
+    goes out inline. Podium and our mail refusing it never reach the dispatcher: the status
+    is saved, the TouchPoint is FAILED with Podium's error (the cron does not retry FAILED
+    rows)."""
     client.force_login(UserFactory())
     trip = _trip(hours=3)
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED, **DRIVER)
 
     with (
         patch(SEND, side_effect=PodiumAPIError("Podium said no")),
+        patch("apps.notifications.email.deliver_html_email", return_value=None),
         django_capture_on_commit_callbacks(execute=True),
     ):
         response = client.post(

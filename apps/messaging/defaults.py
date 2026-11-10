@@ -250,6 +250,10 @@ _QUOTE_EMAIL = (
 )
 _PAY_LINK = "Here's a secure link to pay for {payment_for}: {pay_link}"
 _TERMS_LINK = "Please review and accept the terms for reservation {quote_no}: {terms_link}"
+# Draft subjects (2026-11-10): the links' email went by Podium, which has no subject line,
+# until every email moved to our own mail.
+PAY_LINK_SUBJECT = "Your {company_name} payment link"
+TERMS_LINK_SUBJECT = "Terms for your {company_name} reservation {quote_no}"
 
 
 def _click(
@@ -313,11 +317,12 @@ CLICKS: dict[str, MessageDefault] = {
                 "{quote_total}, billed to your account. Review and book here: {quote_link}"
             ),
         ),
-        # A Podium message (text, else email), which has no subject line.
+        # A text to anyone with a mobile, else an email.
         _click(
             "send_pay_link",
             "Payment link",
             "booking_payments",
+            subject=PAY_LINK_SUBJECT,
             email_body=_PAY_LINK,
             sms_body=_PAY_LINK,
         ),
@@ -326,6 +331,7 @@ CLICKS: dict[str, MessageDefault] = {
             "send_terms_link",
             "Terms link",
             "booking_payments",
+            subject=TERMS_LINK_SUBJECT,
             email_body=_TERMS_LINK,
             sms_body=_TERMS_LINK,
         ),

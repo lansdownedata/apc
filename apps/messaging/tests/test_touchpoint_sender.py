@@ -2,6 +2,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.core import mail
 from django.utils import timezone
 
 from apps.contacts.factories import ContactFactory
@@ -50,10 +51,11 @@ def test_tp1_sends_on_both_channels_and_marks_sent(settings):
     assert tp.status == TouchPoint.Status.SENT
     assert tp.sent_at is not None
     assert tp.podium_message_uid == "msg-1"
-    assert mock_send.call_count == 2
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
     # Podium's own name for the SMS channel is "phone", not "sms" — see PODIUM_CHANNEL.
-    assert calls == {("email", "a@example.com"), ("phone", "5551234567")}
+    assert calls == {("phone", "5551234567")}
+    # The email goes through our own mail.
+    assert [m.to for m in mail.outbox] == [["a@example.com"]]
 
 
 def test_sms_touchpoint_uses_podiums_phone_channel_type(settings):
@@ -259,16 +261,16 @@ def test_all_channels_failing_marks_failed_with_error(settings):
     lead = LeadFactory(contact=contact)
     tp = _due_tp(lead=lead, kind=TouchPoint.Kind.TP1_WELCOME)
 
-    with patch(
-        "apps.messaging.sender.podium.send_message",
-        side_effect=PodiumAPIError("500 boom"),
+    with (
+        patch("apps.messaging.sender.podium.send_message", side_effect=PodiumAPIError("500 boom")),
+        patch("apps.notifications.email.deliver_html_email", return_value=None),
     ):
         result = sender.run_touchpoints()
 
     assert result == 0
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.FAILED
-    assert "boom" in tp.error
+    assert "boom" in tp.error and "Email not sent" in tp.error
 
 
 def test_not_due_rows_are_untouched(settings):
@@ -326,7 +328,8 @@ def test_blank_public_base_url_leaves_quote_link_row_scheduled_but_still_sends_t
     assert tp3.status == TouchPoint.Status.SCHEDULED
     assert tp1.status == TouchPoint.Status.SENT
     calls = {(c.kwargs["channel_type"], c.kwargs["identifier"]) for c in mock_send.call_args_list}
-    assert calls == {("email", "a@example.com"), ("phone", "5551234567")}
+    assert calls == {("phone", "5551234567")}
+    assert [m.to for m in mail.outbox] == [["a@example.com"]]
 
 
 def test_run_touchpoints_returns_sent_count(settings):

@@ -3,7 +3,7 @@
 A fixed dict in code. A message row names one trigger by key; the trigger says whether it is a
 date (with an anchor to time the send from), an app event, a staff click or a schedule; whether
 it belongs to the order or one trip; which audiences may use it; which placeholder groups
-(`fields._GROUPS`) it can fill; and how it sends. A staff click's own groups ("Quote",
+(`fields._GROUPS`) it can fill; and how it is timed. A staff click's own groups ("Quote",
 "Receipt", ...) are values and generated parts its caller hands over (`sender.send_now`).
 """
 
@@ -38,8 +38,6 @@ class Trigger:
     waits_for: str = ""
     # Date triggers on pickup combine per person per day (spec §5).
     combine: bool = False
-    # Which service carries customer/affiliate email; planner and staff always use Postmark.
-    email_via: Literal["podium", "postmark"] = "podium"
     # Date triggers only: the instant the timing counts from, or None when there is none yet.
     anchor: Callable[..., datetime | None] | None = None
     # An event its own service sends at once through `sender.send_now`, with what it hands
@@ -131,7 +129,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         _PEOPLE,
         _ORDER_FIELDS | {"Wedding details"},
-        email_via="postmark",
         caller_sends=True,
     ),
     _t("quote_sent", "Quote sent", "event", "order", _PEOPLE, _ORDER_FIELDS),
@@ -179,10 +176,9 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {CUSTOMER, PLANNER},
         _ORDER_FIELDS | {"Quote"},
-        email_via="postmark",
     ),
-    # The payment and terms links are a Podium message (text, else email) recorded on the
-    # customer's conversation, as they always were.
+    # The payment and terms links: a text to anyone with a mobile, else an email, recorded on
+    # the customer's conversation.
     _t(
         "send_pay_link",
         "Send payment link",
@@ -206,7 +202,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {CUSTOMER, PLANNER},
         _ORDER_FIELDS | {"Receipt"},
-        email_via="postmark",
     ),
     _t(
         "affiliate_offer",
@@ -215,7 +210,6 @@ _ALL: tuple[Trigger, ...] = (
         "trip",
         {AFFILIATE},
         _AFFILIATE_FIELDS | {"Affiliate click"},
-        email_via="postmark",
     ),
     _t(
         "affiliate_cancel",
@@ -224,7 +218,6 @@ _ALL: tuple[Trigger, ...] = (
         "trip",
         {AFFILIATE},
         _AFFILIATE_FIELDS | {"Affiliate click", "Cancellation"},
-        email_via="postmark",
     ),
     _t(
         "planner_invite",
@@ -233,7 +226,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {PLANNER},
         {"Company", "Account", "Planner account"},
-        email_via="postmark",
     ),
     _t(
         "planner_password_reset",
@@ -242,7 +234,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {PLANNER},
         {"Company", "Account", "Planner account"},
-        email_via="postmark",
     ),
     _t(
         "user_invite",
@@ -251,7 +242,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company", "Account", "Staff access"},
-        email_via="postmark",
     ),
     # Schedules
     _t(
@@ -261,7 +251,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
     _t(
         "review_report",
@@ -270,7 +259,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
     _t(
         "complaint_report",
@@ -279,7 +267,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
     _t(
         "unconfirmed_trips_report",
@@ -288,7 +275,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
     _t(
         "task_digest",
@@ -297,7 +283,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
     _t(
         "dispatch_alert",
@@ -306,7 +291,6 @@ _ALL: tuple[Trigger, ...] = (
         "order",
         {STAFF},
         {"Company"},
-        email_via="postmark",
     ),
 )
 

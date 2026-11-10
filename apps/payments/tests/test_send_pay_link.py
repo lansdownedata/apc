@@ -9,6 +9,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.core import mail
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
@@ -51,7 +52,8 @@ def test_falls_back_to_email_when_there_is_no_phone(client):
     with patch("apps.integrations.podium.send_message", return_value={"uid": "m2"}) as send:
         resp = client.post(reverse("order_send_pay_link", args=[lead.pk]))
     assert resp.json() == {"ok": True, "channel": "email"}
-    assert send.call_args.kwargs["channel_type"] == "email"
+    send.assert_not_called()  # every email goes through our own mail
+    assert mail.outbox[-1].to == ["rider@example.com"]
 
 
 def test_records_an_outbound_message_on_the_conversation(client):

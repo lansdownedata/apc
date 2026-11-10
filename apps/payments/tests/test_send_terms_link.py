@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.core import mail
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -52,7 +53,8 @@ def test_send_terms_link_falls_back_to_email():
     with patch(SEND, return_value={"uid": "t2"}) as send:
         assert _send(lead) == "email"
 
-    assert send.call_args.kwargs["channel_type"] == "email"
+    send.assert_not_called()  # every email goes through our own mail
+    assert mail.outbox[-1].to == ["rider@example.com"]
 
 
 @override_settings(OUTBOUND_ENABLED=False)

@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.core import mail
 from django.utils import timezone
 from django.utils.html import escape
@@ -172,13 +173,32 @@ def test_the_quote_and_pay_links_must_stay_in_their_messages():
     assert "pay_link" in fields.validate(row)["sms_body"]
 
 
-def test_the_pay_and_terms_links_email_by_podium_with_no_subject():
-    for key in ("send_pay_link", "send_terms_link"):
-        assert triggers.get(key).email_via == "podium"
-        assert defaults.CLICKS[key].subject == ""
-    # Any other email still needs one.
-    data = listing.row_data(_row("send_quote")) | {"subject": ""}
-    assert fields.validate(data) == {"subject": "Add a subject for the email."}
+def test_the_pay_and_terms_links_email_with_a_subject_like_every_other_email():
+    """Every email goes through our own mail now (Moe, 2026-11-10), so the links' emails
+    carry a subject line of their own too."""
+    assert defaults.CLICKS["send_pay_link"].subject == "Your {company_name} payment link"
+    assert defaults.CLICKS["send_terms_link"].subject == (
+        "Terms for your {company_name} reservation {quote_no}"
+    )
+    for key in ("send_pay_link", "send_terms_link", "send_quote"):
+        assert _row(key).subject == defaults.CLICKS[key].subject
+        data = listing.row_data(_row(key)) | {"subject": ""}
+        assert fields.validate(data) == {"subject": "Add a subject for the email."}, key
+
+
+def test_the_links_email_goes_through_our_own_mail():
+    lead, _ = _booked(phone="")
+    with patch(SEND) as send:
+        assert payments.send_terms_link(lead, base_url=BASE_URL, sender_name="Sam") == "email"
+
+    send.assert_not_called()
+    (email,) = mail.outbox
+    assert email.to == [lead.contact.email]
+    assert email.subject == f"Terms for your {settings.COMPANY_NAME} reservation {lead.quote_no}"
+    assert "/terms/" in email.body
+    # Recorded on the order contact's conversation; no Podium message id to carry.
+    message = lead.contact.conversation.messages.get()
+    assert message.channel == Message.Channel.EMAIL and message.podium_message_uid == ""
 
 
 def test_the_editor_previews_a_click_row_against_an_order():
@@ -290,10 +310,11 @@ def test_the_rows_wording_is_what_goes_out():
 
 def test_send_terms_sends_its_row():
     lead, _ = _booked(phone="")
-    with patch(SEND, return_value={"uid": "t1"}) as send:
+    with patch(SEND) as send:
         assert payments.send_terms_link(lead, base_url=BASE_URL, sender_name="Sam") == "email"
 
-    assert send.call_args.kwargs["channel_type"] == "email"
+    send.assert_not_called()
+    assert mail.outbox[-1].to == ["dana@example.com"]
     assert list(_trail("send_terms_link").deliveries.values_list("channel", flat=True)) == ["email"]
 
 
@@ -463,7 +484,8 @@ def test_an_sms_off_attempt_leaves_the_pay_link_routing_alone(client):
     with patch(SEND, return_value={"uid": "p"}) as send:
         assert payments.send_pay_link(by_text, base_url=BASE_URL, sender_name="Sam") == "sms"
         assert payments.send_pay_link(by_email, base_url=BASE_URL, sender_name="Sam") == "email"
-    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone", "email"]
+    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone"]
+    assert mail.outbox[-1].to == ["pat@example.com"]
 
 
 def test_the_editor_offers_recipient_checkboxes_on_a_click_row(client):
@@ -540,7 +562,8 @@ def test_the_pay_link_goes_to_everyone_the_row_lists_text_first():
         assert payments.send_pay_link(lead, base_url=BASE_URL, sender_name="Sam") == "sms"
 
     sent = sorted((c.kwargs["channel_type"], c.kwargs["identifier"]) for c in send.call_args_list)
-    assert sent == [("email", "lee@plan.example"), ("phone", "+12025550101")]
+    assert sent == [("phone", "+12025550101")]
+    assert [m.to for m in mail.outbox] == [["lee@plan.example"]]
 
 
 def test_a_click_sends_phones_in_e164_like_every_other_message():

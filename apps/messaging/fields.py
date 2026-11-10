@@ -420,8 +420,6 @@ def validate(data, **texts: str) -> dict[str, str]:
         if box in box_errors or text.strip() or not on[_BOX_CHANNEL[box]]:
             continue
         if box == "subject":
-            if builtin and not defaults.ORIGINALS[key].subject:
-                continue  # the payment and terms links: a Podium email has no subject line
             box_errors[box] = "Add a subject for the email."
         else:
             name = _CHANNEL_NAME[_BOX_CHANNEL[box]]

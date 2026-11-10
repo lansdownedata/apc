@@ -21,6 +21,8 @@ from apps.messaging.models import MessageTemplate, TouchPoint
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.services import set_trip_status
 
+POSTMARK = "apps.notifications.email.deliver_html_email"
+
 pytestmark = pytest.mark.django_db
 
 K = TouchPoint.Kind
@@ -491,9 +493,9 @@ def test_affiliate_confirmation_goes_to_the_vendor_contact():
     tp = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_AFFILIATE)
     _due(tp)
 
-    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m"}) as send:
+    with patch(POSTMARK, return_value="pm") as mail:
         assert sender.deliver(tp) is True
-    assert send.call_args.kwargs["identifier"] == "dispatch@affiliate.test"
+    assert mail.call_args.kwargs["to"] == "dispatch@affiliate.test"
 
 
 def test_affiliate_confirmation_skips_when_coverage_was_dropped():
@@ -573,6 +575,7 @@ def test_build_context_time_carries_the_trip_timezone_abbreviation():
     assert ctx["trip_pickup_when"] == f"{ctx['trip_pickup_date']} at {ctx['trip_pickup_time']}"
 
 
+@override_settings(TOUCHPOINTS_ENABLED=False)
 def test_run_touchpoints_disabled_in_dev_is_a_noop():
     lead = _booked_lead()
     res = ReservationFactory(lead=lead, pickup_date=_future())
@@ -632,14 +635,17 @@ def test_one_send_covers_every_trip_the_customer_has_that_day():
         _customer_trip(contact, day)
     _make_due(K.TRIP_CONFIRM_CUSTOMER)
 
-    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}) as m:
+    with (
+        patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}) as m,
+        patch(POSTMARK, return_value="pm") as mail,
+    ):
         sender.run_touchpoints()
 
     rows = TouchPoint.objects.filter(kind=K.TRIP_CONFIRM_CUSTOMER)
     assert rows.filter(status=TouchPoint.Status.SENT).count() == 1
     assert rows.filter(status=TouchPoint.Status.SKIPPED).count() == 2
     # one email + one SMS for the single grouped send, not three of each
-    assert m.call_count == 2
+    assert (m.call_count, mail.call_count) == (1, 1)
 
 
 @override_settings(TOUCHPOINTS_ENABLED=True, PUBLIC_BASE_URL="https://apc.test")
@@ -690,12 +696,13 @@ def test_the_grouped_body_lists_every_trip_in_the_day():
     _customer_trip(contact, day, stops=["The Willard", "Reagan National"])
     _make_due(K.TRIP_CONFIRM_CUSTOMER)
 
-    with patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}) as m:
+    with (
+        patch("apps.messaging.sender.podium.send_message", return_value={"uid": "m1"}),
+        patch(POSTMARK, return_value="pm") as mail,
+    ):
         sender.run_touchpoints()
 
-    email_body = next(
-        c.kwargs["body"] for c in m.call_args_list if c.kwargs["channel_type"] == "email"
-    )
+    email_body = mail.call_args.kwargs["context"]["body"]
     assert "Dulles International" in email_body
     assert "Reagan National" in email_body
 

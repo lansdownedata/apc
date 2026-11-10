@@ -485,3 +485,30 @@ def test_0030_leaves_an_edited_confirmation_alone():
 
     row.refresh_from_db()
     assert row.sms_body == "Our own words for {trip_pickup_when}"
+
+
+def _migration_0032():
+    from importlib import import_module
+
+    return import_module("apps.messaging.migrations.0032_link_email_subjects")
+
+
+def test_0032_gives_the_link_emails_a_subject_unless_one_was_written():
+    """Every email goes through our own mail now, so the payment and terms links' emails
+    need a subject; one an Admin already wrote stays."""
+    from django.apps import apps as registry
+
+    MessageTemplate.objects.filter(key="send_pay_link").update(subject="")
+    MessageTemplate.objects.filter(key="send_terms_link").update(subject="Our own")
+
+    _migration_0032().forwards(registry, None)
+
+    subjects = dict(
+        MessageTemplate.objects.filter(key__in=("send_pay_link", "send_terms_link")).values_list(
+            "key", "subject"
+        )
+    )
+    assert subjects == {
+        "send_pay_link": defaults.ORIGINALS["send_pay_link"].subject,
+        "send_terms_link": "Our own",
+    }

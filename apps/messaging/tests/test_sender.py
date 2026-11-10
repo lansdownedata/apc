@@ -4,8 +4,9 @@ Podium and Postmark are always mocked. Seeded rows come from the seed migration;
 from `MessageRowFactory`.
 """
 
+from contextlib import contextmanager
 from datetime import date, time, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -23,10 +24,12 @@ from apps.messaging import rules, sender
 from apps.messaging.factories import DeliveryFactory, MessageRowFactory, TouchPointFactory
 from apps.messaging.models import Delivery, MessageTemplate, Review, TouchPoint
 from apps.messaging.recipients import Recipient
+from apps.notifications.email import EmailNotSent
 from apps.planners.models import PlannerAccount
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.reservations.factories import PassengerFactory, ReservationFactory
 from apps.reservations.models import Reservation
+from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -106,6 +109,24 @@ def _pickup_row(**kw) -> MessageTemplate:
     )
 
 
+@contextmanager
+def _sends():
+    """Every send in one log, in Podium's call shape: Podium's texts, and the emails our own
+    mail sends (channel "email", the address, the text part). An email through Podium fails."""
+    log = MagicMock(side_effect=_ok)
+
+    def texted(**kw):
+        assert kw["channel_type"] == "phone", "an email went through Podium"
+        return log(**kw)
+
+    def mailed(*, to, context, **_):
+        log(identifier=to, channel_type="email", body=context["body"])
+        return "pm-1"
+
+    with patch(SEND, side_effect=texted), patch(POSTMARK, side_effect=mailed):
+        yield log
+
+
 def _calls(send) -> list[tuple[str, str]]:
     return sorted((c.kwargs["channel_type"], c.kwargs["identifier"]) for c in send.call_args_list)
 
@@ -127,7 +148,7 @@ def test_one_delivery_per_recipient_and_channel_with_labels():
     row = _added(recipients=["booking_contact", "role:couple"])
     tp = _tp(row, lead)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(tp) is True
 
     # Phones go out in E.164, emails as stored (a staff address keeps its capitals, below).
@@ -156,7 +177,7 @@ def test_the_same_address_twice_gets_one_copy():
     LeadContact.objects.create(lead=lead, contact=lead.contact, role=LeadContact.Role.COUPLE)
     tp = _tp(_added(recipients=["booking_contact", "role:couple"]), lead)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         sender.deliver(tp)
 
     assert send.call_count == 2
@@ -233,7 +254,7 @@ def test_a_rerun_only_sends_the_missing_addresses():
         status=Delivery.Status.SENT,
     )
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(tp) is True
 
     assert _calls(send) == [("email", "bea.booker@example.com")]
@@ -260,28 +281,29 @@ def test_a_provider_error_fails_the_delivery_with_its_text():
     lead = _booked()
     tp = _tp(_added(), lead)
 
-    with patch(SEND, side_effect=PodiumAPIError("422 invalid number")):
+    with (
+        patch(SEND, side_effect=PodiumAPIError("422 invalid number")),
+        patch(POSTMARK, side_effect=EmailNotSent("406 inactive recipient")),
+    ):
         assert sender.deliver(tp) is False
 
     assert {(d[0], d[3], d[4]) for d in _deliveries(tp)} == {
         ("sms", "failed", "422 invalid number"),
-        ("email", "failed", "422 invalid number"),
+        ("email", "failed", "406 inactive recipient"),
     }
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.FAILED
-    assert tp.error == "sms: 422 invalid number; email: 422 invalid number"
+    assert tp.error == "sms: 422 invalid number; email: 406 inactive recipient"
 
 
 def test_one_channel_failing_still_marks_it_sent():
     lead = _booked()
     tp = _tp(_added(), lead)
 
-    def flaky(*, channel_type, **_):
-        if channel_type == "email":
-            raise PodiumAPIError("mailbox full")
-        return {"uid": "m-1"}
-
-    with patch(SEND, side_effect=flaky):
+    with (
+        patch(SEND, return_value={"uid": "m-1"}),
+        patch(POSTMARK, side_effect=EmailNotSent("mailbox full")),
+    ):
         assert sender.deliver(tp) is True
 
     tp.refresh_from_db()
@@ -442,7 +464,7 @@ def test_a_wedding_and_a_plain_trip_the_same_day_get_two_confirmations():
     plain = _trip(plain_lead)
     row = _row("trip_confirm_customer")
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(_tp(row, wedding_lead, wedding)) is True
         assert sender.deliver(_tp(row, plain_lead, plain)) is True
 
@@ -461,11 +483,11 @@ def test_a_cancelled_touchpoints_send_does_not_cover_its_replacement():
     trip = _trip(lead)
     row = _row("trip_confirm_customer")
     old = _tp(row, lead, trip)
-    with patch(SEND, side_effect=_ok):
+    with _sends():
         sender.deliver(old)
     TouchPoint.objects.filter(pk=old.pk).update(status=TouchPoint.Status.CANCELLED)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(_tp(row, lead, trip)) is True
     assert send.call_count == 2
 
@@ -785,6 +807,68 @@ def test_planner_email_goes_through_postmark():
     assert Delivery.objects.get(touchpoint=tp).provider_id == "pm-1"
 
 
+def test_a_customer_email_goes_through_postmark_and_its_text_through_podium(mailoutbox):
+    """Every email goes through our own mail in the branded layout; texts stay on Podium
+    (Moe, 2026-11-10)."""
+    lead = _booked()
+    trip = _trip(lead, at=time(10, 0))
+    tp = _tp(_row("trip_confirm_customer"), lead, trip)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(tp) is True
+
+    assert _calls(send) == [("phone", "+12025550100")]
+    (email,) = mailoutbox
+    assert email.to == ["bea.booker@example.com"]
+    assert email.subject.startswith("Please confirm your trip")
+    assert "Bea," in email.body
+    (html, _), *_ = email.alternatives
+    assert "Please take a moment to confirm" in html
+    sent = {d.channel: d.status for d in Delivery.objects.filter(touchpoint=tp)}
+    assert sent == {"email": Delivery.Status.SENT, "sms": Delivery.Status.SENT}
+
+
+def test_an_affiliate_email_goes_through_postmark(mailoutbox):
+    lead = _booked()
+    trip = _trip(lead)
+    vendor = VendorFactory(name="Capital Coaches", email="dispatch@capital.test", phone="")
+    AssignmentFactory(reservation=trip, vendor=vendor, status=Assignment.Status.CONFIRMED)
+    tp = _tp(_row("trip_confirm_affiliate"), lead, trip)
+
+    with patch(SEND, side_effect=_ok) as send:
+        assert sender.deliver(tp) is True
+
+    assert not [c for c in send.call_args_list if c.kwargs["channel_type"] == "email"]
+    (email,) = mailoutbox
+    assert email.to == ["dispatch@capital.test"] and email.subject
+    assert email.alternatives
+
+
+def test_an_email_only_send_records_no_podium_id():
+    """The TouchPoint's Podium id is a text's; an email's id stays on its Delivery."""
+    lead = _booked()
+    tp = _tp(_added(send_sms=False), lead)
+
+    with patch(POSTMARK, return_value="pm-9"):
+        assert sender.deliver(tp) is True
+
+    tp.refresh_from_db()
+    assert tp.podium_message_uid == ""
+    assert Delivery.objects.get(touchpoint=tp).provider_id == "pm-9"
+
+
+def test_customer_email_is_not_internal_mail():
+    """Customer email stays behind the go-live switch: it is never sent as internal."""
+    lead = _booked()
+    trip = _trip(lead, at=time(10, 0))
+    tp = _tp(_row("trip_confirm_customer"), lead, trip)
+
+    with patch(SEND, side_effect=_ok), patch(POSTMARK, return_value="pm-3") as mail:
+        sender.deliver(tp)
+
+    assert mail.call_args.kwargs["internal"] is False
+
+
 def test_staff_email_is_internal():
     lead = _booked()
     row = _added(audience=MessageTemplate.Audience.STAFF, staff_emails=["Ops@apc.test"])
@@ -992,7 +1076,7 @@ def test_an_old_engine_send_on_another_day_does_not_cover():
     row = _row("trip_confirm_customer")
     TouchPointFactory(lead=lead, reservation=other_day, kind=row.key, status=TouchPoint.Status.SENT)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(_tp(row, lead, trip)) is True
     assert send.call_count == 2
 
@@ -1003,7 +1087,7 @@ def test_two_deliver_calls_on_one_snapshot_send_once():
     # As a batch loads it: deliveries prefetched (none yet) before the other send ran.
     stale = TouchPoint.objects.prefetch_related("deliveries").get(pk=tp.pk)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(tp) is True
         assert sender.deliver(stale) is False
 
@@ -1137,7 +1221,7 @@ def test_day_one_routing_of_the_wedding_details_and_driver_messages():
     trip = _dispatched_with(_trip(lead, wedding=True), "Sam Rivera", "+15715551212")
 
     def reached(key: str) -> list[tuple[str, str]]:
-        with patch(SEND, side_effect=_ok) as send:
+        with _sends() as send:
             assert sender.deliver(_tp(_row(key), lead, trip)) is True
         return _calls(send)
 
@@ -1177,7 +1261,7 @@ def test_a_wedding_confirmation_to_the_billing_contact_reaches_them_at_their_own
     lead = _casey_books_pat_pays()
     trip = _trip(lead, wedding=True)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip)) is True
 
     (email,) = _bodies(send, "email")
@@ -1189,7 +1273,7 @@ def test_the_bookers_confirmation_still_reaches_the_booker():
     lead = _booked()
     trip = _trip(lead)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip))
 
     (email,) = _bodies(send, "email")
@@ -1246,7 +1330,7 @@ def test_a_two_leg_wedding_gets_one_details_request_even_on_different_days():
     second = _trip(lead, day=NOV_14 + timedelta(days=1), wedding=True)
     row = _row("wed_final_details")
 
-    with patch(SEND, side_effect=_ok) as send:
+    with _sends() as send:
         assert sender.deliver(_tp(row, lead, first)) is True
         later = _tp(row, lead, second)
         assert sender.deliver(later) is False

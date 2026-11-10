@@ -5,6 +5,7 @@ from itertools import count
 from unittest.mock import patch
 
 import pytest
+from django.core import mail
 from django.urls import reverse
 from django.utils import timezone
 
@@ -142,7 +143,8 @@ def test_the_thank_you_goes_out_by_text_and_email_with_the_rating_link(live):
         assert sender.run_touchpoints() == 1
 
     assert _tp(lead, _K.THANK_YOU).status == TouchPoint.Status.SENT
-    bodies = _bodies(send)
+    (email,) = mail.outbox
+    bodies = _bodies(send) | {"email": email.body}
     day = lead.reservations.first().pickup_date
     link = "https://apc.example" + reverse(
         "trip_confirm", args=[ack.make_trip_day_ack_token(lead.contact, day)]

@@ -333,9 +333,10 @@ def test_email_part_sends_during_quiet_hours(clock):
     row = _pickup_row()
     tp = _tp(row, lead, _trip(lead, datetime(YEAR, 1, 13, 14, 0, tzinfo=ET)))
 
-    with patch(SEND, side_effect=_ok) as send:
+    with patch(SEND, side_effect=_ok) as send, patch(POSTMARK, return_value="pm") as mail:
         assert sender.deliver(tp) is True
-    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
+    send.assert_not_called()
+    assert mail.call_args.kwargs["to"] == "bea.booker@example.com"
     queued = Delivery.objects.get(touchpoint=tp, channel="sms")
     assert (queued.status, queued.reason) == ("queued", "Quiet hours until 8:00 AM EST")
 
@@ -343,10 +344,11 @@ def test_email_part_sends_during_quiet_hours(clock):
         assert sender.run_touchpoints() == 0  # still night: nothing is due
 
     clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
-    with patch(SEND, side_effect=_ok) as send:
+    with patch(SEND, side_effect=_ok) as send, patch(POSTMARK) as mail:
         assert sender.run_touchpoints() == 1
 
     assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone"]
+    mail.assert_not_called()
     assert _deliveries(tp) == [
         ("email", "bea.booker@example.com", "sent", ""),
         ("sms", "+12025550100", "sent", ""),
@@ -402,17 +404,22 @@ def test_a_failed_email_at_night_is_not_tried_again_in_the_morning(clock):
     lead = _booked()
     tp = _tp(_pickup_row(), lead, _trip(lead, datetime(YEAR, 1, 13, 14, 0, tzinfo=ET)))
     from apps.integrations.podium import PodiumAPIError
+    from apps.notifications.email import EmailNotSent
 
-    with patch(SEND, side_effect=PodiumAPIError("mailbox full")):
+    with patch(SEND), patch(POSTMARK, side_effect=EmailNotSent("mailbox full")):
         assert sender.deliver(tp) is False
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.SCHEDULED
 
     clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
-    with patch(SEND, side_effect=PodiumAPIError("carrier down")) as send:
+    with (
+        patch(SEND, side_effect=PodiumAPIError("carrier down")) as send,
+        patch(POSTMARK) as mail,
+    ):
         sender.run_touchpoints()
 
     assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["phone"]
+    mail.assert_not_called()
     tp.refresh_from_db()
     assert tp.status == TouchPoint.Status.FAILED
     assert tp.error == "email: mailbox full; sms: carrier down"
@@ -592,10 +599,11 @@ def test_two_held_texts_the_same_day_combine_in_the_morning(clock):
     row = _pickup_row()
     first, second = _tp(row, lead, morning), _tp(row, lead, afternoon)
 
-    with patch(SEND, side_effect=_ok) as send:
+    with patch(SEND, side_effect=_ok) as send, patch(POSTMARK, return_value="pm") as mail:
         sender.run_touchpoints()
     # One email for the day, listing both; both texts wait.
-    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
+    send.assert_not_called()
+    assert mail.call_count == 1
     assert [d[2] for d in _deliveries(first)] == ["sent", "queued"]
     assert [d[2:] for d in _deliveries(second)] == [
         ("skipped", "Already sent for Jan 13"),
@@ -735,11 +743,12 @@ def test_a_driver_change_overnight_corrects_the_email_without_a_second_text(
     driver("Sam Rivera", "+15715551212")
     with (
         patch(SEND, side_effect=_ok) as send,
+        patch(POSTMARK, return_value="pm") as mail,
         django_capture_on_commit_callbacks(execute=True),
     ):
         set_trip_status(trip, "dispatched")
-    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
-    assert "Sam Rivera" in send.call_args.kwargs["body"]
+    send.assert_not_called()
+    assert "Sam Rivera" in mail.call_args.kwargs["context"]["body"]
     original = TouchPoint.objects.get(reservation=trip, kind="driver_released")
     assert original.status == TouchPoint.Status.SCHEDULED
     assert original.driver_details["name"] == "Sam Rivera"
@@ -747,11 +756,12 @@ def test_a_driver_change_overnight_corrects_the_email_without_a_second_text(
     clock.now = datetime(YEAR, 1, 11, 0, 30, tzinfo=ET)
     with (
         patch(SEND, side_effect=_ok) as send,
+        patch(POSTMARK, return_value="pm") as mail,
         django_capture_on_commit_callbacks(execute=True),
     ):
         driver("Kim Lane", "+15715553434")
-    assert [c.kwargs["channel_type"] for c in send.call_args_list] == ["email"]
-    assert "Kim Lane" in send.call_args.kwargs["body"]
+    send.assert_not_called()
+    assert "Kim Lane" in mail.call_args.kwargs["context"]["body"]
     update = TouchPoint.objects.get(reservation=trip, kind="driver_updated")
     assert ("sms", "+12025550100", "skipped") in [d[:3] for d in _deliveries(update)]
 

@@ -20,8 +20,10 @@
   "pay_link_by_email": [
     {
       "body": "Here's a secure link to pay for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/pay/",
-      "channel_type": "email",
-      "identifier": "dana.whitfield@example.com"
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Your All Pro Charter payment link"
     }
   ],
   "pay_link_by_text": [
@@ -103,8 +105,10 @@
   "terms_link_by_email": [
     {
       "body": "Please review and accept the terms for reservation <Q1>: https://example.test/quote/<TOKEN lead=Dana Whitfield 2027-04-20 14:00>/terms/",
-      "channel_type": "email",
-      "identifier": "dana.whitfield@example.com"
+      "email_to": [
+        "dana.whitfield@example.com"
+      ],
+      "subject": "Terms for your All Pro Charter reservation <Q1>"
     }
   ],
   "terms_link_by_text": [
