@@ -50,7 +50,7 @@ def user_list(request):
             "capabilities": CAPABILITIES,
             "invite_form": UserInviteForm(),
             "roles": User.Role.choices,
-            "nav": "users",
+            "nav": "settings",
             "page_title": "Users",
         },
     )
@@ -98,7 +98,7 @@ def user_detail(request, pk):
             "capabilities": CAPABILITIES,
             "departments": Department.choices,
             "user_departments": user.department_list,
-            "nav": "users",
+            "nav": "settings",
             "page_title": user.get_full_name() or user.username,
         },
     )

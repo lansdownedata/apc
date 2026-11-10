@@ -1,9 +1,7 @@
-{% extends "base.html" %}
+{% extends "settings/base.html" %}
 {% load json_filters %}
 {% block content %}
 <div class="max-w-4xl mx-auto px-4 sm:px-6 py-6">
-  <a href="{% url 'settings_index' %}" class="inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-ink mb-4 transition-colors"><i class="ti ti-arrow-left text-[15px]"></i> Settings</a>
-
   <div class="flex flex-wrap items-start justify-between gap-4 mb-4 px-1"
        x-data="{ on: {% if master_on %}true{% else %}false{% endif %}, busy: false,
          quietLabel: {{ quiet_label|json_string }}, quietStart: '{{ quiet_start }}', quietEnd: '{{ quiet_end }}',

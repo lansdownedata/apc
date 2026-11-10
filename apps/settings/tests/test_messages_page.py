@@ -122,7 +122,7 @@ def test_query_count_bounded(client):
         MessageRowFactory()
     with CaptureQueriesContext(connection) as ctx:
         _get(client)
-    assert len(ctx) <= 20
+    assert len(ctx) <= 26  # 20 for the page, plus the settings menu's attention check
 
 
 def test_toggle_works_for_an_added_row(client):

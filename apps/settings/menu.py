@@ -136,6 +136,19 @@ _MESSAGING = Section(
     ),
 )
 
+_ACCOUNT = Section(
+    "Account",
+    (
+        Item(
+            "Users",
+            "user_list",
+            "ti-users",
+            "team staff invite access roles",
+            ("user_",),
+        ),
+    ),
+)
+
 _QUICKBOOKS = Item(
     "QuickBooks",
     "quickbooks_settings",
@@ -152,6 +165,7 @@ def sections() -> list[Section]:
     menu = [_OVERVIEW, _BOOKING, _OPERATIONS, _AFFILIATES, _MESSAGING]
     if qbo.enabled():
         menu.append(Section("Integrations", (_QUICKBOOKS,)))
+    menu.append(_ACCOUNT)
     return menu
 
 

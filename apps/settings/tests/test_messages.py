@@ -23,7 +23,8 @@ def test_requires_owner_admin(client):
 
 def test_lists_groups_and_rows(client):
     client.force_login(_owner_admin())
-    html = client.get(reverse("messages")).content.decode()
+    page = client.get(reverse("messages")).content.decode()
+    html = page[page.index("<h1") :]  # past the settings menu, which has its own "Affiliates"
     for default in defaults.DEFAULTS.values():
         assert default.name in html
     labels = [escape(label) for label in MessageTemplate.Section.labels]
