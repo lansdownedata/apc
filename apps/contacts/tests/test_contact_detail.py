@@ -149,3 +149,12 @@ def test_channel_labels_use_json_string_escaping(logged_in_client):
     contact = ContactFactory()
     html = logged_in_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
     assert "'website': &quot;Website&quot;" in html
+
+
+def test_contact_page_titles_itself_with_the_contacts_name(client):
+    """SET-04: the top bar read "Lead Manager" on a contact's page."""
+    c = ContactFactory(name="Priya Anand")
+    client.force_login(UserFactory())
+    resp = client.get(reverse("contact_detail", args=[c.pk]))
+    assert resp.context["page_title"] == "Priya Anand"
+    assert "<title>Priya Anand · All Pro Charter</title>" in resp.content.decode()

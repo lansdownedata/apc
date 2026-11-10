@@ -226,6 +226,7 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "contacts/contact_detail.html",
         {
             "nav": "contacts",
+            "page_title": contact.name,
             "contact": contact,
             "stats": _contact_stats(contact, leads),
             "leads": leads[:PROFILE_ORDER_LIMIT],
@@ -376,6 +377,7 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "contacts/company_detail.html",
         {
             "nav": "contacts",
+            "page_title": company.name,
             "company": company,
             "farm_in_summary": task_schedule.farm_in_summary(),
             "members": members,
