@@ -366,7 +366,22 @@ def capture_hold(trip, amount) -> tuple[Charge, bool]:
     charge = services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
     )
+    if charge.status == Charge.Status.SUCCEEDED:
+        _close_unbooked(lead)
     return charge, captured_now
+
+
+def _close_unbooked(lead) -> None:
+    """The hold is on a trip's books now: the sweep's "captured but not booked" task, if it
+    opened one, has nothing left to do and closes itself (HOLD-12)."""
+    from apps.tasks.models import Task
+
+    now = timezone.now()
+    for task in Task.objects.filter(lead=lead, kind=UNBOOKED_TASK_KIND, status__in=Task.UNRESOLVED):
+        task.status = Task.Status.DONE
+        task.completed_at = now
+        task.completed_by = None
+        task.save(update_fields=["status", "completed_at", "completed_by", "updated_at"])
 
 
 def _tag(hold: Charge, trip, amount: Decimal) -> None:

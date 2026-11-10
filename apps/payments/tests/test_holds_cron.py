@@ -631,3 +631,29 @@ def test_cron_endpoint_is_registered(client, settings):
         resp = client.post("/cron/cleaning-holds/", HTTP_X_CRON_KEY="s3cret")
     assert resp.status_code == 200
     assert resp.json() == {"job": "cleaning-holds", "processed": 2}
+
+
+def test_booking_the_captured_hold_to_a_trip_closes_its_unbooked_task():
+    """HOLD-12: once processing adopts the outside capture for a trip, the Accounting task
+    the sweep opened closes itself."""
+    lead, _plan, (trip, *_), hold = _placed("500.00")
+    hold.captured_at = _at(DAY, time(10, 0))
+    hold.capture_expires_at = _at(DAY, time(11, 0))
+    hold.save(update_fields=["captured_at", "capture_expires_at"])
+    with patch.object(stripe.PaymentIntent, "cancel"):
+        holds.sweep(_at(DAY + timedelta(days=20), time(12, 0)))
+
+    with (
+        patch.object(
+            stripe.PaymentIntent,
+            "retrieve",
+            return_value=_intent(status="succeeded", amount=50000),
+        ),
+        patch("apps.payments.receipts.queue"),
+    ):
+        charge, _now = holds.capture_hold(trip, Decimal("400.00"))
+
+    assert charge.status == Charge.Status.SUCCEEDED
+    task = Task.objects.get(lead=lead, kind=holds.UNBOOKED_TASK_KIND)
+    assert task.status == Task.Status.DONE
+    assert task.closed_by_system
