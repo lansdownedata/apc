@@ -110,3 +110,36 @@ def test_insurance_edit_links_certificate_on_file(client, django_user_model, set
     )
     html = client.get(reverse("insurance_edit", args=[policy.pk])).content.decode()
     assert f'href="{policy.certificate.url}"' in html
+
+
+# --- SET-19: the saved toast names the thing, not the page ---------------------------
+
+
+def test_saved_toasts_name_what_was_saved(client, django_user_model):
+    from django.contrib.messages import get_messages
+
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    today = timezone.localdate()
+
+    resp = client.post(
+        reverse("driver_create", args=[vendor.pk]),
+        {"name": "Sam Root", "phone": "617-555-0111", "active": "on"},
+    )
+    assert [str(m) for m in get_messages(resp.wsgi_request)] == ["Driver saved."]
+
+    resp = client.post(
+        reverse("insurance_create", args=[vendor.pk]),
+        {
+            "insurer": "Acme Mutual",
+            "policy_number": "P-9",
+            "coverage_amount": "1000000",
+            "effective_date": str(today),
+            "expiry_date": str(today.replace(year=today.year + 1)),
+        },
+    )
+    assert [str(m) for m in get_messages(resp.wsgi_request)][-1] == "Insurance policy saved."
+
+    f = SimpleUploadedFile("w9.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+    resp = client.post(reverse("document_create", args=[vendor.pk]), {"label": "W-9", "file": f})
+    assert [str(m) for m in get_messages(resp.wsgi_request)][-1] == "Document uploaded."

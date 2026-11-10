@@ -317,6 +317,7 @@ def _child_form_view(
     instance: models.Model | None,
     form_class: type[forms.ModelForm],
     title: str,
+    done: str,
     uploader: bool = False,
 ) -> HttpResponse:
     form = form_class(request.POST or None, request.FILES or None, instance=instance)
@@ -330,7 +331,7 @@ def _child_form_view(
         form.save_m2m()
         if isinstance(obj, VendorInsurance):
             vendor_tasks.sync_vendor(vendor)  # a later policy closes the renewal (APC-71)
-        messages.success(request, f"{title} saved.")
+        messages.success(request, done)  # names the thing, not the page (SET-19)
         return redirect("vendor_detail", pk=vendor.pk)
     return render(
         request,
@@ -343,7 +344,12 @@ def _child_form_view(
 def driver_create(request: HttpRequest, pk: int) -> HttpResponse:
     vendor = get_object_or_404(Vendor, pk=pk)
     return _child_form_view(
-        request, vendor=vendor, instance=None, form_class=VendorDriverForm, title="Add driver"
+        request,
+        vendor=vendor,
+        instance=None,
+        form_class=VendorDriverForm,
+        title="Add driver",
+        done="Driver saved.",
     )
 
 
@@ -356,6 +362,7 @@ def driver_edit(request: HttpRequest, pk: int) -> HttpResponse:
         instance=driver,
         form_class=VendorDriverForm,
         title="Edit driver",
+        done="Driver saved.",
     )
 
 
@@ -368,6 +375,7 @@ def insurance_create(request: HttpRequest, pk: int) -> HttpResponse:
         instance=None,
         form_class=VendorInsuranceForm,
         title="Add insurance policy",
+        done="Insurance policy saved.",
     )
 
 
@@ -380,6 +388,7 @@ def insurance_edit(request: HttpRequest, pk: int) -> HttpResponse:
         instance=policy,
         form_class=VendorInsuranceForm,
         title="Edit insurance policy",
+        done="Insurance policy saved.",
     )
 
 
@@ -392,6 +401,7 @@ def document_create(request: HttpRequest, pk: int) -> HttpResponse:
         instance=None,
         form_class=VendorDocumentForm,
         title="Upload document",
+        done="Document uploaded.",
         uploader=True,
     )
 
