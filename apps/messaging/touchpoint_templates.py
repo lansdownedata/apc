@@ -649,11 +649,17 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         (agent.get_full_name() or agent.get_username()).split(" ")[0] if agent else "the team"
     )
     reservations = list(lead.reservations.all())
-    # The order-level trip is the first one that still runs: a thank-you must not name a
-    # cancelled trip's day (PROC-13). When every trip is cancelled (a release or a whole-
-    # order cancel), the first trip is still the booking the message is about.
+    # The order-level trip is the earliest pickup that still runs (PROC-13): a thank-you must
+    # not name a cancelled trip's day, and reordering the quote's lines must not change it.
+    # Pickups compare as instants across zones; undated trips go last. When every trip is
+    # cancelled (a release or a whole-order cancel), the earliest of them is still the booking.
     live = [r for r in reservations if not r.is_cancelled]
-    first_res = (live or reservations or [None])[0]
+    candidates = live or reservations
+    dated = [r for r in candidates if r.pickup_at is not None]
+    if dated:
+        first_res = min(dated, key=lambda r: r.pickup_at)
+    else:
+        first_res = candidates[0] if candidates else None
     stops = list(first_res.stops.all()) if first_res else []
 
     def format_breakdown(r):

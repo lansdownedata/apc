@@ -102,6 +102,63 @@ def test_order_level_values_fall_back_to_the_first_trip_when_all_are_cancelled()
     assert ctx["pickup_address"] == "First pickup"
 
 
+def test_order_level_values_use_the_earliest_pickup_not_the_first_line():
+    """PROC-13 (Moe, 2026-11-10): the order's trip is the earliest live pickup, so reordering
+    the quote's lines can't change which trip a message names."""
+    lead = LeadFactory()
+    ReservationFactory(
+        lead=lead,
+        sort_order=0,
+        pickup_date=date(2026, 12, 20),
+        pickup_time=time(8, 0),
+        stops=["Later pickup"],
+    )
+    ReservationFactory(
+        lead=lead,
+        sort_order=1,
+        pickup_date=date(2026, 11, 21),
+        pickup_time=time(10, 0),
+        stops=["Earlier pickup"],
+    )
+    ReservationFactory(lead=lead, sort_order=2, pickup_date=None, stops=["Undated"])
+    ctx = tpl.build_context(lead)
+    assert ctx["pickup_date"] == "Nov 21, 2026"
+    assert ctx["pickup_address"] == "Earlier pickup"
+
+
+def test_earliest_pickup_compares_instants_across_zones():
+    """10 AM in New York comes before 9 AM in Los Angeles on the same day."""
+    lead = LeadFactory()
+    ReservationFactory(
+        lead=lead,
+        sort_order=0,
+        pickup_date=date(2026, 11, 21),
+        pickup_time=time(9, 0),
+        pickup_timezone="America/Los_Angeles",
+        stops=["LAX"],
+    )
+    ReservationFactory(
+        lead=lead,
+        sort_order=1,
+        pickup_date=date(2026, 11, 21),
+        pickup_time=time(10, 0),
+        pickup_timezone="America/New_York",
+        stops=["DCA"],
+    )
+    assert tpl.build_context(lead)["pickup_address"] == "DCA"
+
+
+def test_all_cancelled_falls_back_to_the_earliest_pickup():
+    lead = LeadFactory()
+    ReservationFactory(
+        lead=lead, sort_order=0, pickup_date=date(2026, 12, 1), trip_status=CANCELLED
+    )
+    ReservationFactory(
+        lead=lead, sort_order=1, pickup_date=date(2026, 11, 5), trip_status=CANCELLED
+    )
+    assert tpl.build_context(lead)["pickup_date"] == "Nov 5, 2026"
+
+
 def test_message_dates_drop_the_leading_zero():
     """PROC-13: "Nov 08" read as a typo in customer copy."""
     lead = LeadFactory()
