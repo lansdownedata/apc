@@ -287,6 +287,8 @@ LEAD_INBOUND_API_KEY = env("LEAD_INBOUND_API_KEY", default="")
 # ---------------------------------------------------------------- touch-points / messaging
 QUOTE_EXPIRY_DAYS_BEFORE_PICKUP = env.int("QUOTE_EXPIRY_DAYS_BEFORE_PICKUP", default=14)
 TOUCHPOINTS_ENABLED = env.bool("TOUCHPOINTS_ENABLED", default=False)  # dev safety: off by default
+# Text-message sign-in codes (apps/accounts/two_factor.py). On by default.
+TWO_FACTOR_ENABLED = env.bool("TWO_FACTOR_ENABLED", default=True)
 # The go-live switch (APC-90). Off, nothing reaches a customer or an affiliate — see
 # apps/core/outbound.py. Mail to our own staff is not behind it.
 OUTBOUND_ENABLED = env.bool("OUTBOUND_ENABLED", default=False)

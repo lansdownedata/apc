@@ -120,3 +120,45 @@ class UserDepartment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} · {self.get_department_display()}"
+
+
+class SignInCode(models.Model):
+    """A one-time sign-in code for a staff user or a planner account. Only a keyed hash of the
+    code is stored. `consumed_at` is set on success and when the code is voided (replaced, or
+    five wrong tries)."""
+
+    class Channel(models.TextChoices):
+        SMS = "sms", "Text"
+        EMAIL = "email", "Email"
+
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.CASCADE, related_name="sign_in_codes"
+    )
+    planner = models.ForeignKey(
+        "planners.PlannerAccount",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="sign_in_codes",
+    )
+    code_hash = models.CharField(max_length=64)
+    channel = models.CharField(max_length=8, choices=Channel.choices)
+    podium_message_uid = models.CharField(max_length=64, blank=True, db_index=True)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(user__isnull=False, planner__isnull=True)
+                    | models.Q(user__isnull=True, planner__isnull=False)
+                ),
+                name="sign_in_code_one_owner",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_channel_display()} code for {self.user_id or self.planner_id}"
