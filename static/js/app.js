@@ -1208,7 +1208,18 @@ function processingPane(opts) {
     _process(data, done) {
       return this._post(opts.urls.process, { expected: opts.difference, ...data }, done).catch(() => {});
     },
+    /* The server's own refusal, said before any confirm opens (PROC-02): processing waits
+     * for someone to keep or change the overtime suggestion. */
+    _undecided() {
+      if (!opts.overtimeUndecided) return false;
+      Alpine.store("toast").push({
+        type: "danger",
+        title: "Decide the overtime first: keep or change the suggestion.",
+      });
+      return true;
+    },
     processNone() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Process this trip?",
         message: "Nothing is owed either way. Processing locks the customer side of the trip.",
@@ -1218,6 +1229,7 @@ function processingPane(opts) {
       });
     },
     processInvoice() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Process this trip?",
         message: `Nothing is charged: the $${opts.difference} goes on the account's next invoice. Processing locks the customer side of the trip.`,
@@ -1227,6 +1239,7 @@ function processingPane(opts) {
       });
     },
     processCard() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: `Charge $${opts.difference}?`,
         message: `What the trip still owes, charged now to ${opts.card}. Then the trip is locked.`,
@@ -1236,6 +1249,7 @@ function processingPane(opts) {
       });
     },
     processLink() {
+      if (this._undecided()) return;
       Alpine.store("modal").confirm({
         title: "Send the payment link?",
         message: `The customer gets a link to pay $${opts.difference} for this trip. The trip is locked now; the money lands when they pay.`,
@@ -1245,6 +1259,7 @@ function processingPane(opts) {
       });
     },
     processRefund() {
+      if (this._undecided()) return;
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Refund $${amount}?`,
@@ -1261,6 +1276,7 @@ function processingPane(opts) {
       });
     },
     processKeep() {
+      if (this._undecided()) return;
       const amount = Math.abs(Number(opts.difference)).toFixed(2);
       Alpine.store("modal").show({
         title: `Hold $${amount} as credit?`,
@@ -1457,6 +1473,8 @@ function tripReviewForm(opts) {
         this.error = "Give a reason for waiving the overtime.";
         return;
       }
+      // Unticking Waive goes back to the suggestion: the waive left billable at 0 (PROC-02).
+      if (!this.waived && this.state.waived) this.billable = this.state.suggested_minutes || 0;
       this._save({
         billable_minutes: this.waived ? 0 : (this.billable || 0),
         waived: this.waived ? "1" : "0",

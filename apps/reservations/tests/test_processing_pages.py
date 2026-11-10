@@ -514,3 +514,116 @@ def test_processed_pane_query_count_is_flat_with_receipt_state(accountant):
     one = count()
     add(4)
     assert count() == one
+
+
+# --- PROC-02: the overtime gate and Waive, in the browser ------------------------------
+
+
+def _undecided(trip, minutes=60):
+    from apps.reservations import reviews
+
+    review = reviews.review_for(trip)
+    TripReview.objects.filter(pk=review.pk).update(
+        suggested_overtime_minutes=minutes, decided_at=None
+    )
+
+
+def test_the_footer_knows_the_overtime_is_undecided(accountant):
+    trip = _trip()
+    _paid(trip)
+    _undecided(trip)
+
+    body = _page(accountant, trip=trip.pk).content.decode()
+
+    assert "overtimeUndecided: true" in body
+
+
+def test_the_footer_knows_when_there_is_nothing_to_decide(accountant):
+    trip = _trip()
+    _paid(trip)
+    _undecided(trip, minutes=0)
+
+    body = _page(accountant, trip=trip.pk).content.decode()
+
+    assert "overtimeUndecided: false" in body
+
+
+def _node(harness: str, source: str) -> list:
+    import json
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(
+        ["node", "-e", harness], input=source, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _js(name: str) -> str:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[3] / "static" / "js" / "app.js").read_text()
+    start = js.index(f"function {name}(")
+    return js[start : js.index(f"window.{name} = {name};", start)]
+
+
+_GATE_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const out = [];
+const ctx = {
+  out,
+  document: { getElementById: () => null, querySelector: () => null },
+  Alpine: { store: (n) => (n === "modal"
+    ? { confirm: (o) => out.push(["modal", o.title]), show: (o) => out.push(["modal", o.title]) }
+    : { push: (t) => out.push(["toast", t.title]) }) },
+};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + `
+  const base = { difference: "100.00", card: "Visa ••4242", urls: { process: "/p/" } };
+  const p = processingPane({ ...base, overtimeUndecided: true });
+  p.processCard(); p.processLink(); p.processNone(); p.processInvoice();
+  p.processRefund(); p.processKeep();
+  const q = processingPane({ ...base, overtimeUndecided: false });
+  q.processCard();
+`, ctx);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_process_is_refused_in_the_browser_until_the_overtime_is_decided():
+    """PROC-02: the charge confirm opened first, and only its Confirm met the server's
+    refusal."""
+    out = _node(_GATE_HARNESS, _js("processingPane"))
+    gate = ["toast", "Decide the overtime first: keep or change the suggestion."]
+    assert out[:6] == [gate] * 6
+    assert out[6] == ["modal", "Charge $100.00?"]
+
+
+_WAIVE_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const saved = [];
+const ctx = { saved };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(0, "utf8") + `
+  const f = tripReviewForm({
+    state: { billable_minutes: 0, waived: true, suggested_minutes: 60, decided: true },
+    waiveReason: "traffic",
+  });
+  f._save = (data) => saved.push(data);
+  f.waived = false;   // the agent unticks Waive
+  f.saveDecision();
+`, ctx);
+process.stdout.write(JSON.stringify(saved));
+"""
+
+
+def test_unticking_waive_goes_back_to_the_suggestion():
+    """PROC-02: unticking Waive saved 0 billable minutes, the value the waive had left."""
+    (saved,) = _node(_WAIVE_HARNESS, _js("tripReviewForm"))
+    assert saved["billable_minutes"] == 60
+    assert saved["waived"] == "0"

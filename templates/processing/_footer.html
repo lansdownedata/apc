@@ -13,6 +13,9 @@
        cardRefundable: '{{ card_refundable|floatformat:2 }}',
        paidForTrip: '{{ paid_for_trip|floatformat:2 }}',
        methods: {{ refund_methods|json_attr }},
+       {% comment %} The server refuses to process an undecided overtime suggestion; say so
+          before a confirm is opened (PROC-02). {% endcomment %}
+       overtimeUndecided: {% if review.decided_at is None and review.suggested_overtime_minutes > 0 %}true{% else %}false{% endif %},
        urls: {
          process: '{% url 'processing_process' trip.pk %}',
          unlock: '{% url 'processing_unlock' trip.pk %}',
