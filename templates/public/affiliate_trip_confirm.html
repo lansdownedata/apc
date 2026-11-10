@@ -3,7 +3,7 @@
 {% block title %}Confirm coverage · All Pro Charter{% endblock %}
 {% block body %}
   {% if cancelled %}
-    <h1>Trip {{ sheet.quote_no }}</h1>
+    <h1>Trip {{ trip_reference }}</h1>
     <p class="cancelled">This trip is no longer active. Please disregard.</p>
   {% elif confirmed %}
     <div class="done">
@@ -18,6 +18,9 @@
     {% include "components/trip_sheet.html" %}
     <form method="post">
       {% csrf_token %}
+      {% if ack_error %}
+        <p class="err">Please tick the box below to confirm these details are accurate.</p>
+      {% endif %}
       <label class="check">
         <input type="checkbox" name="ack" required>
         <span>I confirm {{ company_name }} coverage of this trip.</span>
