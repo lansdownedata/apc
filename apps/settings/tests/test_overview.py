@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.accounts.factories import UserFactory
 from apps.dispatch.models import DispatchAlertConfig
 from apps.fleet.factories import DriverFactory, RenewalFactory, VehicleFactory
+from apps.integrations.factories import PodiumCredentialFactory
 from apps.integrations.models import QboCredential
 from apps.messaging.models import NotificationConfig
 from apps.settings.menu import label_for
@@ -16,9 +17,9 @@ from apps.tasks.models import TaskConfig
 
 pytestmark = pytest.mark.django_db
 
-# Measured with every attention row on (all configs off, a lapsed driver, QuickBooks keys
-# set but not connected, not live): a page that grows past this should fail loudly.
-QUERY_CAP = 15
+# Measured with every attention row on (all configs off, a lapsed driver, QuickBooks and
+# Podium keys set but not connected, not live): a page that grows past this should fail loudly.
+QUERY_CAP = 16
 
 QBO = {
     "QBO_CLIENT_ID": "client-id",
@@ -29,12 +30,14 @@ QBO = {
 
 @pytest.fixture(autouse=True)
 def all_clear(settings):
-    """Nothing needs attention unless a test turns it on; QuickBooks dark unless set."""
+    """Nothing needs attention unless a test turns it on; QuickBooks and Podium dark unless set."""
     for model in (NotificationConfig, TaskConfig, DispatchAlertConfig):
         _set(model, True)
     settings.OUTBOUND_ENABLED = True
     settings.QBO_CLIENT_ID = ""
     settings.QBO_CLIENT_SECRET = ""
+    settings.PODIUM_CLIENT_ID = ""
+    settings.PODIUM_LOCATION_UID = ""
 
 
 @pytest.fixture
@@ -131,8 +134,10 @@ def test_fleet_row_links_to_renewal_types(owner):
     assert "Renewal types →" in html
 
 
-def test_empty_state(owner):
+def test_empty_state(owner, settings):
     DriverFactory()  # nothing on file: not attention
+    settings.PODIUM_CLIENT_ID = "podium-client"
+    PodiumCredentialFactory()  # configured and connected: not attention
     html = _body(owner)
 
     assert "Nothing needs attention." in html
@@ -144,6 +149,8 @@ def test_status_rows(owner, settings):
     _set(DispatchAlertConfig, False)
     _qbo_keys(settings)
     _connect_qbo()
+    settings.PODIUM_CLIENT_ID = "podium-client"
+    PodiumCredentialFactory(location_uid="loc-1")
 
     resp = owner.get(reverse("settings_index"))
 
@@ -153,6 +160,7 @@ def test_status_rows(owner, settings):
         ("Dispatch monitor", False, "Off"),
         ("Tasks", True, "On"),
         ("QuickBooks", True, "Connected"),
+        ("Podium", True, "Connected · loc-1"),
     ]
 
 
@@ -160,6 +168,7 @@ def test_status_rows_all_the_other_way(owner, settings):
     _set(NotificationConfig, False)
     _set(TaskConfig, False)
     _qbo_keys(settings)
+    settings.PODIUM_CLIENT_ID = "podium-client"
 
     resp = owner.get(reverse("settings_index"))
 
@@ -169,6 +178,7 @@ def test_status_rows_all_the_other_way(owner, settings):
         ("Dispatch monitor", True, "On"),
         ("Tasks", False, "Off"),
         ("QuickBooks", False, "Not connected"),
+        ("Podium", False, "Not connected"),
     ]
 
 
@@ -176,6 +186,31 @@ def test_status_has_no_quickbooks_row_without_keys(owner):
     labels = [label for label, _, _ in owner.get(reverse("settings_index")).context["status"]]
 
     assert "QuickBooks" not in labels
+
+
+def test_status_has_no_podium_row_without_keys(owner):
+    PodiumCredentialFactory(location_uid="loc-1")
+    labels = [label for label, _, _ in owner.get(reverse("settings_index")).context["status"]]
+
+    assert "Podium" not in labels
+
+
+def test_podium_status_falls_back_to_the_location_setting(owner, settings):
+    settings.PODIUM_CLIENT_ID = "podium-client"
+    settings.PODIUM_LOCATION_UID = "loc-env"
+    PodiumCredentialFactory(location_uid="")
+
+    status = owner.get(reverse("settings_index")).context["status"]
+
+    assert ("Podium", True, "Connected · loc-env") in status
+
+
+def test_overview_names_its_list_settings_attention(owner):
+    _set(NotificationConfig, False)
+
+    resp = owner.get(reverse("settings_index"))
+
+    assert [a.key for a in resp.context["settings_attention"]] == ["messages_off"]
 
 
 def test_status_text_colours(owner, settings):
@@ -193,6 +228,7 @@ def test_overview_query_count(owner, settings, django_assert_max_num_queries):
         _set(model, False)
     settings.OUTBOUND_ENABLED = False
     _qbo_keys(settings)
+    settings.PODIUM_CLIENT_ID = "podium-client"
     _lapsed_driver()
     VehicleFactory()
 
@@ -200,6 +236,7 @@ def test_overview_query_count(owner, settings, django_assert_max_num_queries):
         html = _body(owner)
 
     assert "lapsed or expiring paperwork" in html
+    assert "Podium is not connected" in html
     # The menu reuses the view's attention list: the fleet is read once, not twice.
     driver_reads = [q for q in captured.captured_queries if "FROM `fleet_driver`" in q["sql"]]
     assert len(driver_reads) == 1

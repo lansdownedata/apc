@@ -38,6 +38,7 @@ def all_clear(settings):
     settings.OUTBOUND_ENABLED = True
     settings.QBO_CLIENT_ID = ""
     settings.QBO_CLIENT_SECRET = ""
+    settings.PODIUM_CLIENT_ID = ""
 
 
 @pytest.fixture
@@ -123,6 +124,23 @@ def test_quickbooks_only_with_keys(settings):
     assert "QuickBooks" in _labels()
 
 
+def test_podium_is_always_listed_after_quickbooks(settings):
+    integrations = next(s for s in sections() if s.label == "Integrations")
+    assert [i.label for i in integrations.items] == ["Podium"]
+
+    for key, value in QBO.items():
+        setattr(settings, key, value)
+
+    integrations = next(s for s in sections() if s.label == "Integrations")
+    assert [i.label for i in integrations.items] == ["QuickBooks", "Podium"]
+
+
+def test_podium_not_connected_puts_a_dot_on_it(owner, settings):
+    settings.PODIUM_CLIENT_ID = "podium-client"
+
+    assert 'title="Podium is not connected"' in _overview(owner)
+
+
 def test_no_match_state_present(owner):
     assert "No settings match" in _overview(owner)
 
@@ -149,7 +167,8 @@ def _menu_items() -> list:
 def test_every_menu_page_renders_the_menu_with_itself_current(owner, settings):
     _connect_quickbooks(settings)
     items = _menu_items()
-    assert "Users" in [i.label for i in items] and "QuickBooks" in [i.label for i in items]
+    labels = [i.label for i in items]
+    assert "Users" in labels and "QuickBooks" in labels and "Podium" in labels
 
     for item in items:
         resp = owner.get(reverse(item.url_name))

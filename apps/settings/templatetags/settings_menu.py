@@ -13,7 +13,7 @@ def settings_menu(context: template.Context) -> dict:
     request = context.get("request")
     match = getattr(request, "resolver_match", None)
     # The Overview already built the list; reuse it rather than read the fleet twice.
-    attention = context.get("attention")
+    attention = context.get("settings_attention")
     if attention is None:
         attention = settings_attention()
     return {

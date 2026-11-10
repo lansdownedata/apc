@@ -37,6 +37,8 @@ urlpatterns = [
     path(
         "quickbooks/refresh-terms/", views.quickbooks_refresh_terms, name="quickbooks_refresh_terms"
     ),
+    path("podium/", views.podium_settings, name="podium_settings"),
+    path("podium/check-webhook/", views.podium_check_webhook, name="podium_check_webhook"),
     path("messages/", views.messages_list, name="messages"),
     path("messages/master/", views.messages_master, name="messages_master"),
     path("messages/new/", views.messages_new, name="messages_new"),

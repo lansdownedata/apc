@@ -74,7 +74,7 @@ def test_the_overview_flags_fleet_attention_and_the_menu_links_them(client):
     RenewalFactory(driver=d, expires_on=timezone.localdate() + timedelta(days=3))
     VehicleFactory()  # nothing on file → not attention
     resp = client.get(reverse("settings_index"))
-    fleet = [a for a in resp.context["attention"] if a.key == "fleet"]
+    fleet = [a for a in resp.context["settings_attention"] if a.key == "fleet"]
     assert [a.title for a in fleet] == ["1 driver or vehicle has lapsed or expiring paperwork"]
     assert reverse("renewal_type_list") in resp.content.decode()
 

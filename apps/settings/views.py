@@ -1,7 +1,10 @@
 """Settings screens — owner-admin only."""
 
+import logging
 from datetime import datetime, time
 
+import requests
+from django.conf import settings as dj_settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -16,6 +19,8 @@ from apps.addresses.models import Venue
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
 from apps.fleet.models import RenewalType
+from apps.integrations import podium
+from apps.integrations.models import PodiumCredential
 from apps.leads.models import Lead, ServiceType, VehicleType
 from apps.messaging import defaults, editor, fields, listing, recipients, rules, triggers
 from apps.messaging.models import MessageTemplate, NotificationConfig
@@ -37,6 +42,8 @@ from .forms import (
     VenueForm,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @login_required
 @owner_admin_required
@@ -48,7 +55,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
         {
             "nav": "settings",
             "page_title": "Settings",
-            "attention": attention,
+            "settings_attention": attention,
             "status": _status(attention),
         },
     )
@@ -67,7 +74,66 @@ def _status(attention: list[Attention]) -> list[tuple[str, bool, str]]:
     ]
     if qbo.enabled():
         rows.append(("QuickBooks", "qbo" not in flagged, "Connected", "Not connected"))
+    if dj_settings.PODIUM_CLIENT_ID:
+        connected = "podium" not in flagged
+        location = _podium_location(PodiumCredential.current()) if connected else ""
+        on = f"Connected · {location}" if location else "Connected"
+        rows.append(("Podium", connected, on, "Not connected"))
     return [(label, ok, on if ok else off) for label, ok, on, off in rows]
+
+
+def _podium_location(credential: PodiumCredential | None) -> str:
+    """The location Podium sends from: the credential's, else the configured one."""
+    return (credential.location_uid if credential else "") or dj_settings.PODIUM_LOCATION_UID
+
+
+@login_required
+@owner_admin_required
+def podium_settings(request: HttpRequest) -> HttpResponse:
+    """Connect / reconnect Podium and see which location it is. No Podium call on load."""
+    credential = PodiumCredential.current()
+    return render(
+        request,
+        "settings/podium.html",
+        {
+            "nav": "settings",
+            "page_title": "Podium",
+            "configured": bool(dj_settings.PODIUM_CLIENT_ID),
+            "credential": credential,
+            "location": _podium_location(credential),
+            "ngrok_hint": dj_settings.DEBUG,
+        },
+    )
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def podium_check_webhook(request: HttpRequest) -> HttpResponse:
+    """Ask Podium which webhooks deliver here. Every failure is a flash, never a 500."""
+    try:
+        hooks = podium.podium_webhooks()
+    except podium.PodiumNotConnected:
+        messages.error(request, "Podium is not connected.")
+    except podium.PodiumAPIError as exc:
+        logger.warning("podium check webhook: %s", exc)
+        messages.error(request, podium.describe_error(str(exc)))
+    except (requests.HTTPError, KeyError) as exc:
+        # `_request` wraps its own HTTP errors, so a bare one (or a token body without an
+        # access token) comes from renewing the stored token: only a reconnect fixes that.
+        logger.warning("podium check webhook: token refresh failed (%r)", exc)
+        messages.error(request, "Podium would not renew the connection. Reconnect Podium.")
+    except requests.RequestException as exc:
+        logger.warning("podium check webhook: unreachable (%r)", exc)
+        messages.error(request, "Could not reach Podium. Try again in a minute.")
+    else:
+        for hook in hooks:
+            count = len(hook.get("eventTypes") or [])
+            noun = "event" if count == 1 else "events"
+            messages.success(request, f"Webhook registered: {hook['url']} ({count} {noun})")
+        if not hooks:
+            messages.warning(request, "No Podium webhook is registered for this site.")
+    return redirect("podium_settings")
 
 
 @login_required

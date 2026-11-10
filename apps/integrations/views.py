@@ -5,6 +5,7 @@ import logging
 import secrets
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.http import (
@@ -15,7 +16,7 @@ from django.http import (
     HttpResponseNotAllowed,
     JsonResponse,
 )
-from django.shortcuts import redirect, render
+from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -179,9 +180,11 @@ def podium_authorize(request):
 @login_required
 @owner_admin_required
 def podium_callback(request):
-    """Handle Podium's redirect: validate state, exchange the code for tokens."""
+    """Handle Podium's redirect: validate state, exchange the code for tokens, then back to
+    Settings → Podium with a flash."""
     if error := request.GET.get("error"):
-        return render(request, "integrations/podium_callback.html", {"error": error})
+        messages.error(request, f"Podium did not connect: {error}")
+        return redirect("podium_settings")
 
     state = request.GET.get("state")
     if not state or state != request.session.pop(STATE_SESSION_KEY, None):
@@ -191,8 +194,9 @@ def podium_callback(request):
     if not code:
         return HttpResponseBadRequest("Missing authorization code.")
 
-    credential = services.exchange_code(code)
-    return render(request, "integrations/podium_callback.html", {"credential": credential})
+    services.exchange_code(code)
+    messages.success(request, "Podium connected.")
+    return redirect("podium_settings")
 
 
 @csrf_exempt
@@ -375,7 +379,6 @@ def geocode_autocomplete(request):
 def quickbooks_callback(request):
     """Intuit's redirect after consent (APC-41): check the state, trade the code for tokens,
     record the company (`realmId`). Owner-admin only, like the screen that starts it."""
-    from django.contrib import messages
 
     from apps.integrations import qbo
     from apps.settings.views import QBO_STATE_KEY

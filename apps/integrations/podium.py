@@ -222,5 +222,16 @@ def list_webhooks() -> dict:
     return _request("GET", "/webhooks")
 
 
+PODIUM_WEBHOOK_PATH = "/webhooks/podium/"
+
+
+def podium_webhooks() -> list[dict]:
+    """The registered webhooks that deliver to this app's Podium receiver: the entries of
+    `list_webhooks()["data"]` whose `url` ends in /webhooks/podium/. Each carries at least
+    `uid`, `url` and `eventTypes`. Raises what `_request` raises."""
+    entries = list_webhooks().get("data") or []
+    return [e for e in entries if (e.get("url") or "").endswith(PODIUM_WEBHOOK_PATH)]
+
+
 def delete_webhook(uid: str) -> dict:
     return _request("DELETE", f"/webhooks/{uid}")

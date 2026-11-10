@@ -158,15 +158,29 @@ _QUICKBOOKS = Item(
 )
 
 
+_PODIUM = Item(
+    "Podium",
+    "podium_settings",
+    "ti-message-circle",
+    "sms texting inbox oauth webhook location",
+    ("podium_",),
+)
+
+
 def sections() -> list[Section]:
-    """The menu, top to bottom. QuickBooks shows only while its keys are set."""
+    """The menu, top to bottom. QuickBooks shows only while its keys are set; Podium always."""
     from apps.integrations import qbo
 
-    menu = [_OVERVIEW, _BOOKING, _OPERATIONS, _AFFILIATES, _MESSAGING]
-    if qbo.enabled():
-        menu.append(Section("Integrations", (_QUICKBOOKS,)))
-    menu.append(_ACCOUNT)
-    return menu
+    integrations = (_QUICKBOOKS, _PODIUM) if qbo.enabled() else (_PODIUM,)
+    return [
+        _OVERVIEW,
+        _BOOKING,
+        _OPERATIONS,
+        _AFFILIATES,
+        _MESSAGING,
+        Section("Integrations", integrations),
+        _ACCOUNT,
+    ]
 
 
 def current_item(url_name: str | None) -> Item | None:
@@ -187,7 +201,7 @@ def label_for(url_name: str) -> str:
     KeyError for a page the menu does not have: a link labelled with a guess is a silent bug.
     """
     groups = (_OVERVIEW, _BOOKING, _OPERATIONS, _AFFILIATES, _MESSAGING, _ACCOUNT)
-    for item in (*(i for s in groups for i in s.items), _QUICKBOOKS):
+    for item in (*(i for s in groups for i in s.items), _QUICKBOOKS, _PODIUM):
         if item.url_name == url_name:
             return item.label
     raise KeyError(url_name)

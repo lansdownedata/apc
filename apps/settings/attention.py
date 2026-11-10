@@ -37,6 +37,7 @@ def fleet_attention_count() -> int:
 def settings_attention() -> list[Attention]:
     """Everything that is switched off or lapsed, in the fixed order the page lists it."""
     from apps.integrations import qbo
+    from apps.integrations.models import PodiumCredential
 
     rows: list[Attention] = []
     if not NotificationConfig.load().enabled:
@@ -88,6 +89,16 @@ def settings_attention() -> list[Attention]:
                 "QuickBooks is not connected",
                 "Billing accounts and invoices cannot sync until it is connected.",
                 "quickbooks_settings",
+                "danger",
+            )
+        )
+    if settings.PODIUM_CLIENT_ID and PodiumCredential.current() is None:
+        rows.append(
+            Attention(
+                "podium",
+                "Podium is not connected",
+                "Customer texts cannot send or arrive until it is connected.",
+                "podium_settings",
                 "danger",
             )
         )

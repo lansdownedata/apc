@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.contrib.messages import get_messages
+from django.urls import reverse
 
 from apps.integrations import services
 from apps.integrations.factories import PodiumCredentialFactory
@@ -82,8 +84,44 @@ def test_callback_happy_path_stores_token(owner):
     fake.json.return_value = {"access_token": "AT", "refresh_token": "RT", "expires_in": 36000}
     with patch.object(services.requests, "post", return_value=fake):
         resp = client.get("/integrations/podium/callback/?code=c&state=st8")
-    assert resp.status_code == 200
+    assert resp.status_code == 302
+    assert resp["Location"] == reverse("podium_settings")
     assert PodiumCredential.current().access_token == "AT"
+
+
+def test_callback_redirects_with_flash(owner):
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+    fake = MagicMock()
+    fake.json.return_value = {"access_token": "AT", "refresh_token": "RT", "expires_in": 36000}
+    with patch.object(services.requests, "post", return_value=fake):
+        resp = owner.get("/integrations/podium/callback/?code=c&state=st8")
+
+    assert resp.status_code == 302
+    assert resp["Location"] == reverse("podium_settings")
+    assert [(m.level_tag, str(m)) for m in get_messages(resp.wsgi_request)] == [
+        ("success", "Podium connected.")
+    ]
+
+
+def test_callback_error_param_redirects_with_error_flash(owner):
+    resp = owner.get("/integrations/podium/callback/?error=access_denied")
+
+    assert resp.status_code == 302
+    assert resp["Location"] == reverse("podium_settings")
+    assert [(m.level_tag, str(m)) for m in get_messages(resp.wsgi_request)] == [
+        ("error", "Podium did not connect: access_denied")
+    ]
+    assert PodiumCredential.current() is None
+
+
+def test_callback_missing_code_is_400(owner):
+    session = owner.session
+    session["podium_oauth_state"] = "st8"
+    session.save()
+
+    assert owner.get("/integrations/podium/callback/?state=st8").status_code == 400
 
 
 # --- who may connect Podium (2026-10-25) -------------------------------------

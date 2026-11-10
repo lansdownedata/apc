@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.dispatch.models import DispatchAlertConfig
 from apps.fleet.factories import DriverFactory, RenewalFactory
+from apps.integrations.factories import PodiumCredentialFactory
 from apps.integrations.models import QboCredential
 from apps.messaging.models import NotificationConfig
 from apps.settings.attention import Attention, settings_attention
@@ -32,6 +33,7 @@ def all_clear(settings):
     settings.OUTBOUND_ENABLED = True
     settings.QBO_CLIENT_ID = ""
     settings.QBO_CLIENT_SECRET = ""
+    settings.PODIUM_CLIENT_ID = ""
 
 
 def _keys() -> list[str]:
@@ -152,6 +154,25 @@ def test_qbo_ignored_without_keys(settings):
     assert "qbo" not in _keys()
 
 
+def test_podium_configured_but_not_connected(settings):
+    settings.PODIUM_CLIENT_ID = "podium-client"
+    row = _row("podium")
+    assert row.title == "Podium is not connected"
+    assert row.detail == "Customer texts cannot send or arrive until it is connected."
+    assert (row.url_name, row.severity) == ("podium_settings", "danger")
+    assert row.link_label == "Podium"
+
+
+def test_podium_connected_has_no_row(settings):
+    settings.PODIUM_CLIENT_ID = "podium-client"
+    PodiumCredentialFactory()
+    assert "podium" not in _keys()
+
+
+def test_podium_ignored_without_keys():
+    assert "podium" not in _keys()
+
+
 def test_not_live(settings):
     settings.OUTBOUND_ENABLED = False
     row = _row("not_live")
@@ -177,6 +198,7 @@ def test_order_is_fixed(settings):
         _off(model)
     _lapsed_driver()
     _qbo_keys(settings)
+    settings.PODIUM_CLIENT_ID = "podium-client"
     settings.OUTBOUND_ENABLED = False
     assert _keys() == [
         "messages_off",
@@ -184,5 +206,6 @@ def test_order_is_fixed(settings):
         "dispatch_off",
         "fleet",
         "qbo",
+        "podium",
         "not_live",
     ]

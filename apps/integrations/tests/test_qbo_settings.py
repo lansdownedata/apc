@@ -171,7 +171,7 @@ def test_without_keys_the_menu_hides_it_and_the_screen_404s(owner):
     assert owner.get(reverse("quickbooks_settings")).status_code == 404
 
 
-@override_settings(**QBO)
+@override_settings(**QBO, PODIUM_CLIENT_ID="")
 def test_with_keys_the_overview_shows_the_connection_state(owner):
     resp = owner.get(reverse("settings_index"))
     assert ("QuickBooks", False, "Not connected") in resp.context["status"]
