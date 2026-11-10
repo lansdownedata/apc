@@ -540,9 +540,10 @@ REGISTRY: tuple[TaskKind, ...] = (
         applies=_never,
     ),
     TaskKind(
-        # APC-71. One per affiliate policy; closes itself when a policy with a later expiry
-        # is uploaded (see `vendor_tasks`). Opens where the vendor page's "expiring" colour
-        # starts; due the morning it expires.
+        # APC-71. One per affiliate policy; closes itself when that policy's expiry is moved
+        # out of the window (renewed), never because another policy exists (TASK-10, see
+        # `vendor_tasks`). Opens where the vendor page's "expiring" colour starts; due the
+        # morning it expires.
         key="insurance_renewal",
         label="Insurance renewal",
         department=_D.AFFILIATE_MGMT,

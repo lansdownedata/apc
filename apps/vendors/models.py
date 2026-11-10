@@ -130,20 +130,24 @@ class Vendor(QboSyncedModel, TimeStampedModel):
     }
 
     def coverage_on(self, service_date, *, today) -> str:
-        """covered · expires_before_trip · expired · none, from the best policy on file.
+        """covered · expires_before_trip · expired · none, the worst policy governing.
 
-        Covered = some policy runs from on-or-before the service date to on-or-after it.
-        Otherwise the one in force today says the trip outlives it, and with none in force
-        today a past policy means it lapsed. `today` is the trip's today, not the server's
+        Any policy on file that has lapsed means the vendor can't operate, even while
+        another is valid (TASK-10, the rule Compliance and the vendor page apply): one
+        lapsed today is "expired", one that lapses before the service date is
+        "expires_before_trip". Otherwise covered = some policy runs from on-or-before the
+        service date to on-or-after it. `today` is the trip's today, not the server's
         (`dispatch.selectors.trip_today`). Reads `policies.all()`, so prefetch them.
         """
         policies = list(self.policies.all())
+        if any(p.expiry_date < today for p in policies):
+            return "expired"
+        if any(p.expiry_date < service_date for p in policies):
+            return "expires_before_trip"
         if any(p.effective_date <= service_date <= p.expiry_date for p in policies):
             return "covered"
         if any(p.effective_date <= today <= p.expiry_date for p in policies):
             return "expires_before_trip"
-        if any(p.expiry_date < today for p in policies):
-            return "expired"
         return "none"
 
     def insurance_summary(self) -> dict:
