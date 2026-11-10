@@ -4091,6 +4091,10 @@ function initTomSelects(root = document) {
        the name alone would make the picker prettier and the decision worse. The detail
        rides in `data-data`, which Tom Select parses into the option's own data. */
     if (el.dataset.rich !== undefined) {
+      // Tom Select only parses the option JSON when told where it is, and it looks the
+      // name up in the option's `dataset`: "data" is `data-data`. Its default is null, and
+      // "data-data" would match nothing, so either way the rows drew the label alone.
+      options.dataAttr = "data";
       const row = (data, escape, compact) => {
         const alert = data.alert ? ` <span class="ts-badge ts-badge-danger">${escape(data.alert)}</span>` : "";
         const badge = data.badge

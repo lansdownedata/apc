@@ -15,9 +15,14 @@ Both are added to the shared component rather than hand-rolled in the fragment, 
 the next picker that needs them should not have to rebuild them.
 """
 
+import html as html_mod
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 from django.template.loader import render_to_string
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -132,3 +137,105 @@ def test_init_tom_selects_posts_a_created_option():
     block = APP_JS[APP_JS.index("function initTomSelects") :][:4200]
     assert "createUrl" in block
     assert "X-CSRFToken" in block
+
+
+# --- DSP-04: the rich rows actually draw their detail ----------------------------------
+# Tom Select 2.3.1 only parses an option's JSON when `dataAttr` names it, and its default
+# is null — so every rich row drew the vendor name alone. Its readData looks the setting up
+# in `el.dataset`, which means the key is the dataset name ("data"), not the attribute name
+# ("data-data", which silently parses nothing). No JS test runner exists in the repo: this
+# runs the real initTomSelects under node, against the options Django actually rendered,
+# with a stand-in TomSelect whose option parsing is transcribed from 2.3.1's getSettings
+# (dist/js/tom-select.complete.js, `readData` in `init_select`). It does not load Tom
+# Select itself, so a change in a future Tom Select version would not show up here.
+
+_TOM_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const escape = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const drawn = [];
+class TomSelect {
+  constructor(el, settings) {
+    const attr = settings.dataAttr === undefined ? null : settings.dataAttr; // 2.3.1 default
+    for (const opt of el.options) {
+      let data = Object.assign({}, opt.dataset);
+      const json = attr && data[attr];
+      if (typeof json === "string" && json.length) data = Object.assign(data, JSON.parse(json));
+      data.text = data.text || opt.textContent;
+      data.value = data.value || opt.value;
+      drawn.push(settings.render ? settings.render.option(data, escape) : escape(data.text));
+    }
+    el.tomselect = { control: null, control_input: null };
+  }
+}
+const el = {
+  dataset: input.dataset,
+  options: input.options,
+  hasAttribute: () => false,
+};
+const ctx = { TomSelect, document: { querySelectorAll: () => [el] } };
+vm.createContext(ctx);
+vm.runInContext(input.source + "\\ninitTomSelects();", ctx);
+process.stdout.write(JSON.stringify(drawn));
+"""
+
+
+def _init_tom_selects_source() -> str:
+    start = APP_JS.index("function initTomSelects(")
+    return APP_JS[start : APP_JS.index('document.addEventListener("DOMContentLoaded"', start)]
+
+
+def _draw_rows(html: str) -> list[str]:
+    """What initTomSelects draws for each option of `html`, as a browser would read it."""
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    select = re.search(r"<select([^>]*)>", html).group(1)
+    dataset = {"tom": "", **({"rich": ""} if re.search(r"\sdata-rich\b", select) else {})}
+    options = []
+    for value, attrs, text in re.findall(r'<option value="([^"]*)"([^>]*)>([^<]*)<', html):
+        # the browser's `option.dataset`: `data-data` decoded from the attribute, as "data"
+        raw = re.search(r'data-data="([^"]*)"', attrs)
+        options.append(
+            {
+                "value": value,
+                "textContent": html_mod.unescape(text.strip()),
+                "dataset": {"data": html_mod.unescape(raw.group(1))} if raw else {},
+            }
+        )
+    result = subprocess.run(
+        ["node", "-e", _TOM_HARNESS],
+        input=json.dumps(
+            {"source": _init_tom_selects_source(), "dataset": dataset, "options": options}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_a_rich_row_draws_its_alert_badge_and_sub_line():
+    rich = [
+        {
+            "value": 3,
+            "label": "Reston Coach Co",
+            "sub": "used 4× · Valid · exp Dec '27",
+            "badge": "GNET",
+            "warn": False,
+            "alert": "Expires before trip",
+            "email": "ops@reston.example",
+            "gnet": True,
+        }
+    ]
+    (row,) = _draw_rows(_render(name="vendor", rich_options=rich))
+    assert "Reston Coach Co" in row
+    assert "Expires before trip" in row
+    assert "GNET" in row
+    assert "used 4×" in row
+
+
+def test_a_plain_select_still_draws_just_its_label():
+    rows = _draw_rows(_render(name="channel", options=[("phone", "Phone")]))
+    assert rows == ["Phone"]
