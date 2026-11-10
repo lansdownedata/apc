@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from django.urls import reverse
 
@@ -36,3 +38,17 @@ def test_dashboard_reports_pipeline_counts(client, agent):
     assert counts["new"] == 1
     assert counts["quoted"] == 2
     assert counts["booked"] == 1
+
+
+def test_sidebar_nav_scrolls_inside_itself_so_the_shell_never_overflows(client, agent):
+    """CON-14: on a short window the sidebar was taller than the `h-screen overflow-hidden`
+    shell, so focusing the inbox composer or a toast scrolled the whole shell up. The nav
+    (the flex-1 child) must be allowed to shrink (`min-h-0`) and scroll (`overflow-y-auto`).
+    """
+    client.force_login(agent)
+    html = client.get(reverse("dashboard")).content.decode()
+    aside = re.search(r"<aside[^>]*\bsidebar\b.*?</aside>", html, re.S).group(0)
+    nav_classes = re.search(r'<nav class="([^"]*)"', aside).group(1).split()
+    assert "flex-1" in nav_classes
+    assert "min-h-0" in nav_classes
+    assert "overflow-y-auto" in nav_classes
