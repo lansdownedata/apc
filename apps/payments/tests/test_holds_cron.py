@@ -657,3 +657,15 @@ def test_booking_the_captured_hold_to_a_trip_closes_its_unbooked_task():
     task = Task.objects.get(lead=lead, kind=holds.UNBOOKED_TASK_KIND)
     assert task.status == Task.Status.DONE
     assert task.closed_by_system
+
+
+def test_a_declined_placement_counts_as_processed():
+    """HOLD-05: the run that writes a declined hold (a FAILED row and a task) reports it."""
+    lead, _plan, _trips = _order("500.00")
+    declined = stripe.error.CardError("Your card was declined.", "card", "card_declined")
+
+    with patch.object(stripe.PaymentIntent, "create", side_effect=declined):
+        processed = holds.run_cron(now=_at(DAY, time(3, 0)))
+
+    assert _hold_rows(lead).get().status == Charge.Status.FAILED
+    assert processed == 1

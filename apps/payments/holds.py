@@ -779,7 +779,9 @@ def _flag_unbooked(lead) -> int:
 def run_cron(now: datetime | None = None) -> int:
     """The hourly `cleaning-holds` job: the sweep, then placement. The sweep always runs;
     `hold_enabled` gates placement only. Each order on its own: one failure is logged,
-    never stops the run. Returns holds swept plus holds placed (AUTHORIZED this run)."""
+    never stops the run. Returns holds swept plus placements Stripe settled this run:
+    placed (AUTHORIZED) or declined (FAILED, with its task). One still waiting on Stripe
+    (PENDING) and an order with no card (no row, only the task) are not counted."""
     from apps.tasks.models import TaskConfig
 
     now = now or timezone.now()
@@ -793,6 +795,6 @@ def run_cron(now: datetime | None = None) -> int:
         except Exception:
             logger.exception("cleaning hold: placement failed for lead %s", lead.pk)
             continue
-        if hold is not None and hold.status == Charge.Status.AUTHORIZED:
+        if hold is not None and hold.status in (Charge.Status.AUTHORIZED, Charge.Status.FAILED):
             processed += 1
     return processed
