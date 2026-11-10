@@ -1,7 +1,7 @@
 """APC-23 — dispatch exception monitoring."""
 
 import importlib
-from datetime import timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -461,3 +461,57 @@ def test_a_warning_only_pass_sends_no_sms():
         monitoring.run_dispatch_monitor()
 
     send.assert_not_called()
+
+
+# --- DSP-09: pickup times render in the trip's own zone -------------------------------
+
+
+def _zoned_exceptions_pass():
+    """An LA trip at Mon Nov 9, 9:01 PM PST and an Eastern one at Tue Nov 10, 2:31 AM EST,
+    both uncovered, monitored at 02:01 UTC (Nov 9, 9:01 PM EST)."""
+    _cfg()
+    MessageTemplate.objects.filter(key="dispatch_alert").update(
+        staff_emails=["ops@allprocharter.com"]
+    )
+    la = ReservationFactory(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        pickup_date=date(2026, 11, 9),
+        pickup_time=time(21, 1),
+        pickup_timezone="America/Los_Angeles",
+    )
+    east = ReservationFactory(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        pickup_date=date(2026, 11, 10),
+        pickup_time=time(2, 31),
+        pickup_timezone="America/New_York",
+    )
+    mail.outbox.clear()
+    with patch(
+        "django.utils.timezone.now",
+        return_value=datetime(2026, 11, 10, 2, 1, tzinfo=UTC),
+    ):
+        monitoring.run_dispatch_monitor()
+    return la, east
+
+
+def test_exceptions_email_shows_each_pickup_in_its_own_zone():
+    _zoned_exceptions_pass()
+
+    (msg,) = mail.outbox
+    html = msg.alternatives[0][0]
+    for body in (msg.body, html):
+        assert "Mon Nov 9, 9:01 PM PST" in body
+        assert "Tue Nov 10, 2:31 AM" in body
+        assert "EST" not in body  # Eastern is TIME_ZONE: no label, as on the other reports
+        assert "12:01 AM" not in body
+        assert "5:01 AM" not in body
+
+
+def test_exceptions_tray_detail_shows_the_trip_local_pickup_labelled_when_not_eastern():
+    la, east = _zoned_exceptions_pass()
+
+    notes = Notification.objects.filter(kind=Notification.Kind.DISPATCH_EXCEPTION)
+    la_note = notes.get(lead=la.lead)
+    east_note = notes.get(lead=east.lead)
+    assert la_note.detail.endswith("pickup Nov 9, 9:01 PM PST")
+    assert east_note.detail.endswith("pickup Nov 10, 2:31 AM")

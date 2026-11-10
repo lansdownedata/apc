@@ -14,7 +14,7 @@
       <div style="color:#6b7280;" class="dm-muted">{{ l.customer }} · trip #{{ l.trip_id }}</div>
     </td>
     <td style="padding:8px;border-bottom:1px solid #F0EDE6;vertical-align:top;" class="dm-muted">
-      {% if l.pickup %}{{ l.pickup|date:"D M j, g:i A" }} {{ l.tz }}{% else %}—{% endif %}
+      {% if l.pickup %}{{ l.pickup }}{% else %}—{% endif %}
     </td>
   </tr>
   {% endfor %}

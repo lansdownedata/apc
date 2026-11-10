@@ -21,8 +21,9 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import Prefetch
-from django.utils import timezone
+from django.utils import dateformat, timezone
 
+from apps.core.templatetags.time_filters import trip_clock
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
@@ -208,8 +209,12 @@ def _line(exc: DispatchException) -> dict:
         "customer": trip.lead.contact.name,
         "kind": exc.get_kind_display(),
         "tier": exc.tier,
-        "pickup": trip.pickup_at,
-        "tz": trip.pickup_tz_abbrev,
+        # `pickup_at` is already trip-local; `|date` in the template would shift it to TIME_ZONE.
+        "pickup": (
+            f"{dateformat.format(trip.pickup_at, 'D M j, g:i A')} {trip.pickup_tz_abbrev}".strip()
+            if trip.pickup_at
+            else ""
+        ),
         "trip_id": trip.pk,
     }
 
@@ -225,7 +230,7 @@ def _raise_alerts(cfg: DispatchAlertConfig, excs: list[DispatchException], now) 
             title=f"{exc.get_tier_display()}: {exc.get_kind_display()}",
             detail=(
                 f"Trip #{exc.reservation_id} · {exc.reservation.lead.contact.name} · "
-                f"pickup {exc.reservation.pickup_at:%b %-d %-I:%M %p}"
+                f"pickup {trip_clock(exc.reservation.pickup_at, exc.reservation)}"
                 if exc.reservation.pickup_at
                 else f"Trip #{exc.reservation_id}"
             ),
