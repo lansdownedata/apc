@@ -14,6 +14,7 @@ from apps.integrations import services
 from apps.integrations.factories import PodiumCredentialFactory
 from apps.integrations.podium import PodiumAPIError, podium_webhooks
 from apps.settings.menu import current_item
+from apps.settings.views import split_webhooks
 
 pytestmark = pytest.mark.django_db
 
@@ -25,6 +26,7 @@ def podium_keys(settings):
     """Podium configured unless a test blanks it; never read from .env."""
     settings.PODIUM_CLIENT_ID = "podium-client"
     settings.PODIUM_LOCATION_UID = ""
+    settings.PUBLIC_BASE_URL = "https://x/"
     settings.DEBUG = False
 
 
@@ -154,38 +156,62 @@ def test_podium_is_current_in_the_menu():
 # --- check webhook -------------------------------------------------------------------------
 
 
+def _hook(url: str, *events: str) -> dict:
+    return {"uid": url, "url": url, "eventTypes": list(events)}
+
+
 def test_check_webhook_lists_ours(owner):
     PodiumCredentialFactory()
-    body = {
-        "data": [
-            {
-                "uid": "w1",
-                "url": "https://x/webhooks/podium/",
-                "eventTypes": ["message.received", "message.sent"],
-            }
-        ]
-    }
+    body = {"data": [_hook("https://x/webhooks/podium/", "message.received", "message.sent")]}
     with patch(LIST, return_value=body):
         _, flashes = _check(owner)
 
     assert flashes == [("success", "Webhook registered: https://x/webhooks/podium/ (2 events)")]
 
 
-def test_check_webhook_one_message_per_webhook(owner):
+def test_check_webhook_only_another_host_is_not_this_site(owner):
+    """A stale hook on the dev tunnel must not pass for this site's own hook."""
+    PodiumCredentialFactory()
+    body = {"data": [_hook("https://tunnel.ngrok-free.dev/webhooks/podium/", "message.sent")]}
+    with patch(LIST, return_value=body):
+        _, flashes = _check(owner)
+
+    assert flashes == [
+        ("warning", "No Podium webhook is registered for this site (https://x/webhooks/podium/)."),
+        (
+            "warning",
+            "Also registered, points elsewhere: https://tunnel.ngrok-free.dev/webhooks/podium/",
+        ),
+    ]
+
+
+def test_check_webhook_ours_and_one_elsewhere(owner):
     PodiumCredentialFactory()
     body = {
         "data": [
-            {"uid": "w1", "url": "https://a/webhooks/podium/", "eventTypes": ["message.sent"]},
-            {"uid": "w2", "url": "https://elsewhere/hook", "eventTypes": ["message.sent"]},
-            {"uid": "w3", "url": "https://b/webhooks/podium/", "eventTypes": []},
+            _hook("https://b/webhooks/podium/"),
+            _hook("https://x/webhooks/podium/", "message.sent"),
+            _hook("https://elsewhere/hook", "message.sent"),
         ]
     }
     with patch(LIST, return_value=body):
         _, flashes = _check(owner)
 
     assert flashes == [
-        ("success", "Webhook registered: https://a/webhooks/podium/ (1 event)"),
-        ("success", "Webhook registered: https://b/webhooks/podium/ (0 events)"),
+        ("success", "Webhook registered: https://x/webhooks/podium/ (1 event)"),
+        ("warning", "Also registered, points elsewhere: https://b/webhooks/podium/"),
+    ]
+
+
+def test_check_webhook_blank_base_url_uses_the_request_host(owner, settings):
+    settings.PUBLIC_BASE_URL = ""
+    PodiumCredentialFactory()
+    body = {"data": [_hook("http://testserver/webhooks/podium/", "message.sent")]}
+    with patch(LIST, return_value=body):
+        _, flashes = _check(owner)
+
+    assert flashes == [
+        ("success", "Webhook registered: http://testserver/webhooks/podium/ (1 event)")
     ]
 
 
@@ -194,7 +220,41 @@ def test_check_webhook_none_registered(owner):
     with patch(LIST, return_value={"data": []}):
         _, flashes = _check(owner)
 
-    assert flashes == [("warning", "No Podium webhook is registered for this site.")]
+    assert flashes == [
+        ("warning", "No Podium webhook is registered for this site (https://x/webhooks/podium/).")
+    ]
+
+
+# --- split_webhooks ------------------------------------------------------------------------
+
+
+def test_split_webhooks_normalises_scheme_host_and_trailing_slash():
+    hooks = [
+        _hook("HTTPS://X.example.com/webhooks/podium"),
+        _hook("https://x.example.com/webhooks/podium/"),
+        _hook("http://x.example.com/webhooks/podium/"),
+        _hook("https://y.example.com/webhooks/podium/"),
+    ]
+
+    ours, elsewhere = split_webhooks(hooks, "https://x.example.com/webhooks/podium/")
+
+    assert [h["url"] for h in ours] == [
+        "HTTPS://X.example.com/webhooks/podium",
+        "https://x.example.com/webhooks/podium/",
+    ]
+    assert [h["url"] for h in elsewhere] == [
+        "http://x.example.com/webhooks/podium/",
+        "https://y.example.com/webhooks/podium/",
+    ]
+
+
+def test_split_webhooks_path_case_still_matters():
+    ours, elsewhere = split_webhooks(
+        [_hook("https://x/Webhooks/Podium/")], "https://x/webhooks/podium/"
+    )
+
+    assert ours == []
+    assert len(elsewhere) == 1
 
 
 def test_check_webhook_api_error_is_readable(owner):

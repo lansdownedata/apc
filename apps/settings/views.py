@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, time
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from django.conf import settings as dj_settings
@@ -106,11 +107,30 @@ def podium_settings(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _normalise_url(url: str) -> str:
+    """Lower-case scheme and host and drop a trailing slash, so equal addresses compare equal."""
+    parts = urlsplit(url.strip())
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
+    )
+
+
+def split_webhooks(hooks: list[dict], expected_url: str) -> tuple[list[dict], list[dict]]:
+    """(this site's, elsewhere): the hooks whose URL is `expected_url`, and the rest."""
+    expected = _normalise_url(expected_url)
+    ours: list[dict] = []
+    elsewhere: list[dict] = []
+    for hook in hooks:
+        (ours if _normalise_url(hook.get("url") or "") == expected else elsewhere).append(hook)
+    return ours, elsewhere
+
+
 @login_required
 @owner_admin_required
 @require_POST
 def podium_check_webhook(request: HttpRequest) -> HttpResponse:
-    """Ask Podium which webhooks deliver here. Every failure is a flash, never a 500."""
+    """Ask Podium which webhooks deliver to this site, and name any that point elsewhere.
+    Every failure is a flash, never a 500."""
     try:
         hooks = podium.podium_webhooks()
     except podium.PodiumNotConnected:
@@ -127,13 +147,26 @@ def podium_check_webhook(request: HttpRequest) -> HttpResponse:
         logger.warning("podium check webhook: unreachable (%r)", exc)
         messages.error(request, "Could not reach Podium. Try again in a minute.")
     else:
-        for hook in hooks:
+        expected = _expected_webhook_url(request)
+        ours, elsewhere = split_webhooks(hooks, expected)
+        for hook in ours:
             count = len(hook.get("eventTypes") or [])
             noun = "event" if count == 1 else "events"
             messages.success(request, f"Webhook registered: {hook['url']} ({count} {noun})")
-        if not hooks:
-            messages.warning(request, "No Podium webhook is registered for this site.")
+        if not ours:
+            messages.warning(
+                request, f"No Podium webhook is registered for this site ({expected})."
+            )
+        for hook in elsewhere:
+            messages.warning(request, f"Also registered, points elsewhere: {hook['url']}")
     return redirect("podium_settings")
+
+
+def _expected_webhook_url(request: HttpRequest) -> str:
+    """This site's Podium receiver: PUBLIC_BASE_URL + the route, else the request's host."""
+    path = reverse("podium_webhook")
+    base = dj_settings.PUBLIC_BASE_URL.rstrip("/")
+    return f"{base}{path}" if base else request.build_absolute_uri(path)
 
 
 @login_required
