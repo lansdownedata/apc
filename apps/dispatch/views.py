@@ -570,7 +570,7 @@ def resolve(request: HttpRequest, pk: int) -> JsonResponse:
         )
     try:
         if handler is services.confirm:
-            handler(assignment)
+            handler(assignment, user=request.user)
             services.record_insurance_override(assignment, request.user)
         else:
             handler(assignment, note=(request.POST.get("note") or "").strip())

@@ -9,7 +9,9 @@
 
 Both measure "since the last report" from a stamp on `TaskConfig`, so nothing is missed or
 repeated if a run is late or the schedule changes. Each goes out through its message row
-(wording, staff emails, switch), its table as one block.
+(wording, staff emails, switch), its table as one block. A report that reached no one (row
+switched off, no staff emails, every delivery failed) moves no stamp and marks nothing
+reported, so what it held is in the next report that does go out (RPT-03).
 """
 
 from __future__ import annotations
@@ -128,11 +130,13 @@ def review_report_rows(since, until) -> list[dict]:
 
 def send_review_report(now=None) -> int:
     """Email the customer review report for orders finished since the last one. Nothing
-    goes out when no order finished. Returns the number of orders listed."""
+    goes out when no order finished. Returns the number of orders listed, 0 when it reached
+    no one — those orders stay unreported, and the next report that goes out looks back to
+    the last one that did, however long ago."""
     now = now or timezone.now()
     config = TaskConfig.load()
     since = config.review_report_through or now - REVIEW_LOOKBACK
-    rows = review_report_rows(now - REVIEW_LOOKBACK, now)
+    rows = review_report_rows(min(since, now - REVIEW_LOOKBACK), now)
     if rows:
         rated = [r["rating"] for r in rows if r["rating"] is not None]
         context = {
@@ -150,7 +154,7 @@ def send_review_report(now=None) -> int:
         }
         average = context["average"]
         averaging = f", averaging {floatformat(average, 1)} out of 5" if average else ""
-        sender.send_report(
+        result = sender.send_report(
             "review_report",
             "review_report",
             context,
@@ -166,6 +170,8 @@ def send_review_report(now=None) -> int:
                 ),
             },
         )
+        if not result.sent:
+            return 0
         ReportedOrder.objects.bulk_create(
             [ReportedOrder(lead_id=r["lead_id"], reported_at=now) for r in rows],
             ignore_conflicts=True,
@@ -238,7 +244,8 @@ def incident_stats(since, until) -> dict:
 
 def send_complaint_report(now=None) -> int:
     """Email the day's new complaints with the incident numbers. Nothing goes out on a
-    day without a new complaint. Returns the number of complaints listed."""
+    day without a new complaint. Returns the number of complaints listed, 0 when it reached
+    no one — the stamp stays, so those complaints are in the next report that goes out."""
     now = now or timezone.now()
     config = TaskConfig.load()
     since = config.complaint_report_through or now - FIRST_COMPLAINT_WINDOW
@@ -251,7 +258,7 @@ def send_complaint_report(now=None) -> int:
             "until": timezone.localtime(now),
             "company_name": settings.COMPANY_NAME,
         }
-        sender.send_report(
+        result = sender.send_report(
             "complaint_report",
             "complaint_report",
             context,
@@ -260,5 +267,7 @@ def send_complaint_report(now=None) -> int:
                 "period_start": rendering.format_date(context["since"], "D M j, g:i A"),
             },
         )
+        if not result.sent:
+            return 0
     TaskConfig.objects.filter(pk=config.pk).update(complaint_report_through=now)
     return len(rows)

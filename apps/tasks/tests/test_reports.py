@@ -22,7 +22,7 @@ from apps.reservations import reviews
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation, TripIssue
 from apps.tasks import reports
-from apps.tasks.models import Task, TaskConfig
+from apps.tasks.models import ReportedOrder, Task, TaskConfig
 from apps.vendors.factories import VendorFactory
 
 pytestmark = pytest.mark.django_db
@@ -258,6 +258,99 @@ def test_reports_fall_back_to_the_digest_recipients():
     reports.send_complaint_report()
 
     assert mail.outbox[0].to == ["ops@allprocharter.com"]
+
+
+# --- a report that didn't go out reports later (RPT-03) --------------------------------
+
+
+def _row(key, **fields):
+    MessageTemplate.objects.filter(key=key).update(**fields)
+
+
+def test_a_switched_off_complaint_report_keeps_its_complaints_for_later():
+    reports.send_complaint_report()  # nothing yet: the stamp starts here
+    stamp = TaskConfig.load().complaint_report_through
+    _, trip = _order(name="Dana Reyes")
+    _complain(trip)
+    _row("complaint_report", enabled=False)
+    later = timezone.now() + timedelta(minutes=1)
+
+    assert reports.send_complaint_report(now=later) == 0
+    assert mail.outbox == []
+    assert TaskConfig.load().complaint_report_through == stamp
+
+    _row("complaint_report", enabled=True)
+    assert reports.send_complaint_report(now=later + timedelta(minutes=1)) == 1
+    assert "Driver was 40 minutes late" in mail.outbox[0].body
+    assert TaskConfig.load().complaint_report_through == later + timedelta(minutes=1)
+
+
+def test_a_complaint_report_with_no_staff_emails_keeps_its_complaints():
+    reports.send_complaint_report()
+    stamp = TaskConfig.load().complaint_report_through
+    _, trip = _order()
+    _complain(trip)
+    _row("complaint_report", staff_emails=[])
+
+    assert reports.send_complaint_report(now=timezone.now() + timedelta(minutes=1)) == 0
+    assert TaskConfig.load().complaint_report_through == stamp
+
+
+def test_a_complaint_report_that_failed_to_send_keeps_its_complaints():
+    from apps.notifications.email import EmailNotSent
+
+    reports.send_complaint_report()
+    stamp = TaskConfig.load().complaint_report_through
+    _, trip = _order()
+    _complain(trip)
+
+    with patch(
+        "apps.notifications.email.deliver_html_email", side_effect=EmailNotSent("smtp down")
+    ):
+        assert reports.send_complaint_report(now=timezone.now() + timedelta(minutes=1)) == 0
+
+    assert TaskConfig.load().complaint_report_through == stamp
+
+
+def test_a_switched_off_review_report_keeps_its_orders_for_later():
+    _order(name="Dana Reyes")
+    _row("review_report", enabled=False)
+
+    assert reports.send_review_report() == 0
+    assert mail.outbox == []
+    assert TaskConfig.load().review_report_through is None
+    assert not ReportedOrder.objects.exists()
+
+    _row("review_report", enabled=True)
+    assert reports.send_review_report(now=timezone.now() + timedelta(minutes=1)) == 1
+    assert "Dana Reyes" in mail.outbox[0].body
+    assert ReportedOrder.objects.count() == 1
+
+
+def test_a_review_report_off_for_longer_than_the_lookback_still_lists_what_it_missed():
+    """Switched off for two months: the next report that goes out starts at the last one
+    that did, not at the usual month back."""
+    config = TaskConfig.load()
+    config.review_report_through = timezone.now() - timedelta(days=60)
+    config.save()
+    _order(name="Missed While Off", days_ago=45)
+
+    assert reports.send_review_report() == 1
+    assert "Missed While Off" in mail.outbox[0].body
+
+
+def test_a_review_report_that_failed_to_send_marks_nothing_reported():
+    from apps.notifications.email import EmailNotSent
+
+    _order()
+
+    with patch(
+        "apps.notifications.email.deliver_html_email", side_effect=EmailNotSent("smtp down")
+    ):
+        assert reports.send_review_report() == 0
+
+    assert not ReportedOrder.objects.exists()
+    assert TaskConfig.load().review_report_through is None
 
 
 # --- the go-live switch (APC-90) --------------------------------------------------------

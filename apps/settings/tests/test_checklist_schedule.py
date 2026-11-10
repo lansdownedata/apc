@@ -48,7 +48,10 @@ def test_lists_every_row_with_defaults(client):
         assert text in body
     assert 'name="amount__deposit_received__standard"' in body
     assert 'value="72"' in body
-    assert "Opens when the balance is charged (30 days before pickup)." in body
+    assert (
+        "Opens when the balance is charged (30 days before the first pickup), "
+        "or at booking inside that window." in body
+    )
 
 
 def test_post_saves_and_reports_redated(client):

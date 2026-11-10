@@ -3,10 +3,13 @@
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
+from django.conf import settings
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
@@ -229,6 +232,135 @@ def test_a_future_opening_task_is_scheduled_not_open():
     assert task.status == Task.Status.SCHEDULED
 
 
+# --- "Final balance paid" follows the payment terms (TASK-03) ------------------------
+# The balance is charged `BALANCE_CHARGE_DAYS_BEFORE` days before the order's first pickup
+# (`PaymentPlan.balance_due_date`), or by the next balance run when the order is booked
+# inside that window. The task opens then and is due the Settings interval after it opens.
+
+LA = ZoneInfo("America/Los_Angeles")
+BOOKED_AT = datetime(2026, 11, 10, 19, 8, tzinfo=UTC)  # 11:08 AM PST, like lead 61
+
+
+def _book_with_first_pickup(days_out: int):
+    """Lead 61's shape: the first pickup in LA `days_out` days after booking, and a later
+    DC trip. Booked (tasks generated) at BOOKED_AT."""
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    first = BOOKED_AT.astimezone(LA).date() + timedelta(days=days_out)
+    ReservationFactory(
+        lead=lead,
+        pickup_date=first + timedelta(days=29),
+        pickup_time=time(9, 0),
+        pickup_timezone="America/New_York",
+    )
+    ReservationFactory(
+        lead=lead, pickup_date=first, pickup_time=time(9, 0), pickup_timezone="America/Los_Angeles"
+    )
+    with patch("django.utils.timezone.now", return_value=BOOKED_AT):
+        services.ensure_tasks(lead)
+    return lead, first
+
+
+def test_balance_task_opens_on_the_balance_date_at_midnight_in_the_first_pickups_zone():
+    lead, first = _book_with_first_pickup(60)
+
+    task = _task(lead, "final_balance_paid")
+    balance_day = first - timedelta(days=settings.BALANCE_CHARGE_DAYS_BEFORE)
+    assert balance_day == PaymentPlanFactory(lead=lead).balance_due_date
+    assert task.status == Task.Status.SCHEDULED
+    assert task.opens_at == datetime.combine(balance_day, time(0, 0), tzinfo=LA)
+    assert task.due_at == task.opens_at + timedelta(days=2)
+    assert task.due_at.astimezone(LA).time() == time(0, 0)
+
+
+@pytest.mark.parametrize("days_out", [20, 2])
+def test_booked_inside_the_balance_window_the_task_opens_at_booking_and_is_not_overdue(days_out):
+    """The balance date has passed, so the next balance run charges it: the task opens at
+    booking and gets the Settings interval from there, never a due date in the past."""
+    lead, _first = _book_with_first_pickup(days_out)
+
+    task = _task(lead, "final_balance_paid")
+    assert task.status == Task.Status.OPEN
+    assert task.opens_at == BOOKED_AT
+    assert task.due_at == BOOKED_AT + timedelta(days=2)
+    with patch("django.utils.timezone.now", return_value=BOOKED_AT + timedelta(minutes=1)):
+        assert not task.is_overdue_now
+
+
+def test_no_balance_task_is_born_overdue_whatever_the_first_pickup():
+    for days_out in (60, 31, 30, 29, 20, 2, 0):
+        lead, _first = _book_with_first_pickup(days_out)
+        task = _task(lead, "final_balance_paid")
+        assert task.due_at > BOOKED_AT, days_out
+        assert task.due_at > task.opens_at, days_out
+
+
+def test_moving_the_first_pickup_into_the_window_opens_the_task_with_a_fresh_due():
+    lead, first = _book_with_first_pickup(60)
+    trip = lead.reservations.get(pickup_timezone="America/Los_Angeles")
+    trip.pickup_date = first - timedelta(days=45)  # now 15 days out
+    trip.save(update_fields=["pickup_date"])
+    later = BOOKED_AT + timedelta(days=1)
+
+    with patch("django.utils.timezone.now", return_value=later):
+        services.reschedule(lead)
+
+    task = _task(lead, "final_balance_paid")
+    assert task.status == Task.Status.OPEN
+    assert task.opens_at == later
+    assert task.due_at == later + timedelta(days=2)
+
+
+def test_moving_the_first_pickup_out_re_dates_a_scheduled_balance_task():
+    lead, first = _book_with_first_pickup(60)
+    trip = lead.reservations.get(pickup_timezone="America/Los_Angeles")
+    trip.pickup_date = first + timedelta(days=7)
+    trip.save(update_fields=["pickup_date"])
+
+    with patch("django.utils.timezone.now", return_value=BOOKED_AT):
+        services.reschedule(lead)
+
+    task = _task(lead, "final_balance_paid")
+    balance_day = first + timedelta(days=7 - settings.BALANCE_CHARGE_DAYS_BEFORE)
+    assert task.status == Task.Status.SCHEDULED
+    assert task.opens_at == datetime.combine(balance_day, time(0, 0), tzinfo=LA)
+    assert task.due_at == task.opens_at + timedelta(days=2)
+
+
+def test_the_checklist_schedule_sets_the_interval_after_the_balance_task_opens():
+    from apps.tasks import schedule
+
+    lead, _first = _book_with_first_pickup(20)
+
+    with patch("django.utils.timezone.now", return_value=BOOKED_AT):
+        schedule.save({("final_balance_paid", "standard"): (5, "days")}, user=UserFactory())
+
+    task = _task(lead, "final_balance_paid")
+    assert task.opens_at == BOOKED_AT
+    assert task.due_at == BOOKED_AT + timedelta(days=5)
+    rows = {(r.key, r.variant): r for r in schedule.ROWS}
+    assert rows[("final_balance_paid", "standard")].anchor == "after it opens"
+
+
+@pytest.mark.parametrize(
+    ("amount", "unit", "expected"),
+    [
+        (28, "days", None),  # the old default: 2 days after the T-30 opening
+        (25, "days", (5, "days")),
+        (35, "days", (0, "days")),  # was due before it opened: due as it opens
+        (700, "hours", (20, "hours")),
+        (48, "hours", (672, "hours")),
+    ],
+)
+def test_migration_turns_a_saved_before_pickup_row_into_an_interval_after_opening(
+    amount, unit, expected
+):
+    import importlib
+
+    migration = importlib.import_module("apps.tasks.migrations.0019_balance_due_after_open")
+
+    assert migration.interval_for(amount, unit) == expected
+
+
 # --- auto-complete predicates ------------------------------------------------------
 
 
@@ -321,6 +453,71 @@ def test_dispatch_confirm_is_a_generation_seam():
     dispatch.confirm(offer)
 
     assert _task(lead, "affiliate_assigned", trip).status == Task.Status.DONE
+
+
+# --- the drawer's Confirm counts as the affiliate confirming (TASK-04) ----------------
+
+
+def _offered():
+    lead = _order()
+    trip = lead.reservations.get()
+    services.ensure_tasks(lead)
+    offer = AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
+    services.evaluate_lead(lead)
+    return lead, trip, offer
+
+
+def test_the_drawers_confirm_closes_affiliate_confirmed_as_that_user(client):
+    user = UserFactory()
+    client.force_login(user)
+    lead, trip, offer = _offered()
+
+    response = client.post(reverse("dispatch_resolve", args=[offer.pk]), {"action": "confirm"})
+
+    assert response.json()["ok"] is True
+    task = _task(lead, "affiliate_confirmed", trip)
+    assert task.status == Task.Status.DONE
+    assert task.completed_by == user
+    # The affiliate's own acknowledgement is untouched: its T-48 request, its confirm page
+    # and the "awaiting affiliate confirmation" warning read that, not the task.
+    offer.refresh_from_db()
+    assert offer.affiliate_confirmed_at is None
+
+
+def test_the_affiliate_link_still_closes_affiliate_confirmed(client):
+    from apps.reservations.acknowledgements import make_affiliate_ack_token
+
+    lead, trip, offer = _offered()
+    dispatch.confirm(offer)
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
+
+    client.post(
+        reverse("affiliate_trip_confirm", args=[make_affiliate_ack_token(offer)]), {"ack": "1"}
+    )
+    services.evaluate_lead(lead)
+
+    task = _task(lead, "affiliate_confirmed", trip)
+    assert task.status == Task.Status.DONE
+    assert task.completed_by is None
+
+
+def test_an_offer_nobody_confirmed_leaves_affiliate_confirmed_open(client):
+    client.force_login(UserFactory())
+    lead, trip, offer = _offered()
+
+    client.post(reverse("dispatch_resolve", args=[offer.pk]), {"action": "decline"})
+    services.evaluate_lead(lead)
+
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
+
+
+def test_a_confirm_with_no_user_behind_it_leaves_affiliate_confirmed_to_the_affiliate():
+    """A GNet acceptance goes through `confirm` from the gateway callback, with no person."""
+    lead, trip, offer = _offered()
+
+    dispatch.confirm(offer)
+
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
 
 
 def test_a_sent_driver_released_touchpoint_closes_driver_released():
