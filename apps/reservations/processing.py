@@ -552,7 +552,7 @@ def process(
         if collect == "keep":
             note = (
                 f"Overpayment of ${-money.difference:,.2f} held as credit owed to the"
-                f" customer: {reason.strip()}"
+                f" customer ({reason.strip()})"
             )
         elif collect == "refund":
             note = (reason or "").strip()
@@ -806,7 +806,7 @@ def add_charge(
     to_collect = min(amount, trip_money.money_for(_fresh(trip)).difference)
     if to_collect <= 0 or collect == "invoice":
         covered = to_collect <= 0
-        note = f"{label} (covered by the trip's credit)" if covered else f"{label}: on the invoice"
+        note = f"{label} (covered by the trip's credit)" if covered else f"{label} (on the invoice)"
         _event(review, ProcessingEvent.Kind.CHARGE_ADDED, user=user, amount=amount, note=note)
         trip.refresh_from_db()
         from apps.payments import ledger

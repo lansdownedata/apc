@@ -915,7 +915,9 @@ def test_hold_as_credit_says_it_is_owed_to_the_customer(agent):
     )
 
     note = review.events.get(kind=ProcessingEvent.Kind.PROCESSED).note
-    assert "held as credit owed to the customer" in note
+    # PROC-07: History quotes the whole note, so the reason sits in brackets, not after a
+    # colon where the closing quote read as stray.
+    assert note == "Overpayment of $200.00 held as credit owed to the customer (Rolling to June)"
     # Still a liability on the books, not revenue: the cash beyond the trip stays deferred.
     books = ledger.order_balances(trip.lead)
     assert books["recognized"] == Decimal("400.00") and books["deferred"] == Decimal("200.00")
