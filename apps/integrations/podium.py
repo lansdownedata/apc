@@ -77,7 +77,9 @@ def get_credential() -> PodiumCredential:
     return cred
 
 
-def _request(method: str, path: str, *, json=None, params=None) -> dict:
+def _request(
+    method: str, path: str, *, json=None, params=None, timeout: float | None = None
+) -> dict:
     cred = get_credential()
     resp = requests.request(
         method,
@@ -88,7 +90,7 @@ def _request(method: str, path: str, *, json=None, params=None) -> dict:
         },
         json=json,
         params=params,
-        timeout=TIMEOUT,
+        timeout=TIMEOUT if timeout is None else timeout,
     )
     try:
         resp.raise_for_status()
@@ -147,6 +149,7 @@ def send_message(
     channel_type: str = "phone",
     location_uid: str | None = None,
     internal: bool = False,
+    timeout: float | None = None,
 ) -> dict:
     """Send an SMS/email through Podium (requires the write_messages scope).
 
@@ -163,6 +166,7 @@ def send_message(
             "body": body,
             "locationUid": location_uid or settings.PODIUM_LOCATION_UID,
         },
+        timeout=timeout,
     )
 
 

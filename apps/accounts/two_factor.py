@@ -28,6 +28,7 @@ RESEND_GAP = timedelta(seconds=60)
 RESEND_PER_HOUR = 5
 KEEP_FOR = timedelta(hours=24)
 _SALT = "apps.accounts.two_factor.code"
+SMS_TIMEOUT = 8  # seconds; under Heroku's 30 s router limit so the email backup can still go
 PENDING_TTL = 600  # seconds a half-finished sign-in stays open
 REMEMBER_AGE = 30 * 24 * 60 * 60
 COOKIES = {"staff": ("apc_staff_device", "/"), "planner": ("apc_planner_device", "/planner/")}
@@ -203,9 +204,18 @@ def send_code(subject: Subject, *, prefer: str = "sms") -> Delivery:
         "It expires in 10 minutes. Never share this code."
     )
     try:
-        response = podium.send_message(identifier=subject.phone, body=body, internal=True)
+        response = podium.send_message(
+            identifier=subject.phone, body=body, internal=True, timeout=SMS_TIMEOUT
+        )
     except Exception as exc:
-        logger.warning("sign-in text to ...%s failed: %s", mask_phone(subject.phone), exc)
+        # Never log str(exc): a Podium refusal can echo the request body, which holds the code.
+        reason = podium.describe_error(str(exc)) if isinstance(exc, podium.PodiumAPIError) else ""
+        logger.warning(
+            "sign-in text to ...%s failed: %s %s",
+            mask_phone(subject.phone),
+            type(exc).__name__,
+            reason,
+        )
     else:
         uid = ""
         if isinstance(response, dict):

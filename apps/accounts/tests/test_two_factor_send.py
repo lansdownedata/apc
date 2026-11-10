@@ -142,3 +142,38 @@ def test_is_code_echo_by_uid_and_by_body(subject):
     assert two_factor.is_code_echo("other", "X: your sign-in code is 123456. It expires")
     assert not two_factor.is_code_echo("", "On our way!")
     assert not two_factor.is_code_echo("", "")
+
+
+def test_sms_send_uses_a_short_timeout(subject):
+    with patch(SEND, return_value={"uid": "m-3"}) as send:
+        two_factor.send_code(subject)
+    assert send.call_args.kwargs["timeout"] == two_factor.SMS_TIMEOUT == 8
+
+
+def test_a_podium_http_timeout_falls_back_to_one_email(subject, mailoutbox):
+    import requests
+
+    with (
+        patch("apps.integrations.podium.get_credential"),
+        patch("apps.integrations.podium.requests.request", side_effect=requests.Timeout()) as req,
+    ):
+        d = two_factor.send_code(subject)
+    assert req.call_args.kwargs["timeout"] == 8
+    assert d == Delivery(channel="email", fell_back=True)
+    assert len(mailoutbox) == 1
+
+
+def test_the_failure_log_never_carries_the_code(subject, caplog):
+    def refuse(**kwargs):
+        code = re.search(r"\d{6}", kwargs["body"]).group(0)
+        raise podium.PodiumAPIError(
+            f'400 POST https://api.podium.com/v4/messages → {{"echo": "{code}", '
+            f'"message": "Contact opted out"}} body {code}'
+        )
+
+    with patch(SEND, side_effect=refuse), caplog.at_level("DEBUG"):
+        two_factor.send_code(subject)
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "Podium refused the message: Contact opted out" in text
+    assert "PodiumAPIError" in text
+    assert not re.search(r"\b\d{6}\b", text)
