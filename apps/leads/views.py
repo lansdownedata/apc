@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
 
+import stripe
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -57,6 +59,8 @@ from .forms import NewLeadForm, PortalWeddingForm
 from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, LeadContact
 
 ZERO = Decimal("0.00")
+
+logger = logging.getLogger(__name__)
 
 
 def _la_state(rows: list[dict]) -> str:
@@ -857,17 +861,23 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
             )
         services.accept_terms(lead)
     plan = payment_services.ensure_plan(lead)
-    if kind == "trip":
-        link = _open_trip_link(plan)
-        if link is None:  # charged from the office between the page load and this click
-            return JsonResponse(
-                {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
+    try:
+        if kind == "trip":
+            link = _open_trip_link(plan)
+            if link is None:  # charged from the office between the page load and this click
+                return JsonResponse(
+                    {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
+                )
+            _, secret = payment_services.open_intent_for(
+                plan, kind=kind, amount=amount, reservation=link.reservation
             )
-        _, secret = payment_services.open_intent_for(
-            plan, kind=kind, amount=amount, reservation=link.reservation
+        else:
+            _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
+    except stripe.error.StripeError:
+        logger.exception("pay page: Stripe refused the intent for lead %s", lead.pk)
+        return JsonResponse(
+            {"ok": False, "error": "We couldn't start the payment. Please try again."}, status=502
         )
-    else:
-        _, secret = payment_services.open_intent_for(plan, kind=kind, amount=amount)
     return JsonResponse({"ok": True, "client_secret": secret, "amount": str(amount)})
 
 
