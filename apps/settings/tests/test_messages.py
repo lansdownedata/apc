@@ -110,7 +110,7 @@ def test_old_notifications_url_gone():
         reverse("notifications")
 
 
-def test_index_card_links_to_messages(client):
+def test_the_settings_menu_links_to_messages(client):
     client.force_login(_owner_admin())
     html = client.get(reverse("settings_index")).content.decode()
     assert reverse("messages") in html

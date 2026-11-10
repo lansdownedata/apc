@@ -164,7 +164,7 @@ def test_disconnect_clears_the_connection(owner):
 
 
 @override_settings(QBO_CLIENT_ID="", QBO_CLIENT_SECRET="")
-def test_without_keys_the_tile_is_hidden_and_the_screen_404s(owner):
+def test_without_keys_the_menu_hides_it_and_the_screen_404s(owner):
     index = owner.get(reverse("settings_index")).content.decode()
 
     assert "QuickBooks" not in index
@@ -172,10 +172,14 @@ def test_without_keys_the_tile_is_hidden_and_the_screen_404s(owner):
 
 
 @override_settings(**QBO)
-def test_with_keys_the_tile_shows_the_connection_state(owner):
-    assert "Not connected" in owner.get(reverse("settings_index")).content.decode()
+def test_with_keys_the_overview_shows_the_connection_state(owner):
+    resp = owner.get(reverse("settings_index"))
+    assert ("QuickBooks", False, "Not connected") in resp.context["status"]
+    assert "Not connected" in resp.content.decode()
     _live()
-    assert "Connected" in owner.get(reverse("settings_index")).content.decode()
+    resp = owner.get(reverse("settings_index"))
+    assert ("QuickBooks", True, "Connected") in resp.context["status"]
+    assert "Not connected" not in resp.content.decode()
 
 
 @override_settings(**QBO)

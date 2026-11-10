@@ -24,7 +24,7 @@ from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
 from apps.vendors.models import AffiliateDocumentType
 
-from .attention import fleet_attention_count
+from .attention import Attention, settings_attention
 from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
@@ -41,41 +41,33 @@ from .forms import (
 @login_required
 @owner_admin_required
 def settings_index(request: HttpRequest) -> HttpResponse:
+    attention = settings_attention()
     return render(
         request,
         "settings/index.html",
         {
             "nav": "settings",
             "page_title": "Settings",
-            "vehicle_type_count": VehicleType.objects.filter(active=True).count(),
-            "service_type_count": ServiceType.objects.filter(active=True).count(),
-            "poi_count": Venue.objects.filter(is_active=True).count(),
-            # Places that cannot take our largest coach — the number worth glancing at,
-            # because each one reshapes any run quoted to it.
-            "capped_poi_count": Venue.objects.filter(is_active=True)
-            .exclude(max_vehicle__isnull=True, vehicle_cap__isnull=True)
-            .count(),
-            "renewal_type_count": RenewalType.objects.filter(active=True).count(),
-            "fleet_attention_count": fleet_attention_count(),
-            "dispatch_monitor_on": DispatchAlertConfig.load().enabled,
-            "open_dispatch_exceptions": DispatchException.objects.filter(
-                resolved_at__isnull=True
-            ).count(),
-            "notifications_on": NotificationConfig.load().enabled,
-            "tasks_on": TaskConfig.load().enabled,
-            "default_cost_ratio_pct": PricingConfig.load().default_cost_ratio_pct,
-            **_qbo_tile(),
+            "attention": attention,
+            "status": _status(attention),
         },
     )
 
 
-def _qbo_tile() -> dict:
+def _status(attention: list[Attention]) -> list[tuple[str, bool, str]]:
+    """(label, ok, text) for each switch, read off the attention list so the page asks once."""
     from apps.integrations import qbo
 
-    return {
-        "qbo_enabled": qbo.enabled(),
-        "qbo_tile_connected": qbo.enabled() and qbo.is_connected(),
-    }
+    flagged = {a.key for a in attention}
+    rows = [
+        ("Go-live", "not_live" not in flagged, "Live", "Not live"),
+        ("Automated messages", "messages_off" not in flagged, "On", "Off"),
+        ("Dispatch monitor", "dispatch_off" not in flagged, "On", "Off"),
+        ("Tasks", "tasks_off" not in flagged, "On", "Off"),
+    ]
+    if qbo.enabled():
+        rows.append(("QuickBooks", "qbo" not in flagged, "Connected", "Not connected"))
+    return [(label, ok, on if ok else off) for label, ok, on, off in rows]
 
 
 @login_required

@@ -178,3 +178,16 @@ def current_item(url_name: str | None) -> Item | None:
             if url_name.startswith(item.match):
                 return item
     return None
+
+
+def label_for(url_name: str) -> str:
+    """The menu label for the page at `url_name`, e.g. "Messages" for "messages".
+
+    Looks through every item, QuickBooks included whether or not its keys are set. Raises
+    KeyError for a page the menu does not have: a link labelled with a guess is a silent bug.
+    """
+    groups = (_OVERVIEW, _BOOKING, _OPERATIONS, _AFFILIATES, _MESSAGING, _ACCOUNT)
+    for item in (*(i for s in groups for i in s.items), _QUICKBOOKS):
+        if item.url_name == url_name:
+            return item.label
+    raise KeyError(url_name)

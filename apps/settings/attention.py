@@ -7,6 +7,7 @@ from django.conf import settings
 from apps.dispatch.models import DispatchAlertConfig
 from apps.fleet.models import RENEWAL_PREFETCH, Driver, Vehicle
 from apps.messaging.models import NotificationConfig
+from apps.settings.menu import label_for
 from apps.tasks.models import TaskConfig
 
 
@@ -18,9 +19,14 @@ class Attention:
     url_name: str | None
     severity: str  # "danger" | "warn"
 
+    @property
+    def link_label(self) -> str | None:
+        """The menu label of the page that fixes this, or None when no page does."""
+        return label_for(self.url_name) if self.url_name else None
+
 
 def fleet_attention_count() -> int:
-    """Active drivers + units whose paperwork is lapsed or expiring — the tile's nudge."""
+    """Active drivers + units whose paperwork is lapsed or expiring — the Overview's fleet row."""
     subjects = [
         *Driver.objects.filter(status=Driver.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
         *Vehicle.objects.filter(status=Vehicle.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),

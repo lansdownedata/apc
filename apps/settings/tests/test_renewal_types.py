@@ -68,15 +68,15 @@ def test_delete_removes_when_unreferenced(client):
     assert not RenewalType.objects.filter(pk=t.pk).exists()
 
 
-def test_settings_index_counts_types_and_attention(client):
+def test_the_overview_flags_fleet_attention_and_the_menu_links_them(client):
     _owner(client)
     d = DriverFactory()
     RenewalFactory(driver=d, expires_on=timezone.localdate() + timedelta(days=3))
     VehicleFactory()  # nothing on file → not attention
     resp = client.get(reverse("settings_index"))
-    assert resp.context["renewal_type_count"] == RenewalType.objects.filter(active=True).count()
-    assert resp.context["fleet_attention_count"] == 1
-    assert b"Renewal types" in resp.content
+    fleet = [a for a in resp.context["attention"] if a.key == "fleet"]
+    assert [a.title for a in fleet] == ["1 driver or vehicle has lapsed or expiring paperwork"]
+    assert reverse("renewal_type_list") in resp.content.decode()
 
 
 def test_vehicle_type_delete_deactivates_when_a_unit_uses_it(client):

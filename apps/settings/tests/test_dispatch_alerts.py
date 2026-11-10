@@ -58,7 +58,7 @@ def test_saving_updates_the_singleton(client):
     assert DispatchAlertConfig.objects.count() == 1
 
 
-def test_the_settings_index_links_to_it(client):
+def test_the_settings_menu_links_to_it(client):
     _owner(client)
 
     body = client.get(reverse("settings_index")).content.decode()

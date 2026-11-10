@@ -153,7 +153,7 @@ def test_owner_pickers_are_searchable_selects_not_native(client):
         assert "data-tom" in chunk.split(">")[0]
 
 
-def test_the_settings_index_links_to_it(client):
+def test_the_settings_menu_links_to_it(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
 
     body = client.get(reverse("settings_index")).content.decode()
