@@ -4,6 +4,7 @@ import re
 from decimal import Decimal
 
 from django import forms
+from django.core.exceptions import NON_FIELD_ERRORS
 from django.core.validators import validate_email
 from django.db.models import Q
 
@@ -101,11 +102,14 @@ class ServiceTypeForm(forms.ModelForm):
             "active": "Inactive types stay on the trips that use them, but aren't offered.",
         }
 
-    def validate_unique(self) -> None:
-        """Surface the case-insensitive name constraint as a form error.
+    DUPLICATE = "A service type with that name already exists."
 
-        ModelForm only checks constraints it can map to fields; the UniqueConstraint is on
-        Lower("name"), so without this the duplicate reaches the database and 500s.
+    def validate_unique(self) -> None:
+        """Surface the case-insensitive name constraint under Name, once.
+
+        The UniqueConstraint is on Lower("name"), so Django's own constraint check reports a
+        clash with no field — above the buttons. It is moved under Name here, where the
+        problem is, rather than shown twice (SET-09).
         """
         super().validate_unique()
         name = (self.cleaned_data.get("name") or "").strip()
@@ -115,7 +119,14 @@ class ServiceTypeForm(forms.ModelForm):
         if self.instance.pk:
             clash = clash.exclude(pk=self.instance.pk)
         if clash.exists():
-            self.add_error("name", "A service type with that name already exists.")
+            general = self._errors.get(NON_FIELD_ERRORS)
+            if general is not None:
+                rest = [e for e in general if e != self.DUPLICATE]
+                if rest:
+                    self._errors[NON_FIELD_ERRORS] = self.error_class(rest, error_class="nonfield")
+                else:
+                    del self._errors[NON_FIELD_ERRORS]
+            self.add_error("name", self.DUPLICATE)
 
 
 _NUM = {"class": "field w-full", "min": 0}

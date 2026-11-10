@@ -99,3 +99,17 @@ def test_delete_is_refused_while_a_message_uses_it(client):
     assert st.active is True
     assert list(row.service_types.all()) == [st]
     assert "Tasting reminder" in resp.content.decode()
+
+
+def test_a_duplicate_name_is_reported_once_under_name(client):
+    """SET-09: the error showed twice, under Name and again above the buttons — Django's
+    own constraint check raised it with no field, and the form added it to Name too."""
+    _owner(client)
+    ServiceTypeFactory(name="Wine Tour")
+    resp = client.post(
+        reverse("service_type_create"), {"name": "wine tour", "sort_order": 0, "active": "on"}
+    )
+    form = resp.context["form"]
+    assert form.errors["name"] == ["A service type with that name already exists."]
+    assert form.non_field_errors() == []
+    assert resp.content.decode().count("A service type with that name already exists.") == 1
