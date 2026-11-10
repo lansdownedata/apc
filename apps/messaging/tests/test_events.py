@@ -690,6 +690,32 @@ def test_booking_queues_the_affiliate_row_only_for_a_manual_farm_out(clock):
     assert open_.pk
 
 
+@pytest.mark.parametrize("earlier", [S.SENT, S.SKIPPED])
+def test_a_new_manual_assignment_gets_its_own_affiliate_confirmation(clock, earlier):
+    """TRIP-07: once the T-48h request has gone out (or been skipped) for one affiliate, a
+    trip reassigned to another still asks the new one, and the new one only once."""
+    from apps.dispatch import services as dispatch
+    from apps.vendors.factories import VendorFactory
+
+    lead = _lead()
+    trip = _trip(lead)
+    first = dispatch.assign_direct(trip, VendorFactory(), payout=100)
+    row = _tps(lead, reservation=trip, kind=K.TRIP_CONFIRM_AFFILIATE).get()
+    row.status = earlier
+    row.save(update_fields=["status"])
+
+    clock.now = NOW + timedelta(hours=1)
+    dispatch.withdraw(first, note="vendor fell through")
+    clock.now = NOW + timedelta(hours=2)
+    dispatch.assign_direct(trip, VendorFactory(), payout=100)
+    clock.now = NOW + timedelta(hours=3)
+    events.schedule_dates(lead, trip)
+    events.schedule_dates(lead)
+
+    rows = _tps(lead, reservation=trip, kind=K.TRIP_CONFIRM_AFFILIATE)
+    assert sorted(rows.values_list("status", flat=True)) == sorted([earlier, S.SCHEDULED])
+
+
 def test_an_added_affiliate_row_on_pickup_follows_the_same_gate(clock):
     row = _added(
         trigger="pickup",

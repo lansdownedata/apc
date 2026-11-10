@@ -275,17 +275,20 @@ def _balance_due(lead, *, only: MessageTemplate | None = None) -> list[TouchPoin
     return created
 
 
-def _manual_farm_out(reservation) -> bool:
-    """Confirmed coverage by an affiliate who acknowledges by link: not in-house, not GNet
-    (whose acceptance is its acknowledgement, as the old `schedule_affiliate_confirmation`)."""
+def _manual_farm_out(reservation):
+    """The confirmed coverage by an affiliate who acknowledges by link, or None: not
+    in-house, not GNet (whose acceptance is its acknowledgement, as the old
+    `schedule_affiliate_confirmation`)."""
     from apps.dispatch.models import Assignment
 
     assignment = rules.confirmed_assignment(reservation)
-    return (
+    if (
         assignment is not None
         and not assignment.is_in_house
         and assignment.channel != Assignment.Channel.GNET
-    )
+    ):
+        return assignment
+    return None
 
 
 def _pickup_rows(lead, trips: Iterable, *, only: MessageTemplate | None = None) -> list[TouchPoint]:
@@ -297,24 +300,32 @@ def _pickup_rows(lead, trips: Iterable, *, only: MessageTemplate | None = None) 
     if not rows or not trips:
         return []
     # What each trip already has, in one read: a row's own TouchPoints, and the old
-    # scheduler's by kind. Anything but a cancelled one counts.
-    have = set(
+    # scheduler's by kind. Anything but a cancelled one counts, except that an affiliate
+    # row counts only from the current coverage's confirmation on: a trip reassigned to
+    # another affiliate asks the new one (TRIP-07), its own row bound to it by time.
+    have = list(
         TouchPoint.objects.filter(lead=lead, reservation__in=[t.pk for t in trips])
         .exclude(status=_S.CANCELLED)
-        .values_list("reservation_id", "message_id", "kind")
+        .values_list("reservation_id", "message_id", "kind", "created_at")
     )
-    mine = {(res, message) for res, message, _ in have if message is not None}
-    legacy = {(res, kind) for res, message, kind in have if message is None}
     created = []
     for trip in trips:
         pickup = trip.pickup_at
-        farm_out = None
+        farm_out = False
         for row in rows:
+            since = None
             if row.audience == row.Audience.AFFILIATE:
-                farm_out = _manual_farm_out(trip) if farm_out is None else farm_out
-                if not farm_out:
+                if farm_out is False:
+                    farm_out = _manual_farm_out(trip)
+                if farm_out is None:
                     continue
-            if (trip.pk, row.pk) in mine or (trip.pk, row.key) in legacy:
+                since = farm_out.resolved_at or farm_out.created_at
+            if any(
+                res == trip.pk
+                and (message == row.pk if message is not None else kind == row.key)
+                and (since is None or at >= since)
+                for res, message, kind, at in have
+            ):
                 continue
             if not rules.matches(row, lead, trip):
                 continue
