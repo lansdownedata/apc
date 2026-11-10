@@ -11,7 +11,7 @@ const plugin = require("tailwindcss/plugin");
 module.exports = {
   content: [
     "./templates/**/*.html",
-    "./apps/**/*.html", // app-level templates (integrations/podium_callback.html)
+    "./apps/**/*.html", // app-level templates (none today; kept so one added later is scanned)
     "./apps/**/*.py", // form widget attrs, e.g. {"class": "field w-full"}
     "./static/js/**/*.js", // modal/toast markup built in app.js
   ],
