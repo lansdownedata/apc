@@ -361,3 +361,20 @@ def test_ordered_stops_joins_the_flight(db, django_assert_num_queries):
     stops = list(res.ordered_stops)
     with django_assert_num_queries(0):
         assert stops[0].flight.pill()["state"] == "verified"
+
+
+def test_a_private_tail_number_is_not_offered_for_verifying(db):
+    """LEAD-05: a tail number has no scheduled flight to look up, yet the trip line still
+    showed a "Verify flight" chip for it (the editor already hid its Verify button)."""
+    from apps.addresses.factories import AirlineFactory
+    from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline
+    from apps.reservations.models import Reservation
+
+    res = _airport_trip(["unverified", ""])
+    private = Airline.objects.filter(iata=PRIVATE_AIRLINE_IATA).first() or AirlineFactory(
+        iata=PRIVATE_AIRLINE_IATA, name="Private / Tail number"
+    )
+    res.stops.exclude(airport=None).update(airline=private, flight_number="N561FX")
+
+    fresh = Reservation.objects.prefetch_related("stops__airline").get(pk=res.pk)
+    assert fresh.flight_summary is None
