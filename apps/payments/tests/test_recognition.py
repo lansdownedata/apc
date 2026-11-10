@@ -423,3 +423,32 @@ def test_the_cron_does_not_rebook_a_historical_finals_overtime():
     recognize_due_revenue()
 
     assert _bal(lead)["recognized"] == Decimal("960.00")
+
+
+def test_journal_memos_name_the_trip_by_its_reference():
+    """PAY-17, HOLD-06, PROC-05: "Transfer · Transfer" told the books nothing; the trip's
+    reference does."""
+    from apps.payments import services
+    from apps.payments.factories import PaymentPlanFactory
+    from apps.payments.models import Charge
+
+    lead = LeadFactory()
+    res = TransferReservationFactory(lead=lead, rate=Decimal("1500.00"))
+    plan = PaymentPlanFactory(lead=lead)
+    ledger.post_capture(
+        lead=lead,
+        amount=Decimal("1500.00"),
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        idempotency_key="cap1",
+    )
+
+    assert ledger.recognize_reservation(res).memo == f"Recognize {res.reference}"
+    res.rate = Decimal("1600.00")
+    res.trip_status = Reservation.TripStatus.DONE
+    res.save()
+    assert ledger.true_up_recognition(res).memo == f"Revenue true-up {res.reference}"
+
+    trip = Charge(plan=plan, kind=Charge.Kind.TRIP, reservation=res)
+    hold = Charge(plan=plan, kind=Charge.Kind.HOLD, reservation=res)
+    assert services._memo(trip) == f"Trip charge ({res.reference})"
+    assert services._memo(hold) == f"Cleaning fee from the hold ({res.reference})"

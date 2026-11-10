@@ -243,7 +243,7 @@ def recognize_reservation(reservation):
         kind=JournalEntry.Kind.REVENUE_RECOGNIZED,
         lines=lines,
         idempotency_key=f"recognize-res{reservation.pk}",
-        memo=f"Recognize {reservation}",
+        memo=f"Recognize {reservation.reference}",
     )
     if reservation.revenue_status != Reservation.RevenueStatus.RECOGNIZED:
         reservation.revenue_status = Reservation.RevenueStatus.RECOGNIZED
@@ -337,7 +337,7 @@ def true_up_recognition(reservation):
         kind=JournalEntry.Kind.ADJUSTMENT,
         lines=lines,
         idempotency_key=f"recognize-res{reservation.pk}-adj{_adjustments(reservation) + 1}",
-        memo=f"Revenue true-up {reservation}",
+        memo=f"Revenue true-up {reservation.reference}",
     )
     reservation.recognized_amount = Decimal(reservation.recognized_amount or 0) + delta
     reservation.save(update_fields=["recognized_amount", "updated_at"])

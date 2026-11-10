@@ -705,10 +705,10 @@ def _memo(charge: Charge) -> str:
         return "Deposit captured"
     if charge.kind == Charge.Kind.HOLD:
         if charge.reservation_id:
-            return f"Cleaning fee from the hold ({charge.reservation})"
+            return f"Cleaning fee from the hold ({charge.reservation.reference})"
         return "Cleaning hold captured"
     if charge.kind == Charge.Kind.TRIP:
-        return f"Trip charge ({charge.reservation})"
+        return f"Trip charge ({charge.reservation.reference})"
     return "Card payment"
 
 
