@@ -259,3 +259,22 @@ def test_the_order_page_offers_the_trips_to_cancel(client):
     html = client.get(reverse("lead_detail", args=[plan.lead_id])).content.decode()
     assert "cancelRefund(" in html
     assert a.reference in html and "1335.00" in html
+
+
+def test_the_dialog_path_leaves_a_flash_for_the_reload(client):
+    """PAY-16: the dialog posts for JSON and then reloads the page; the reload must say
+    what happened, as a plain form post does."""
+    from django.contrib.messages import get_messages
+
+    plan = _plan()
+    a, _b = _trip(plan.lead), _trip(plan.lead)
+    client.force_login(_admin())
+    with _refunds():
+        resp = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]),
+            {"trips": [a.pk]},
+            HTTP_ACCEPT="application/json",
+        )
+    assert [str(m) for m in get_messages(resp.wsgi_request)] == [
+        "1 trip cancelled and $667.50 refunded."
+    ]

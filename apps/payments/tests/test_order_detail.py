@@ -211,3 +211,23 @@ def test_the_page_costs_the_same_whether_it_holds_one_trip_or_ten(client, owner)
         client.get(_url(big))
 
     assert len(ten_trips) <= len(one_trip)
+
+
+def test_cancel_and_refund_on_the_order_page_has_its_trips(client, owner):
+    """PAY-16: the money card's Cancel & refund button parses `cancel_options_json`; the
+    order page never supplied it, so the button ran JSON.parse("") and no dialog opened."""
+    import json
+
+    from apps.payments.factories import PaymentPlanFactory
+
+    lead = _order()
+    trip = _trip(lead)
+    PaymentPlanFactory(lead=lead, quote_total=Decimal("500.00"))
+
+    resp = client.get(_url(lead))
+
+    body = resp.content.decode()
+    assert "Cancel &amp; refund" in body
+    assert "JSON.parse(&quot;&quot;)" not in body
+    options = json.loads(resp.context["cancel_options_json"])
+    assert [o["pk"] for o in options] == [trip.pk]

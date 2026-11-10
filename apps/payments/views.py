@@ -1,3 +1,4 @@
+import json
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import requests
@@ -102,6 +103,9 @@ def order_detail(request, lead_id):
             **reports.cleaning_hold(lead),
             "payment": plan,
             "balances": reports.order_balances_with_remaining(lead),
+            # The money card's Cancel & refund dialog reads this, here as on the workspace
+            # (PAY-16: without it the button parsed "" and never opened).
+            "cancel_options_json": json.dumps(services.cancel_options(lead, request.user)),
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "ledger_entries": lead.journal_entries.prefetch_related("lines").order_by(
                 "posted_at", "id"
@@ -228,6 +232,13 @@ def order_cancel_refund(request, lead_id):
         return fail(
             f"Stripe refused the refund, so the trip was not cancelled: {exc.user_message or exc}"
         )
+    # Flashed on both paths: the dialog posts for JSON and then reloads (PAY-16).
+    if result.order_cancelled:
+        messages.success(request, "Order cancelled and refunded.")
+    else:
+        n = len(result.cancelled)
+        trips_ = f"{n} trip{'s' if n != 1 else ''}"
+        messages.success(request, f"{trips_} cancelled and ${result.refunded:,.2f} refunded.")
     if wants_json:
         return JsonResponse(
             {
@@ -237,12 +248,6 @@ def order_cancel_refund(request, lead_id):
                 "order_cancelled": result.order_cancelled,
             }
         )
-    if result.order_cancelled:
-        messages.success(request, "Order cancelled and refunded.")
-    else:
-        n = len(result.cancelled)
-        trips_ = f"{n} trip{'s' if n != 1 else ''}"
-        messages.success(request, f"{trips_} cancelled and ${result.refunded:,.2f} refunded.")
     return redirect("lead_detail", pk=lead_id)
 
 
