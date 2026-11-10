@@ -1225,6 +1225,11 @@ class TripReview(TimeStampedModel):
     def is_processed(self) -> bool:
         return self.processed_at is not None
 
+    @property
+    def overtime_undecided(self) -> bool:
+        """Overtime is suggested and nobody has kept or changed it: processing waits."""
+        return self.decided_at is None and self.suggested_overtime_minutes > 0
+
 
 class ProcessingEvent(TimeStampedModel):
     """One step in a trip's processing history (APC-102, spec §4.6): processed, unlocked,

@@ -603,3 +603,46 @@ def test_a_double_submit_of_one_trip_records_one_capture(agent):
     assert review.is_processed and _diff(trip) == Decimal("0.00")
     assert ProcessingEvent.Kind.HOLD_CAPTURED not in _kinds(trip)
     assert JournalEntry.objects.filter(charge=hold).count() == 1
+
+
+# --- what the pane says comes from the hold and from the card (HOLD-07, HOLD-12) -------------
+
+
+def _split(client, trip):
+    resp = client.get(reverse("processing"), {"trip": trip.pk})
+    return resp.context["from_hold"], resp.context["from_card"]
+
+
+@pytest.mark.parametrize(
+    ("line", "from_hold", "from_card"),
+    [("250.00", "250.00", "0.00"), ("650.00", "500.00", "150.00")],
+)
+def test_pane_splits_what_the_hold_pays_from_what_the_card_pays(
+    client, agent, line, from_hold, from_card
+):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    trip = _dirty(trip, line)
+
+    assert _split(client, trip) == (Decimal(from_hold), Decimal(from_card))
+
+
+def test_pane_puts_everything_on_the_card_without_a_hold(client, agent):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    hold.status = Charge.Status.RELEASED
+    hold.save(update_fields=["status"])
+    trip = _dirty(trip, "250.00")
+
+    assert _split(client, trip) == (Decimal("0.00"), Decimal("250.00"))
+
+
+def test_pane_counts_an_outside_capture_processing_will_adopt(client, agent):
+    client.force_login(agent)
+    lead, plan, (trip,), hold = _order()
+    hold.captured_at = timezone.now()
+    hold.amount = Decimal("400.00")  # what Stripe took
+    hold.save(update_fields=["captured_at", "amount"])
+    trip = _dirty(trip, "650.00")
+
+    assert _split(client, trip) == (Decimal("400.00"), Decimal("250.00"))
