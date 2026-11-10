@@ -434,7 +434,7 @@ def process(
     review = reviews.review_for(trip)
     if review.is_processed:
         raise ProcessingError("This trip is already processed.")
-    if review.decided_at is None and review.suggested_overtime_minutes > 0:
+    if review.overtime_undecided:
         raise ProcessingError("Decide the overtime first: keep or change the suggestion.")
     money = trip_money.money_for(trip)
     if Decimal(str(expected)).quantize(Decimal("0.01")) != money.difference:
@@ -552,7 +552,7 @@ def process(
         if collect == "keep":
             note = (
                 f"Overpayment of ${-money.difference:,.2f} held as credit owed to the"
-                f" customer: {reason.strip()}"
+                f" customer ({reason.strip()})"
             )
         elif collect == "refund":
             note = (reason or "").strip()
@@ -618,6 +618,44 @@ HOLD_LAPSED_NOTE = "Cleaning hold had lapsed; charged normally"
 HOLD_USED_NOTE = "Cleaning hold already used; charged normally"
 
 
+def _cleaning_due(trip, money) -> Decimal:
+    """The trip's cleaning lines, at most what the trip still owes: what the hold may pay."""
+    from .models import TripExtra
+
+    cleaning = sum(
+        (Decimal(e.amount) for e in trip.extras.all() if e.kind == TripExtra.Kind.CLEANING),
+        Decimal("0.00"),
+    )
+    return min(cleaning, money.difference)
+
+
+def hold_split(trip, money) -> tuple[Decimal, Decimal]:
+    """What processing will take from the order's cleaning hold and what from the card, for
+    a trip that owes `money.difference` (HOLD-07, HOLD-12): the pane says so instead of
+    "charged now". It reads as `_take_cleaning_from_hold` acts: the cleaning fee out of an
+    AUTHORIZED hold, at most the hold; a capture made outside (captured at Stripe, no trip
+    yet) is adopted for what Stripe took. An order billed to an account never touches it."""
+    from apps.payments import holds
+    from apps.payments.models import Charge
+
+    zero = Decimal("0.00")
+    owed = max(money.difference, zero)
+    if owed <= 0 or trip.lead.on_account:
+        return zero, owed
+    due = _cleaning_due(trip, money)
+    hold = holds.current_hold(trip.lead) if due > 0 else None
+    if hold is None or hold.status != Charge.Status.AUTHORIZED:
+        return zero, owed
+    if hold.captured_at is None:
+        taken = min(due, Decimal(hold.amount))
+    elif hold.reservation_id in (None, trip.pk):
+        taken = Decimal(hold.amount)
+    else:
+        return zero, owed
+    taken = taken.quantize(Decimal("0.01"))
+    return taken, max(owed - taken, zero)
+
+
 def _take_cleaning_from_hold(trip, money, record) -> bool:
     """Take the trip's cleaning fee out of the order's cleaning hold (APC-95, spec §4):
     the trip's cleaning lines, at most what the trip still owes (a fee the order already
@@ -629,13 +667,9 @@ def _take_cleaning_from_hold(trip, money, record) -> bool:
     from apps.payments import holds
     from apps.payments.models import Charge
 
-    from .models import ProcessingEvent, TripExtra
+    from .models import ProcessingEvent
 
-    cleaning = sum(
-        (Decimal(e.amount) for e in trip.extras.all() if e.kind == TripExtra.Kind.CLEANING),
-        Decimal("0.00"),
-    )
-    due = min(cleaning, money.difference)
+    due = _cleaning_due(trip, money)
     if due <= 0:
         return False
     hold = holds.current_hold(trip.lead)
@@ -772,7 +806,7 @@ def add_charge(
     to_collect = min(amount, trip_money.money_for(_fresh(trip)).difference)
     if to_collect <= 0 or collect == "invoice":
         covered = to_collect <= 0
-        note = f"{label} (covered by the trip's credit)" if covered else f"{label}: on the invoice"
+        note = f"{label} (covered by the trip's credit)" if covered else f"{label} (on the invoice)"
         _event(review, ProcessingEvent.Kind.CHARGE_ADDED, user=user, amount=amount, note=note)
         trip.refresh_from_db()
         from apps.payments import ledger

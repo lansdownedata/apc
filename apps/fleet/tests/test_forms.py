@@ -136,3 +136,11 @@ def test_a_blank_hourly_rate_saves_as_not_set():
 def test_a_negative_hourly_rate_is_refused():
     form = DriverForm({"name": "Marcus Bell", "status": "active", "hourly_rate": "-5"})
     assert not form.is_valid()
+
+
+def test_renewal_type_applies_to_has_a_written_empty_choice():
+    """SET-15: the blank choice reads as a prompt, not Django's "---------"."""
+    choices = list(RenewalTypeForm().fields["applies_to"].choices)
+
+    assert choices[0] == ("", "Driver or vehicle…")
+    assert all("---" not in str(label) for _, label in choices)

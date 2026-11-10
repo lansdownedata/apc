@@ -217,7 +217,8 @@ def test_place_hold_without_card_opens_one_task_and_notifies_without_a_row():
     assert task.status == Task.Status.OPEN
     assert task.note == "Cleaning hold not placed: no card on file"
     note = Notification.objects.get(lead=lead, kind=Notification.Kind.HOLD_FAILED)
-    assert note.title == "Cleaning hold not placed: no card on file"
+    # HOLD-04: the title is the task's, the reason is the detail (not said twice).
+    assert (note.title, note.detail) == ("Cleaning hold not placed", "No card on file")
     lead.refresh_from_db()
     assert lead.has_alert is True
 
@@ -239,7 +240,8 @@ def test_declined_hold_records_failed_opens_task_and_is_not_retried():
     assert holds.any_hold(lead) == failed
     task = Task.objects.get(lead=lead, kind="cleaning_hold_failed")
     assert task.note == "Cleaning hold declined: Your card was declined."
-    assert Notification.objects.filter(lead=lead, kind=Notification.Kind.HOLD_FAILED).count() == 1
+    note = Notification.objects.get(lead=lead, kind=Notification.Kind.HOLD_FAILED)
+    assert (note.title, note.detail) == ("Cleaning hold not placed", "Your card was declined.")
     lead.refresh_from_db()
     plan.refresh_from_db()
     assert lead.has_alert is True

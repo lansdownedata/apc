@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% block content %}
 <div class="max-w-[960px] mx-auto px-4 sm:px-6 py-6">
 
@@ -66,7 +67,7 @@
             {% include "vendors/_insurance_pill.html" with status=p.status %}
           </div>
           <div class="text-[11.5px] text-muted mt-1 flex items-center gap-2 flex-wrap num">
-            <span>${{ p.coverage_amount|floatformat:0 }}</span><span class="text-line">·</span>
+            <span>${{ p.coverage_amount|floatformat:0|intcomma }}</span><span class="text-line">·</span>
             <span>{{ p.effective_date|date:"M j, Y" }} – {{ p.expiry_date|date:"M j, Y" }}</span>
             {% if p.certificate %}<a href="{{ p.certificate.url }}" class="font-semibold" style="color:rgb(var(--gold-deep));"><i class="ti ti-file-text text-[12px]"></i> COI</a>{% endif %}
           </div>

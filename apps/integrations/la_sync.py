@@ -72,14 +72,15 @@ def _flight_info(stop) -> dict:
     An airport with no airline and no flight number sends nothing (matches GNet's
     rule): the airport alone isn't "flight info". Once there is something to send, LA
     marks `airport_code` required for airport locations, so it goes first when a stop
-    is linked to one.
+    is linked to one. A private flight sends its tail number with no airline code.
     """
     if not stop.airline_id and not stop.flight_number:
         return {}
     info = {}
     if stop.airport_id:
         info["airport_code"] = stop.airport.iata or stop.airport.ident
-    if stop.airline_id:
+    if stop.airline_id and not stop.airline.is_private:
+        # The Private / Tail number entry's "N" is our placeholder, not a carrier code.
         info["airline_code"] = stop.airline.iata
     if stop.flight_number:
         info["flight_number"] = stop.flight_number

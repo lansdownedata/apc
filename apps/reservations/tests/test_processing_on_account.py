@@ -22,7 +22,7 @@ from apps.payments import trip_money
 from apps.payments.factories import PaymentPlanFactory
 from apps.reservations import processing
 from apps.reservations.factories import ReservationFactory
-from apps.reservations.models import ProcessingEvent, Reservation, TripExtra
+from apps.reservations.models import ProcessingEvent, Reservation, TripExtra, TripReview
 
 pytestmark = pytest.mark.django_db
 S = Reservation.TripStatus
@@ -128,6 +128,10 @@ def test_a_charge_added_later_goes_on_the_invoice(agent):
     assert TripExtra.objects.filter(reservation=trip, label="Cleaning").exists()
     assert _diff(trip) == Decimal("650.00")
     assert not trip.lead.payment.charges.exists()
+    added = TripReview.objects.get(reservation=trip).events.get(
+        kind=ProcessingEvent.Kind.CHARGE_ADDED
+    )
+    assert added.note == "Cleaning (on the invoice)"
 
 
 @pytest.mark.parametrize("collect", ["card", "link"])

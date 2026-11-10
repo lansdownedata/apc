@@ -126,3 +126,26 @@ def test_a_charge_without_an_intent_id_is_not_reused():
         )
     assert charge.pk != orphan.pk
     assert secret
+
+
+def test_a_refused_intent_leaves_no_pending_charge_behind():
+    """PAY-08: Stripe refusing the intent must not leave a PENDING charge with no intent
+    (it read as money in flight). The attempt is kept as FAILED, so the next one gets a
+    fresh idempotency key rather than Stripe replaying the refusal."""
+    plan = _plan()
+    refusal = services.stripe.error.InvalidRequestError("No such customer", "customer")
+    with patch.object(services.stripe.PaymentIntent, "create", side_effect=refusal):
+        with pytest.raises(services.stripe.error.StripeError):
+            services.open_intent_for(plan, kind=Charge.Kind.DEPOSIT, amount=Decimal("500.00"))
+
+    assert not plan.charges.filter(status=Charge.Status.PENDING).exists()
+    failed = plan.charges.get()
+    assert failed.status == Charge.Status.FAILED
+    assert "No such customer" in failed.failure_reason
+
+    with patch.object(services.stripe.PaymentIntent, "create", side_effect=_intents()) as create:
+        charge, _ = services.open_intent_for(
+            plan, kind=Charge.Kind.DEPOSIT, amount=Decimal("500.00")
+        )
+    assert charge.status == Charge.Status.PENDING
+    assert create.call_args.kwargs["idempotency_key"] != failed.idempotency_key

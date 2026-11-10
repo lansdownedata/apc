@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from zoneinfo import ZoneInfo
@@ -183,18 +183,39 @@ def _prefilled_times(
 ) -> tuple[datetime | None, datetime | None]:
     """Pickup and drop-off from the status log. On an hourly trip the clock starts when the
     car is on location (Arrived); on a transfer the wait runs until the passenger boards,
-    so Customer In Car is the pickup when it was logged."""
+    so Customer In Car is the pickup when it was logged.
+
+    A Done set by hand is the drop-off only when it was marked while the trip was ending:
+    by the time the post-trip review would have opened anyway (scheduled end plus
+    `post_trip_grace_hours`). Marked later, it is bookkeeping, not the moment the car let
+    the passenger go, and would read as hours or days of overtime (PROC-02); the drop-off
+    stays blank for the dispatcher to type. LimoAnywhere's Done carries the real time."""
+    from apps.tasks.models import TaskConfig
+    from apps.tasks.post_trip import scheduled_end
+
     events = list(
         TripStatusEvent.objects.filter(
             reservation=trip, status__in=(*_PICKUP_EVENTS, Reservation.TripStatus.DONE)
-        ).values_list("status", "created_at")
+        ).values_list("status", "source", "created_at")
     )
-    boarded = [at for status, at in events if status == Reservation.TripStatus.CUSTOMER_IN_CAR]
-    pickups = [at for status, at in events if status in _PICKUP_EVENTS]
+    boarded = [at for status, _, at in events if status == Reservation.TripStatus.CUSTOMER_IN_CAR]
+    pickups = [at for status, _, at in events if status in _PICKUP_EVENTS]
     if basis is not OvertimeBasis.HOURLY and boarded:
         pickups = boarded
-    dones = [at for status, at in events if status == Reservation.TripStatus.DONE]
-    return (min(pickups) if pickups else None, max(dones) if dones else None)
+    dones = [(source, at) for status, source, at in events if status == Reservation.TripStatus.DONE]
+    if any(source == TripStatusEvent.Source.MANUAL for source, _ in dones):
+        end = scheduled_end(trip)
+        latest = (
+            end + timedelta(hours=TaskConfig.load().post_trip_grace_hours)
+            if end is not None
+            else None
+        )
+        dones = [
+            (source, at)
+            for source, at in dones
+            if source != TripStatusEvent.Source.MANUAL or (latest is not None and at <= latest)
+        ]
+    return (min(pickups) if pickups else None, max(at for _, at in dones) if dones else None)
 
 
 def review_for(trip: Reservation) -> TripReview:

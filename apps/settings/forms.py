@@ -162,6 +162,18 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "affiliate_unacked_warn_hours": forms.NumberInput(attrs=_NUM),
             "critical_sms": forms.Textarea(attrs=_AREA),
         }
+        labels = {
+            "unassigned_warn_hours": "No coverage warning (hours)",
+            "unassigned_critical_hours": "No coverage critical (hours)",
+            "otw_warn_minutes": "Not en route warning (minutes)",
+            "otw_critical_minutes": "Not en route critical (minutes)",
+            "arrived_warn_minutes": "Not arrived warning (minutes)",
+            "arrived_critical_minutes": "Not arrived critical (minutes)",
+            "driver_info_warn_hours": "Driver info missing warning (hours)",
+            "driver_info_critical_hours": "Driver info missing critical (hours)",
+            "affiliate_unacked_warn_hours": "Affiliate unacknowledged warning (hours)",
+            "critical_sms": "Critical SMS numbers",
+        }
 
 
 _OWNER = {"class": "field w-full", "data-tom": "", "data-placeholder": "No default owner"}

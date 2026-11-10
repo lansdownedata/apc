@@ -153,6 +153,18 @@ def test_booking_payload_carries_pickup_and_dropoff_flight_info():
     }
 
 
+def test_a_private_tail_number_flight_sends_no_airline_code():
+    """The Private / Tail number entry's "N" is our placeholder, not a carrier: LA gets the
+    airport and the tail number only."""
+    from apps.addresses.models import PRIVATE_AIRLINE_IATA, Airline
+
+    res = _geocoded_reservation()
+    _with_flight(res, 0, "N561FX")
+    res.stops.filter(sequence=0).update(airline=Airline.objects.get(iata=PRIVATE_AIRLINE_IATA))
+    payload = la_sync.build_booking_payload(res, search_result_id=1)
+    assert payload["pickup_flight_info"] == {"airport_code": "T0", "flight_number": "N561FX"}
+
+
 def test_booking_payload_omits_flight_info_keys_without_a_flight():
     payload = la_sync.build_booking_payload(_geocoded_reservation(), search_result_id=1)
     assert "pickup_flight_info" not in payload

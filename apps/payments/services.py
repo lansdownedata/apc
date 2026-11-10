@@ -162,16 +162,25 @@ def open_intent_for(
         # A balance charge is money already owed on a confirmed booking — it still
         # captures automatically.
         extra["capture_method"] = "manual"
-    intent = _stripe().PaymentIntent.create(
-        amount=_cents(amount),
-        currency="usd",
-        customer=customer,
-        allowed_payment_method_types=["card"],
-        setup_future_usage="off_session",
-        metadata=metadata,
-        idempotency_key=charge.idempotency_key,
-        **extra,
-    )
+    try:
+        intent = _stripe().PaymentIntent.create(
+            amount=_cents(amount),
+            currency="usd",
+            customer=customer,
+            allowed_payment_method_types=["card"],
+            setup_future_usage="off_session",
+            metadata=metadata,
+            idempotency_key=charge.idempotency_key,
+            **extra,
+        )
+    except stripe.error.StripeError as exc:
+        # No intent, so no money in flight (PAY-08): the attempt is closed as FAILED, not
+        # left PENDING, and the next one gets its own idempotency key (Stripe would replay
+        # this refusal for the same key).
+        charge.status = Charge.Status.FAILED
+        charge.failure_reason = (getattr(exc, "user_message", None) or str(exc))[:255]
+        charge.save(update_fields=["status", "failure_reason", "updated_at"])
+        raise
     charge.stripe_payment_intent_id = intent.id
     charge.stripe_client_secret = intent.client_secret
     charge.save(update_fields=["stripe_payment_intent_id", "stripe_client_secret", "updated_at"])
@@ -696,10 +705,10 @@ def _memo(charge: Charge) -> str:
         return "Deposit captured"
     if charge.kind == Charge.Kind.HOLD:
         if charge.reservation_id:
-            return f"Cleaning fee from the hold ({charge.reservation})"
+            return f"Cleaning fee from the hold ({charge.reservation.reference})"
         return "Cleaning hold captured"
     if charge.kind == Charge.Kind.TRIP:
-        return f"Trip charge ({charge.reservation})"
+        return f"Trip charge ({charge.reservation.reference})"
     return "Card payment"
 
 

@@ -139,7 +139,7 @@ def place_hold(lead, *, now=None) -> Charge | None:
                 kind=Charge.Kind.HOLD, amount=hold_amount(lead), note="Cleaning hold"
             )
     if charge is None:
-        _hold_failed(lead, "Cleaning hold not placed: no card on file", "no card on file")
+        _hold_failed(lead, "Cleaning hold not placed: no card on file", "No card on file")
         return None
 
     try:
@@ -286,7 +286,8 @@ def _capture_before(intent) -> datetime | None:
 
 def _hold_failed(lead, title: str, reason: str) -> None:
     """The hold could not be placed: one task for Customer Service (its note is `title`),
-    a staff notification and the order's alert. Once per order."""
+    a staff notification titled as the task with `reason` as its detail, and the order's
+    alert. Once per order."""
     from apps.tasks import services as tasks
     from apps.tasks.models import Task
 
@@ -295,7 +296,12 @@ def _hold_failed(lead, title: str, reason: str) -> None:
     task = tasks.open_request_task(lead, TASK_KIND)
     task.note = title
     task.save(update_fields=["note", "updated_at"])
-    Notification.notify(lead, Notification.Kind.HOLD_FAILED, title=title, detail=reason)
+    Notification.notify(
+        lead,
+        Notification.Kind.HOLD_FAILED,
+        title=Notification.Kind.HOLD_FAILED.label,
+        detail=reason,
+    )
     lead.has_alert = True
     lead.save(update_fields=["has_alert", "updated_at"])
 
@@ -366,7 +372,22 @@ def capture_hold(trip, amount) -> tuple[Charge, bool]:
     charge = services.record_payment(
         plan, hold.stripe_payment_intent_id, kind=Charge.Kind.TRIP, intent=intent
     )
+    if charge.status == Charge.Status.SUCCEEDED:
+        _close_unbooked(lead)
     return charge, captured_now
+
+
+def _close_unbooked(lead) -> None:
+    """The hold is on a trip's books now: the sweep's "captured but not booked" task, if it
+    opened one, has nothing left to do and closes itself (HOLD-12)."""
+    from apps.tasks.models import Task
+
+    now = timezone.now()
+    for task in Task.objects.filter(lead=lead, kind=UNBOOKED_TASK_KIND, status__in=Task.UNRESOLVED):
+        task.status = Task.Status.DONE
+        task.completed_at = now
+        task.completed_by = None
+        task.save(update_fields=["status", "completed_at", "completed_by", "updated_at"])
 
 
 def _tag(hold: Charge, trip, amount: Decimal) -> None:
@@ -764,7 +785,9 @@ def _flag_unbooked(lead) -> int:
 def run_cron(now: datetime | None = None) -> int:
     """The hourly `cleaning-holds` job: the sweep, then placement. The sweep always runs;
     `hold_enabled` gates placement only. Each order on its own: one failure is logged,
-    never stops the run. Returns holds swept plus holds placed (AUTHORIZED this run)."""
+    never stops the run. Returns holds swept plus placements Stripe settled this run:
+    placed (AUTHORIZED) or declined (FAILED, with its task). One still waiting on Stripe
+    (PENDING) and an order with no card (no row, only the task) are not counted."""
     from apps.tasks.models import TaskConfig
 
     now = now or timezone.now()
@@ -778,6 +801,6 @@ def run_cron(now: datetime | None = None) -> int:
         except Exception:
             logger.exception("cleaning hold: placement failed for lead %s", lead.pk)
             continue
-        if hold is not None and hold.status == Charge.Status.AUTHORIZED:
+        if hold is not None and hold.status in (Charge.Status.AUTHORIZED, Charge.Status.FAILED):
             processed += 1
     return processed

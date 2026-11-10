@@ -188,6 +188,21 @@ def test_intent_reuses_the_same_intent_on_a_second_call(client):
     assert lead.payment.charges.count() == 1
 
 
+def test_intent_stripe_refuses_is_a_message_and_no_pending_charge(client):
+    """PAY-08: a failed intent call answers with a sentence the pay page shows, and leaves
+    no PENDING charge without an intent behind."""
+    import stripe
+
+    lead = _lead()
+    with patch.object(services_stripe(), "PaymentIntent") as pi:
+        pi.create.side_effect = stripe.error.APIConnectionError("Network down")
+        resp = client.post(reverse("quote_pay_intent", args=[_tok(lead)]), {"accept_terms": "1"})
+
+    assert resp.status_code == 502
+    assert resp.json()["error"] == "We couldn't start the payment. Please try again."
+    assert not lead.payment.charges.filter(status=Charge.Status.PENDING).exists()
+
+
 def test_intent_refuses_on_lost(client):
     lead = _lead()
     lead.status = Lead.Status.LOST

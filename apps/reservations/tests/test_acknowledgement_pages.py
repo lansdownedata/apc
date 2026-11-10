@@ -399,6 +399,33 @@ def test_affiliate_confirm_inactive_assignment_does_not_stamp(client):
     assert a.affiliate_confirmed_at is None
 
 
+def test_affiliate_confirm_without_the_box_is_refused(client):
+    """DSP-08: the box is required on the server too, not only by the browser."""
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), pickup_date=_future())
+    a = AssignmentFactory(reservation=res, status=Assignment.Status.CONFIRMED)
+    url = reverse("affiliate_trip_confirm", args=[ack.make_affiliate_ack_token(a)])
+
+    resp = client.post(url, {})
+
+    assert resp.status_code == 200
+    assert "Please tick the box below to confirm these details are accurate." in (
+        resp.content.decode()
+    )
+    a.refresh_from_db()
+    assert a.affiliate_confirmed_at is None
+
+
+def test_a_withdrawn_affiliate_page_names_the_trip_not_the_order(client):
+    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), pickup_date=_future())
+    a = AssignmentFactory(reservation=res, status=Assignment.Status.WITHDRAWN)
+    url = reverse("affiliate_trip_confirm", args=[ack.make_affiliate_ack_token(a)])
+
+    body = client.get(url).content.decode()
+
+    assert f"<h1>Trip {res.reference}</h1>" in body
+    assert res.lead.quote_no not in body
+
+
 # --- wedding day-of details (APC-18) ----------------------------------------------
 
 

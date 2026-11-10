@@ -172,8 +172,14 @@ def affiliate_trip_confirm(request: HttpRequest, token: str) -> HttpResponse:
         "cancelled": reservation.is_cancelled or not assignment.is_active,
         "confirmed": assignment.affiliate_confirmed_at is not None,
         "company_name": settings.COMPANY_NAME,
+        "trip_reference": reservation.reference,
+        "ack_error": False,
     }
     if request.method == "POST" and not ctx["cancelled"]:
+        if not ctx["confirmed"] and not request.POST.get("ack"):
+            # The box is the confirmation (DSP-08): the browser's `required` is not enough.
+            ctx["ack_error"] = True
+            return render(request, "public/affiliate_trip_confirm.html", ctx)
         if assignment.affiliate_confirmed_at is None:
             assignment.affiliate_confirmed_at = timezone.now()
             assignment.save(update_fields=["affiliate_confirmed_at", "updated_at"])

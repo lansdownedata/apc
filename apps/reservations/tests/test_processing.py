@@ -412,6 +412,19 @@ def test_an_undecided_suggestion_must_be_decided_first(agent):
         processing.process(trip, user=agent, expected="0.00")
 
 
+def test_the_review_says_when_its_overtime_waits_on_a_decision():
+    """PROC-02: the pane reads this to refuse Process before opening the charge confirm."""
+    trip = _trip()
+    review = reviews.review_for(trip)
+    assert not review.overtime_undecided
+
+    review.suggested_overtime_minutes = 60
+    assert review.overtime_undecided
+
+    review.decided_at = timezone.now()
+    assert not review.overtime_undecided
+
+
 def test_a_stale_pane_is_refused(agent):
     trip = _trip()
     _paid(trip, extra_hours=Decimal("1"))
@@ -902,7 +915,9 @@ def test_hold_as_credit_says_it_is_owed_to_the_customer(agent):
     )
 
     note = review.events.get(kind=ProcessingEvent.Kind.PROCESSED).note
-    assert "held as credit owed to the customer" in note
+    # PROC-07: History quotes the whole note, so the reason sits in brackets, not after a
+    # colon where the closing quote read as stray.
+    assert note == "Overpayment of $200.00 held as credit owed to the customer (Rolling to June)"
     # Still a liability on the books, not revenue: the cash beyond the trip stays deferred.
     books = ledger.order_balances(trip.lead)
     assert books["recognized"] == Decimal("400.00") and books["deferred"] == Decimal("200.00")
