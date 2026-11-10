@@ -60,6 +60,15 @@ def user_detail(request, pk):
             except services.UserManagementError as exc:
                 messages.error(request, str(exc))
             return redirect("user_detail", pk=user.pk)
+        if "phone_form" in request.POST:
+            try:
+                services.change_user_phone(
+                    target=user, phone=request.POST.get("phone", ""), actor=request.user
+                )
+                messages.success(request, "Mobile number updated.")
+            except services.UserManagementError as exc:
+                messages.error(request, str(exc))
+            return redirect("user_detail", pk=user.pk)
         if "departments_form" in request.POST:
             services.set_departments(user, request.POST.getlist("departments"))
             messages.success(request, "Departments updated.")
@@ -102,6 +111,7 @@ def user_invite(request):
             last_name=data["last_name"],
             email=data["email"],
             role=data["role"],
+            phone=data["phone"],
             can_manage_payments=data.get("can_manage_payments", False),
             actor=request.user,
         )

@@ -14,6 +14,7 @@ def _data(**overrides):
         "email": "New.Hire@allprocharter.com",
         "role": User.Role.AGENT,
         "can_manage_payments": False,
+        "phone": "(571) 555-0142",
     }
     base.update(overrides)
     return base
@@ -82,3 +83,21 @@ def test_accept_invite_form_sets_a_usable_password():
     form.save()
     user.refresh_from_db()
     assert user.has_usable_password() is True
+
+
+def test_invite_form_requires_a_phone():
+    form = UserInviteForm(data=_data(phone=""))
+    assert not form.is_valid()
+    assert "phone" in form.errors
+
+
+def test_invite_form_normalises_the_phone():
+    form = UserInviteForm(data=_data(phone="(571) 555-0142"))
+    assert form.is_valid(), form.errors
+    assert form.cleaned_data["phone"] == "+15715550142"
+
+
+def test_invite_form_rejects_an_invalid_phone():
+    form = UserInviteForm(data=_data(phone="12345"))
+    assert not form.is_valid()
+    assert form.errors["phone"] == ["Enter a valid mobile number."]

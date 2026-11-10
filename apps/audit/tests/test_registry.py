@@ -13,6 +13,7 @@ from django.db.models import Model
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
+from apps.accounts.models import User
 from apps.audit import registry
 from apps.audit.display import money
 from apps.audit.models import AuditEntry
@@ -88,6 +89,7 @@ class Case:
 
 
 CASES: dict[str, Case] = {
+    "accounts.User": Case(UserFactory, ("phone", "+15715550142"), ("last_login", timezone.now)),
     "reservations.TripExtra": Case(
         TripExtraFactory, ("label", "Parking"), ("created_by", UserFactory)
     ),
@@ -326,6 +328,7 @@ def test_field_label_uses_the_map_then_the_verbose_name():
 
 
 MINIMAL: dict[str, Callable[[], Model]] = {
+    "accounts.User": User,
     "reservations.Reservation": Reservation,
     "reservations.TripExtra": TripExtra,
     "dispatch.Assignment": Assignment,

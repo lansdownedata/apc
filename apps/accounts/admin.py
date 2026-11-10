@@ -15,7 +15,7 @@ class UserAdmin(DjangoUserAdmin):
     fieldsets = DjangoUserAdmin.fieldsets + (
         (
             "Lead Manager",
-            {"fields": ("role", "phone", "two_factor_enabled", "can_manage_payments")},
+            {"fields": ("role", "phone", "can_manage_payments")},
         ),
     )
     list_display = (

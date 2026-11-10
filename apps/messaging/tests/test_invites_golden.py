@@ -137,6 +137,7 @@ def _invite_user(**over):
         "email": "New.Hire@AllProCharter.com",
         "role": User.Role.AGENT,
         "can_manage_payments": False,
+        "phone": "+15715550142",
         "actor": _admin(),
     }
     return account_services.invite_user(**(values | over))

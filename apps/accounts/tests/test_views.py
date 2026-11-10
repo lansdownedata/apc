@@ -46,6 +46,7 @@ def _invite_payload(**overrides):
         "last_name": "Hire",
         "email": "new.hire@allprocharter.com",
         "role": User.Role.AGENT,
+        "phone": "(571) 555-0142",
     }
     data.update(overrides)
     return data
@@ -59,6 +60,7 @@ def _make_pending(admin, email="new.hire@allprocharter.com"):
             email=email,
             role=User.Role.AGENT,
             can_manage_payments=False,
+            phone="+15715550142",
             actor=admin,
         )
     return user
@@ -277,3 +279,41 @@ def test_accept_invite_icon_inputs_use_field_inset_modifiers(client):
     assert len(lines) == 2
     assert all("field-icon-left" in line for line in lines)
     assert not any(" pl-9" in line or " pr-10" in line for line in lines)
+
+
+def test_user_detail_phone_form_saves_for_an_admin(client):
+    owner = UserFactory(role=User.Role.OWNER_ADMIN)
+    target = UserFactory(role=User.Role.AGENT)
+    client.force_login(owner)
+    resp = client.post(
+        reverse("user_detail", args=[target.pk]), {"phone_form": "1", "phone": "571-555-0199"}
+    )
+    assert resp.status_code == 302
+    target.refresh_from_db()
+    assert target.phone == "+15715550199"
+
+
+def test_user_detail_phone_form_reports_an_invalid_number(client):
+    owner = UserFactory(role=User.Role.OWNER_ADMIN)
+    target = UserFactory(role=User.Role.AGENT, phone="+15715550142")
+    client.force_login(owner)
+    resp = client.post(
+        reverse("user_detail", args=[target.pk]),
+        {"phone_form": "1", "phone": "12345"},
+        follow=True,
+    )
+    assert "Enter a valid mobile number." in resp.content.decode()
+    target.refresh_from_db()
+    assert target.phone == "+15715550142"
+
+
+def test_user_detail_phone_form_is_admin_only(client):
+    agent = UserFactory(role=User.Role.AGENT)
+    target = UserFactory(role=User.Role.AGENT, phone="+15715550142")
+    client.force_login(agent)
+    resp = client.post(
+        reverse("user_detail", args=[target.pk]), {"phone_form": "1", "phone": "571-555-0199"}
+    )
+    assert resp.status_code == 403
+    target.refresh_from_db()
+    assert target.phone == "+15715550142"

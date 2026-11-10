@@ -37,6 +37,12 @@ Escape and backdrop-click close it, matching the shared component's behaviour.
       </label>
 
       <label class="block">
+        <span class="text-[11.5px] font-medium text-muted">Mobile number</span>
+        <div class="mt-1.5">{{ invite_form.phone }}</div>
+        <span class="text-[11px] text-slate-400 mt-1 block">Sign-in codes are texted here.</span>
+      </label>
+
+      <label class="block">
         <span class="text-[11.5px] font-medium text-muted">Role</span>
         <div class="mt-1.5">
           {% include "components/searchable_select.html" with name="role" field_id="f-invite-role" options=roles selected="agent" search="off" %}

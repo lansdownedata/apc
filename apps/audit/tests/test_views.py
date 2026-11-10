@@ -309,6 +309,7 @@ def test_empty_state_text(staff):
 
 def test_empty_state_before_any_entry_starts_today(staff, settings):
     trip = _quiet_trip()
+    AuditEntry.objects.all().delete()  # the signed-in staff user's own creation is audited too
     assert not AuditEntry.objects.exists()
 
     resp = _get(staff, "trip", trip.pk)

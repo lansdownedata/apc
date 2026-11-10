@@ -43,7 +43,6 @@ class User(AbstractUser):
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.AGENT)
     phone = models.CharField(max_length=32, blank=True)
-    two_factor_enabled = models.BooleanField(default=False)
     can_manage_payments = models.BooleanField(
         "can manage payments",
         default=False,

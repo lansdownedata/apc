@@ -15,6 +15,8 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
+from apps.core.phone import to_e164
+
 from .models import Department, User, UserDepartment
 
 
@@ -66,6 +68,21 @@ def set_user_active(*, target: User, active: bool, actor: User) -> User:
         _assert_not_last_admin(target)
     target.is_active = active
     target.save(update_fields=["is_active"])
+    return target
+
+
+def _clean_phone(phone: str) -> str:
+    normalised = to_e164(phone)
+    if normalised is None:
+        raise UserManagementError("Enter a valid mobile number.")
+    return normalised
+
+
+def change_user_phone(*, target: User, phone: str, actor: User) -> User:
+    """Set the number sign-in codes are texted to. Admin-only (the view gates it); the save
+    names the field so the audit trail records the change."""
+    target.phone = _clean_phone(phone)
+    target.save(update_fields=["phone"])
     return target
 
 
@@ -123,7 +140,8 @@ def invite_user(
     last_name: str,
     email: str,
     role: str,
-    can_manage_payments: bool,
+    phone: str,
+    can_manage_payments: bool = False,
     actor: User,
 ) -> tuple[User, bool]:
     """Create a pending staff account and email a set-password link.
@@ -133,6 +151,7 @@ def invite_user(
     """
     if role not in User.Role.values:
         raise UserManagementError(f"Unknown role {role!r}.")
+    phone = _clean_phone(phone)
 
     email = (email or "").strip().lower()
     user = User(
@@ -141,6 +160,7 @@ def invite_user(
         first_name=first_name.strip(),
         last_name=last_name.strip(),
         role=role,
+        phone=phone,
         can_manage_payments=can_manage_payments,
         invited_at=timezone.now(),
         invited_by=actor,

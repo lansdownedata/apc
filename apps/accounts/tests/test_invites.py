@@ -23,6 +23,7 @@ def _invite(admin, email="new.hire@allprocharter.com", role=User.Role.AGENT):
         email=email,
         role=role,
         can_manage_payments=False,
+        phone="+15715550142",
         actor=admin,
     )
 

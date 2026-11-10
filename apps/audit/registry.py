@@ -20,7 +20,8 @@ from django.utils.text import capfirst
 
 from apps.audit import display
 
-# Every registered model is a TimeStampedModel. auditlog's own setting for this
+# Most registered models are TimeStampedModels (User is not: `effective_exclude` keeps only the
+# names a model has). auditlog's own setting for this
 # (AUDITLOG_EXCLUDE_TRACKING_FIELDS) refuses to load without AUDITLOG_INCLUDE_ALL_MODELS,
 # so the two timestamps are added here instead.
 GLOBAL_EXCLUDE = ("created_at", "updated_at")
@@ -171,6 +172,20 @@ def _invoice_line_parents(line: Model) -> dict:
 
 
 SPECS: list[ModelSpec] = [
+    ModelSpec(
+        model="accounts.User",
+        exclude=(
+            "password",
+            "last_login",
+            "date_joined",
+            "preferences",
+            "invited_at",
+            "invite_accepted_at",
+            "invited_by",
+            "username",
+        ),
+        labels={"phone": "Mobile number", "can_manage_payments": "Can manage payments"},
+    ),
     ModelSpec(
         model="reservations.Reservation",
         exclude=(
@@ -376,10 +391,13 @@ def effective_exclude(model_or_instance: type[Model] | Model) -> tuple[str, ...]
     """Every field the trail leaves out for this model: its spec's, its QuickBooks sync
     columns when it is mirrored there, and the timestamps."""
     spec = spec_for(model_or_instance)
+    model = model_or_instance._meta.model
+    columns = {f.name for f in model._meta.concrete_fields}
+    stamps = tuple(name for name in GLOBAL_EXCLUDE if name in columns)
     if spec is None:
-        return GLOBAL_EXCLUDE
-    qbo = qbo_fields(model_or_instance._meta.model) if spec.qbo else ()
-    return tuple(dict.fromkeys(spec.exclude + qbo + GLOBAL_EXCLUDE))
+        return stamps
+    qbo = qbo_fields(model) if spec.qbo else ()
+    return tuple(dict.fromkeys(spec.exclude + qbo + stamps))
 
 
 def field_label(model: type[Model], name: str) -> str:

@@ -6,9 +6,12 @@ from django import forms
 from django.contrib.auth.forms import SetPasswordForm
 from django.db.models import Q
 
+from apps.core.phone import to_e164
+
 from .models import User
 
 FIELD_CLASS = "field"
+INVALID_PHONE = "Enter a valid mobile number."
 
 
 class UserInviteForm(forms.ModelForm):
@@ -16,17 +19,28 @@ class UserInviteForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "email", "role", "can_manage_payments"]
+        fields = ["first_name", "last_name", "email", "phone", "role", "can_manage_payments"]
         widgets = {
             "first_name": forms.TextInput(attrs={"class": FIELD_CLASS, "autocomplete": "off"}),
             "last_name": forms.TextInput(attrs={"class": FIELD_CLASS, "autocomplete": "off"}),
             "email": forms.EmailInput(attrs={"class": FIELD_CLASS, "autocomplete": "off"}),
+            "phone": forms.TextInput(
+                attrs={"class": FIELD_CLASS, "type": "tel", "autocomplete": "tel"}
+            ),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["email"].required = True
         self.fields["first_name"].required = True
+        self.fields["phone"].required = True
+
+    def clean_phone(self) -> str:
+        """Sign-in codes are texted here, so it must be a real number, stored as E.164."""
+        phone = to_e164(self.cleaned_data.get("phone"))
+        if phone is None:
+            raise forms.ValidationError(INVALID_PHONE)
+        return phone
 
     def clean_email(self) -> str:
         """Normalise and reject duplicates.

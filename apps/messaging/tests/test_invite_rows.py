@@ -78,6 +78,7 @@ def _invite_user(**over):
         "email": "new.hire@allprocharter.com",
         "role": User.Role.AGENT,
         "can_manage_payments": False,
+        "phone": "+15715550142",
         "actor": UserFactory(role=User.Role.OWNER_ADMIN),
     }
     return account_services.invite_user(**(values | over))

@@ -176,6 +176,7 @@ def test_a_staff_invitation_still_reaches_the_new_hire(settings):
         email="new.hire@allprocharter.com",
         role=User.Role.AGENT,
         can_manage_payments=False,
+        phone="+15715550142",
         actor=UserFactory(role=User.Role.OWNER_ADMIN),
     )
 

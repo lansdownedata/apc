@@ -1,8 +1,12 @@
 import pytest
+from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
 
 from apps.accounts import services
 from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
+from apps.audit.context import audit_context
+from apps.audit.models import AuditEntry
 
 pytestmark = pytest.mark.django_db
 
@@ -89,3 +93,66 @@ def test_active_admin_count_ignores_agents_and_inactive_admins():
     UserFactory(role=User.Role.OWNER_ADMIN, deactivated=True)
     UserFactory(role=User.Role.AGENT)
     assert services.active_admin_count() == 1
+
+
+def _user_entries(user: User):
+    ct = ContentType.objects.get_for_model(User)
+    return AuditEntry.objects.filter(content_type=ct, object_id=user.pk)
+
+
+def test_invite_user_stores_the_phone():
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    user, _ = services.invite_user(
+        first_name="New",
+        last_name="Hire",
+        email="new.hire@allprocharter.com",
+        role=User.Role.AGENT,
+        phone="+15715550142",
+        actor=admin,
+    )
+    assert User.objects.get(pk=user.pk).phone == "+15715550142"
+
+
+def test_invite_user_rejects_an_invalid_phone():
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    with pytest.raises(services.UserManagementError, match="Enter a valid mobile number."):
+        services.invite_user(
+            first_name="New",
+            last_name="Hire",
+            email="new.hire@allprocharter.com",
+            role=User.Role.AGENT,
+            phone="12345",
+            actor=admin,
+        )
+    assert not User.objects.filter(email="new.hire@allprocharter.com").exists()
+
+
+def test_change_user_phone_writes_an_audit_entry():
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    user = UserFactory(phone="+15715550142")
+    with audit_context(actor=admin, source="test"):
+        services.change_user_phone(target=user, phone="571-555-0199", actor=admin)
+    entry = _user_entries(user).get(action=AuditEntry.Action.UPDATE)
+    assert entry.changes["phone"] == ["+15715550142", "+15715550199"]
+    assert entry.actor == admin
+
+
+def test_change_user_phone_rejects_invalid():
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    user = UserFactory(phone="+15715550142")
+    with pytest.raises(services.UserManagementError, match="Enter a valid mobile number."):
+        services.change_user_phone(target=user, phone="12345", actor=admin)
+    user.refresh_from_db()
+    assert user.phone == "+15715550142"
+
+
+def test_login_bookkeeping_writes_no_audit_entry():
+    user = UserFactory()
+    before = _user_entries(user).filter(action=AuditEntry.Action.UPDATE).count()
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+    assert _user_entries(user).filter(action=AuditEntry.Action.UPDATE).count() == before
+
+
+def test_user_has_no_two_factor_enabled_field():
+    assert "two_factor_enabled" not in {f.name for f in User._meta.get_fields()}
