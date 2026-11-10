@@ -363,12 +363,26 @@ def access_for(contact) -> dict:
             line += f" · last visit {when(account.last_seen_at)}"
     else:
         line = f"Invited {when(account.invited_at)} · not registered yet"
+    contact_phone = to_e164(contact.phone) or ""
+    has_phone = bool(contact_phone)
+    if account is not None and account.phone and status != PlannerAccount.Status.REVOKED:
+        line += f" · Codes go to the number ending in {account.phone[-4:]}"
     return {
         "account": account,
         "line": line,
         "status": status,
         "has_email": bool(contact.email),
-        "can_invite": bool(contact.email) and status in ("", PlannerAccount.Status.REVOKED),
+        "has_phone": has_phone,
+        "phone_last4": contact_phone[-4:],
+        "phone_differs": bool(
+            account
+            and status in (PlannerAccount.Status.INVITED, PlannerAccount.Status.REGISTERED)
+            and has_phone
+            and contact_phone != account.phone
+        ),
+        "can_invite": bool(contact.email)
+        and has_phone
+        and status in ("", PlannerAccount.Status.REVOKED),
         "can_resend": status == PlannerAccount.Status.INVITED,
         "can_revoke": status in (PlannerAccount.Status.INVITED, PlannerAccount.Status.REGISTERED),
         "weddings": weddings,

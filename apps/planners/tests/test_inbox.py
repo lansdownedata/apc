@@ -27,7 +27,7 @@ def _thread(staff, conversation) -> str:
 
 
 def test_a_planner_thread_shows_their_weddings_and_no_create_lead(staff):
-    planner = ContactFactory(name="Dana Planner", email="dana@example.com")
+    planner = ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
     with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         services.invite(planner, actor=UserFactory())
     wedding = LeadFactory(status=Lead.Status.BOOKED, wedding_name="Whitfield & Okafor")

@@ -32,6 +32,9 @@ class PlannerAccount(TimeStampedModel):
     # edit to the contact must not silently change how someone logs in.
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=128)
+    # Snapshot (E.164) of the contact's mobile: where sign-in codes go. Like the email, a later
+    # edit to the contact must not redirect codes; staff copy it over deliberately.
+    phone = models.CharField(max_length=32, blank=True)
     invited_at = models.DateTimeField(null=True, blank=True)
     invited_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"

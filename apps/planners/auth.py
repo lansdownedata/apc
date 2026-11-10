@@ -20,6 +20,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare, salted_hmac
 
+from apps.accounts import two_factor
+
 from .models import PlannerAccount
 
 SESSION_KEY = "planner_account_id"
@@ -30,6 +32,19 @@ def _session_hash(account: PlannerAccount) -> str:
     return salted_hmac(
         "apps.planners.auth.session", account.password, algorithm="sha256"
     ).hexdigest()
+
+
+def planner_subject(account: PlannerAccount) -> two_factor.Subject:
+    """The account flattened for the sign-in code service."""
+    name = account.contact.name.split()
+    return two_factor.Subject(
+        "planner",
+        account.pk,
+        account.phone,
+        account.email,
+        name[0] if name else "",
+        account.password,
+    )
 
 
 def sign_in(request, account: PlannerAccount) -> None:

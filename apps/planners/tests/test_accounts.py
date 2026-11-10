@@ -10,7 +10,7 @@ from apps.core import outbound
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead, LeadContact
 from apps.messaging.models import TouchPoint
-from apps.planners import services
+from apps.planners import auth, services
 from apps.planners.models import PlannerAccount
 from apps.planners.tokens import planner_token
 
@@ -26,7 +26,7 @@ def agent():
 
 @pytest.fixture
 def planner():
-    return ContactFactory(name="Dana Planner", email="Dana@Example.com")
+    return ContactFactory(name="Dana Planner", email="Dana@Example.com", phone="(571) 555-0142")
 
 
 def _invite(contact, agent):
@@ -173,7 +173,7 @@ def test_a_lost_order_is_not_a_wedding_the_planner_sees(planner, agent):
 
 def test_invite_and_resend_are_refused_without_a_public_base_url(planner, agent, settings):
     account, _, _ = _invite(planner, agent)
-    other = ContactFactory(email="second@example.com")
+    other = ContactFactory(email="second@example.com", phone="(571) 555-0142")
     settings.PUBLIC_BASE_URL = ""
     with patch(SEND) as send:
         with pytest.raises(services.PlannerError, match="PUBLIC_BASE_URL"):
@@ -182,3 +182,74 @@ def test_invite_and_resend_are_refused_without_a_public_base_url(planner, agent,
             services.resend(account)
     send.assert_not_called()
     assert not PlannerAccount.objects.filter(contact=other).exists()
+
+
+# --- the sign-in number -----------------------------------------------------------------
+
+
+def test_invite_refuses_a_contact_without_a_mobile(agent):
+    contact = ContactFactory(name="Dana Planner", email="dana@example.com", phone="")
+    with pytest.raises(services.PlannerError) as exc:
+        services.invite(contact, actor=agent)
+    assert str(exc.value) == "Add a mobile number for Dana Planner before inviting them."
+    assert not PlannerAccount.objects.exists()
+
+
+def test_invite_snapshots_the_contact_phone(planner, agent):
+    account, _, _ = _invite(planner, agent)
+    assert account.phone == "+15715550142"
+
+
+def test_reinviting_a_revoked_account_takes_the_current_number(planner, agent):
+    account, _, _ = _invite(planner, agent)
+    services.revoke(account, actor=agent)
+    planner.phone = "(571) 555-0177"
+    planner.save()
+    account, _, _ = _invite(planner, agent)
+    assert account.phone == "+15715550177"
+
+
+def test_editing_the_contact_phone_does_not_move_the_sign_in_number(planner, agent):
+    account, _, _ = _invite(planner, agent)
+    planner.phone = "(571) 555-0199"
+    planner.save()
+    account.refresh_from_db()
+    assert account.phone == "+15715550142"
+
+
+def test_update_sign_in_phone_copies_and_audits(planner, agent):
+    from apps.audit.models import AuditEntry
+
+    account, _, _ = _invite(planner, agent)
+    planner.phone = "(571) 555-0199"
+    planner.save()
+    services.update_sign_in_phone(account, actor=agent)
+    account.refresh_from_db()
+    assert account.phone == "+15715550199"
+    entry = AuditEntry.objects.filter(
+        profile=f"contact:{planner.pk}", actor=agent, object_repr=account.email
+    ).latest("pk")
+    assert "phone" in entry.changes
+
+
+def test_update_sign_in_phone_rejects_an_invalid_contact_number(planner, agent):
+    account, _, _ = _invite(planner, agent)
+    planner.phone = "123"
+    planner.save()
+    with pytest.raises(services.PlannerError):
+        services.update_sign_in_phone(account, actor=agent)
+    account.refresh_from_db()
+    assert account.phone == "+15715550142"
+
+
+def test_planner_subject_fields(planner, agent):
+    account, _, _ = _invite(planner, agent)
+    services.register(account, "a-long-pass-phrase-77")
+    account.refresh_from_db()
+    subject = auth.planner_subject(account)
+    assert subject.kind == "planner"
+    assert subject.pk == account.pk
+    assert subject.phone == "+15715550142"
+    assert subject.email == "dana@example.com"
+    assert subject.first_name == "Dana"
+    assert subject.password_hash == account.password

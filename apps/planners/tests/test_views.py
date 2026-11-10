@@ -30,7 +30,7 @@ PASSWORD = "a-long-pass-phrase-77"
 
 @pytest.fixture
 def account():
-    contact = ContactFactory(name="Dana Planner", email="dana@example.com")
+    contact = ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
     with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return account
@@ -120,7 +120,7 @@ def test_planner_pages_carry_no_marketing_embeds_or_footer(client, settings):
 
 
 def test_an_uninvited_contact_has_no_way_in(client):
-    ContactFactory(email="stranger@example.com")
+    ContactFactory(email="stranger@example.com", phone="(571) 555-0142")
     response = client.post(
         reverse("planners:login"), {"email": "stranger@example.com", "password": PASSWORD}
     )

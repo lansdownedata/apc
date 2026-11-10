@@ -61,7 +61,7 @@ def _edit(client, key, **over):
 
 
 def _invite_planner(name="Dana Planner", email="dana@example.com") -> PlannerAccount:
-    contact = ContactFactory(name=name, email=email, phone="")
+    contact = ContactFactory(name=name, email=email, phone="(571) 555-0142")
     account, sent = planner_services.invite(contact, actor=UserFactory())
     assert sent is True
     return account

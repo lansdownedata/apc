@@ -61,3 +61,16 @@ def revoke(request, pk: int):
     services.revoke(account, actor=request.user)
     messages.success(request, f"{account.contact.name} can no longer sign in.")
     return _back(account.contact)
+
+
+@login_required
+@require_POST
+def update_phone(request, pk: int):
+    account = get_object_or_404(PlannerAccount.objects.select_related("contact"), contact_id=pk)
+    try:
+        services.update_sign_in_phone(account, actor=request.user)
+    except services.PlannerError as exc:
+        messages.error(request, str(exc))
+        return _back(account.contact)
+    messages.success(request, f"{account.contact.name}'s sign-in codes now go to the new number.")
+    return _back(account.contact)

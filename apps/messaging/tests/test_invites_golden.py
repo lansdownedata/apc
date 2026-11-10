@@ -68,7 +68,7 @@ def _live(settings):
 
 
 def _planner(name="Dana Planner", email="Dana@Example.com"):
-    return ContactFactory(name=name, email=email, phone="")
+    return ContactFactory(name=name, email=email, phone="(571) 555-0142")
 
 
 def _admin() -> User:

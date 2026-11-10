@@ -24,8 +24,10 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
+from apps.audit.context import audit_context
 from apps.contacts.models import Contact
 from apps.core import outbound
+from apps.core.phone import to_e164
 from apps.leads.models import Lead
 
 from .models import PlannerAccount
@@ -121,6 +123,9 @@ def invite(contact: Contact, *, actor) -> tuple[PlannerAccount, bool]:
     email = (contact.email or "").strip().lower()
     if not email:
         raise PlannerError(f"Add an email address for {contact.name} before inviting them.")
+    phone = to_e164(contact.phone)
+    if phone is None:
+        raise PlannerError(f"Add a mobile number for {contact.name} before inviting them.")
     account = PlannerAccount.objects.filter(contact=contact).first()
     if account is not None and account.status == PlannerAccount.Status.REGISTERED:
         raise PlannerError(f"{contact.name} already has planner access.")
@@ -128,6 +133,7 @@ def invite(contact: Contact, *, actor) -> tuple[PlannerAccount, bool]:
         raise PlannerError(f"{contact.name} is already invited. Use Resend to send a new link.")
     account = account or PlannerAccount(contact=contact)
     account.email = email
+    account.phone = phone
     account.set_unusable_password()
     account.invited_at = timezone.now()
     account.invited_by = actor
@@ -151,6 +157,19 @@ def resend(account: PlannerAccount) -> bool:
     account.invited_at = timezone.now()
     account.save(update_fields=["invited_at", "updated_at"])
     return _send_invite(account)
+
+
+def update_sign_in_phone(account: PlannerAccount, *, actor) -> PlannerAccount:
+    """Copy the contact's current mobile onto the account: the number sign-in codes go to."""
+    phone = to_e164(account.contact.phone)
+    if phone is None:
+        raise PlannerError(
+            f"{account.contact.name}'s number is not a valid mobile. Fix it on the contact first."
+        )
+    account.phone = phone
+    with audit_context(actor=actor, source="planner sign-in number"):
+        account.save(update_fields=["phone", "updated_at"])
+    return account
 
 
 def revoke(account: PlannerAccount, *, actor) -> None:

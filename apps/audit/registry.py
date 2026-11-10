@@ -368,6 +368,22 @@ SPECS: list[ModelSpec] = [
         label=lambda line: f"Invoice line {display.money(line.amount)}",
     ),
     ModelSpec(
+        model="planners.PlannerAccount",
+        exclude=(
+            "password",
+            "last_login",
+            "last_seen_at",
+            "view_count",
+            "failed_logins",
+            "locked_until",
+            "invited_by",
+            "revoked_by",
+        ),
+        labels={"phone": "Sign-in number"},
+        parents=_contact_child_parents,
+        label=lambda account: account.email,
+    ),
+    ModelSpec(
         model="planners.PlannerRequest",
         exclude=("message", "task"),
         parents=_order_child_parents,

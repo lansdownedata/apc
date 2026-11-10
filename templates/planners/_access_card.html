@@ -20,14 +20,30 @@
         <i class="ti ti-mail text-[15px] text-goldd"></i>{% if pa.status == 'revoked' %}Invite again{% else %}Invite{% endif %}
       </button>
     </form>
-    {% elif not pa.has_email and not pa.can_resend and not pa.can_revoke %}
-    <span class="text-[12px] text-muted">Add an email to invite them</span>
+    {% elif not pa.can_resend and not pa.can_revoke %}
+    <span class="text-[12px] text-muted">Add an email and a mobile number to invite them</span>
     {% endif %}
     {% if pa.can_resend %}
     <form method="post" action="{% url 'planner_resend' contact.pk %}">
       {% csrf_token %}
       <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
         <i class="ti ti-send text-[15px] text-goldd"></i>Resend
+      </button>
+    </form>
+    {% endif %}
+    {% if pa.phone_differs %}
+    <form method="post" action="{% url 'planner_update_phone' contact.pk %}" x-data x-ref="phoneForm">
+      {% csrf_token %}
+      <button type="button"
+              class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50"
+              @click="$store.modal.confirm({
+                title: 'Change sign-in number',
+                message: {{ contact.name|json_string }} + '\'s sign-in codes will go to the number ending in {{ pa.phone_last4 }}. Every device they asked us to remember will need a new code.',
+                variant: 'gold',
+                confirmText: 'Change number',
+                onConfirm: () => $refs.phoneForm.submit(),
+              })">
+        <i class="ti ti-phone text-[15px] text-goldd"></i>Use contact's number
       </button>
     </form>
     {% endif %}

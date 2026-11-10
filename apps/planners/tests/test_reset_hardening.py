@@ -23,7 +23,7 @@ PASSWORD = "a-long-pass-phrase-77"
 
 @pytest.fixture
 def registered():
-    contact = ContactFactory(name="Dana Planner", email="dana@example.com")
+    contact = ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
     with patch(SEND, return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     return services.register(account, PASSWORD)
@@ -88,7 +88,7 @@ def test_a_per_email_cap_applies_silently(client, registered):
 
 
 def test_an_invited_planner_gets_no_mail_and_the_page_says_what_to_do(client):
-    contact = ContactFactory(email="ivy@example.com")
+    contact = ContactFactory(email="ivy@example.com", phone="(571) 555-0142")
     with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
     with patch(SEND) as send:

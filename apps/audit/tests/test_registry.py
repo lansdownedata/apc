@@ -71,6 +71,10 @@ def _planner_request() -> PlannerRequest:
     )
 
 
+def _planner_account() -> PlannerAccount:
+    return PlannerAccount.objects.create(contact=ContactFactory(), email="w@plans.test")
+
+
 def _phone() -> ContactPhone:
     return ContactPhone.objects.create(contact=ContactFactory(phone=""), number="+12025550134")
 
@@ -126,6 +130,9 @@ CASES: dict[str, Case] = {
     ),
     "billing.Invoice": Case(InvoiceFactory, ("po_number", "PO-9"), ("edit_note", "Changed PO")),
     "billing.InvoiceLine": Case(InvoiceLineFactory, ("description", "Airport run"), None),
+    "planners.PlannerAccount": Case(
+        _planner_account, ("phone", "+15715550142"), ("failed_logins", 3)
+    ),
     "planners.PlannerRequest": Case(_planner_request, ("about", "Sunday run"), None),
 }
 
@@ -348,6 +355,7 @@ MINIMAL: dict[str, Callable[[], Model]] = {
     "payments.AffiliatePayable": AffiliatePayable,
     "billing.Invoice": Invoice,
     "billing.InvoiceLine": InvoiceLine,
+    "planners.PlannerAccount": PlannerAccount,
     "planners.PlannerRequest": PlannerRequest,
 }
 

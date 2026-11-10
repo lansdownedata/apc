@@ -35,6 +35,7 @@ urlpatterns = [
     path("<int:pk>/planner/invite/", planner_views.invite, name="planner_invite"),
     path("<int:pk>/planner/resend/", planner_views.resend, name="planner_resend"),
     path("<int:pk>/planner/revoke/", planner_views.revoke, name="planner_revoke"),
+    path("<int:pk>/planner/phone/", planner_views.update_phone, name="planner_update_phone"),
     path("companies/<int:pk>/", views.company_detail, name="company_detail"),
     path("companies/<int:pk>/update/", views.company_update, name="company_update"),
 ]

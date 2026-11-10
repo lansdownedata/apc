@@ -25,7 +25,7 @@ PASSWORD = "a-long-pass-phrase-77"
 
 @pytest.fixture
 def planner(client):
-    contact = ContactFactory(name="Dana Planner", email="dana@example.com")
+    contact = ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
     with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = services.invite(contact, actor=UserFactory())
     services.register(account, PASSWORD)

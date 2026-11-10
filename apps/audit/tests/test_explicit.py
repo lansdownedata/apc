@@ -187,7 +187,7 @@ def test_planner_request_entry_has_planner_email(client):
     from apps.leads.models import LeadContact
     from apps.planners import services as planner_services
 
-    contact = ContactFactory(name="Dana Planner", email="dana@example.com")
+    contact = ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
     with patch("apps.notifications.email.deliver_html_email", return_value="pm-1"):
         account, _ = planner_services.invite(contact, actor=UserFactory())
     planner_services.register(account, "a-long-pass-phrase-77")

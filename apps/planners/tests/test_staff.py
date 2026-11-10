@@ -6,6 +6,7 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
+from apps.audit.models import AuditEntry
 from apps.contacts.factories import ContactFactory
 from apps.core import outbound
 from apps.leads.factories import LeadFactory
@@ -26,7 +27,7 @@ def staff(client):
 
 @pytest.fixture
 def contact():
-    return ContactFactory(name="Dana Planner", email="dana@example.com")
+    return ContactFactory(name="Dana Planner", email="dana@example.com", phone="(571) 555-0142")
 
 
 def _profile(client, contact) -> str:
@@ -45,7 +46,7 @@ def test_the_profile_offers_an_invite_to_someone_without_access(staff, contact):
 def test_without_an_email_the_invite_is_explained_not_offered(staff):
     contact = ContactFactory(email=None)
     html = _profile(staff, contact)
-    assert "Add an email to invite" in html
+    assert "Add an email and a mobile number to invite them" in html
     assert reverse("planner_invite", args=[contact.pk]) not in html
 
 
@@ -68,7 +69,7 @@ def test_invite_is_refused_while_outbound_is_off_and_the_state_still_shows(
 ):
     with patch(SEND, return_value="pm-1"):
         services.invite(contact, actor=UserFactory())
-    other = ContactFactory(email="second@example.com")
+    other = ContactFactory(email="second@example.com", phone="(571) 555-0142")
     settings.OUTBOUND_ENABLED = False
     with patch(SEND) as send:
         response = staff.post(reverse("planner_invite", args=[other.pk]), follow=True)
@@ -116,3 +117,51 @@ def test_the_actions_are_staff_only_and_post_only(client, contact):
     assert response.status_code == 302 and "/login/" in response.url
     client.force_login(UserFactory())
     assert client.get(url).status_code == 405
+
+
+def _registered(contact):
+    with patch(SEND, return_value="pm-1"):
+        account, _ = services.invite(contact, actor=UserFactory())
+    return account
+
+
+def test_update_phone_view_requires_staff_login_and_post(client, contact):
+    url = reverse("planner_update_phone", args=[contact.pk])
+    response = client.post(url)
+    assert response.status_code == 302 and "/login/" in response.url
+    client.force_login(UserFactory())
+    assert client.get(url).status_code == 405
+
+
+def test_update_phone_view_copies_the_contact_number(staff, contact):
+    account = _registered(contact)
+    contact.phone = "(571) 555-0199"
+    contact.save()
+    response = staff.post(reverse("planner_update_phone", args=[contact.pk]))
+    assert response.status_code == 302
+    account.refresh_from_db()
+    assert account.phone == "+15715550199"
+
+
+def test_access_card_shows_last4_and_the_button_only_when_numbers_differ(staff, contact):
+    _registered(contact)
+    html = _profile(staff, contact)
+    assert "Codes go to the number ending in 0142" in html
+    assert "Use contact" not in html
+    contact.phone = "(571) 555-0199"
+    contact.save()
+    html = _profile(staff, contact)
+    assert "Use contact&#x27;s number" in html or "Use contact's number" in html
+    assert "Change sign-in number" in html
+    assert "ending in 0199" in html
+    assert reverse("planner_update_phone", args=[contact.pk]) in html
+
+
+def test_update_sign_in_phone_audits_under_the_contact_profile(contact):
+    agent = UserFactory()
+    account = _registered(contact)
+    contact.phone = "(571) 555-0199"
+    contact.save()
+    services.update_sign_in_phone(account, actor=agent)
+    entry = AuditEntry.objects.filter(profile=f"contact:{contact.pk}", actor=agent).latest("pk")
+    assert "phone" in entry.changes
