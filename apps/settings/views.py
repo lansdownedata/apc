@@ -15,7 +15,7 @@ from apps.accounts.permissions import owner_admin_required
 from apps.addresses.models import Venue
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
-from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
+from apps.fleet.models import RenewalType
 from apps.leads.models import Lead, ServiceType, VehicleType
 from apps.messaging import defaults, editor, fields, listing, recipients, rules, triggers
 from apps.messaging.models import MessageTemplate, NotificationConfig
@@ -24,6 +24,7 @@ from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
 from apps.vendors.models import AffiliateDocumentType
 
+from .attention import fleet_attention_count
 from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
@@ -35,15 +36,6 @@ from .forms import (
     VehicleTypeForm,
     VenueForm,
 )
-
-
-def _fleet_attention_count() -> int:
-    """Active drivers + units whose paperwork is lapsed or expiring — the tile's nudge."""
-    subjects = [
-        *Driver.objects.filter(status=Driver.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
-        *Vehicle.objects.filter(status=Vehicle.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
-    ]
-    return sum(1 for s in subjects if s.needs_attention)
 
 
 @login_required
@@ -64,7 +56,7 @@ def settings_index(request: HttpRequest) -> HttpResponse:
             .exclude(max_vehicle__isnull=True, vehicle_cap__isnull=True)
             .count(),
             "renewal_type_count": RenewalType.objects.filter(active=True).count(),
-            "fleet_attention_count": _fleet_attention_count(),
+            "fleet_attention_count": fleet_attention_count(),
             "dispatch_monitor_on": DispatchAlertConfig.load().enabled,
             "open_dispatch_exceptions": DispatchException.objects.filter(
                 resolved_at__isnull=True
