@@ -111,6 +111,41 @@ def test_flagged_item_has_a_dot(owner):
     assert 'title="Automated messages are off"' in _overview(owner)
 
 
+def test_current_item_is_aria_current(owner):
+    html = _overview(owner)
+
+    assert 'aria-current="page"' in _anchor(html, "Overview")
+    assert "aria-current" not in _anchor(html, "Vehicle types")
+
+
+def test_items_are_named_by_their_label(owner):
+    assert 'aria-label="Vehicle types"' in _anchor(_overview(owner), "Vehicle types")
+
+
+def test_flagged_item_name_carries_the_attention_and_the_dot_is_hidden(owner):
+    cfg = NotificationConfig.load()
+    cfg.enabled = False
+    cfg.save()
+    html = _overview(owner)
+
+    assert 'aria-label="Messages: Automated messages are off"' in _anchor(html, "Messages")
+    dot = re.search(r'<span\b[^>]*title="Automated messages are off"[^>]*>', html).group(0)
+    assert 'aria-hidden="true"' in dot
+    assert "role=" not in dot
+
+
+def test_users_is_found_by_two_factor(owner):
+    search = re.search(r'data-search="([^"]*)"', _anchor(_overview(owner), "Users")).group(1)
+
+    assert "2fa" in search
+
+
+def test_overview_is_found_by_go_live(owner):
+    search = re.search(r'data-search="([^"]*)"', _anchor(_overview(owner), "Overview")).group(1)
+
+    assert "go-live" in search
+
+
 def test_no_dot_when_fine(owner):
     assert 'title="Automated messages are off"' not in _overview(owner)
 

@@ -1,7 +1,8 @@
 {% comment %}
 The settings menu, rendered by {% settings_menu %} into the sidebar on every Settings page.
 Context: sections (menu.Section list), current (the menu.Item for this page, or None),
-flagged (url_name -> attention title; those items get a red dot).
+flagged (url_name -> attention title; those items get a red dot, and the title joins the
+link's aria-label so it survives the collapsed sidebar).
 Filtering is settingsMenu() in static/js/app.js; it only toggles x-show, never builds markup.
 {% endcomment %}
 <div x-data="settingsMenu()" class="flex flex-col gap-0.5">
@@ -23,13 +24,15 @@ Filtering is settingsMenu() in static/js/app.js; it only toggles x-show, never b
     {% endif %}
     {% for item in section.items %}
     <a href="{% url item.url_name %}" title="{{ item.label }}"
+       aria-label="{{ item.label }}{% for url_name, title in flagged.items %}{% if url_name == item.url_name %}: {{ title }}{% endif %}{% endfor %}"
+       {% if item == current %}aria-current="page"{% endif %}
        data-search="{{ item.label|lower }} {{ item.keywords }}"
        x-show="!navOpen || matches($el)"
        class="nav-item group relative flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if item == current %}nav-active{% else %}text-slate-400{% endif %}">
       <i class="ti {{ item.icon }} text-[18px] shrink-0"></i>
       <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">{{ item.label }}</span>
       {% for url_name, title in flagged.items %}{% if url_name == item.url_name %}
-      <span role="img" aria-label="{{ title }}" title="{{ title }}"
+      <span aria-hidden="true" title="{{ title }}"
             class="w-1.5 h-1.5 rounded-full bg-danger shrink-0"
             :class="navOpen ? '' : 'absolute top-2 left-6'"></span>
       {% endif %}{% endfor %}
