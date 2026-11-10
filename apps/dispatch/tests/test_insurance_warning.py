@@ -58,11 +58,18 @@ def test_no_policy_on_file():
     assert _vendor().coverage_on(TRIP_DAY, today=TODAY) == "none"
 
 
-def test_the_best_policy_wins():
-    """A renewal on file covers the trip even while the old policy lapses first."""
+def test_any_lapsed_policy_means_the_affiliate_is_not_covered():
+    """TASK-10: a vendor with an expired policy can't operate even while another is valid —
+    the rule Compliance and the vendor page already apply (worst policy governs)."""
     vendor = _vendor(TODAY - timedelta(days=3), TRIP_DAY + timedelta(days=200))
 
-    assert vendor.coverage_on(TRIP_DAY, today=TODAY) == "covered"
+    assert vendor.coverage_on(TRIP_DAY, today=TODAY) == "expired"
+
+
+def test_a_policy_lapsing_before_the_trip_warns_while_another_covers_it():
+    vendor = _vendor(TRIP_DAY - timedelta(days=5), TRIP_DAY + timedelta(days=200))
+
+    assert vendor.coverage_on(TRIP_DAY, today=TODAY) == "expires_before_trip"
 
 
 def test_a_policy_that_only_starts_after_the_trip_does_not_cover_it():

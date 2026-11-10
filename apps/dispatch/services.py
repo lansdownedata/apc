@@ -374,8 +374,15 @@ def _resolve(
 _IN_HOUSE_ONLY_UNASSIGN = "An in-house assignment can only be unassigned."
 
 
-def confirm(assignment: Assignment) -> Assignment:
-    """The affiliate accepted."""
+def confirm(assignment: Assignment, *, user=None) -> Assignment:
+    """The affiliate accepted.
+
+    ``user`` is the person who clicked Confirm in the drawer (TASK-04): that explicit
+    confirmation counts as the affiliate confirming, so the trip's "Affiliate confirmed"
+    task closes as done by them. `affiliate_confirmed_at` stays the affiliate's own
+    acknowledgement — the T-48 request, the affiliate's confirm page, the "awaiting
+    confirmation" warning and the response-time scorecard keep reading only that. A GNet
+    acceptance (the gateway callback) has no user and leaves the task to the predicate."""
     from apps.messaging import events
 
     if assignment.is_in_house:
@@ -384,8 +391,21 @@ def confirm(assignment: Assignment) -> Assignment:
         return assignment
     confirmed = _resolve(assignment, Assignment.Status.CONFIRMED)
     reservation = confirmed.reservation
+    if user is not None:
+        _confirmed_by(reservation, user)
     events.emit("affiliate_accepted", reservation.lead, reservation)
     return confirmed
+
+
+def _confirmed_by(reservation: Reservation, user) -> None:
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    task = Task.objects.filter(
+        reservation=reservation, kind="affiliate_confirmed", status__in=Task.UNRESOLVED
+    ).first()
+    if task is not None:
+        tasks.complete(task, user)
 
 
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:

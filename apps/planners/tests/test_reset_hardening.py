@@ -1,4 +1,4 @@
-"""Review fixes: password reset — timing, per-email cap, its own 3-day links (APC-66)."""
+"""Review fixes: password reset — timing, per-email cap, its own 7-day links (APC-66, APC-130)."""
 
 import re
 from datetime import datetime, timedelta
@@ -50,6 +50,24 @@ def test_reset_links_last_seven_days_as_the_email_says(registered):
         stale = planner_reset_token.make_token(registered)
     assert planner_reset_token.check_token(registered, fresh) is True
     assert planner_reset_token.check_token(registered, stale) is False
+
+
+def test_the_sent_page_promises_the_links_real_life(client, registered):
+    """PLN-09: the page said three days while the link (and the email) said seven."""
+    with patch(SEND, return_value="pm-1"):
+        page = _post(client, "dana@example.com").content.decode()
+    assert "It works for seven days." in page
+    assert "three days" not in page
+
+
+def test_the_sent_page_follows_the_reset_links_timeout(client, registered):
+    with (
+        patch.object(planner_reset_token, "timeout", timedelta(days=5)),
+        patch(SEND, return_value="pm-1"),
+    ):
+        page = _post(client, "dana@example.com").content.decode()
+    assert "It works for five days." in page
+    assert "seven days" not in page
 
 
 def test_the_reset_page_refuses_an_expired_reset_link(client, registered):

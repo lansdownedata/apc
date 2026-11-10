@@ -5,9 +5,13 @@ only on the vendor page. This turns each policy into an `insurance_renewal` task
 Affiliate Management: scheduled at creation, opening 30 days before expiry, due the
 morning it expires, and escalating through APC-52 like any other task.
 
-- A policy gets a task only while its vendor is active and no later policy has
-  superseded it — a renewal already on file needs no chasing.
-- The task closes itself (system-done) once a policy with a later expiry is uploaded.
+- Every policy of an active vendor gets its own task (TASK-10). A later policy on file
+  doesn't suppress or close it: a vendor with any lapsed policy can't operate, which is
+  what Compliance and the vendor page show.
+- The task follows its policy's expiry. Moved out of the window (renewed), an open task
+  closes itself (system-done) and comes back when the new expiry's window opens; moved
+  inside it, the due date follows. Removing the policy (a delete — there is no inactive
+  flag) deletes its task with it.
 - Deactivating the vendor marks its unresolved tasks not-applicable.
 
 `run` is called from `run-tasks` for every vendor, and `sync_vendor` from the vendor
@@ -30,19 +34,43 @@ from .models import Task, TaskConfig
 KIND = "insurance_renewal"
 
 
-def _superseded(policies: list[VendorInsurance]) -> set[int]:
-    """Policy pks some other policy on the same vendor outlasts."""
-    latest: dict[int, object] = {}
-    for p in policies:
-        if p.vendor_id not in latest or p.expiry_date > latest[p.vendor_id]:
-            latest[p.vendor_id] = p.expiry_date
-    return {p.pk for p in policies if p.expiry_date < latest[p.vendor_id]}
+def _follow(task: Task, policy: VendorInsurance, kind, now: datetime) -> bool:
+    """Bring an existing task in line with its policy's expiry. Returns whether it changed.
+
+    The open time never moves on a task that has opened, the escalation tier only resets
+    when a closed task comes back for a new expiry, and a task a person closed stays closed.
+    """
+    opens = kind.opens.resolve(policy.expiry_date)
+    due = kind.due.resolve(policy.expiry_date)
+    before = (task.status, task.opens_at, task.due_at)
+    if task.status == Task.Status.OPEN:
+        if opens > now:  # renewed: its window is in the future again
+            task.status, task.completed_at, task.completed_by = Task.Status.DONE, now, None
+        else:
+            task.due_at = max(due, task.opens_at)
+    elif task.status == Task.Status.SCHEDULED:
+        task.opens_at = max(opens, now)
+        task.due_at = max(due, task.opens_at)
+        if task.opens_at <= now:
+            task.status = Task.Status.OPEN
+    elif task.closed_by_system and opens <= now:
+        # Its window has come round again (or the old "a later policy covers it" rule
+        # closed it while the policy still lapses).
+        task.status, task.completed_at, task.escalated_tier = Task.Status.OPEN, None, 0
+        task.opens_at = max(opens, task.opens_at)
+        task.due_at = max(due, task.opens_at)
+    else:
+        return False
+    if (task.status, task.opens_at, task.due_at) == before:
+        return False
+    task.updated_at = now
+    return True
 
 
 def run(
     now: datetime | None = None, *, vendor_id: int | None = None, config: TaskConfig | None = None
 ) -> int:
-    """Create, close and retire renewal tasks. Idempotent; returns the rows changed."""
+    """Create, follow, close and retire renewal tasks. Idempotent; returns the rows changed."""
     config = config or TaskConfig.load()
     if not config.enabled:
         return 0
@@ -56,13 +84,15 @@ def run(
         policies = policies.filter(vendor_id=vendor_id)
         tasks = tasks.filter(vendor_id=vendor_id)
     policies = list(policies)
-    superseded = _superseded(policies)
-    have = set(tasks.values_list("insurance_id", flat=True))
+    have = {t.insurance_id: t for t in tasks.filter(insurance__in=policies)}
     owner = config.owner_for(kind.department)
 
-    new = []
+    new, followed = [], []
     for policy in policies:
-        if policy.pk in have or policy.pk in superseded:
+        task = have.get(policy.pk)
+        if task is not None:
+            if _follow(task, policy, kind, now):
+                followed.append(task)
             continue
         opens_at = max(kind.opens.resolve(policy.expiry_date), now)
         new.append(
@@ -78,14 +108,26 @@ def run(
             )
         )
     Task.objects.bulk_create(new)
-
-    unresolved = tasks.filter(status__in=Task.UNRESOLVED)
-    changed = len(new)
-    changed += unresolved.filter(insurance_id__in=superseded).update(
-        status=Task.Status.DONE, completed_at=now, completed_by=None, updated_at=now
+    Task.objects.bulk_update(
+        followed,
+        [
+            "status",
+            "opens_at",
+            "due_at",
+            "completed_at",
+            "completed_by",
+            "escalated_tier",
+            "updated_at",
+        ],
     )
-    changed += unresolved.exclude(vendor__status=Vendor.Status.ACTIVE).update(
-        status=Task.Status.NOT_APPLICABLE, completed_at=now, completed_by=None, updated_at=now
+
+    changed = len(new) + len(followed)
+    changed += (
+        tasks.filter(status__in=Task.UNRESOLVED)
+        .exclude(vendor__status=Vendor.Status.ACTIVE)
+        .update(
+            status=Task.Status.NOT_APPLICABLE, completed_at=now, completed_by=None, updated_at=now
+        )
     )
     return changed
 

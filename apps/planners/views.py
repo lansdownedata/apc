@@ -316,7 +316,11 @@ def password_reset(request: HttpRequest) -> HttpResponse:
             _count(request, "reset", RESET_WINDOW)
             services.send_password_reset(request.POST.get("email", ""))
         sent = True  # the same answer whoever asked, so it never confirms an account
-    return _page(request, "planners/password_reset.html", {"sent": sent})
+    return _page(
+        request,
+        "planners/password_reset.html",
+        {"sent": sent, "link_days": planner_reset_token.timeout.days},
+    )
 
 
 @planner_required

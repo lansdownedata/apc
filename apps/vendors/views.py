@@ -330,7 +330,7 @@ def _child_form_view(
         obj.save()
         form.save_m2m()
         if isinstance(obj, VendorInsurance):
-            vendor_tasks.sync_vendor(vendor)  # a later policy closes the renewal (APC-71)
+            vendor_tasks.sync_vendor(vendor)  # a renewed expiry closes its renewal (TASK-10)
         messages.success(request, done)  # names the thing, not the page (SET-19)
         return redirect("vendor_detail", pk=vendor.pk)
     return render(

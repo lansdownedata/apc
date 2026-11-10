@@ -11,8 +11,8 @@ with nothing new changes nothing and returns 0. Each tick:
    system-closed tasks on upcoming trips (so a withdrawn offer reopens its task). This is
    what closes work whose data arrived with no seam hook: the GNet callback, the admin,
    the LA webhook, a touch-point the send loop just delivered.
-4. **Vendor tasks** (APC-71) — insurance renewals created, closed by a later policy,
-   retired with an inactive vendor (`vendor_tasks`).
+4. **Vendor tasks** (APC-71) — insurance renewals created, following their policy's
+   expiry (closed when renewed), retired with an inactive vendor (`vendor_tasks`).
 5. **Post-trip** (APC-58) — trips that finished (Done, or past their scheduled end plus
    the grace with no status) enter the post-trip workflow, and any stage whose
    predecessors closed through a path with no hook opens its successors.

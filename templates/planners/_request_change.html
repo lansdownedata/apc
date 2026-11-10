@@ -32,7 +32,7 @@
       </a>
     </div>
     {% else %}
-    <form method="post" action="{% url 'planners:request_change' w.pk %}" x-data="{ text: '', busy: false }" @submit="busy = true">
+    <form method="post" action="{% url 'planners:request_change' w.pk %}" x-data="{ text: '', busy: false }" @submit="busy = true" @pageshow.window="busy = false; text = $refs.body.value">
       {% csrf_token %}
       <div class="space-y-4 px-5 py-5 sm:px-6">
         <div>
@@ -42,7 +42,7 @@
         </div>
         <div>
           <label for="chg-text" class="mb-1.5 block text-[12px] font-medium text-muted">What needs to change?</label>
-          <textarea id="chg-text" name="body" rows="4" maxlength="2000" required x-model="text" class="field"
+          <textarea id="chg-text" name="body" rows="4" maxlength="2000" required x-model="text" x-ref="body" class="field"
                     placeholder="e.g. The ceremony now starts at 3:30, so the hotel pickups need to move up."></textarea>
         </div>
         <p class="text-[12px] leading-relaxed text-muted">

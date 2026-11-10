@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -102,7 +103,10 @@ def _units(key: str, variant: str) -> tuple[str, ...]:
     return (HOURS, DAYS)
 
 
-_BALANCE_NOTE = "Opens when the balance is charged (30 days before pickup)."
+_BALANCE_NOTE = (
+    f"Opens when the balance is charged ({settings.BALANCE_CHARGE_DAYS_BEFORE} days before "
+    "the first pickup), or at booking inside that window."
+)
 _FARM_BALANCE_NOTE = "Opens when the trip ends."
 _RENEWAL_NOTE = "Opens 30 days before expiry."
 

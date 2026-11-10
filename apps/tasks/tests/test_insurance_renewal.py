@@ -17,6 +17,7 @@ from apps.notifications.models import Notification
 from apps.tasks import vendor_tasks
 from apps.tasks.jobs import run_tasks
 from apps.tasks.models import Task
+from apps.vendors import compliance
 from apps.vendors.factories import VendorFactory, VendorInsuranceFactory
 from apps.vendors.models import Vendor
 
@@ -75,7 +76,9 @@ def test_a_policy_already_inside_the_window_opens_straight_away():
     assert _task(policy).status == Task.Status.OPEN
 
 
-def test_uploading_a_later_policy_closes_it(client):
+def test_uploading_a_later_policy_does_not_close_it(client):
+    """TASK-10: an expiring policy is still critical while another is valid — the vendor
+    can't operate once any policy on file has lapsed, so its renewal stays owned work."""
     policy = _policy(12)
     run_tasks()
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
@@ -89,12 +92,125 @@ def test_uploading_a_later_policy_closes_it(client):
 
     client.post(reverse("insurance_create", args=[policy.vendor.pk]), renewal)
 
+    assert _task(policy).status == Task.Status.OPEN
+    # The new policy is a year out, so its own task is only scheduled.
+    new = policy.vendor.policies.get(policy_number="P-NEW")
+    assert _task(new).status == Task.Status.SCHEDULED
+
+
+def test_a_policy_expiring_in_10_days_is_critical_and_gets_a_task_while_another_is_valid():
+    soon = _policy(10)
+    valid = _policy(365, vendor=soon.vendor)
+
+    run_tasks()
+
+    assert _task(soon).status == Task.Status.OPEN
+    assert _task(valid).status == Task.Status.SCHEDULED
+    (row,) = compliance.report()
+    assert (row.status, row.expiry) == ("critical", soon.expiry_date)
+
+
+def test_moving_the_policys_expiry_a_year_out_closes_its_task(client):
+    policy = _policy(10)
+    _policy(365, vendor=policy.vendor)
+    run_tasks()
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    renewed = {
+        "insurer": policy.insurer,
+        "policy_number": policy.policy_number,
+        "coverage_amount": "1000000",
+        "effective_date": policy.effective_date.isoformat(),
+        "expiry_date": (policy.expiry_date + timedelta(days=365)).isoformat(),
+    }
+
+    client.post(reverse("insurance_edit", args=[policy.pk]), renewed)
+
     task = _task(policy)
     assert task.status == Task.Status.DONE
     assert task.completed_by is None
-    # The renewal itself is a year out, so its own task is only scheduled.
-    new = policy.vendor.policies.get(policy_number="P-NEW")
-    assert _task(new).status == Task.Status.SCHEDULED
+
+
+def test_adding_an_unrelated_policy_does_not_close_it():
+    policy = _policy(10)
+    run_tasks()
+    _policy(400, vendor=policy.vendor)
+
+    run_tasks()
+
+    assert _task(policy).status == Task.Status.OPEN
+
+
+def test_a_renewed_policys_task_comes_back_when_its_new_expiry_comes_round():
+    policy = _policy(10)
+    run_tasks()
+    policy.expiry_date += timedelta(days=365)
+    policy.save()
+    run_tasks()
+    Task.objects.filter(insurance=policy).update(escalated_tier=2)
+
+    with _at(_local(policy.expiry_date - timedelta(days=30), time(0, 5))):
+        run_tasks()
+
+    task = _task(policy)
+    assert task.status == Task.Status.OPEN
+    assert task.completed_at is None
+    assert task.escalated_tier == 0
+    assert task.opens_at == _local(policy.expiry_date - timedelta(days=30))
+    assert task.due_at == _local(policy.expiry_date, time(9, 0))
+
+
+def test_a_task_the_old_superseded_rule_closed_reopens():
+    policy = _policy(10)
+    _policy(365, vendor=policy.vendor)
+    run_tasks()
+    Task.objects.filter(insurance=policy).update(
+        status=Task.Status.DONE, completed_at=timezone.now(), completed_by=None
+    )
+
+    run_tasks()
+
+    assert _task(policy).status == Task.Status.OPEN
+
+
+def test_a_renewal_a_person_closed_stays_closed():
+    policy = _policy(10)
+    run_tasks()
+    Task.objects.filter(insurance=policy).update(
+        status=Task.Status.DONE, completed_at=timezone.now(), completed_by=UserFactory()
+    )
+
+    run_tasks()
+
+    assert _task(policy).status == Task.Status.DONE
+
+
+def test_moving_the_expiry_inside_the_window_re_dates_the_open_task():
+    policy = _policy(20)
+    run_tasks()
+    opened = _task(policy).opens_at
+    policy.expiry_date -= timedelta(days=5)
+    policy.save()
+
+    run_tasks()
+
+    task = _task(policy)
+    assert task.status == Task.Status.OPEN
+    assert task.opens_at == opened
+    assert task.due_at == _local(policy.expiry_date, time(9, 0))
+
+
+def test_moving_the_expiry_re_dates_a_scheduled_task():
+    policy = _policy(60)
+    run_tasks()
+    policy.expiry_date += timedelta(days=30)
+    policy.save()
+
+    run_tasks()
+
+    task = _task(policy)
+    assert task.status == Task.Status.SCHEDULED
+    assert task.opens_at == _local(policy.expiry_date - timedelta(days=30))
+    assert task.due_at == _local(policy.expiry_date, time(9, 0))
 
 
 def test_a_policy_with_the_same_or_earlier_expiry_doesnt_close_it():
@@ -108,13 +224,15 @@ def test_a_policy_with_the_same_or_earlier_expiry_doesnt_close_it():
     assert _task(policy).status == Task.Status.OPEN
 
 
-def test_a_superseded_policy_never_gets_a_task():
+def test_a_lapsed_policy_gets_its_task_even_with_a_later_one_on_file():
+    """TASK-10: a lapsed policy on file means the vendor can't operate (Compliance shows
+    Expired), so it is chased until it is renewed or removed."""
     old = _policy(-200)
     _policy(160, vendor=old.vendor)
 
     run_tasks()
 
-    assert not Task.objects.filter(insurance=old).exists()
+    assert _task(old).status == Task.Status.OPEN
 
 
 def test_an_inactive_vendor_gets_no_task():
