@@ -658,3 +658,19 @@ def test_running_the_backfill_twice_changes_nothing_the_second_time():
         _backfill("--apply")
 
     assert SavedCard.objects.filter(contact=contact).count() == 1
+
+
+def test_a_card_saved_with_replace_card_joins_the_vault():
+    """PAY-19: Replace card attaches a brand-new card to the contact's customer. The card
+    read before attaching has no customer yet, so the vault's own-customer check turned it
+    away and the card that would pay the balance never showed on the Cards tab."""
+    contact = _contact_with_customer()
+    plan = _booked_plan(contact, pm="pm_old")
+    with (
+        patch.object(STRIPE.PaymentMethod, "retrieve", return_value=_pm(customer=None)),
+        patch.object(STRIPE.PaymentMethod, "attach", return_value=_pm()) as attach,
+    ):
+        services.save_payment_method(plan, "pm_new")
+
+    attach.assert_called_once_with("pm_new", customer="cus_contact")
+    assert SavedCard.objects.filter(contact=contact, stripe_payment_method_id="pm_new").exists()

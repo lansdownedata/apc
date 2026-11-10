@@ -634,7 +634,9 @@ def save_payment_method(plan: PaymentPlan, payment_method_id: str) -> PaymentPla
     pm = _stripe().PaymentMethod.retrieve(payment_method_id)
     attached_to = getattr(pm, "customer", None)
     if attached_to != customer:
-        _stripe().PaymentMethod.attach(payment_method_id, customer=customer)
+        # The attached card, not the one read before: only it names the customer, which
+        # the vault checks before adopting the card (PAY-19).
+        pm = _stripe().PaymentMethod.attach(payment_method_id, customer=customer)
     _store_card(plan, pm)
     return plan
 
