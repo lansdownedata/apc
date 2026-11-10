@@ -155,3 +155,28 @@ def test_upload_offers_and_preselects_other_even_if_inactive(client, staff):
     body = client.get(reverse("document_create", args=[vendor.pk])).content.decode()
 
     assert _options(body)["Other"] is True
+
+
+# --- SET-19 / DSP-12: Label was required but not marked; it's optional now -------------
+
+
+def test_an_upload_without_a_label_takes_the_type_name(client, staff):
+    w9 = AffiliateDocumentTypeFactory(name="W-9 form")
+    vendor = VendorFactory()
+    f = SimpleUploadedFile("a.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+
+    resp = client.post(
+        reverse("document_create", args=[vendor.pk]),
+        {"document_type": w9.pk, "label": "", "file": f},
+    )
+
+    assert resp.status_code == 302
+    assert VendorDocument.objects.get(vendor=vendor).label == "W-9 form"
+
+
+def test_the_label_field_says_it_is_optional_and_has_no_native_required(client, staff):
+    body = client.get(reverse("document_create", args=[VendorFactory().pk])).content.decode()
+
+    label_input = body[body.index('name="label"') - 200 : body.index('name="label"') + 200]
+    assert "required" not in label_input
+    assert "Optional" in body

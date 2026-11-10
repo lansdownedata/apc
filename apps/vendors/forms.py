@@ -124,6 +124,17 @@ class VendorDocumentForm(forms.ModelForm):
         field = self.fields["document_type"]
         field.queryset = AffiliateDocumentType.objects.filter(Q(active=True) | Q(pk=other.pk))
         field.initial = other.pk
+        label = self.fields["label"]
+        label.required = False
+        label.help_text = "Optional. Left blank, it takes the document type's name."
 
     def clean_document_type(self) -> AffiliateDocumentType:
         return self.cleaned_data.get("document_type") or AffiliateDocumentType.objects.other()
+
+    def clean_label(self) -> str:
+        # Optional (SET-19): a blank label is filed under the document type's name.
+        label = (self.cleaned_data.get("label") or "").strip()
+        if label:
+            return label
+        doc_type = self.cleaned_data.get("document_type") or AffiliateDocumentType.objects.other()
+        return doc_type.name
