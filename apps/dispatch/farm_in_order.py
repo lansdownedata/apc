@@ -251,7 +251,11 @@ def _stop_dicts(payload: dict) -> list[dict]:
     rest = [loc for loc in rest if str(loc.get("address") or "").strip()]
     airports, airlines = _airport_lookups([pickup, *rest])
 
+    # The name sign is for the driver: it rides in the pickup note, not `Stop.name` (the
+    # venue name, which the trip line shows in place of the address; GNET-05).
+    sign = str(payload.get("namesignInstructions") or "").strip()
     pickup_note = [
+        f"Sign: {sign}" if sign else "",
         str(payload.get("specialInstructions") or "").strip(),
         str(pickup.get("specialInstructions") or "").strip(),
         *_note_texts(payload, "DRIVER"),
@@ -259,7 +263,6 @@ def _stop_dicts(payload: dict) -> list[dict]:
     if str(pickup.get("meetAndGreet") or "").strip().lower() == "true":
         pickup_note.append("Meet and greet")
     first = _stop_dict(pickup, airports, airlines)
-    first["name"] = str(payload.get("namesignInstructions") or "").strip()[:160]
     first["note"] = " · ".join(n for n in pickup_note if n)[:_TEXT_MAX]
     stops = [first, *(_stop_dict(loc, airports, airlines) for loc in rest)]
 

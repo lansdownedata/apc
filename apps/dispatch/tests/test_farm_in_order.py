@@ -105,7 +105,10 @@ def test_build_stops_in_order_with_airport_and_flight(sedan):
     assert pickup.address.startswith("123 S Beverly Dr")
     assert pickup.latitude == Decimal("34.066470")
     assert pickup.longitude == Decimal("-118.399324")
-    assert pickup.name == "Mr. Adam"
+    # GNET-05: the name sign is a note for the driver, not the pickup's venue name, which
+    # the trip line shows in place of the address.
+    assert pickup.name == ""
+    assert pickup.note.startswith("Sign: Mr. Adam · ")
     assert "Carseat needed" in pickup.note and "Meet at curb" in pickup.note
     assert "Meet and greet" not in pickup.note
     assert pickup.airport is None and pickup.flight_direction == ""
@@ -126,7 +129,9 @@ def test_build_orders_middle_stops_by_stop_number(sedan):
     stops = list(_req(payload).reservation.stops.order_by("sequence"))
     assert [s.address for s in stops[1:3]] == ["First stop", "Second stop"]
     assert stops[2].note == "Ring bell"
-    assert stops[0].note == "- Carseat needed · Gate code 12 · Meet at curb · Meet and greet"
+    assert stops[0].note == (
+        "Sign: Mr. Adam · - Carseat needed · Gate code 12 · Meet at curb · Meet and greet"
+    )
 
 
 def test_build_pickup_is_local_time_in_trip_zone(sedan):
@@ -168,7 +173,8 @@ def test_build_keeps_a_blank_address_pickup_as_stop_zero(sedan):
     res = _req(payload).reservation
     stops = list(res.stops.select_related("airport").order_by("sequence"))
     assert len(stops) == 3
-    assert stops[0].address == "" and stops[0].name == "Mr. Adam"
+    assert stops[0].address == "" and stops[0].name == ""
+    assert "Sign: Mr. Adam" in stops[0].note
     assert "Carseat needed" in stops[0].note and "Meet at curb" in stops[0].note
     assert stops[0].flight_direction == ""
     assert stops[-1].airport.iata == "LAX" and stops[-1].flight_direction == "departure"
