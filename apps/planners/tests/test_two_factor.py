@@ -422,7 +422,9 @@ def test_a_timed_out_planner_sign_in_says_so(client, planner, sent_code):
         r = client.get(reverse("planners:login_code"))
         assert r.status_code == 302 and r.url == reverse("planners:login")
         page = _page(client.get(r.url))
-    assert re.search(r'role="alert"[^>]*>\s*Your sign-in timed out\. Enter your password again\.', page)
+    assert re.search(
+        r'role="alert"[^>]*>\s*Your sign-in timed out\. Enter your password again\.', page
+    )
     assert "timed out" not in _page(client.get(reverse("planners:login")))
 
 

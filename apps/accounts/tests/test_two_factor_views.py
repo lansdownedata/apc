@@ -223,7 +223,9 @@ def test_deactivated_mid_flow_is_refused(client, staff, sent_code):
     assert not _signed_in(client)
     assert two_factor.pending(_FakeRequest(client), "staff") is None
     page = _page(client.get(r.url))
-    assert re.search(r'role="alert"[^>]*>\s*<span[^>]*>.*?</span>\s*<span>That username', page, re.S)
+    assert re.search(
+        r'role="alert"[^>]*>\s*<span[^>]*>.*?</span>\s*<span>That username', page, re.S
+    )
 
 
 def test_staff_code_page_is_never_cached(client, staff, sent_code):

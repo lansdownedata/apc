@@ -47,3 +47,17 @@ def test_invited_by_survives_inviter_deletion():
     inviter.delete()
     invitee.refresh_from_db()
     assert invitee.invited_by is None
+
+
+def test_the_retained_two_factor_column_has_a_database_default():
+    """Old dynos still read the column during the release; new inserts must not need it."""
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        columns = {
+            c.name: c
+            for c in connection.introspection.get_table_description(cursor, "accounts_user")
+        }
+    column = columns["two_factor_enabled"]
+    assert not column.null_ok
+    assert column.default is not None and str(column.default).strip("'") in {"0", "false", "False"}
