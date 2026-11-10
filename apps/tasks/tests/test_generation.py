@@ -9,6 +9,7 @@ import pytest
 from django.conf import settings
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
@@ -452,6 +453,71 @@ def test_dispatch_confirm_is_a_generation_seam():
     dispatch.confirm(offer)
 
     assert _task(lead, "affiliate_assigned", trip).status == Task.Status.DONE
+
+
+# --- the drawer's Confirm counts as the affiliate confirming (TASK-04) ----------------
+
+
+def _offered():
+    lead = _order()
+    trip = lead.reservations.get()
+    services.ensure_tasks(lead)
+    offer = AssignmentFactory(reservation=trip, status=Assignment.Status.OFFERED)
+    services.evaluate_lead(lead)
+    return lead, trip, offer
+
+
+def test_the_drawers_confirm_closes_affiliate_confirmed_as_that_user(client):
+    user = UserFactory()
+    client.force_login(user)
+    lead, trip, offer = _offered()
+
+    response = client.post(reverse("dispatch_resolve", args=[offer.pk]), {"action": "confirm"})
+
+    assert response.json()["ok"] is True
+    task = _task(lead, "affiliate_confirmed", trip)
+    assert task.status == Task.Status.DONE
+    assert task.completed_by == user
+    # The affiliate's own acknowledgement is untouched: its T-48 request, its confirm page
+    # and the "awaiting affiliate confirmation" warning read that, not the task.
+    offer.refresh_from_db()
+    assert offer.affiliate_confirmed_at is None
+
+
+def test_the_affiliate_link_still_closes_affiliate_confirmed(client):
+    from apps.reservations.acknowledgements import make_affiliate_ack_token
+
+    lead, trip, offer = _offered()
+    dispatch.confirm(offer)
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
+
+    client.post(
+        reverse("affiliate_trip_confirm", args=[make_affiliate_ack_token(offer)]), {"ack": "1"}
+    )
+    services.evaluate_lead(lead)
+
+    task = _task(lead, "affiliate_confirmed", trip)
+    assert task.status == Task.Status.DONE
+    assert task.completed_by is None
+
+
+def test_an_offer_nobody_confirmed_leaves_affiliate_confirmed_open(client):
+    client.force_login(UserFactory())
+    lead, trip, offer = _offered()
+
+    client.post(reverse("dispatch_resolve", args=[offer.pk]), {"action": "decline"})
+    services.evaluate_lead(lead)
+
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
+
+
+def test_a_confirm_with_no_user_behind_it_leaves_affiliate_confirmed_to_the_affiliate():
+    """A GNet acceptance goes through `confirm` from the gateway callback, with no person."""
+    lead, trip, offer = _offered()
+
+    dispatch.confirm(offer)
+
+    assert _task(lead, "affiliate_confirmed", trip).status == Task.Status.OPEN
 
 
 def test_a_sent_driver_released_touchpoint_closes_driver_released():
