@@ -111,6 +111,21 @@ def test_podium_down_is_a_502(client):
     assert resp.json()["ok"] is False
 
 
+def test_a_podium_refusal_reads_cleanly(client):
+    """LEAD-15: the toast showed Podium's raw JSON."""
+    lead = _setup(phone="+15715551212")
+    client.force_login(UserFactory())
+    raw = (
+        '400 POST https://api.podium.com/v4/messages → {"code":"bad_request",'
+        '"message":"Contact opted out"}'
+    )
+
+    with patch(SEND, side_effect=PodiumAPIError(raw)):
+        resp = client.post(reverse("order_send_terms_link", args=[lead.pk]))
+
+    assert resp.json()["error"] == "Podium refused the message: Contact opted out"
+
+
 def test_the_endpoint_requires_login_and_post(client):
     lead = _setup(phone="+15715551212")
     url = reverse("order_send_terms_link", args=[lead.pk])

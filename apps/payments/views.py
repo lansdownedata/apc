@@ -1,4 +1,5 @@
 import json
+import logging
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import requests
@@ -16,7 +17,7 @@ from apps.accounts.permissions import payment_access_required
 from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.dispatch import selectors as dispatch_selectors
-from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
+from apps.integrations.podium import PodiumAPIError, PodiumNotConnected, describe_error
 from apps.leads import contact_roles
 from apps.leads import services as lead_services
 from apps.leads.models import Lead
@@ -28,6 +29,8 @@ from apps.tasks import selectors as task_selectors
 
 from . import ledger, payables, reports, services, webhooks
 from .models import AffiliatePayable
+
+logger = logging.getLogger(__name__)
 
 
 @csrf_exempt
@@ -412,7 +415,8 @@ def order_send_pay_link(request, lead_id):
     except services.PaymentError as exc:
         return _json_error(str(exc))
     except (PodiumAPIError, PodiumNotConnected) as exc:
-        return _json_error(str(exc), status=502)
+        logger.warning("link send for lead %s refused: %s", lead.pk, exc)
+        return _json_error(describe_error(str(exc)), status=502)
     except requests.RequestException:
         # A timeout or refused connection never reaches PodiumAPIError (that wraps HTTP
         # errors only); report it as the gateway failure it is, not a 500.
@@ -435,7 +439,8 @@ def order_send_terms_link(request, lead_id):
     except services.PaymentError as exc:
         return _json_error(str(exc))
     except (PodiumAPIError, PodiumNotConnected) as exc:
-        return _json_error(str(exc), status=502)
+        logger.warning("link send for lead %s refused: %s", lead.pk, exc)
+        return _json_error(describe_error(str(exc)), status=502)
     except requests.RequestException:
         # A timeout or refused connection never reaches PodiumAPIError (that wraps HTTP
         # errors only); report it as the gateway failure it is, not a 500.

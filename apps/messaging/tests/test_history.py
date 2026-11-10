@@ -264,3 +264,30 @@ def test_only_a_skip_someone_should_fix_is_a_problem(reason, problem):
         assert names[:2] == ["Skipped", "Bare skip"] and names[2] == "Soon"
     else:
         assert names[0] == "Soon" and set(names[1:]) == {"Sent", "Skipped", "Bare skip"}
+
+
+# --- PAY-05 / LEAD-15: a Podium refusal reads as a sentence, not the client's raw error ---
+
+_RAW = (
+    '400 POST https://api.podium.com/v4/messages → {"code":"bad_request",'
+    '"message":"Contact opted out"}'
+)
+
+
+def test_a_failed_delivery_shows_podiums_reason_not_its_json():
+    lead = LeadFactory()
+    tp = _tp(lead, status=TouchPoint.Status.FAILED)
+    DeliveryFactory(touchpoint=tp, message=tp.message, status=Delivery.Status.FAILED, reason=_RAW)
+
+    (row,) = history.for_lead(lead)
+
+    assert row.reason == "Podium refused the message: Contact opted out"
+
+
+def test_a_failed_touchpoint_with_no_delivery_reads_cleanly_too():
+    lead = LeadFactory()
+    _tp(lead, status=TouchPoint.Status.FAILED, error=_RAW)
+
+    (row,) = history.for_lead(lead)
+
+    assert row.reason == "Podium refused the message: Contact opted out"
