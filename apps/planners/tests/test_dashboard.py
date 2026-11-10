@@ -24,7 +24,8 @@ from apps.reservations.models import Reservation, Stop
 from apps.tasks.models import Task, TaskConfig
 from apps.vendors.factories import VendorFactory
 
-pytestmark = pytest.mark.django_db
+# These sign in with a password and test what follows; the code step is test_two_factor.py.
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("two_factor_off")]
 
 PASSWORD = "a-long-pass-phrase-77"
 NY, CHI = "America/New_York", "America/Chicago"

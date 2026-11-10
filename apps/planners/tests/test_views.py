@@ -23,7 +23,8 @@ from apps.planners.views import TOKEN_PLACEHOLDER
 from apps.reservations.factories import ReservationFactory
 from apps.reservations.models import Reservation
 
-pytestmark = pytest.mark.django_db
+# These sign in with a password and test what follows; the code step is test_two_factor.py.
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("two_factor_off")]
 
 PASSWORD = "a-long-pass-phrase-77"
 

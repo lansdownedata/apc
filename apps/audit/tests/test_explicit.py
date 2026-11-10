@@ -182,6 +182,7 @@ def test_quote_page_view_writes_nothing(client):
 # --- planner ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("two_factor_off")  # signs in with a password only
 def test_planner_request_entry_has_planner_email(client):
     from apps.accounts.factories import UserFactory
     from apps.leads.models import LeadContact
