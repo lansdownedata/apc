@@ -75,3 +75,21 @@ def test_driver_details_setting_says_when_it_takes_effect(client):
     assert (
         "Takes effect the next time driver details are saved for a trip." in resp.content.decode()
     )
+
+
+def test_every_threshold_has_a_written_label():
+    """SET-14: no auto-generated "Otw warn minutes" or "Critical sms"."""
+    from apps.settings.forms import DispatchAlertConfigForm
+
+    labels = {name: str(f.label) for name, f in DispatchAlertConfigForm().fields.items()}
+
+    assert labels["unassigned_warn_hours"] == "No coverage warning (hours)"
+    assert labels["unassigned_critical_hours"] == "No coverage critical (hours)"
+    assert labels["otw_warn_minutes"] == "Not en route warning (minutes)"
+    assert labels["otw_critical_minutes"] == "Not en route critical (minutes)"
+    assert labels["arrived_warn_minutes"] == "Not arrived warning (minutes)"
+    assert labels["arrived_critical_minutes"] == "Not arrived critical (minutes)"
+    assert labels["driver_info_warn_hours"] == "Driver info missing warning (hours)"
+    assert labels["driver_info_critical_hours"] == "Driver info missing critical (hours)"
+    assert labels["affiliate_unacked_warn_hours"] == "Affiliate unacknowledged warning (hours)"
+    assert labels["critical_sms"] == "Critical SMS numbers"
