@@ -144,6 +144,12 @@ def _balance_failed(intent) -> None:
     plan = _plan_from_metadata(intent)
     if plan is None:
         return
+    if kind == Charge.Kind.DEPOSIT:
+        # PAY-03: a deposit attempt fails with the customer on the pay page, who sees the
+        # error and tries again. Record the attempt; the balance, the lead's alert and the
+        # staff bell are no business of it.
+        _mark_failed(plan, intent.get("id"), intent)
+        return
     # A final bill or a trip charge is money on top of a booked balance that may well be
     # paid — its failure mustn't mark that balance failed.
     final = kind in (Charge.Kind.FINAL, Charge.Kind.TRIP)
@@ -171,14 +177,21 @@ def _balance_failed(intent) -> None:
             stripe_payment_intent_id=pi_id, status=Charge.Status.FAILED
         ).exists()
     )
-    if pi_id:
-        for charge in plan.charges.filter(stripe_payment_intent_id=pi_id):
-            charge.status = Charge.Status.FAILED
-            charge.failure_reason = reason
-            charge.save(update_fields=["status", "failure_reason", "updated_at"])
+    _mark_failed(plan, pi_id, intent, reason=reason)
     if not already_failed:
         # An inline off-session decline already raised this alert; the webhook that follows
         # it is the same decline, not a second one.
         Notification.notify(
             plan.lead, Notification.Kind.BALANCE_FAILED, title=default, detail=reason
         )
+
+
+def _mark_failed(plan, pi_id, intent, *, reason: str = "") -> None:
+    """Mark the plan's rows for this intent failed."""
+    if not pi_id:
+        return
+    reason = (reason or (intent.get("last_payment_error") or {}).get("message") or "")[:255]
+    for charge in plan.charges.filter(stripe_payment_intent_id=pi_id):
+        charge.status = Charge.Status.FAILED
+        charge.failure_reason = reason
+        charge.save(update_fields=["status", "failure_reason", "updated_at"])

@@ -455,3 +455,40 @@ def test_view_returns_400_on_bad_signature(client):
             HTTP_STRIPE_SIGNATURE="x",
         )
     assert resp.status_code == 400
+
+
+def test_a_declined_deposit_attempt_is_not_a_balance_failure():
+    """PAY-03: the customer is on the pay page when a deposit attempt fails and simply tries
+    again. The attempt's row is marked failed, but the balance, the lead's alert and the
+    staff bell are left alone."""
+    from apps.notifications.models import Notification
+
+    plan = PaymentPlanFactory(quote_total=Decimal("115.00"))
+    before = plan.balance_status
+    charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=Decimal("57.50"))
+    charge.stripe_payment_intent_id = "pi_dep"
+    charge.save(update_fields=["stripe_payment_intent_id"])
+
+    webhooks.process_stripe_event(
+        {
+            "type": "payment_intent.payment_failed",
+            "data": {
+                "object": {
+                    "id": "pi_dep",
+                    "metadata": {"lead_id": str(plan.lead_id), "kind": "deposit"},
+                    "last_payment_error": {
+                        "message": "The provided PaymentMethod has failed authentication."
+                    },
+                }
+            },
+        }
+    )
+
+    plan.refresh_from_db()
+    plan.lead.refresh_from_db()
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.FAILED
+    assert plan.balance_status == before
+    assert plan.fail_reason == ""
+    assert plan.lead.has_alert is False
+    assert not Notification.objects.filter(lead=plan.lead).exists()
