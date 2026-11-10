@@ -1074,6 +1074,8 @@ class TripStatusEvent(TimeStampedModel):
     class Source(models.TextChoices):
         LIMOANYWHERE = "limoanywhere", "LimoAnywhere"
         MANUAL = "manual", "Manual"
+        # Set by the app itself: coverage confirmed (Assigned) or let go (Unassigned).
+        SYSTEM = "system", "System"
 
     reservation = models.ForeignKey(
         Reservation, related_name="status_events", on_delete=models.CASCADE

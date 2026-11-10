@@ -162,6 +162,36 @@ def test_cancel_withdraws_and_alerts(client, settings):
     ).exists()
 
 
+def test_cancel_puts_the_trip_back_to_unassigned(client, settings):
+    """GNet says "Trip #M is uncovered again": its status says so too, whatever it was."""
+    from apps.reservations.models import Reservation, TripStatusEvent
+
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment(status=Assignment.Status.CONFIRMED)
+    trip = assignment.reservation
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.ON_THE_WAY)
+
+    resp = _signed_post(client, {"transactionId": "TX-1", "status": "CANCEL"})
+
+    assert resp.status_code == 200
+    trip.refresh_from_db()
+    assert trip.trip_status == Reservation.TripStatus.UNASSIGNED
+    event = TripStatusEvent.objects.get(reservation=trip)
+    assert (event.status, event.source) == ("unassigned", "system")
+
+
+def test_confirmed_shows_the_trip_assigned(client, settings):
+    from apps.reservations.models import Reservation
+
+    settings.GNET_CALLBACK_SECRET = SECRET
+    assignment = _gnet_assignment()
+
+    _signed_post(client, {"transactionId": "TX-1", "status": "CONFIRMED"})
+
+    assignment.reservation.refresh_from_db()
+    assert assignment.reservation.trip_status == Reservation.TripStatus.ASSIGNED
+
+
 def test_an_affiliate_cancel_does_not_echo_a_delete_back_to_the_gateway(client, settings):
     """The affiliate already cancelled. Echoing a DELETE earns a rejection plus a
     spurious "GNet cancel failed" alert next to the correct one, on every single

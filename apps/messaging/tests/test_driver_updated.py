@@ -118,6 +118,12 @@ def test_in_house_reassignment_updates():
         sender.run_touchpoints()
     dispatch_services.withdraw(first)
     dispatch_services.assign_in_house(res, DriverFactory(phone="+15715550202"))
+    # A reassigned trip is back to Assigned (Moe, 2026-11-10): the customer hears about the
+    # new driver once the trip is Dispatched again.
+    res.refresh_from_db()
+    assert res.trip_status == "assigned"
+    assert not _updates(res).exists()
+    set_trip_status(res, "dispatched")
     assert _updates(res).count() == 1
 
 

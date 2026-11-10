@@ -137,10 +137,10 @@ def test_release_trips_isolates_a_failure_so_the_rest_of_the_batch_still_release
     boom = assignments[1]
     real_withdraw = services.withdraw
 
-    def _flaky(assignment, *, note=""):
+    def _flaky(assignment, **kwargs):
         if assignment.pk == boom.pk:
             raise RuntimeError("boom")
-        return real_withdraw(assignment, note=note)
+        return real_withdraw(assignment, **kwargs)
 
     with patch.object(services, "withdraw", side_effect=_flaky):
         released = services.release_trips(reservations, note="Order cancelled")
@@ -354,3 +354,146 @@ def test_withdraw_with_key_present_but_inactive_makes_no_http_call(settings):
     event = GnetEvent.objects.get(assignment=a, action=GnetEvent.Action.CANCEL_TRIP)
     assert event.result == GnetEvent.Result.PREVIEW
     assert event.payload == {"transactionId": "TX-1"}
+
+
+# --- the trip status follows coverage (Moe, 2026-11-10) -----------------------------------
+
+
+def _status_events(res) -> list[tuple[str, str]]:
+    from apps.reservations.models import TripStatusEvent
+
+    return list(
+        TripStatusEvent.objects.filter(reservation=res)
+        .order_by("pk")
+        .values_list("status", "source")
+    )
+
+
+def test_confirmed_coverage_shows_the_trip_assigned():
+    res = _booked_trip()
+    offer = services.send_offer(res, VendorFactory(), payout=Decimal("140.00"))
+    res.refresh_from_db()
+    assert res.trip_status == ""
+
+    services.confirm(offer)
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.ASSIGNED
+    assert _status_events(res) == [("assigned", "system")]
+
+
+def test_marking_assigned_and_an_in_house_driver_show_the_trip_assigned():
+    from apps.fleet.factories import DriverFactory
+
+    by_phone, in_house = _booked_trip(), _booked_trip()
+    services.assign_direct(by_phone, VendorFactory(), payout=Decimal("140.00"))
+    services.assign_in_house(in_house, DriverFactory())
+
+    for res in (by_phone, in_house):
+        res.refresh_from_db()
+        assert res.trip_status == Reservation.TripStatus.ASSIGNED
+
+
+def test_confirming_never_moves_a_trip_back_to_assigned():
+    res = _booked_trip(trip_status=Reservation.TripStatus.DISPATCHED)
+    services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.DISPATCHED
+    assert _status_events(res) == []
+
+
+def test_withdrawing_coverage_puts_a_running_trip_back_to_unassigned():
+    from apps.reservations.services import set_trip_status
+
+    res = _booked_trip()
+    a = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    res.refresh_from_db()
+    set_trip_status(res, Reservation.TripStatus.DISPATCHED)
+    set_trip_status(res, Reservation.TripStatus.ARRIVED)
+
+    services.withdraw(a, note="driver no-show")
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.UNASSIGNED
+    assert _status_events(res)[-1] == ("unassigned", "system")
+    assert [s for s, _ in _status_events(res)].count("unassigned") == 1
+
+
+def test_a_declined_confirmed_affiliate_puts_the_trip_back_to_unassigned():
+    res = _booked_trip()
+    a = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+
+    services.decline(a, note="backed out")
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.UNASSIGNED
+
+
+def test_the_reset_sends_the_customer_nothing():
+    from apps.messaging.models import TouchPoint
+
+    res = _booked_trip()
+    a = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    before = set(TouchPoint.objects.filter(reservation=res).values_list("pk", flat=True))
+
+    services.withdraw(a)
+
+    added = TouchPoint.objects.filter(reservation=res).exclude(pk__in=before)
+    assert not added.exists()
+
+
+def test_a_reassigned_trip_is_assigned_again_once_the_new_coverage_is_confirmed():
+    res = _booked_trip()
+    first = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    services.withdraw(first)
+    services.assign_direct(res, VendorFactory(), payout=Decimal("150.00"))
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.ASSIGNED
+    assert [s for s, _ in _status_events(res)] == ["assigned", "unassigned", "assigned"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        Reservation.TripStatus.DONE,
+        Reservation.TripStatus.CANCELLED,
+        Reservation.TripStatus.NO_SHOW,
+        Reservation.TripStatus.LATE_CANCEL,
+    ],
+)
+def test_withdrawing_from_a_finished_or_cancelled_trip_leaves_its_status(status):
+    res = _booked_trip()
+    a = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    Reservation.objects.filter(pk=res.pk).update(trip_status=status)
+    before = _status_events(res)
+
+    services.withdraw(a)
+
+    res.refresh_from_db()
+    assert res.trip_status == status
+    assert _status_events(res) == before
+
+
+def test_releasing_trips_that_stop_needing_coverage_writes_no_status():
+    res = _booked_trip()
+    services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    Reservation.objects.filter(pk=res.pk).update(trip_status=Reservation.TripStatus.DISPATCHED)
+
+    services.release_trips([res], note="Trip removed")
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.DISPATCHED
+    assert [s for s, _ in _status_events(res)] == ["assigned"]
+
+
+def test_a_reset_on_a_farmed_in_trip_pushes_nothing_to_gnet():
+    from apps.dispatch import farm_in_push
+
+    res = _booked_trip()
+    a = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
+    with patch.object(farm_in_push, "_enqueue_for_trip") as enqueue:
+        services.withdraw(a)
+
+    enqueue.assert_not_called()

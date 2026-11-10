@@ -111,12 +111,53 @@ def _sync_tasks(reservation: Reservation) -> None:
     tasks.ensure_tasks(reservation.lead)
 
 
+_TS = Reservation.TripStatus
+# Confirmed coverage shows the trip Assigned unless it has already got further (Moe,
+# 2026-11-10): a trip already Dispatched or under way is never moved back.
+_BEFORE_ASSIGNED = frozenset(
+    {
+        "",
+        _TS.UNASSIGNED,
+        _TS.FARM_OUT_UNASSIGNED,
+        _TS.PENDING,
+        _TS.OFFERED,
+        _TS.OFFERED_TO_AFFILIATE,
+    }
+)
+
+
+def _set_status(reservation: Reservation, status: str) -> None:
+    """A status the app sets for itself, through the one seam every status change takes
+    (its event, messages, GNet farm-in push), logged as System."""
+    from apps.reservations.models import TripStatusEvent
+    from apps.reservations.services import set_trip_status
+
+    set_trip_status(reservation, status, source=TripStatusEvent.Source.SYSTEM)
+
+
+def _reopen(reservation: Reservation) -> None:
+    """Coverage was let go: the trip goes back to Unassigned, clearing Dispatched, On The
+    Way, Arrived and the rest (Moe, 2026-11-10). A trip that is done or cancelled (No Show
+    included) keeps its status, and one with no status yet stays blank. Unassigned queues
+    no customer message and has no GNet farm-in code, so nothing leaves the building."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    reservation.refresh_from_db(fields=["trip_status"])
+    current = reservation.trip_status
+    if current in ("", _TS.UNASSIGNED, _TS.FARM_OUT_UNASSIGNED, _TS.DONE, *CANCELLED_STATUSES):
+        return
+    _set_status(reservation, _TS.UNASSIGNED)
+
+
 def _on_assignment_confirmed(assignment: Assignment) -> None:
-    """Queue the T-48h affiliate confirmation for a newly-confirmed farm-out (APC-20), and
-    the driver message if the trip is already dispatched with details on file."""
+    """Show the trip Assigned, then queue the T-48h affiliate confirmation for a
+    newly-confirmed farm-out (APC-20), and the driver message if the trip is already
+    dispatched with details on file."""
     from apps.messaging import events
 
     reservation = assignment.reservation
+    if reservation.trip_status in _BEFORE_ASSIGNED:
+        _set_status(reservation, _TS.ASSIGNED)
     events.schedule_dates(reservation.lead, reservation)
     events.sync_waiting(reservation)
 
@@ -302,7 +343,11 @@ def assign_in_house(
     )
 
 
-def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignment:
+def _resolve(
+    assignment: Assignment, status: str, *, note: str = "", reopen: bool = True
+) -> Assignment:
+    """Settle an active assignment. Declined or withdrawn coverage puts the trip back to
+    Unassigned (`_reopen`) unless ``reopen`` is False."""
     if not assignment.is_active:
         raise AssignmentError(
             f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}."
@@ -317,8 +362,11 @@ def _resolve(assignment: Assignment, status: str, *, note: str = "") -> Assignme
     assignment.save(update_fields=fields)
     if status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
-    elif was_confirmed and not assignment.is_in_house:
-        _on_assignment_released(assignment.reservation)
+    else:
+        if was_confirmed and not assignment.is_in_house:
+            _on_assignment_released(assignment.reservation)
+        if reopen:
+            _reopen(assignment.reservation)
     _sync_tasks(assignment.reservation)
     return assignment
 
@@ -341,14 +389,18 @@ def confirm(assignment: Assignment) -> Assignment:
 
 
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:
-    """The affiliate said no — the trip goes back to uncovered."""
+    """The affiliate said no — the trip goes back to uncovered (and Unassigned)."""
     if assignment.is_in_house:
         raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
     return _resolve(assignment, Assignment.Status.DECLINED, note=note)
 
 
-def withdraw(assignment: Assignment, *, note: str = "", release_gateway: bool = True) -> Assignment:
-    """We pulled the offer, or unassigned confirmed coverage.
+def withdraw(
+    assignment: Assignment, *, note: str = "", release_gateway: bool = True, reopen: bool = True
+) -> Assignment:
+    """We pulled the offer, or unassigned confirmed coverage. The trip goes back to
+    Unassigned (`_reopen`); `reopen=False` is for `release_trips`, whose trips stop needing
+    coverage altogether (cancelled, or about to be deleted).
 
     `release_gateway=False` is for the one caller whose trip is ALREADY released on the
     partner's side: an affiliate-initiated `CANCEL` callback. Echoing a DELETE back
@@ -368,7 +420,7 @@ def withdraw(assignment: Assignment, *, note: str = "", release_gateway: bool = 
     assignment deliberately keeps its transaction id (append-only history), and
     `cancel_assignment` itself is what guards against sending a second cancel.
     """
-    resolved = _resolve(assignment, Assignment.Status.WITHDRAWN, note=note)
+    resolved = _resolve(assignment, Assignment.Status.WITHDRAWN, note=note, reopen=reopen)
     if release_gateway and resolved.channel == Assignment.Channel.GNET:
         gnet_sync.cancel_assignment(resolved)
     return resolved
@@ -450,7 +502,7 @@ def release_trips(reservations: Iterable[Reservation], *, note: str) -> list[Ass
     released = []
     for assignment in Assignment.objects.active().filter(reservation__in=reservations):
         try:
-            released.append(withdraw(assignment, note=note))
+            released.append(withdraw(assignment, note=note, reopen=False))
         except Exception:  # noqa: BLE001 - one bad row must not strand the rest of the batch
             logger.exception("Failed to release assignment %s", assignment.pk)
     return released
