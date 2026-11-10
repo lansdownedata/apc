@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import Literal
 
 from django.conf import settings
+from django.core import signing
 from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare, salted_hmac
@@ -27,6 +28,9 @@ RESEND_GAP = timedelta(seconds=60)
 RESEND_PER_HOUR = 5
 KEEP_FOR = timedelta(hours=24)
 _SALT = "apps.accounts.two_factor.code"
+PENDING_TTL = 600  # seconds a half-finished sign-in stays open
+REMEMBER_AGE = 30 * 24 * 60 * 60
+COOKIES = {"staff": ("apc_staff_device", "/"), "planner": ("apc_planner_device", "/planner/")}
 CODE_BODY_RE = re.compile(r"your sign-in code is \d{6}\.")
 
 
@@ -215,3 +219,99 @@ def send_code(subject: Subject, *, prefer: str = "sms") -> Delivery:
     row.save(update_fields=["channel"])
     went = _email_code(subject, raw, "fallback")
     return Delivery("email" if went else "", True)
+
+
+@dataclass(frozen=True)
+class Pending:
+    """A password-checked sign-in still waiting for its code."""
+
+    pk: int
+    next_url: str
+    channel: str  # how the latest code went: "sms" | "email" | ""
+    fell_back: bool
+
+
+def _pending_key(kind: str) -> str:
+    return f"two_factor_pending_{kind}"
+
+
+def begin(request, subject: Subject, *, next_url: str, delivery: Delivery) -> None:
+    """Mark the session as password-verified for this subject. Does not sign anyone in."""
+    request.session[_pending_key(subject.kind)] = {
+        "pk": subject.pk,
+        "next_url": next_url,
+        "channel": delivery.channel,
+        "fell_back": delivery.fell_back,
+        "at": timezone.now().timestamp(),
+    }
+
+
+def pending(request, kind: str) -> Pending | None:
+    data = request.session.get(_pending_key(kind))
+    try:
+        if not data or timezone.now().timestamp() - float(data["at"]) > PENDING_TTL:
+            return None
+        return Pending(
+            int(data["pk"]), str(data["next_url"]), str(data["channel"]), bool(data["fell_back"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def note_delivery(request, kind: str, delivery: Delivery) -> None:
+    data = request.session.get(_pending_key(kind))
+    if data:
+        request.session[_pending_key(kind)] = {
+            **data,
+            "channel": delivery.channel,
+            "fell_back": delivery.fell_back,
+        }
+
+
+def clear(request, kind: str) -> None:
+    request.session.pop(_pending_key(kind), None)
+
+
+def _device_salt(kind: str) -> str:
+    return f"apps.accounts.two_factor.device.{kind}"
+
+
+def _device_hmac(subject: Subject) -> str:
+    return salted_hmac(
+        f"{_device_salt(subject.kind)}.hmac", f"{subject.password_hash}:{subject.phone}"
+    ).hexdigest()
+
+
+def remember(response, subject: Subject) -> None:
+    """Skip the code on this browser for 30 days, until the password or phone changes."""
+    name, path = COOKIES[subject.kind]
+    value = signing.dumps(
+        {"pk": subject.pk, "h": _device_hmac(subject)}, salt=_device_salt(subject.kind)
+    )
+    response.set_cookie(
+        name,
+        value,
+        max_age=REMEMBER_AGE,
+        path=path,
+        httponly=True,
+        samesite="Lax",
+        secure=settings.SESSION_COOKIE_SECURE,
+    )
+
+
+def is_remembered(request, subject: Subject) -> bool:
+    raw = request.COOKIES.get(COOKIES[subject.kind][0])
+    if not raw:
+        return False
+    try:
+        data = signing.loads(raw, salt=_device_salt(subject.kind), max_age=REMEMBER_AGE)
+        return data["pk"] == subject.pk and constant_time_compare(
+            str(data["h"]), _device_hmac(subject)
+        )
+    except (signing.BadSignature, KeyError, TypeError):
+        return False
+
+
+def forget(response, kind: str) -> None:
+    name, path = COOKIES[kind]
+    response.delete_cookie(name, path=path)
