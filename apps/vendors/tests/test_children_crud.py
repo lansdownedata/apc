@@ -63,6 +63,10 @@ def test_add_insurance_rejects_expiry_before_effective(client, django_user_model
     )
     assert resp.status_code == 200
     assert VendorInsurance.objects.count() == 0
+    html = resp.content.decode()
+    # The form-level error is shown, not silently dropped (DSP-11), and the input is kept.
+    assert "Expiry date can&#x27;t be before the effective date." in html
+    assert 'value="P-9"' in html
 
 
 def test_add_document_sets_uploaded_by(client, django_user_model):
