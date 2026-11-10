@@ -108,3 +108,14 @@ def test_empty_recipient_list_sends_nothing_and_warns(mailoutbox, settings, capl
         assert send_unpaid_deposit_report(today=TODAY) == 1
     assert mailoutbox == []
     assert "deposit_report: not sent: No recipient" in caplog.text
+
+
+def test_a_farm_in_order_owes_no_deposit_and_is_not_listed():
+    """PAY-12: a GNet farm-in order is booked for an affiliate account, which has no
+    deposit spine (APC-92); the report and the APC-69 count must leave it out."""
+    from apps.contacts.factories import CompanyFactory
+
+    affiliate = ContactFactory(company=CompanyFactory(is_affiliate_account=True))
+    _order(5, contact=affiliate)
+    assert reports.unpaid_deposit_rows(today=TODAY) == []
+    assert not reports.unpaid_deposit_leads(today=TODAY).exists()
