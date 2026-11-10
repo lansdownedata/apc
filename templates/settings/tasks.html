@@ -49,29 +49,12 @@
             {{ form.hold_enabled }}
             <label for="{{ form.hold_enabled.id_for_label }}" class="text-[12.5px] text-ink">Place cleaning holds</label>
           </div>
-          <div>
-            <label for="{{ form.hold_place_time.id_for_label }}" class="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
-              <span>Place the hold at</span>
-              <span class="w-32">{{ form.hold_place_time }}</span>
-              <span>on the day of the order's first held trip (trip's local time)</span>
-            </label>
-            {% for error in form.hold_place_time.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ form.hold_lead_hours.id_for_label }}" class="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
-              <span>…or</span>
-              <span class="w-20">{{ form.hold_lead_hours }}</span>
-              <span>hours before the first held pickup, whichever is earlier.</span>
-            </label>
-            {% for error in form.hold_lead_hours.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
-          </div>
-          <div>
-            <label for="{{ form.hold_release_days.id_for_label }}" class="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
-              <span>Release an unused hold no later than</span>
-              <span class="w-20">{{ form.hold_release_days }}</span>
-              <span>days after the order's last held trip.</span>
-            </label>
-            {% for error in form.hold_release_days.errors %}<p class="text-[11.5px] text-rose-600 mt-1">{{ error }}</p>{% endfor %}
+          {% comment %} Labelled fields side by side (SET-11): a sentence wrapped around three
+             inputs broke at odd places on desktop. {% endcomment %}
+          <div class="grid sm:grid-cols-3 gap-3">
+            {% include "components/form_field.html" with field=form.hold_place_time %}
+            {% include "components/form_field.html" with field=form.hold_lead_hours %}
+            {% include "components/form_field.html" with field=form.hold_release_days %}
           </div>
           <p class="text-[11.5px] text-muted">Each vehicle type's cleaning fee is its hold amount; set it on <a href="{% url 'vehicle_type_list' %}" class="font-semibold text-goldd hover:underline focus-gold">Vehicle Types</a>.</p>
         </div>

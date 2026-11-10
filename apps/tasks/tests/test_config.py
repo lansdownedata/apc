@@ -161,15 +161,32 @@ def test_the_settings_index_links_to_it(client):
     assert reverse("task_settings") in body
 
 
+def test_hold_settings_are_labelled_fields_not_a_sentence_around_inputs(client):
+    """SET-11: the hold sentence wrapped around its inputs ("Place the hold at [03:00 AM]"
+    then the rest on its own line), and the lead-hours input made it worse. Each setting
+    is now a labelled field, side by side at desktop width."""
+    import re
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    body = client.get(reverse("task_settings")).content.decode()
+
+    block = body[body.index("Cleaning hold") : body.index("Vehicle Types")]
+    assert "sm:grid-cols-3" in block
+    for name in ("hold_place_time", "hold_lead_hours", "hold_release_days"):
+        label = re.search(rf'<label for="id_{name}"[^>]*>([^<]*)</label>', block)
+        assert label, name
+        assert label.group(1).strip()
+
+
 def test_tasks_screen_saves_hold_settings(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
 
     body = client.get(reverse("task_settings")).content.decode()
     assert "Cleaning hold" in body
     assert "Place cleaning holds" in body
-    assert "on the day of the order's first held trip (trip's local time)" in body
-    assert "days after the order's last held trip" in body
-    assert "hours before the first held pickup, whichever is earlier" in body
+    assert "On the day of the order&#x27;s first held trip, in the trip&#x27;s local time." in body
+    assert "After the order&#x27;s last held trip, at the latest." in body
+    assert "Whichever comes first." in body
     assert 'type="time"' in body
     assert "cleaning_fee" not in body  # the fee is set per vehicle type now
 

@@ -225,6 +225,19 @@ class TaskConfigForm(forms.ModelForm):
             "hold_lead_hours": forms.NumberInput(attrs=_NUM | {"max": 24}),
             "hold_release_days": forms.NumberInput(attrs=_NUM),
         }
+        # Short, because the three sit side by side as labelled fields (SET-11).
+        labels = {
+            "hold_place_time": "Place the hold at",
+            "hold_lead_hours": "Or hours before pickup",
+            "hold_release_days": "Release within (days)",
+        }
+        help_texts = {
+            "hold_place_time": (
+                "On the day of the order's first held trip, in the trip's local time."
+            ),
+            "hold_lead_hours": "Whichever comes first.",
+            "hold_release_days": "After the order's last held trip, at the latest.",
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
