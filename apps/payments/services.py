@@ -861,24 +861,32 @@ def record_authorization(plan: PaymentPlan, payment_intent_id: str) -> Charge:
         charge.stripe_payment_intent_id = payment_intent_id
         charge.save(update_fields=["stripe_payment_intent_id", "updated_at"])
 
-    if charge.status == Charge.Status.PENDING:
-        now = timezone.now()
-        charge.status = Charge.Status.AUTHORIZED
-        charge.authorized_at = now
-        charge.capture_expires_at = now + timedelta(days=AUTH_HOLD_DAYS)
-        charge.save(
-            update_fields=[
-                "status",
-                "authorized_at",
-                "capture_expires_at",
-                "updated_at",
-            ]
-        )
+    # The inline confirm and the webhook both land here, often together. Each status is
+    # re-read under its row lock before it moves, so the later of the two can never write
+    # an older state over a capture the other just made (PAY-11).
+    with transaction.atomic():
+        charge = Charge.objects.select_for_update().get(pk=charge.pk)
+        if charge.status == Charge.Status.PENDING:
+            now = timezone.now()
+            charge.status = Charge.Status.AUTHORIZED
+            charge.authorized_at = now
+            charge.capture_expires_at = now + timedelta(days=AUTH_HOLD_DAYS)
+            charge.save(
+                update_fields=[
+                    "status",
+                    "authorized_at",
+                    "capture_expires_at",
+                    "updated_at",
+                ]
+            )
 
     _store_card(plan, getattr(intent, "payment_method", None), charge)
-    if plan.deposit_status != PaymentPlan.DepositStatus.PAID:
-        plan.deposit_status = PaymentPlan.DepositStatus.AUTHORIZED
-        plan.save(update_fields=["deposit_status", "updated_at"])
+    with transaction.atomic():
+        locked = PaymentPlan.objects.select_for_update().get(pk=plan.pk)
+        if locked.deposit_status != PaymentPlan.DepositStatus.PAID:
+            locked.deposit_status = PaymentPlan.DepositStatus.AUTHORIZED
+            locked.save(update_fields=["deposit_status", "updated_at"])
+        plan.deposit_status = locked.deposit_status
 
     lead = plan.lead
     lead.refresh_from_db()

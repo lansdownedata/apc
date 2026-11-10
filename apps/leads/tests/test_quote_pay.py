@@ -426,3 +426,18 @@ def test_success_page_on_a_booked_order_says_the_deposit_was_charged(client):
     assert "Deposit received" in body
     assert "Nothing has been charged yet" not in body
     assert "confirm availability" not in body
+
+
+def test_the_pay_page_on_a_booked_order_charges_the_deposit_rather_than_holding_it(client):
+    """PAY-11: a booked order's deposit is captured as soon as it lands, so its pay page
+    must not promise a hold that is taken only once the trip is confirmed."""
+    lead = _lead(status=Lead.Status.BOOKED)
+    lead.accepted_terms_at = timezone.now()
+    lead.save(update_fields=["accepted_terms_at"])
+
+    body = client.get(reverse("quote_pay", args=[_tok(lead)])).content.decode()
+
+    assert "places a hold" not in body
+    assert "Deposit to authorize" not in body
+    assert "Authorize $" not in body
+    assert "Pay $500.00" in body

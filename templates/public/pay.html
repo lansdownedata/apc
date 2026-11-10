@@ -119,7 +119,7 @@
         Authorizing again below re-reserves the amount while we confirm.
       </div>
       {% endif %}
-      {# A deposit only ever *authorizes* (APC-26) — never call it "due" or "Pay". #}
+      {# A deposit only authorizes (APC-26), unless the order is booked already (charged_now). #}
       {% if trip_charge %}
       {% with t=trip_charge.reservation %}
       <div class="bill-line"><span>Trip {{ t.reference }} · {{ t.pickup_date|date:"D M j" }}</span><span>{{ t.pickup.name|default:t.pickup.address }} → {{ t.dropoff.name|default:t.dropoff.address }}</span></div>
@@ -127,7 +127,7 @@
       {% endwith %}
       {% endif %}
       <div class="amt">
-        <span>{% if pay_kind == 'deposit' %}Deposit to authorize{% elif pay_kind == 'trip' %}Due for this trip{% else %}Balance due{% endif %}</span>
+        <span>{% if charged_now %}Deposit due{% elif pay_kind == 'deposit' %}Deposit to authorize{% elif pay_kind == 'trip' %}Due for this trip{% else %}Balance due{% endif %}</span>
         <span class="n">${{ amount|floatformat:2|intcomma }}</span>
       </div>
 
@@ -167,9 +167,11 @@
       {% endif %}
       <div id="pay-error" class="err"></div>
       <button id="pay-button" type="button" class="btn-gold"{% if needs_terms %} disabled{% endif %}>
-        {% if pay_kind == 'deposit' %}Authorize{% else %}Pay{% endif %} ${{ amount|floatformat:2|intcomma }}
+        {% if pay_kind == 'deposit' and not charged_now %}Authorize{% else %}Pay{% endif %} ${{ amount|floatformat:2|intcomma }}
       </button>
-      {% if pay_kind == 'deposit' %}
+      {% if charged_now %}
+      <p class="secure">Your trip is booked, so the deposit is charged now.</p>
+      {% elif pay_kind == 'deposit' %}
       <p class="secure">This places a hold, not a charge — we take the deposit once we've confirmed your trip.</p>
       {% endif %}
       <div class="secure">{% icon "lock" attrs='width="14" height="14" style="vertical-align:-2px"' %} Card details are handled securely by Stripe.</div>

@@ -360,3 +360,33 @@ def test_a_deposit_held_on_a_quoted_order_still_waits_for_confirm():
     capture.assert_not_called()
     plan.lead.refresh_from_db()
     assert plan.lead.status == Lead.Status.ENGAGED
+
+
+def test_a_late_authorization_webhook_never_undoes_the_capture():
+    """PAY-11, seen live: the inline confirm captured the booked order's deposit, then the
+    amount_capturable_updated webhook, holding a plan read before the capture, wrote the
+    deposit back to AUTHORIZED, so the done page said 'Card authorized'."""
+    plan = _authorizable_plan()
+    plan.lead.status = Lead.Status.BOOKED
+    plan.lead.save(update_fields=["status"])
+    charge = plan.record_charge(kind=Charge.Kind.DEPOSIT, amount=plan.deposit_amount)
+    charge.stripe_payment_intent_id = "pi_1"
+    charge.save(update_fields=["stripe_payment_intent_id"])
+    stale = PaymentPlan.objects.select_related("lead").get(pk=plan.pk)
+
+    with (
+        patch.object(services.stripe.PaymentIntent, "capture"),
+        patch.object(
+            services.stripe.PaymentIntent,
+            "retrieve",
+            side_effect=[_authorized_intent(), _captured_intent(), _captured_intent()],
+        ),
+        patch("apps.integrations.la_sync.push_lead_bookings"),
+    ):
+        services.record_authorization(plan, "pi_1")  # the inline confirm
+        services.record_authorization(stale, "pi_1")  # the webhook, read before it
+
+    plan.refresh_from_db()
+    charge.refresh_from_db()
+    assert charge.status == Charge.Status.SUCCEEDED
+    assert plan.deposit_status == PaymentPlan.DepositStatus.PAID

@@ -827,6 +827,8 @@ def quote_pay(request, token: str) -> HttpResponse:
             # confirmed (APC-26) — the page has to say so before asking for another.
             "hold_released": _hold_was_released(lead),
             "needs_terms": kind == "deposit" and lead.accepted_terms_at is None,
+            # A booked order's deposit is captured as it lands: no hold to promise (PAY-11).
+            "charged_now": kind == "deposit" and lead.status == Lead.Status.BOOKED,
             "trip_charge": _open_trip_link(lead.payment) if kind == "trip" else None,
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
