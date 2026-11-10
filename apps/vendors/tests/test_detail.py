@@ -33,6 +33,18 @@ def test_detail_shows_children(client, django_user_model):
     assert b"Acme Mutual" in resp.content
 
 
+def test_detail_shows_the_coverage_amount_with_separators(client, django_user_model):
+    """SET-19: "$5000000" read as a typo; money reads "$5,000,000"."""
+    _login(client, django_user_model)
+    vendor = VendorFactory()
+    VendorInsuranceFactory(vendor=vendor, coverage_amount=5_000_000)
+
+    body = client.get(reverse("vendor_detail", args=[vendor.pk])).content.decode()
+
+    assert "$5,000,000" in body
+    assert "$5000000" not in body
+
+
 def test_detail_404_for_missing(client, django_user_model):
     _login(client, django_user_model)
     assert client.get(reverse("vendor_detail", args=[999999])).status_code == 404
