@@ -2498,6 +2498,23 @@ function quoteWorkspace(opts = {}) {
     // the save payload.
     _saved: null,
 
+    // The header phone is an intl-tel-input, not x-model: post its E.164 value, or flag it.
+    onPhoneBlur(e) {
+      const el = e.target;
+      if (!phoneIsValid(el)) {
+        el.classList.add("field-error");
+        Alpine.store("toast").push({
+          type: "danger",
+          title: "Invalid phone number",
+          message: "Check the number for the country you selected.",
+        });
+        return;
+      }
+      el.classList.remove("field-error");
+      this.header.phone = phoneValue(el);
+      this.saveHeader();
+    },
+
     saveHeader() {
       const changed = {};
       for (const [key, value] of Object.entries(this.header)) {
