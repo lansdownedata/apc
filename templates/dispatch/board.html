@@ -104,10 +104,13 @@
     </a>
     {% endfor %}
 
-    {% if farm_in_dispatch_count %}
-    <button type="button" data-farm-in-chip @click="$dispatch('farm-in-open', {tab:'pending', dispatch:true})"
-            class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2.5 py-1 rounded-full chip-gold ring-1 ring-gold/25 hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-gold">{{ farm_in_dispatch_count }} GNet requests</button>
-    {% endif %}
+    {% comment %} Always rendered, hidden at zero: the drawer announces the dispatch count
+       after every action (Request coverage, Send back), so the chip follows without a reload. {% endcomment %}
+    <button type="button" data-farm-in-chip x-data="{ n: {{ farm_in_dispatch_count|default:0 }} }" x-show="n"{% if not farm_in_dispatch_count %} x-cloak{% endif %}
+            @farm-in-dispatch-count.window="n = $event.detail"
+            @click="$dispatch('farm-in-open', {tab:'pending', dispatch:true})"
+            x-text="n === 1 ? '1 GNet request' : n + ' GNet requests'"
+            class="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2.5 py-1 rounded-full chip-gold ring-1 ring-gold/25 hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-gold">{{ farm_in_dispatch_count }} GNet request{{ farm_in_dispatch_count|pluralize }}</button>
 
     <div class="flex items-center gap-1.5 ml-auto text-[12px]">
       <button type="button" x-show="sortable" @click="exceptionsFirst = !exceptionsFirst; savePrefs(); apply()"

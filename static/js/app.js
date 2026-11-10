@@ -382,6 +382,10 @@ function farmInDrawer() {
         if (root) {
           this.pending = Number(root.dataset.pending) || 0;
           window.dispatchEvent(new CustomEvent("farm-in-count", { detail: this.pending }));
+          // The dispatch board's "N GNet requests" chip (GNET-08).
+          window.dispatchEvent(
+            new CustomEvent("farm-in-dispatch-count", { detail: Number(root.dataset.dispatch) || 0 }),
+          );
         }
         this.paintRows();
         const focused = this.openRow && this.$refs.body.querySelector(`[data-fi="${this.openRow}"]`);

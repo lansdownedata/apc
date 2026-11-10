@@ -2,9 +2,10 @@
   The GNet requests drawer's body (APC-136): tabs with their counts, then the tab's rows.
   Fetched by farmInDrawer() in app.js and injected with x-html, so nothing in here may rely
   on Alpine: the drawer wires tabs, the switch, rows and buttons by delegation.
-  `data-pending` on the root is how the drawer learns the header count after an action.
+  `data-pending` on the root is how the drawer learns the header count after an action, and
+  `data-dispatch` the dispatch board's chip count.
 {% endcomment %}
-<div data-fi-root data-pending="{{ counts.pending }}">
+<div data-fi-root data-pending="{{ counts.pending }}" data-dispatch="{{ counts.dispatch }}">
   <div class="sticky top-0 z-10 bg-surface flex items-center gap-5 px-5 border-b border-line text-[12px]" role="tablist">
     <button type="button" role="tab" data-fi-tab="pending" aria-selected="{% if tab == 'pending' %}true{% else %}false{% endif %}"
             class="py-2.5 -mb-px border-b-2 num focus-visible:outline-none focus-visible:text-ink {% if tab == 'pending' %}border-gold text-ink font-semibold{% else %}border-transparent text-muted hover:text-ink{% endif %}">Pending · {{ counts.pending }}</button>
