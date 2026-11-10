@@ -1,0 +1,36 @@
+{% extends "email/base_email.html" %}
+{% block subject %}Your {{ company_name }} sign-in code{% endblock %}
+{% block preheader %}{% include "email/preheaders/sign_in_code.html" %}{% endblock %}
+{% block content %}
+<p class="dm-ink" style="margin:0 0 6px;font-size:17px;color:#17191D;">Hi {{ first_name|default:"there" }},</p>
+<p class="dm-muted" style="margin:0 0 28px;font-size:16px;color:#4b5563;line-height:1.6;">
+  Enter this code to finish signing in to the {{ company_name }} Lead Manager.
+</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-panel"
+       style="background:#FAF8F3;border:1px solid #E7E3DA;border-radius:12px;">
+  <tr><td align="center" style="padding:26px 20px 22px;">
+    <div class="dm-soft" style="font-size:12px;letter-spacing:2.5px;color:#a59e90;text-transform:uppercase;">Sign-in code</div>
+    <div class="dm-ink" style="font-family:'Playfair Display',Georgia,'Times New Roman',serif;font-size:40px;font-weight:600;letter-spacing:8px;color:#17191D;padding-top:8px;">{{ code_display|slice:":3" }}&nbsp;{{ code_display|slice:"4:" }}</div>
+    <div class="dm-muted" style="font-size:14px;color:#6b7280;padding-top:8px;">Expires in 10 minutes &middot; works once</div>
+  </td></tr>
+</table>
+
+{% if reason == "fallback" %}
+<p class="dm-muted" style="margin:26px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  We sent this by email because the text to your phone ending in {{ phone_last4 }} didn't go through.
+</p>
+{% elif reason == "requested" %}
+<p class="dm-muted" style="margin:26px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  We sent this by email because you asked for it. Any earlier code no longer works.
+</p>
+{% else %}
+<p class="dm-muted" style="margin:26px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  We sent this by email because there is no phone number on your account.
+</p>
+{% endif %}
+<p class="dm-muted" style="margin:12px 0 0;font-size:14px;color:#6b7280;line-height:1.6;">
+  If you didn't try to sign in, someone has your password. Change it now, and never
+  share this code with anyone. We will never ask you for it.
+</p>
+{% endblock %}

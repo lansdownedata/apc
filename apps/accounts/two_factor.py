@@ -1,6 +1,7 @@
 """One-time sign-in codes: issue, limit resends, verify. Sending lives elsewhere."""
 
 import enum
+import logging
 import math
 import re
 import secrets
@@ -13,7 +14,12 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare, salted_hmac
 
+from apps.integrations import podium
+from apps.notifications.email import send_html_email
+
 from .models import SignInCode, User
+
+logger = logging.getLogger(__name__)
 
 CODE_TTL = timedelta(minutes=10)
 MAX_ATTEMPTS = 5
@@ -21,6 +27,7 @@ RESEND_GAP = timedelta(seconds=60)
 RESEND_PER_HOUR = 5
 KEEP_FOR = timedelta(hours=24)
 _SALT = "apps.accounts.two_factor.code"
+CODE_BODY_RE = re.compile(r"your sign-in code is \d{6}\.")
 
 
 @dataclass(frozen=True)
@@ -125,3 +132,86 @@ def verify(subject: Subject, raw: str) -> Verdict:
             return Verdict.LOCKED
         row.save(update_fields=["attempts"])
         return Verdict.WRONG
+
+
+@dataclass(frozen=True)
+class Delivery:
+    channel: str  # "sms" | "email" | "" when nothing went
+    fell_back: bool  # asked for sms, went by email
+
+    @property
+    def sent(self) -> bool:
+        return bool(self.channel)
+
+
+def mask_phone(phone: str) -> str:
+    return phone[-4:]
+
+
+def mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    return f"{local[:1]}•••@{domain}"
+
+
+def is_code_echo(uid: str, body: str) -> bool:
+    """True for Podium's `message.sent` echo of one of our own sign-in texts, which must
+    never reach the Inbox."""
+    if uid and SignInCode.objects.filter(podium_message_uid=uid).exists():
+        return True
+    return bool(body and CODE_BODY_RE.search(body))
+
+
+def _email_code(subject: Subject, raw: str, reason: str) -> bool:
+    from apps.messaging import rendering
+
+    logo = rendering.logo_path()
+    return send_html_email(
+        to=subject.email,
+        subject=f"Your {settings.COMPANY_NAME} sign-in code",
+        template="sign_in_code",
+        context={
+            "first_name": subject.first_name,
+            "code_display": f"{raw[:3]} {raw[3:]}",
+            "reason": reason,
+            "phone_last4": mask_phone(subject.phone),
+            "company_name": settings.COMPANY_NAME,
+            "company_phone": settings.COMPANY_PHONE,
+            "company_email": settings.COMPANY_EMAIL,
+            "logo_cid": "logo" if logo else "",
+        },
+        inline_images={"logo": logo} if logo else None,
+        internal=True,
+    )
+
+
+def send_code(subject: Subject, *, prefer: str = "sms") -> Delivery:
+    """Issue a code and deliver it: by text when asked and possible, else by email. A failed
+    text falls back to emailing the same code. May raise ResendLimited."""
+    if prefer == "email" or not subject.phone:
+        row, raw = issue(subject, SignInCode.Channel.EMAIL)
+        reason = "requested" if subject.phone else "no_phone"
+        went = _email_code(subject, raw, reason)
+        return Delivery("email" if went else "", False)
+
+    row, raw = issue(subject, SignInCode.Channel.SMS)
+    body = (
+        f"{settings.COMPANY_NAME}: your sign-in code is {raw}. "
+        "It expires in 10 minutes. Never share this code."
+    )
+    try:
+        response = podium.send_message(identifier=subject.phone, body=body, internal=True)
+    except Exception as exc:
+        logger.warning("sign-in text to ...%s failed: %s", mask_phone(subject.phone), exc)
+    else:
+        uid = ""
+        if isinstance(response, dict):
+            uid = response.get("uid") or (response.get("data") or {}).get("uid") or ""
+        if uid:
+            row.podium_message_uid = uid
+            row.save(update_fields=["podium_message_uid"])
+        return Delivery("sms", False)
+
+    row.channel = SignInCode.Channel.EMAIL
+    row.save(update_fields=["channel"])
+    went = _email_code(subject, raw, "fallback")
+    return Delivery("email" if went else "", True)

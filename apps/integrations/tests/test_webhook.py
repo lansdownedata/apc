@@ -393,3 +393,26 @@ def test_insert_race_returns_the_existing_row_instead_of_raising():
 
     assert result.pk == winner.pk
     assert PodiumEvent.objects.count() == 1
+
+
+def test_echo_with_a_stored_uid_is_skipped():
+    from apps.accounts.factories import SignInCodeFactory
+
+    SignInCodeFactory(podium_message_uid="code-1")
+    event = process_podium_webhook(_sent(uid="code-1", body="whatever"))
+    assert event.processed is True and event.conversation is None
+    assert not Contact.objects.exists()
+    assert not Conversation.objects.exists()
+    assert not Message.objects.exists()
+
+
+def test_echo_matching_code_body_is_skipped_without_uid():
+    body = "All Pro Charter: your sign-in code is 123456. It expires in 10 minutes."
+    event = process_podium_webhook(_sent(uid="unknown", body=body))
+    assert event.processed is True
+    assert not Contact.objects.exists() and not Message.objects.exists()
+
+
+def test_ordinary_outbound_echo_still_mirrors():
+    process_podium_webhook(_sent(uid="plain-1", body="On our way!"))
+    assert Message.objects.filter(podium_message_uid="plain-1", direction="out").count() == 1

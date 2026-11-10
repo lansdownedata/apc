@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.accounts import two_factor
 from apps.contacts.models import Contact
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
@@ -175,6 +176,8 @@ def _ingest_outbound(data: dict) -> Conversation | None:
     so there is nothing to orphan.
     """
     msg_uid = data.get("uid", "")
+    if two_factor.is_code_echo(msg_uid, data.get("body", "")):
+        return None  # a sign-in code text: never belongs in the Inbox
     existing = Message.objects.filter(podium_message_uid=msg_uid).first() if msg_uid else None
     if existing:
         update_fields = []

@@ -1,0 +1,13 @@
+{% autoescape off %}Hi {{ first_name|default:"there" }},
+
+Your {{ company_name }} sign-in code is {{ code_display }}.
+It expires in 10 minutes and works once.
+
+{% if reason == "fallback" %}We sent this by email because the text to your phone ending in {{ phone_last4 }} didn't go through.{% elif reason == "requested" %}We sent this by email because you asked for it. Any earlier code no longer works.{% else %}We sent this by email because there is no phone number on your account.{% endif %}
+
+If you didn't try to sign in, someone has your password. Change it now, and never
+share this code with anyone. We will never ask you for it.
+
+--
+{{ company_name }}
+{% endautoescape %}
