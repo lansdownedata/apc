@@ -629,7 +629,7 @@ def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
     from apps.tasks import schedule
 
     pickup = schedule.sample_pickup()
-    date_text = f"{pickup:%b %d, %Y}"
+    date_text = f"{pickup:%b %-d, %Y}"
     time_text = f"{pickup:%-I:%M %p} {pickup:%Z}"
     ctx = dict.fromkeys(message_fields.FIELDS, "")
     ctx.update(
@@ -641,11 +641,11 @@ def sample_context(base_url: str, trigger_key: str = "") -> dict[str, str]:
             "pickup_address": "1 Main St, Washington, DC",
             "dropoff_address": "Dulles International Airport (IAD)",
             "quote_breakdown": (
-                f"{pickup:%b %d} · {time_text} — Luxury SUV · 4 passengers — $450.00"
+                f"{pickup:%b %-d} · {time_text} — Luxury SUV · 4 passengers — $450.00"
             ),
             "agent_first": "Alex",
             "balance_amount": "$225.00",
-            "balance_due_date": f"{pickup - timedelta(days=30):%b %d, %Y}",
+            "balance_due_date": f"{pickup - timedelta(days=30):%b %-d, %Y}",
             "card_last4": "4242",
             "trip_pickup_date": date_text,
             "trip_pickup_time": time_text,

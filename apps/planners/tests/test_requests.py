@@ -1,5 +1,6 @@
 """APC-68: "Request a change" from the planner dashboard → Inbox + Customer Service task."""
 
+import re
 import uuid
 from datetime import time, timedelta
 from unittest.mock import patch
@@ -261,3 +262,17 @@ def test_a_trip_from_another_wedding_is_ignored_as_the_subject(client, planner):
     assert "About: the whole day" in message.body
     assert "Secret Estate" not in message.body
     assert PlannerRequest.objects.get().about == ""
+
+
+def test_the_form_unsticks_itself_after_back(client, planner):
+    """PLN-08: Back restored the page from the back-forward cache with busy still true, so
+    the button sat on "Sending…", disabled. The form resets busy, and reads the text back
+    from the textarea the browser restored, whenever the page is shown."""
+    lead, _ = _wedding(planner)
+    html = _page(client, lead)
+    form = re.search(rf'<form method="post" action="{re.escape(_url(lead))}"[^>]*>', html)
+    assert form is not None
+    tag = form.group(0)
+    assert '@submit="busy = true"' in tag  # the double-submit guard stays
+    assert '@pageshow.window="busy = false; text = $refs.body.value"' in tag
+    assert 'x-ref="body"' in html

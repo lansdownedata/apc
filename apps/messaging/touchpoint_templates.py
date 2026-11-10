@@ -546,7 +546,7 @@ def day_when(trips: list) -> dict[str, str]:
     first = trips[0].pickup_at if trips else None
     if first is None:
         return {"trip_pickup_when": "", "trips_coming_up": "Your trip is coming up"}
-    when = f"{first:%b %d, %Y}"
+    when = f"{first:%b %-d, %Y}"
     clocks = [c for c in (_clock(t) for t in trips) if c]
     if clocks:
         when = f"{when} at {_and(clocks)}"
@@ -590,7 +590,7 @@ def _trip_context(reservation) -> dict[str, str]:
 
     pickup_at = reservation.pickup_at
     if pickup_at is not None:
-        ctx["trip_pickup_date"] = f"{pickup_at:%b %d, %Y}"
+        ctx["trip_pickup_date"] = f"{pickup_at:%b %-d, %Y}"
         if reservation.pickup_time is not None:
             ctx["trip_pickup_tz"] = reservation.pickup_tz_label
             ctx["trip_pickup_time"] = _clock(reservation)
@@ -649,7 +649,11 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         (agent.get_full_name() or agent.get_username()).split(" ")[0] if agent else "the team"
     )
     reservations = list(lead.reservations.all())
-    first_res = reservations[0] if reservations else None
+    # The order-level trip is the first one that still runs: a thank-you must not name a
+    # cancelled trip's day (PROC-13). When every trip is cancelled (a release or a whole-
+    # order cancel), the first trip is still the booking the message is about.
+    live = [r for r in reservations if not r.is_cancelled]
+    first_res = (live or reservations or [None])[0]
     stops = list(first_res.stops.all()) if first_res else []
 
     def format_breakdown(r):
@@ -662,7 +666,7 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         passengers = f"{r.passengers} passengers"
         total = f"${r.line_total:,.2f}"
         if r.pickup_date and r.pickup_time:
-            date_fmt = f"{r.pickup_date:%b %d}"
+            date_fmt = f"{r.pickup_date:%b %-d}"
             time_fmt = f"{r.pickup_time:%-I:%M %p}"
             head = f"{date_fmt} · {time_fmt} — {vehicle} · {passengers} — {total}"
         else:
@@ -677,7 +681,7 @@ def build_context(lead, reservation=None) -> dict[str, str]:
 
     breakdown = "\n".join(format_breakdown(r) for r in reservations)
     pickup_date = (
-        f"{first_res.pickup_date:%b %d, %Y}" if first_res and first_res.pickup_date else ""
+        f"{first_res.pickup_date:%b %-d, %Y}" if first_res and first_res.pickup_date else ""
     )
     pickup_time = (
         f"{first_res.pickup_time:%-I:%M %p}" if first_res and first_res.pickup_time else ""
@@ -702,7 +706,7 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         "confirm_link": "",  # filled by the reservation-anchored senders
         "ack_link": "",  # filled by the affiliate-confirmation sender
         "balance_amount": f"${plan.balance_amount:,.2f}" if plan else "",
-        "balance_due_date": f"{balance_due:%b %d, %Y}" if balance_due else "",
+        "balance_due_date": f"{balance_due:%b %-d, %Y}" if balance_due else "",
         "card_last4": plan.card_last4 if plan else "",
         **_trip_context(reservation),
         # Filled by a staff click's caller (`sender.send_now`), on its own trigger only.
