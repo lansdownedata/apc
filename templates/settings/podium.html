@@ -1,5 +1,4 @@
 {% extends "settings/base.html" %}
-{% load time_filters %}
 {% comment %}
   Settings → Integrations → Podium. Owner-admin only. Tokens are never rendered. Loading the
   page makes no Podium call; Check webhook is the one button that asks Podium anything.
@@ -17,7 +16,7 @@
     {% elif credential %}
       <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[13px] mb-5">
         <dt class="text-muted">Location</dt><dd class="font-medium text-ink num break-all">{{ location|default:"Not set" }}</dd>
-        <dt class="text-muted">Connected since</dt><dd class="text-ink">{{ credential.created_at|zone_clock:"" }}</dd>
+        <dt class="text-muted">Connected since</dt><dd class="text-ink">{{ credential.created_at|date:"M j, Y · g:i A" }}</dd>
         <dt class="text-muted">Scopes</dt><dd class="text-ink break-words">{{ credential.scopes|default:"None recorded" }}</dd>
       </dl>
       <div class="flex items-center gap-2.5">

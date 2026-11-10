@@ -90,13 +90,13 @@ def test_location_falls_back_to_the_setting(owner, settings):
     assert "loc-from-env" in _page(owner)
 
 
-def test_connected_since_uses_the_company_clock(owner, settings):
+def test_connected_since_shows_the_year_on_the_company_clock(owner, settings):
     settings.TIME_ZONE = "America/New_York"
     cred = PodiumCredentialFactory(location_uid="loc-1")
     cred.created_at = datetime(2026, 11, 8, 15, 27, tzinfo=UTC)
     cred.save(update_fields=["created_at"])
 
-    assert "Sun Nov 8 · 10:27 AM" in _page(owner)
+    assert "Nov 8, 2026 · 10:27 AM" in _page(owner)
 
 
 def test_page_makes_no_podium_call(owner):
