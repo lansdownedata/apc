@@ -139,7 +139,7 @@ def place_hold(lead, *, now=None) -> Charge | None:
                 kind=Charge.Kind.HOLD, amount=hold_amount(lead), note="Cleaning hold"
             )
     if charge is None:
-        _hold_failed(lead, "Cleaning hold not placed: no card on file", "no card on file")
+        _hold_failed(lead, "Cleaning hold not placed: no card on file", "No card on file")
         return None
 
     try:
@@ -286,7 +286,8 @@ def _capture_before(intent) -> datetime | None:
 
 def _hold_failed(lead, title: str, reason: str) -> None:
     """The hold could not be placed: one task for Customer Service (its note is `title`),
-    a staff notification and the order's alert. Once per order."""
+    a staff notification titled as the task with `reason` as its detail, and the order's
+    alert. Once per order."""
     from apps.tasks import services as tasks
     from apps.tasks.models import Task
 
@@ -295,7 +296,12 @@ def _hold_failed(lead, title: str, reason: str) -> None:
     task = tasks.open_request_task(lead, TASK_KIND)
     task.note = title
     task.save(update_fields=["note", "updated_at"])
-    Notification.notify(lead, Notification.Kind.HOLD_FAILED, title=title, detail=reason)
+    Notification.notify(
+        lead,
+        Notification.Kind.HOLD_FAILED,
+        title=Notification.Kind.HOLD_FAILED.label,
+        detail=reason,
+    )
     lead.has_alert = True
     lead.save(update_fields=["has_alert", "updated_at"])
 
