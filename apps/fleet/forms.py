@@ -140,3 +140,10 @@ class RenewalTypeForm(forms.ModelForm):
             "sort_order": forms.NumberInput(attrs={"class": "field w-full", "min": 0}),
         }
         help_texts = {"sort_order": "Lower numbers appear first."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["applies_to"].choices = [
+            ("", "Driver or vehicle…"),
+            *RenewalType.AppliesTo.choices,
+        ]
