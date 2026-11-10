@@ -173,7 +173,22 @@ def exchange_code(code: str, *, realm_id: str, user) -> QboCredential:
         cred.broken_at = None
         cred.broken_reason = ""
         cred.save()
+    _resolve_lost_alerts()
     return cred
+
+
+CONNECTION_LOST = "QuickBooks connection lost"
+
+
+def _resolve_lost_alerts() -> None:
+    """Connected again: the "connection lost" alerts are no longer news (SET-07). They are
+    marked read for everyone; other QuickBooks alerts stay."""
+    from apps.notifications.models import Notification
+
+    for note in Notification.objects.unread().filter(
+        kind=Notification.Kind.SYNC_FAILED, title=CONNECTION_LOST, lead__isnull=True
+    ):
+        note.mark_read()
 
 
 def _break(cred: QboCredential, reason: str) -> None:
@@ -184,9 +199,7 @@ def _break(cred: QboCredential, reason: str) -> None:
     cred.broken_at = timezone.now()
     cred.broken_reason = reason[:255]
     cred.save(update_fields=["broken_at", "broken_reason", "updated_at"])
-    Notification.notify(
-        None, Notification.Kind.SYNC_FAILED, title="QuickBooks connection lost", detail=reason
-    )
+    Notification.notify(None, Notification.Kind.SYNC_FAILED, title=CONNECTION_LOST, detail=reason)
 
 
 def _is_fresh(cred: QboCredential) -> bool:

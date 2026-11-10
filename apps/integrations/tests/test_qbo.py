@@ -167,6 +167,27 @@ def test_an_invalid_grant_marks_the_connection_broken_and_notifies():
 
 
 @override_settings(**QBO)
+def test_a_reconnect_clears_the_connection_lost_alert():
+    """SET-07: once QuickBooks is connected again, "connection lost" is no longer news.
+    Other QuickBooks alerts stay."""
+    _connected()
+    with patch(HTTP, return_value=_resp(400, {"error": "invalid_grant"})):
+        with pytest.raises(qbo.QboNotConnected):
+            qbo.refresh(force=True)
+    other = Notification.notify(
+        None, Notification.Kind.SYNC_FAILED, title="QuickBooks invoice failed: 1042"
+    )
+
+    with patch(HTTP, return_value=_resp(200, _tokens())):
+        qbo.exchange_code("the-code", realm_id="9130", user=UserFactory())
+
+    lost = Notification.objects.get(title="QuickBooks connection lost")
+    assert lost.read and lost.read_at is not None
+    other.refresh_from_db()
+    assert not other.read
+
+
+@override_settings(**QBO)
 def test_a_refresh_waits_for_the_one_already_running_and_reuses_its_token():
     """Two jobs racing must not both spend the same refresh token: the second re-reads under
     the lock and, finding a fresh access token, doesn't refresh again."""
