@@ -607,12 +607,24 @@ def _snapshot_plan_card(plan: PaymentPlan, charge: Charge) -> None:
     charge.save(update_fields=["card_brand", "card_last4", "updated_at"])
 
 
+def _owed_amount(plan: PaymentPlan, amount) -> Decimal:
+    """A staff card charge: more than zero and no more than the order still owes (PAY-10).
+    Refunds are capped the same way; money beyond the order total has nowhere to go."""
+    amount = _parse_positive_amount(amount)
+    owed = remaining_balance(plan.lead)
+    if owed <= ZERO:
+        raise PaymentError("Nothing is owed on this order.")
+    if amount > owed:
+        raise PaymentError(f"This order only owes ${owed:,.2f}.")
+    return amount
+
+
 def create_admin_payment_intent(plan: PaymentPlan, amount) -> tuple[Charge, str]:
     """Create a PaymentIntent for the staff Payment Element. Returns (charge, client_secret).
 
     Routed through `open_intent_for`, which stops a repeated attempt minting a row per try.
     """
-    amount = _parse_positive_amount(amount)
+    amount = _owed_amount(plan, amount)
     return open_intent_for(plan, kind=Charge.Kind.BALANCE, amount=amount)
 
 
@@ -1199,7 +1211,7 @@ def expire_authorization(charge: Charge) -> Charge:
 def charge_saved_card(plan: PaymentPlan, amount) -> Charge:
     """Off-session charge of the card already on the plan."""
     _card_order_only(plan.lead)
-    amount = _parse_positive_amount(amount)
+    amount = _owed_amount(plan, amount)
     if not plan.stripe_payment_method_id or not plan.stripe_customer_id:
         raise PaymentError("No card on file.")
     charge = plan.record_charge(kind=Charge.Kind.BALANCE, amount=amount)

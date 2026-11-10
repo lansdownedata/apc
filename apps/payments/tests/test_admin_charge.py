@@ -164,3 +164,46 @@ def test_mark_paid_offline_endpoint_is_gone(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     resp = client.post(f"/portal/orders/{plan.lead_id}/mark-paid/", {"amount": "50.00"})
     assert resp.status_code == 404
+
+
+def _owing(collected: str):
+    """A $185 order (one factory trip) with `collected` already taken."""
+    from apps.reservations.factories import ReservationFactory
+
+    lead = LeadFactory(status=Lead.Status.BOOKED)
+    ReservationFactory(lead=lead, gratuity_pct=0)
+    plan = _plan(
+        lead=lead,
+        quote_total=lead.quote_total,
+        stripe_customer_id="cus_1",
+        stripe_payment_method_id="pm_1",
+    )
+    if Decimal(collected):
+        ledger.post_capture(
+            lead=lead,
+            amount=Decimal(collected),
+            kind=JournalEntry.Kind.BALANCE_CAPTURED,
+            idempotency_key=f"seed-{lead.pk}",
+        )
+    return plan
+
+
+def test_take_payment_refuses_more_than_the_order_owes():
+    """PAY-10: $15 left on the order; a $50 card charge must be refused, not collected."""
+    plan = _owing("170.00")
+    assert services.remaining_balance(plan.lead) == Decimal("15.00")
+    with patch.object(services.stripe.PaymentIntent, "create") as create:
+        with pytest.raises(services.PaymentError, match=r"\$15\.00"):
+            services.charge_saved_card(plan, "50.00")
+        with pytest.raises(services.PaymentError, match=r"\$15\.00"):
+            services.create_admin_payment_intent(plan, "50.00")
+    create.assert_not_called()
+    assert not plan.charges.exists()
+
+
+def test_take_payment_allows_exactly_what_is_owed():
+    plan = _owing("170.00")
+    intent = MagicMock(id="pi_ok", client_secret="cs", status="requires_payment_method")
+    with patch.object(services.stripe.PaymentIntent, "create", return_value=intent):
+        charge, _ = services.create_admin_payment_intent(plan, "15.00")
+    assert charge.amount == Decimal("15.00")
