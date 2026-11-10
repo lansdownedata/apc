@@ -1,6 +1,6 @@
 """Template registry completeness + context building from real lead data."""
 
-from datetime import timedelta
+from datetime import date, time, timedelta
 
 import pytest
 
@@ -8,6 +8,7 @@ from apps.leads.factories import LeadFactory
 from apps.messaging import touchpoint_templates as tpl
 from apps.messaging.models import TouchPoint
 from apps.reservations.factories import ReservationFactory, StopFactory
+from apps.reservations.models import Reservation
 
 pytestmark = pytest.mark.django_db
 
@@ -48,3 +49,70 @@ def test_context_values():
     ctx = tpl.build_context(lead)
     assert ctx["first_name"] == "Jane"
     assert ctx["quote_no"] == lead.quote_no
+
+
+CANCELLED = Reservation.TripStatus.CANCELLED
+
+
+def test_order_level_values_skip_a_cancelled_first_trip():
+    """PROC-13: the thank-you named the cancelled first trip's date, not the trip that ran."""
+    lead = LeadFactory()
+    ReservationFactory(
+        lead=lead,
+        sort_order=0,
+        pickup_date=date(2026, 11, 3),
+        pickup_time=time(7, 0),
+        trip_status=CANCELLED,
+        stops=["Cancelled pickup", "Cancelled drop-off"],
+    )
+    ReservationFactory(
+        lead=lead,
+        sort_order=1,
+        pickup_date=date(2026, 11, 20),
+        pickup_time=time(9, 30),
+        stops=["Live pickup", "Live drop-off"],
+    )
+    ctx = tpl.build_context(lead)
+    assert ctx["pickup_date"] == "Nov 20, 2026"
+    assert ctx["pickup_time"] == "9:30 AM"
+    assert ctx["pickup_address"] == "Live pickup"
+    assert ctx["dropoff_address"] == "Live drop-off"
+    rendered = tpl.render(tpl.TEMPLATES["thank_you"].email_body, ctx)
+    assert "booking with us for Nov 20, 2026." in rendered
+
+
+def test_order_level_values_fall_back_to_the_first_trip_when_all_are_cancelled():
+    """A whole-order cancel or release still names the booking it's about."""
+    lead = LeadFactory()
+    ReservationFactory(
+        lead=lead,
+        sort_order=0,
+        pickup_date=date(2026, 11, 3),
+        trip_status=CANCELLED,
+        stops=["First pickup"],
+    )
+    ReservationFactory(
+        lead=lead,
+        sort_order=1,
+        pickup_date=date(2026, 11, 20),
+        trip_status=CANCELLED,
+    )
+    ctx = tpl.build_context(lead)
+    assert ctx["pickup_date"] == "Nov 3, 2026"
+    assert ctx["pickup_address"] == "First pickup"
+
+
+def test_message_dates_drop_the_leading_zero():
+    """PROC-13: "Nov 08" read as a typo in customer copy."""
+    lead = LeadFactory()
+    res = ReservationFactory(
+        lead=lead,
+        pickup_date=date(2026, 11, 8),
+        pickup_time=time(10, 0),
+        pickup_timezone="America/New_York",
+    )
+    ctx = tpl.build_context(lead, res)
+    assert ctx["pickup_date"] == "Nov 8, 2026"
+    assert ctx["trip_pickup_date"] == "Nov 8, 2026"
+    assert ctx["trip_pickup_when"].startswith("Nov 8, 2026 at 10:00 AM")
+    assert ctx["quote_breakdown"].startswith("Nov 8 · 10:00 AM")
