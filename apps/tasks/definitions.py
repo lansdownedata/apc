@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 
@@ -415,9 +416,13 @@ REGISTRY: tuple[TaskKind, ...] = (
         label="Final balance paid",
         department=_D.ACCOUNTING,
         level=Level.ORDER,
-        # Opens when the balance cron would charge it (T-30d).
-        opens=BeforePickup(days=30, day_start=True),
-        due=BeforePickup(days=28, day_start=True),
+        # The payment terms (TASK-03): the balance is charged `BALANCE_CHARGE_DAYS_BEFORE`
+        # days before the first pickup, midnight in that pickup's zone (the date of
+        # `PaymentPlan.balance_due_date`). Booked inside that window, the next balance run
+        # charges it, so the task opens at booking. Either way it is due the Settings
+        # interval after it opens, never already overdue.
+        opens=BeforePickup(days=settings.BALANCE_CHARGE_DAYS_BEFORE, day_start=True),
+        due=AfterOpen(hours=48),
         applies=_card_order,
         auto_complete=_balance_paid,
         not_applicable=_on_account,
