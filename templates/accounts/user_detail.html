@@ -53,7 +53,7 @@
 
         {% if target.status == 'pending' and target.invited_at %}
         <div class="text-[11.5px] text-muted mt-2">
-          Invited {{ target.invited_at|date:"M j, Y" }}{% if target.invited_by %} by {{ target.invited_by.get_full_name|default:target.invited_by.username }}{% endif %} · link expires {{ target.invited_at|timesince }} after sending
+          Invited {{ target.invited_at|date:"M j, Y" }}{% if target.invited_by %} by {{ target.invited_by.get_full_name|default:target.invited_by.username }}{% endif %} · {% if target.invite_expired %}link expired {{ target.invite_expires_at|date:"M j, Y" }}{% else %}link expires in {{ target.invite_expires_at|timeuntil }}{% endif %}
         </div>
         {% elif target.last_login %}
         <div class="text-[11.5px] text-muted mt-2">Last signed in {{ target.last_login|date:"M j, Y g:i A" }}</div>

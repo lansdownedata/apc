@@ -1,8 +1,10 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.tokens import default_token_generator
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
@@ -215,6 +217,29 @@ def test_user_detail_shows_resend_and_revoke_for_pending(client):
     html = client.get(reverse("user_detail", args=[user.pk])).content.decode()
     assert "Resend invite" in html
     assert "Revoke invite" in html
+
+
+def test_user_detail_says_when_a_pending_invite_link_expires(client):
+    """SET-18: the line read "link expires 0 minutes after sending" (timesince of the send)."""
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    client.force_login(admin)
+    user = UserFactory(username="p@x.com", pending=True, invited_by=admin)
+    user.invited_at = timezone.now() - timedelta(days=1, minutes=5)
+    user.save(update_fields=["invited_at"])
+    html = client.get(reverse("user_detail", args=[user.pk])).content.decode()
+    assert "after sending" not in html
+    assert "link expires in 5\xa0days" in html
+
+
+def test_user_detail_says_an_old_invite_link_has_expired(client):
+    admin = UserFactory(role=User.Role.OWNER_ADMIN)
+    client.force_login(admin)
+    user = UserFactory(username="old@x.com", pending=True, invited_by=admin)
+    user.invited_at = timezone.now() - timedelta(days=10)
+    user.save(update_fields=["invited_at"])
+    html = client.get(reverse("user_detail", args=[user.pk])).content.decode()
+    assert "link expired" in html
+    assert "link expires" not in html
 
 
 def test_user_detail_shows_deactivate_for_active_user(client):

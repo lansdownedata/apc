@@ -1,5 +1,9 @@
+from datetime import datetime, timedelta
+
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
+from django.utils import timezone
 
 
 class Department(models.TextChoices):
@@ -71,6 +75,19 @@ class User(AbstractUser):
         if self.invited_at and not self.invite_accepted_at:
             return self.Status.PENDING
         return self.Status.ACTIVE
+
+    @property
+    def invite_expires_at(self) -> datetime | None:
+        """When the latest invite link stops working. The link is a default_token_generator
+        token, so its window is PASSWORD_RESET_TIMEOUT counted from the send."""
+        if not self.invited_at:
+            return None
+        return self.invited_at + timedelta(seconds=settings.PASSWORD_RESET_TIMEOUT)
+
+    @property
+    def invite_expired(self) -> bool:
+        expires = self.invite_expires_at
+        return expires is not None and expires <= timezone.now()
 
     @property
     def has_payments_access(self) -> bool:
