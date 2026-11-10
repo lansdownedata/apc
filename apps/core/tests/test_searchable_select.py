@@ -239,3 +239,69 @@ def test_a_rich_row_draws_its_alert_badge_and_sub_line():
 def test_a_plain_select_still_draws_just_its_label():
     rows = _draw_rows(_render(name="channel", options=[("phone", "Phone")]))
     assert rows == ["Phone"]
+
+
+# --- SET-19: Enter in a select's search must not submit the form around it ------------
+# Tom Select handles Enter itself when an option is highlighted (it picks it and stops the
+# event). With nothing highlighted — no match, or a multi-select whose dropdown has just
+# closed — the keydown fell through to the <input> inside a <form>, and the browser's
+# implicit submission posted the whole New vendor form with no vehicle types.
+
+_ENTER_HARNESS = """
+const vm = require("vm");
+const fs = require("fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const out = [];
+const handlers = [];
+class TomSelect {
+  constructor(el) {
+    const ts = this;
+    this.isOpen = input.isOpen;
+    this.activeOption = input.active ? {} : null;
+    this.control = { setAttribute() {} };
+    this.control_input = {
+      setAttribute() {},
+      addEventListener: (type, fn) => handlers.push([type, fn]),
+    };
+    this.close = () => out.push("close");
+    el.tomselect = this;
+  }
+}
+const el = { dataset: { tom: "" }, options: [], hasAttribute: () => false };
+const ctx = { TomSelect, document: { querySelectorAll: () => [el] } };
+vm.createContext(ctx);
+vm.runInContext(input.source + "\\ninitTomSelects();", ctx);
+for (const [type, fn] of handlers) {
+  if (type !== "keydown") continue;
+  fn({ key: input.key, preventDefault: () => out.push("prevented") });
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _press(key: str, *, is_open: bool, active: bool) -> list[str]:
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(
+        ["node", "-e", _ENTER_HARNESS],
+        input=json.dumps(
+            {"source": _init_tom_selects_source(), "key": key, "isOpen": is_open, "active": active}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_enter_with_nothing_highlighted_closes_instead_of_submitting():
+    assert _press("Enter", is_open=True, active=False) == ["prevented", "close"]
+
+
+def test_enter_on_a_closed_select_does_not_submit_the_form():
+    assert _press("Enter", is_open=False, active=False) == ["prevented"]
+
+
+def test_other_keys_pass_through():
+    assert _press("a", is_open=True, active=False) == []

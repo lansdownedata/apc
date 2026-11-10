@@ -4182,6 +4182,15 @@ function initTomSelects(root = document) {
     }
     new TomSelect(el, options);
     const ts = el.tomselect;
+    /* Enter in the search box picks or closes; it never submits the form around it. Tom
+       Select handles Enter itself when an option is highlighted (this listener runs after
+       its own); with nothing highlighted the keydown reached the browser's implicit
+       submission and posted the whole form (SET-19, the New vendor Vehicle types). */
+    ts?.control_input?.addEventListener?.("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (ts.isOpen && !ts.activeOption) ts.close();
+    });
     for (const target of [ts?.control, ts?.control_input]) {
       if (!target) continue;
       for (const attr of ["aria-label", "aria-labelledby"]) {
