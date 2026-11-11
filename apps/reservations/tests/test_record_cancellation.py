@@ -102,6 +102,25 @@ def test_a_cancelled_trip_cannot_become_a_chargeable_one():
     assert trip.trip_status == TS.CANCELLED
 
 
+def test_a_repeat_of_the_same_cancel_keeps_the_first_reason_who_and_when(admin_user):
+    """A second No Show (another dispatcher, another reason) is a no-op: the first stands."""
+    from apps.accounts.factories import UserFactory
+
+    trip = ReservationFactory(trip_status=TS.DISPATCHED)
+    record_cancellation(trip, TS.NO_SHOW, reason="Never came down", user=admin_user)
+    trip.refresh_from_db()
+    first_at = trip.cancelled_at
+
+    again = Reservation.objects.get(pk=trip.pk)
+    assert record_cancellation(again, TS.NO_SHOW, reason="Wrong door", user=UserFactory()) is None
+
+    trip.refresh_from_db()
+    assert trip.cancel_reason == "Never came down"
+    assert trip.cancelled_by == admin_user
+    assert trip.cancelled_at == first_at
+    assert TripStatusEvent.objects.filter(reservation=trip, status=TS.NO_SHOW).count() == 1
+
+
 def test_it_emits_trip_cancelled_once_by_default():
     trip = ReservationFactory(trip_status=TS.DISPATCHED)
     with patch.object(events, "emit") as emit:

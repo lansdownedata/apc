@@ -388,7 +388,8 @@ def record_cancellation(
     plain cancel (a late cancel or no-show is chargeable, whatever the cause). A plain
     cancel is final: its money has gone back, and a late cancel or no-show would claim it.
     The status goes through `set_trip_status` (``emit`` passed on), so every cancel leaves
-    a `TripStatusEvent`.
+    a `TripStatusEvent`. Repeating the trip's current cancel status changes nothing and
+    returns None.
     """
     reason = (reason or "").strip()
     if status not in _CANCEL_STATUSES:
@@ -401,6 +402,9 @@ def record_cancellation(
         locked = Reservation.objects.select_for_update().get(pk=trip.pk)
         if locked.trip_status == Reservation.TripStatus.CANCELLED and status != locked.trip_status:
             raise ValueError("This trip is already cancelled.")
+        if locked.trip_status == status:
+            # Already so: the first cancel's reason, who and when stand.
+            return None
         locked.cancel_reason = reason[:255]
         locked.cancel_covid = covid
         locked.cancelled_at = dj_timezone.now()
