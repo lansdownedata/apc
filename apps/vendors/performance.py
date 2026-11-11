@@ -15,7 +15,7 @@ from statistics import median
 from django.conf import settings
 
 from apps.dispatch.models import Assignment
-from apps.reservations.models import Reservation, TripIssue, TripReview, TripStatusEvent
+from apps.reservations.models import TripIssue, TripReview
 
 from .models import Vendor
 
@@ -296,10 +296,9 @@ def scorecards(
     payouts: dict[int, list[tuple[int | None, float]]] = defaultdict(list)
     by_type: dict[int | None, list[float]] = defaultdict(list)
     held_by: dict[int, int] = {}  # trip → the vendor who ran it
-    last_holder: dict[int, int] = {}  # trip → the vendor who most recently held it
     for a in rows:
-        if a.status != Assignment.Status.DECLINED:
-            last_holder[a.reservation_id] = a.vendor_id
+        if a.status == Assignment.Status.SENT_BACK and a.vendor_id in cards:
+            cards[a.vendor_id].cancellations += 1
         if a.status != Assignment.Status.CONFIRMED or a.vendor_id not in cards:
             continue
         trip = a.reservation
@@ -312,15 +311,6 @@ def scorecards(
             info[a.vendor_id].append((trip.pickup_at - a.driver_info_at).total_seconds() / 3600)
         payouts[a.vendor_id].append((trip.vehicle_id, float(a.payout)))
         by_type[trip.vehicle_id].append(float(a.payout))
-
-    cancelled = TripStatusEvent.objects.filter(
-        status=Reservation.TripStatus.CANCELLED_BY_AFFILIATE,
-        reservation__pickup_date__range=(start, end),
-    ).values_list("reservation_id", flat=True)
-    for trip_id in set(cancelled):
-        vendor_id = last_holder.get(trip_id)
-        if vendor_id in cards:
-            cards[vendor_id].cancellations += 1
 
     rated: dict[int, list[int]] = defaultdict(list)
     reviews = TripReview.objects.filter(reservation_id__in=held_by, affiliate_rating__isnull=False)

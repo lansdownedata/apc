@@ -156,10 +156,10 @@ def test_a_reassigned_trip_is_listed_under_the_confirmed_vendor_only():
     assert processing.vendor_bill_trip_ids(second) == {trip.pk}
 
 
-def test_a_stale_payable_on_a_trip_the_affiliate_dropped_is_not_a_bill():
+def test_a_stale_payable_on_a_trip_that_was_cancelled_is_not_a_bill():
     trip = _farmed()
-    assert _payable(trip)  # made earlier, before LA said the affiliate dropped it
-    Reservation.objects.filter(pk=trip.pk).update(trip_status=S.CANCELLED_BY_AFFILIATE)
+    assert _payable(trip)  # made earlier, before the trip was cancelled
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=S.CANCELLED)
 
     assert _groups() == []
     assert processing.vendor_bill_count() == 0

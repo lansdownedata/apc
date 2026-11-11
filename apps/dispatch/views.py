@@ -577,3 +577,15 @@ def resolve(request: HttpRequest, pk: int) -> JsonResponse:
     except services.AssignmentError as exc:
         return _fail(exc)
     return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def send_back(request: HttpRequest, pk: int) -> JsonResponse:
+    """The vendor gave a confirmed trip back; the drawer asks for the reason."""
+    assignment = get_object_or_404(Assignment, pk=pk)
+    try:
+        services.send_back(assignment, reason=request.POST.get("reason", ""), user=request.user)
+    except services.AssignmentError as exc:
+        return _fail(exc)
+    return JsonResponse({"ok": True})

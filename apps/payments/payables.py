@@ -97,12 +97,12 @@ def ensure_payable(trip) -> AffiliatePayable | None:
     """The trip's payable, made if missing (Trip Processing, APC-102): the active confirmed
     vendor assignment of a trip that ran or carries a charge — Done, No Show, Late Cancel
     (the affiliate went out). None for an in-house trip, an uncovered one, or one the
-    affiliate dropped (Cancelled by Affiliate: there is nobody to pay)."""
+    affiliate gave back (Sent back: no confirmed assignment, so nobody to pay)."""
     from apps.dispatch.models import Assignment
     from apps.reservations.models import Reservation
 
     s = Reservation.TripStatus
-    gone = (s.CANCELLED, s.COVID_CANCELLATION, s.CANCELLED_BY_AFFILIATE)
+    gone = (s.CANCELLED, s.COVID_CANCELLATION)
     if trip.trip_status in gone:
         return None
     assignment = (

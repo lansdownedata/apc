@@ -21,6 +21,7 @@ urlpatterns = [
         name="dispatch_vendor_driver_create",
     ),
     path("assignment/<int:pk>/resolve/", views.resolve, name="dispatch_resolve"),
+    path("assignment/<int:pk>/send-back/", views.send_back, name="dispatch_send_back"),
     path(
         "assignment/<int:pk>/cancel-notice/",
         views.cancel_notice,

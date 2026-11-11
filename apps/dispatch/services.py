@@ -422,6 +422,46 @@ def _confirmed_by(reservation: Reservation, user) -> None:
         tasks.complete(task, user)
 
 
+def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
+    """The vendor gave a confirmed trip back. The assignment becomes SENT_BACK (with the
+    reason and who recorded it), the trip returns to Unassigned flagged for farm-out, and
+    the pending T-48h affiliate message is withdrawn. The gateway is never echoed: a GNet
+    cancel has already released the trip on the partner's side. In-house coverage is
+    Unassign, not Sent back."""
+    reason = reason.strip()
+    if assignment.is_in_house:
+        raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
+    if not reason:
+        raise AssignmentError("Say why the trip was sent back.")
+    with transaction.atomic():
+        reservation = Reservation.objects.select_for_update().get(pk=assignment.reservation_id)
+        assignment.refresh_from_db()
+        if assignment.status != Assignment.Status.CONFIRMED:
+            raise AssignmentError(
+                f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}, "
+                "not confirmed."
+            )
+        assignment.status = Assignment.Status.SENT_BACK
+        assignment.sent_back_reason = reason[:255]
+        assignment.sent_back_by = user
+        assignment.resolved_at = timezone.now()
+        assignment.save(
+            update_fields=[
+                "status",
+                "sent_back_reason",
+                "sent_back_by",
+                "resolved_at",
+                "updated_at",
+            ]
+        )
+        reservation.needs_farm_out = True
+        reservation.save(update_fields=["needs_farm_out", "updated_at"])
+    _on_assignment_released(reservation)
+    _reopen(reservation)
+    _sync_tasks(reservation)
+    return assignment
+
+
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:
     """The affiliate said no — the trip goes back to uncovered (and Unassigned)."""
     if assignment.is_in_house:

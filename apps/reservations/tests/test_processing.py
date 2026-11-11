@@ -71,15 +71,6 @@ def test_plain_cancelled_and_covid_never_are(status):
     assert _trip(status) not in _ready()
 
 
-def test_cancelled_by_affiliate_is_ready_only_with_money_to_settle():
-    owes = _trip(S.CANCELLED_BY_AFFILIATE)
-    free = _trip(S.CANCELLED_BY_AFFILIATE, rate=Decimal("0"))
-
-    ready = _ready()
-
-    assert owes in ready and free not in ready
-
-
 def test_an_ended_trip_with_no_status_is_ready_and_needs_a_status():
     trip = _trip("", days_ago=1)
 
@@ -164,7 +155,7 @@ def test_the_issues_filter_shows_trips_with_an_open_issue():
         (S.DONE, 1, True),
         (S.NO_SHOW, 1, True),
         (S.LATE_CANCEL, 1, True),
-        (S.CANCELLED_BY_AFFILIATE, 1, True),
+        (S.UNASSIGNED, 1, True),
         (S.CANCELLED, 1, False),
         ("", 1, True),
         ("", -2, False),
@@ -203,7 +194,7 @@ def test_groups_are_customers_sorted_by_their_oldest_trip():
 
 def test_ready_trips_cost_a_flat_number_of_queries():
     _trip()
-    _trip(S.CANCELLED_BY_AFFILIATE, contact=ContactFactory())
+    _trip(S.NO_SHOW, contact=ContactFactory())
 
     def touch():
         for g in processing.group_by_customer(_ready()):
