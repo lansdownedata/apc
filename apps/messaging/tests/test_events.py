@@ -1112,6 +1112,104 @@ def test_a_queued_driver_change_notice_is_withdrawn_when_the_trip_changes(clock)
     assert notice.status == S.CANCELLED
 
 
+# --- a send elsewhere stands in only for a trip it listed, sent after this was queued ---
+# (MSG-09)
+
+
+def _hours_until(when) -> float:
+    return (when - timezone.now()).total_seconds() / 3600
+
+
+def _delivered(tp) -> list[tuple]:
+    from apps.messaging.models import Delivery
+
+    return sorted(Delivery.objects.filter(touchpoint=tp).values_list("channel", "status", "reason"))
+
+
+def test_a_second_order_booked_after_the_days_confirmation_gets_its_own(clock, live):
+    """MSG-09: the customer's confirmation for the day went; a second order for the same
+    day booked afterwards was skipped as "Already sent", though that notice never listed
+    its trip."""
+    first_lead = _lead()
+    first = _trip(first_lead)
+    events.schedule_dates(first_lead)
+    clock.now = first.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+    assert _tps(first_lead, kind=K.TRIP_CONFIRM_CUSTOMER).get().status == S.SENT
+
+    clock.now += timedelta(hours=1)
+    second_lead = LeadFactory(status=Lead.Status.BOOKED, contact=first_lead.contact)
+    second = _trip(second_lead, hours=_hours_until(first.pickup_at) - 1)
+    events.schedule_dates(second_lead)
+    _send_due()
+
+    tp = _tps(second_lead, reservation=second, kind=K.TRIP_CONFIRM_CUSTOMER).get()
+    assert tp.status == S.SENT
+    assert _delivered(tp) == [("email", "sent", ""), ("sms", "sent", "")]
+
+
+def test_a_staff_notice_for_a_trip_booked_after_the_days_notice_still_goes(clock, live):
+    """MSG-09, the staff side: the day's notice to ops@ went for other orders' trips; a trip
+    booked later that day is news to ops too."""
+    staff = _staff_pickup_row()
+    first_lead = _lead()
+    first = _trip(first_lead)
+    events.schedule_dates(first_lead)
+    clock.now = first.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+
+    clock.now += timedelta(hours=1)
+    second_lead = _lead()
+    second = _trip(second_lead, hours=_hours_until(first.pickup_at) - 1)
+    events.schedule_dates(second_lead)
+    _send_due()
+
+    tp = _tps(second_lead, reservation=second, kind=staff.key).get()
+    assert tp.status == S.SENT
+    assert _delivered(tp) == [("email", "sent", "")]
+
+
+def test_one_order_with_two_trips_a_day_still_sends_one_notice(clock, live):
+    staff = _staff_pickup_row()
+    lead = _lead()
+    first = _trip(lead)
+    second = _trip(lead, hours=24 * 10 + 2)
+    events.schedule_dates(lead)
+    clock.now = second.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+
+    day = second.pickup_date
+    for key in (K.TRIP_CONFIRM_CUSTOMER, staff.key):
+        assert _tps(lead, reservation=first, kind=key).get().status == S.SENT
+        tp = _tps(lead, reservation=second, kind=key).get()
+        assert tp.status == S.SKIPPED
+        assert {reason for *_, reason in _delivered(tp)} == {f"Already sent for {day:%b} {day.day}"}
+
+
+def test_a_trip_moved_within_its_day_is_told_again(clock, live):
+    """MSG-05 with MSG-09: the day's notice listed both trips; the second then moves to a
+    later time the same day. Its fresh notice goes, though the first trip's notice listed
+    it: that notice went before the move."""
+    staff = _staff_pickup_row()
+    lead = _lead()
+    _trip(lead)
+    second = _trip(lead, hours=24 * 10 + 2)
+    events.schedule_dates(lead)
+    clock.now = second.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+
+    clock.now += timedelta(minutes=5)
+    second.pickup_time = second.pickup_time.replace(hour=(second.pickup_time.hour + 1) % 24)
+    second.save()
+    events.reschedule_trip(second)
+    clock.now += timedelta(hours=1)
+    _send_due()
+
+    for key in (K.TRIP_CONFIRM_CUSTOMER, staff.key):
+        fresh = _tps(lead, reservation=second, kind=key).exclude(status=S.CANCELLED).get()
+        assert fresh.status == S.SENT, key
+
+
 # --- parity: rows that wait ------------------------------------------------------------
 
 

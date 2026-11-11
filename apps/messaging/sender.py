@@ -533,19 +533,26 @@ def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[De
     they are what makes a re-run send only what is missing), and the addresses (lowercased)
     a send of this row reached for this combine key on another TouchPoint. One that was
     cancelled since (a pickup moved, so a fresh notice was queued) no longer stands in for
-    anything. One query."""
+    anything. One query.
+
+    A send elsewhere stands in only for a trip it listed (`Delivery.covers`), and only if
+    it went after this TouchPoint was queued (MSG-09): a trip booked, or moved, after the
+    day's notice went is news to the person. A send that recorded no list (made before
+    APC-131, or keyed on its own trip) keeps the old rule: it stands in, except for a row
+    that waits for dispatch, which tells each trip once."""
     wanted = Q(touchpoint=tp)
     if key:
         wanted |= Q(message=row, combine_key=key, status=Delivery.Status.SENT)
-    # A row that waits for dispatch tells each trip once: a send that didn't list this
-    # trip (it wasn't ready yet) doesn't stand in for it (APC-131).
     per_trip = bool(triggers.CATALOG[row.trigger].waits_for)
     mine, elsewhere = [], set()
     for d in Delivery.objects.filter(wanted).select_related("touchpoint"):
         if d.touchpoint_id == tp.pk:
             mine.append(d)
         elif d.touchpoint.status != TouchPoint.Status.CANCELLED:
-            if per_trip and tp.reservation_id not in (d.covers or []):
+            if d.covers:
+                if tp.reservation_id not in d.covers or d.created_at < tp.created_at:
+                    continue
+            elif per_trip:
                 continue
             elsewhere.add(d.address.lower())
     return mine, elsewhere
