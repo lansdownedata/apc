@@ -77,7 +77,7 @@ def test_the_screen_explains_which_way_the_lever_runs(client):
     assert "lower" in body and "higher" in body
 
 
-def test_the_settings_index_links_to_it(client):
+def test_the_settings_menu_links_to_it(client):
     _owner(client)
 
     body = client.get(reverse("settings_index")).content.decode()

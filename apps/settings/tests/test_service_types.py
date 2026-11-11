@@ -76,11 +76,11 @@ def test_delete_removes_when_unused(client):
     assert not ServiceType.objects.filter(pk=st.pk).exists()
 
 
-def test_settings_index_counts_and_links_them(client):
+def test_the_settings_menu_links_them(client):
     _owner(client)
-    resp = client.get(reverse("settings_index"))
-    assert resp.context["service_type_count"] == ServiceType.objects.filter(active=True).count()
-    assert b"Service types" in resp.content
+    body = client.get(reverse("settings_index")).content.decode()
+    assert reverse("service_type_list") in body
+    assert "Service types" in body
 
 
 def test_delete_is_refused_while_a_message_uses_it(client):

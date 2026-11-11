@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% load settings_menu %}
+{# Every Settings page: the sidebar shows the settings menu instead of the portal nav. #}
+{% block sidebar_nav %}{% settings_menu %}{% endblock %}

@@ -142,6 +142,6 @@ def test_deleting_a_poi_deactivates_it_rather_than_losing_the_history(owner):
     assert venue.is_active is False
 
 
-def test_the_settings_index_links_the_directory(owner):
+def test_the_settings_menu_links_the_directory(owner):
     body = owner.get(reverse("settings_index")).content.decode()
     assert reverse("poi_list") in body

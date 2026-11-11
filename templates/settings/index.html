@@ -1,151 +1,45 @@
-{% extends "base.html" %}
+{% extends "settings/base.html" %}
+{% comment %}
+The Settings Overview: problems first, then the state of each switch. The settings menu does
+the navigating. Context: settings_attention (attention.Attention list, also reused by the menu tag for
+its dots) and status ((label, tone, text) tuples;
+tone is "ok", "warn" or "danger").
+{% endcomment %}
 {% block content %}
-<div class="max-w-[1000px] mx-auto px-4 sm:px-6 py-6">
-  <header class="mb-5">
+<div class="max-w-[720px] mx-auto px-4 sm:px-6 py-6">
+  <header>
     <h1 class="font-display text-[22px] font-semibold text-ink tracking-tight">Settings</h1>
-    <p class="text-[12.5px] text-muted mt-0.5">Configure what your customers see.</p>
+    <p class="text-[12.5px] text-muted mt-0.5">How the portal prices, dispatches and talks to customers.</p>
   </header>
-  <div class="grid gap-4 sm:grid-cols-2">
-    <a href="{% url 'vehicle_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-car text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Vehicle Types</h2>
+
+  <h2 class="font-display text-[15px] font-semibold text-ink mt-7 mb-2">Needs attention</h2>
+  {% if settings_attention %}
+  <div class="card divide-y divide-line">
+    {% for item in settings_attention %}
+    <div class="flex items-start gap-3 px-4 py-3 text-[12.5px]">
+      <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {% if item.severity == 'danger' %}bg-danger{% else %}bg-warn{% endif %}" aria-hidden="true"></span>
+      <div class="flex-1 min-w-0">
+        <p class="font-semibold text-ink">{{ item.title }}</p>
+        <p class="text-muted">{{ item.detail }}</p>
       </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Photos, capacity, and descriptions shown on every quote.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">{{ vehicle_type_count }} active</p>
-    </a>
-    <a href="{% url 'service_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-tag text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Service types</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        What a trip is for — airport, wedding, corporate. Offered in the editor and on the booking form.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">{{ service_type_count }} active</p>
-    </a>
-    <a href="{% url 'poi_list' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-map-pin text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Points of interest</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Venues, hotels and ceremony sites we run to — and the largest vehicle each one can take.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">{{ poi_count }} active{% if capped_poi_count %} · {{ capped_poi_count }} size-limited{% endif %}</p>
-    </a>
-    <a href="{% url 'renewal_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-calendar-check text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Renewal types</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        What paperwork drivers and vehicles carry — licenses, registration, inspections, permits.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">{{ renewal_type_count }} active{% if fleet_attention_count %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ fleet_attention_count }} need attention</span>{% endif %}</p>
-    </a>
-    <a href="{% url 'document_type_list' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-files text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Affiliate documents</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        The paperwork each affiliate keeps on file — which kinds exist and which are required.
-      </p>
-    </a>
-    <a href="{% url 'pricing' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-calculator text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Pricing</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        The default share an affiliate keeps when you price a trip from their rate.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">Vendor keeps {{ default_cost_ratio_pct|floatformat:"-2" }}%</p>
-    </a>
-    <a href="{% url 'dispatch_alerts' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-bell-exclamation text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Dispatch alerts</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Thresholds and text numbers for missed-milestone alerts — no driver assigned, not en route, not arrived.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">
-        {% if dispatch_monitor_on %}Monitor on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Monitor off</span>{% endif %}{% if open_dispatch_exceptions %} · <span class="font-semibold" style="color:rgb(var(--danger));">{{ open_dispatch_exceptions }} open</span>{% endif %}
-      </p>
-    </a>
-    <a href="{% url 'affiliate_scoring' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-chart-bar text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Affiliate scoring</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        How the affiliate reliability score is worked out: what is measured, what earns full marks, and how much each part counts.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">Read-only</p>
-    </a>
-    {% if qbo_enabled %}
-    <a href="{% url 'quickbooks_settings' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-building-bank text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">QuickBooks</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        The QuickBooks Online company billing accounts and invoices sync to.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">
-        {% if qbo_tile_connected %}Connected{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Not connected</span>{% endif %}
-      </p>
-    </a>
-    {% endif %}
-    <a href="{% url 'task_settings' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-checklist text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Tasks</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Who owns each department's work and when overdue tasks escalate.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">
-        {% if tasks_on %}Tasks on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Tasks off</span>{% endif %}
-      </p>
-    </a>
-    <a href="{% url 'checklist_schedule' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-calendar-time text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Checklist schedule</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        When each checklist item falls due, from deposits to insurance renewals.
-      </p>
-    </a>
-    <a href="{% url 'messages' %}" class="card p-4 hover:wash-gold transition-colors">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-message-2 text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Messages</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Every automated message to customers and affiliates: what it says, when it sends, and whether it is on.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">
-        {% if notifications_on %}Messaging on{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Messaging off</span>{% endif %}
-      </p>
-    </a>
-    <div class="card p-4">
-      <div class="flex items-center gap-2">
-        <i class="ti ti-send text-[18px] text-gold"></i>
-        <h2 class="font-display text-[15px] font-semibold text-ink">Go-live switch</h2>
-      </div>
-      <p class="text-[12.5px] text-muted mt-1">
-        Whether anything reaches a customer or an affiliate. Staff reports and alerts send either way. Turned on once, at go-live, by your developer.
-      </p>
-      <p class="text-[12.5px] text-muted mt-2">
-        {% if outbound_enabled %}Live{% else %}<span class="font-semibold" style="color:rgb(var(--danger));">Not live</span>{% endif %}
-      </p>
+      {% if item.url_name %}
+      <a href="{% url item.url_name %}" class="font-semibold text-goldd whitespace-nowrap hover:underline focus-gold rounded">{{ item.link_label }} →</a>
+      {% endif %}
     </div>
+    {% endfor %}
   </div>
+  {% else %}
+  <p class="text-[12.5px] text-muted">Nothing needs attention.</p>
+  {% endif %}
+
+  <h2 class="font-display text-[15px] font-semibold text-ink mt-7 mb-2">Status</h2>
+  <dl class="text-[12.5px]">
+    {% for label, tone, text in status %}
+    <div class="flex items-center justify-between gap-4 py-2 border-b border-line">
+      <dt class="text-ink">{{ label }}</dt>
+      <dd class="{% if tone == 'ok' %}text-ok{% elif tone == 'warn' %}text-warn font-semibold{% else %}text-danger font-semibold{% endif %}">{{ text }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
 </div>
 {% endblock %}

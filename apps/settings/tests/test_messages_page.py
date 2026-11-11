@@ -115,14 +115,15 @@ def test_archive_added_row_only(client):
     assert ">Mine<" not in _get(client)
 
 
-def test_query_count_bounded(client):
+def test_query_count_bounded(client, settings):
+    settings.PODIUM_CLIENT_ID = "podium-client"  # the attention check reads the credential
     _admin(client)
     seed()
     for _ in range(15):
         MessageRowFactory()
     with CaptureQueriesContext(connection) as ctx:
         _get(client)
-    assert len(ctx) <= 20
+    assert len(ctx) <= 27  # 20 for the page, plus the settings menu's attention check
 
 
 def test_toggle_works_for_an_added_row(client):

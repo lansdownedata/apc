@@ -1,7 +1,11 @@
 """Settings screens — owner-admin only."""
 
+import logging
 from datetime import datetime, time
+from urllib.parse import urlsplit, urlunsplit
 
+import requests
+from django.conf import settings as dj_settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -15,7 +19,9 @@ from apps.accounts.permissions import owner_admin_required
 from apps.addresses.models import Venue
 from apps.dispatch.models import DispatchAlertConfig, DispatchException
 from apps.fleet.forms import RenewalTypeForm
-from apps.fleet.models import RENEWAL_PREFETCH, Driver, RenewalType, Vehicle
+from apps.fleet.models import RenewalType
+from apps.integrations import podium
+from apps.integrations.models import PodiumCredential
 from apps.leads.models import Lead, ServiceType, VehicleType
 from apps.messaging import defaults, editor, fields, listing, recipients, rules, triggers
 from apps.messaging.models import MessageTemplate, NotificationConfig
@@ -24,6 +30,7 @@ from apps.tasks import schedule
 from apps.tasks.models import TaskConfig
 from apps.vendors.models import AffiliateDocumentType
 
+from .attention import Attention, settings_attention
 from .forms import (
     AffiliateDocumentTypeForm,
     ChecklistScheduleForm,
@@ -36,54 +43,134 @@ from .forms import (
     VenueForm,
 )
 
-
-def _fleet_attention_count() -> int:
-    """Active drivers + units whose paperwork is lapsed or expiring — the tile's nudge."""
-    subjects = [
-        *Driver.objects.filter(status=Driver.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
-        *Vehicle.objects.filter(status=Vehicle.Status.ACTIVE).prefetch_related(RENEWAL_PREFETCH),
-    ]
-    return sum(1 for s in subjects if s.needs_attention)
+logger = logging.getLogger(__name__)
 
 
 @login_required
 @owner_admin_required
 def settings_index(request: HttpRequest) -> HttpResponse:
+    attention = settings_attention()
     return render(
         request,
         "settings/index.html",
         {
             "nav": "settings",
             "page_title": "Settings",
-            "vehicle_type_count": VehicleType.objects.filter(active=True).count(),
-            "service_type_count": ServiceType.objects.filter(active=True).count(),
-            "poi_count": Venue.objects.filter(is_active=True).count(),
-            # Places that cannot take our largest coach — the number worth glancing at,
-            # because each one reshapes any run quoted to it.
-            "capped_poi_count": Venue.objects.filter(is_active=True)
-            .exclude(max_vehicle__isnull=True, vehicle_cap__isnull=True)
-            .count(),
-            "renewal_type_count": RenewalType.objects.filter(active=True).count(),
-            "fleet_attention_count": _fleet_attention_count(),
-            "dispatch_monitor_on": DispatchAlertConfig.load().enabled,
-            "open_dispatch_exceptions": DispatchException.objects.filter(
-                resolved_at__isnull=True
-            ).count(),
-            "notifications_on": NotificationConfig.load().enabled,
-            "tasks_on": TaskConfig.load().enabled,
-            "default_cost_ratio_pct": PricingConfig.load().default_cost_ratio_pct,
-            **_qbo_tile(),
+            "settings_attention": attention,
+            "status": _status(attention),
         },
     )
 
 
-def _qbo_tile() -> dict:
+def _status(attention: list[Attention]) -> list[tuple[str, str, str]]:
+    """(label, tone, text) for each switch, read off the attention list so the page asks once.
+    `tone` is "ok", or the flagged attention row's severity ("warn" | "danger"), so a row and
+    its attention item always agree."""
     from apps.integrations import qbo
 
-    return {
-        "qbo_enabled": qbo.enabled(),
-        "qbo_tile_connected": qbo.enabled() and qbo.is_connected(),
-    }
+    flagged = {a.key: a.severity for a in attention}
+    rows = [
+        ("Go-live", "not_live", "Live", "Not live"),
+        ("Automated messages", "messages_off", "On", "Off"),
+        ("Dispatch monitor", "dispatch_off", "On", "Off"),
+        ("Tasks", "tasks_off", "On", "Off"),
+    ]
+    if qbo.enabled():
+        rows.append(("QuickBooks", "qbo", "Connected", "Not connected"))
+    if dj_settings.PODIUM_CLIENT_ID:
+        location = "" if "podium" in flagged else _podium_location(PodiumCredential.current())
+        on = f"Connected · {location}" if location else "Connected"
+        rows.append(("Podium", "podium", on, "Not connected"))
+    return [
+        (label, flagged[key], off) if key in flagged else (label, "ok", on)
+        for label, key, on, off in rows
+    ]
+
+
+def _podium_location(credential: PodiumCredential | None) -> str:
+    """The location Podium sends from: the credential's, else the configured one."""
+    return (credential.location_uid if credential else "") or dj_settings.PODIUM_LOCATION_UID
+
+
+@login_required
+@owner_admin_required
+def podium_settings(request: HttpRequest) -> HttpResponse:
+    """Connect / reconnect Podium and see which location it is. No Podium call on load."""
+    credential = PodiumCredential.current()
+    return render(
+        request,
+        "settings/podium.html",
+        {
+            "nav": "settings",
+            "page_title": "Podium",
+            "configured": bool(dj_settings.PODIUM_CLIENT_ID),
+            "credential": credential,
+            "location": _podium_location(credential),
+            "ngrok_hint": dj_settings.DEBUG,
+        },
+    )
+
+
+def _normalise_url(url: str) -> str:
+    """Lower-case scheme and host and drop a trailing slash, so equal addresses compare equal."""
+    parts = urlsplit(url.strip())
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
+    )
+
+
+def split_webhooks(hooks: list[dict], expected_url: str) -> tuple[list[dict], list[dict]]:
+    """(this site's, elsewhere): the hooks whose URL is `expected_url`, and the rest."""
+    expected = _normalise_url(expected_url)
+    ours: list[dict] = []
+    elsewhere: list[dict] = []
+    for hook in hooks:
+        (ours if _normalise_url(hook.get("url") or "") == expected else elsewhere).append(hook)
+    return ours, elsewhere
+
+
+@login_required
+@owner_admin_required
+@require_POST
+def podium_check_webhook(request: HttpRequest) -> HttpResponse:
+    """Ask Podium which webhooks deliver to this site, and name any that point elsewhere.
+    Every failure is a flash, never a 500."""
+    try:
+        hooks = podium.podium_webhooks()
+    except podium.PodiumNotConnected:
+        messages.error(request, "Podium is not connected.")
+    except podium.PodiumAPIError as exc:
+        logger.warning("podium check webhook: %s", exc)
+        messages.error(request, podium.describe_error(str(exc)))
+    except (requests.HTTPError, KeyError) as exc:
+        # `_request` wraps its own HTTP errors, so a bare one (or a token body without an
+        # access token) comes from renewing the stored token: only a reconnect fixes that.
+        logger.warning("podium check webhook: token refresh failed (%r)", exc)
+        messages.error(request, "Podium would not renew the connection. Reconnect Podium.")
+    except requests.RequestException as exc:
+        logger.warning("podium check webhook: unreachable (%r)", exc)
+        messages.error(request, "Could not reach Podium. Try again in a minute.")
+    else:
+        expected = _expected_webhook_url(request)
+        ours, elsewhere = split_webhooks(hooks, expected)
+        for hook in ours:
+            count = len(hook.get("eventTypes") or [])
+            noun = "event" if count == 1 else "events"
+            messages.success(request, f"Webhook registered: {hook['url']} ({count} {noun})")
+        if not ours:
+            messages.warning(
+                request, f"No Podium webhook is registered for this site ({expected})."
+            )
+        for hook in elsewhere:
+            messages.warning(request, f"Also registered, points elsewhere: {hook['url']}")
+    return redirect("podium_settings")
+
+
+def _expected_webhook_url(request: HttpRequest) -> str:
+    """This site's Podium receiver: PUBLIC_BASE_URL + the route, else the request's host."""
+    path = reverse("podium_webhook")
+    base = dj_settings.PUBLIC_BASE_URL.rstrip("/")
+    return f"{base}{path}" if base else request.build_absolute_uri(path)
 
 
 @login_required

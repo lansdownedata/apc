@@ -1,0 +1,38 @@
+{% extends "settings/base.html" %}
+{% comment %}
+  Settings → Integrations → Podium. Owner-admin only. Tokens are never rendered. Loading the
+  page makes no Podium call; Check webhook is the one button that asks Podium anything.
+{% endcomment %}
+{% block content %}
+<div class="max-w-[640px] mx-auto px-4 sm:px-6 py-6">
+  <div class="card p-5 sm:p-6">
+    <h1 class="font-display text-[19px] font-semibold text-ink tracking-tight mb-1">Podium</h1>
+    <p class="text-[12.5px] text-muted mb-5">
+      Customer texts send and arrive through Podium. Connecting needs a Podium admin of the location.
+    </p>
+
+    {% if not configured %}
+      <p class="text-[13px] text-ink">Podium isn't configured on this server.</p>
+    {% elif credential %}
+      <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[13px] mb-5">
+        <dt class="text-muted">Location</dt><dd class="font-medium text-ink num break-all">{{ location|default:"Not set" }}</dd>
+        <dt class="text-muted">Connected since</dt><dd class="text-ink">{{ credential.created_at|date:"M j, Y · g:i A" }}</dd>
+        <dt class="text-muted">Scopes</dt><dd class="text-ink break-words">{{ credential.scopes|default:"None recorded" }}</dd>
+      </dl>
+      <div class="flex items-center gap-2.5">
+        <a href="{% url 'integrations:podium_authorize' %}" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors focus-gold">Reconnect</a>
+        <form method="post" action="{% url 'podium_check_webhook' %}">{% csrf_token %}
+          <button type="submit" class="text-[13px] font-medium text-muted hover:text-ink px-4 py-2 rounded-lg ring-1 ring-line bg-surface transition-colors focus-gold">Check webhook</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="text-[13px] text-ink mb-4">Not connected.</p>
+      <a href="{% url 'integrations:podium_authorize' %}" class="btn-gold inline-block text-[13px] font-semibold rounded-lg px-4 py-2 focus-gold">Connect Podium</a>
+    {% endif %}
+
+    {% if ngrok_hint %}
+      <p class="text-[12px] text-muted mt-4">Connect from the public (ngrok) address. Connecting from localhost fails with “Invalid OAuth state”.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

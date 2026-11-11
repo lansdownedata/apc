@@ -33,13 +33,12 @@ def test_no_banner_once_live(client, owner):
 
 def test_settings_shows_not_live_while_the_switch_is_off(client, owner, settings):
     settings.OUTBOUND_ENABLED = False
-    html = client.get(reverse("settings_index")).content.decode()
-    assert "Go-live switch" in html
-    assert "Not live" in html
+    resp = client.get(reverse("settings_index"))
+    assert ("Go-live", "warn", "Not live") in resp.context["status"]
+    assert "Not live" in resp.content.decode()
 
 
 def test_settings_shows_live_once_the_switch_is_on(client, owner):
-    html = client.get(reverse("settings_index")).content.decode()
-    assert "Go-live switch" in html
-    assert "Not live" not in html
-    assert "Live" in html
+    resp = client.get(reverse("settings_index"))
+    assert ("Go-live", "ok", "Live") in resp.context["status"]
+    assert "Not live" not in resp.content.decode()
