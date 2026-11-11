@@ -18,6 +18,7 @@ from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
 from apps.payments import services as payment_services
 from apps.reservations import editor as reservation_editor
+from apps.reservations import processing
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
 from apps.tasks import selectors as task_selectors
@@ -439,6 +440,14 @@ def _fail(exc: Exception) -> JsonResponse:
     return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
 
+def _status_lock(trip: Reservation) -> str:
+    """Why the drawer may not change this trip's status, or "" when it may. A processed trip
+    is unlocked from Trip Processing; a Done trip that isn't processed can still move."""
+    if trip.lead.status != Lead.Status.BOOKED:
+        return "Only booked trips can change status here."
+    return processing.lock_message(trip)
+
+
 @login_required
 @require_POST
 def offer(request: HttpRequest, pk: int) -> JsonResponse:
@@ -509,6 +518,8 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
         return _fail(services.AssignmentError("Unknown status."))
     if trip.is_cancelled:
         return _fail(services.AssignmentError("This trip is cancelled."))
+    if lock := _status_lock(trip):
+        return _fail(services.AssignmentError(lock))
     covering = services.active_assignment(trip)
     if covering is None or covering.status != Assignment.Status.CONFIRMED:
         return _fail(services.AssignmentError("Confirm coverage before setting trip status."))
@@ -527,6 +538,8 @@ def cancel_status(request: HttpRequest, pk: int) -> JsonResponse:
     status = request.POST.get("status", "")
     if status not in _DRAWER_CANCEL_STATUSES:
         return _fail(ValueError("Pick Late cancel or No show. Cancel the trip from its order."))
+    if lock := _status_lock(trip):
+        return _fail(ValueError(lock))
     try:
         reservation_services.record_cancellation(
             trip, status, reason=request.POST.get("reason", ""), user=request.user

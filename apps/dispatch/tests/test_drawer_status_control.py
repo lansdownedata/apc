@@ -412,3 +412,70 @@ def test_drawer_disables_the_drawer_statuses_on_a_cancelled_trip(logged_in_clien
     disabled = {o[0] for o in options if o[1]}
     assert set(DRAWER) <= disabled
     assert "no_show" not in disabled  # a late cancel can still become a no-show
+
+
+# --- processed and non-booked trips (final fix wave F1) ---------------------------------------
+
+
+def _processed(trip):
+    from apps.reservations.models import TripReview
+
+    TripReview.objects.create(
+        reservation=trip, processed_at=timezone.now(), processed_by=UserFactory()
+    )
+    return trip
+
+
+def test_set_status_refuses_a_processed_trip(logged_in_client):
+    trip = _processed(_trip(trip_status=TS.DONE))
+    _confirmed(trip)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_set_status", args=[trip.pk]), {"status": "on_the_way"}
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"].startswith("Processed on ")
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.DONE
+
+
+def test_cancel_status_refuses_a_processed_trip(logged_in_client):
+    trip = _processed(_trip(trip_status=TS.DONE))
+    _confirmed(trip)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_cancel_status", args=[trip.pk]), {"status": "no_show", "reason": "x"}
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"].startswith("Processed on ")
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.DONE
+
+
+def test_set_status_moves_a_done_trip_that_is_not_processed(logged_in_client):
+    """Once Done, dispatch can still move a trip back until it is processed."""
+    trip = _trip(trip_status=TS.DONE)
+    _confirmed(trip)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_set_status", args=[trip.pk]), {"status": "arrived"}
+    )
+
+    assert resp.status_code == 200, resp.content
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.ARRIVED
+
+
+def test_cancel_status_refuses_a_quote(logged_in_client):
+    trip = _trip(lead=LeadFactory(status=Lead.Status.QUOTED), trip_status=TS.PENDING)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_cancel_status", args=[trip.pk]), {"status": "no_show", "reason": "x"}
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "Only booked trips can change status here."
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.PENDING
