@@ -1,0 +1,34 @@
+{% extends "public/base_public.html" %}
+{% block title %}Your trip · All Pro Charter{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex">{% endblock %}
+{% block header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block schema %}{% endblock %}
+{% block marketing_embeds %}{% endblock %}
+{% block content %}
+  {% if dead %}
+    <p>This trip is no longer assigned to you. Call {{ company_phone }} with questions.</p>
+  {% else %}
+    <h1>Trip {{ trip_ref }}</h1>
+    <p>{{ state.status_label }}</p>
+    {% if state.message %}<p>{{ state.message }}</p>{% endif %}
+    {% if state.next %}<button type="button" {% if not state.window_open %}disabled{% endif %}>{{ state.next.label }}</button>{% elif state.done %}<p>Trip complete · thank you</p>{% endif %}
+    {% if not state.window_open and state.opens_at_label %}<p>Opens at {{ state.opens_at_label }}, 6 hours before pickup</p>{% endif %}
+    {% if next_stop %}
+      <p>{{ next_stop.eyebrow }}</p>
+      <p>{{ next_stop.time_label }} {{ next_stop.name }} {{ next_stop.address }}</p>
+      {% if navigate_url %}<a href="{{ navigate_url }}">Navigate</a>{% endif %}
+    {% endif %}
+    <ol>
+      {% for stop in stops %}
+        <li>{{ stop.kind }} {{ stop.time_label }} {{ stop.name }} {{ stop.address }} {{ stop.note }}</li>
+      {% endfor %}
+    </ol>
+    <p>{{ pax_count }} passengers{% if vehicle %} · {{ vehicle }}{% endif %}</p>
+    {% for name in passengers %}<p>{{ name }}</p>{% endfor %}
+    {% if lead_mobile %}<a href="tel:{{ lead_mobile }}">{{ lead_mobile }}</a>{% endif %}
+    {% if sign_name %}<p>Sign: {{ sign_name }}</p>{% endif %}
+    {% for line in flight_lines %}<p>{{ line }}</p>{% endfor %}
+    {{ config|json_script:"driver-data" }}
+  {% endif %}
+{% endblock %}

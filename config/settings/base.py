@@ -214,6 +214,8 @@ LA_COMPANY_ALIAS = env("LA_COMPANY_ALIAS", default="")
 LA_PAYMENT_TYPE_ID = env.int("LA_PAYMENT_TYPE_ID", default=0)  # non-charging type; see smoke test
 LA_WEBHOOK_BASE_URL = env("LA_WEBHOOK_BASE_URL", default="")  # e.g. https://<NGROK_HOST>
 LOCATIONIQ_API_KEY = env("LOCATIONIQ_API_KEY", default="")
+# Browser-safe key for the driver page map tiles; the server key above never reaches a template.
+LOCATIONIQ_PUBLIC_KEY = env("LOCATIONIQ_PUBLIC_KEY", default="")
 
 # aviationstack — flight verification (spec 2026-08-29). Blank key = Verify hidden everywhere
 # and the endpoint answers 503 `not_configured`. Needs the Basic plan or higher for
