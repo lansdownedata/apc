@@ -102,6 +102,17 @@ def test_dead_link_page_shows_only_the_phone_line(client):
     assert res["Cache-Control"] == "private, no-store"
 
 
+def test_dead_link_page_without_a_company_phone_says_dispatch(client):
+    a = _live(status=S.DISPATCHED)
+    a.status = Assignment.Status.WITHDRAWN
+    a.save(update_fields=["status"])
+    with override_settings(COMPANY_PHONE=""):
+        html = client.get(_url(a)).content.decode()
+    assert "This trip is no longer assigned to you. Call dispatch with questions." in html
+    assert "Call  with" not in html
+    assert "tel:" not in html
+
+
 def test_post_to_dead_link_is_410(client):
     a = _live()
     a.status = Assignment.Status.WITHDRAWN

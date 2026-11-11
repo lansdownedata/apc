@@ -192,3 +192,11 @@ def test_token_never_in_canonical_or_og_url(client, dead):
     for tag in tags:
         assert token not in tag
     assert '<meta name="robots" content="noindex">' in page
+
+
+def test_map_resizes_to_its_frame_before_fitting_bounds():
+    from pathlib import Path
+
+    js = Path("static/js/driver_page.js").read_text()
+    assert "ResizeObserver" in js
+    assert js.index("resize()") < js.index("fitBounds(")

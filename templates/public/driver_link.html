@@ -27,7 +27,7 @@
     <img src="{% static 'brand/apc-logo-ondark.svg' %}" alt="All Pro Charter" class="h-7 w-auto">
   </header>
   <div class="mx-auto max-w-md px-4 py-10 text-center">
-    <p class="text-base font-semibold text-ink">This trip is no longer assigned to you. Call {{ company_phone }} with questions.</p>
+    <p class="text-base font-semibold text-ink">This trip is no longer assigned to you. Call {% if company_phone %}{{ company_phone }}{% else %}dispatch{% endif %} with questions.</p>
     {% if company_phone %}
       <a href="tel:{{ company_phone }}"
          class="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-onyx px-5 py-3 text-sm font-semibold text-gold transition-colors hover:bg-charcoal3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2">

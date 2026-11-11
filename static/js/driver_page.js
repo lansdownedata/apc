@@ -114,6 +114,17 @@
     // Kept out of Alpine's reactive proxy: a MapLibre map and a watch id are not UI state.
     var geo = { watchId: null, last: null, sent: null, sentAt: 0 };
     var map = null;
+    var mapBounds = null;
+
+    // Measure the real container, then fit: MapLibre sizes itself at construction, which can
+    // be before layout (a 400x300 canvas in a 224 px frame), and the fit would be for that.
+    function fitMap() {
+      if (!map || !mapBounds) return;
+      try {
+        map.resize();
+        map.fitBounds(mapBounds, { padding: 40, maxZoom: 15, animate: false });
+      } catch (e) { /* the stop list stands alone */ }
+    }
     var dot = null;
 
     return {
@@ -183,9 +194,7 @@
       showTab: function (name) {
         this.tab = name;
         if (name === "route" && map) {
-          this.$nextTick(function () {
-            try { map.resize(); } catch (e) { /* the stop list stands alone */ }
-          });
+          this.$nextTick(function () { fitMap(); });
         }
       },
 
@@ -430,10 +439,11 @@
           // No cached route (or a broken one): straight segments between the stops.
           if (line.length < 2) line = points;
           var loaded = false;
+          mapBounds = boundsOf(line.concat(points));
           map = new maplibregl.Map({
             container: this.$refs.map,
             style: STYLE_URL + encodeURIComponent(cfg.map_key),
-            bounds: boundsOf(line.concat(points)),
+            bounds: mapBounds,
             fitBoundsOptions: { padding: 40, maxZoom: 15 },
             attributionControl: { compact: true },
             cooperativeGestures: true,
@@ -443,6 +453,7 @@
           });
           map.on("load", function () {
             loaded = true;
+            fitMap();
             try {
               map.addSource("route", {
                 type: "geojson",
@@ -464,6 +475,13 @@
           points.forEach(function (p, i) {
             new maplibregl.Marker({ element: stopPin(i + 1) }).setLngLat(p).addTo(map);
           });
+          try {
+            if (window.ResizeObserver) {
+              new ResizeObserver(function () {
+                try { map.resize(); } catch (e) { /* map gone */ }
+              }).observe(this.$refs.map);
+            }
+          } catch (e) { /* no observer; load and tab show still refit */ }
           if (geo.last && geo.watchId !== null) this.placeDot(geo.last);
         } catch (e) {
           this.mapFailed = true;
