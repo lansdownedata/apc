@@ -107,6 +107,35 @@ def test_the_affiliate_trip_sheet_never_shows_it(costed_lead):
     _assert_clean(trip_sheet_text(reservation), "the trip sheet")
 
 
+def test_the_driver_page_never_shows_it(client, costed_lead, settings):
+    """The driver runs the trip from this page; neither our cost nor their payout is on it."""
+    from apps.dispatch.models import Assignment
+    from apps.reservations.acknowledgements import make_driver_link_token
+    from apps.reservations.models import Reservation
+    from apps.reservations.services import set_trip_status
+
+    settings.LOCATIONIQ_PUBLIC_KEY = "pk.public"
+    costed_lead.status = Lead.Status.BOOKED
+    costed_lead.save(update_fields=["status"])
+    reservation = costed_lead.reservations.first()
+    assignment = AssignmentFactory(
+        reservation=reservation,
+        vendor=VendorFactory(),
+        status=Assignment.Status.CONFIRMED,
+        payout=Decimal("987.65"),
+    )
+    set_trip_status(reservation, Reservation.TripStatus.DISPATCHED)
+
+    resp = client.get(reverse("driver_link", args=[make_driver_link_token(assignment)]))
+
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert reservation.reference in body, "the live page rendered, not the dead view"
+    _assert_clean(body, "the driver page")
+    for payout in ("987.65", "987.6"):
+        assert payout not in body, f"the payout {payout!r} leaked into the driver page"
+
+
 # --- integrations ------------------------------------------------------------
 def test_the_limoanywhere_booking_payload_never_carries_it(costed_lead):
     from apps.integrations.la_sync import build_booking_payload

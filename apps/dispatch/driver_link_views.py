@@ -107,24 +107,27 @@ def page_state(assignment: Assignment, *, now: datetime | None = None) -> dict:
     }
 
 
-def _stop_dicts(trip: Reservation, stops: list) -> list[dict]:
+def _stop_dicts(trip: Reservation, stops: list, user_agent: str) -> list[dict]:
+    """Each stop as the page draws it. `navigate_url` rides on every stop so the page can
+    swap the next-stop card from pickup to drop-off without a reload."""
     zone = trip.pickup_tz_label
     last = len(stops)
     rows = []
     for n, stop in enumerate(stops, start=1):
         clock = stop.scheduled_time or (trip.pickup_time if n == 1 else None)
-        rows.append(
-            {
-                "n": n,
-                "kind": "Pickup" if n == 1 else "Drop-off" if n == last else "Stop",
-                "time_label": f"{clock:%-I:%M %p} {zone}" if clock else "",
-                "name": stop.name,
-                "address": stop.address,
-                "note": stop.note,
-                "lat": str(stop.latitude) if stop.latitude is not None else None,
-                "lng": str(stop.longitude) if stop.longitude is not None else None,
-            }
-        )
+        row = {
+            "n": n,
+            "kind": "Pickup" if n == 1 else "Drop-off" if n == last else "Stop",
+            "time_label": f"{clock:%-I:%M %p} {zone}" if clock else "",
+            "name": stop.name,
+            "address": stop.address,
+            "note": stop.note,
+            "flight": flight_line(stop),
+            "lat": str(stop.latitude) if stop.latitude is not None else None,
+            "lng": str(stop.longitude) if stop.longitude is not None else None,
+        }
+        row["navigate_url"] = _navigate_url(row, user_agent)
+        rows.append(row)
     return rows
 
 
@@ -144,7 +147,7 @@ def page_context(assignment: Assignment, request: HttpRequest) -> dict:
     trip = assignment.reservation
     state = page_state(assignment)
     stop_rows = list(trip.ordered_stops)
-    stops = _stop_dicts(trip, stop_rows)
+    stops = _stop_dicts(trip, stop_rows, request.META.get("HTTP_USER_AGENT", ""))
     next_stop = None
     if stops:
         heading_to_pickup = state["status"] not in (_S.CUSTOMER_IN_CAR, _S.DONE)
@@ -164,16 +167,17 @@ def page_context(assignment: Assignment, request: HttpRequest) -> dict:
     return {
         "state": state,
         "trip_ref": trip.reference,
+        "trip_date": f"{trip.pickup_date:%a, %b %-d}" if trip.pickup_date else "",
         "stops": stops,
         "next_stop": next_stop,
-        "flight_lines": [line for s in stop_rows if (line := flight_line(s))],
+        "flight_lines": [s["flight"] for s in stops if s["flight"]],
         "passengers": [p.name for p in named if p.name],
         "pax_count": trip.passengers,
         "vehicle": trip.vehicle.name if trip.vehicle else "",
         "sign_name": (lead_passenger.name if lead_passenger else "") or trip.lead.contact.name,
         "show_passenger_contact": show_contact,
         "lead_mobile": lead_passenger.mobile if show_contact and lead_passenger else "",
-        "navigate_url": _navigate_url(next_stop, request.META.get("HTTP_USER_AGENT", "")),
+        "navigate_url": next_stop["navigate_url"] if next_stop else "",
         "company_phone": settings.COMPANY_PHONE,
         "map_key": map_key,
         "route": route_for(trip) if has_route else "",
@@ -205,13 +209,12 @@ def driver_link_page(request: HttpRequest, token: str) -> HttpResponse:
     if assignment is None:
         return _not_found()
     if not driver_link.is_live(assignment):
-        return render(
-            request,
-            "public/driver_link.html",
-            {"dead": True, "company_phone": settings.COMPANY_PHONE},
-        )
-    ctx = page_context(assignment, request)
-    ctx["config"] = _client_config(request, ctx, token)
+        ctx = {"dead": True, "company_phone": settings.COMPANY_PHONE}
+    else:
+        ctx = page_context(assignment, request)
+        ctx["config"] = _client_config(request, ctx, token)
+    # The shell's og:url is the request URL, which here carries the token: point it home.
+    ctx["canonical_url"] = request.build_absolute_uri("/")
     return render(request, "public/driver_link.html", ctx)
 
 

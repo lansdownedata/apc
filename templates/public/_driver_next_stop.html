@@ -1,0 +1,36 @@
+{% comment %}
+  One "next stop" block on the driver page (public/driver_link.html). Rendered twice, pickup
+  and final drop-off; the page shows the one that matches the trip status. `which` is
+  "pickup" or "dropoff", `eyebrow` its label, `stop` a row from page_context's `stops`.
+{% endcomment %}
+<div data-part="next-{{ which }}"
+     x-show="{% if which == 'pickup' %}!dropOffNext{% else %}dropOffNext{% endif %}"
+     {% if next_stop.eyebrow != eyebrow %}style="display: none"{% endif %}>
+  <p data-part="eyebrow" class="mt-5 text-xs font-semibold uppercase tracking-wider text-muted">{{ eyebrow }}</p>
+  {% if stop.time_label %}<p class="mt-1 text-3xl font-bold tracking-tight text-ink">{{ stop.time_label }}</p>{% endif %}
+  <p data-part="next-name" class="mt-1 text-base font-semibold text-ink">{{ stop.name|default:stop.address }}</p>
+  {% if stop.name and stop.address %}<p class="text-sm text-muted">{{ stop.address }}</p>{% endif %}
+  {% if stop.flight or stop.note or which == "pickup" and sign_name %}
+    <div class="mt-2 space-y-0.5 text-sm text-muted">
+      {% if stop.flight %}<p class="flex items-center gap-1.5">{% icon "plane" class="h-4 w-4 shrink-0" %}{{ stop.flight }}</p>{% endif %}
+      {% if stop.note %}<p>{{ stop.note }}</p>{% endif %}
+      {% if which == "pickup" and sign_name %}<p>Sign: <span class="font-semibold text-ink">{{ sign_name }}</span></p>{% endif %}
+    </div>
+  {% endif %}
+  {% if stop.navigate_url or lead_mobile %}
+    <div class="mt-4 flex gap-2">
+      {% if stop.navigate_url %}
+        <a href="{{ stop.navigate_url }}" target="_blank" rel="noopener noreferrer"
+           class="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface2 py-3 text-sm font-semibold text-ink ring-1 ring-line transition-colors hover:bg-goldl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+          {% icon "navigation" class="h-4 w-4 shrink-0" %}Navigate
+        </a>
+      {% endif %}
+      {% if lead_mobile %}
+        <a href="tel:{{ lead_mobile }}"
+           class="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface2 py-3 text-sm font-semibold text-ink ring-1 ring-line transition-colors hover:bg-goldl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+          {% icon "phone" class="h-4 w-4 shrink-0" %}Call passenger
+        </a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
