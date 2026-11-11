@@ -304,6 +304,15 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     return {
         "trip": trip,
         "assignment": assignment,
+        # Mirrors `services.send_back` and its view: confirmed affiliate coverage, not
+        # GNet, on a trip that is neither done nor cancelled.
+        "can_send_back": bool(
+            farmed_out
+            and assignment.status == Assignment.Status.CONFIRMED
+            and assignment.channel != Assignment.Channel.GNET
+            and trip.trip_status != Reservation.TripStatus.DONE
+            and not trip.is_cancelled
+        ),
         "driver_held_for": held_for,
         "coverage": assignment.status if assignment else selectors.COVERAGE_UNCOVERED,
         "coverage_state": selectors.coverage_state(trip, assignment),
@@ -721,6 +730,10 @@ def resolve(request: HttpRequest, pk: int) -> JsonResponse:
 def send_back(request: HttpRequest, pk: int) -> JsonResponse:
     """The vendor gave a confirmed trip back; the drawer asks for the reason."""
     assignment = get_object_or_404(Assignment, pk=pk)
+    if assignment.channel == Assignment.Channel.GNET:
+        # The affiliate's own GNet cancel arrives as Sent back (`gnet_callback`); a hand
+        # mark would leave the booking live on the gateway.
+        return _fail(services.AssignmentError("GNet trips are sent back on GNet."))
     try:
         services.send_back(assignment, reason=request.POST.get("reason", ""), user=request.user)
     except services.AssignmentError as exc:

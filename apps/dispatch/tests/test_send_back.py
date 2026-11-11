@@ -152,3 +152,60 @@ def test_send_back_view(client):
     assignment.refresh_from_db()
     assert assignment.status == Assignment.Status.SENT_BACK
     assert assignment.sent_back_by is not None
+
+
+# --- refusals (final fix wave F3) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", [TS.DONE, TS.NO_SHOW])
+def test_send_back_refuses_a_done_or_cancelled_trip(status):
+    assignment = _confirmed(_trip(trip_status=status))
+
+    with pytest.raises(services.AssignmentError):
+        services.send_back(assignment, reason="Gave it back")
+
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
+    trip = assignment.reservation
+    trip.refresh_from_db()
+    assert trip.trip_status == status
+    assert trip.needs_farm_out is False
+
+
+def test_send_back_reopens_inside_its_own_transaction():
+    """The release and reopen run under the trip lock, so a re-claim can't slip into a gap."""
+    from django.db import connection
+
+    assignment = _confirmed()
+    outside = len(connection.atomic_blocks)
+    depths = []
+
+    def record(*args, **kwargs):
+        depths.append(len(connection.atomic_blocks))
+
+    with (
+        patch.object(services, "_reopen", side_effect=record),
+        patch.object(services, "_on_assignment_released", side_effect=record),
+    ):
+        services.send_back(assignment, reason="Gave it back")
+
+    assert len(depths) == 2
+    assert all(depth > outside for depth in depths)
+
+
+def test_send_back_view_refuses_a_gnet_assignment(client):
+    client.force_login(UserFactory())
+    assignment = _gnet_confirmed()
+
+    resp = client.post(reverse("dispatch_send_back", args=[assignment.pk]), {"reason": "x"})
+
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "GNet trips are sent back on GNet."
+    assignment.refresh_from_db()
+    assert assignment.status == Assignment.Status.CONFIRMED
+
+
+def test_send_back_view_404s_on_a_missing_assignment(client):
+    client.force_login(UserFactory())
+    resp = client.post(reverse("dispatch_send_back", args=[999999]), {"reason": "x"})
+    assert resp.status_code == 404

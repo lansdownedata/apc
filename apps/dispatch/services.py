@@ -416,7 +416,12 @@ def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
     reason and who recorded it), the trip returns to Unassigned flagged for farm-out, and
     the pending T-48h affiliate message is withdrawn. The gateway is never echoed: a GNet
     cancel has already released the trip on the partner's side. In-house coverage is
-    Unassign, not Sent back."""
+    Unassign, not Sent back. A done or cancelled trip has nothing left to give back.
+
+    The release and the reopen run inside the trip lock, so no other dispatcher can claim
+    the trip in between."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
     reason = reason.strip()
     if assignment.is_in_house:
         raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
@@ -425,6 +430,11 @@ def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
     with transaction.atomic():
         reservation = Reservation.objects.select_for_update().get(pk=assignment.reservation_id)
         assignment.refresh_from_db()
+        if reservation.trip_status == _TS.DONE or reservation.trip_status in CANCELLED_STATUSES:
+            raise AssignmentError(
+                f"Trip #{reservation.pk} is {reservation.get_trip_status_display().lower()}; "
+                "it can't be sent back."
+            )
         if assignment.status != Assignment.Status.CONFIRMED:
             raise AssignmentError(
                 f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}, "
@@ -445,8 +455,8 @@ def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
         )
         reservation.needs_farm_out = True
         reservation.save(update_fields=["needs_farm_out", "updated_at"])
-    _on_assignment_released(reservation)
-    _reopen(reservation)
+        _on_assignment_released(reservation)
+        _reopen(reservation)
     _sync_tasks(reservation)
     return assignment
 

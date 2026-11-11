@@ -479,3 +479,11 @@ def test_cancel_status_refuses_a_quote(logged_in_client):
     assert resp.json()["error"] == "Only booked trips can change status here."
     trip.refresh_from_db()
     assert trip.trip_status == TS.PENDING
+
+
+@pytest.mark.parametrize("status", [TS.DONE, TS.NO_SHOW, TS.LATE_CANCEL])
+def test_sent_back_is_not_offered_on_a_done_or_cancelled_trip(logged_in_client, status):
+    trip = _trip(trip_status=status)
+    _confirmed(trip)
+
+    assert "/send-back/" not in _panel(logged_in_client, trip).content.decode()
