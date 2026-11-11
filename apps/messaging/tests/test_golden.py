@@ -58,8 +58,8 @@ def capture(tp: TouchPoint) -> list[dict]:
         calls.append({"channel_type": channel_type, "identifier": identifier, "body": body})
         return {"uid": f"golden-{len(calls)}"}
 
-    def invite(*, phone, first_name, last_name, **_):
-        calls.append({"review_invite": phone, "first_name": first_name, "last_name": last_name})
+    def invite(*, phone, **_):
+        calls.append({"review_invite": phone})
         return {"url": REVIEW_LINK, "uid": "golden-invite"}
 
     mailed = len(mail.outbox)

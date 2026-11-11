@@ -30,7 +30,6 @@ from django.utils import timezone
 from apps.core import outbound
 from apps.core.templatetags.phone_filters import phone_display
 from apps.integrations import podium
-from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
 from apps.notifications import email as mail
 
@@ -58,6 +57,8 @@ NO_LONGER = "No longer a recipient"
 WITH_HELD = "New details go with the held driver message"
 # Why the cron closed a staff click's or report's TouchPoint that its own send never finished.
 INTERRUPTED = "send interrupted"
+# Podium answered the invite without a link: texting it would send a blank link.
+NO_REVIEW_LINK = "Podium returned no review link"
 # Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
 _SENT_NOW = frozenset({"staff_click", "schedule"})
 # The context's note of which trips a combined send lists for the person (reservation
@@ -784,12 +785,16 @@ def _review(
         if phone in sent_here:
             continue
         line = waiting.pop(("sms", phone.lower()), None)
-        first, last = _split_name(person.name)
         try:
-            invite = podium.create_review_invitation(phone=phone, first_name=first, last_name=last)
+            invite = podium.create_review_invitation(phone=phone)
         except (PodiumAPIError, PodiumNotConnected) as exc:
             errors.append(str(exc))
             _record(tp, row, "sms", person, phone, "", "failed", str(exc), line=line)
+            continue
+        link = invite.get("shortUrl") or invite.get("url") or ""
+        if not link:
+            errors.append(NO_REVIEW_LINK)
+            _record(tp, row, "sms", person, phone, "", "failed", NO_REVIEW_LINK, line=line)
             continue
         Review.objects.create(
             lead=tp.lead,
@@ -799,7 +804,7 @@ def _review(
             requested_at=timezone.now(),
         )
         ctx = context(tp, row, person)
-        ctx["review_link"] = invite.get("url") or invite.get("link") or ""
+        ctx["review_link"] = link
         try:
             provider_id = _transport(row, "sms", phone, ctx)
         except (PodiumAPIError, PodiumNotConnected) as exc:

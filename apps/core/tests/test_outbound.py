@@ -85,7 +85,7 @@ def test_a_text_to_our_own_staff_goes_out_while_off(off, transport):
 
 def test_a_review_invitation_is_refused_while_off(off, transport):
     with pytest.raises(outbound.OutboundDisabled):
-        podium.create_review_invitation(phone="+15715551212", first_name="A", last_name="B")
+        podium.create_review_invitation(phone="+15715551212")
     transport.assert_not_called()
 
 

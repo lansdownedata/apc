@@ -752,7 +752,7 @@ def test_the_review_request_uses_podiums_invite():
     ):
         assert sender.deliver(tp) is True
 
-    invite.assert_called_once_with(phone="+12025550100", first_name="Dana", last_name="Whitfield")
+    invite.assert_called_once_with(phone="+12025550100")
     assert send.call_args.kwargs["channel_type"] == "phone"
     assert "https://podium.test/r/1" in send.call_args.kwargs["body"]
     review = Review.objects.get(lead=lead)

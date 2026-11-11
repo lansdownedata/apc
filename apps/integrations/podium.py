@@ -170,32 +170,23 @@ def send_message(
     )
 
 
-def create_review_invitation(
-    *, phone: str, first_name: str, last_name: str, location_uid: str | None = None
-) -> dict:
-    """Send a Podium review-invitation SMS to a customer.
+def create_review_invitation(*, phone: str, location_uid: str | None = None) -> dict:
+    """Create a single-use Podium review-invite link for one customer phone (requires the
+    write_reviews scope). Podium only makes the link; the caller texts it. Returns the invite
+    object (`uid`, `url`, `shortUrl`, ...), unwrapped from Podium's `data` envelope.
 
-    VERIFY-LIVE: the `/review_invitations` path and request/response shape below are a
-    documented best-guess (Podium's `review_invitecreate` reference page isn't
-    machine-readable) — probe this against the connected test account before relying on
-    it in prod and correct path/body/response keys if the guess is off.
-
-    Always a customer, so always behind the go-live switch (APC-90).
+    Podium asks for a new link per send: one link shared between contacts breaks its
+    reporting. Always a customer, so always behind the go-live switch (APC-90).
     """
     if not outbound.allowed(kind="podium review invitation", recipient=phone):
         raise outbound.OutboundDisabled
-    return _request(
+    out = _request(
         "POST",
-        "/review_invitations",
-        json={
-            "locationUid": location_uid or settings.PODIUM_LOCATION_UID,
-            "contact": {
-                "phoneNumber": phone,
-                "firstName": first_name,
-                "lastName": last_name,
-            },
-        },
+        "/reviews/invites",
+        json={"locationUid": location_uid or settings.PODIUM_LOCATION_UID, "phoneNumber": phone},
     )
+    data = out.get("data")
+    return data if isinstance(data, dict) else out
 
 
 def create_webhook(
