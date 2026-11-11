@@ -41,6 +41,7 @@ Check = tuple[Verdict, str]
 
 SEND: Check = ("send", "")
 DISABLED = "message disabled"
+SERVICE_TYPE_MISMATCH = "service type no longer matches"
 # The TouchPoint error when every person a combining send would reach already had that
 # day's message. Combining is the sender's step (it knows the addresses); this is the
 # string it writes.
@@ -576,7 +577,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         # an event its service sends itself (a couple on a lost order who send their
         # wedding details again still get them back).
         if not matches(row, lead, res):
-            return "skip", "service type no longer matches"
+            return "skip", SERVICE_TYPE_MISMATCH
         return SEND
     # A cancellation message exists because the order is lost: the order's own, or a
     # trip's when the whole order was cancelled (spec section 3, "unless the trigger is the
@@ -622,7 +623,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
             return "skip", "pickup passed"
 
     if not matches(row, lead, res):
-        return "skip", "service type no longer matches"
+        return "skip", SERVICE_TYPE_MISMATCH
 
     if built_in:
         reason = _built_in_skip(tp, row)

@@ -55,7 +55,8 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("vehicle_number", "Vehicle number"),
         ("trip_sheet_drivers", "Trip details with drivers"),
     ],
-    "Affiliate": [("vendor_name", "Affiliate name"), ("payout", "Payout")],
+    "Affiliate": [("vendor_name", "Affiliate name")],
+    "Payout": [("payout", "Payout")],
     "Links": [
         ("quote_link", "Quote link"),
         ("pay_link", "Payment link"),
@@ -241,7 +242,12 @@ def _keys_for(kind: str) -> set[str]:
 
     if kind == "trip_confirm_affiliate":
         return (
-            group("Trip") | group("Affiliate") | group("Company") | group("Driver") | {"ack_link"}
+            group("Trip")
+            | group("Affiliate")
+            | group("Payout")
+            | group("Company")
+            | group("Driver")
+            | {"ack_link"}
         )
     keys = group("Customer") | group("Order") | group("Payment") | group("Company")
     if kind not in _DRIVER_KINDS and kind != "review_request":
@@ -274,7 +280,7 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
     trigger = triggers.get(trigger_key)
     groups = set(trigger.field_groups)
     if audience != "affiliate":
-        groups.discard("Affiliate")
+        groups -= {"Affiliate", "Payout"}
     keys = {k for g in groups for k, _ in _GROUPS[g]}
     keys -= set(_SENDER_LINKS)
     if "Links" in groups:

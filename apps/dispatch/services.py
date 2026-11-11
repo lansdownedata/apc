@@ -350,7 +350,7 @@ def assign_in_house(
 def _send_link_on_commit(assignment: Assignment) -> None:
     """Send the coverage its driver link once the assignment is saved for good: never for
     coverage a rollback undoes, and never inside a dispatcher's lock."""
-    transaction.on_commit(lambda: driver_link.send_link(assignment))
+    transaction.on_commit(lambda: driver_link.send_link(assignment), robust=True)
 
 
 def _resolve(

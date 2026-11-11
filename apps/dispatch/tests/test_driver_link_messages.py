@@ -66,6 +66,13 @@ def _offered(vendor=None, **kw):
     )
 
 
+def _confirmed(**kw):
+    assignment = _offered(**kw)
+    Assignment.objects.filter(pk=assignment.pk).update(status=Assignment.Status.CONFIRMED)
+    assignment.refresh_from_db()
+    return assignment
+
+
 def _linked(text: str, base_url: str = "") -> Assignment:
     """The coverage the driver link in ``text`` opens. The token is time-stamped, so two
     links to one assignment can differ; what matters is whose it is."""
@@ -336,3 +343,72 @@ def test_the_driver_row_previews_against_an_order_with_our_driver(client):
     assert body["ok"] is True
     assert LINK in body["sms"] and trip.reference in body["sms"]
     assert "Sam Driver (in-house driver) · text and email" in body["to"]
+
+
+# --- send_link never raises, and respects admin choices ----------------------------------
+
+
+def test_send_link_swallows_a_url_that_cannot_be_built():
+    assignment = _confirmed()
+    with patch("apps.reservations.acknowledgements.driver_link_url", side_effect=RuntimeError):
+        result = driver_link.send_link(assignment)
+    assert result.sent is False
+
+
+def test_send_link_swallows_a_notification_that_cannot_be_written(settings):
+    settings.OUTBOUND_ENABLED = False
+    assignment = _confirmed()
+    with patch.object(Notification, "notify", side_effect=RuntimeError):
+        assert driver_link.send_link(assignment).sent is False
+
+
+def test_a_row_turned_off_in_settings_raises_no_notification(mailoutbox):
+    MessageTemplate.objects.filter(key="affiliate_confirmed").update(enabled=False)
+    assignment = _confirmed()
+
+    result = driver_link.send_link(assignment)
+
+    assert result.sent is False
+    assert not Notification.objects.filter(title__startswith="Driver link to").exists()
+    assert driver_link.link_send_state(assignment) == "not_sent"
+
+
+def test_a_row_limited_to_other_service_types_raises_no_notification(mailoutbox):
+    from apps.leads.models import ServiceType
+
+    row = MessageTemplate.objects.get(key="affiliate_confirmed")
+    row.service_types.add(ServiceType.objects.create(name="Only this one"))
+    assignment = _confirmed()
+
+    result = driver_link.send_link(assignment)
+
+    assert result.sent is False
+    assert not Notification.objects.filter(title__startswith="Driver link to").exists()
+    assert driver_link.link_send_state(assignment) == "not_sent"
+
+
+def test_a_refused_send_still_raises_a_notification(settings):
+    settings.OUTBOUND_ENABLED = False
+    driver_link.send_link(_confirmed())
+    assert Notification.objects.filter(title__startswith="Driver link to").exists()
+
+
+def test_a_send_still_in_flight_reads_as_nothing_yet():
+    assignment = _confirmed()
+    TouchPoint.objects.create(
+        lead=assignment.reservation.lead,
+        reservation=assignment.reservation,
+        kind="affiliate_confirmed",
+        status=TouchPoint.Status.SCHEDULED,
+        scheduled_for=timezone.now(),
+    )
+    assert driver_link.link_send_state(assignment) == ""
+
+
+def test_the_vendor_row_is_offered_no_payout_and_no_customer_links():
+    keys = {
+        f.key for f in fields.fields_for("coverage_confirmed", "affiliate", "affiliate_confirmed")
+    }
+    assert {"driver_link", "vendor_name", "trip_day", "trip_sheet"} <= keys
+    for money_or_link in ("payout", "pay_link", "quote_link", "balance_amount"):
+        assert money_or_link not in keys

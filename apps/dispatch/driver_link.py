@@ -285,6 +285,31 @@ def _has_address(assignment: Assignment) -> bool:
     return bool((assignment.vendor.email or "").strip())
 
 
+def _latest_touchpoint(assignment: Assignment):
+    """The newest link message tried for this coverage, as (status, error), or None."""
+    from apps.messaging.models import TouchPoint
+
+    return (
+        TouchPoint.objects.filter(
+            reservation_id=assignment.reservation_id,
+            kind__in=(VENDOR_ROW, DRIVER_ROW),
+            created_at__gte=assignment.created_at,
+        )
+        .order_by("-created_at", "-pk")
+        .values_list("status", "error")
+        .first()
+    )
+
+
+def _skipped_by_choice(assignment: Assignment) -> bool:
+    """The link message was not sent because Settings turned its row off or limited it to
+    other service types: an admin's choice, so there is nothing to alert on."""
+    from apps.messaging import rules
+
+    latest = _latest_touchpoint(assignment)
+    return latest is not None and latest[1] in (rules.DISABLED, rules.SERVICE_TYPE_MISMATCH)
+
+
 def send_link(assignment: Assignment):
     """Send confirmed coverage its driver link: the "Trip confirmed" email to the vendor, or
     the "Driver trip assignment" text and email to our own driver. Returns the
@@ -293,16 +318,20 @@ def send_link(assignment: Assignment):
 
     Best effort, like the offer email: the coverage is already recorded, so a send that is
     refused (outbound off), fails or raises tells dispatch with a notification to copy the
-    link from the drawer, and never fails the assignment."""
+    link from the drawer, and never fails the assignment. Nothing raises out of here. A row
+    that Settings turned off, or limited to other service types, is the admin's choice and
+    raises no notification."""
     from apps.messaging import rendering, sender
     from apps.reservations.acknowledgements import driver_link_url
 
-    if not _has_address(assignment):
-        return None
     trip = assignment.reservation
-    values = {"driver_link": driver_link_url(assignment, base_url=settings.PUBLIC_BASE_URL or "")}
-    blocks = {}
     try:
+        if not _has_address(assignment):
+            return None
+        values = {
+            "driver_link": driver_link_url(assignment, base_url=settings.PUBLIC_BASE_URL or "")
+        }
+        blocks = {}
         if assignment.is_in_house:
             key = DRIVER_ROW
         else:
@@ -320,33 +349,31 @@ def send_link(assignment: Assignment):
     except Exception:  # noqa: BLE001 - the coverage stands; the notice says to copy the link
         logger.exception("driver link for assignment %s not sent", assignment.pk)
         result = sender.SendResult(sent=False, deliveries=[], errors=["unexpected error"])
-    if not result.sent:
-        Notification.notify(
-            trip.lead,
-            Notification.Kind.SYNC_FAILED,
-            title=f"Driver link to {assignment.provider_name} not sent"[:160],
-            detail=f"Trip #{trip.reference}: copy the driver link from the drawer."[:255],
-        )
+    try:
+        if not result.sent and not _skipped_by_choice(assignment):
+            Notification.notify(
+                trip.lead,
+                Notification.Kind.SYNC_FAILED,
+                title=f"Driver link to {assignment.provider_name} not sent"[:160],
+                detail=f"Trip #{trip.reference}: copy the driver link from the drawer."[:255],
+            )
+    except Exception:  # noqa: BLE001 - a notice that cannot be written never fails the click
+        logger.exception("notice for driver link %s not written", assignment.pk)
     return result
 
 
 def link_send_state(assignment: Assignment) -> str:
     """What the drawer says about this coverage's link message: "sent", "not_sent",
-    "no_address" (nowhere to send it), or "" (not confirmed coverage, or nothing tried)."""
+    "no_address" (nowhere to send it), or "" (not confirmed coverage, nothing tried, or a
+    send still in flight, which must not offer a Resend)."""
     from apps.messaging.models import TouchPoint
 
     if assignment.status != Assignment.Status.CONFIRMED:
         return ""
-    latest = (
-        TouchPoint.objects.filter(
-            reservation_id=assignment.reservation_id,
-            kind__in=(VENDOR_ROW, DRIVER_ROW),
-            created_at__gte=assignment.created_at,
-        )
-        .order_by("-created_at", "-pk")
-        .values_list("status", flat=True)
-        .first()
-    )
+    latest = _latest_touchpoint(assignment)
     if latest is None:
         return "" if _has_address(assignment) else "no_address"
-    return "sent" if latest == TouchPoint.Status.SENT else "not_sent"
+    status = latest[0]
+    if status == TouchPoint.Status.SCHEDULED:
+        return ""
+    return "sent" if status == TouchPoint.Status.SENT else "not_sent"
