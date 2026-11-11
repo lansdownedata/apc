@@ -26,27 +26,35 @@ def _fresh_credential(access_token="AT"):
 
 # --- podium.create_review_invitation ---------------------------------------
 def test_create_review_invitation_posts_expected_body(settings):
+    """Podium's route is POST /v4/reviews/invites with a flat phoneNumber + locationUid, and
+    the invite comes back inside `data` like every other v4 response."""
     settings.PODIUM_LOCATION_UID = "loc-1"
     _fresh_credential()
+    invite = {
+        "uid": "inv-1",
+        "url": "https://podium.example/r/inv-1",
+        "shortUrl": "https://podium.co/x",
+    }
     fake = MagicMock(content=b"{}")
-    fake.json.return_value = {"uid": "inv-1", "url": "https://podium.example/r/inv-1"}
+    fake.json.return_value = {"data": invite}
     with patch.object(podium.requests, "request", return_value=fake) as req:
-        out = podium.create_review_invitation(
-            phone="+15551234567", first_name="Jane", last_name="Doe"
-        )
-    assert out == {"uid": "inv-1", "url": "https://podium.example/r/inv-1"}
+        out = podium.create_review_invitation(phone="+15551234567")
+    assert out == invite
     method, url = req.call_args.args
     kwargs = req.call_args.kwargs
     assert method == "POST"
-    assert url.endswith("/v4/review_invitations")
-    assert kwargs["json"] == {
-        "locationUid": "loc-1",
-        "contact": {
-            "phoneNumber": "+15551234567",
-            "firstName": "Jane",
-            "lastName": "Doe",
-        },
-    }
+    assert url.endswith("/v4/reviews/invites")
+    assert kwargs["json"] == {"locationUid": "loc-1", "phoneNumber": "+15551234567"}
+
+
+def test_create_review_invitation_accepts_an_unwrapped_invite(settings):
+    settings.PODIUM_LOCATION_UID = "loc-1"
+    _fresh_credential()
+    fake = MagicMock(content=b"{}")
+    fake.json.return_value = {"uid": "inv-2", "url": "https://podium.example/r/inv-2"}
+    with patch.object(podium.requests, "request", return_value=fake):
+        out = podium.create_review_invitation(phone="+15551234567")
+    assert out["uid"] == "inv-2"
 
 
 def test_create_review_invitation_honors_explicit_location_uid(settings):
@@ -55,9 +63,7 @@ def test_create_review_invitation_honors_explicit_location_uid(settings):
     fake = MagicMock(content=b"{}")
     fake.json.return_value = {}
     with patch.object(podium.requests, "request", return_value=fake) as req:
-        podium.create_review_invitation(
-            phone="5551234567", first_name="A", last_name="B", location_uid="loc-override"
-        )
+        podium.create_review_invitation(phone="5551234567", location_uid="loc-override")
     assert req.call_args.kwargs["json"]["locationUid"] == "loc-override"
 
 
