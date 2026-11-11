@@ -1210,6 +1210,69 @@ def test_a_trip_moved_within_its_day_is_told_again(clock, live):
         assert fresh.status == S.SENT, key
 
 
+# --- a booking inside 48 hours gets one confirmation, not two (MSG-09) -----------------
+
+
+def _booked_now(clock, hours, django_capture_on_commit_callbacks):
+    """Book an order with one trip ``hours`` out, sending what is due on commit."""
+    lead = _lead()
+    trip = _trip(lead, hours=hours)
+    with (
+        patch(SEND, side_effect=_ok) as send,
+        patch(POSTMARK, return_value="pm") as mail,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        events.schedule_dates(lead)
+    return lead, trip, send, mail
+
+
+def test_a_booking_inside_48_hours_sends_one_confirmation(
+    clock, live, django_capture_on_commit_callbacks
+):
+    """MSG-09: booked 11 hours out, both notices were past due and both went in the same
+    second. The first goes; the second is skipped, the first having just gone."""
+    lead, trip, send, mail = _booked_now(clock, 11, django_capture_on_commit_callbacks)
+
+    first = _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER).get()
+    second = _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER_2).get()
+    assert first.status == S.SENT
+    assert (second.status, second.error) == (S.SKIPPED, "First notice just sent")
+    assert not second.deliveries.exists()
+    assert (send.call_count, mail.call_count) == (1, 1)
+
+
+def test_a_booking_60_hours_out_keeps_the_second_notice(
+    clock, live, django_capture_on_commit_callbacks
+):
+    lead, trip, send, mail = _booked_now(clock, 60, django_capture_on_commit_callbacks)
+
+    first = _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER).get()
+    second = _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER_2).get()
+    assert first.status == S.SENT
+    assert second.status == S.SCHEDULED
+    assert second.scheduled_for == trip.pickup_at - timedelta(hours=48)
+
+    clock.now = second.scheduled_for + timedelta(minutes=1)
+    _send_due()
+
+    second.refresh_from_db()
+    assert second.status == S.SENT
+
+
+def test_the_second_notice_is_skipped_when_a_sibling_trips_first_notice_listed_it(clock, live):
+    """Two trips on one order booked 11 hours out: the first trip's notice lists both, so
+    neither trip's second notice goes."""
+    lead = _lead()
+    _trip(lead, hours=11)
+    _trip(lead, hours=12)
+    events.schedule_dates(lead, send_inline=False)
+    _send_due()
+
+    assert set(_tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER_2).values_list("status", "error")) == {
+        (S.SKIPPED, "First notice just sent")
+    }
+
+
 # --- parity: rows that wait ------------------------------------------------------------
 
 
