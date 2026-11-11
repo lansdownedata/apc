@@ -95,6 +95,69 @@ def test_the_notice_survives_a_move_to_on_the_way():
     assert trip.circling_at is not None
 
 
+def test_the_notice_survives_a_move_from_on_the_way_to_arrived():
+    trip = ReservationFactory(trip_status=TS.ON_THE_WAY)
+    set_circling(trip, on=True, source=Source.MANUAL)
+
+    set_trip_status(trip, TS.ARRIVED)
+
+    trip.refresh_from_db()
+    assert trip.circling_at is not None
+
+
+@pytest.mark.parametrize("status", [TS.DISPATCHED, TS.UNASSIGNED, TS.ASSIGNED, TS.PENDING])
+def test_the_notice_clears_when_the_trip_moves_back(status):
+    """Circling only means something On The Way or Arrived; any other status clears it."""
+    trip = ReservationFactory(trip_status=TS.ARRIVED)
+    set_circling(trip, on=True, source=Source.MANUAL)
+
+    set_trip_status(trip, status)
+
+    trip.refresh_from_db()
+    assert trip.circling_at is None
+    assert trip.circling_source == ""
+
+
+def test_sent_back_clears_the_notice():
+    from apps.dispatch import services
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+    from apps.leads.models import Lead
+    from apps.vendors.factories import VendorFactory
+
+    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), trip_status=TS.ARRIVED)
+    set_circling(trip, on=True, source=Source.MANUAL)
+    assignment = AssignmentFactory(
+        reservation=trip, vendor=VendorFactory(), status=Assignment.Status.CONFIRMED
+    )
+
+    services.send_back(assignment, reason="Car broke down")
+
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.UNASSIGNED
+    assert trip.circling_at is None
+
+
+def test_drawer_arrived_to_dispatched_clears_the_notice(admin_client):
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+    from apps.leads.models import Lead
+    from apps.vendors.factories import VendorFactory
+
+    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), trip_status=TS.ARRIVED)
+    AssignmentFactory(reservation=trip, vendor=VendorFactory(), status=Assignment.Status.CONFIRMED)
+    set_circling(trip, on=True, source=Source.MANUAL)
+
+    resp = admin_client.post(
+        reverse("dispatch_set_status", args=[trip.pk]), {"status": TS.DISPATCHED}
+    )
+
+    assert resp.status_code == 200, resp.content
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.DISPATCHED
+    assert trip.circling_at is None
+
+
 def test_la_circling_event_sets_arrived_and_the_notice(client):
     lac = LACustomerFactory()
     trip = ReservationFactory(

@@ -333,7 +333,9 @@ def set_trip_status(
         was_cancelled = locked.trip_status in CANCELLED_STATUSES
         locked.trip_status = status
         locked.save(update_fields=["trip_status", "updated_at"])
-        if status in _CIRCLING_CLEARED_BY or status in CANCELLED_STATUSES:
+        if status not in _CIRCLING_ALLOWED_AT:
+            # Circling only means something On The Way or Arrived: any other status
+            # (moved on, moved back, sent back, cancelled) clears the notice.
             set_circling(locked, on=False, source="")
         for field in ("trip_status", "circling_at", "circling_source", "circling_by_id"):
             setattr(reservation, field, getattr(locked, field))
