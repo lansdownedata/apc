@@ -567,6 +567,41 @@ function assignPanel(panelUrl = "") {
     post(url) {
       return this.send(url, {});
     },
+
+    /* The driver's trip link, copied for dispatch to hand over by phone. A relative link
+     * (no PUBLIC_BASE_URL) is made absolute against this page. */
+    async copyLink(link) {
+      const absolute = new URL(link, window.location.origin).href;
+      try {
+        await navigator.clipboard.writeText(absolute);
+        Alpine.store("toast").push({ type: "success", title: "Driver link copied" });
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: "Could not copy the link" });
+      }
+    },
+
+    async resendLink(url) {
+      this.busy = true;
+      let data;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "X-CSRFToken": getCookie("csrftoken"), Accept: "application/json" },
+        });
+        data = await resp.json();
+      } catch (e) {
+        data = { ok: false, error: "Network error" };
+      }
+      this.busy = false;
+      const line = this.$refs.linkLine;
+      if (line && data.state) {
+        line.textContent = data.state;
+        line.classList.toggle("text-muted", Boolean(data.ok));
+        line.classList.toggle("text-rose-600", !data.ok);
+      }
+      if (data.ok) Alpine.store("toast").push({ type: "success", title: "Driver link sent" });
+      else Alpine.store("toast").push({ type: "danger", title: data.error || data.state || "Link not sent" });
+    },
     resolve(url, action) {
       return this.send(url, { action });
     },

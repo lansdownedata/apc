@@ -26,6 +26,11 @@ urlpatterns = [
     path("assignment/<int:pk>/resolve/", views.resolve, name="dispatch_resolve"),
     path("assignment/<int:pk>/send-back/", views.send_back, name="dispatch_send_back"),
     path(
+        "assignment/<int:pk>/resend-link/",
+        views.resend_driver_link,
+        name="dispatch_resend_driver_link",
+    ),
+    path(
         "assignment/<int:pk>/cancel-notice/",
         views.cancel_notice,
         name="dispatch_cancel_notice",
