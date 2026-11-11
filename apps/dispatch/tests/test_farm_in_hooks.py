@@ -132,8 +132,6 @@ def _sent(req, status):
         ("done", "COMPLETE"),
         ("cancelled", "CANCEL"),
         ("late_cancel", "CANCEL"),
-        ("cancelled_by_affiliate", "CANCEL"),
-        ("covid_cancellation", "CANCEL"),
         ("no_show", "NO_SHOW"),
     ],
 )
@@ -147,7 +145,7 @@ def test_set_trip_status_enqueues_mapped_code(accepted, status, code):
 
 
 def test_unmapped_status_enqueues_nothing(accepted):
-    set_trip_status(accepted.reservation, "circling")
+    set_trip_status(accepted.reservation, "unassigned")
 
     assert not Push.objects.exists()
 
@@ -186,7 +184,7 @@ def test_hook_costs_one_query_on_ordinary_trip():
     with CaptureQueriesContext(connection) as mapped:
         assert farm_in_push.after_trip_status(trip, "assigned") is None
     with CaptureQueriesContext(connection) as unmapped:
-        assert farm_in_push.after_trip_status(trip, "circling") is None
+        assert farm_in_push.after_trip_status(trip, "unassigned") is None
 
     assert len(counted(mapped)) == 1
     assert len(counted(unmapped)) == 0

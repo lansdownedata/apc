@@ -28,9 +28,7 @@ _Trip = Reservation.TripStatus
 DRIVER_MESSAGE_STATUSES = frozenset(
     {
         _Trip.DISPATCHED,
-        _Trip.DISPATCHED_NON_LA,
         _Trip.ON_THE_WAY,
-        _Trip.CIRCLING,
         _Trip.ARRIVED,
         _Trip.CUSTOMER_IN_CAR,
     }

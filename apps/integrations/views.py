@@ -25,6 +25,7 @@ from apps.accounts.permissions import owner_admin_required
 from apps.dispatch import farm_in
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
+from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.messaging import events
 from apps.notifications.models import Notification
 from apps.reservations import services as reservations_services
@@ -38,15 +39,8 @@ logger = logging.getLogger(__name__)
 
 STATE_SESSION_KEY = "podium_oauth_state"
 
-# Cancelled-family statuses, per apps/reservations/models.py TRIP_PHASE_BY_STATUS. A trip
-# in one of these will never be "done" but is finished from a review-invite standpoint.
-_CANCELLED_STATUSES = (
-    Reservation.TripStatus.CANCELLED,
-    Reservation.TripStatus.CANCELLED_BY_AFFILIATE,
-    Reservation.TripStatus.LATE_CANCEL,
-    Reservation.TripStatus.COVID_CANCELLATION,
-)
-_TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + _CANCELLED_STATUSES
+# A cancelled trip will never be "done" but is finished from a review-invite standpoint.
+_TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + CANCELLED_STATUSES
 
 
 def _digests_equal(expected: str, received: str) -> bool:

@@ -117,19 +117,8 @@ def _sync_tasks(reservation: Reservation) -> None:
 _TS = Reservation.TripStatus
 # An offer shows the trip Assigned; acceptance or direct coverage shows it Dispatched
 # (Moe, 2026-11-10). Coverage only moves a trip still in this set: a trip already
-# Dispatched or under way is never moved back. The removed legacy values stay until the
-# status cleanup finishes.
-_BEFORE_DISPATCHED = frozenset(
-    {
-        "",
-        _TS.PENDING,
-        _TS.UNASSIGNED,
-        _TS.ASSIGNED,
-        _TS.FARM_OUT_UNASSIGNED,
-        _TS.OFFERED,
-        _TS.OFFERED_TO_AFFILIATE,
-    }
-)
+# Dispatched or under way is never moved back.
+_BEFORE_DISPATCHED = frozenset({_TS.PENDING, _TS.UNASSIGNED, _TS.ASSIGNED})
 
 
 def _set_status(reservation: Reservation, status: str) -> None:
@@ -144,13 +133,13 @@ def _set_status(reservation: Reservation, status: str) -> None:
 def _reopen(reservation: Reservation) -> None:
     """Coverage was let go: the trip goes back to Unassigned, clearing Dispatched, On The
     Way, Arrived and the rest (Moe, 2026-11-10). A trip that is done or cancelled (No Show
-    included) keeps its status, and one with no status yet stays blank. Unassigned queues
-    no customer message and has no GNet farm-in code, so nothing leaves the building."""
+    included) keeps its status. Unassigned queues no customer message and has no GNet
+    farm-in code, so nothing leaves the building."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
 
     reservation.refresh_from_db(fields=["trip_status"])
     current = reservation.trip_status
-    if current in ("", _TS.UNASSIGNED, _TS.FARM_OUT_UNASSIGNED, _TS.DONE, *CANCELLED_STATUSES):
+    if current in (_TS.UNASSIGNED, _TS.DONE, *CANCELLED_STATUSES):
         return
     _set_status(reservation, _TS.UNASSIGNED)
 

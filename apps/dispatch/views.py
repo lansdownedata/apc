@@ -239,9 +239,7 @@ def _status_control(user, trip: Reservation, assignment: Assignment | None) -> d
             disabled = not chargeable
         else:
             disabled = True
-        # "Dispatched - Driver Assigned" is LA's wording; the driver is its own badge now.
-        label = "Dispatched" if status == _TS.DISPATCHED else status.label
-        options.append((status.value, label, disabled))
+        options.append((status.value, status.label, disabled))
     return {
         "options": options,
         "config": {

@@ -56,8 +56,6 @@ STATUS_MAP: dict[str, str] = {
     "done": "COMPLETE",
     "cancelled": "CANCEL",
     "late_cancel": "CANCEL",
-    "cancelled_by_affiliate": "CANCEL",
-    "covid_cancellation": "CANCEL",
     "no_show": "NO_SHOW",
 }
 

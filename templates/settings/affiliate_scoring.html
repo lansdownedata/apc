@@ -53,7 +53,7 @@
     <ul class="text-[12.5px] text-ink space-y-1.5 list-disc pl-5">
       <li>Trips are counted by pickup date, in the trip's own timezone. The windows are {{ windows|join:", " }}; an affiliate's own page uses {{ default_window|lower }}.</li>
       <li>Only farmed-out trips the affiliate confirmed count. In-house trips and inactive affiliates are left out.</li>
-      <li>A cancellation counts against the affiliate who last held the trip when it was marked Cancelled by Affiliate.</li>
+      <li>A cancellation counts against the affiliate who sent the trip back.</li>
       <li>Pricing compares each payout to the median payout across all affiliates for that vehicle type in the same window, so it moves as other affiliates' prices move.</li>
       <li>Medians are used for the two timing parts, so one very slow trip doesn't sink the number.</li>
     </ul>
