@@ -26,7 +26,8 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from . import rules, sender
@@ -591,15 +592,41 @@ def cancel(
     return qs.update(status=_S.CANCELLED)
 
 
+# The reason on a held text's line withdrawn without one (an archived row, a new trigger).
+WITHDRAWN = "Withdrawn"
+
+
 def withdraw(row: MessageTemplate, *, reason: str = "") -> int:
-    """Cancel every queued send of a row, on every order: it was switched off, archived or
-    moved to another trigger (spec section 9). ``reason`` goes on each as its error;
-    `SWITCHED_OFF` lets the row's sends come back when it is switched on again. Returns
-    how many."""
+    """Withdraw every queued send of a row, on every order: it was switched off, archived
+    or moved to another trigger (spec section 9). Returns how many.
+
+    A send that already reached someone (its email went while quiet hours hold its texts)
+    is Sent, as any send that reached anyone is, and its held texts are skipped with the
+    reason: cancelled, its email would stop counting as sent, and switching the row back
+    on would send it again (MSG-05). Every other queued send is cancelled with ``reason``
+    as its error; `SWITCHED_OFF` lets the row's sends come back when it is switched on
+    again."""
+    queued = TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED)
+    reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
+    partly = list(
+        queued.annotate(reached=Exists(reached)).filter(reached=True).values_list("pk", flat=True)
+    )
+    if partly:
+        Delivery.objects.filter(touchpoint__in=partly, status=Delivery.Status.QUEUED).update(
+            status=Delivery.Status.SKIPPED, reason=reason or WITHDRAWN
+        )
+        first_sent = (
+            Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
+            .order_by("created_at")
+            .values("created_at")[:1]
+        )
+        TouchPoint.objects.filter(pk__in=partly).update(
+            status=_S.SENT, error="", sent_at=Coalesce("sent_at", Subquery(first_sent))
+        )
     changes = {"status": _S.CANCELLED}
     if reason:
         changes["error"] = reason
-    return TouchPoint.objects.filter(_of_row(row), status=_S.SCHEDULED).update(**changes)
+    return len(partly) + queued.exclude(pk__in=partly).update(**changes)
 
 
 def redate(row: MessageTemplate, *, old_offset: timedelta) -> int:
