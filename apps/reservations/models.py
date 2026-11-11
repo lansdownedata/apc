@@ -213,6 +213,34 @@ class Reservation(TimeStampedModel):
         max_length=32, choices=TripStatus.choices, blank=True, default=""
     )
     sort_order = models.PositiveIntegerField(default=0)
+
+    class CirclingSource(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        DRIVER_LINK = "driver_link", "Driver link"
+        LIMOANYWHERE = "limoanywhere", "LimoAnywhere"
+
+    # The trip needs an affiliate (farm-out) and has none yet.
+    needs_farm_out = models.BooleanField(default=False)
+    # The driver reported circling at the pickup: when, how it was recorded, and by whom.
+    circling_at = models.DateTimeField(null=True, blank=True)
+    circling_source = models.CharField(max_length=20, choices=CirclingSource.choices, blank=True)
+    circling_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    cancel_reason = models.CharField(max_length=255, blank=True)
+    cancel_covid = models.BooleanField(default=False)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     # Stamped when the customer acknowledges the T-72h trip confirmation on the public
     # trip-sheet page (APC-19). Null until they do.
     customer_confirmed_at = models.DateTimeField(null=True, blank=True)

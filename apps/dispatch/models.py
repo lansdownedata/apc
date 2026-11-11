@@ -30,6 +30,7 @@ class Assignment(TimeStampedModel):
         CONFIRMED = "confirmed", "Confirmed"
         DECLINED = "declined", "Declined"
         WITHDRAWN = "withdrawn", "Withdrawn"
+        SENT_BACK = "sent_back", "Sent back"
 
     class Channel(models.TextChoices):
         MANUAL = "manual", "Manual"
@@ -94,6 +95,17 @@ class Assignment(TimeStampedModel):
         on_delete=models.SET_NULL,
     )
     insurance_override_at = models.DateTimeField(null=True, blank=True)
+    # When the affiliate accepted the offer (before they are assigned a driver).
+    offer_accepted_at = models.DateTimeField(null=True, blank=True)
+    # An affiliate that took the trip and then handed it back: why, and who recorded it.
+    sent_back_reason = models.CharField(max_length=255, blank=True)
+    sent_back_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     objects = AssignmentQuerySet.as_manager()
 
