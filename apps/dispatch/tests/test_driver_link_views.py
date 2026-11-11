@@ -3,6 +3,7 @@
 import json
 from datetime import date, time, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.test import override_settings
@@ -25,13 +26,16 @@ S = Reservation.TripStatus
 IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
 
 
-def _live(status=S.DISPATCHED, *, pickup_date=None, pickup_time=time(9, 0), **trip_kw):
-    trip = ReservationFactory(
-        lead=LeadFactory(status=Lead.Status.BOOKED),
-        pickup_date=pickup_date or timezone.localdate(),
-        pickup_time=pickup_time,
-        **trip_kw,
-    )
+def _soon(zone="America/New_York"):
+    """Pickup one hour from now in the trip's zone, so the 6-hour window is always open."""
+    local = (timezone.now() + timedelta(hours=1)).astimezone(ZoneInfo(zone))
+    return {"pickup_date": local.date(), "pickup_time": local.time(), "pickup_timezone": zone}
+
+
+def _live(status=S.DISPATCHED, **trip_kw):
+    if "pickup_date" not in trip_kw:
+        trip_kw = {**_soon(trip_kw.get("pickup_timezone") or "America/New_York"), **trip_kw}
+    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), **trip_kw)
     assignment = AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
     set_trip_status(trip, status)
     return assignment
@@ -119,6 +123,26 @@ def test_status_post_advances_and_returns_state(client):
     assert a.reservation.trip_status == S.ON_THE_WAY
 
 
+def test_status_post_with_top_level_coords_writes_one_status_ping(client):
+    a = _live()
+    res = _post(
+        client,
+        a,
+        "driver_link_status",
+        {"to": S.ON_THE_WAY, "from": S.DISPATCHED, "lat": 40.7, "lng": -74.0, "accuracy": 9},
+    )
+    assert res.status_code == 200
+    ping = DriverPing.objects.get()
+    assert ping.kind == DriverPing.Kind.STATUS
+    assert ping.status_event is not None and ping.status_event.status == S.ON_THE_WAY
+
+
+def test_status_post_without_coords_writes_no_ping(client):
+    a = _live()
+    _post(client, a, "driver_link_status", {"to": S.ON_THE_WAY, "from": S.DISPATCHED})
+    assert not DriverPing.objects.exists()
+
+
 def test_stale_from_is_409_with_current_state(client):
     a = _live(status=S.ON_THE_WAY)
     res = _post(client, a, "driver_link_status", {"to": S.ON_THE_WAY, "from": S.DISPATCHED})
@@ -194,8 +218,7 @@ def test_vendor_driver_hides_mobile_when_setting_off(client):
 def test_in_house_driver_always_sees_mobile(client):
     trip = ReservationFactory(
         lead=LeadFactory(status=Lead.Status.BOOKED),
-        pickup_date=timezone.localdate(),
-        pickup_time=time(9, 0),
+        **_soon(),
     )
     a = AssignmentFactory(reservation=trip, in_house=True)
     set_trip_status(trip, S.DISPATCHED)

@@ -260,12 +260,12 @@ def _driver_post(view):
 
 @_driver_post
 def driver_link_status(request: HttpRequest, assignment: Assignment, body: dict) -> HttpResponse:
-    coords = body.get("coords")
+    coords = {k: body.get(k) for k in ("lat", "lng", "accuracy")} if "lat" in body else None
     driver_link.apply_status(
         assignment.pk,
         to=str(body.get("to") or ""),
         from_=str(body.get("from") or ""),
-        coords=coords if isinstance(coords, dict) else None,
+        coords=coords,
     )
     return _state_response(assignment.pk)
 
