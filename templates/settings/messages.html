@@ -108,8 +108,8 @@
                  try {
                    const resp = await fetch('{% url 'message_toggle' item.row.key %}', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), Accept: 'application/json' } });
                    const data = await resp.json();
-                   if (!resp.ok || !data.ok) throw new Error('failed');
-                   this.on = data.enabled;
+                   if (resp.ok && data.ok) this.on = data.enabled;
+                   else $store.toast.push({ type: 'danger', title: 'Could not change that switch', message: data.error || '' });
                  } catch (e) {
                    $store.toast.push({ type: 'danger', title: 'Could not change that switch' });
                  } finally { this.busy = false; }

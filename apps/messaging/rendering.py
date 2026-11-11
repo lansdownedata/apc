@@ -25,6 +25,8 @@ from django.utils import timezone
 from django.utils.html import escape
 from django.utils.safestring import SafeString, mark_safe
 
+from apps.core.templatetags.phone_filters import phone_display
+
 from .touchpoint_templates import render
 
 # The inline styles of the old planner invite email: its greeting, then its body copy.
@@ -158,7 +160,7 @@ def layout_context(
         "logo_cid": logo_cid,
         "preheader": preheader,
         "company_name": ctx.get("company_name", settings.COMPANY_NAME),
-        "company_phone": ctx.get("company_phone", settings.COMPANY_PHONE),
+        "company_phone": ctx.get("company_phone", phone_display(settings.COMPANY_PHONE)),
         "company_email": ctx.get("company_email", settings.COMPANY_EMAIL),
     }
 

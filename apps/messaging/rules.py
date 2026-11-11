@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
+from apps.core.templatetags.phone_filters import phone_display
 from apps.reservations.models import Reservation
 
 from . import defaults, fields, triggers
@@ -216,7 +217,8 @@ def driver_sheet(reservation) -> str:
     if not ready(reservation, "dispatched_with_driver"):
         return f"{sheet}\n  {DRIVER_TO_FOLLOW}"
     info = confirmed_assignment(reservation).driver_info or {}
-    who = " · ".join(part for part in (info.get("name", ""), info.get("cell", "")) if part)
+    cell = phone_display(info.get("cell", ""))
+    who = " · ".join(part for part in (info.get("name", ""), cell) if part)
     return f"{sheet}\n  Driver: {who}"
 
 

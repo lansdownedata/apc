@@ -568,7 +568,7 @@ def test_an_added_driver_row_listing_the_day_sends_every_driver_once():
 
     (body,) = [c.kwargs["body"] for c in send.call_args_list]
     assert body.index("10:00 AM") < body.index("Sam Rivera") < body.index("4:00 PM")
-    assert "+15715551212" in body and "Kim Lane" in body and "+15715553434" in body
+    assert "(571) 555-1212" in body and "Kim Lane" in body and "(571) 555-3434" in body
     assert {(d[3], d[4]) for d in _deliveries(later)} == {("skipped", "Already sent for Nov 14")}
 
 
@@ -620,7 +620,8 @@ def test_the_driver_sheet_says_when_a_drivers_details_are_still_to_come():
     assert "Driver: details to follow" in sender.context(tp, row, bea)["trip_sheet_drivers"]
     trip = _dispatched_with(trip, "Sam Rivera", "+15715551212")
     tp = _tp(row, lead, trip)
-    assert "Driver: Sam Rivera · +15715551212" in sender.context(tp, row, bea)["trip_sheet_drivers"]
+    drivers = sender.context(tp, row, bea)["trip_sheet_drivers"]
+    assert "Driver: Sam Rivera · (571) 555-1212" in drivers
 
 
 def test_an_added_pickup_row_listing_the_day_sends_one_message():
@@ -1265,7 +1266,7 @@ def test_a_wedding_confirmation_to_the_billing_contact_reaches_them_at_their_own
         assert sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip)) is True
 
     (email,) = _bodies(send, "email")
-    assert "We'll reach you at: Pat Okafor · +12025550103" in email
+    assert "We'll reach you at: Pat Okafor · (202) 555-0103" in email
     assert "Casey" not in email
 
 
@@ -1277,7 +1278,7 @@ def test_the_bookers_confirmation_still_reaches_the_booker():
         sender.deliver(_tp(_row("trip_confirm_customer"), lead, trip))
 
     (email,) = _bodies(send, "email")
-    assert "We'll reach you at: Bea Booker · +12025550100" in email
+    assert "We'll reach you at: Bea Booker · (202) 555-0100" in email
 
 
 def test_one_trip_keeps_the_singular_confirmation_text():

@@ -179,3 +179,15 @@ def test_the_on_off_segment_and_tags_use_the_theme_surfaces(client):
     assert "bg-surface2" in nav and "bg-surface font-semibold text-ink" in nav
     for light_only in (r"bg-slate-100\b", r"bg-white font-semibold", r"text-slate-600\b"):
         assert not re.search(light_only, html), light_only
+
+
+def test_a_refused_switch_says_why(client):
+    """MSG-02: the server says why a switch can't flip ("This one has no switch.", or the
+    row's wording error); the toast shows it under the title instead of a generic line."""
+    _admin(client)
+    MessageRowFactory(name="Mine", enabled=True)
+    html = _get(client)
+    start = html.index("async flip()", html.index('aria-label="On or off"'))
+    flip = html[start : html.index("finally", start)]
+    assert "title: 'Could not change that switch', message: data.error" in flip
+    assert "throw new Error('failed')" not in flip

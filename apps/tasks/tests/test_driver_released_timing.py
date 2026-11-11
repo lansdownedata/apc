@@ -79,8 +79,8 @@ def test_saving_message_timing_redates_open_tasks():
     lead, trip = _order()
     row = MessageTemplate.objects.get(key="driver_released")
     row.timing_amount, row.timing_unit = 4, "hours"
-    count = editor.save(row, user=UserFactory())
-    assert count >= 1
+    redated = editor.save(row, user=UserFactory())
+    assert redated.tasks >= 1
     assert _task(lead).due_at == trip.pickup_at - timedelta(hours=3)
     editor.reset(MessageTemplate.objects.get(key="driver_released"))
     assert _task(lead).due_at == trip.pickup_at - timedelta(hours=11)

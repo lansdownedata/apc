@@ -28,6 +28,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.core import outbound
+from apps.core.templatetags.phone_filters import phone_display
 from apps.integrations import podium
 from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
@@ -292,8 +293,9 @@ def _day_trips(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> list:
 
 def _on_file(person: Recipient) -> str:
     """Who the message tells "we'll reach you at": the person it reaches, never the booker
-    on their behalf (APC-122)."""
-    return f"{person.name} · {person.phone}".strip(" ·") if person.name else person.phone
+    on their behalf (APC-122), written as people write it."""
+    phone = phone_display(person.phone)
+    return f"{person.name} · {phone}".strip(" ·") if person.name else phone
 
 
 def context(
@@ -311,7 +313,7 @@ def context(
         ctx = {
             "first_name": "there",
             "company_name": settings.COMPANY_NAME,
-            "company_phone": settings.COMPANY_PHONE,
+            "company_phone": phone_display(settings.COMPANY_PHONE),
             "company_email": settings.COMPANY_EMAIL,
         }
     else:

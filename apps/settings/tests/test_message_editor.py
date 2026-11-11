@@ -645,6 +645,37 @@ def _queued(row, lead=None, at=None):
     )
 
 
+@pytest.mark.parametrize("queued", [True, False], ids=["both", "tasks-only"])
+def test_the_redated_note_counts_messages_and_checklist_tasks_apart(client, queued):
+    """MSG-03: saving Driver details read "37 scheduled messages re-dated." for 3 queued
+    sends: the count added the checklist tasks re-dated with them. Each is named apart."""
+    from apps.tasks import services as tasks
+
+    client.force_login(_owner_admin())
+    row = _row("driver_released")
+    lead = _booked_lead()
+    trip = lead.reservations.get()
+    tasks.ensure_tasks(lead)
+    if queued:
+        TouchPointFactory(
+            lead=lead,
+            reservation=trip,
+            message=row,
+            kind=row.key,
+            status="scheduled",
+            scheduled_for=trip.pickup_at - timedelta(hours=12),
+        )
+
+    resp = client.post(
+        reverse("message_edit", args=["driver_released"]),
+        post_data(row, timing=(4, "hours")),
+        follow=True,
+    )
+
+    note = "1 scheduled message and 1 checklist task" if queued else "1 checklist task"
+    assert f"Saved. Applies to messages not yet sent. {note} re-dated." in resp.content.decode()
+
+
 def test_changed_timing_redates_queued_sends(client):
     client.force_login(_owner_admin())
     row = _row("tp2_lead_followup")

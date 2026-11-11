@@ -7,7 +7,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -20,12 +20,12 @@
   "driver_released": {
     "calls": [
       {
-        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM EDT is confirmed. Your driver:\nSam Rivera\nCell +12025550199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM EDT is confirmed. Your driver:\nSam Rivera\nCell (202) 555-0199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
         "channel_type": "phone",
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour trip on Apr 20, 2027 at 8:30 PM EDT is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour trip on Apr 20, 2027 at 8:30 PM EDT is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       (202) 555-0199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -38,12 +38,12 @@
   "driver_released_pacific_trip": {
     "calls": [
       {
-        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM PDT is confirmed. Your driver:\nSam Rivera\nCell +12025550199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "body": "Dana, it's All Pro Charter. Your trip on Apr 20, 2027 at 8:30 PM PDT is confirmed. Your driver:\nSam Rivera\nCell (202) 555-0199\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
         "channel_type": "phone",
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour trip on Apr 20, 2027 at 8:30 PM PDT is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour trip on Apr 20, 2027 at 8:30 PM PDT is confirmed and your driver is assigned:\n\n  Driver:     Sam Rivera\n  Cell:       (202) 555-0199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -56,12 +56,12 @@
   "driver_updated": {
     "calls": [
       {
-        "body": "Dana, it's All Pro Charter. Your driver details have changed:\nSam Rivera\nCell +12025550177\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
+        "body": "Dana, it's All Pro Charter. Your driver details have changed:\nSam Rivera\nCell (202) 555-0177\nBlack Cadillac Escalade\nVehicle #12\nThey'll reach out as pickup nears.",
         "channel_type": "phone",
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour driver details have changed:\n\n  Driver:     Sam Rivera\n  Cell:       +12025550177\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour driver details have changed:\n\n  Driver:     Sam Rivera\n  Cell:       (202) 555-0177\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nYour driver will contact you as pickup approaches. If you need anything before then, call us at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -79,7 +79,7 @@
         "identifier": "+12025550144"
       },
       {
-        "body": "Riley,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Riley Chen · +12025550144\n\nConfirm: https://example.test/trip/<TOKEN contact=Riley Chen date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Riley,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Riley Chen · (202) 555-0144\n\nConfirm: https://example.test/trip/<TOKEN contact=Riley Chen date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "dispatch@beltwayexec.example.com"
         ],
@@ -97,7 +97,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -115,7 +115,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -133,7 +133,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
@@ -308,7 +308,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour trip is confirmed and assigned for Apr 20, 2027 at 8:30 PM EDT.\n\n  Driver:     Sam Rivera\n  Cell:       +12025550199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nFull details: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour trip is confirmed and assigned for Apr 20, 2027 at 8:30 PM EDT.\n\n  Driver:     Sam Rivera\n  Cell:       (202) 555-0199\n  Vehicle:    Black Cadillac Escalade\n  Vehicle #:  12\n\nFull details: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -525,7 +525,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -543,7 +543,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Dana,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 2:00 PM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -577,7 +577,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q2>\n  Tuesday, April 20, 2027 at 4:00 PM EDT\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM EDT\n  Route: 1600 Pennsylvania Ave NW, Washington, DC 20500 → Washington Dulles International Airport (IAD)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q2>\n  Tuesday, April 20, 2027 at 4:00 PM EDT\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -600,7 +600,7 @@
         "identifier": "+12025550101"
       },
       {
-        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM PDT\n  Route: 200 N Spring St, Los Angeles, CA 90012 → Los Angeles International Airport (LAX)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q2>\n  Tuesday, April 20, 2027 at 8:30 PM PDT\n  Route: Los Angeles International Airport (LAX) → 200 N Spring St, Los Angeles, CA 90012\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · +12025550101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Dana,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Tuesday, April 20, 2027 at 10:00 AM PDT\n  Route: 200 N Spring St, Los Angeles, CA 90012 → Los Angeles International Airport (LAX)\n  Passengers: 3\n  Vehicle: Luxury SUV\n\nTrip <Q2>\n  Tuesday, April 20, 2027 at 8:30 PM PDT\n  Route: Los Angeles International Airport (LAX) → 200 N Spring St, Los Angeles, CA 90012\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Dana Whitfield · (202) 555-0101\n\nConfirm: https://example.test/trip/<TOKEN contact=Dana Whitfield date=2027-04-20>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "dana.whitfield@example.com"
         ],
@@ -636,7 +636,7 @@
         "identifier": "+12025550102"
       },
       {
-        "body": "Casey,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/<TOKEN contact=Casey Morgan date=2027-04-24>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Casey,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: Washington Dulles International Airport (IAD) → 1600 Pennsylvania Ave NW, Washington, DC 20500\n  Passengers: 3\n  Vehicle: Luxury SUV\n\n  We'll reach you at: Casey Morgan · (202) 555-0102\n\nConfirm: https://example.test/trip/<TOKEN contact=Casey Morgan date=2027-04-24>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "casey.morgan@example.com"
         ],
@@ -648,7 +648,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
@@ -671,7 +671,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Pat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
@@ -689,7 +689,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
+        "body": "Pat,\n\nWe haven't heard back on the details for your upcoming travel, and we'd rather check than assume. Please take a moment to confirm:\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
@@ -707,7 +707,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
@@ -725,7 +725,7 @@
         "identifier": "+12025550102"
       },
       {
-        "body": "Casey,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · +12025550102\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Casey,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Casey Morgan · (202) 555-0102\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "casey.morgan@example.com"
         ],
@@ -743,7 +743,7 @@
         "identifier": "+12025550103"
       },
       {
-        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · +12025550103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
+        "body": "Pat,\n\nYour travel with us is coming up. Please take a moment to confirm the details below are correct.\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 2:00 PM EDT\n  Route: The Hay-Adams, 800 16th St NW, Washington, DC → St. Matthew's Cathedral\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\nTrip <Q1>\n  Saturday, April 24, 2027 at 6:00 PM EDT\n  Route: St. Matthew's Cathedral → Anderson House, 2118 Massachusetts Ave NW\n  Passengers: 3\n  Vehicle: Stretch Limousine\n\n  We'll reach you at: Pat Okafor · (202) 555-0103\n\nConfirm: https://example.test/trip/o/<TOKEN date=2027-04-24 lead=Casey Morgan 2027-04-24 14:00>/\n\nIf anything is wrong, or your plans have changed, reply to this email or call us right away at (703) 555-0100 — the sooner we know, the better we can adjust.\n\nAll Pro Charter",
         "email_to": [
           "pat.okafor@example.com"
         ],
