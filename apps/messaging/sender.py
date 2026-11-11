@@ -59,6 +59,8 @@ WITH_HELD = "New details go with the held driver message"
 INTERRUPTED = "send interrupted"
 # Podium answered the invite without a link: texting it would send a blank link.
 NO_REVIEW_LINK = "Podium returned no review link"
+# Podium caps review invites per customer per period and refused this one.
+ALREADY_INVITED = "Podium already asked this customer recently"
 # Trigger kinds sent only by `send_now`, inside the click or the report's cron job.
 _SENT_NOW = frozenset({"staff_click", "schedule"})
 # The context's note of which trips a combined send lists for the person (reservation
@@ -781,6 +783,7 @@ def _review(
             return False
     sent_now: list[Delivery] = []
     errors: list[str] = []
+    already = False
     for person, phone in recipients.addresses(people, "sms"):
         if phone in sent_here:
             continue
@@ -788,6 +791,10 @@ def _review(
         try:
             invite = podium.create_review_invitation(phone=phone)
         except (PodiumAPIError, PodiumNotConnected) as exc:
+            if podium.invite_limited(exc):
+                already = True
+                _record(tp, row, "sms", person, phone, "", "skipped", ALREADY_INVITED, line=line)
+                continue
             errors.append(str(exc))
             _record(tp, row, "sms", person, phone, "", "failed", str(exc), line=line)
             continue
@@ -815,6 +822,9 @@ def _review(
                 _record(tp, row, "sms", person, phone, "", "sent", "", provider_id, line=line)
             )
     _close(waiting)
+    if already and not (sent_now or sent_here or errors):
+        _mark(tp, status=TouchPoint.Status.SKIPPED, error=ALREADY_INVITED)
+        return False
     return _finish(
         tp, row, sent_now=sent_now, sent_before=bool(sent_here), errors=errors, covered=0
     )
