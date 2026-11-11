@@ -76,3 +76,36 @@ def test_clone_takes_its_orders_initial_status():
     quoted = TransferReservationFactory(lead=LeadFactory(status=Lead.Status.QUOTED))
     assert groups.clone_reservation(booked, 5).trip_status == UNASSIGNED
     assert groups.clone_reservation(quoted, 5).trip_status == PENDING
+
+
+def test_a_return_trip_carries_none_of_the_sources_trip_state(admin_user):
+    """Farm-out flag, circling notice and cancel stamps belong to the source trip, not to
+    the new one made from it (final fix wave F6)."""
+    from django.utils import timezone
+
+    from apps.reservations.routing import create_return_trip
+
+    source = TransferReservationFactory(
+        lead=LeadFactory(status=Lead.Status.BOOKED),
+        trip_status=Reservation.TripStatus.ARRIVED,
+        needs_farm_out=True,
+        circling_at=timezone.now(),
+        circling_source=Reservation.CirclingSource.MANUAL,
+        circling_by=admin_user,
+        cancel_reason="Flight grounded",
+        cancel_covid=True,
+        cancelled_at=timezone.now(),
+        cancelled_by=admin_user,
+    )
+
+    ret = create_return_trip(source)
+
+    ret.refresh_from_db()
+    assert ret.needs_farm_out is False
+    assert (ret.circling_at, ret.circling_source, ret.circling_by) == (None, "", None)
+    assert (ret.cancel_reason, ret.cancel_covid, ret.cancelled_at, ret.cancelled_by) == (
+        "",
+        False,
+        None,
+        None,
+    )

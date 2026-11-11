@@ -175,6 +175,16 @@ def clone_reservation(
     clone.la_reservation_id = ""
     clone.la_confirmation = ""
     clone.trip_status = initial_status(source.lead)
+    # Per-trip state is the source's own: the copy needs no farm-out yet, nobody is
+    # circling it, and it has not been cancelled.
+    clone.needs_farm_out = False
+    clone.circling_at = None
+    clone.circling_source = ""
+    clone.circling_by = None
+    clone.cancel_reason = ""
+    clone.cancel_covid = False
+    clone.cancelled_at = None
+    clone.cancelled_by = None
     # A fresh trip nobody has seen yet must not be born "confirmed" because the source
     # happened to be — that stamp belongs to a specific customer looking at this specific
     # trip's sheet (APC-19).
