@@ -16,6 +16,7 @@ from apps.core.phone import to_e164
 from apps.dispatch import farm_in_drawer
 from apps.fleet.models import Driver, Vehicle
 from apps.leads.models import Lead, VehicleType
+from apps.payments import services as payment_services
 from apps.reservations import editor as reservation_editor
 from apps.reservations import services as reservation_services
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
@@ -172,14 +173,83 @@ _COLUMNS = (
     ("total", "TOTAL", "right", True, "w-[96px] min-w-[96px]"),
 )
 
-# The only statuses the drawer's Trip status control sets — the three that drive a
-# customer notification (APC-22). Everything else on Reservation.TripStatus stays
-# LA-driven; this is a small, curated advance, not a full status state machine here.
-_MANUAL_STATUSES = (
-    Reservation.TripStatus.DISPATCHED,
-    Reservation.TripStatus.ON_THE_WAY,
-    Reservation.TripStatus.ARRIVED,
+_TS = Reservation.TripStatus
+
+# The drawer's Trip status control lists all eleven, in the order a trip moves through them.
+_STATUS_ORDER = (
+    _TS.PENDING,
+    _TS.UNASSIGNED,
+    _TS.ASSIGNED,
+    _TS.DISPATCHED,
+    _TS.ON_THE_WAY,
+    _TS.ARRIVED,
+    _TS.CUSTOMER_IN_CAR,
+    _TS.DONE,
+    _TS.CANCELLED,
+    _TS.LATE_CANCEL,
+    _TS.NO_SHOW,
 )
+# Coverage owns these (offer, confirm, release); the drawer shows them but never sets them.
+_COVERAGE_STATUSES = (_TS.PENDING, _TS.UNASSIGNED, _TS.ASSIGNED)
+# What `set_status` sets by hand, once coverage is confirmed.
+_DRAWER_STATUSES = (_TS.DISPATCHED, _TS.ON_THE_WAY, _TS.ARRIVED, _TS.CUSTOMER_IN_CAR, _TS.DONE)
+# Chargeable cancels the drawer records itself (`cancel_status`). A plain cancel moves
+# money, so it goes through the order's cancel flow (hold release or refund).
+_DRAWER_CANCEL_STATUSES = (_TS.LATE_CANCEL, _TS.NO_SHOW)
+
+
+def _cancel_flow(user, trip: Reservation) -> dict:
+    """Which order cancel flow the drawer's Cancelled opens for this trip: releasing an
+    engaged order's hold, or cancel-and-refund on a booked one with this trip pre-ticked.
+    `kind` is blank when neither applies (no payments access, or already cancelled)."""
+    lead = trip.lead
+    if not user.has_payments_access or trip.is_cancelled:
+        return {"kind": ""}
+    if lead.status == Lead.Status.ENGAGED:
+        return {
+            "kind": "hold",
+            "url": reverse("order_cancel", args=[lead.pk]),
+            "quote": lead.quote_no,
+        }
+    if lead.status == Lead.Status.BOOKED:
+        return {
+            "kind": "refund",
+            "url": reverse("order_cancel_refund", args=[lead.pk]),
+            "quote": lead.quote_no,
+            "trips": payment_services.cancel_options(lead, user),
+            "preselect": trip.pk,
+        }
+    return {"kind": ""}
+
+
+def _status_control(user, trip: Reservation, assignment: Assignment | None) -> dict:
+    """The drawer's status select: `options` as (value, label, disabled), and what its
+    change handler (assignPanel.pickStatus) needs to post or open a dialog."""
+    confirmed = assignment is not None and assignment.status == Assignment.Status.CONFIRMED
+    cancel = _cancel_flow(user, trip)
+    chargeable = trip.lead.status == Lead.Status.BOOKED and trip.trip_status != _TS.CANCELLED
+    options = []
+    for status in _STATUS_ORDER:
+        if status in _DRAWER_STATUSES:
+            disabled = not confirmed
+        elif status == _TS.CANCELLED:
+            disabled = not cancel["kind"]
+        elif status in _DRAWER_CANCEL_STATUSES:
+            disabled = not chargeable
+        else:
+            disabled = True
+        # "Dispatched - Driver Assigned" is LA's wording; the driver is its own badge now.
+        label = "Dispatched" if status == _TS.DISPATCHED else status.label
+        options.append((status.value, label, disabled))
+    return {
+        "options": options,
+        "config": {
+            "current": trip.trip_status,
+            "setUrl": reverse("dispatch_set_status", args=[trip.pk]),
+            "cancelStatusUrl": reverse("dispatch_cancel_status", args=[trip.pk]),
+            "cancel": cancel,
+        },
+    }
 
 
 @login_required
@@ -294,6 +364,8 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
     )
     attach_green_lit([trip])
     checklist = task_selectors.checklist_for_trip(trip)
+    coverage = coverage_context(trip, search=request.GET.get("q", ""))
+    status = _status_control(request.user, trip, coverage["assignment"])
     return render(
         request,
         "dispatch/_assign_panel.html",
@@ -301,9 +373,11 @@ def assign_panel(request: HttpRequest, pk: int) -> HttpResponse:
             "checklist": checklist,
             # The coverage half is the shared fragment's own context — one source, so the
             # drawer and the editor cannot drift apart again (APC-48).
-            **coverage_context(trip, search=request.GET.get("q", "")),
+            **coverage,
             "stops": list(trip.stops.all()),
-            "trip_status_options": [(s, s.label) for s in _MANUAL_STATUSES],
+            "trip_status_options": status["options"],
+            "status_control": status["config"],
+            "can_circle": trip.trip_status in (_TS.ON_THE_WAY, _TS.ARRIVED),
         },
     )
 
@@ -422,12 +496,17 @@ def assign_driver(request: HttpRequest, pk: int) -> JsonResponse:
 @login_required
 @require_POST
 def set_status(request: HttpRequest, pk: int) -> JsonResponse:
-    """Advance a covered trip's status by hand (APC-22) — Dispatched / On The Way /
-    Arrived, each of which can fire a customer notification (Settings > Customer
-    notifications, off by default)."""
+    """Move a covered trip along by hand: Dispatched through Done (APC-22). Dispatched,
+    On The Way and Arrived can each fire a customer notification (Settings > Customer
+    notifications, off by default). Coverage owns Pending / Unassigned / Assigned, and the
+    cancel statuses post to their own endpoints so a reason can't be skipped."""
     trip = get_object_or_404(Reservation, pk=pk)
     status = request.POST.get("status", "")
-    if status not in _MANUAL_STATUSES:
+    if status in _COVERAGE_STATUSES:
+        return _fail(services.AssignmentError("That status is set by coverage, not by hand."))
+    if status in (_TS.CANCELLED, *_DRAWER_CANCEL_STATUSES):
+        return _fail(services.AssignmentError("A cancellation needs a reason: use Cancel."))
+    if status not in _DRAWER_STATUSES:
         return _fail(services.AssignmentError("Unknown status."))
     covering = services.active_assignment(trip)
     if covering is None or covering.status != Assignment.Status.CONFIRMED:
@@ -436,11 +515,6 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
         trip, status, user=request.user, source=TripStatusEvent.Source.MANUAL
     )
     return JsonResponse({"ok": True})
-
-
-# Chargeable cancels the drawer records itself. A plain cancel moves money, so it goes
-# through the order's cancel flow (hold release or refund), never this endpoint.
-_DRAWER_CANCEL_STATUSES = (Reservation.TripStatus.LATE_CANCEL, Reservation.TripStatus.NO_SHOW)
 
 
 @login_required
@@ -475,6 +549,15 @@ def circling(request: HttpRequest, pk: int) -> JsonResponse:
         )
     except ValueError as exc:
         return _fail(exc)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def needs_farm_out(request: HttpRequest, pk: int) -> JsonResponse:
+    """Flag (`on=1`) or clear (`on=0`) the trip as needing an affiliate, from the drawer."""
+    trip = get_object_or_404(Reservation, pk=pk)
+    services.set_needs_farm_out(trip, on=request.POST.get("on") == "1")
     return JsonResponse({"ok": True})
 
 

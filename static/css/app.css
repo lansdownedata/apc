@@ -479,6 +479,10 @@ header, aside, main, .wash-gold {
   color: rgb(var(--text));
 }
 .ts-dropdown .option:hover { background: rgb(var(--surface-2)); }
+/* A disabled option (searchable_select's third item): Tom Select greys it; it must not
+   light up on hover as if it could be picked. */
+.ts-dropdown .option[aria-disabled="true"] { color: rgb(var(--muted)); cursor: not-allowed; }
+.ts-dropdown .option[aria-disabled="true"]:hover { background: transparent; }
 .ts-dropdown .no-results { padding: .6rem .85rem; color: rgb(var(--muted)); }
 .ts-wrapper.multi .ts-control > .item {
   background: rgb(var(--gold-soft));

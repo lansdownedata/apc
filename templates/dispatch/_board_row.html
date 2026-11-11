@@ -12,7 +12,7 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
     data-pu="{{ trip.pickup_time|time:'H:i'|default:'00:00' }}"
     data-conf="{{ trip.la_confirmation|default:trip.reference }}"
     data-coverage="{{ trip.coverage }}"
-    data-tokens="{{ trip.lead.contact.name|lower }} {{ trip.reference|lower }} {{ trip.pk|add:600000 }} {{ trip.pk }} {{ trip.la_confirmation|lower }} {{ trip.vehicle.name|default:''|lower }}{% if a.is_in_house and a.vehicle %} {{ a.vehicle.name|lower }}{% endif %}{% if a %} {{ a.provider_name|lower }}{% endif %} {{ trip.pickup_stop.address|default:''|lower }} {{ trip.dropoff_stop.address|default:''|lower }} {% if trip.trip_type == 'hourly' %}hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}airport{% else %}p2p point-to-point{% endif %} {% if trip.coverage == 'uncovered' %}unassigned{% else %}{{ trip.coverage_state }}{% endif %} {{ trip.passengers }}"
+    data-tokens="{{ trip.lead.contact.name|lower }} {{ trip.reference|lower }} {{ trip.pk|add:600000 }} {{ trip.pk }} {{ trip.la_confirmation|lower }} {{ trip.vehicle.name|default:''|lower }}{% if a.is_in_house and a.vehicle %} {{ a.vehicle.name|lower }}{% endif %}{% if a %} {{ a.provider_name|lower }}{% endif %} {{ trip.pickup_stop.address|default:''|lower }} {{ trip.dropoff_stop.address|default:''|lower }} {% if trip.trip_type == 'hourly' %}hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}airport{% else %}p2p point-to-point{% endif %} {% if trip.coverage == 'uncovered' %}unassigned{% else %}{{ trip.coverage_state }}{% endif %}{% if trip.circling_at %} circling{% endif %}{% if trip.needs_farm_out %} farm-out{% endif %} {{ trip.passengers }}"
     data-pax="{{ trip.passengers }}"
     data-total="{{ trip.line_total|stringformat:'012.2f' }}"
     data-passenger="{{ trip.lead.contact.name|lower }}"
@@ -20,8 +20,8 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
     data-svc="{% if trip.trip_type == 'hourly' %}hourly{% elif trip.pickup_stop.airport_id or trip.dropoff_stop.airport_id %}airport{% else %}p2p{% endif %}"
     data-driver="{% if a.is_in_house %}{{ a.driver.name|lower }}{% endif %}"
     data-affiliate="{% if a and not a.is_in_house %}{{ a.vendor.name|lower }}{% endif %}"
-    data-exception="{% if trip.coverage == 'uncovered' or trip.coverage == 'offered' or trip.exception_tier %}1{% else %}0{% endif %}"
-    class="group border-t border-line whitespace-nowrap cursor-pointer bg-surface hover:bg-surface2 {% if trip.exception_tier == 'critical' or fs.state == 'cancelled' %}row-danger{% elif trip.exception_tier == 'warning' or trip.coverage == 'uncovered' or fs.state == 'delayed' or fs.state == 'not_found' %}row-warn{% endif %}"
+    data-exception="{% if trip.coverage == 'uncovered' or trip.coverage == 'offered' or trip.exception_tier or trip.circling_at %}1{% else %}0{% endif %}"
+    class="group border-t border-line whitespace-nowrap cursor-pointer bg-surface hover:bg-surface2 {% if trip.exception_tier == 'critical' or fs.state == 'cancelled' %}row-danger{% elif trip.exception_tier == 'warning' or trip.coverage == 'uncovered' or trip.circling_at or fs.state == 'delayed' or fs.state == 'not_found' %}row-warn{% endif %}"
     @click="select($el)" @dblclick="open($el)">
 
   {# PU — sticky left (opaque bg, set below) #}
@@ -32,9 +32,11 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
   {# CONF# — sticky left #}
   <td class="w-[108px] min-w-[108px] sticky left-[100px] z-10 bg-surface group-hover:bg-surface2 px-3 num text-muted" title="{% if trip.la_confirmation %}LA confirmation{% else %}Trip reference{% endif %}">{{ trip.la_confirmation|default:trip.reference }}</td>
 
-  {# COVERAGE — uniform-width pill + exception glyph #}
+  {# COVERAGE — uniform-width pill, then the trip's notices (circling, needs farm-out), then the exception glyph #}
   <td class="min-w-[100px] px-3">
     {% include "dispatch/_coverage_badge.html" with coverage=trip.coverage_state uniform=1 %}
+    {% if trip.circling_at %}<span class="ml-1 inline-flex items-center gap-1 align-middle text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-warn" title="Since {{ trip.circling_at|trip_clock_tz:trip }}"><i class="ti ti-rotate-clockwise-2 text-[11px]"></i> Circling · {{ trip.circling_minutes }} min</span>{% endif %}
+    {% if trip.needs_farm_out %}<span class="ml-1 inline-flex items-center gap-1 align-middle text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full chip-warn"><i class="ti ti-arrow-ramp-right-2 text-[11px]"></i> Needs farm-out</span>{% endif %}
     {% if trip.exception_tier %}<span class="ml-1 inline-flex items-center align-middle text-[10px] font-semibold px-1 py-0.5 rounded {% if trip.exception_tier == 'critical' %}chip-danger{% else %}chip-warn{% endif %}"
       title="{% for e in trip.open_exceptions %}{{ e.get_kind_display }}{% if not forloop.last %} · {% endif %}{% endfor %}"><i class="ti ti-alert-triangle text-[11px]"></i></span>{% endif %}
     {% include "components/green_lit_pill.html" %}

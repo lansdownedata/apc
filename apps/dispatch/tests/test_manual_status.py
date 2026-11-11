@@ -67,11 +67,13 @@ def test_set_status_refuses_an_offer_not_yet_confirmed(logged_in_client):
     assert resp.status_code == 400
 
 
-def test_set_status_refuses_a_status_outside_the_curated_set(logged_in_client):
+def test_set_status_refuses_a_status_coverage_owns(logged_in_client):
     trip = _trip()
     AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED)
 
-    resp = logged_in_client.post(reverse("dispatch_set_status", args=[trip.pk]), {"status": "done"})
+    resp = logged_in_client.post(
+        reverse("dispatch_set_status", args=[trip.pk]), {"status": "assigned"}
+    )
 
     assert resp.status_code == 400
     trip.refresh_from_db()
@@ -117,8 +119,17 @@ def test_panel_shows_the_status_buttons_for_a_confirmed_trip(logged_in_client):
     assert b"Arrived" in resp.content
 
 
-def test_panel_hides_the_status_buttons_for_an_uncovered_trip(logged_in_client):
+def test_panel_shows_the_status_select_for_an_uncovered_booked_trip(logged_in_client):
+    """Late Cancel / No Show need no coverage, so the select is there before coverage is."""
     trip = _trip()
+
+    resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
+
+    assert b"Trip status" in resp.content
+
+
+def test_panel_hides_the_status_select_on_a_quote(logged_in_client):
+    trip = _trip(lead=LeadFactory(status=Lead.Status.QUOTED))
 
     resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 

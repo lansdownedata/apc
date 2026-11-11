@@ -1,0 +1,11 @@
+{% load time_filters %}
+{% comment %}
+  components/cancel_line.html — why, who and when a trip was cancelled, in the trip's own
+  zone: "Cancelled · COVID-19 — reason · Name, Nov 3, 9:15 AM EST". Same line in the
+  dispatch drawer and on the trip line (quote workspace and order page).
+  Requires: trip. Lists should prefetch `cancelled_by`.
+  Renders nothing for a live trip, or one cancelled before who/when were recorded.
+{% endcomment %}
+{% if trip.is_cancelled and trip.cancelled_at %}
+<p data-cancel-line class="text-[12px] text-muted"><span class="font-semibold text-danger">{{ trip.get_trip_status_display }}{% if trip.cancel_covid %} · COVID-19{% endif %}</span>{% if trip.cancel_reason %} — {{ trip.cancel_reason }}{% endif %} · {% if trip.cancelled_by %}{{ trip.cancelled_by.get_full_name|default:trip.cancelled_by.email }}, {% endif %}<span class="num">{{ trip.cancelled_at|trip_clock_tz:trip }}</span></p>
+{% endif %}

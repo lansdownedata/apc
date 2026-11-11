@@ -462,6 +462,14 @@ def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
     return assignment
 
 
+def set_needs_farm_out(reservation: Reservation, *, on: bool) -> None:
+    """Flag (or clear) a trip as needing an affiliate. Claiming a vendor clears it."""
+    if reservation.needs_farm_out == on:
+        return
+    reservation.needs_farm_out = on
+    reservation.save(update_fields=["needs_farm_out", "updated_at"])
+
+
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:
     """The affiliate said no — the trip goes back to uncovered (and Unassigned)."""
     if assignment.is_in_house:

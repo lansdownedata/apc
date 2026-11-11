@@ -644,6 +644,13 @@ class Reservation(TimeStampedModel):
         return self.trip_phase == "Cancelled"
 
     @property
+    def circling_minutes(self) -> int | None:
+        """Whole minutes the circling notice has been up, or None when it is not."""
+        if self.circling_at is None:
+            return None
+        return max(int((dj_timezone.now() - self.circling_at).total_seconds() // 60), 0)
+
+    @property
     def service_label(self) -> str:
         """What to call this trip in a list. Falls back to the trip type, which every
         reservation has — the catalog entry is optional and can be retired underneath one.

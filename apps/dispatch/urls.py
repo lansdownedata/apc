@@ -12,6 +12,7 @@ urlpatterns = [
     path("<int:pk>/status/", views.set_status, name="dispatch_set_status"),
     path("<int:pk>/cancel-status/", views.cancel_status, name="dispatch_cancel_status"),
     path("<int:pk>/circling/", views.circling, name="dispatch_circling"),
+    path("<int:pk>/needs-farm-out/", views.needs_farm_out, name="dispatch_needs_farm_out"),
     path(
         "<int:pk>/confirm-customer/",
         views.confirm_customer,

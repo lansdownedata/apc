@@ -3,7 +3,7 @@
   Reusable searchable dropdown (Tom Select) — never a native <select> UI.
 
   Include with: name, field_id, options (iterable of value/label pairs, e.g. a
-  TextChoices.choices), selected (or selected_list for a multiple), empty_label, placeholder, autosubmit, search, multiple, aria_label (optional accessible name).
+  TextChoices.choices; a third item, when truthy, renders the option disabled), selected (or selected_list for a multiple), empty_label, placeholder, autosubmit, search, multiple, aria_label (optional accessible name).
 
   Two extras, added for the coverage controls (APC-48) and available to any picker:
 
@@ -34,8 +34,10 @@
               data-data="{{ option|json_attr }}">{{ option.label }}</option>
     {% endfor %}
   {% else %}
-    {% for value, label in options %}
-      <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" or value in selected_list %} selected{% endif %}>{{ label }}</option>
+    {% for option in options %}
+      {% with value=option.0 %}
+      <option value="{{ value }}"{% if value|stringformat:"s" == selected|stringformat:"s" or value in selected_list %} selected{% endif %}{% if option.2 %} disabled{% endif %}>{{ option.1 }}</option>
+      {% endwith %}
     {% endfor %}
   {% endif %}
 </select>
