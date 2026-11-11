@@ -122,9 +122,15 @@ def back_status(current: str) -> str | None:
 
 
 def _lock(assignment_pk: int) -> tuple[Assignment, Reservation]:
-    """Re-read the assignment, then its trip, under row locks. Call inside atomic()."""
+    """Re-read the trip, then its assignment, under row locks. Call inside atomic().
+
+    Reservation first, matching `services.send_back` and `_claim`, so no two paths can
+    deadlock on the pair."""
+    reservation_id = Assignment.objects.values_list("reservation_id", flat=True).get(
+        pk=assignment_pk
+    )
+    trip = Reservation.objects.select_for_update().get(pk=reservation_id)
     assignment = Assignment.objects.select_for_update().get(pk=assignment_pk)
-    trip = Reservation.objects.select_for_update().get(pk=assignment.reservation_id)
     assignment.reservation = trip
     return assignment, trip
 

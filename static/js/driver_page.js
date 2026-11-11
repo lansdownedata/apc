@@ -159,7 +159,13 @@
         if (!this.waitingForWindow()) return;
         var wait = Date.parse(this.state.opens_at) - Date.now();
         if (!isFinite(wait) || wait > MAX_OPEN_WAIT_MS) return;
-        setTimeout(function () { self.reloadIfOpen(); }, Math.max(0, wait) + 1000);
+        // A phone clock ahead of the server would reload every second: once per opens_at.
+        var key = "driverOpenReload:" + this.state.opens_at;
+        try { if (sessionStorage.getItem(key)) return; } catch (e) { /* storage unavailable */ }
+        setTimeout(function () {
+          try { sessionStorage.setItem(key, "1"); } catch (e) { /* storage unavailable */ }
+          self.reloadIfOpen();
+        }, Math.max(0, wait) + 1000);
       },
 
       get dropOffNext() {

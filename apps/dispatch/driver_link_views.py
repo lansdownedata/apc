@@ -18,6 +18,7 @@ from django.middleware.csrf import get_token
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils.dateparse import parse_datetime
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.dispatch import driver_link
@@ -55,11 +56,18 @@ def _driver_headers(view):
     return wrapper
 
 
+class _Gone(Exception):
+    """A validly signed link whose Assignment was deleted (its trip left the order)."""
+
+
 def _load(token: str) -> Assignment | None:
+    """The assignment, None for a bad signature; raises _Gone when the row no longer exists."""
     try:
         assignment = ack.read_driver_link_token(token)
-    except (BadSignature, Assignment.DoesNotExist):
+    except BadSignature:
         return None
+    except Assignment.DoesNotExist as exc:
+        raise _Gone from exc
     return Assignment.objects.select_related(
         "reservation",
         "reservation__lead",
@@ -207,10 +215,13 @@ def _client_config(request: HttpRequest, ctx: dict, token: str) -> dict:
 @_driver_headers
 @require_GET
 def driver_link_page(request: HttpRequest, token: str) -> HttpResponse:
-    assignment = _load(token)
+    try:
+        assignment = _load(token)
+    except _Gone:
+        assignment = False
     if assignment is None:
         return _not_found()
-    if not driver_link.is_live(assignment):
+    if assignment is False or not driver_link.is_live(assignment):
         ctx = {"dead": True, "company_phone": settings.COMPANY_PHONE}
     else:
         ctx = page_context(assignment, request)
@@ -237,11 +248,18 @@ def _state_response(assignment_pk: int, *, status: int = 200, **extra) -> JsonRe
 def _driver_post(view):
     """Shared plumbing for the state-changing endpoints: token, JSON body, refused taps."""
 
+    # csrf_exempt: the signed URL token is the only credential and nothing here reads a
+    # session or user, so CSRF protects nothing; `Origin: null` under the no-referrer policy
+    # or in-app-browser cookie quirks could refuse every tap.
+    @csrf_exempt
     @_driver_headers
     @require_POST
     @wraps(view)
     def wrapper(request: HttpRequest, token: str) -> HttpResponse:
-        assignment = _load(token)
+        try:
+            assignment = _load(token)
+        except _Gone:
+            return JsonResponse({"dead": True}, status=410)
         if assignment is None:
             return _not_found()
         body = _json_body(request)
@@ -300,11 +318,16 @@ def _recorded_at(value) -> datetime | None:
     return parsed if parsed is not None and parsed.utcoffset() is not None else None
 
 
+# csrf_exempt: the signed URL token is the only credential; no session or user is read.
+@csrf_exempt
 @_driver_headers
 @require_POST
 def driver_link_ping(request: HttpRequest, token: str) -> HttpResponse:
     """Periodic position. 204 whether or not it was stored, so a dead link learns nothing."""
-    assignment = _load(token)
+    try:
+        assignment = _load(token)
+    except _Gone:
+        return HttpResponse(status=204)
     if assignment is None:
         return _not_found()
     body = _json_body(request)

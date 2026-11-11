@@ -352,33 +352,59 @@ def _csrf_client(assignment):
     return browser, browser.cookies["csrftoken"].value
 
 
-def test_status_post_with_null_origin_is_refused_by_csrf():
-    """Why driver_page.js sends `referrerPolicy: "same-origin"`: under the page's
-    `no-referrer` policy a browser POST carries `Origin: null`, which CSRF rejects."""
-    a = _live()
-    browser, token = _csrf_client(a)
-    res = browser.post(
-        _url(a, "driver_link_status"),
-        json.dumps({"to": S.ON_THE_WAY, "from": S.DISPATCHED}),
-        content_type="application/json",
-        HTTP_X_CSRFTOKEN=token,
-        HTTP_ORIGIN="null",
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("driver_link_status", {"to": S.ON_THE_WAY, "from": S.DISPATCHED}),
+        ("driver_link_circling", {"on": True}),
+        ("driver_link_no_show", {"note": "x"}),
+        ("driver_link_ping", {"lat": 40.7, "lng": -74.0}),
+    ],
+)
+def test_post_with_null_origin_and_no_csrf_token_succeeds(name, body):
+    """The signed URL is the only credential, so CSRF is exempt: `Origin: null` (the page's
+    no-referrer policy) or a cookie-less in-app browser must not refuse a tap."""
+    from django.test import Client
+
+    a = _live(
+        status=S.ARRIVED
+        if name in ("driver_link_no_show", "driver_link_circling")
+        else S.DISPATCHED
     )
-    assert res.status_code == 403
+    if name == "driver_link_ping":
+        set_trip_status(a.reservation, S.ON_THE_WAY)
+    browser = Client(enforce_csrf_checks=True)
+    res = browser.post(
+        _url(a, name), json.dumps(body), content_type="application/json", HTTP_ORIGIN="null"
+    )
+    assert res.status_code in (200, 204)
 
 
-def test_status_post_with_same_origin_passes_csrf():
-    a = _live()
-    browser, token = _csrf_client(a)
-    res = browser.post(
-        _url(a, "driver_link_status"),
-        json.dumps({"to": S.ON_THE_WAY, "from": S.DISPATCHED}),
-        content_type="application/json",
-        HTTP_X_CSRFTOKEN=token,
-        HTTP_ORIGIN="http://testserver",
+def test_no_driver_link_view_reads_request_user():
+    """The token is the only authority: nothing here may start trusting a session."""
+    from pathlib import Path
+
+    from apps.dispatch import driver_link_views
+
+    assert "request.user" not in Path(driver_link_views.__file__).read_text()
+
+
+def test_deleted_assignment_is_not_a_404(client):
+    a = _live(status=S.ON_THE_WAY)
+    token = make_driver_link_token(a)
+    a.delete()
+    page = client.get(reverse("driver_link", args=[token]))
+    assert page.status_code == 200
+    assert "no longer assigned" in page.content.decode()
+    assert page["Cache-Control"] == "private, no-store"
+    for name in ("driver_link_status", "driver_link_circling", "driver_link_no_show"):
+        res = client.post(reverse(name, args=[token]), "{}", content_type="application/json")
+        assert res.status_code == 410
+        assert res.json() == {"dead": True}
+    ping = client.post(
+        reverse("driver_link_ping", args=[token]), "{}", content_type="application/json"
     )
-    assert res.status_code == 200
-    assert res.json()["state"]["status"] == S.ON_THE_WAY
+    assert ping.status_code == 204
 
 
 def test_page_script_sends_its_origin_on_every_post():
@@ -403,3 +429,29 @@ def test_page_state_carries_opens_at_in_utc():
     a.reservation.pickup_date = None
     a.reservation.save(update_fields=["pickup_date"])
     assert page_state(a)["opens_at"] is None
+
+
+def test_lock_returns_freshly_locked_rows():
+    from apps.dispatch import driver_link
+
+    a = _live(status=S.DISPATCHED)
+    Reservation.objects.filter(pk=a.reservation_id).update(trip_status=S.ON_THE_WAY)
+    Assignment.objects.filter(pk=a.pk).update(status=Assignment.Status.WITHDRAWN)
+    from django.db import transaction
+
+    with transaction.atomic():
+        assignment, trip = driver_link._lock(a.pk)
+    assert trip.trip_status == S.ON_THE_WAY
+    assert assignment.status == Assignment.Status.WITHDRAWN
+    assert assignment.reservation is trip
+
+
+def test_open_timer_reloads_at_most_once_per_opens_at():
+    from pathlib import Path
+
+    from django.conf import settings
+
+    script = (Path(settings.BASE_DIR) / "static" / "js" / "driver_page.js").read_text()
+    assert '"driverOpenReload:" + this.state.opens_at' in script
+    assert "sessionStorage.getItem(key)" in script
+    assert script.count("sessionStorage.setItem(key") == 1

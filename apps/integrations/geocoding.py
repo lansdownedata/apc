@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 SEARCH_URL = "https://us1.locationiq.com/v1/search"
 TIMEOUT = 15
+# The driver page waits on the route lookup, so it gets a short leash of its own.
+ROUTE_TIMEOUT = 4
 
 
 class GeocodeError(Exception):
@@ -281,7 +283,7 @@ def route_polyline(points: list[tuple[float, float]]) -> str | None:
                 "overview": "full",
                 "geometries": "polyline",
             },
-            timeout=TIMEOUT,
+            timeout=ROUTE_TIMEOUT,
         )
         if resp.status_code >= 400:
             logger.warning(
@@ -290,6 +292,9 @@ def route_polyline(points: list[tuple[float, float]]) -> str | None:
             return None
         routes = (resp.json() or {}).get("routes") or []
         geometry = routes[0].get("geometry") if routes else None
-    except (requests.RequestException, ValueError, TypeError, AttributeError, IndexError):
+    except requests.RequestException as exc:
+        logger.warning("LocationIQ route request failed: %s", type(exc).__name__)
+        return None
+    except (ValueError, TypeError, AttributeError, IndexError):
         return None
     return geometry if isinstance(geometry, str) and geometry else None

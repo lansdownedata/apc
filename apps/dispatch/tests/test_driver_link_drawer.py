@@ -155,3 +155,35 @@ def test_settings_form_saves_passenger_setting(client):
 
     assert resp.status_code == 302
     assert DispatchAlertConfig.load().driver_page_show_passenger_contact is False
+
+
+def _kill_link(assignment):
+    """Done more than 12 hours ago: the link is dead."""
+    from apps.reservations.models import Reservation, TripStatusEvent
+    from apps.reservations.services import set_trip_status
+
+    set_trip_status(assignment.reservation, Reservation.TripStatus.DONE)
+    TripStatusEvent.objects.filter(reservation=assignment.reservation).update(
+        created_at=timezone.now() - timedelta(hours=13)
+    )
+
+
+def test_dead_link_hides_copy_and_resend(logged_in_client, django_capture_on_commit_callbacks):
+    assignment = _confirmed(django_capture_on_commit_callbacks)
+    _kill_link(assignment)
+
+    body = _panel(logged_in_client, assignment.reservation)
+
+    assert "Copy driver link" not in body
+    assert "Resend link" not in body
+
+
+def test_resend_refused_for_a_dead_link(logged_in_client, django_capture_on_commit_callbacks):
+    assignment = _confirmed(django_capture_on_commit_callbacks)
+    _kill_link(assignment)
+
+    with patch("apps.messaging.sender.send_now") as send_now:
+        resp = logged_in_client.post(reverse("dispatch_resend_driver_link", args=[assignment.pk]))
+
+    assert resp.status_code == 400
+    send_now.assert_not_called()

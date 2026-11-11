@@ -320,7 +320,11 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     if farmed_out and assignment.has_driver_info:
         missing = services.missing_driver_fields(assignment, DispatchAlertConfig.load())
         held_for = " and ".join(missing)
-    confirmed = bool(assignment and assignment.status == Assignment.Status.CONFIRMED)
+    confirmed = bool(
+        assignment
+        and assignment.status == Assignment.Status.CONFIRMED
+        and driver_link.is_live(assignment)
+    )
     link_state, link_line = link_state_line(assignment) if confirmed else ("", "")
     return {
         "trip": trip,
@@ -777,6 +781,8 @@ def resend_driver_link(request: HttpRequest, pk: int) -> JsonResponse:
     assignment = get_object_or_404(Assignment.objects.select_related("reservation"), pk=pk)
     if assignment.status != Assignment.Status.CONFIRMED:
         return _fail(services.AssignmentError("Only confirmed coverage has a driver link."))
+    if not driver_link.is_live(assignment):
+        return _fail(services.AssignmentError("This driver link has expired."))
     result = driver_link.send_link(assignment)
     _, line = link_state_line(assignment)
     return JsonResponse({"ok": bool(result and result.sent), "state": line})

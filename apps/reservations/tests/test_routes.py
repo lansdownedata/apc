@@ -12,6 +12,13 @@ from apps.reservations.factories import TransferReservationFactory
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    from django.core.cache import cache
+
+    cache.clear()
+
+
 class _Resp:
     def __init__(self, payload, status=200, text=""):
         self._payload = payload
@@ -115,6 +122,9 @@ def test_failure_caches_nothing(key, monkeypatch):
     trip.refresh_from_db()
     assert trip.route_geometry == "" and trip.route_signature == ""
 
+    from django.core.cache import cache
+
+    cache.clear()  # the failure above is remembered for ten minutes
     seen = []
     monkeypatch.setattr(requests, "get", lambda *a, **k: seen.append(1) or _Resp(OK))
     assert routes.route_for(trip) == OK["routes"][0]["geometry"]
@@ -128,3 +138,40 @@ def test_stop_without_coordinates_returns_blank_without_calling(key, calls):
     last.save(update_fields=["latitude", "updated_at"])
     assert routes.route_for(trip) == ""
     assert calls == []
+
+
+def test_route_polyline_uses_its_own_short_timeout(key, calls):
+    geocoding.route_polyline([(38.9, -77.4), (38.6, -77.1)])
+    assert calls[0][1]["timeout"] == geocoding.ROUTE_TIMEOUT == 4
+
+
+def test_route_polyline_logs_a_request_exception_without_the_key(key, monkeypatch, caplog):
+    def boom(*a, **k):
+        raise requests.Timeout("slow")
+
+    monkeypatch.setattr(requests, "get", boom)
+    with caplog.at_level("WARNING"):
+        assert geocoding.route_polyline([(38.9, -77.4), (38.6, -77.1)]) is None
+    assert "LocationIQ route" in caplog.text
+    assert "test-key" not in caplog.text
+
+
+def test_failed_lookup_is_not_retried_within_ten_minutes(key, monkeypatch):
+    trip = _trip()
+    seen = []
+    monkeypatch.setattr(requests, "get", lambda *a, **k: seen.append(1) or _Resp({}, status=500))
+    assert routes.route_for(trip) == ""
+    assert routes.route_for(trip) == ""
+    assert len(seen) == 1
+
+
+def test_changed_stops_retry_after_a_failure(key, monkeypatch):
+    trip = _trip()
+    seen = []
+    monkeypatch.setattr(requests, "get", lambda *a, **k: seen.append(1) or _Resp({}, status=500))
+    routes.route_for(trip)
+    last = trip.ordered_stops.last()
+    last.latitude = Decimal("38.5")
+    last.save(update_fields=["latitude", "updated_at"])
+    routes.route_for(trip)
+    assert len(seen) == 2
