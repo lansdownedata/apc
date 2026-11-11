@@ -385,3 +385,30 @@ def test_cancel_line_for_a_no_show_in_the_trip_zone(logged_in_client):
 
 def test_no_cancel_line_on_a_live_trip(logged_in_client):
     assert "data-cancel-line" not in _panel(logged_in_client, _trip()).content.decode()
+
+
+# --- a cancelled trip stays cancelled ---------------------------------------------------------
+
+
+def test_set_status_refuses_a_cancelled_trip(logged_in_client):
+    """A no-show keeps its confirmed coverage; one pick must not move it out of the cancel."""
+    trip = _trip(trip_status=TS.NO_SHOW)
+    _confirmed(trip)
+
+    resp = logged_in_client.post(reverse("dispatch_set_status", args=[trip.pk]), {"status": "done"})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"ok": False, "error": "This trip is cancelled."}
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.NO_SHOW
+
+
+def test_drawer_disables_the_drawer_statuses_on_a_cancelled_trip(logged_in_client):
+    trip = _trip(trip_status=TS.LATE_CANCEL)
+    _confirmed(trip)
+
+    options = _status_options(_panel(logged_in_client, trip).content.decode())
+
+    disabled = {o[0] for o in options if o[1]}
+    assert set(DRAWER) <= disabled
+    assert "no_show" not in disabled  # a late cancel can still become a no-show

@@ -231,7 +231,8 @@ def _status_control(user, trip: Reservation, assignment: Assignment | None) -> d
     options = []
     for status in _STATUS_ORDER:
         if status in _DRAWER_STATUSES:
-            disabled = not confirmed
+            # A no-show keeps its coverage; it must not be one pick from Done.
+            disabled = not confirmed or trip.is_cancelled
         elif status == _TS.CANCELLED:
             disabled = not cancel["kind"]
         elif status in _DRAWER_CANCEL_STATUSES:
@@ -508,6 +509,8 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
         return _fail(services.AssignmentError("A cancellation needs a reason: use Cancel."))
     if status not in _DRAWER_STATUSES:
         return _fail(services.AssignmentError("Unknown status."))
+    if trip.is_cancelled:
+        return _fail(services.AssignmentError("This trip is cancelled."))
     covering = services.active_assignment(trip)
     if covering is None or covering.status != Assignment.Status.CONFIRMED:
         return _fail(services.AssignmentError("Confirm coverage before setting trip status."))
