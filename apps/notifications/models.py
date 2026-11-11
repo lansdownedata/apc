@@ -38,6 +38,7 @@ class Notification(TimeStampedModel):
         AUTH_EXPIRING = "auth_expiring", "Deposit hold expiring"
         AUTH_EXPIRED = "auth_expired", "Deposit hold released"
         TASK_OVERDUE = "task_overdue", "Task overdue"
+        DRIVER_REPORT = "driver_report", "Driver report"
         # GNet farm-in requests (APC-134).
         FARM_IN_NEW = "farm_in_new", "New farm-in request"
         FARM_IN_COVERAGE = "farm_in_coverage", "Farm-in needs coverage"

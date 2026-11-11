@@ -293,6 +293,9 @@ class DispatchAlertConfig(models.Model):
     require_vehicle_desc = models.BooleanField(default=False)
     require_vehicle_number = models.BooleanField(default=False)
 
+    # The driver's trip link shows the passenger's phone and a call button.
+    driver_page_show_passenger_contact = models.BooleanField(default=True)
+
     critical_sms = models.TextField(
         blank=True,
         help_text="Phone numbers texted for critical-tier exceptions only. One per line or "
@@ -323,6 +326,37 @@ class DispatchAlertConfig(models.Model):
     @property
     def sms_list(self) -> list[str]:
         return _split_list(self.critical_sms)
+
+
+class DriverPing(models.Model):
+    """One position from a driver's trip link: a periodic track point, or the fix taken
+    with a status tap. Purged on a schedule; not audited."""
+
+    class Kind(models.TextChoices):
+        TRACK = "track", "Track"
+        STATUS = "status", "Status"
+
+    assignment = models.ForeignKey(Assignment, related_name="pings", on_delete=models.CASCADE)
+    reservation = models.ForeignKey(
+        "reservations.Reservation", related_name="driver_pings", on_delete=models.CASCADE
+    )
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    status_event = models.ForeignKey(
+        "reservations.TripStatusEvent", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=10, decimal_places=6)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    speed_mps = models.FloatField(null=True, blank=True)
+    heading_deg = models.FloatField(null=True, blank=True)
+    recorded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=False)
+
+    class Meta:
+        indexes = [models.Index(fields=["assignment", "created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} ping · assignment {self.assignment_id}"
 
 
 class DispatchException(TimeStampedModel):

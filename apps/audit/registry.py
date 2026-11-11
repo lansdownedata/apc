@@ -198,6 +198,8 @@ SPECS: list[ModelSpec] = [
             "recognized_at",
             "recognized_amount",
             "circling_source",
+            "route_geometry",
+            "route_signature",
         ),
         labels={
             "passengers": "Passenger count",

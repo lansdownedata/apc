@@ -90,6 +90,11 @@ _PER_COPY_FIELDS = frozenset(
         "cancel_covid",
         "cancelled_at",
         "cancelled_by",
+        # The driver link's cached route and no-show report belong to the one trip.
+        "route_geometry",
+        "route_signature",
+        "driver_no_show_at",
+        "driver_no_show_note",
         "revenue_status",
         "recognized_at",
         "recognized_amount",
@@ -188,6 +193,10 @@ def clone_reservation(
     clone.cancel_covid = False
     clone.cancelled_at = None
     clone.cancelled_by = None
+    clone.driver_no_show_at = None
+    clone.driver_no_show_note = ""
+    clone.route_geometry = ""
+    clone.route_signature = ""
     # A fresh trip nobody has seen yet must not be born "confirmed" because the source
     # happened to be — that stamp belongs to a specific customer looking at this specific
     # trip's sheet (APC-19).

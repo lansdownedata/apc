@@ -225,6 +225,14 @@ class Reservation(TimeStampedModel):
         DRIVER_LINK = "driver_link", "Driver link"
         LIMOANYWHERE = "limoanywhere", "LimoAnywhere"
 
+    # The driver page's route line (cached) and the stops it was built for; a changed
+    # signature means the cache is stale. Derived data, never audited.
+    route_geometry = models.TextField(blank=True)
+    route_signature = models.CharField(max_length=64, blank=True)
+    # The driver reported the customer a no-show from their trip link.
+    driver_no_show_at = models.DateTimeField(null=True, blank=True)
+    driver_no_show_note = models.CharField(max_length=500, blank=True)
+
     # The trip needs an affiliate (farm-out) and has none yet.
     needs_farm_out = models.BooleanField(default=False)
     # The driver reported circling at the pickup: when, how it was recorded, and by whom.
@@ -1122,9 +1130,19 @@ class TripStatusEvent(TimeStampedModel):
         MANUAL = "manual", "Manual"
         # Set by the app itself: booking, coverage offered, confirmed or let go.
         SYSTEM = "system", "System"
+        # The driver tapped the status on their trip link.
+        DRIVER_LINK = "driver_link", "Driver link"
 
     reservation = models.ForeignKey(
         Reservation, related_name="status_events", on_delete=models.CASCADE
+    )
+    # The coverage the driver acted under, when the change came from a driver link.
+    assignment = models.ForeignKey(
+        "dispatch.Assignment",
+        related_name="status_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
     )
     status = models.CharField(max_length=32, choices=Reservation.TripStatus.choices)
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.LIMOANYWHERE)
