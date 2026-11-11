@@ -358,12 +358,14 @@ def set_trip_status(
         sync(reservation.lead)
     # APC-135: a farmed-in trip reports the status back to GNet. Imported here: at module
     # level it cycles through apps.integrations.gnet -> apps.dispatch.models. A report that
-    # fails to queue never undoes the status (the order cancel has already refunded).
+    # fails to queue never undoes the status (the order cancel has already refunded). A
+    # failed enqueue leaves no push row, so there is nothing on the request to retry: the
+    # log line below is the only trace.
     from apps.dispatch import farm_in_push
 
     try:
         farm_in_push.after_trip_status(reservation, status)
-    except Exception:  # noqa: BLE001 - the desk can retry a failed push from the request
+    except Exception:  # noqa: BLE001 - a status write must never fail on its GNet report
         logger.exception("farm-in: %s push for trip %s failed to queue", status, reservation.pk)
     return event
 

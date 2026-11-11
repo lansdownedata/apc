@@ -98,7 +98,8 @@ def _claim(
         # In-house coverage carries its driver from the start, so its info is on file now.
         assignment.stamp_driver_info(DispatchAlertConfig.load())
         assignment.save()
-        if vendor is not None and reservation.needs_farm_out:
+        # Coverage of any kind, our own driver included, ends the need for an affiliate.
+        if reservation.needs_farm_out:
             reservation.needs_farm_out = False
             reservation.save(update_fields=["needs_farm_out", "updated_at"])
     if assignment.status == Assignment.Status.CONFIRMED:
@@ -117,8 +118,9 @@ def _sync_tasks(reservation: Reservation) -> None:
 _TS = Reservation.TripStatus
 # An offer shows the trip Assigned; acceptance or direct coverage shows it Dispatched
 # (Moe, 2026-11-10). Coverage only moves a trip still in this set: a trip already
-# Dispatched or under way is never moved back.
-_BEFORE_DISPATCHED = frozenset({_TS.PENDING, _TS.UNASSIGNED, _TS.ASSIGNED})
+# Dispatched or under way is never moved back. Blank is a row an old dyno wrote during
+# the release window; it still moves.
+_BEFORE_DISPATCHED = frozenset({"", _TS.PENDING, _TS.UNASSIGNED, _TS.ASSIGNED})
 
 
 def _set_status(reservation: Reservation, status: str) -> None:
@@ -462,7 +464,7 @@ def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
 
 
 def set_needs_farm_out(reservation: Reservation, *, on: bool) -> None:
-    """Flag (or clear) a trip as needing an affiliate. Claiming a vendor clears it."""
+    """Flag (or clear) a trip as needing an affiliate. Any claim clears it (`_claim`)."""
     if reservation.needs_farm_out == on:
         return
     reservation.needs_farm_out = on

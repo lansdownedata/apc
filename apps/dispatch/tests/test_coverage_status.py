@@ -78,11 +78,23 @@ def test_confirm_never_moves_an_under_way_trip_back():
     assert _status(trip) == TS.ON_THE_WAY
 
 
-def test_vendor_claim_clears_needs_farm_out():
-    trip = _trip(needs_farm_out=True)
-    services.assign_direct(trip, VendorFactory(), payout=Decimal("100"))
-    trip.refresh_from_db()
-    assert trip.needs_farm_out is False
+def test_any_claim_clears_needs_farm_out():
+    """Coverage of any kind, our own driver included, ends the need for an affiliate."""
+    direct, house = _trip(needs_farm_out=True), _trip(needs_farm_out=True)
+    services.assign_direct(direct, VendorFactory(), payout=Decimal("100"))
+    services.assign_in_house(house, DriverFactory())
+    for trip in (direct, house):
+        trip.refresh_from_db()
+        assert trip.needs_farm_out is False
+
+
+def test_a_blank_status_still_moves_to_dispatched():
+    """A row written blank by an old dyno during the release window still moves."""
+    trip = _trip()
+    trip.trip_status = ""
+    trip.save(update_fields=["trip_status"])
+    services.assign_in_house(trip, DriverFactory())
+    assert _status(trip) == TS.DISPATCHED
 
 
 def test_badges():
