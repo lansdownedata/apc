@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 from django.db import transaction
@@ -17,6 +18,9 @@ _S = Reservation.TripStatus
 SEQUENCE = (_S.DISPATCHED, _S.ON_THE_WAY, _S.ARRIVED, _S.CUSTOMER_IN_CAR, _S.DONE)
 WINDOW_BEFORE_PICKUP = timedelta(hours=6)
 DONE_GRACE = timedelta(hours=12)
+PING_STATUSES = (_S.ON_THE_WAY, _S.ARRIVED, _S.CUSTOMER_IN_CAR)
+PING_MIN_GAP = timedelta(seconds=15)
+PING_RETENTION = timedelta(days=90)
 
 
 def done_at(trip: Reservation) -> datetime | None:
@@ -68,6 +72,10 @@ class DeadLink(DriverLinkError):
     """The link no longer belongs to live coverage."""
 
 
+class BadCoordinates(DriverLinkError):
+    """A ping carried a position or accuracy that cannot be real."""
+
+
 class StaleStatus(DriverLinkError):
     """The driver's page was behind the trip's real status."""
 
@@ -116,13 +124,27 @@ def _lock(assignment_pk: int) -> tuple[Assignment, Reservation]:
     return assignment, trip
 
 
+def _finite(value) -> float | None:
+    """The value as a finite float, or None when it is missing or not a finite number."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _clean_accuracy(value) -> float | None:
+    number = _finite(value)
+    return number if number is not None and number >= 0 else None
+
+
 def _valid_coords(coords: dict | None) -> bool:
     if not coords:
         return False
-    try:
-        return -90 <= float(coords["lat"]) <= 90 and -180 <= float(coords["lng"]) <= 180
-    except (KeyError, TypeError, ValueError):
-        return False
+    lat, lng = _finite(coords.get("lat")), _finite(coords.get("lng"))
+    return lat is not None and lng is not None and -90 <= lat <= 90 and -180 <= lng <= 180
 
 
 def apply_status(
@@ -156,10 +178,64 @@ def apply_status(
                 status_event=event,
                 latitude=coords["lat"],
                 longitude=coords["lng"],
-                accuracy_m=coords.get("accuracy"),
+                accuracy_m=_clean_accuracy(coords.get("accuracy")),
                 recorded_at=now,
             )
     return event
+
+
+def record_ping(
+    assignment_pk: int,
+    *,
+    lat,
+    lng,
+    accuracy=None,
+    speed=None,
+    heading=None,
+    recorded_at: datetime | None = None,
+    now: datetime | None = None,
+) -> DriverPing | None:
+    """Store one periodic position from the driver's page. Returns None, writing nothing,
+    when the link is dead, the trip is not under way, or the last ping was under 15s ago."""
+    latitude, longitude = _finite(lat), _finite(lng)
+    if latitude is None or longitude is None:
+        raise BadCoordinates("Position is not a number.")
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise BadCoordinates("Position is out of range.")
+    if accuracy is not None and _clean_accuracy(accuracy) is None:
+        raise BadCoordinates("Accuracy must be zero or more.")
+    now = now or timezone.now()
+    with transaction.atomic():
+        assignment, trip = _lock(assignment_pk)
+        if not is_live(assignment, now=now) or trip.trip_status not in PING_STATUSES:
+            return None
+        last = (
+            DriverPing.objects.filter(assignment=assignment)
+            .order_by("-created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        if last is not None and now - last < PING_MIN_GAP:
+            return None
+        return DriverPing.objects.create(
+            assignment=assignment,
+            reservation=trip,
+            kind=DriverPing.Kind.TRACK,
+            latitude=round(latitude, 6),
+            longitude=round(longitude, 6),
+            accuracy_m=_clean_accuracy(accuracy),
+            speed_mps=_finite(speed),
+            heading_deg=_finite(heading),
+            recorded_at=recorded_at,
+            created_at=now,
+        )
+
+
+def purge_driver_pings(*, now: datetime | None = None) -> int:
+    """Delete pings older than the retention window; returns how many went."""
+    now = now or timezone.now()
+    deleted, _ = DriverPing.objects.filter(created_at__lt=now - PING_RETENTION).delete()
+    return deleted
 
 
 def set_driver_circling(assignment_pk: int, *, on: bool) -> None:
