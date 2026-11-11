@@ -691,8 +691,9 @@ class MessageForm(forms.ModelForm):
         if name not in self.errors:
             self.add_error(name, message)
 
-    def save(self, user=None) -> int:
-        """Store the message; returns how many queued sends were re-dated."""
+    def save(self, user=None) -> editor.Redated:
+        """Store the message; returns how many queued sends and checklist tasks were
+        re-dated."""
         return editor.save(
             self.instance, user=user, service_types=self.cleaned_data.get("service_types", [])
         )

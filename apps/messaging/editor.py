@@ -9,6 +9,7 @@ the real recipients, but never reaches a transport.
 
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
+from typing import NamedTuple
 from uuid import uuid4
 
 from django.conf import settings
@@ -198,6 +199,14 @@ def check_timing(
 # --- storing ---------------------------------------------------------------------------
 
 
+class Redated(NamedTuple):
+    """What a save re-dated: queued sends of the row, and the checklist tasks that follow
+    its timing (MSG-03: the page names them apart)."""
+
+    messages: int = 0
+    tasks: int = 0
+
+
 @dataclass(frozen=True)
 class _Was:
     trigger: str
@@ -241,10 +250,10 @@ def _normalise(row: MessageTemplate) -> None:
             row.timing_amount, row.timing_unit = default.timing_amount, default.timing_unit
 
 
-def save(row: MessageTemplate, *, user=None, service_types=None) -> int:
+def save(row: MessageTemplate, *, user=None, service_types=None) -> Redated:
     """Store a row as edited, then bring its queued sends in line (`_follow`). A new row gets
     the key `custom-<pk>`. ``service_types`` (when given) replaces the row's. Returns how many
-    queued sends were re-dated."""
+    queued sends, and how many checklist tasks, were re-dated."""
     _normalise(row)
     row.updated_by = user
     with transaction.atomic():
@@ -271,7 +280,7 @@ def reset(row: MessageTemplate, *, user=None) -> int:
         row.enabled = defaults.ORIGINALS[row.key].enabled
         row.updated_by = user
         row.save(update_fields=["enabled", "updated_by", "updated_at"])
-    return _follow(row, was)
+    return _follow(row, was).messages
 
 
 def set_enabled(row: MessageTemplate, enabled: bool | None, *, user=None) -> None:
@@ -299,14 +308,14 @@ def archive(row: MessageTemplate, *, user=None) -> int:
         return events.withdraw(row)
 
 
-def _follow(row: MessageTemplate, was: _Was | None) -> int:
+def _follow(row: MessageTemplate, was: _Was | None) -> Redated:
     """After a row change has committed (so a failure here cannot poison it): switched off
     withdraws its queued sends; a new trigger withdraws them and queues the row on a date
     trigger for the booked orders; switched back on queues a date row again (an event row's
     withdrawn sends stay withdrawn: the event has happened); new service types queue a date
     row for the orders it now matches (the sender re-checks the types of those already
-    queued); a new timing re-dates them. Only this row's sends are touched. Returns the
-    re-dated count, the Driver details checklist tasks included."""
+    queued); a new timing re-dates them. Only this row's sends are touched. Returns what it
+    re-dated: the row's queued sends, and the Driver details checklist tasks."""
     moved = was is None or row.trigger != was.trigger
     switched_on = was is not None and row.enabled and not was.enabled
     retyped = was is not None and _type_ids(row) != was.service_types
@@ -321,7 +330,7 @@ def _follow(row: MessageTemplate, was: _Was | None) -> int:
     if row.enabled and (moved or switched_on or retyped):
         _queue_dates(row)
     changed = was is not None and (moved or row.offset != was.offset)
-    return count + _redate_checklist(row.key, changed=changed)
+    return Redated(count, _redate_checklist(row.key, changed=changed))
 
 
 def _queue_dates(row: MessageTemplate) -> None:

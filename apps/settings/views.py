@@ -516,18 +516,32 @@ def message_edit(request: HttpRequest, key: str) -> HttpResponse:
     return _editor(request, _live_row(key))
 
 
+def _redated_note(redated) -> str:
+    """ " 3 scheduled messages and 34 checklist tasks re-dated.", each part only when it
+    counted anything (MSG-03); "" when nothing was."""
+    parts = [
+        f"{n} {noun}{'s' if n != 1 else ''}"
+        for n, noun in (
+            (redated.messages, "scheduled message"),
+            (redated.tasks, "checklist task"),
+        )
+        if n
+    ]
+    return f" {' and '.join(parts)} re-dated." if parts else ""
+
+
 def _editor(request: HttpRequest, row: MessageTemplate) -> HttpResponse:
     new = row.pk is None
     title = row.name
     form = MessageForm(request.POST or None, instance=row)
     if request.method == "POST" and form.is_valid():
-        count = form.save(request.user)
+        redated = form.save(request.user)
         if new:
             messages.success(request, f"{row.name} added.")
         else:
-            plural = "s" if count != 1 else ""
-            note = f" {count} scheduled message{plural} re-dated." if count else ""
-            messages.success(request, f"Saved. Applies to messages not yet sent.{note}")
+            messages.success(
+                request, f"Saved. Applies to messages not yet sent.{_redated_note(redated)}"
+            )
         return redirect("messages")
     return render(request, "settings/message_edit.html", _editor_context(form, row, title, new))
 

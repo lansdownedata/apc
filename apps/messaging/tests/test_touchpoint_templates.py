@@ -173,3 +173,52 @@ def test_message_dates_drop_the_leading_zero():
     assert ctx["trip_pickup_date"] == "Nov 8, 2026"
     assert ctx["trip_pickup_when"].startswith("Nov 8, 2026 at 10:00 AM")
     assert ctx["quote_breakdown"].startswith("Nov 8 · 10:00 AM")
+
+
+def test_phone_numbers_in_messages_read_as_people_write_them(settings):
+    """MSG-03/05/09: the driver's cell, the number we'll reach the customer at, the driver
+    list and the company phone printed raw E.164 ("+12025550190"). They read
+    "(202) 555-0190", as the editor's sample already does."""
+    from apps.contacts.factories import ContactFactory
+    from apps.dispatch.factories import AssignmentFactory
+    from apps.dispatch.models import Assignment
+    from apps.messaging import sender
+    from apps.messaging.models import MessageTemplate
+    from apps.messaging.recipients import Recipient
+
+    settings.COMPANY_PHONE = "+12025550100"
+    lead = LeadFactory(contact=ContactFactory(name="Mia Messages", phone="+12025550142"))
+    trip = ReservationFactory(
+        lead=lead,
+        pickup_date=date(2027, 3, 12),
+        pickup_time=time(9, 30),
+        pickup_timezone="America/New_York",
+        trip_status=Reservation.TripStatus.DISPATCHED,
+    )
+    AssignmentFactory(
+        reservation=trip,
+        status=Assignment.Status.CONFIRMED,
+        driver_name="Sam Rivera",
+        driver_cell="+12025550190",
+        vehicle_desc="Suburban",
+        vehicle_number="9",
+    )
+
+    ctx = tpl.build_context(lead, trip)
+
+    assert ctx["driver_cell"] == "(202) 555-0190"
+    assert ctx["contact_on_file"] == "Mia Messages · (202) 555-0142"
+    assert ctx["company_phone"] == "(202) 555-0100"
+    assert "Driver: Sam Rivera · (202) 555-0190" in ctx["trip_sheet_drivers"]
+
+    row = MessageTemplate.objects.get(key="trip_confirm_customer")
+    tp = TouchPoint(lead=lead, reservation=trip, message=row, kind=row.key)
+    person = Recipient(
+        name="Mia Messages",
+        label="Mia Messages (booking contact)",
+        phone="+12025550142",
+        email="mia@example.com",
+        contact_id=lead.contact_id,
+        channels=frozenset({"sms", "email"}),
+    )
+    assert sender.context(tp, row, person)["contact_on_file"] == "Mia Messages · (202) 555-0142"

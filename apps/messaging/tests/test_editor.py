@@ -47,9 +47,10 @@ def _form(kind="tp1_welcome", **over) -> MessageForm:
 
 
 def _save(kind="tp1_welcome", **over) -> int:
+    """Save the form; how many queued sends it re-dated."""
     form = _form(kind, **over)
     assert form.is_valid(), form.errors
-    return form.save(None)
+    return form.save(None).messages
 
 
 def _edited(key: str) -> bool:

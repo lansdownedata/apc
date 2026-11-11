@@ -6,6 +6,7 @@ now posts the whole row. Podium and Postmark are patched wherever a send could h
 """
 
 import json
+import re
 from datetime import date, time, timedelta
 from pathlib import Path
 from unittest import mock
@@ -644,6 +645,37 @@ def _queued(row, lead=None, at=None):
     )
 
 
+@pytest.mark.parametrize("queued", [True, False], ids=["both", "tasks-only"])
+def test_the_redated_note_counts_messages_and_checklist_tasks_apart(client, queued):
+    """MSG-03: saving Driver details read "37 scheduled messages re-dated." for 3 queued
+    sends: the count added the checklist tasks re-dated with them. Each is named apart."""
+    from apps.tasks import services as tasks
+
+    client.force_login(_owner_admin())
+    row = _row("driver_released")
+    lead = _booked_lead()
+    trip = lead.reservations.get()
+    tasks.ensure_tasks(lead)
+    if queued:
+        TouchPointFactory(
+            lead=lead,
+            reservation=trip,
+            message=row,
+            kind=row.key,
+            status="scheduled",
+            scheduled_for=trip.pickup_at - timedelta(hours=12),
+        )
+
+    resp = client.post(
+        reverse("message_edit", args=["driver_released"]),
+        post_data(row, timing=(4, "hours")),
+        follow=True,
+    )
+
+    note = "1 scheduled message and 1 checklist task" if queued else "1 checklist task"
+    assert f"Saved. Applies to messages not yet sent. {note} re-dated." in resp.content.decode()
+
+
 def test_changed_timing_redates_queued_sends(client):
     client.force_login(_owner_admin())
     row = _row("tp2_lead_followup")
@@ -1266,3 +1298,20 @@ def test_widening_a_date_rows_service_types_queues_the_newly_matching_trips():
     editor.save(row, service_types=[])
 
     assert _scheduled(row, plain).get().scheduled_for == plain.pickup_at - timedelta(days=2)
+
+
+@pytest.mark.parametrize("url", [("message_edit", ["driver_released"]), ("messages_new", [])])
+def test_the_editor_uses_the_theme_surfaces(client, url):
+    """MSG-01/03 bug 4: the who-line, wording help, segments, previews and tags were
+    light-only (slate and white), unreadable in dark mode."""
+    client.force_login(_owner_admin())
+    html = client.get(reverse(url[0], args=url[1])).content.decode()
+    for light_only in (
+        r"bg-slate-50\b",
+        r"bg-slate-100\b",
+        r"bg-white font-semibold",
+        r"text-slate-600\b",
+    ):
+        assert not re.search(light_only, html), light_only
+    assert 'data-preview="sms"' in html
+    assert "rounded-xl bg-surface2" in html

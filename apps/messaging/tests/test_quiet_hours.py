@@ -772,3 +772,64 @@ def test_a_driver_change_overnight_corrects_the_email_without_a_second_text(
     assert text["identifier"] == "+12025550100" and "Kim Lane" in text["body"]
     original.refresh_from_db()
     assert original.status == TouchPoint.Status.SENT
+
+
+def test_switching_a_partly_sent_message_off_and_on_never_sends_its_email_again(clock):
+    """MSG-05 bug 2: booked at 10 PM, the catch-up Trip confirmation emailed the customer
+    and held its text. Switching the row off used to cancel it, so its sent email stopped
+    counting and switching it back on emailed the customer a second time. The row is Sent
+    (its email went); only its held text is withdrawn."""
+    from apps.messaging import editor
+
+    _window()
+    MessageTemplate.objects.filter(key="trip_confirm_customer_2").update(enabled=False)
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    lead = _booked()
+    trip = _trip(lead, datetime(YEAR, 1, 12, 23, 0, tzinfo=ET))
+    events.schedule_dates(lead, send_inline=False)
+    with patch(SEND, side_effect=_ok) as send, patch(POSTMARK, return_value="pm") as mail:
+        sender.run_touchpoints()
+    send.assert_not_called()
+    assert mail.call_count == 1
+    tp = TouchPoint.objects.get(reservation=trip, kind="trip_confirm_customer")
+    assert tp.status == TouchPoint.Status.SCHEDULED  # its text waits for 8 AM
+    row = MessageTemplate.objects.get(key="trip_confirm_customer")
+
+    editor.set_enabled(row, False)
+
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.SENT, "")
+    assert tp.sent_at is not None
+    assert _deliveries(tp) == [
+        ("email", "bea.booker@example.com", "sent", ""),
+        ("sms", "+12025550100", "skipped", events.SWITCHED_OFF),
+    ]
+    rows = [(r.to, r.status, r.reason) for r in history.for_lead(lead) if r.name == row.name]
+    assert sorted(rows) == [
+        ("Bea Booker (booking contact) · Email", "Sent", ""),
+        ("Bea Booker (booking contact) · SMS", "Skipped", events.SWITCHED_OFF),
+    ]
+
+    editor.set_enabled(row, True)
+
+    assert TouchPoint.objects.filter(reservation=trip, kind="trip_confirm_customer").count() == 1
+    clock.now = datetime(YEAR, 1, 11, 8, 0, tzinfo=ET)
+    with patch(SEND, side_effect=_ok) as send, patch(POSTMARK, return_value="pm") as mail:
+        assert sender.run_touchpoints() == 0
+    send.assert_not_called()
+    mail.assert_not_called()
+
+
+def test_switching_off_still_cancels_a_send_that_reached_nobody(clock):
+    _window()
+    clock.now = datetime(YEAR, 1, 10, 22, 0, tzinfo=ET)
+    lead = _booked()
+    row = _pickup_row(send_email=False)
+    tp = _tp(row, lead, _trip(lead, datetime(YEAR, 1, 13, 14, 0, tzinfo=ET)))
+    with patch(SEND, side_effect=_ok):
+        sender.deliver(tp)
+
+    assert events.withdraw(row, reason=events.SWITCHED_OFF) == 1
+
+    tp.refresh_from_db()
+    assert (tp.status, tp.error) == (TouchPoint.Status.CANCELLED, events.SWITCHED_OFF)

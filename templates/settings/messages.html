@@ -71,10 +71,10 @@
     <div class="w-44">{% include "components/searchable_select.html" with name="trigger" field_id="f-trigger" options=trigger_options selected=filters.trigger empty_label="Trigger: All" autosubmit=1 aria_label="Trigger" %}</div>
     <div class="w-40">{% include "components/searchable_select.html" with name="service" field_id="f-service" options=service_options selected=filters.service empty_label="Service: All" autosubmit=1 aria_label="Service type" %}</div>
     <div class="w-36">{% include "components/searchable_select.html" with name="origin" field_id="f-origin" options=origin_options selected=filters.origin empty_label="Built-in and added" autosubmit=1 search="off" aria_label="Built-in or added" %}</div>
-    <nav class="inline-flex gap-0.5 rounded-lg bg-slate-100 p-0.5" aria-label="On or off">
+    <nav class="inline-flex gap-0.5 rounded-lg bg-surface2 p-0.5 ring-1 ring-line" aria-label="On or off">
       {% for seg in segments %}
       <a href="{{ seg.url }}" {% if seg.active %}aria-current="true"{% endif %}
-         class="rounded-md px-2.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors {% if seg.active %}bg-white font-semibold text-ink shadow-sm{% else %}text-muted hover:text-ink{% endif %}">{{ seg.label }}</a>
+         class="rounded-md px-2.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors {% if seg.active %}bg-surface font-semibold text-ink shadow-sm{% else %}text-muted hover:text-ink{% endif %}">{{ seg.label }}</a>
       {% endfor %}
     </nav>
     {% if filtering %}<a href="{{ clear_url }}" class="text-[12px] text-muted hover:text-ink underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line">Clear filters</a>{% endif %}
@@ -108,8 +108,8 @@
                  try {
                    const resp = await fetch('{% url 'message_toggle' item.row.key %}', { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken'), Accept: 'application/json' } });
                    const data = await resp.json();
-                   if (!resp.ok || !data.ok) throw new Error('failed');
-                   this.on = data.enabled;
+                   if (resp.ok && data.ok) this.on = data.enabled;
+                   else $store.toast.push({ type: 'danger', title: 'Could not change that switch', message: data.error || '' });
                  } catch (e) {
                    $store.toast.push({ type: 'danger', title: 'Could not change that switch' });
                  } finally { this.busy = false; }
@@ -117,7 +117,7 @@
           <a href="{% url 'message_edit' item.row.key %}" class="min-w-0 flex-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line">
             <span class="flex items-center gap-2">
               <span class="text-[13px] font-medium text-ink">{{ item.name }}</span>
-              {% if item.tag %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ item.tag }}</span>{% endif %}
+              {% if item.tag %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-surface2 text-muted">{{ item.tag }}</span>{% endif %}
             </span>
             {% for problem in item.problems %}<span class="block text-[11.5px] text-amber-700">{{ problem }}</span>{% endfor %}
             <span class="block text-[11.5px] text-muted">{{ item.summary }}</span>

@@ -15,6 +15,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
+from apps.core.templatetags.phone_filters import phone_display
 from apps.reservations.models import Reservation
 
 from . import defaults, fields, triggers
@@ -61,6 +62,9 @@ _QUOTE_PROGRAM = frozenset(
 )
 _DEPOSIT_STOPS = _QUOTE_PROGRAM - {"tp1_welcome", "tp2_lead_followup"}
 CONFIRMS = frozenset({"trip_confirm_customer", "trip_confirm_customer_2"})
+FIRST_NOTICE, SECOND_NOTICE = "trip_confirm_customer", "trip_confirm_customer_2"
+# Why the second notice stood down: the first went at or after its own send time (MSG-09).
+FIRST_JUST_SENT = "First notice just sent"
 _THANK_YOUS = frozenset({"thank_you", "thank_you_wedding"})
 # Seeded rows on a combining trigger that today send one message per trip, each with its
 # own trip's link or details.
@@ -80,6 +84,12 @@ _CANCELLATIONS = frozenset({"trip_cancelled", "order_cancelled"})
 # Placeholders built on PUBLIC_BASE_URL; `review_link` comes from Podium instead.
 _SITE_LINKS = frozenset({"quote_link", "pay_link", "confirm_link", "ack_link"})
 
+_CONFIRM_RULES = [
+    "Weddings and orders with a cleaning-fee vehicle go to the billing contact only,"
+    " with the acknowledgment link",
+    "Their notice never stands in for the booker's other trips that day",
+    "Skips a day already confirmed (for those orders, once the fees are acknowledged too)",
+]
 _DESCRIPTIONS: dict[str, list[str]] = {
     **{
         key: ["Stops once the order is booked, waiting on confirmation or lost"]
@@ -97,15 +107,11 @@ _DESCRIPTIONS: dict[str, list[str]] = {
         "Skips orders with no card on file",
         "Skips plans already paid",
     ],
-    **{
-        key: [
-            "Weddings and orders with a cleaning-fee vehicle go to the billing contact only,"
-            " with the acknowledgment link",
-            "Their notice never stands in for the booker's other trips that day",
-            "Skips a day already confirmed (for those orders, once the fees are acknowledged too)",
-        ]
-        for key in CONFIRMS
-    },
+    FIRST_NOTICE: _CONFIRM_RULES,
+    SECOND_NOTICE: [
+        *_CONFIRM_RULES,
+        "Skips when the first notice went at or after its time (a late booking)",
+    ],
     "wed_final_details": ["Links to the wedding details form", "One message per order"],
     "trip_confirm_affiliate": [
         "Skips once the affiliate no longer holds the trip; not sent for GNet or in-house coverage",
@@ -211,7 +217,8 @@ def driver_sheet(reservation) -> str:
     if not ready(reservation, "dispatched_with_driver"):
         return f"{sheet}\n  {DRIVER_TO_FOLLOW}"
     info = confirmed_assignment(reservation).driver_info or {}
-    who = " · ".join(part for part in (info.get("name", ""), info.get("cell", "")) if part)
+    cell = phone_display(info.get("cell", ""))
+    who = " · ".join(part for part in (info.get("name", ""), cell) if part)
     return f"{sheet}\n  Driver: {who}"
 
 
@@ -423,6 +430,33 @@ def _day_confirmed(tp: TouchPoint) -> bool:
     return bool(group) and all(t.customer_confirmed_at is not None for t in group) and not fees_owed
 
 
+def _first_notice_since(tp: TouchPoint) -> bool:
+    """The first notice told the customer about this trip at or after the second notice's
+    own send time: it went late (a booking inside 48 hours, a catch-up), so the reminder
+    would land on top of it (MSG-09). Read from its sent Deliveries, so a first notice
+    whose texts quiet hours still hold counts once its email went; one on another trip of
+    the day counts when it listed this one."""
+    if tp.scheduled_for is None:
+        return False
+    trips = [t.pk for t in confirm_group(tp)] or [tp.reservation_id]
+    sent = (
+        Delivery.objects.filter(
+            status=Delivery.Status.SENT,
+            created_at__gte=tp.scheduled_for,
+            touchpoint__reservation__in=trips,
+        )
+        .filter(
+            Q(touchpoint__message__key=FIRST_NOTICE)
+            | Q(touchpoint__message__isnull=True, touchpoint__kind=FIRST_NOTICE)
+        )
+        .exclude(touchpoint__status=TouchPoint.Status.CANCELLED)
+        .values_list("touchpoint__reservation_id", "covers")
+    )
+    return any(
+        res == tp.reservation_id or tp.reservation_id in (covers or []) for res, covers in sent
+    )
+
+
 def _payment_reminder_reason(lead) -> str:
     from apps.payments.models import PaymentPlan
     from apps.payments.services import remaining_balance
@@ -502,6 +536,8 @@ def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
     elif key in CONFIRMS:
         if _day_confirmed(tp):
             return "day already confirmed"
+        if key == SECOND_NOTICE and _first_notice_since(tp):
+            return FIRST_JUST_SENT
     elif key in _THANK_YOUS:
         if lead.status != lead.Status.BOOKED:
             return "lead not booked"

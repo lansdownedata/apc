@@ -10,6 +10,8 @@ from datetime import timedelta
 
 from django.conf import settings
 
+from apps.core.templatetags.phone_filters import phone_display
+
 
 @dataclass(frozen=True)
 class TouchPointTemplate:
@@ -610,7 +612,7 @@ def _trip_context(reservation) -> dict[str, str]:
 
     lead = reservation.lead
     contact = lead.contact
-    phone = (contact.phone or "").strip()
+    phone = phone_display((contact.phone or "").strip())
     ctx["contact_on_file"] = f"{contact.name} · {phone}".strip(" ·") if contact.name else phone
 
     from apps.dispatch.selectors import confirmed_assignment
@@ -623,7 +625,7 @@ def _trip_context(reservation) -> dict[str, str]:
         info = confirmed.driver_info
         if info:
             ctx["driver_name"] = info["name"] or ""
-            ctx["driver_cell"] = info["cell"] or ""
+            ctx["driver_cell"] = phone_display(info["cell"])
             ctx["vehicle_description"] = info["vehicle_desc"] or ""
             ctx["vehicle_number"] = info["vehicle_number"] or ""
 
@@ -698,7 +700,7 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         "first_name": first,
         "agent_first": agent_first,
         "company_name": settings.COMPANY_NAME,
-        "company_phone": settings.COMPANY_PHONE,
+        "company_phone": phone_display(settings.COMPANY_PHONE),
         "company_email": settings.COMPANY_EMAIL,
         "pickup_date": pickup_date,
         "pickup_time": pickup_time,

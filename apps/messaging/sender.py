@@ -28,6 +28,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.core import outbound
+from apps.core.templatetags.phone_filters import phone_display
 from apps.integrations import podium
 from apps.integrations.la_sync import _split_name
 from apps.integrations.podium import PodiumAPIError, PodiumNotConnected
@@ -292,8 +293,9 @@ def _day_trips(tp: TouchPoint, row: MessageTemplate, person: Recipient) -> list:
 
 def _on_file(person: Recipient) -> str:
     """Who the message tells "we'll reach you at": the person it reaches, never the booker
-    on their behalf (APC-122)."""
-    return f"{person.name} · {person.phone}".strip(" ·") if person.name else person.phone
+    on their behalf (APC-122), written as people write it."""
+    phone = phone_display(person.phone)
+    return f"{person.name} · {phone}".strip(" ·") if person.name else phone
 
 
 def context(
@@ -311,7 +313,7 @@ def context(
         ctx = {
             "first_name": "there",
             "company_name": settings.COMPANY_NAME,
-            "company_phone": settings.COMPANY_PHONE,
+            "company_phone": phone_display(settings.COMPANY_PHONE),
             "company_email": settings.COMPANY_EMAIL,
         }
     else:
@@ -533,19 +535,26 @@ def _deliveries(tp: TouchPoint, row: MessageTemplate, key: str) -> tuple[list[De
     they are what makes a re-run send only what is missing), and the addresses (lowercased)
     a send of this row reached for this combine key on another TouchPoint. One that was
     cancelled since (a pickup moved, so a fresh notice was queued) no longer stands in for
-    anything. One query."""
+    anything. One query.
+
+    A send elsewhere stands in only for a trip it listed (`Delivery.covers`), and only if
+    it went after this TouchPoint was queued (MSG-09): a trip booked, or moved, after the
+    day's notice went is news to the person. A send that recorded no list (made before
+    APC-131, or keyed on its own trip) keeps the old rule: it stands in, except for a row
+    that waits for dispatch, which tells each trip once."""
     wanted = Q(touchpoint=tp)
     if key:
         wanted |= Q(message=row, combine_key=key, status=Delivery.Status.SENT)
-    # A row that waits for dispatch tells each trip once: a send that didn't list this
-    # trip (it wasn't ready yet) doesn't stand in for it (APC-131).
     per_trip = bool(triggers.CATALOG[row.trigger].waits_for)
     mine, elsewhere = [], set()
     for d in Delivery.objects.filter(wanted).select_related("touchpoint"):
         if d.touchpoint_id == tp.pk:
             mine.append(d)
         elif d.touchpoint.status != TouchPoint.Status.CANCELLED:
-            if per_trip and tp.reservation_id not in (d.covers or []):
+            if d.covers:
+                if tp.reservation_id not in d.covers or d.created_at < tp.created_at:
+                    continue
+            elif per_trip:
                 continue
             elsewhere.add(d.address.lower())
     return mine, elsewhere
