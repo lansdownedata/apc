@@ -35,6 +35,7 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("card_last4", "Card last four"),
     ],
     "Trip": [
+        ("trip_ref", "Trip number"),
         ("trip_pickup_date", "Pickup date"),
         ("trip_pickup_time", "Pickup time"),
         ("trip_pickup_tz", "Time zone"),
@@ -62,6 +63,9 @@ _GROUPS: dict[str, list[tuple[str, str]]] = {
         ("ack_link", "Acknowledge link"),
         ("review_link", "Review link"),
     ],
+    # The driver's trip page (`reservations.acknowledgements.driver_link_url`): handed over
+    # by the link's own send, or filled for the T-48h affiliate confirmation.
+    "Driver link": [("driver_link", "Driver link")],
     "Company": [
         ("company_name", "Company name"),
         ("company_phone", "Company phone"),
@@ -203,9 +207,10 @@ _LINKS = (
     "account_button",
     "resume_button",
     "report_table",
+    "driver_link",
 )
 # Links the sender fills only in particular cases; `fields_for` adds each where it can.
-_SENDER_LINKS = ("confirm_link", "ack_link", "review_link")
+_SENDER_LINKS = ("confirm_link", "ack_link", "review_link", "driver_link")
 _TRIP_KINDS = frozenset(
     {
         "wed_final_details",
@@ -263,8 +268,8 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
 
     Only what the sender fills: the Affiliate group is for the affiliate audience; `confirm_link`
     only on trip-level triggers for a non-affiliate audience (`rules.fill_links`); `ack_link`,
-    `review_link` and a staff report's values only for the seeded message that carries them,
-    while it stays on its trigger (`key` names that seeded message).
+    `review_link`, `driver_link` and a staff report's values only for the seeded message that
+    carries them, while it stays on its trigger (`key` names that seeded message).
     """
     trigger = triggers.get(trigger_key)
     groups = set(trigger.field_groups)
@@ -278,6 +283,8 @@ def fields_for(trigger_key: str, audience: str, key: str = "") -> list[Field]:
             keys.add("confirm_link")
     if _original_trigger(key, trigger_key):
         keys |= required_for(key) | REPORT_FIELDS.get(key, frozenset())
+        if key == "trip_confirm_affiliate":
+            keys.add("driver_link")  # beside its ack link (`rules.fill_links`); not required
     return [f for k, f in FIELDS.items() if k in keys]
 
 
@@ -335,6 +342,7 @@ _PURPOSE = {
     "account_button": "they set their password",
     "resume_button": "the couple updates their details",
     "report_table": "staff see what's in the report",
+    "driver_link": "the driver opens the trip",
 }
 _CHANNEL_NAME = {"email": "email", "sms": "SMS"}
 

@@ -121,6 +121,7 @@ def test_the_invite_originals_sit_beside_the_others():
         **defaults.CLICKS,
         **defaults.INVITES,
         **defaults.REPORTS,
+        **defaults.DRIVER_LINKS,
     }
 
 
@@ -134,9 +135,11 @@ def test_each_row_sends_on_its_own_trigger_to_its_audience():
     }
 
 
-def test_only_the_wedding_details_trigger_is_sent_by_its_caller():
+def test_only_the_wedding_details_and_driver_link_triggers_are_sent_by_their_caller():
     assert {k for k, t in triggers.CATALOG.items() if t.caller_sends} == {
-        "wedding_details_received"
+        "wedding_details_received",
+        "coverage_confirmed",
+        "driver_assigned",
     }
 
 

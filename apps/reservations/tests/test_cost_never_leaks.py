@@ -172,3 +172,56 @@ def test_the_gnet_payload_never_carries_it(costed_lead):
     )
 
     _assert_clean(str(build_send_payload(assignment)), "the GNet farm-out payload")
+
+
+# --- the driver link's messages ----------------------------------------------------------
+def _booked_trip(lead):
+    lead.status = Lead.Status.BOOKED
+    lead.save(update_fields=["status"])
+    return lead.reservations.first()
+
+
+def _assert_no_money(text: str, where: str) -> None:
+    """Our cost, the customer's price and the vendor's payout: none of it."""
+    _assert_clean(text, where)
+    for needle in ("1952.8", "1,952.8", "987.65", "987.6", "$"):
+        assert needle not in text, f"{needle!r} leaked into {where}"
+
+
+def test_the_trip_confirmed_email_never_shows_it(
+    costed_lead, mailoutbox, django_capture_on_commit_callbacks
+):
+    from apps.dispatch import services
+
+    reservation = _booked_trip(costed_lead)
+    with django_capture_on_commit_callbacks(execute=True):
+        services.assign_direct(
+            reservation, VendorFactory(email="ops@vendor.example"), payout=Decimal("987.65")
+        )
+
+    [message] = [m for m in mailoutbox if m.subject.startswith("Trip confirmed")]
+    _assert_no_money(message.subject, "the trip-confirmed subject")
+    _assert_no_money(message.body, "the trip-confirmed email")
+    _assert_no_money(message.alternatives[0][0], "the trip-confirmed email's HTML")
+
+
+def test_the_driver_assignment_text_never_shows_it(
+    costed_lead, mailoutbox, django_capture_on_commit_callbacks
+):
+    from unittest.mock import patch
+
+    from apps.dispatch import services
+    from apps.fleet.factories import DriverFactory
+
+    reservation = _booked_trip(costed_lead)
+    driver = DriverFactory(phone="+15715550142", email="sam@apc.example")
+    with patch("apps.integrations.podium.send_message", return_value={"uid": "m"}) as podium:
+        with django_capture_on_commit_callbacks(execute=True):
+            services.assign_in_house(reservation, driver)
+
+    # The customer may hear about their driver too; only the driver's own messages count.
+    [call] = [c for c in podium.call_args_list if c.kwargs["identifier"] == "+15715550142"]
+    _assert_no_money(call.kwargs["body"], "the driver assignment text")
+    [message] = [m for m in mailoutbox if m.to == ["sam@apc.example"]]
+    _assert_no_money(message.body, "the driver assignment email")
+    _assert_no_money(message.alternatives[0][0], "the driver assignment email's HTML")

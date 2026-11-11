@@ -23,7 +23,7 @@ from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.vendors.models import Vendor
 
-from . import gnet_sync
+from . import driver_link, gnet_sync
 from .models import Assignment, DispatchAlertConfig
 
 logger = logging.getLogger(__name__)
@@ -328,6 +328,7 @@ def assign_direct(
         reservation, vendor=vendor, payout=payout, note=note, status=Assignment.Status.CONFIRMED
     )
     events.emit("affiliate_accepted", reservation.lead, reservation)
+    _send_link_on_commit(assignment)
     return assignment
 
 
@@ -336,12 +337,20 @@ def assign_in_house(
 ) -> Assignment:
     """Cover the trip with one of our own drivers (and optionally a fleet unit).
 
-    Straight to CONFIRMED: there is no offer step for your own driver, no payout, and
-    nothing leaves the building — the trip sheet to the driver is a follow-on feature.
+    Straight to CONFIRMED: there is no offer step for your own driver and no payout. Once
+    it commits, the driver is texted their trip link (`driver_link.send_link`).
     """
-    return _claim(
+    assignment = _claim(
         reservation, driver=driver, vehicle=vehicle, note=note, status=Assignment.Status.CONFIRMED
     )
+    _send_link_on_commit(assignment)
+    return assignment
+
+
+def _send_link_on_commit(assignment: Assignment) -> None:
+    """Send the coverage its driver link once the assignment is saved for good: never for
+    coverage a rollback undoes, and never inside a dispatcher's lock."""
+    transaction.on_commit(lambda: driver_link.send_link(assignment))
 
 
 def _resolve(
@@ -399,6 +408,7 @@ def confirm(assignment: Assignment, *, user=None) -> Assignment:
     if user is not None:
         _confirmed_by(reservation, user)
     events.emit("affiliate_accepted", reservation.lead, reservation)
+    _send_link_on_commit(confirmed)
     return confirmed
 
 

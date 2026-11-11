@@ -1,10 +1,13 @@
-"""Driver trip link rules: when a link is live and when its status window is open."""
+"""Driver trip link rules: when a link is live and when its status window is open, and the
+messages that take the link to the driver."""
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import UTC, datetime, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -12,6 +15,8 @@ from apps.dispatch.models import Assignment, DriverPing
 from apps.notifications.models import Notification
 from apps.reservations.models import Reservation, TripStatusEvent
 from apps.reservations.services import set_circling, set_trip_status
+
+logger = logging.getLogger(__name__)
 
 _S = Reservation.TripStatus
 
@@ -264,3 +269,84 @@ def report_no_show(assignment_pk: int, *, note: str = "") -> None:
             title=f"Driver reports no-show on trip #{trip.reference}",
             detail=note[:255],
         )
+
+
+# --- the link's messages --------------------------------------------------------------
+
+VENDOR_ROW = "affiliate_confirmed"
+DRIVER_ROW = "driver_assignment"
+
+
+def _has_address(assignment: Assignment) -> bool:
+    """Somewhere to send the link: the vendor's email, or our driver's mobile or email."""
+    if assignment.is_in_house:
+        driver = assignment.driver
+        return bool((driver.phone or "").strip() or (driver.email or "").strip())
+    return bool((assignment.vendor.email or "").strip())
+
+
+def send_link(assignment: Assignment):
+    """Send confirmed coverage its driver link: the "Trip confirmed" email to the vendor, or
+    the "Driver trip assignment" text and email to our own driver. Returns the
+    `sender.SendResult`, or None when there is nowhere to send it (no notice either: the
+    drawer says "No email on file").
+
+    Best effort, like the offer email: the coverage is already recorded, so a send that is
+    refused (outbound off), fails or raises tells dispatch with a notification to copy the
+    link from the drawer, and never fails the assignment."""
+    from apps.messaging import rendering, sender
+    from apps.reservations.acknowledgements import driver_link_url
+
+    if not _has_address(assignment):
+        return None
+    trip = assignment.reservation
+    values = {"driver_link": driver_link_url(assignment, base_url=settings.PUBLIC_BASE_URL or "")}
+    blocks = {}
+    try:
+        if assignment.is_in_house:
+            key = DRIVER_ROW
+        else:
+            from .services import _affiliate_values
+
+            key = VENDOR_ROW
+            values |= _affiliate_values(assignment.vendor, trip)
+            # The plain trip sheet: no payout, no price, no money of any kind.
+            blocks["trip_sheet"] = rendering.block(
+                "trip_sheet", {"trip": trip, "stops": list(trip.ordered_stops)}
+            )
+        result = sender.send_now(
+            key, trip.lead, trip, assignment=assignment, extra_ctx=values, blocks=blocks
+        )
+    except Exception:  # noqa: BLE001 - the coverage stands; the notice says to copy the link
+        logger.exception("driver link for assignment %s not sent", assignment.pk)
+        result = sender.SendResult(sent=False, deliveries=[], errors=["unexpected error"])
+    if not result.sent:
+        Notification.notify(
+            trip.lead,
+            Notification.Kind.SYNC_FAILED,
+            title=f"Driver link to {assignment.provider_name} not sent"[:160],
+            detail=f"Trip #{trip.reference}: copy the driver link from the drawer."[:255],
+        )
+    return result
+
+
+def link_send_state(assignment: Assignment) -> str:
+    """What the drawer says about this coverage's link message: "sent", "not_sent",
+    "no_address" (nowhere to send it), or "" (not confirmed coverage, or nothing tried)."""
+    from apps.messaging.models import TouchPoint
+
+    if assignment.status != Assignment.Status.CONFIRMED:
+        return ""
+    latest = (
+        TouchPoint.objects.filter(
+            reservation_id=assignment.reservation_id,
+            kind__in=(VENDOR_ROW, DRIVER_ROW),
+            created_at__gte=assignment.created_at,
+        )
+        .order_by("-created_at", "-pk")
+        .values_list("status", flat=True)
+        .first()
+    )
+    if latest is None:
+        return "" if _has_address(assignment) else "no_address"
+    return "sent" if latest == TouchPoint.Status.SENT else "not_sent"

@@ -5,8 +5,9 @@ the client copy in `touchpoint_templates`. `CLICKS` are the staff-click sends (s
 8): their wording is today's button text, kept here, with the parts the caller generates
 (the quote summary, the receipt lines, a trip sheet, a button) as block placeholders.
 `INVITES` are the invites, the planner password reset and the wedding-details email, the
-same way, and `REPORTS` the staff reports, their tables as block placeholders. `ORIGINALS`
-is all four. `seed` creates the rows that are missing (folding in
+same way, `REPORTS` the staff reports, their tables as block placeholders, and
+`DRIVER_LINKS` the two messages that carry the driver's trip link. `ORIGINALS` is all
+five. `seed` creates the rows that are missing (folding in
 what spec B saved for a key) and never overwrites a seeded row; `reset` copies an original
 back over its row.
 
@@ -578,8 +579,61 @@ REPORTS: dict[str, MessageDefault] = {
     )
 }
 
+# --- the driver link -------------------------------------------------------------------
+#
+# Sent by dispatch the moment coverage is confirmed (`dispatch.driver_link.send_link`), each
+# on its own trigger: the vendor's "Trip confirmed" email, its trip sheet a block with no
+# payout, and our own driver's text. The caller hands over `{driver_link}` and, for the
+# vendor, its name and the pickup day. Neither carries money of any kind.
+
+_DRIVER_TEXT = (
+    "{company_name}: you're driving trip #{trip_ref} on {trip_pickup_date} at "
+    "{trip_pickup_time}. Trip details and status: {driver_link}"
+)
+
+DRIVER_LINKS: dict[str, MessageDefault] = {
+    d.key: d
+    for d in (
+        _click(
+            "affiliate_confirmed",
+            "Trip confirmed",
+            "affiliates",
+            trigger="coverage_confirmed",
+            audience="affiliate",
+            channels=("email",),
+            subject="Trip confirmed — {trip_day}",
+            email_body=(
+                "{vendor_name} — trip confirmed with {company_name}\n\n"
+                "{trip_sheet}\n\n"
+                "Driver link: {driver_link}\n\n"
+                "Forward this link to your driver. They'll see the route and update the trip "
+                "status from their phone.\n\n" + _SIGNATURE
+            ),
+            recipients=("company",),
+        ),
+        _click(
+            "driver_assignment",
+            "Driver trip assignment",
+            "affiliates",
+            trigger="driver_assigned",
+            audience="driver",
+            channels=("sms", "email"),
+            subject="Trip #{trip_ref} on {trip_pickup_date}",
+            email_body=_DRIVER_TEXT + "\n\n" + _SIGNATURE,
+            sms_body=_DRIVER_TEXT,
+            recipients=("in_house_driver",),
+        ),
+    )
+}
+
 # Every seeded message's original, by key.
-ORIGINALS: dict[str, MessageDefault] = {**DEFAULTS, **CLICKS, **INVITES, **REPORTS}
+ORIGINALS: dict[str, MessageDefault] = {
+    **DEFAULTS,
+    **CLICKS,
+    **INVITES,
+    **REPORTS,
+    **DRIVER_LINKS,
+}
 
 # The fields `reset` copies back. The on/off switch is not part of the original: resetting the
 # wording never turns a message on or off.

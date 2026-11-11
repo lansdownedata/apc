@@ -32,6 +32,8 @@ SPEC_KEYS = {
     "driver_changed",
     "trip_cancelled",
     "trip_done",
+    "coverage_confirmed",
+    "driver_assigned",
     # Staff clicks
     "send_quote",
     "send_pay_link",
@@ -62,6 +64,8 @@ TRIP_LEVEL = {
     "driver_changed",
     "trip_cancelled",
     "trip_done",
+    "coverage_confirmed",
+    "driver_assigned",
     "affiliate_offer",
     "affiliate_cancel",
 }
@@ -107,7 +111,7 @@ def test_kinds_and_levels():
 def test_field_groups_are_real_groups():
     for trigger in triggers.CATALOG.values():
         assert trigger.field_groups <= set(fields._GROUPS), trigger.key
-        assert trigger.audiences <= {"customer", "affiliate", "planner", "staff"}
+        assert trigger.audiences <= {"customer", "affiliate", "planner", "staff", "driver"}
         assert trigger.audiences, trigger.key
 
 

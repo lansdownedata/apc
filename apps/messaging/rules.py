@@ -701,6 +701,7 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
     from apps.leads.services import make_pay_page_url, make_quote_page_url
     from apps.reservations.acknowledgements import (
         affiliate_ack_url,
+        driver_link_url,
         order_day_ack_url,
         trip_day_ack_url,
         wedding_details_url,
@@ -725,6 +726,13 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
         assignment = confirmed_assignment(res)
         if assignment is not None:
             ctx["ack_link"] = affiliate_ack_url(assignment, base_url=base_url)
+            ctx["driver_link"] = driver_link_url(assignment, base_url=base_url)
+    elif key in defaults.DRIVER_LINKS:
+        # Its sender hands over the link for the coverage it is about; this is the trip's
+        # confirmed coverage, for the editor's preview.
+        assignment = confirmed_assignment(res)
+        if assignment is not None:
+            ctx["driver_link"] = driver_link_url(assignment, base_url=base_url)
     elif key in CONFIRMS and _order_keyed(res, _held_cache(tp)):
         ctx["confirm_link"] = order_day_ack_url(lead, res.pickup_date, base_url=base_url)
     elif row.audience != row.Audience.AFFILIATE:

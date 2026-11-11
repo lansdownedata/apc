@@ -65,6 +65,7 @@ def _balance_due(lead, reservation) -> datetime | None:
 
 
 CUSTOMER, AFFILIATE, PLANNER, STAFF = "customer", "affiliate", "planner", "staff"
+DRIVER = "driver"
 
 _ORDER_FIELDS = frozenset({"Customer", "Order", "Payment", "Links", "Company"})
 _TRIP_FIELDS = _ORDER_FIELDS | {"Trip"}
@@ -168,6 +169,28 @@ _ALL: tuple[Trigger, ...] = (
         _TRIP_FIELDS | {"Affiliate"},
     ),
     _t("trip_done", "Trip done", "event", "trip", _PEOPLE, _DRIVER_FIELDS),
+    # The driver link (`dispatch.driver_link.send_link`): sent by the dispatch service the
+    # moment coverage is confirmed, so the drawer can say whether it went. The vendor's
+    # email carries the pickup day its offer did ("Affiliate click"); our own driver's text
+    # gets the trip and no order, payment or customer-link fields: no money reaches a driver.
+    _t(
+        "coverage_confirmed",
+        "Coverage confirmed",
+        "event",
+        "trip",
+        {AFFILIATE},
+        _AFFILIATE_FIELDS | {"Affiliate click", "Driver link"},
+        caller_sends=True,
+    ),
+    _t(
+        "driver_assigned",
+        "Driver assigned",
+        "event",
+        "trip",
+        {DRIVER},
+        {"Trip", "Company", "Driver link"},
+        caller_sends=True,
+    ),
     # Staff clicks
     _t(
         "send_quote",
