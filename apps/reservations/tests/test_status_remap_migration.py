@@ -118,6 +118,29 @@ def test_assigned_values_without_confirmed_coverage_become_assigned(old):
     assert _status(trip) == TS.ASSIGNED
 
 
+@pytest.mark.parametrize("old", ["offered", "offered_to_affiliate"])
+def test_offered_values_with_confirmed_coverage_become_dispatched(old):
+    trip = _trip(old)
+    _covered(trip, Assignment.Status.CONFIRMED)
+    _remap()
+    assert _status(trip) == TS.DISPATCHED
+
+
+@pytest.mark.parametrize("old", ["assigned", "affiliate_assigned"])
+def test_assigned_values_with_no_active_coverage_become_unassigned(old):
+    trip = _trip(old)
+    _covered(trip, Assignment.Status.WITHDRAWN)
+    assert _remap()[old] == 1
+    assert _status(trip) == TS.UNASSIGNED
+
+
+@pytest.mark.parametrize("old", ["offered", "offered_to_affiliate"])
+def test_offered_values_with_no_active_coverage_become_unassigned(old):
+    trip = _trip(old)
+    assert _remap()[old] == 1
+    assert _status(trip) == TS.UNASSIGNED
+
+
 def test_dispatched_non_la_becomes_dispatched():
     trip = _trip("dispatched_non_la")
     assert _remap()["dispatched_non_la"] == 1
@@ -162,6 +185,29 @@ def test_covid_cancellation_becomes_cancelled_with_the_covid_flag():
     assert trip.trip_status == TS.CANCELLED
     assert trip.cancel_covid is True
     assert trip.cancel_reason == "COVID-19 (migrated)"
+
+
+def test_covid_cancellation_is_dated_from_its_latest_event():
+    trip = _trip("covid_cancellation")
+    older = TripStatusEvent.objects.create(reservation=trip, status="covid_cancellation")
+    latest = TripStatusEvent.objects.create(reservation=trip, status="covid_cancellation")
+    TripStatusEvent.objects.create(reservation=trip, status="dispatched")
+    at = NOW - timedelta(days=3)
+    TripStatusEvent.objects.filter(pk=older.pk).update(created_at=at - timedelta(days=1))
+    TripStatusEvent.objects.filter(pk=latest.pk).update(created_at=at)
+
+    _remap()
+
+    trip.refresh_from_db()
+    assert trip.cancelled_at == at
+    assert trip.cancelled_by is None
+
+
+def test_covid_cancellation_with_no_event_is_dated_now():
+    trip = _trip("covid_cancellation")
+    _remap()
+    trip.refresh_from_db()
+    assert trip.cancelled_at == NOW
 
 
 # --- what the migration leaves alone ---

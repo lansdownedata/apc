@@ -45,43 +45,54 @@ def _active(Assignment, trip) -> str:
     return OFFERED if OFFERED in statuses else ""
 
 
+def _latest_event_at(TripStatusEvent, trip, status: str, now):
+    """When the trip last entered `status` by its own history, or `now` if it never did."""
+    event = (
+        TripStatusEvent.objects.filter(reservation=trip, status=status)
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    return event.created_at if event else now
+
+
+# The trip's active coverage decides its status: an offer in play is Assigned, an accepted
+# one Dispatched, none at all Unassigned (whatever the old value claimed).
+_BY_COVERAGE = {CONFIRMED: "dispatched", OFFERED: "assigned", "": "unassigned"}
+
+
 def _new_values(trip, Assignment, TripStatusEvent, now) -> dict:
     """The fields to write for one trip, keyed by field name (status included)."""
     old = trip.trip_status
     if old == "":
         if trip.lead.status != BOOKED:
             return {"trip_status": "pending"}
-        by_coverage = {CONFIRMED: "dispatched", OFFERED: "assigned", "": "unassigned"}
-        return {"trip_status": by_coverage[_active(Assignment, trip)]}
+        return {"trip_status": _BY_COVERAGE[_active(Assignment, trip)]}
     if old in ("farm_out_unassigned", "cancelled_by_affiliate"):
         return {"trip_status": "unassigned", "needs_farm_out": True}
-    if old in ("offered", "offered_to_affiliate"):
-        return {"trip_status": "assigned"}
-    if old in ("assigned", "affiliate_assigned"):
-        confirmed = _active(Assignment, trip) == CONFIRMED
-        return {"trip_status": "dispatched" if confirmed else "assigned"}
+    if old in ("offered", "offered_to_affiliate", "assigned", "affiliate_assigned"):
+        return {"trip_status": _BY_COVERAGE[_active(Assignment, trip)]}
     if old == "dispatched_non_la":
         return {"trip_status": "dispatched"}
     if old == "circling":
-        event = (
-            TripStatusEvent.objects.filter(reservation=trip, status="circling")
-            .order_by("-created_at", "-pk")
-            .first()
-        )
         return {
             "trip_status": "arrived",
-            "circling_at": event.created_at if event else now,
+            "circling_at": _latest_event_at(TripStatusEvent, trip, "circling", now),
             "circling_source": CIRCLING_SOURCE,
         }
     # covid_cancellation
-    return {"trip_status": "cancelled", "cancel_covid": True, "cancel_reason": COVID_REASON}
+    return {
+        "trip_status": "cancelled",
+        "cancel_covid": True,
+        "cancel_reason": COVID_REASON,
+        "cancelled_at": _latest_event_at(TripStatusEvent, trip, "covid_cancellation", now),
+    }
 
 
 def remap(Reservation, Assignment, TripStatusEvent, now) -> dict[str, int]:
     """Rewrite every reservation holding an old value; returns how many held each one.
 
     Per-row `save(update_fields=...)` (APC-140: no bulk writes on audited models). A row
-    whose value doesn't change (Assigned with no confirmed coverage) is not saved.
+    whose value doesn't change (Assigned with an offer in play) is not saved.
     """
     counts = dict.fromkeys(OLD_VALUES, 0)
     trips = Reservation.objects.filter(trip_status__in=OLD_VALUES).select_related("lead")
