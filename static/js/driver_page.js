@@ -21,6 +21,7 @@
   var PING_EVERY_MS = 30000;
   var PING_METERS = 100;
   var POST_TIMEOUT_MS = 15000;
+  var MAX_OPEN_WAIT_MS = 24 * 60 * 60 * 1000;
   // Statuses whose next stop is the final drop-off; before these it is the pickup.
   var DROP_OFF_NEXT = ["customer_in_car", "done"];
   var STYLE_URL = "https://tiles.locationiq.com/v3/streets/vector.json?key=";
@@ -131,8 +132,34 @@
         this.syncWatch();
         document.addEventListener("visibilitychange", function () {
           self.syncWatch();
+          // Back on screen before the window: reload for fresh state (no reliance on the
+          // phone's clock, which may be off).
+          if (document.visibilityState === "visible" && self.waitingForWindow()) {
+            window.location.reload();
+          }
         });
+        this.scheduleOpen();
         this.startMap();
+      },
+
+      /* ---- the 6-hour window -------------------------------------------- */
+      // Only a POST changes `window_open`, so a page opened early reloads itself once the
+      // window opens: on a timer (capped at 24 h) and whenever the phone shows it again.
+      waitingForWindow: function () {
+        return !this.state.window_open && !!this.state.next && !!this.state.opens_at;
+      },
+
+      reloadIfOpen: function () {
+        var opens = Date.parse(this.state.opens_at);
+        if (isFinite(opens) && Date.now() >= opens) window.location.reload();
+      },
+
+      scheduleOpen: function () {
+        var self = this;
+        if (!this.waitingForWindow()) return;
+        var wait = Date.parse(this.state.opens_at) - Date.now();
+        if (!isFinite(wait) || wait > MAX_OPEN_WAIT_MS) return;
+        setTimeout(function () { self.reloadIfOpen(); }, Math.max(0, wait) + 1000);
       },
 
       get dropOffNext() {
@@ -166,6 +193,9 @@
             headers: { "Content-Type": "application/json", "X-CSRFToken": cfg.csrf },
             body: JSON.stringify(body),
             credentials: "same-origin",
+            // The page is served `no-referrer`, which makes a POST say `Origin: null` and
+            // fail CSRF; same-origin sends our own origin and still nothing to third parties.
+            referrerPolicy: "same-origin",
             signal: ctl.signal,
           });
           if (res.status === 410) {
@@ -359,6 +389,7 @@
             headers: { "Content-Type": "application/json", "X-CSRFToken": cfg.csrf },
             body: JSON.stringify(body),
             credentials: "same-origin",
+            referrerPolicy: "same-origin",
             keepalive: true,
           }).catch(function () { /* fire-and-forget: no retry */ });
         } catch (e) { /* fire-and-forget */ }

@@ -340,3 +340,66 @@ def test_navigate_link_by_user_agent(client):
     assert "https://www.google.com/maps/dir/?api=1&amp;destination=40.500000,-74.500000" in (
         android.content.decode()
     )
+
+
+def _csrf_client(assignment):
+    """A browser-like client: CSRF enforced, holding the cookie the page set."""
+    from django.test import Client
+
+    browser = Client(enforce_csrf_checks=True)
+    page = browser.get(_url(assignment))
+    assert page.status_code == 200
+    return browser, browser.cookies["csrftoken"].value
+
+
+def test_status_post_with_null_origin_is_refused_by_csrf():
+    """Why driver_page.js sends `referrerPolicy: "same-origin"`: under the page's
+    `no-referrer` policy a browser POST carries `Origin: null`, which CSRF rejects."""
+    a = _live()
+    browser, token = _csrf_client(a)
+    res = browser.post(
+        _url(a, "driver_link_status"),
+        json.dumps({"to": S.ON_THE_WAY, "from": S.DISPATCHED}),
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=token,
+        HTTP_ORIGIN="null",
+    )
+    assert res.status_code == 403
+
+
+def test_status_post_with_same_origin_passes_csrf():
+    a = _live()
+    browser, token = _csrf_client(a)
+    res = browser.post(
+        _url(a, "driver_link_status"),
+        json.dumps({"to": S.ON_THE_WAY, "from": S.DISPATCHED}),
+        content_type="application/json",
+        HTTP_X_CSRFTOKEN=token,
+        HTTP_ORIGIN="http://testserver",
+    )
+    assert res.status_code == 200
+    assert res.json()["state"]["status"] == S.ON_THE_WAY
+
+
+def test_page_script_sends_its_origin_on_every_post():
+    """Every fetch in the page script overrides the page's no-referrer policy."""
+    from pathlib import Path
+
+    from django.conf import settings
+
+    script = (Path(settings.BASE_DIR) / "static" / "js" / "driver_page.js").read_text()
+    fetches = script.count("fetch(")
+    assert fetches >= 2
+    assert script.count('referrerPolicy: "same-origin"') == fetches
+
+
+def test_page_state_carries_opens_at_in_utc():
+    from apps.dispatch.driver_link_views import page_state
+
+    a = _live(
+        pickup_date=date(2026, 7, 4), pickup_time=time(9, 0), pickup_timezone="America/New_York"
+    )
+    assert page_state(a)["opens_at"] == "2026-07-04T07:00:00Z"
+    a.reservation.pickup_date = None
+    a.reservation.save(update_fields=["pickup_date"])
+    assert page_state(a)["opens_at"] is None

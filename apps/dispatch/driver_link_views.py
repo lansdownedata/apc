@@ -7,7 +7,7 @@ line. The page never carries money: nothing here reads a payout, price or cost.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import wraps
 from urllib.parse import quote
 
@@ -99,6 +99,8 @@ def page_state(assignment: Assignment, *, now: datetime | None = None) -> dict:
         "back": driver_link.back_status(status),
         "window_open": driver_link.window_open(trip, now=now),
         "opens_at_label": _time_label(opens),
+        # The open instant in UTC, so a page opened early can reload itself when it opens.
+        "opens_at": opens.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if opens else None,
         "can_circle": status in _CIRCLING_STATUSES,
         "circling": trip.circling_at is not None,
         "share_location": status in driver_link.PING_STATUSES,
