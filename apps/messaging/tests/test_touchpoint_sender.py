@@ -255,6 +255,57 @@ def test_review_request_without_a_link_sends_nothing(settings):
     assert not Review.objects.filter(lead=lead).exists()
 
 
+INVITE_LIMIT = (
+    '429 POST https://api.podium.com/v4/reviews/invites \u2192 {"code":"rate_limit",'
+    '"message":"Customer has received too many invites per location."}'
+)
+
+
+def test_review_request_skips_a_customer_podium_already_asked(settings):
+    """Podium allows one invite per customer per period; its refusal is not our failure."""
+    settings.TOUCHPOINTS_ENABLED = True
+    contact = ContactFactory(phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    tp = _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
+
+    with (
+        patch("apps.messaging.sender.podium.send_message") as mock_send,
+        patch(
+            "apps.messaging.sender.podium.create_review_invitation",
+            side_effect=PodiumAPIError(INVITE_LIMIT),
+        ),
+    ):
+        result = sender.run_touchpoints()
+
+    assert result == 0
+    mock_send.assert_not_called()
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.SKIPPED
+    assert tp.error == sender.ALREADY_INVITED == "Podium already asked this customer recently"
+    delivery = tp.deliveries.get()
+    assert (delivery.status, delivery.reason) == ("skipped", sender.ALREADY_INVITED)
+    assert not Review.objects.filter(lead=lead).exists()
+
+
+def test_review_request_other_rate_limits_still_fail(settings):
+    settings.TOUCHPOINTS_ENABLED = True
+    contact = ContactFactory(phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    tp = _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
+
+    with patch(
+        "apps.messaging.sender.podium.create_review_invitation",
+        side_effect=PodiumAPIError(
+            '429 POST https://api.podium.com/v4/reviews/invites \u2192 {"code":"rate_limit",'
+            '"message":"Too many requests"}'
+        ),
+    ):
+        sender.run_touchpoints()
+
+    tp.refresh_from_db()
+    assert tp.status == TouchPoint.Status.FAILED
+
+
 def test_review_request_invite_failure_marks_failed_no_review_row(settings):
     settings.TOUCHPOINTS_ENABLED = True
     contact = ContactFactory(phone="5551234567")

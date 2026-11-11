@@ -65,6 +65,13 @@ def describe_error(text: str) -> str:
     return "".join(out)
 
 
+def invite_limited(exc: Exception) -> bool:
+    """Whether `exc` is Podium's per-customer review-invite cap (429 "Customer has received
+    too many invites per location."), as opposed to any other refusal or rate limit."""
+    text = str(exc)
+    return text.startswith("429 ") and "too many invites" in text.lower()
+
+
 def get_credential() -> PodiumCredential:
     """The active credential, refreshed if it's at/near expiry."""
     cred = PodiumCredential.current()
