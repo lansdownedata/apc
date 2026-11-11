@@ -137,3 +137,17 @@ def test_no_pickup_date_never_opens():
 
     assert driver_link.window_opens_at(trip) is None
     assert not driver_link.window_open(trip, now=NOON)
+
+
+@pytest.mark.parametrize(
+    ("day", "hour"), [(date(2026, 11, 1), 5), (date(2026, 3, 8), 8)], ids=["fall-back", "spring"]
+)
+def test_window_is_six_absolute_hours_across_a_dst_change(day, hour):
+    trip = ReservationFactory(
+        pickup_date=day, pickup_time=time(hour, 0), pickup_timezone="America/New_York"
+    )
+
+    opens = driver_link.window_opens_at(trip)
+
+    assert trip.pickup_at.astimezone(UTC) - opens.astimezone(UTC) == timedelta(hours=6)
+    assert opens.tzinfo == trip.pickup_at.tzinfo

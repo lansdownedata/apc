@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from django.utils import timezone
 
@@ -44,7 +44,11 @@ def is_live(assignment: Assignment, *, now: datetime | None = None) -> bool:
 
 def window_opens_at(trip: Reservation) -> datetime | None:
     pickup = trip.pickup_at
-    return pickup - WINDOW_BEFORE_PICKUP if pickup else None
+    if pickup is None:
+        return None
+    # Subtract in UTC: timedelta math on a zone-aware datetime is wall-clock, which drifts
+    # an hour on a DST night. The result is still expressed in the trip's zone.
+    return (pickup.astimezone(UTC) - WINDOW_BEFORE_PICKUP).astimezone(pickup.tzinfo)
 
 
 def window_open(trip: Reservation, *, now: datetime | None = None) -> bool:
