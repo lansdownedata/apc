@@ -339,6 +339,7 @@ def set_trip_status(
     user=None,
     source: str = TripStatusEvent.Source.MANUAL,
     emit: bool = True,
+    assignment=None,
 ) -> TripStatusEvent | None:
     """Write a trip status, log the transition, and fire its message events.
 
@@ -371,7 +372,11 @@ def set_trip_status(
         for field in ("trip_status", "circling_at", "circling_source", "circling_by_id"):
             setattr(reservation, field, getattr(locked, field))
         event = TripStatusEvent.objects.create(
-            reservation=reservation, status=status, source=source, changed_by=user
+            reservation=reservation,
+            status=status,
+            source=source,
+            changed_by=user,
+            assignment=assignment,
         )
     lead = reservation.lead
     if emit:

@@ -41,6 +41,7 @@ Check = tuple[Verdict, str]
 
 SEND: Check = ("send", "")
 DISABLED = "message disabled"
+SERVICE_TYPE_MISMATCH = "service type no longer matches"
 # The TouchPoint error when every person a combining send would reach already had that
 # day's message. Combining is the sender's step (it knows the addresses); this is the
 # string it writes.
@@ -576,7 +577,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
         # an event its service sends itself (a couple on a lost order who send their
         # wedding details again still get them back).
         if not matches(row, lead, res):
-            return "skip", "service type no longer matches"
+            return "skip", SERVICE_TYPE_MISMATCH
         return SEND
     # A cancellation message exists because the order is lost: the order's own, or a
     # trip's when the whole order was cancelled (spec section 3, "unless the trigger is the
@@ -622,7 +623,7 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
             return "skip", "pickup passed"
 
     if not matches(row, lead, res):
-        return "skip", "service type no longer matches"
+        return "skip", SERVICE_TYPE_MISMATCH
 
     if built_in:
         reason = _built_in_skip(tp, row)
@@ -701,6 +702,7 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
     from apps.leads.services import make_pay_page_url, make_quote_page_url
     from apps.reservations.acknowledgements import (
         affiliate_ack_url,
+        driver_link_url,
         order_day_ack_url,
         trip_day_ack_url,
         wedding_details_url,
@@ -725,6 +727,13 @@ def fill_links(tp: TouchPoint, row: MessageTemplate, ctx: dict, base_url: str) -
         assignment = confirmed_assignment(res)
         if assignment is not None:
             ctx["ack_link"] = affiliate_ack_url(assignment, base_url=base_url)
+            ctx["driver_link"] = driver_link_url(assignment, base_url=base_url)
+    elif key in defaults.DRIVER_LINKS:
+        # Its sender hands over the link for the coverage it is about; this is the trip's
+        # confirmed coverage, for the editor's preview.
+        assignment = confirmed_assignment(res)
+        if assignment is not None:
+            ctx["driver_link"] = driver_link_url(assignment, base_url=base_url)
     elif key in CONFIRMS and _order_keyed(res, _held_cache(tp)):
         ctx["confirm_link"] = order_day_ack_url(lead, res.pickup_date, base_url=base_url)
     elif row.audience != row.Audience.AFFILIATE:

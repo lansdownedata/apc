@@ -107,6 +107,7 @@ def test_the_click_originals_sit_beside_the_touch_point_defaults():
         **defaults.CLICKS,
         **defaults.INVITES,
         **defaults.REPORTS,
+        **defaults.DRIVER_LINKS,
     }
 
 

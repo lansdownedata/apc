@@ -17,6 +17,7 @@ _TRIP_DAY_ACK_SALT = "apc.trip-day-ack.v1"
 _AFFILIATE_ACK_SALT = "apc.affiliate-ack.v1"
 _WEDDING_DETAILS_SALT = "apc.wedding-details.v1"
 _WEDDING_DAY_ACK_SALT = "apc.wedding-day-ack.v1"
+_DRIVER_LINK_SALT = "apc.driver-link.v1"
 
 
 # --- customer trip confirmation (APC-19) ------------------------------------------------
@@ -88,6 +89,25 @@ def affiliate_ack_url(assignment, *, base_url: str = "") -> str:
         f"{base_url}"
         f"{reverse('affiliate_trip_confirm', args=[make_affiliate_ack_token(assignment)])}"
     )
+
+
+# --- driver trip link --------------------------------------------------------------------
+# Keyed on the assignment, not the trip: a reassignment makes a new assignment row, so the
+# previous driver's link dies even when the same vendor is assigned again.
+def make_driver_link_token(assignment) -> str:
+    return signing.dumps({"assignment": assignment.pk}, salt=_DRIVER_LINK_SALT)
+
+
+def read_driver_link_token(token: str):
+    """Raises BadSignature on a forged token, Assignment.DoesNotExist on a deleted row."""
+    from apps.dispatch.models import Assignment
+
+    data = signing.loads(token, salt=_DRIVER_LINK_SALT)
+    return Assignment.objects.get(pk=data["assignment"])
+
+
+def driver_link_url(assignment, *, base_url: str = "") -> str:
+    return f"{base_url}{reverse('driver_link', args=[make_driver_link_token(assignment)])}"
 
 
 # --- wedding day-of details (APC-18) ---------------------------------------------------

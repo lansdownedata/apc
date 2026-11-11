@@ -61,6 +61,12 @@
         <p class="text-[11.5px] text-muted mt-2">Takes effect the next time driver details are saved for a trip.</p>
       </div>
 
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Driver trip link</div>
+        <label for="{{ form.driver_page_show_passenger_contact.id_for_label }}" class="flex items-center gap-2 text-[12.5px] text-ink">{{ form.driver_page_show_passenger_contact }} {{ form.driver_page_show_passenger_contact.label }}</label>
+        <p class="text-[11.5px] text-muted mt-1">{{ form.driver_page_show_passenger_contact.help_text }}</p>
+      </div>
+
       <p class="text-[11.5px] text-muted">Who gets the exception email is set on the <a href="{% url 'message_edit' 'dispatch_alert' %}" class="font-semibold text-goldd hover:underline focus-gold">dispatch exceptions alert</a> message.</p>
       {% include "components/form_field.html" with field=form.critical_sms %}
 

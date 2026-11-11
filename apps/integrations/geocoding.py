@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 SEARCH_URL = "https://us1.locationiq.com/v1/search"
 TIMEOUT = 15
+# The driver page waits on the route lookup, so it gets a short leash of its own.
+ROUTE_TIMEOUT = 4
 
 
 class GeocodeError(Exception):
@@ -257,3 +259,42 @@ def drive_seconds(from_lat, from_lon, to_lat, to_lon) -> int | None:
         return None
     cache.set(key, seconds, DIRECTIONS_CACHE_SECONDS)
     return seconds
+
+
+def route_polyline(points: list[tuple[float, float]]) -> str | None:
+    """Encoded driving route (polyline, precision 5) through `points`, or None.
+
+    `points` are (lat, lng) pairs in stop order. No cache here: the Reservation row that
+    stores the result is the cache. None — never an exception — for no key, fewer than two
+    points, an HTTP error or a malformed payload.
+    """
+    if not settings.LOCATIONIQ_API_KEY or len(points) < 2:
+        return None
+    try:
+        # LocationIQ takes lon,lat — the reverse of every other coordinate in this file.
+        path = ";".join(f"{float(lng)},{float(lat)}" for lat, lng in points)
+    except (TypeError, ValueError):
+        return None
+    try:
+        resp = requests.get(
+            f"{DIRECTIONS_URL}/{path}",
+            params={
+                "key": settings.LOCATIONIQ_API_KEY,
+                "overview": "full",
+                "geometries": "polyline",
+            },
+            timeout=ROUTE_TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            logger.warning(
+                "LocationIQ route %s for %s: %s", resp.status_code, path, (resp.text or "")[:200]
+            )
+            return None
+        routes = (resp.json() or {}).get("routes") or []
+        geometry = routes[0].get("geometry") if routes else None
+    except requests.RequestException as exc:
+        logger.warning("LocationIQ route request failed: %s", type(exc).__name__)
+        return None
+    except (ValueError, TypeError, AttributeError, IndexError):
+        return None
+    return geometry if isinstance(geometry, str) and geometry else None

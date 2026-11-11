@@ -68,9 +68,13 @@ def test_a_vendor_without_an_email_still_gets_the_assignment(mailoutbox):
     assert len(mailoutbox) == 0
 
 
-def test_direct_assign_does_not_email(mailoutbox):
-    services.assign_direct(_trip(), VendorFactory(email="x@y.example"), payout=Decimal("215.00"))
-    assert len(mailoutbox) == 0
+def test_direct_assign_sends_no_offer_only_the_trip_confirmed_email(
+    mailoutbox, django_capture_on_commit_callbacks
+):
+    vendor = VendorFactory(email="x@y.example")
+    with django_capture_on_commit_callbacks(execute=True):
+        services.assign_direct(_trip(), vendor, payout=Decimal("215.00"))
+    assert [m.subject.split(" — ")[0] for m in mailoutbox] == ["Trip confirmed"]
 
 
 def test_a_failed_send_alerts_but_keeps_the_offer(monkeypatch):

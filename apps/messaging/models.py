@@ -273,6 +273,8 @@ class MessageTemplate(TimeStampedModel):
         AFFILIATE = "affiliate", "Affiliate"
         PLANNER = "planner", "Planner"
         STAFF = "staff", "Staff"
+        # Our own (in-house) driver, reached about a trip they drive.
+        DRIVER = "driver", "Driver"
 
     class Direction(models.TextChoices):
         BEFORE = "before", "Before"

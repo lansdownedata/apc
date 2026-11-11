@@ -50,6 +50,8 @@ def source_for(request: HttpRequest) -> str:
         return "customer: trip confirmation"
     if name == "wedding_details":
         return "customer: wedding details"
+    if name and name.startswith("driver_link"):
+        return "driver: trip link"
     if name == "affiliate_trip_confirm":
         return "affiliate: trip confirmation"
     if "planners" in namespaces:

@@ -39,6 +39,9 @@ CHOICES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
     "affiliate": [("Affiliate", [("company", "Company"), ("driver", "Driver")])],
     "planner": [("Planner", [("planner", "Planner on the order")])],
     "staff": [],
+    # `driver` above is the affiliate's driver (their cell, from the details they gave us);
+    # this is our own driver covering the trip.
+    "driver": [("Driver", [("in_house_driver", "In-house driver")])],
 }
 LABELS: dict[str, str] = {
     key: label for groups in CHOICES.values() for _, items in groups for key, label in items
@@ -161,6 +164,25 @@ def _driver(reservation, assignment=None) -> list[Recipient]:
     ]
 
 
+def _in_house_driver(reservation, assignment=None) -> list[Recipient]:
+    """Our own driver on the coverage (the trip's confirmed coverage unless ``assignment``
+    names one), by text and email; nobody for a trip an affiliate covers."""
+    assignment = assignment if assignment is not None else _confirmed(reservation)
+    if assignment is None or not assignment.is_in_house:
+        return []
+    driver = assignment.driver
+    return [
+        Recipient(
+            name=driver.name,
+            label=f"{driver.name} (in-house driver)",
+            phone=_phone(driver.phone),
+            email=(driver.email or "").strip(),
+            contact_id=None,
+            channels=("sms", "email"),
+        )
+    ]
+
+
 def _role(lead, role: str) -> list[Recipient]:
     label = LeadContact.Role(role).label
     return [_person(link.contact, label) for link in lead.people.all() if link.role == role]
@@ -209,6 +231,8 @@ def resolve(row, lead, reservation=None, *, assignment=None) -> list[Recipient]:
             out += _company(reservation, assignment)
         elif key == "driver":
             out += _driver(reservation, assignment)
+        elif key == "in_house_driver":
+            out += _in_house_driver(reservation, assignment)
         elif key == "planner":
             out += _planners(lead)
     return out

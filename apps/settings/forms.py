@@ -156,6 +156,7 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "require_driver_cell",
             "require_vehicle_desc",
             "require_vehicle_number",
+            "driver_page_show_passenger_contact",
             "critical_sms",
         ]
         widgets = {
@@ -172,6 +173,7 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "driver_info_critical_hours": forms.NumberInput(attrs=_NUM),
             "affiliate_unacked_warn_hours": forms.NumberInput(attrs=_NUM),
             "critical_sms": forms.Textarea(attrs=_AREA),
+            "driver_page_show_passenger_contact": forms.CheckboxInput(attrs=_CHECK),
         }
         labels = {
             "unassigned_warn_hours": "No coverage warning (hours)",
@@ -184,6 +186,11 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "driver_info_critical_hours": "Driver info missing critical (hours)",
             "affiliate_unacked_warn_hours": "Affiliate unacknowledged warning (hours)",
             "critical_sms": "Critical SMS numbers",
+            "driver_page_show_passenger_contact": "Show passenger info to vendor drivers",
+        }
+        help_texts = {
+            "driver_page_show_passenger_contact": "Off: vendor drivers see passenger names and "
+            "count, not the lead's mobile. Our own drivers always see it.",
         }
 
 

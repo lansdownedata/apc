@@ -67,6 +67,7 @@ def test_registry_contains_all_jobs():
         "gnet-farm-in",
         "cleaning-holds",
         "purge-import-files",
+        "purge-driver-pings",
     }
 
 

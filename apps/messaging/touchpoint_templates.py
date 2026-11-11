@@ -567,6 +567,7 @@ def _trip_context(reservation) -> dict[str, str]:
     the viewer's.
     """
     keys = (
+        "trip_ref",
         "trip_pickup_date",
         "trip_pickup_time",
         "trip_pickup_tz",
@@ -590,6 +591,7 @@ def _trip_context(reservation) -> dict[str, str]:
     if reservation is None:
         return ctx
 
+    ctx["trip_ref"] = reservation.reference
     pickup_at = reservation.pickup_at
     if pickup_at is not None:
         ctx["trip_pickup_date"] = f"{pickup_at:%b %-d, %Y}"
@@ -713,6 +715,7 @@ def build_context(lead, reservation=None) -> dict[str, str]:
         "review_link": "",  # filled by the review_request sender
         "confirm_link": "",  # filled by the reservation-anchored senders
         "ack_link": "",  # filled by the affiliate-confirmation sender
+        "driver_link": "",  # filled by the driver-link sends and the affiliate confirmation
         "balance_amount": f"${plan.balance_amount:,.2f}" if plan else "",
         "balance_due_date": f"{balance_due:%b %-d, %Y}" if balance_due else "",
         "card_last4": plan.card_last4 if plan else "",

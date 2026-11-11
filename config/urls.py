@@ -10,6 +10,13 @@ from django.views.generic import RedirectView, TemplateView
 
 from apps.accounts.views import StaffLoginView, accept_invite, login_code, login_code_resend
 from apps.core.cron import run_job
+from apps.dispatch.driver_link_views import (
+    driver_link_circling,
+    driver_link_no_show,
+    driver_link_page,
+    driver_link_ping,
+    driver_link_status,
+)
 from apps.integrations.views import (
     calendly_webhook,
     gnet_callback,
@@ -97,6 +104,12 @@ urlpatterns = [
     # Where Stripe sends the customer back after a 3-D Secure challenge.
     path("quote/<str:token>/done/", quote_deposit_success, name="quote_deposit_success"),
     # reservation-lifecycle acknowledgement pages (token-keyed, no login) — APC-18/19/20
+    # The driver's trip link: before `trip/<token>/` so "driver" is not read as a token.
+    path("trip/driver/<str:token>/", driver_link_page, name="driver_link"),
+    path("trip/driver/<str:token>/status/", driver_link_status, name="driver_link_status"),
+    path("trip/driver/<str:token>/circling/", driver_link_circling, name="driver_link_circling"),
+    path("trip/driver/<str:token>/no-show/", driver_link_no_show, name="driver_link_no_show"),
+    path("trip/driver/<str:token>/ping/", driver_link_ping, name="driver_link_ping"),
     path("trip/<str:token>/", trip_confirm, name="trip_confirm"),
     path("trip/affiliate/<str:token>/", affiliate_trip_confirm, name="affiliate_trip_confirm"),
     path("trip/o/<str:token>/", order_trip_confirm, name="order_trip_confirm"),

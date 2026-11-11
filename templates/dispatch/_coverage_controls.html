@@ -68,6 +68,24 @@
       {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
         {% include "dispatch/_ack_status_line.html" with confirmed_at=assignment.affiliate_confirmed_at who="the affiliate" %}
       {% endif %}
+      {% comment %} The driver's trip page (Task 9): copy it to hand over by phone, or send it
+         again. The line says what became of the automatic send; Resend is offered only when
+         there is somewhere to send and no send is mid-flight. {% endcomment %}
+      {% if assignment.status == 'confirmed' and driver_link_url %}
+        <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <button type="button" class="inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded disabled:opacity-50"
+                  :disabled="busy" @click="copyLink('{{ driver_link_url|escapejs }}')">
+            <i class="ti ti-copy text-[13px]"></i> Copy driver link
+          </button>
+          {% if link_state == 'sent' or link_state == 'not_sent' %}
+          <button type="button" class="inline-flex items-center gap-1 text-[12px] font-medium text-muted hover:text-ink transition-colors focus-gold rounded disabled:opacity-50"
+                  :disabled="busy" @click="resendLink('{% url 'dispatch_resend_driver_link' assignment.pk %}')">
+            <i class="ti ti-send text-[13px]"></i> Resend link
+          </button>
+          {% endif %}
+        </div>
+        {% if link_line %}<p class="text-[11.5px] mt-1 {% if link_state == 'sent' %}text-muted{% else %}text-rose-600{% endif %}" x-ref="linkLine" aria-live="polite">{{ link_line }}</p>{% endif %}
+      {% endif %}
       {% if assignment_insurance.alert %}
         <p class="text-[11.5px] text-rose-700 mt-1"><i class="ti ti-shield-x text-[13px]"></i> {{ assignment_insurance.alert }} for this trip's date</p>
       {% endif %}

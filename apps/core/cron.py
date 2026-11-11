@@ -13,7 +13,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from apps.dispatch import farm_in_push, monitoring
+from apps.dispatch import driver_link, farm_in_push, monitoring
 from apps.imports import services as import_services
 from apps.integrations import la_sync
 from apps.messaging import sender
@@ -46,6 +46,8 @@ JOBS: dict[str, Callable[[], int]] = {
     # APC-141: delete uploaded import workbooks after 3 days; run rows are kept (daily; needs a
     # cron-job.org entry).
     "purge-import-files": import_services.purge_files,
+    # Driver trip link: delete location pings after 90 days (daily; needs a cron-job.org entry).
+    "purge-driver-pings": driver_link.purge_driver_pings,
 }
 
 

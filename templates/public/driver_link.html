@@ -1,0 +1,192 @@
+{% extends "public/base_public.html" %}
+{% load static %}
+{% comment %}
+  The driver's trip page (spec 2026-11-10, layout B "next step first"), built for a 375px phone.
+  First paint is the server's; static/js/driver_page.js (Alpine `driverPage()`) keeps it in
+  step with each POST, so every part it can change carries x-show/x-text plus the server's
+  starting value. No money on this page, ever.
+{% endcomment %}
+{% block meta %}
+  <title>Your trip · All Pro Charter</title>
+  <meta name="robots" content="noindex">
+{% endblock %}
+{% block head_extra %}
+  {% if not dead and map_key %}
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  {% endif %}
+  {% if not dead %}<script src="{% static 'js/driver_page.js' %}?v={{ asset_version }}"></script>{% endif %}
+{% endblock %}
+{% block header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block schema %}{% endblock %}
+{% block marketing_embeds %}{% endblock %}
+{% block content %}
+{% if dead %}
+  <header class="bg-charcoal px-4 py-3">
+    <img src="{% static 'brand/apc-logo-ondark.svg' %}" alt="All Pro Charter" class="h-7 w-auto">
+  </header>
+  <div class="mx-auto max-w-md px-4 py-10 text-center">
+    <p class="text-base font-semibold text-ink">This trip is no longer assigned to you. Call {% if company_phone %}{{ company_phone }}{% else %}dispatch{% endif %} with questions.</p>
+    {% if company_phone %}
+      <a href="tel:{{ company_phone }}"
+         class="mt-6 inline-flex items-center gap-1.5 rounded-xl bg-onyx px-5 py-3 text-sm font-semibold text-gold transition-colors hover:bg-charcoal3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2">
+        {% icon "phone" class="h-4 w-4 shrink-0" %}Call dispatch
+      </a>
+    {% endif %}
+  </div>
+{% else %}
+<div x-data="driverPage()" class="min-h-screen pb-52">
+  <header class="flex items-center justify-between gap-3 bg-charcoal px-4 py-3">
+    <img src="{% static 'brand/apc-logo-ondark.svg' %}" alt="All Pro Charter" class="h-7 w-auto">
+    <span x-show="sharing" style="display: none"
+          class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+      <span class="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true"></span>Sharing location
+    </span>
+  </header>
+
+  <div class="mx-auto max-w-md px-3">
+    <section class="card mt-3 p-4" aria-label="Next step">
+      <div class="flex items-center justify-between gap-3">
+        <span class="rounded-full bg-goldl px-2.5 py-1 text-xs font-semibold text-goldd" x-text="state.status_label">{{ state.status_label }}</span>
+        <span class="text-xs text-muted">Trip {{ trip_ref }}{% if trip_date %} · {{ trip_date }}{% endif %}</span>
+      </div>
+      <div data-part="progress" class="mt-3 flex gap-1" role="progressbar" aria-label="Trip progress"
+           aria-valuemin="0" aria-valuemax="5" aria-valuenow="{{ state.step|add:1 }}" :aria-valuenow="state.step + 1">
+        <span class="h-1 flex-1 overflow-hidden rounded-full bg-line"><span class="block h-full bg-gold" x-show="reached(0)" {% if state.step < 0 %}style="display: none"{% endif %}></span></span>
+        <span class="h-1 flex-1 overflow-hidden rounded-full bg-line"><span class="block h-full bg-gold" x-show="reached(1)" {% if state.step < 1 %}style="display: none"{% endif %}></span></span>
+        <span class="h-1 flex-1 overflow-hidden rounded-full bg-line"><span class="block h-full bg-gold" x-show="reached(2)" {% if state.step < 2 %}style="display: none"{% endif %}></span></span>
+        <span class="h-1 flex-1 overflow-hidden rounded-full bg-line"><span class="block h-full bg-gold" x-show="reached(3)" {% if state.step < 3 %}style="display: none"{% endif %}></span></span>
+        <span class="h-1 flex-1 overflow-hidden rounded-full bg-line"><span class="block h-full bg-gold" x-show="reached(4)" {% if state.step < 4 %}style="display: none"{% endif %}></span></span>
+      </div>
+      {% if stops %}
+        {% include "public/_driver_next_stop.html" with which="pickup" eyebrow="Next · Pickup" stop=stops.0 %}
+        {% include "public/_driver_next_stop.html" with which="dropoff" eyebrow="Next · Drop-off" stop=stops|last %}
+      {% else %}
+        <p class="mt-5 text-sm text-muted">No stops on this trip yet. Call dispatch.</p>
+      {% endif %}
+    </section>
+
+    <p x-show="state.share_location && !locOff" {% if not state.share_location %}style="display: none"{% endif %}
+       class="mt-3 flex items-center gap-1.5 px-1 text-xs text-muted">
+      {% icon "map-pin" class="h-4 w-4 shrink-0" %}Sharing location with dispatch while this trip is under way
+    </p>
+    <p x-show="state.share_location && locOff" style="display: none"
+       class="mt-3 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+      {% icon "map-pin-off" class="h-4 w-4 shrink-0" %}Location is off — dispatch can't see you. Status updates still work.
+    </p>
+
+    <div class="mt-4 flex gap-1 rounded-xl bg-line/60 p-1" role="tablist" aria-label="Trip">
+      <button type="button" role="tab" id="tab-route" aria-controls="panel-route" aria-selected="true"
+              :aria-selected="tab === 'route' ? 'true' : 'false'" @click="showTab('route')"
+              class="flex-1 rounded-lg py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+              :class="tab === 'route' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'">Route</button>
+      <button type="button" role="tab" id="tab-details" aria-controls="panel-details" aria-selected="false"
+              :aria-selected="tab === 'details' ? 'true' : 'false'" @click="showTab('details')"
+              class="flex-1 rounded-lg py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+              :class="tab === 'details' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'">Details</button>
+      <button type="button" role="tab" id="tab-dispatch" aria-controls="panel-dispatch" aria-selected="false"
+              :aria-selected="tab === 'dispatch' ? 'true' : 'false'" @click="showTab('dispatch')"
+              class="flex-1 rounded-lg py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+              :class="tab === 'dispatch' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'">Dispatch</button>
+    </div>
+
+    <section id="panel-route" role="tabpanel" aria-labelledby="tab-route" x-show="tab === 'route'" class="card mt-2 overflow-hidden">
+      {% if map_key %}<div x-ref="map" x-show="mapOn && !mapFailed" style="display: none" class="h-56 w-full bg-line"></div>{% endif %}
+      <ol data-part="stops" class="divide-y divide-line px-4">
+        {% for stop in stops %}
+          <li class="flex gap-3 py-3">
+            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-onyx text-xs font-bold text-gold" aria-hidden="true">{{ stop.n }}</span>
+            <div class="min-w-0">
+              <p class="text-xs text-muted">{{ stop.kind }}{% if stop.time_label %} · {{ stop.time_label }}{% endif %}</p>
+              <p class="text-sm font-semibold text-ink">{{ stop.name|default:stop.address }}</p>
+              {% if stop.name and stop.address %}<p class="text-sm text-muted">{{ stop.address }}</p>{% endif %}
+              {% if stop.flight %}<p class="text-sm text-muted">{{ stop.flight }}</p>{% endif %}
+              {% if stop.note %}<p class="mt-1 text-sm text-ink">{{ stop.note }}</p>{% endif %}
+            </div>
+          </li>
+        {% empty %}
+          <li class="py-4 text-sm text-muted">No stops on this trip yet.</li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section id="panel-details" role="tabpanel" aria-labelledby="tab-details" x-show="tab === 'details'" style="display: none" class="card mt-2 p-4">
+      <dl class="grid grid-cols-3 gap-x-3 gap-y-3 text-sm">
+        <dt class="text-muted">Passengers</dt>
+        <dd class="col-span-2 font-medium text-ink">
+          {% for name in passengers %}<p>{{ name }}</p>{% empty %}<p class="text-muted">Names not on file</p>{% endfor %}
+          {% if lead_mobile %}<a href="tel:{{ lead_mobile }}" class="rounded text-goldd underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">{{ lead_mobile }}</a>{% endif %}
+        </dd>
+        <dt class="text-muted">Pax</dt>
+        <dd class="col-span-2 font-medium text-ink">{{ pax_count|default:"—" }}</dd>
+        {% if vehicle %}<dt class="text-muted">Vehicle</dt><dd class="col-span-2 font-medium text-ink">{{ vehicle }}</dd>{% endif %}
+        {% if sign_name %}<dt class="text-muted">Sign</dt><dd class="col-span-2 font-medium text-ink">{{ sign_name }}</dd>{% endif %}
+        {% if flight_lines %}
+          <dt class="text-muted">Flights</dt>
+          <dd class="col-span-2 font-medium text-ink">{% for line in flight_lines %}<p>{{ line }}</p>{% endfor %}</dd>
+        {% endif %}
+      </dl>
+    </section>
+
+    <section id="panel-dispatch" role="tabpanel" aria-labelledby="tab-dispatch" x-show="tab === 'dispatch'" style="display: none" class="card mt-2 space-y-2 p-4">
+      {% if company_phone %}
+        <div class="flex gap-2">
+          <a href="tel:{{ company_phone }}"
+             class="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface2 py-3 text-sm font-semibold text-ink ring-1 ring-line transition-colors hover:bg-goldl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+            {% icon "phone" class="h-4 w-4 shrink-0" %}Call dispatch
+          </a>
+          <a href="sms:{{ company_phone }}"
+             class="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface2 py-3 text-sm font-semibold text-ink ring-1 ring-line transition-colors hover:bg-goldl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+            {% icon "message" class="h-4 w-4 shrink-0" %}Text dispatch
+          </a>
+        </div>
+      {% endif %}
+      <button type="button" @click="reportNoShow()"
+              class="flex w-full items-center justify-center gap-1.5 rounded-xl py-3 text-sm font-semibold text-rose-700 ring-1 ring-rose-200 transition-colors hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500">
+        {% icon "user-x" class="h-4 w-4 shrink-0" %}Report a no-show
+      </button>
+    </section>
+  </div>
+
+  <div class="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface shadow-lg">
+    <div class="mx-auto max-w-md px-4 pb-5 pt-3">
+      <p data-part="thanks" x-show="state.done" {% if not state.done %}style="display: none"{% endif %}
+         class="py-3 text-center text-base font-semibold text-ink">Trip complete · thank you</p>
+      {% if not state.done %}
+      <div x-show="!state.done">
+        <p data-part="opens" x-show="!state.window_open && state.opens_at_label" x-text="opensLine"
+           {% if state.window_open or not state.opens_at_label %}style="display: none"{% endif %}
+           class="mb-2 text-center text-sm font-medium text-muted">Opens at {{ state.opens_at_label }}, 6 hours before pickup</p>
+        <p data-part="message" x-show="state.message" x-text="state.message"
+           {% if not state.message %}style="display: none"{% endif %}
+           class="mb-2 text-center text-sm font-medium text-muted">{{ state.message }}</p>
+        <p data-part="notice" role="status" aria-live="polite" x-show="notice" x-text="notice" style="display: none"
+           class="mb-2 text-center text-sm font-semibold text-rose-700"></p>
+        <button data-part="go" type="button" @click="advance()"
+                x-show="state.next" {% if not state.next %}style="display: none"{% endif %}
+                :disabled="busy || !state.window_open" {% if not state.window_open %}disabled{% endif %}
+                :aria-busy="busy ? 'true' : 'false'"
+                class="flex w-full items-center justify-center gap-2 rounded-2xl bg-onyx py-4 text-lg font-bold text-gold transition-colors hover:bg-charcoal3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">{% icon "loader-2" class="h-5 w-5 spin" attrs='x-show="busy" style="display: none"' %}<span x-text="state.next ? state.next.label : ''">{{ state.next.label }}</span></button>
+        <div class="mt-3 flex items-center justify-between gap-3 text-sm">
+          <button data-part="back" type="button" @click="goBack()"
+                  x-show="state.back" {% if not state.back %}style="display: none"{% endif %}
+                  :disabled="busy || !state.window_open" {% if not state.window_open %}disabled{% endif %}
+                  class="rounded text-muted underline underline-offset-4 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold disabled:cursor-not-allowed disabled:opacity-50">Need to go back?</button>
+          <button data-part="circling" type="button" @click="toggleCircling()"
+                  x-show="state.can_circle" {% if not state.can_circle %}style="display: none"{% endif %}
+                  aria-pressed="{% if state.circling %}true{% else %}false{% endif %}" :aria-pressed="state.circling ? 'true' : 'false'"
+                  :disabled="busy || !state.window_open" {% if not state.window_open %}disabled{% endif %}
+                  class="ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-semibold ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold disabled:cursor-not-allowed disabled:opacity-50"
+                  :class="state.circling ? 'bg-amber-100 text-amber-800 ring-amber-300' : 'text-muted ring-line hover:text-ink'">
+            {% icon "circle-dashed" class="h-4 w-4 shrink-0" %}Circling
+          </button>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {{ config|json_script:"driver-data" }}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Exists, OuterRef, Prefetch
@@ -20,12 +21,13 @@ from apps.payments import services as payment_services
 from apps.reservations import editor as reservation_editor
 from apps.reservations import processing
 from apps.reservations import services as reservation_services
+from apps.reservations.acknowledgements import driver_link_url
 from apps.reservations.models import Reservation, Stop, TripStatusEvent
 from apps.tasks import selectors as task_selectors
 from apps.tasks.selectors import attach_green_lit
 from apps.vendors.models import Vendor, VendorDriver
 
-from . import selectors, services
+from . import driver_link, selectors, services
 from .board_filters import BoardFilters
 from .models import Assignment, DispatchAlertConfig
 
@@ -278,6 +280,23 @@ def coverage_controls(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+LINK_LINES = {
+    "sent": "Link sent",
+    "not_sent": "Not sent",
+}
+NO_EMAIL_LINE = "No email on file — copy the driver link"
+NO_ADDRESS_LINE = "No mobile or email on file — copy the driver link"
+
+
+def link_state_line(assignment: Assignment) -> tuple[str, str]:
+    """The drawer's one-line driver link send state: (state, text). The text is empty when
+    there is nothing to say (an offer, or a send still in flight)."""
+    state = driver_link.link_send_state(assignment)
+    if state == "no_address":
+        return state, NO_ADDRESS_LINE if assignment.is_in_house else NO_EMAIL_LINE
+    return state, LINK_LINES.get(state, "")
+
+
 def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     """Everything the coverage fragment draws, for whichever surface is drawing it.
 
@@ -301,9 +320,23 @@ def coverage_context(trip: Reservation, *, search: str = "") -> dict:
     if farmed_out and assignment.has_driver_info:
         missing = services.missing_driver_fields(assignment, DispatchAlertConfig.load())
         held_for = " and ".join(missing)
+    confirmed = bool(
+        assignment
+        and assignment.status == Assignment.Status.CONFIRMED
+        and driver_link.is_live(assignment)
+    )
+    link_state, link_line = link_state_line(assignment) if confirmed else ("", "")
     return {
         "trip": trip,
         "assignment": assignment,
+        # The driver link, absolute like the one `send_link` sends, and what became of that send.
+        "driver_link_url": (
+            driver_link_url(assignment, base_url=settings.PUBLIC_BASE_URL or "")
+            if confirmed
+            else ""
+        ),
+        "link_state": link_state,
+        "link_line": link_line,
         # Mirrors `services.send_back` and its view: confirmed affiliate coverage, not
         # GNet, on a trip that is neither done nor cancelled.
         "can_send_back": bool(
@@ -739,3 +772,17 @@ def send_back(request: HttpRequest, pk: int) -> JsonResponse:
     except services.AssignmentError as exc:
         return _fail(exc)
     return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
+def resend_driver_link(request: HttpRequest, pk: int) -> JsonResponse:
+    """Send confirmed coverage its driver link again (the drawer's Resend link)."""
+    assignment = get_object_or_404(Assignment.objects.select_related("reservation"), pk=pk)
+    if assignment.status != Assignment.Status.CONFIRMED:
+        return _fail(services.AssignmentError("Only confirmed coverage has a driver link."))
+    if not driver_link.is_live(assignment):
+        return _fail(services.AssignmentError("This driver link has expired."))
+    result = driver_link.send_link(assignment)
+    _, line = link_state_line(assignment)
+    return JsonResponse({"ok": bool(result and result.sent), "state": line})
