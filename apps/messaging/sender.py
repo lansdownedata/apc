@@ -803,7 +803,7 @@ def _review(
             errors.append(NO_REVIEW_LINK)
             _record(tp, row, "sms", person, phone, "", "failed", NO_REVIEW_LINK, line=line)
             continue
-        Review.objects.create(
+        review = Review.objects.create(
             lead=tp.lead,
             contact_id=person.contact_id,
             podium_review_invite_uid=invite.get("uid", ""),
@@ -817,6 +817,8 @@ def _review(
         except (PodiumAPIError, PodiumNotConnected) as exc:
             errors.append(str(exc))
             _record(tp, row, "sms", person, phone, "", "failed", str(exc), line=line)
+            review.delivery_status = Review.DeliveryStatus.FAILED
+            review.save(update_fields=["delivery_status", "updated_at"])
         else:
             sent_now.append(
                 _record(tp, row, "sms", person, phone, "", "sent", "", provider_id, line=line)
