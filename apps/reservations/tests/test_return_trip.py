@@ -96,7 +96,7 @@ def test_return_trip_starts_with_no_la_link_or_recognised_revenue():
     ret = create_return_trip(out)
 
     assert ret.la_reservation_id == ""
-    assert ret.trip_status == ""
+    assert ret.trip_status == Reservation.TripStatus.PENDING
     assert ret.revenue_status == Reservation.RevenueStatus.DEFERRED
     assert ret.recognized_amount == 0
 

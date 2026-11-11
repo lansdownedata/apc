@@ -107,7 +107,7 @@ def test_group_clones_start_with_no_la_link_and_deferred_revenue():
 
     for clone in res.lead.reservations.exclude(pk=res.pk):
         assert clone.la_reservation_id == ""
-        assert clone.trip_status == ""
+        assert clone.trip_status == Reservation.TripStatus.PENDING
         assert clone.revenue_status == Reservation.RevenueStatus.DEFERRED
         assert clone.recognized_amount == 0
         assert clone.recognized_at is None

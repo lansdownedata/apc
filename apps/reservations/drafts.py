@@ -13,6 +13,7 @@ from apps.audit.children import track_children
 from .flights import link_flights
 from .models import Reservation, Stop
 from .passengers import parse_passengers, save_passengers
+from .services import initial_status
 
 
 class DraftError(ValueError):
@@ -403,6 +404,7 @@ def save_reservation_from_draft(
         instance = Reservation(lead=lead)
         last = lead.reservations.order_by("-sort_order").first()
         instance.sort_order = (last.sort_order + 1) if last else 0
+        instance.trip_status = initial_status(lead)
         # A trip added to a booked order has no prepaid money behind it: its booked
         # total is 0, so processing charges its whole price (spec 2026-10-25 §4.4).
         if lead.status == lead.Status.BOOKED:

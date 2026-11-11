@@ -53,7 +53,7 @@ def test_set_status_refuses_an_uncovered_trip(logged_in_client):
 
     assert resp.status_code == 400
     trip.refresh_from_db()
-    assert trip.trip_status == ""
+    assert trip.trip_status == Reservation.TripStatus.PENDING
 
 
 def test_set_status_refuses_an_offer_not_yet_confirmed(logged_in_client):
@@ -75,7 +75,7 @@ def test_set_status_refuses_a_status_outside_the_curated_set(logged_in_client):
 
     assert resp.status_code == 400
     trip.refresh_from_db()
-    assert trip.trip_status == ""
+    assert trip.trip_status == Reservation.TripStatus.PENDING
 
 
 def test_set_status_fires_the_configured_customer_notification(logged_in_client):

@@ -256,6 +256,13 @@ _STATUS_EVENTS = frozenset(
 )
 
 
+def initial_status(lead) -> str:
+    """The status a new trip on `lead` starts at: Unassigned once booked, else Pending."""
+    if lead.status == lead.Status.BOOKED:
+        return Reservation.TripStatus.UNASSIGNED
+    return Reservation.TripStatus.PENDING
+
+
 def set_trip_status(
     reservation: Reservation,
     status: str,

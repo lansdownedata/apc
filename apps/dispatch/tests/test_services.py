@@ -373,7 +373,7 @@ def test_confirmed_coverage_shows_the_trip_assigned():
     res = _booked_trip()
     offer = services.send_offer(res, VendorFactory(), payout=Decimal("140.00"))
     res.refresh_from_db()
-    assert res.trip_status == ""
+    assert res.trip_status == Reservation.TripStatus.PENDING
 
     services.confirm(offer)
 

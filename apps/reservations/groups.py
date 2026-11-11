@@ -21,6 +21,7 @@ from django.db import transaction
 from apps.audit.children import track_children
 
 from .models import Reservation, Stop
+from .services import initial_status
 
 
 def _schedule_new_members(lead) -> None:
@@ -173,7 +174,7 @@ def clone_reservation(
     clone.source_leg_id = ""
     clone.la_reservation_id = ""
     clone.la_confirmation = ""
-    clone.trip_status = ""
+    clone.trip_status = initial_status(source.lead)
     # A fresh trip nobody has seen yet must not be born "confirmed" because the source
     # happened to be — that stamp belongs to a specific customer looking at this specific
     # trip's sheet (APC-19).

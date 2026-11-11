@@ -210,7 +210,7 @@ class Reservation(TimeStampedModel):
     la_reservation_id = models.CharField(max_length=64, blank=True)
     la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)
     trip_status = models.CharField(
-        max_length=32, choices=TripStatus.choices, blank=True, default=""
+        max_length=32, choices=TripStatus.choices, blank=True, default=TripStatus.PENDING
     )
     sort_order = models.PositiveIntegerField(default=0)
 

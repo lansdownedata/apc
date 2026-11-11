@@ -402,6 +402,17 @@ class BookLeadError(Exception):
     """Raised when a lead cannot be converted to Booked (e.g. it is Lost)."""
 
 
+def _release_pending_trips(lead: Lead) -> None:
+    """Booking moves every Pending (or blank) trip to Unassigned; other statuses stay."""
+    from apps.reservations.models import Reservation, TripStatusEvent
+    from apps.reservations.services import set_trip_status
+
+    for trip in lead.reservations.filter(trip_status__in=[Reservation.TripStatus.PENDING, ""]):
+        set_trip_status(
+            trip, Reservation.TripStatus.UNASSIGNED, source=TripStatusEvent.Source.SYSTEM
+        )
+
+
 def book_lead(lead: Lead) -> Lead:
     """Convert a new or quoted lead to Booked without recording a payment.
 
@@ -435,6 +446,8 @@ def book_lead(lead: Lead) -> Lead:
         # After the totals are frozen and the plan exists: a confirmation already due goes
         # out on commit, which outside a transaction is right here.
         events.schedule_dates(lead)
+
+    _release_pending_trips(lead)
 
     tasks.sync(lead)
     if already_booked:
