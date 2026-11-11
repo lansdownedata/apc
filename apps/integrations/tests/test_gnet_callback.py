@@ -180,7 +180,7 @@ def test_cancel_puts_the_trip_back_to_unassigned(client, settings):
     assert (event.status, event.source) == ("unassigned", "system")
 
 
-def test_confirmed_shows_the_trip_assigned(client, settings):
+def test_confirmed_shows_the_trip_dispatched(client, settings):
     from apps.reservations.models import Reservation
 
     settings.GNET_CALLBACK_SECRET = SECRET
@@ -189,7 +189,7 @@ def test_confirmed_shows_the_trip_assigned(client, settings):
     _signed_post(client, {"transactionId": "TX-1", "status": "CONFIRMED"})
 
     assignment.reservation.refresh_from_db()
-    assert assignment.reservation.trip_status == Reservation.TripStatus.ASSIGNED
+    assert assignment.reservation.trip_status == Reservation.TripStatus.DISPATCHED
 
 
 def test_an_affiliate_cancel_does_not_echo_a_delete_back_to_the_gateway(client, settings):

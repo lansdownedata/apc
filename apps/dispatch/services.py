@@ -98,6 +98,9 @@ def _claim(
         # In-house coverage carries its driver from the start, so its info is on file now.
         assignment.stamp_driver_info(DispatchAlertConfig.load())
         assignment.save()
+        if vendor is not None and reservation.needs_farm_out:
+            reservation.needs_farm_out = False
+            reservation.save(update_fields=["needs_farm_out", "updated_at"])
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
     _sync_tasks(reservation)
@@ -112,14 +115,17 @@ def _sync_tasks(reservation: Reservation) -> None:
 
 
 _TS = Reservation.TripStatus
-# Confirmed coverage shows the trip Assigned unless it has already got further (Moe,
-# 2026-11-10): a trip already Dispatched or under way is never moved back.
-_BEFORE_ASSIGNED = frozenset(
+# An offer shows the trip Assigned; acceptance or direct coverage shows it Dispatched
+# (Moe, 2026-11-10). Coverage only moves a trip still in this set: a trip already
+# Dispatched or under way is never moved back. The removed legacy values stay until the
+# status cleanup finishes.
+_BEFORE_DISPATCHED = frozenset(
     {
         "",
-        _TS.UNASSIGNED,
-        _TS.FARM_OUT_UNASSIGNED,
         _TS.PENDING,
+        _TS.UNASSIGNED,
+        _TS.ASSIGNED,
+        _TS.FARM_OUT_UNASSIGNED,
         _TS.OFFERED,
         _TS.OFFERED_TO_AFFILIATE,
     }
@@ -150,14 +156,15 @@ def _reopen(reservation: Reservation) -> None:
 
 
 def _on_assignment_confirmed(assignment: Assignment) -> None:
-    """Show the trip Assigned, then queue the T-48h affiliate confirmation for a
+    """Show the trip Dispatched, then queue the T-48h affiliate confirmation for a
     newly-confirmed farm-out (APC-20), and the driver message if the trip is already
     dispatched with details on file."""
     from apps.messaging import events
 
     reservation = assignment.reservation
-    if reservation.trip_status in _BEFORE_ASSIGNED:
-        _set_status(reservation, _TS.ASSIGNED)
+    reservation.refresh_from_db(fields=["trip_status"])
+    if reservation.trip_status in _BEFORE_DISPATCHED:
+        _set_status(reservation, _TS.DISPATCHED)
     events.schedule_dates(reservation.lead, reservation)
     events.sync_waiting(reservation)
 
@@ -233,6 +240,9 @@ def send_offer(
         status=Assignment.Status.OFFERED,
         channel=channel,
     )
+    reservation.refresh_from_db(fields=["trip_status"])
+    if reservation.trip_status in _BEFORE_DISPATCHED and reservation.trip_status != _TS.ASSIGNED:
+        _set_status(reservation, _TS.ASSIGNED)
 
     if channel == Assignment.Channel.GNET:
         gnet_sync.push_assignment(assignment)
@@ -353,9 +363,13 @@ def _resolve(
             f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}."
         )
     was_confirmed = assignment.status == Assignment.Status.CONFIRMED
+    was_offered = assignment.status == Assignment.Status.OFFERED
     assignment.status = status
     assignment.resolved_at = timezone.now()
     fields = ["status", "resolved_at", "updated_at"]
+    if status == Assignment.Status.CONFIRMED and was_offered:
+        assignment.offer_accepted_at = assignment.resolved_at
+        fields.append("offer_accepted_at")
     if note:
         assignment.note = note
         fields.append("note")

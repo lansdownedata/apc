@@ -369,20 +369,20 @@ def _status_events(res) -> list[tuple[str, str]]:
     )
 
 
-def test_confirmed_coverage_shows_the_trip_assigned():
+def test_an_offer_shows_assigned_and_acceptance_shows_dispatched():
     res = _booked_trip()
     offer = services.send_offer(res, VendorFactory(), payout=Decimal("140.00"))
     res.refresh_from_db()
-    assert res.trip_status == Reservation.TripStatus.PENDING
+    assert res.trip_status == Reservation.TripStatus.ASSIGNED
 
     services.confirm(offer)
 
     res.refresh_from_db()
-    assert res.trip_status == Reservation.TripStatus.ASSIGNED
-    assert _status_events(res) == [("assigned", "system")]
+    assert res.trip_status == Reservation.TripStatus.DISPATCHED
+    assert _status_events(res) == [("assigned", "system"), ("dispatched", "system")]
 
 
-def test_marking_assigned_and_an_in_house_driver_show_the_trip_assigned():
+def test_marking_assigned_and_an_in_house_driver_show_the_trip_dispatched():
     from apps.fleet.factories import DriverFactory
 
     by_phone, in_house = _booked_trip(), _booked_trip()
@@ -391,7 +391,7 @@ def test_marking_assigned_and_an_in_house_driver_show_the_trip_assigned():
 
     for res in (by_phone, in_house):
         res.refresh_from_db()
-        assert res.trip_status == Reservation.TripStatus.ASSIGNED
+        assert res.trip_status == Reservation.TripStatus.DISPATCHED
 
 
 def test_confirming_never_moves_a_trip_back_to_assigned():
@@ -443,15 +443,15 @@ def test_the_reset_sends_the_customer_nothing():
     assert not added.exists()
 
 
-def test_a_reassigned_trip_is_assigned_again_once_the_new_coverage_is_confirmed():
+def test_a_reassigned_trip_is_dispatched_again_once_the_new_coverage_is_confirmed():
     res = _booked_trip()
     first = services.assign_direct(res, VendorFactory(), payout=Decimal("140.00"))
     services.withdraw(first)
     services.assign_direct(res, VendorFactory(), payout=Decimal("150.00"))
 
     res.refresh_from_db()
-    assert res.trip_status == Reservation.TripStatus.ASSIGNED
-    assert [s for s, _ in _status_events(res)] == ["assigned", "unassigned", "assigned"]
+    assert res.trip_status == Reservation.TripStatus.DISPATCHED
+    assert [s for s, _ in _status_events(res)] == ["dispatched", "unassigned", "dispatched"]
 
 
 @pytest.mark.parametrize(
@@ -485,7 +485,7 @@ def test_releasing_trips_that_stop_needing_coverage_writes_no_status():
 
     res.refresh_from_db()
     assert res.trip_status == Reservation.TripStatus.DISPATCHED
-    assert [s for s, _ in _status_events(res)] == ["assigned"]
+    assert [s for s, _ in _status_events(res)] == ["dispatched"]
 
 
 def test_a_reset_on_a_farmed_in_trip_pushes_nothing_to_gnet():

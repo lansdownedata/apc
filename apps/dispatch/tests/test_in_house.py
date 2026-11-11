@@ -389,6 +389,13 @@ def test_board_names_the_driver_with_a_house_icon(logged_in_client):
 # the drawer's Dispatched button (Reservation.trip_status).
 
 
+def _back_to_assigned(trip):
+    """In-house coverage now lands Dispatched; these cases check the Assigned display."""
+    from apps.reservations.models import Reservation
+
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.ASSIGNED)
+
+
 def _row(body, trip):
     return re.search(rf'<tr data-trip="{trip.pk}".*?</tr>', body, re.DOTALL).group(0)
 
@@ -398,6 +405,7 @@ def test_an_in_house_trip_is_assigned_until_it_is_dispatched():
 
     trip = _trip()
     a = services.assign_in_house(trip, DriverFactory())
+    trip.trip_status = Reservation.TripStatus.ASSIGNED
     assert selectors.coverage_state(trip, a) == "assigned"
     trip.trip_status = Reservation.TripStatus.DISPATCHED
     assert selectors.coverage_state(trip, a) == "dispatched"
@@ -418,6 +426,7 @@ def test_the_board_shows_assigned_then_dispatched_for_our_own_driver(logged_in_c
     day = timezone.localdate() + timedelta(days=30)
     trip = _trip(pickup_date=day)
     services.assign_in_house(trip, DriverFactory(name="Marcus Bell"))
+    Reservation.objects.filter(pk=trip.pk).update(trip_status=Reservation.TripStatus.ASSIGNED)
 
     def badge() -> str:
         body = logged_in_client.get(reverse("dispatch_board"), {"day": day.isoformat()})
@@ -443,6 +452,7 @@ def test_the_board_still_counts_an_assigned_trip_as_covered(logged_in_client):
 def test_the_drawer_says_assigned_for_our_own_driver(logged_in_client):
     trip = _trip()
     services.assign_in_house(trip, DriverFactory(name="Marcus Bell"))
+    _back_to_assigned(trip)
     body = _panel(logged_in_client, trip)
     assert "Assigned · In-house" in body
     assert "Confirmed" not in body
@@ -453,6 +463,7 @@ def test_the_editor_draws_the_same_state_as_the_drawer(logged_in_client):
     Assigned."""
     trip = _trip()
     services.assign_in_house(trip, DriverFactory())
+    _back_to_assigned(trip)
     body = logged_in_client.get(reverse("dispatch_coverage_controls", args=[trip.pk]))
     assert "Assigned · In-house" in body.content.decode()
 

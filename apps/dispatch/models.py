@@ -175,6 +175,26 @@ class Assignment(TimeStampedModel):
         }
 
     @property
+    def is_affiliate_coverage(self) -> bool:
+        """Badge "Assigned to affiliate": an affiliate holds the trip, offered or confirmed."""
+        from apps.reservations.models import Reservation
+
+        TS = Reservation.TripStatus
+        return (
+            self.is_active
+            and self.vendor_id is not None
+            and self.reservation.trip_status in (TS.ASSIGNED, TS.DISPATCHED)
+        )
+
+    @property
+    def driver_assigned(self) -> bool:
+        """Badge "Driver assigned": in-house with a driver, or the affiliate's driver
+        details are on file."""
+        if self.is_in_house:
+            return True
+        return self.driver_info_at is not None
+
+    @property
     def has_driver_info(self) -> bool:
         return self.driver_info is not None
 
