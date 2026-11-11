@@ -6,16 +6,10 @@ link's aria-label so it survives the collapsed sidebar).
 Filtering is settingsMenu() in static/js/app.js; it only toggles x-show, never builds markup.
 {% endcomment %}
 <div x-data="settingsMenu()" class="flex flex-col gap-0.5">
-  <a href="{% url 'dashboard' %}" title="Back to portal"
-     class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-slate-400">
-    <i class="ti ti-arrow-left text-[18px] shrink-0"></i>
-    <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Back to portal</span>
-  </a>
-
   <input type="search" x-model="q" x-show="navOpen"
          @keydown.enter.prevent="go()" @keydown.escape="q = ''"
          aria-label="Search settings" placeholder="Search settings…" autocomplete="off"
-         class="w-full mt-1 mb-1 rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] text-slate-200 placeholder:text-slate-500 focus-gold">
+         class="w-full mt-1 mb-3 rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] text-slate-200 placeholder:text-slate-500 focus-gold">
 
   {% for section in sections %}
   <div data-settings-group class="flex flex-col gap-0.5">

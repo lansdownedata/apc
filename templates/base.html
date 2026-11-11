@@ -53,10 +53,11 @@
 <div class="flex h-screen overflow-hidden">
 
   <!-- ============================================================ SIDEBAR -->
-  <aside class="sidebar text-slate-300 flex flex-col shrink-0 z-30 transition-all duration-300 fixed lg:static inset-y-0 left-0"
+  <aside class="sidebar {% block sidebar_class %}{% endblock %} text-slate-300 flex flex-col shrink-0 z-30 transition-all duration-300 fixed lg:static inset-y-0 left-0"
          :class="navOpen ? 'w-[214px]' : 'w-[214px] -translate-x-full lg:translate-x-0 lg:w-[72px]'">
 
     <!-- brand -->
+    {% block sidebar_brand %}
     <div class="relative px-4 pt-5 pb-4">
       <div class="brand-glow absolute inset-0 pointer-events-none"></div>
       <a href="{% url 'dashboard' %}" class="relative flex items-center gap-2.5">
@@ -68,6 +69,7 @@
         </div>
       </a>
     </div>
+    {% endblock %}
 
     <!-- nav -->
     <nav class="flex-1 min-h-0 overflow-y-auto scroll-dark px-2.5 mt-1 flex flex-col gap-0.5 text-[13px]">

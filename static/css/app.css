@@ -39,6 +39,8 @@
   /* —— sidebar frame (always dark, both themes) ————————————————— */
   --side-1:       23  28  36;   /* #171C24 */
   --side-2:       15  19  24;   /* #0F1318 */
+  --side-set-1:   31  39  51;   /* #1F2733  Settings: lighter, cooler */
+  --side-set-2:   21  27  37;   /* #151B25 */
 
   /* —— effects ———————————————————————————————————————————————— */
   --ring:        rgb(var(--gold) / .30);
@@ -113,6 +115,11 @@ header, aside, main, .wash-gold {
   background: linear-gradient(180deg, rgb(var(--side-1)) 0%, rgb(var(--side-2)) 100%);
   border-right: 1px solid rgb(255 255 255 / .04);
 }
+/* Settings swaps the sidebar to its own menu; a different shade and a gold-ruled header make
+   the swap visible at a glance (see templates/settings/base.html). */
+.sidebar-settings { background: linear-gradient(180deg, rgb(var(--side-set-1)) 0%, rgb(var(--side-set-2)) 100%); }
+.sidebar-settings .nav-active { background: rgb(255 255 255 / .07); }
+.settings-head { margin: 0 .625rem .75rem; padding-left: 0; padding-right: 0; border-bottom: 1px solid rgb(var(--gold) / .28); }
 .brand-glow { background: radial-gradient(140px 70px at 26% 18%, rgb(var(--gold) / .20), transparent 72%); }
 
 .card {

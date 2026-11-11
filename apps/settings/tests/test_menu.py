@@ -80,6 +80,38 @@ def test_overview_is_current(owner):
     assert "nav-active" not in _anchor(html, "Vehicle types")
 
 
+def _aside_tag(html: str) -> str:
+    match = re.search(r"<aside\b[^>]*>", html)
+    assert match, "no sidebar"
+    return match.group(0)
+
+
+def test_settings_sidebar_has_a_settings_header_instead_of_the_brand(owner):
+    html = _overview(owner)
+
+    head = re.search(r"<div\b[^>]*data-settings-head[^>]*>.*?</div>\s*</div>", html, re.S)
+    assert head, "no settings header"
+    assert re.search(
+        rf'<a\b[^>]*href="{re.escape(reverse("dashboard"))}"[^>]*aria-label="Back to portal"',
+        head.group(0),
+    )
+    assert ">Settings<" in head.group(0)
+    assert "LEAD MANAGER" not in html
+    assert "sidebar-settings" in _aside_tag(html)
+
+
+def test_back_to_portal_is_only_in_the_header(owner):
+    assert _overview(owner).count("Back to portal") == 2  # the link's title + aria-label
+
+
+def test_dashboard_keeps_the_brand_and_the_plain_sidebar(owner):
+    html = owner.get(reverse("dashboard")).content.decode()
+
+    assert "LEAD MANAGER" in html
+    assert "data-settings-head" not in html
+    assert "sidebar-settings" not in _aside_tag(html)
+
+
 def test_dashboard_keeps_the_portal_menu(owner):
     html = owner.get(reverse("dashboard")).content.decode()
 

@@ -1,4 +1,19 @@
 {% extends "base.html" %}
 {% load settings_menu %}
-{# Every Settings page: the sidebar shows the settings menu instead of the portal nav. #}
+{% comment %}
+Every Settings page: the sidebar takes its own shade (.sidebar-settings), the brand block becomes
+a "Settings" header with the way back to the portal, and the nav shows the settings menu.
+{% endcomment %}
+{% block sidebar_class %}sidebar-settings{% endblock %}
+{% block sidebar_brand %}
+<div data-settings-head class="settings-head flex items-center gap-2 pt-5 pb-4">
+  <a href="{% url 'dashboard' %}" title="Back to portal" aria-label="Back to portal"
+     class="w-9 h-9 shrink-0 grid place-items-center rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors focus-gold">
+    <i class="ti ti-arrow-left text-[18px]"></i>
+  </a>
+  <div x-show="navOpen" x-transition.opacity class="min-w-0 leading-none">
+    <div class="font-display text-[18px] font-semibold text-white tracking-tight">Settings</div>
+  </div>
+</div>
+{% endblock %}
 {% block sidebar_nav %}{% settings_menu %}{% endblock %}
