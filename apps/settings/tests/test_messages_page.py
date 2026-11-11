@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -164,3 +166,16 @@ def test_switches_use_the_one_accent_and_have_a_hover(client):
     assert "bg-emerald-600" not in html
     assert "'text-ink' : 'text-muted'" in html
     assert html.count("'bg-gold hover:bg-goldd' : 'bg-slate-300 hover:bg-slate-400'") >= 2
+
+
+def test_the_on_off_segment_and_tags_use_the_theme_surfaces(client):
+    """MSG-01/03 bug 4: a white active segment and slate tags don't remap in dark mode,
+    where text-ink turns light: near-white on white. They use the theme's surfaces."""
+    _admin(client)
+    seed()
+    html = _get(client)
+    label = html.index('aria-label="On or off"')
+    nav = html[html.rindex("<nav", 0, label) : html.index("</nav>", label)]
+    assert "bg-surface2" in nav and "bg-surface font-semibold text-ink" in nav
+    for light_only in (r"bg-slate-100\b", r"bg-white font-semibold", r"text-slate-600\b"):
+        assert not re.search(light_only, html), light_only

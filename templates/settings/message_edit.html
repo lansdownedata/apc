@@ -10,8 +10,8 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h1 class="font-display text-[21px] font-semibold text-ink tracking-tight">{{ title }}</h1>
-          {% if row.seeded %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Built-in</span>{% elif not new %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Added</span>{% endif %}
-          {% if tag == "Edited" %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Edited</span>{% endif %}
+          {% if row.seeded %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-surface2 text-muted">Built-in</span>{% elif not new %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-surface2 text-muted">Added</span>{% endif %}
+          {% if tag == "Edited" %}<span class="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-surface2 text-muted">Edited</span>{% endif %}
         </div>
         <p class="text-[12.5px] text-muted mt-0.5">{{ section_label }}</p>
       </div>
@@ -50,7 +50,7 @@
             <input type="hidden" name="audience" value="{{ row.audience }}">
             {% for key in stored_recipients %}<input type="hidden" name="recipients" value="{{ key }}">
             {% endfor %}
-            <div class="flex gap-2.5 items-start rounded-xl bg-slate-50 px-3.5 py-3">
+            <div class="flex gap-2.5 items-start rounded-xl bg-surface2 px-3.5 py-3">
               <i class="ti ti-lock text-[16px] text-amber-700 mt-px"></i>
               <p class="text-[12.5px] leading-relaxed text-ink">{{ click_who }}</p>
             </div>
@@ -62,12 +62,12 @@
             {% if report_row %}
             {% if locked_error %}<p class="text-[11.5px] text-rose-600">{{ locked_error }}</p>{% endif %}
             {% else %}
-            <div role="radiogroup" aria-label="Audience" class="inline-flex flex-wrap gap-1 rounded-lg bg-slate-100 p-0.5">
+            <div role="radiogroup" aria-label="Audience" class="inline-flex flex-wrap gap-1 rounded-lg bg-surface2 p-0.5 ring-1 ring-line">
               {% for value, label in audience_options %}
               <button type="button" role="radio" :aria-checked="(audience === '{{ value }}').toString()" aria-checked="{% if state.audience == value %}true{% else %}false{% endif %}"
                       @click="setAudience('{{ value }}')" :disabled="!allowed('{{ value }}')"
                       class="rounded-md px-3.5 py-1.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      :class="audience === '{{ value }}' ? 'bg-white font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
+                      :class="audience === '{{ value }}' ? 'bg-surface font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
               {% endfor %}
             </div>
             {% if errors.audience %}<p class="text-[11.5px] text-rose-600">{{ errors.audience }}</p>{% endif %}
@@ -78,7 +78,7 @@
               <label for="staff-email-input" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Staff emails</label>
               <div class="field flex flex-wrap items-center gap-1.5">
                 <template x-for="(address, i) in staffEmails" :key="i">
-                  <span class="inline-flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-slate-100 text-ink">
+                  <span class="inline-flex items-center gap-1 text-[12px] px-2 py-0.5 rounded-full bg-surface2 text-ink">
                     <span x-text="address"></span>
                     <input type="hidden" name="staff_emails" :value="address" :disabled="audience !== 'staff'">
                     <button type="button" @click="removeStaffEmail(i)" :aria-label="'Remove ' + address" class="text-muted hover:text-ink rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line"><i class="ti ti-x text-[12px]"></i></button>
@@ -100,7 +100,7 @@
                   <label{% if key in text_only %} x-show="!emailOnly"{% endif %}>
                     <input type="checkbox" name="recipients" value="{{ key }}" x-model="picked" class="peer sr-only"{% if key in picked %} checked{% endif %}{% if state.audience != audience_key %} disabled{% endif %}
                            :disabled="audience !== '{{ audience_key }}'{% if key in text_only %} || emailOnly{% endif %}">
-                    <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-slate-50 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="picked.includes('{{ key }}')"{% if key not in picked %} style="display: none"{% endif %}></i>{{ label }}</span>
+                    <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-surface2 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="picked.includes('{{ key }}')"{% if key not in picked %} style="display: none"{% endif %}></i>{{ label }}</span>
                   </label>
                   {% endfor %}
                 </div>
@@ -110,7 +110,7 @@
             {% endfor %}
             {% if errors.recipients %}<p class="text-[11.5px] text-rose-600">{{ errors.recipients }}</p>{% endif %}
             <p class="text-[11.5px] text-muted" x-show="hiddenNote" style="display: none" x-text="hiddenText"></p>
-            <div class="flex gap-2.5 items-start rounded-xl bg-slate-50 px-3.5 py-3">
+            <div class="flex gap-2.5 items-start rounded-xl bg-surface2 px-3.5 py-3">
               <i class="ti ti-users text-[16px] text-amber-700 mt-px"></i>
               <p class="text-[12.5px] leading-relaxed text-ink" x-text="whoLine"></p>
             </div>
@@ -137,11 +137,11 @@
                 {% include "components/searchable_select.html" with name="timing_unit" field_id="id_timing_unit" options=unit_options selected=form.timing_unit.value search="off" aria_label="Timing unit" %}
               </div>
               <input type="hidden" name="timing_direction" value="{{ state.direction }}" :value="direction">
-              <div class="inline-flex gap-0.5 rounded-lg bg-slate-100 p-0.5" role="radiogroup" aria-label="Before or after" x-show="isDate"{% if not is_date %} style="display: none"{% endif %}>
+              <div class="inline-flex gap-0.5 rounded-lg bg-surface2 p-0.5 ring-1 ring-line" role="radiogroup" aria-label="Before or after" x-show="isDate"{% if not is_date %} style="display: none"{% endif %}>
                 {% for value, label in direction_options %}
                 <button type="button" role="radio" :aria-checked="(direction === '{{ value }}').toString()" @click="setDirection('{{ value }}')"
                         class="rounded-md px-2.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"
-                        :class="direction === '{{ value }}' ? 'bg-white font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
+                        :class="direction === '{{ value }}' ? 'bg-surface font-semibold text-ink shadow-sm' : 'text-muted hover:text-ink'">{{ label }}</button>
                 {% endfor %}
               </div>
               <span x-text="anchorWord">{{ anchor_word }}</span>
@@ -182,7 +182,7 @@
               {% for st in service_options %}
               <label>
                 <input type="checkbox" name="service_types" value="{{ st.pk }}" x-model="services" class="peer sr-only"{% if st.pk|stringformat:"s" in services %} checked{% endif %}>
-                <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-slate-50 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="services.includes('{{ st.pk }}')"{% if st.pk|stringformat:"s" not in services %} style="display: none"{% endif %}></i>{{ st.name }}</span>
+                <span class="inline-flex items-center gap-1.5 cursor-pointer rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset ring-line bg-surface text-ink hover:bg-surface2 peer-checked:bg-amber-50 peer-checked:ring-amber-400 peer-checked:text-amber-900 peer-checked:font-semibold peer-focus-visible:ring-2 peer-focus-visible:ring-line transition-colors"><i class="ti ti-check text-[13px]" x-show="services.includes('{{ st.pk }}')"{% if st.pk|stringformat:"s" not in services %} style="display: none"{% endif %}></i>{{ st.name }}</span>
               </label>
               {% empty %}
               <p class="text-[12.5px] text-muted">No service types yet. Add them in Settings.</p>
@@ -199,8 +199,8 @@
                 {% if locked or report_row %}
                 <input type="hidden" name="send_sms" value="{% if row.send_sms %}on{% endif %}">
                 <input type="hidden" name="send_email" value="{% if row.send_email %}on{% endif %}">
-                {% if row.send_sms %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-slate-100 text-ink"><i class="ti ti-lock text-[13px]"></i>Text</span>{% endif %}
-                {% if row.send_email %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-slate-100 text-ink"><i class="ti ti-lock text-[13px]"></i>Email</span>{% endif %}
+                {% if row.send_sms %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-surface2 text-ink"><i class="ti ti-lock text-[13px]"></i>Text</span>{% endif %}
+                {% if row.send_email %}<span class="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold bg-surface2 text-ink"><i class="ti ti-lock text-[13px]"></i>Email</span>{% endif %}
                 {% else %}
                 <input type="hidden" name="send_sms" value="{% if state.sms %}on{% endif %}" :value="sms ? 'on' : ''">
                 <input type="hidden" name="send_email" value="{% if state.email %}on{% endif %}" :value="email ? 'on' : ''">
@@ -243,7 +243,7 @@
                     <span class="text-[11.5px] text-muted w-16 shrink-0" x-text="group.name"></span>
                     <template x-for="chip in group.chips" :key="chip.key">
                       <button type="button" @mousedown.prevent @click="insert(chip.key)" :aria-label="'Insert ' + chip.label" x-text="chip.label"
-                              class="text-[12px] font-medium text-ink px-2.5 py-1 rounded-full ring-1 ring-inset ring-line bg-surface hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"></button>
+                              class="text-[12px] font-medium text-ink px-2.5 py-1 rounded-full ring-1 ring-inset ring-line bg-surface hover:bg-surface2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-line transition-colors"></button>
                     </template>
                   </div>
                 </template>
@@ -273,11 +273,11 @@
         <p class="text-[12.5px] text-rose-600 hidden" data-preview-error></p>
         <div class="space-y-1" x-show="sms"{% if not state.sms %} style="display: none"{% endif %}>
           <p class="text-[11.5px] text-muted" x-text="smsTo ? 'Text to ' + smsTo : 'Text'">Text</p>
-          <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="sms"></div>
+          <div class="rounded-xl bg-surface2 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="sms"></div>
         </div>
         <div class="space-y-1" x-show="email"{% if not state.email %} style="display: none"{% endif %}>
           <p class="text-[11.5px] text-muted" x-text="emailTo ? 'Email to ' + emailTo : 'Email'">Email</p>
-          <div class="rounded-xl bg-slate-50 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="email"></div>
+          <div class="rounded-xl bg-surface2 px-3 py-2.5 text-[13px] text-ink whitespace-pre-wrap break-words" data-preview="email"></div>
         </div>
         <div>
           <h3 class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">On this order it would go to</h3>

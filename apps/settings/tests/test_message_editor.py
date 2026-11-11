@@ -6,6 +6,7 @@ now posts the whole row. Podium and Postmark are patched wherever a send could h
 """
 
 import json
+import re
 from datetime import date, time, timedelta
 from pathlib import Path
 from unittest import mock
@@ -1266,3 +1267,20 @@ def test_widening_a_date_rows_service_types_queues_the_newly_matching_trips():
     editor.save(row, service_types=[])
 
     assert _scheduled(row, plain).get().scheduled_for == plain.pickup_at - timedelta(days=2)
+
+
+@pytest.mark.parametrize("url", [("message_edit", ["driver_released"]), ("messages_new", [])])
+def test_the_editor_uses_the_theme_surfaces(client, url):
+    """MSG-01/03 bug 4: the who-line, wording help, segments, previews and tags were
+    light-only (slate and white), unreadable in dark mode."""
+    client.force_login(_owner_admin())
+    html = client.get(reverse(url[0], args=url[1])).content.decode()
+    for light_only in (
+        r"bg-slate-50\b",
+        r"bg-slate-100\b",
+        r"bg-white font-semibold",
+        r"text-slate-600\b",
+    ):
+        assert not re.search(light_only, html), light_only
+    assert 'data-preview="sms"' in html
+    assert "rounded-xl bg-surface2" in html
