@@ -534,7 +534,7 @@ def test_cancelling_every_held_trip_releases_the_hold():
     lead, _plan, (van, _sedan), hold = _placed("500.00", "0.00", day=_soon())
 
     with patch.object(stripe.PaymentIntent, "cancel") as cancel:
-        services.cancel_trips(lead, [van], user=_admin())
+        services.cancel_trips(lead, [van], user=_admin(), reason="Customer cancelled")
 
     cancel.assert_called_once_with("pi_hold")
     hold.refresh_from_db()
@@ -546,7 +546,7 @@ def test_cancelling_leaves_an_expired_hold_alone():
     holds.mark_expired(hold)
 
     with patch.object(stripe.PaymentIntent, "cancel") as cancel:
-        services.cancel_trips(lead, [van], user=_admin())
+        services.cancel_trips(lead, [van], user=_admin(), reason="Customer cancelled")
 
     cancel.assert_not_called()
     hold.refresh_from_db()
@@ -557,7 +557,7 @@ def test_cancelling_one_of_two_held_trips_keeps_it():
     lead, _plan, (first, _second), hold = _placed("500.00", "250.00", day=_soon())
 
     with patch.object(stripe.PaymentIntent, "cancel") as cancel:
-        services.cancel_trips(lead, [first], user=_admin())
+        services.cancel_trips(lead, [first], user=_admin(), reason="Customer cancelled")
 
     cancel.assert_not_called()
     hold.refresh_from_db()
@@ -590,7 +590,7 @@ def test_a_release_stripe_refuses_never_undoes_a_cancel():
         patch.object(stripe.PaymentIntent, "cancel", side_effect=err),
         patch.object(stripe.PaymentIntent, "retrieve", side_effect=err),
     ):
-        services.cancel_trips(lead, [van], user=_admin())
+        services.cancel_trips(lead, [van], user=_admin(), reason="Customer cancelled")
 
     van.refresh_from_db()
     assert van.trip_status == Reservation.TripStatus.CANCELLED

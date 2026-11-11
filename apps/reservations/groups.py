@@ -21,6 +21,7 @@ from django.db import transaction
 from apps.audit.children import track_children
 
 from .models import Reservation, Stop
+from .services import initial_status
 
 
 def _schedule_new_members(lead) -> None:
@@ -80,6 +81,15 @@ _PER_COPY_FIELDS = frozenset(
         "la_confirmation",
         "trip_status",
         "customer_confirmed_at",
+        # Per-trip dispatch and cancellation state, never shared across a set.
+        "needs_farm_out",
+        "circling_at",
+        "circling_source",
+        "circling_by",
+        "cancel_reason",
+        "cancel_covid",
+        "cancelled_at",
+        "cancelled_by",
         "revenue_status",
         "recognized_at",
         "recognized_amount",
@@ -167,7 +177,17 @@ def clone_reservation(
     clone.source_leg_id = ""
     clone.la_reservation_id = ""
     clone.la_confirmation = ""
-    clone.trip_status = ""
+    clone.trip_status = initial_status(source.lead)
+    # Per-trip state is the source's own: the copy needs no farm-out yet, nobody is
+    # circling it, and it has not been cancelled.
+    clone.needs_farm_out = False
+    clone.circling_at = None
+    clone.circling_source = ""
+    clone.circling_by = None
+    clone.cancel_reason = ""
+    clone.cancel_covid = False
+    clone.cancelled_at = None
+    clone.cancelled_by = None
     # A fresh trip nobody has seen yet must not be born "confirmed" because the source
     # happened to be — that stamp belongs to a specific customer looking at this specific
     # trip's sheet (APC-19).

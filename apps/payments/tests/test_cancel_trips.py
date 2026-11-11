@@ -121,7 +121,7 @@ def test_cancelling_one_trip_refunds_its_share_and_keeps_the_order_booked():
     }
 
     with _refunds():
-        result = services.cancel_trips(plan.lead, [a], user=_agent())
+        result = services.cancel_trips(plan.lead, [a], user=_agent(), reason="Customer cancelled")
 
     a.refresh_from_db(), b.refresh_from_db(), plan.lead.refresh_from_db(), offer.refresh_from_db()
     assert result.refunded == Decimal("667.50") and result.cancelled == [a]
@@ -151,7 +151,9 @@ def test_cancelling_every_live_trip_loses_the_order_and_tells_the_customer():
     )
 
     with _refunds(), patch.object(events, "_send_on_commit"):
-        result = services.cancel_trips(plan.lead, [a, b], user=_agent())
+        result = services.cancel_trips(
+            plan.lead, [a, b], user=_agent(), reason="Customer cancelled"
+        )
 
     plan.lead.refresh_from_db()
     assert result.order_cancelled is True and result.refunded == Decimal("1335.00")
@@ -170,12 +172,12 @@ def test_a_trip_whose_pickup_has_passed_needs_an_admin():
     gone, ahead = _trip(plan.lead, days=-1), _trip(plan.lead)
 
     with pytest.raises(services.PaymentError, match="Admin"), _refunds():
-        services.cancel_trips(plan.lead, [gone], user=_agent())
+        services.cancel_trips(plan.lead, [gone], user=_agent(), reason="Customer cancelled")
     gone.refresh_from_db()
     assert gone.trip_status != Reservation.TripStatus.CANCELLED
 
     with _refunds():
-        services.cancel_trips(plan.lead, [gone], user=_admin())
+        services.cancel_trips(plan.lead, [gone], user=_admin(), reason="Customer cancelled")
     gone.refresh_from_db()
     assert gone.trip_status == Reservation.TripStatus.CANCELLED
     assert services.cancel_options(plan.lead, _agent())[0]["past"] is False
@@ -186,9 +188,11 @@ def test_nothing_chosen_or_a_trip_off_the_order_is_refused():
     plan = _plan()
     _trip(plan.lead)
     with pytest.raises(services.PaymentError):
-        services.cancel_trips(plan.lead, [], user=_admin())
+        services.cancel_trips(plan.lead, [], user=_admin(), reason="Customer cancelled")
     with pytest.raises(services.PaymentError):
-        services.cancel_trips(plan.lead, [_trip(_plan().lead)], user=_admin())
+        services.cancel_trips(
+            plan.lead, [_trip(_plan().lead)], user=_admin(), reason="Customer cancelled"
+        )
 
 
 def test_a_refund_stripe_refuses_leaves_the_trip_uncancelled():
@@ -200,7 +204,7 @@ def test_a_refund_stripe_refuses_leaves_the_trip_uncancelled():
         patch(REFUND, side_effect=stripe.error.StripeError("no")),
         pytest.raises(stripe.error.StripeError),
     ):
-        services.cancel_trips(plan.lead, [a], user=_admin())
+        services.cancel_trips(plan.lead, [a], user=_admin(), reason="Customer cancelled")
     a.refresh_from_db()
     assert a.trip_status != Reservation.TripStatus.CANCELLED
 
@@ -215,7 +219,7 @@ def test_the_endpoint_cancels_the_chosen_trips_and_answers_json(client):
     with _refunds():
         resp = client.post(
             reverse("order_cancel_refund", args=[plan.lead_id]),
-            {"trips": [a.pk]},
+            {"trips": [a.pk], "reason": "Customer cancelled"},
             HTTP_ACCEPT="application/json",
         )
     assert resp.status_code == 200
@@ -235,7 +239,7 @@ def test_the_endpoint_refuses_an_agents_past_trip_with_the_reason(client):
     client.force_login(_agent())
     resp = client.post(
         reverse("order_cancel_refund", args=[plan.lead_id]),
-        {"trips": [gone.pk]},
+        {"trips": [gone.pk], "reason": "Customer cancelled"},
         HTTP_ACCEPT="application/json",
     )
     assert resp.status_code == 400 and "Admin" in resp.json()["error"]
@@ -246,7 +250,9 @@ def test_a_plain_post_still_cancels_the_whole_order(client):
     _trip(plan.lead), _trip(plan.lead)
     client.force_login(_admin())
     with _refunds():
-        resp = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        resp = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
     assert resp.status_code == 302
     plan.lead.refresh_from_db()
     assert plan.lead.status == Lead.Status.LOST
@@ -272,9 +278,107 @@ def test_the_dialog_path_leaves_a_flash_for_the_reload(client):
     with _refunds():
         resp = client.post(
             reverse("order_cancel_refund", args=[plan.lead_id]),
-            {"trips": [a.pk]},
+            {"trips": [a.pk], "reason": "Customer cancelled"},
             HTTP_ACCEPT="application/json",
         )
     assert [str(m) for m in get_messages(resp.wsgi_request)] == [
         "1 trip cancelled and $667.50 refunded."
     ]
+
+
+# --- the reason (trip-status cleanup: every cancellation records a reason) -----------------
+
+
+def test_cancel_trips_writes_a_status_event_with_reason_and_covid():
+    from apps.reservations.models import TripStatusEvent
+
+    plan = _plan()
+    a, b = _trip(plan.lead), _trip(plan.lead)
+    who = _agent()
+
+    with _refunds():
+        services.cancel_trips(plan.lead, [a], user=who, reason=" Event called off ", covid=True)
+
+    a.refresh_from_db(), b.refresh_from_db()
+    assert (a.trip_status, a.revenue_status) == ("cancelled", "reversed")
+    assert (a.cancel_reason, a.cancel_covid, a.cancelled_by) == ("Event called off", True, who)
+    assert a.cancelled_at is not None
+    event = TripStatusEvent.objects.get(reservation=a)
+    assert (event.status, event.changed_by) == (Reservation.TripStatus.CANCELLED, who)
+    assert b.cancelled_at is None and not TripStatusEvent.objects.filter(reservation=b).exists()
+
+
+def test_cancel_trips_emits_trip_cancelled_once_per_trip():
+    plan = _plan()
+    a, b = _trip(plan.lead), _trip(plan.lead)
+
+    with _refunds(), patch.object(events, "emit") as emit:
+        services.cancel_trips(plan.lead, [a, b], user=_agent(), reason="Wedding moved")
+
+    fired = [(c.args[0], c.args[2].pk if len(c.args) > 2 else None) for c in emit.call_args_list]
+    assert sorted(pk for trigger, pk in fired if trigger == "trip_cancelled") == [a.pk, b.pk]
+    assert [t for t, _ in fired].count("order_cancelled") == 1
+
+
+def test_cancel_trips_queues_one_message_per_trip():
+    plan = _plan()
+    a = _trip(plan.lead)
+    _trip(plan.lead)
+    per_trip = MessageRowFactory(
+        trigger="trip_cancelled", recipients=["booking_contact"], send_email=False
+    )
+
+    with _refunds(), patch.object(events, "_send_on_commit"):
+        services.cancel_trips(plan.lead, [a], user=_agent(), reason="Wedding moved")
+
+    assert TouchPoint.objects.filter(message=per_trip, reservation=a).count() == 1
+
+
+@pytest.mark.parametrize("reason", ["", "  "])
+def test_cancel_trips_refuses_a_blank_reason_before_any_refund(reason):
+    plan = _plan()
+    a = _trip(plan.lead)
+
+    with _refunds() as refund, pytest.raises(services.PaymentError, match="Give a reason."):
+        services.cancel_trips(plan.lead, [a], user=_admin(), reason=reason)
+
+    refund.assert_not_called()
+    a.refresh_from_db()
+    assert a.trip_status != Reservation.TripStatus.CANCELLED
+
+
+def test_order_cancel_refund_view_requires_reason(client):
+    plan = _plan()
+    a = _trip(plan.lead)
+    client.force_login(_admin())
+
+    with _refunds() as refund:
+        resp = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]),
+            {"trips": [a.pk], "reason": "   "},
+            HTTP_ACCEPT="application/json",
+        )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"ok": False, "error": "Give a reason."}
+    refund.assert_not_called()
+    a.refresh_from_db()
+    assert a.trip_status != Reservation.TripStatus.CANCELLED
+
+
+def test_order_cancel_refund_view_records_the_reason_and_covid(client):
+    plan = _plan()
+    a, _b = _trip(plan.lead), _trip(plan.lead)
+    who = _admin()
+    client.force_login(who)
+
+    with _refunds():
+        resp = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]),
+            {"trips": [a.pk], "reason": "Venue closed", "covid": "1"},
+            HTTP_ACCEPT="application/json",
+        )
+
+    assert resp.status_code == 200
+    a.refresh_from_db()
+    assert (a.cancel_reason, a.cancel_covid, a.cancelled_by) == ("Venue closed", True, who)

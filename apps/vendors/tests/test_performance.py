@@ -17,7 +17,7 @@ from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.reservations import reviews
 from apps.reservations.factories import ReservationFactory
-from apps.reservations.models import Reservation, TripIssue, TripReview, TripStatusEvent
+from apps.reservations.models import TripIssue, TripReview
 from apps.vendors import performance
 from apps.vendors.factories import VendorFactory
 from apps.vendors.models import Vendor
@@ -84,10 +84,7 @@ def test_cancellation_rate_is_affiliate_cancellations_over_trips_held():
     vendor = VendorFactory()
     for _ in range(3):
         _trip(vendor)
-    trip, _ = _trip(vendor, status=Assignment.Status.WITHDRAWN)
-    TripStatusEvent.objects.create(
-        reservation=trip, status=Reservation.TripStatus.CANCELLED_BY_AFFILIATE
-    )
+    _trip(vendor, status=Assignment.Status.SENT_BACK)
 
     card = _card(vendor)
 

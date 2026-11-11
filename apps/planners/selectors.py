@@ -116,14 +116,11 @@ def wedding_list(account: PlannerAccount) -> tuple[list[dict], list[dict]]:
 # The trip statuses at or past Dispatched (APC-67). Driver details appear only from here:
 # dispatched means the driver has been told, so the planner can never learn a driver's name
 # before the driver knows the job. Releasing driver info to the customer (APC-21) does not
-# count. Both of LA's dispatched states are here, and the board's own Dispatched button
-# writes DISPATCHED.
+# count.
 DISPATCHED_STATUSES = frozenset(
     {
         Reservation.TripStatus.DISPATCHED,
-        Reservation.TripStatus.DISPATCHED_NON_LA,
         Reservation.TripStatus.ON_THE_WAY,
-        Reservation.TripStatus.CIRCLING,
         Reservation.TripStatus.ARRIVED,
         Reservation.TripStatus.CUSTOMER_IN_CAR,
         Reservation.TripStatus.DONE,

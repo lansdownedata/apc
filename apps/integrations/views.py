@@ -25,6 +25,7 @@ from apps.accounts.permissions import owner_admin_required
 from apps.dispatch import farm_in
 from apps.dispatch import services as dispatch_services
 from apps.dispatch.gnet_callback import handle_callback
+from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.messaging import events
 from apps.notifications.models import Notification
 from apps.reservations import services as reservations_services
@@ -38,15 +39,8 @@ logger = logging.getLogger(__name__)
 
 STATE_SESSION_KEY = "podium_oauth_state"
 
-# Cancelled-family statuses, per apps/reservations/models.py TRIP_PHASE_BY_STATUS. A trip
-# in one of these will never be "done" but is finished from a review-invite standpoint.
-_CANCELLED_STATUSES = (
-    Reservation.TripStatus.CANCELLED,
-    Reservation.TripStatus.CANCELLED_BY_AFFILIATE,
-    Reservation.TripStatus.LATE_CANCEL,
-    Reservation.TripStatus.COVID_CANCELLATION,
-)
-_TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + _CANCELLED_STATUSES
+# A cancelled trip will never be "done" but is finished from a review-invite standpoint.
+_TERMINAL_STATUSES = EARNED_TERMINAL_STATUSES + CANCELLED_STATUSES
 
 
 def _digests_equal(expected: str, received: str) -> bool:
@@ -264,6 +258,20 @@ def la_webhook(request, token: str):
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
                 events.emit("all_trips_done", lead)
+    if (
+        event_name == "reservation.driver_arrived_at_pickup_and_circling"
+        and not reservations_services.circling_is_over(reservation)
+    ):
+        # Circling is a notice on the trip, not a status: the driver is at the pickup. A late
+        # event for a trip already past that point (in the car, done, cancelled) is ignored.
+        reservations_services.set_trip_status(
+            reservation,
+            Reservation.TripStatus.ARRIVED,
+            source=TripStatusEvent.Source.LIMOANYWHERE,
+        )
+        reservations_services.set_circling(
+            reservation, on=True, source=Reservation.CirclingSource.LIMOANYWHERE
+        )
     if event_name == "reservation.cancelled":
         # LimoAnywhere is the system of record, so a cancellation there ends the trip —
         # and an affiliate holding it has to be let go. Without this the assignment stays

@@ -30,6 +30,7 @@ class Assignment(TimeStampedModel):
         CONFIRMED = "confirmed", "Confirmed"
         DECLINED = "declined", "Declined"
         WITHDRAWN = "withdrawn", "Withdrawn"
+        SENT_BACK = "sent_back", "Sent back"
 
     class Channel(models.TextChoices):
         MANUAL = "manual", "Manual"
@@ -94,6 +95,17 @@ class Assignment(TimeStampedModel):
         on_delete=models.SET_NULL,
     )
     insurance_override_at = models.DateTimeField(null=True, blank=True)
+    # When the affiliate accepted the offer (before they are assigned a driver).
+    offer_accepted_at = models.DateTimeField(null=True, blank=True)
+    # An affiliate that took the trip and then handed it back: why, and who recorded it.
+    sent_back_reason = models.CharField(max_length=255, blank=True)
+    sent_back_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     objects = AssignmentQuerySet.as_manager()
 
@@ -161,6 +173,26 @@ class Assignment(TimeStampedModel):
             "vehicle_desc": self.vehicle_desc,
             "vehicle_number": self.vehicle_number,
         }
+
+    @property
+    def is_affiliate_coverage(self) -> bool:
+        """Badge "Assigned to affiliate": an affiliate holds the trip, offered or confirmed."""
+        from apps.reservations.models import Reservation
+
+        TS = Reservation.TripStatus
+        return (
+            self.is_active
+            and self.vendor_id is not None
+            and self.reservation.trip_status in (TS.ASSIGNED, TS.DISPATCHED)
+        )
+
+    @property
+    def driver_assigned(self) -> bool:
+        """Badge "Driver assigned": in-house with a driver, or the affiliate's driver
+        details are on file."""
+        if self.is_in_house:
+            return True
+        return self.driver_info_at is not None
 
     @property
     def has_driver_info(self) -> bool:

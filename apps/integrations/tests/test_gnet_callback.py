@@ -156,7 +156,7 @@ def test_cancel_withdraws_and_alerts(client, settings):
 
     assert resp.status_code == 200
     assignment.refresh_from_db()
-    assert assignment.status == Assignment.Status.WITHDRAWN
+    assert assignment.status == Assignment.Status.SENT_BACK
     assert Notification.objects.filter(
         lead=assignment.reservation.lead, kind=Notification.Kind.SYNC_FAILED
     ).exists()
@@ -180,7 +180,7 @@ def test_cancel_puts_the_trip_back_to_unassigned(client, settings):
     assert (event.status, event.source) == ("unassigned", "system")
 
 
-def test_confirmed_shows_the_trip_assigned(client, settings):
+def test_confirmed_shows_the_trip_dispatched(client, settings):
     from apps.reservations.models import Reservation
 
     settings.GNET_CALLBACK_SECRET = SECRET
@@ -189,7 +189,7 @@ def test_confirmed_shows_the_trip_assigned(client, settings):
     _signed_post(client, {"transactionId": "TX-1", "status": "CONFIRMED"})
 
     assignment.reservation.refresh_from_db()
-    assert assignment.reservation.trip_status == Reservation.TripStatus.ASSIGNED
+    assert assignment.reservation.trip_status == Reservation.TripStatus.DISPATCHED
 
 
 def test_an_affiliate_cancel_does_not_echo_a_delete_back_to_the_gateway(client, settings):
@@ -206,7 +206,7 @@ def test_an_affiliate_cancel_does_not_echo_a_delete_back_to_the_gateway(client, 
     assert resp.status_code == 200
     assert not mock_cancel.called
     assignment.refresh_from_db()
-    assert assignment.status == Assignment.Status.WITHDRAWN
+    assert assignment.status == Assignment.Status.SENT_BACK
 
 
 def test_failed_leaves_offered_and_alerts(client, settings):
@@ -455,7 +455,7 @@ def test_cancel_with_totalamount_still_auto_heals(client, settings):
     assert resp.status_code == 200
     assignment.refresh_from_db()
     assert assignment.payout == Decimal("160.00")
-    assert assignment.status == Assignment.Status.WITHDRAWN
+    assert assignment.status == Assignment.Status.SENT_BACK
 
 
 # --- valid JSON that isn't an object ---

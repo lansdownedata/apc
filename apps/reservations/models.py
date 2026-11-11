@@ -13,28 +13,45 @@ from django.utils.timesince import timesince
 from apps.core.fields import MoneyField
 from apps.core.models import TimeStampedModel
 
-# Trip status -> dispatch phase (mirrors the LimoAnywhere taxonomy, grouped for display).
+# Trip status -> dispatch phase, grouped for display. `is_cancelled`, the dispatch
+# selectors' CANCELLED_STATUSES and the payables all derive from the "Cancelled" phase.
 TRIP_PHASE_BY_STATUS = {
-    "unassigned": "Created",
-    "farm_out_unassigned": "Created",
     "pending": "Created",
-    "offered": "Offered to Driver",
-    "assigned": "Driver is Assigned",
-    "dispatched": "Driver is Assigned",
+    "unassigned": "Created",
+    "assigned": "Assigned",
+    "dispatched": "Dispatched",
     "on_the_way": "En Route to Pickup",
-    "circling": "Circling",
     "arrived": "Waiting at Pickup",
     "customer_in_car": "Driving Passenger",
     "done": "Completing",
     "cancelled": "Cancelled",
-    "cancelled_by_affiliate": "Cancelled",
     "late_cancel": "Cancelled",
     "no_show": "Cancelled",
-    "covid_cancellation": "Cancelled",
-    "offered_to_affiliate": "Offered to Affiliate",
-    "affiliate_assigned": "Affiliate Assigned",
-    "dispatched_non_la": "Other",
 }
+
+# The LimoAnywhere values the 2026-11-10 status cleanup retired. Reservations were migrated
+# off them (reservations 0035); old `TripStatusEvent` rows and audit entries keep the raw
+# value, and History reads it from here.
+RETIRED_STATUS_LABELS = {
+    "farm_out_unassigned": "Farm-out Unassigned (retired)",
+    "offered": "Offered (retired)",
+    "offered_to_affiliate": "Offered to Affiliate (retired)",
+    "affiliate_assigned": "Affiliate is Assigned (retired)",
+    "dispatched_non_la": "Dispatched - Driver Assigned NON LA (retired)",
+    "circling": "Circling (retired)",
+    "cancelled_by_affiliate": "Cancelled by Affiliate (retired)",
+    "covid_cancellation": "COVID-19 Cancellation (retired)",
+}
+
+
+def trip_status_label(value: str) -> str:
+    """A stored trip status as it reads on screen: the live label, the retired one for a
+    value the cleanup removed, or the value itself when it is neither."""
+    try:
+        return str(Reservation.TripStatus(value).label)
+    except ValueError:
+        return RETIRED_STATUS_LABELS.get(value, value)
+
 
 # flightsFuture refuses dates within this many days (spec §6.1). Whether the rest of that
 # window has live coverage is a separate call — see flights.LIVE_LOOKAHEAD_DAYS (as of the
@@ -118,32 +135,21 @@ class Reservation(TimeStampedModel):
         HOURLY = "hourly", "Hourly"
 
     class TripStatus(models.TextChoices):
-        # Created
-        UNASSIGNED = "unassigned", "Unassigned"
-        FARM_OUT_UNASSIGNED = "farm_out_unassigned", "Farm-out Unassigned"
+        """The statuses a trip moves through, in order (spec 2026-11-10). Coverage facts,
+        the circling notice and the cancel reason live on their own fields, not here."""
+
         PENDING = "pending", "Pending"
-        # Offered to Driver
-        OFFERED = "offered", "Offered"
-        # Driver is Assigned
+        UNASSIGNED = "unassigned", "Unassigned"
         ASSIGNED = "assigned", "Assigned"
-        DISPATCHED = "dispatched", "Dispatched - Driver Assigned"
-        # En route / circling / waiting
+        DISPATCHED = "dispatched", "Dispatched"
         ON_THE_WAY = "on_the_way", "On The Way"
-        CIRCLING = "circling", "Circling"
         ARRIVED = "arrived", "Arrived"
-        # Driving / completing
         CUSTOMER_IN_CAR = "customer_in_car", "Customer In Car"
         DONE = "done", "Done"
-        # Cancelled
+        # Exits
         CANCELLED = "cancelled", "Cancelled"
-        CANCELLED_BY_AFFILIATE = "cancelled_by_affiliate", "Cancelled by Affiliate"
         LATE_CANCEL = "late_cancel", "Late Cancel"
         NO_SHOW = "no_show", "No Show"
-        COVID_CANCELLATION = "covid_cancellation", "COVID-19 Cancellation"
-        # Affiliate / other
-        OFFERED_TO_AFFILIATE = "offered_to_affiliate", "Offered to Affiliate"
-        AFFILIATE_ASSIGNED = "affiliate_assigned", "Affiliate is Assigned"
-        DISPATCHED_NON_LA = "dispatched_non_la", "Dispatched - Driver Assigned NON LA"
 
     lead = models.ForeignKey("leads.Lead", related_name="reservations", on_delete=models.CASCADE)
     vehicle = models.ForeignKey(
@@ -210,9 +216,37 @@ class Reservation(TimeStampedModel):
     la_reservation_id = models.CharField(max_length=64, blank=True)
     la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)
     trip_status = models.CharField(
-        max_length=32, choices=TripStatus.choices, blank=True, default=""
+        max_length=32, choices=TripStatus.choices, blank=True, default=TripStatus.PENDING
     )
     sort_order = models.PositiveIntegerField(default=0)
+
+    class CirclingSource(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        DRIVER_LINK = "driver_link", "Driver link"
+        LIMOANYWHERE = "limoanywhere", "LimoAnywhere"
+
+    # The trip needs an affiliate (farm-out) and has none yet.
+    needs_farm_out = models.BooleanField(default=False)
+    # The driver reported circling at the pickup: when, how it was recorded, and by whom.
+    circling_at = models.DateTimeField(null=True, blank=True)
+    circling_source = models.CharField(max_length=20, choices=CirclingSource.choices, blank=True)
+    circling_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    cancel_reason = models.CharField(max_length=255, blank=True)
+    cancel_covid = models.BooleanField(default=False)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="+",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
     # Stamped when the customer acknowledges the T-72h trip confirmation on the public
     # trip-sheet page (APC-19). Null until they do.
     customer_confirmed_at = models.DateTimeField(null=True, blank=True)
@@ -614,6 +648,13 @@ class Reservation(TimeStampedModel):
     @property
     def is_cancelled(self) -> bool:
         return self.trip_phase == "Cancelled"
+
+    @property
+    def circling_minutes(self) -> int | None:
+        """Whole minutes the circling notice has been up, or None when it is not."""
+        if self.circling_at is None:
+            return None
+        return max(int((dj_timezone.now() - self.circling_at).total_seconds() // 60), 0)
 
     @property
     def service_label(self) -> str:
@@ -1079,7 +1120,7 @@ class TripStatusEvent(TimeStampedModel):
     class Source(models.TextChoices):
         LIMOANYWHERE = "limoanywhere", "LimoAnywhere"
         MANUAL = "manual", "Manual"
-        # Set by the app itself: coverage confirmed (Assigned) or let go (Unassigned).
+        # Set by the app itself: booking, coverage offered, confirmed or let go.
         SYSTEM = "system", "System"
 
     reservation = models.ForeignKey(
@@ -1092,7 +1133,12 @@ class TripStatusEvent(TimeStampedModel):
     )
 
     def __str__(self) -> str:
-        return f"{self.reservation_id} → {self.get_status_display()}"
+        return f"{self.reservation_id} → {self.status_label}"
+
+    @property
+    def status_label(self) -> str:
+        """Old rows keep the raw value they were written with, retired ones included."""
+        return trip_status_label(self.status)
 
 
 class TripReview(TimeStampedModel):

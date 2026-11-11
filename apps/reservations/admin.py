@@ -38,7 +38,7 @@ class ReservationAdmin(admin.ModelAdmin):
 
 @admin.register(TripStatusEvent)
 class TripStatusEventAdmin(admin.ModelAdmin):
-    list_display = ("reservation", "status", "source", "changed_by", "created_at")
+    list_display = ("reservation", "status_label", "source", "changed_by", "created_at")
     list_filter = ("status", "source")
 
 

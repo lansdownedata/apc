@@ -22,11 +22,12 @@ from .models import Reservation, Stop, TripReview
 S = Reservation.TripStatus
 # Statuses processing settles (spec §4.1): the trip ran, or it carries a charge.
 SETTLE_STATUSES = (S.DONE, S.LATE_CANCEL, S.NO_SHOW)
-# Never processed: nothing ran and nothing is owed.
-NEVER = (S.CANCELLED, S.COVID_CANCELLATION)
+# Never processed: nothing ran and nothing is owed. A COVID-19 cancel is Cancelled with
+# `cancel_covid`, so it is here too.
+NEVER = (S.CANCELLED,)
 # A status LA or dispatch sets when the trip is over. Anything else on a trip whose
 # scheduled end has passed means the status never arrived: the trip "needs a status".
-TERMINAL = (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE, *NEVER)
+TERMINAL = (*SETTLE_STATUSES, *NEVER)
 DEFAULT_DAYS = 30  # the Processed view's window
 
 
@@ -168,7 +169,6 @@ def ready_trips(filters: Filters) -> list[Reservation]:
     """Finished trips not yet processed (spec §4.1): Done, Late Cancel, No Show; Cancelled
     by Affiliate only when there is money to settle; and a trip with no status whose
     scheduled end + grace has passed ("needs a status" — LA statuses can be missing)."""
-    from apps.payments import trip_money
     from apps.tasks import post_trip
     from apps.tasks.models import TaskConfig
 
@@ -182,10 +182,6 @@ def ready_trips(filters: Filters) -> list[Reservation]:
         trip.needs_status = trip.trip_status not in TERMINAL
         if trip.trip_status in SETTLE_STATUSES:
             out.append(trip)
-        elif trip.trip_status == S.CANCELLED_BY_AFFILIATE:
-            money = trip_money.money_for(trip)
-            if money.allocated != 0 or money.line_total != 0:
-                out.append(trip)
         elif trip.needs_status and post_trip.has_ended(trip, now=now, grace=grace):
             out.append(trip)
     return _with_route(_order(out))
@@ -200,7 +196,7 @@ def workable(trip) -> bool:
 
     if trip.lead.status != "booked" or trip.trip_status in NEVER:
         return False
-    if trip.trip_status in (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE):
+    if trip.trip_status in SETTLE_STATUSES:
         return True
     grace = timedelta(hours=TaskConfig.load().post_trip_grace_hours)
     return post_trip.has_ended(trip, now=timezone.now(), grace=grace)
@@ -429,7 +425,7 @@ def process(
     trip = _fresh(trip)
     if not workable(trip):
         raise ProcessingError("This trip can't be processed.")
-    if trip.trip_status not in (*SETTLE_STATUSES, S.CANCELLED_BY_AFFILIATE):
+    if trip.trip_status not in SETTLE_STATUSES:
         raise ProcessingError("Set the trip's status first.")
     review = reviews.review_for(trip)
     if review.is_processed:
@@ -877,7 +873,7 @@ BILL_SORTS = {
 SORTS["bills"] = BILL_SORTS
 # Statuses with nobody to pay: `ensure_payable` makes no payable for them, and one made
 # earlier (the pane opened before LA said the affiliate dropped it) is not a bill.
-NO_VENDOR_BILL = (*NEVER, S.CANCELLED_BY_AFFILIATE)
+NO_VENDOR_BILL = NEVER
 
 
 @dataclass

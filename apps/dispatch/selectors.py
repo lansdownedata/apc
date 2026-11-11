@@ -24,18 +24,9 @@ _TIER_RANK = {DispatchException.Tier.WARNING: 1, DispatchException.Tier.CRITICAL
 COVERAGE_UNCOVERED = "uncovered"
 COVERAGE_OFFERED = "offered"
 COVERAGE_CONFIRMED = "confirmed"
-# Display-only states for our own drivers (APC-88) — never buckets: the board's filters and
+# Display-only state for our own drivers (APC-88) — never a bucket: the board's filters and
 # counts still group on uncovered / offered / confirmed.
-COVERAGE_ASSIGNED = "assigned"
 COVERAGE_DISPATCHED = "dispatched"
-_DISPATCHED_ONWARD = (
-    Reservation.TripStatus.DISPATCHED,
-    Reservation.TripStatus.ON_THE_WAY,
-    Reservation.TripStatus.CIRCLING,
-    Reservation.TripStatus.ARRIVED,
-    Reservation.TripStatus.CUSTOMER_IN_CAR,
-    Reservation.TripStatus.DONE,
-)
 
 # A cancelled trip needs no coverage, so it would otherwise sit in the "uncovered" count
 # forever. `Reservation.is_cancelled` is a property over TRIP_PHASE_BY_STATUS and can't be
@@ -65,15 +56,14 @@ def confirmed_assignment(reservation: Reservation) -> Assignment | None:
 def coverage_state(trip: Reservation, active: Assignment | None) -> str:
     """What the coverage pill says for this trip.
 
-    An in-house driver is assigned the moment the dispatcher picks them, but nothing has
-    reached the driver yet — so the pill reads Assigned, then Dispatched once the trip's
-    status says so (the drawer's Dispatched button). Farm-outs keep Offered / Confirmed:
-    there, Confirmed is the affiliate's own answer.
+    In-house coverage lands the trip at Dispatched (there is no offer for our own driver to
+    answer), so its pill reads Dispatched. Farm-outs keep Offered / Confirmed: there,
+    Confirmed is the affiliate's own answer.
     """
     if active is None:
         return COVERAGE_UNCOVERED
     if active.is_in_house and active.status == Assignment.Status.CONFIRMED:
-        return COVERAGE_DISPATCHED if trip.trip_status in _DISPATCHED_ONWARD else COVERAGE_ASSIGNED
+        return COVERAGE_DISPATCHED
     return active.status
 
 

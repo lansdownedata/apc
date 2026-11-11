@@ -286,6 +286,10 @@ def _by_kind(f: models.Field, raw: str, *, zone, fk_names, show_abbr, at, refund
     if f.concrete and (f.many_to_one or f.one_to_one):
         related = f.related_model._meta
         return fk_names.get((related.label_lower, raw)) or f"deleted {related.verbose_name} #{raw}"
+    if name == "trip_status" and f.model._meta.label == "reservations.Reservation":
+        from apps.reservations.models import trip_status_label
+
+        return trip_status_label(raw)  # entries from before the cleanup keep retired values
     if f.choices:
         return str(dict(f.flatchoices).get(f.to_python(raw), raw))
     if isinstance(f, models.BooleanField):

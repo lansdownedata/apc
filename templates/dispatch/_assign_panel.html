@@ -25,6 +25,24 @@
     </a>
   </div>
 
+  {% comment %} Circling (trip-status cleanup): a notice, not a status — the driver is at
+       pickup but has to keep moving. Up top so it is the first thing read. {% endcomment %}
+  {% if trip.circling_at %}
+  <div data-circling-banner role="status" class="tone tone-warn mb-4 text-[12.5px]">
+    <i class="ti ti-rotate-clockwise-2 text-[16px] text-warn"></i>
+    <div class="min-w-0">
+      <p class="font-semibold text-warn">Circling · {{ trip.circling_minutes }} min</p>
+      <p class="text-[11.5px] text-muted num">Since {{ trip.circling_at|trip_clock_tz:trip }}</p>
+    </div>
+    <button type="button" class="ml-auto text-[12px] font-semibold text-ink px-2 py-1 rounded-lg hover:bg-surface2 focus-gold disabled:opacity-50"
+            :disabled="busy" @click="circling('{% url 'dispatch_circling' trip.pk %}', false)">Dismiss</button>
+  </div>
+  {% endif %}
+
+  {% if trip.is_cancelled and trip.cancelled_at %}
+  <div class="mb-4">{% include "components/cancel_line.html" %}</div>
+  {% endif %}
+
   {% if checklist %}
   {% comment %} The trip's checklist (APC-54) — where dispatch ticks off trip-level checks.
        Reloads itself from trip_checklist after each action. {% endcomment %}
@@ -171,22 +189,43 @@
      sheet above and the trip status below. {% endcomment %}
   {% include "dispatch/_coverage_controls.html" %}
 
-  {% comment %} Trip status (APC-22) — a small, curated advance, not a full status state
-       machine: these three are the ones a customer notification can hang off (Settings >
-       Customer notifications, off by default). Everything else on Reservation.TripStatus
-       stays LA-driven. Drawer-only — the editor is not where a trip is run. {% endcomment %}
-  {% if assignment and assignment.status == 'confirmed' %}
-    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mt-5 mb-2">Trip status</p>
-    <div class="flex flex-wrap gap-2">
-      {% for value, label in trip_status_options %}
-        <button type="button"
-                class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 transition-colors {% if trip.trip_status == value %}bg-charcoal2 text-gold ring-charcoal2{% else %}btn-ghost ring-line{% endif %}"
-                :disabled="busy"
-                @click="setStatus('{% url 'dispatch_set_status' trip.pk %}', '{{ value }}')">
-          {{ label }}
+  {% comment %} Trip status — all eleven, in order, on the shared select. Coverage owns
+       Pending / Unassigned / Assigned (shown, disabled). Dispatched to Done post to
+       set_status once coverage is confirmed; Cancelled opens the order's cancel flow and
+       Late Cancel / No Show their own reason dialog (assignPanel.pickStatus). Drawer-only:
+       the editor is not where a trip is run. {% endcomment %}
+  {% if trip.lead.status == 'booked' or trip.lead.status == 'engaged' %}
+  <section class="mt-5" @change="pickStatus($event, {{ status_control|json_attr }})">
+    <label for="trip-status" class="block text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Trip status</label>
+    {% include "components/searchable_select.html" with name="status" field_id="trip-status" options=trip_status_options selected=trip.trip_status search="off" %}
+    <p class="mt-1.5 text-[11px] text-muted">
+      Pending, Unassigned and Assigned follow coverage.{% if not assignment or assignment.status != 'confirmed' %} Dispatched onward opens once coverage is confirmed.{% endif %}
+    </p>
+    <div class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
+      {% if assignment.is_affiliate_coverage %}
+        <span data-badge="affiliate" class="chip-gold inline-flex items-center gap-1 rounded-full px-2 py-0.5"><i class="ti ti-arrow-ramp-right-2 text-[12px]"></i> Assigned to affiliate</span>
+      {% endif %}
+      {% if assignment.driver_assigned %}
+        <span data-badge="driver" class="chip-ok inline-flex items-center gap-1 rounded-full px-2 py-0.5"><i class="ti ti-steering-wheel text-[12px]"></i> Driver assigned</span>
+      {% endif %}
+      {% comment %} Needs farm-out: a flag dispatch raises on an uncovered trip; Sent back
+           raises it too, and claiming an affiliate clears it. {% endcomment %}
+      {% if not trip.is_cancelled and not assignment or trip.needs_farm_out %}
+        <button type="button" aria-pressed="{{ trip.needs_farm_out|yesno:'true,false' }}"
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-opacity hover:opacity-80 focus-gold disabled:opacity-50 {% if trip.needs_farm_out %}chip-warn{% else %}chip-ring{% endif %}"
+                :disabled="busy" title="{% if trip.needs_farm_out %}Clear the flag{% else %}Flag this trip as needing an affiliate{% endif %}"
+                @click="farmOut('{% url 'dispatch_needs_farm_out' trip.pk %}', {{ trip.needs_farm_out|yesno:'false,true' }})">
+          <i class="ti {% if trip.needs_farm_out %}ti-x{% else %}ti-plus{% endif %} text-[12px]"></i> Needs farm-out
         </button>
-      {% endfor %}
+      {% endif %}
+      {% if can_circle and not trip.circling_at %}
+        <button type="button" class="chip-ring inline-flex items-center gap-1 rounded-full px-2 py-0.5 transition-opacity hover:opacity-80 focus-gold disabled:opacity-50"
+                :disabled="busy" @click="circling('{% url 'dispatch_circling' trip.pk %}', true)">
+          <i class="ti ti-rotate-clockwise-2 text-[12px]"></i> Mark circling
+        </button>
+      {% endif %}
     </div>
+  </section>
   {% endif %}
 
   <div class="mt-5 pt-3">

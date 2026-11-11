@@ -993,7 +993,6 @@ def _status_events(trip) -> list[tuple]:
     [
         Reservation.TripStatus.DISPATCHED,
         Reservation.TripStatus.ON_THE_WAY,
-        Reservation.TripStatus.CIRCLING,
         Reservation.TripStatus.ARRIVED,
         Reservation.TripStatus.CUSTOMER_IN_CAR,
     ],

@@ -1073,18 +1073,21 @@ class CancelResult:
     order_cancelled: bool
 
 
-def cancel_trips(lead, trips, *, user) -> CancelResult:
+def cancel_trips(lead, trips, *, user, reason: str, covid: bool = False) -> CancelResult:
     """Cancel the chosen trips of a booked order and refund each one's share (APC-127).
 
     Every live trip chosen is today's whole-order cancellation: everything refundable comes
     back in one refund and the order is lost. Otherwise each trip's share (`cancel_shares`)
     is refunded against that trip, and the order stays booked with the rest. A trip whose
     pickup has passed takes an Admin. A refund Stripe refuses raises before anything is
-    cancelled (what did refund is on the books), as the order console always has."""
+    cancelled (what did refund is on the books), as the order console always has. Each
+    trip records ``reason`` (required, checked before any money moves) and ``covid``."""
     from apps.leads.models import Lead
 
     if lead.status != Lead.Status.BOOKED:
         raise PaymentError("Only booked orders can be cancelled.")
+    if not (reason or "").strip():
+        raise PaymentError("Give a reason.")
     live = _live_trips(lead)
     wanted = {t.pk for t in trips}
     if not wanted:
@@ -1108,13 +1111,14 @@ def cancel_trips(lead, trips, *, user) -> CancelResult:
             for trip in chosen:
                 if shares[trip.pk] > Decimal("0.00"):
                     refunded += refund_payment(plan, shares[trip.pk], reservation=trip)
-    _cancel(lead, chosen, whole=whole)
+    _cancel(lead, chosen, whole=whole, reason=reason, covid=covid, user=user)
     return CancelResult(cancelled=chosen, refunded=refunded, order_cancelled=whole)
 
 
-def _cancel(lead, trips, *, whole: bool) -> None:
-    """Cancel these trips once their money is back: status Cancelled with revenue
-    reversed, any coverage let go, their queued messages withdrawn, `trip_cancelled` each.
+def _cancel(lead, trips, *, whole: bool, reason: str, covid: bool = False, user=None) -> None:
+    """Cancel these trips once their money is back: status Cancelled (with the reason, who
+    and when, through `record_cancellation`) and revenue reversed, any coverage let go,
+    their queued messages withdrawn, `trip_cancelled` each.
     ``whole`` (no live trip left) also loses the order, withdraws every queued message
     and emits `order_cancelled`, so the seeded Order cancelled message goes out.
 
@@ -1123,13 +1127,22 @@ def _cancel(lead, trips, *, whole: bool) -> None:
     from apps.dispatch import services as dispatch_services
     from apps.leads.models import Lead
     from apps.reservations.models import Reservation
+    from apps.reservations.services import record_cancellation
 
     pks = [t.pk for t in trips]
     for trip in trips:
-        trip.trip_status = Reservation.TripStatus.CANCELLED
+        # emit=False: the `trip_cancelled` events below are this function's, sent once
+        # every write is done. The status write also reports the cancel to GNet.
+        record_cancellation(
+            trip,
+            Reservation.TripStatus.CANCELLED,
+            reason=reason,
+            covid=covid,
+            user=user,
+            emit=False,
+        )
         trip.revenue_status = Reservation.RevenueStatus.REVERSED
-        trip.save(update_fields=["trip_status", "revenue_status", "updated_at"])
-    _report_cancels_to_gnet(trips)
+        trip.save(update_fields=["revenue_status", "updated_at"])
     # Cancelled trips drop off the dispatch board, so any affiliate offer still open on
     # them would be unreachable — pull it here while we still know the trip died.
     dispatch_services.release_trips(
@@ -1167,26 +1180,12 @@ def _release_cleaning_hold(lead) -> None:
         logger.exception("cleaning hold: release for lead %s failed on cancel", lead.pk)
 
 
-def _report_cancels_to_gnet(trips) -> None:
-    """Queue GNet's CANCEL for each farmed-in trip: the per-trip save above skips
-    `set_trip_status`, which is where that hook normally runs. A failure is logged, never
-    raised, so it can't undo a cancel whose money is already back."""
-    from apps.dispatch import farm_in_push
-    from apps.reservations.models import Reservation
-
-    for trip in trips:
-        try:
-            farm_in_push.after_trip_status(trip, Reservation.TripStatus.CANCELLED)
-        except Exception:
-            logger.exception("farm-in: CANCEL push for trip %s failed to queue", trip.pk)
-
-
-def cancel_booked_order(lead) -> list:
+def cancel_booked_order(lead, *, reason: str = "Order cancelled", user=None) -> list:
     """Cancel a booked order once its money is back: every live trip, no permission
     check (the console's whole-order path and the tests). Returns the trips cancelled."""
     live = _live_trips(lead)
     if live:
-        _cancel(lead, live, whole=True)
+        _cancel(lead, live, whole=True, reason=reason, user=user)
     return live
 
 

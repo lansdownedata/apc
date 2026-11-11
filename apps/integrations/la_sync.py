@@ -285,7 +285,6 @@ LA_EVENT_TO_TRIP_STATUS: dict[str, str] = {
     "reservation.driver_was_unassigned": Reservation.TripStatus.UNASSIGNED,
     "reservation.driver_departed_to_pickup": Reservation.TripStatus.ON_THE_WAY,
     "reservation.driver_arrived_at_pickup_and_waiting": Reservation.TripStatus.ARRIVED,
-    "reservation.driver_arrived_at_pickup_and_circling": Reservation.TripStatus.CIRCLING,
     "reservation.departed_from_pickup": Reservation.TripStatus.CUSTOMER_IN_CAR,
     "reservation.arrived_at_dropoff": Reservation.TripStatus.DONE,
     "reservation.completed": Reservation.TripStatus.DONE,

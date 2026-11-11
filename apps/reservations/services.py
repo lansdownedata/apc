@@ -17,14 +17,18 @@ address, which this flat list can't express) — change one and change the other
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
+from django.db import transaction
 from django.db.models import F, Prefetch
 from django.utils import timezone as dj_timezone
 
 from apps.audit.explicit import record_update
 
 from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent, round_to_dime
+
+logger = logging.getLogger(__name__)
 
 
 def solve_rate_from_cost(reservation: Reservation) -> Decimal | None:
@@ -287,12 +291,54 @@ _STATUS_EVENTS = frozenset(
 )
 
 
+def initial_status(lead) -> str:
+    """The status a new trip on `lead` starts at: Unassigned once booked, else Pending."""
+    if lead.status == lead.Status.BOOKED:
+        return Reservation.TripStatus.UNASSIGNED
+    return Reservation.TripStatus.PENDING
+
+
+_CIRCLING_CLEARED_BY = (Reservation.TripStatus.CUSTOMER_IN_CAR, Reservation.TripStatus.DONE)
+_CIRCLING_ALLOWED_AT = (Reservation.TripStatus.ON_THE_WAY, Reservation.TripStatus.ARRIVED)
+
+
+def circling_is_over(trip: Reservation) -> bool:
+    """True when the trip is past the point where circling can apply (the notice clears here)."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    return trip.trip_status in _CIRCLING_CLEARED_BY or trip.trip_status in CANCELLED_STATUSES
+
+
+def set_circling(trip: Reservation, *, on: bool, source: str, user=None) -> None:
+    """Raise or clear the circling notice: the driver is at pickup but has to keep moving.
+
+    Turning it on is only legal while the trip is On the way or Arrived, and keeps the
+    original time and source if it is already on. Turning it off blanks all three fields.
+    """
+    if on:
+        if trip.trip_status not in _CIRCLING_ALLOWED_AT:
+            raise ValueError("Circling can only be set while the trip is on the way or arrived.")
+        if trip.circling_at is not None:
+            return
+        trip.circling_at = dj_timezone.now()
+        trip.circling_source = source
+        trip.circling_by = user
+    else:
+        if trip.circling_at is None and not trip.circling_source and trip.circling_by_id is None:
+            return
+        trip.circling_at = None
+        trip.circling_source = ""
+        trip.circling_by = None
+    trip.save(update_fields=["circling_at", "circling_source", "circling_by", "updated_at"])
+
+
 def set_trip_status(
     reservation: Reservation,
     status: str,
     *,
     user=None,
     source: str = TripStatusEvent.Source.MANUAL,
+    emit: bool = True,
 ) -> TripStatusEvent | None:
     """Write a trip status, log the transition, and fire its message events.
 
@@ -301,25 +347,40 @@ def set_trip_status(
     Arrived), the trip entering a cancelled status, the trip done; then the rows that wait
     for dispatch are brought up to date; a farmed-in trip reports the status to GNet.
     Returns the event, or None when the status is unchanged.
+
+    The row is re-read under `select_for_update` so two dispatchers acting at once compare
+    against what is stored, not what each of them loaded; the result is copied back onto
+    ``reservation``. ``emit`` False skips only the message events (a caller that emits its
+    own, as the order cancel does); everything else still happens.
     """
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.messaging import events
 
-    if reservation.trip_status == status:
-        return None
-    was_cancelled = reservation.trip_status in CANCELLED_STATUSES
-    reservation.trip_status = status
-    reservation.save(update_fields=["trip_status", "updated_at"])
-    event = TripStatusEvent.objects.create(
-        reservation=reservation, status=status, source=source, changed_by=user
-    )
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=reservation.pk)
+        reservation.trip_status = locked.trip_status
+        if locked.trip_status == status:
+            return None
+        was_cancelled = locked.trip_status in CANCELLED_STATUSES
+        locked.trip_status = status
+        locked.save(update_fields=["trip_status", "updated_at"])
+        if status not in _CIRCLING_ALLOWED_AT:
+            # Circling only means something On The Way or Arrived: any other status
+            # (moved on, moved back, sent back, cancelled) clears the notice.
+            set_circling(locked, on=False, source="")
+        for field in ("trip_status", "circling_at", "circling_source", "circling_by_id"):
+            setattr(reservation, field, getattr(locked, field))
+        event = TripStatusEvent.objects.create(
+            reservation=reservation, status=status, source=source, changed_by=user
+        )
     lead = reservation.lead
-    if status in _STATUS_EVENTS:
-        events.emit(f"status_{status}", lead, reservation)
-    if status in CANCELLED_STATUSES and not was_cancelled:
-        events.emit("trip_cancelled", lead, reservation)
-    if status == Reservation.TripStatus.DONE:
-        events.emit("trip_done", lead, reservation)
+    if emit:
+        if status in _STATUS_EVENTS:
+            events.emit(f"status_{status}", lead, reservation)
+        if status in CANCELLED_STATUSES and not was_cancelled:
+            events.emit("trip_cancelled", lead, reservation)
+        if status == Reservation.TripStatus.DONE:
+            events.emit("trip_done", lead, reservation)
     events.sync_waiting(reservation)
     if status == Reservation.TripStatus.DONE:
         # APC-58: a Done trip enters the post-trip workflow now, not on the next tick.
@@ -327,11 +388,67 @@ def set_trip_status(
 
         sync(reservation.lead)
     # APC-135: a farmed-in trip reports the status back to GNet. Imported here: at module
-    # level it cycles through apps.integrations.gnet -> apps.dispatch.models.
+    # level it cycles through apps.integrations.gnet -> apps.dispatch.models. A report that
+    # fails to queue never undoes the status (the order cancel has already refunded). A
+    # failed enqueue leaves no push row, so there is nothing on the request to retry: the
+    # log line below is the only trace.
     from apps.dispatch import farm_in_push
 
-    farm_in_push.after_trip_status(reservation, status)
+    try:
+        farm_in_push.after_trip_status(reservation, status)
+    except Exception:  # noqa: BLE001 - a status write must never fail on its GNet report
+        logger.exception("farm-in: %s push for trip %s failed to queue", status, reservation.pk)
     return event
+
+
+_CANCEL_STATUSES = (
+    Reservation.TripStatus.CANCELLED,
+    Reservation.TripStatus.LATE_CANCEL,
+    Reservation.TripStatus.NO_SHOW,
+)
+
+
+def record_cancellation(
+    trip: Reservation,
+    status: str,
+    *,
+    reason: str,
+    covid: bool = False,
+    user=None,
+    emit: bool = True,
+) -> TripStatusEvent | None:
+    """Cancel a trip as Cancelled, Late Cancel or No Show, saying why, who and when.
+
+    The one writer of the cancel fields. The reason is required; COVID-19 only qualifies a
+    plain cancel (a late cancel or no-show is chargeable, whatever the cause). A plain
+    cancel is final: its money has gone back, and a late cancel or no-show would claim it.
+    The status goes through `set_trip_status` (``emit`` passed on), so every cancel leaves
+    a `TripStatusEvent`. Repeating the trip's current cancel status changes nothing and
+    returns None.
+    """
+    reason = (reason or "").strip()
+    if status not in _CANCEL_STATUSES:
+        raise ValueError("Pick Cancelled, Late cancel or No show.")
+    if not reason:
+        raise ValueError("Give a reason.")
+    if covid and status != Reservation.TripStatus.CANCELLED:
+        raise ValueError("COVID-19 only applies to a plain cancellation.")
+    with transaction.atomic():
+        locked = Reservation.objects.select_for_update().get(pk=trip.pk)
+        if locked.trip_status == Reservation.TripStatus.CANCELLED and status != locked.trip_status:
+            raise ValueError("This trip is already cancelled.")
+        if locked.trip_status == status:
+            # Already so: the first cancel's reason, who and when stand.
+            return None
+        locked.cancel_reason = reason[:255]
+        locked.cancel_covid = covid
+        locked.cancelled_at = dj_timezone.now()
+        locked.cancelled_by = user
+        fields = ["cancel_reason", "cancel_covid", "cancelled_at", "cancelled_by"]
+        locked.save(update_fields=[*fields, "updated_at"])
+        for field in ("cancel_reason", "cancel_covid", "cancelled_at", "cancelled_by_id"):
+            setattr(trip, field, getattr(locked, field))
+        return set_trip_status(trip, status, user=user, emit=emit)
 
 
 # --- trip window -----------------------------------------------------------------------

@@ -436,7 +436,9 @@ def test_cancelling_an_order_tells_each_live_trip_once(client, live):
     plan = PaymentPlanFactory(lead=trip.lead, quote_total=Decimal("1000.00"))
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     with patch(SEND, return_value={"uid": "m"}) as send:
-        response = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        response = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
     assert response.status_code == 302
     trip.refresh_from_db()
     assert trip.trip_status in CANCELLED_STATUSES

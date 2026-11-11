@@ -224,11 +224,15 @@ def _apply_status(assignment: Assignment, status: str, payload: dict) -> None:
             # would raise a spurious "GNet cancel failed" alert next to the correct one
             # below — on every affiliate cancellation — while spending a 10s-timeout
             # outbound call inside the gateway's 15s callback budget.
-            services.withdraw(
-                assignment,
-                note="Cancelled by the affiliate via GNet.",
-                release_gateway=False,
-            )
+            if assignment.status == Assignment.Status.CONFIRMED:
+                # Confirmed coverage the affiliate gave back: Sent back, not withdrawn.
+                services.send_back(assignment, reason="Cancelled on GNet", user=None)
+            else:
+                services.withdraw(
+                    assignment,
+                    note="Cancelled by the affiliate via GNet.",
+                    release_gateway=False,
+                )
             _alert(
                 assignment,
                 title=f"GNet cancelled assignment #{assignment.pk}",

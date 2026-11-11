@@ -238,10 +238,10 @@ def test_driver_release_alone_does_not_show_the_driver(client, planner):
     assert "Marcus Bell" not in _page(client, lead)
 
 
-def test_a_dispatched_non_la_trip_and_later_statuses_show_the_driver(client, planner):
+def test_statuses_past_dispatched_show_the_driver(client, planner):
     lead, (trip,) = _wedding(planner)
     _driver(trip)
-    for status in (Reservation.TripStatus.DISPATCHED_NON_LA, Reservation.TripStatus.ON_THE_WAY):
+    for status in (Reservation.TripStatus.ON_THE_WAY, Reservation.TripStatus.ARRIVED):
         Reservation.objects.filter(pk=trip.pk).update(trip_status=status)
         assert "Marcus Bell" in _page(client, lead)
 

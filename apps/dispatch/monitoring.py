@@ -35,9 +35,7 @@ from .services import driver_details_ready
 log = logging.getLogger(__name__)
 
 TS = Reservation.TripStatus
-EN_ROUTE_OR_BEYOND = frozenset(
-    {TS.ON_THE_WAY, TS.CIRCLING, TS.ARRIVED, TS.CUSTOMER_IN_CAR, TS.DONE}
-)
+EN_ROUTE_OR_BEYOND = frozenset({TS.ON_THE_WAY, TS.ARRIVED, TS.CUSTOMER_IN_CAR, TS.DONE})
 ARRIVED_OR_BEYOND = frozenset({TS.ARRIVED, TS.CUSTOMER_IN_CAR, TS.DONE})
 
 _TIER_RANK = {DispatchException.Tier.WARNING: 1, DispatchException.Tier.CRITICAL: 2}

@@ -98,6 +98,10 @@ def _claim(
         # In-house coverage carries its driver from the start, so its info is on file now.
         assignment.stamp_driver_info(DispatchAlertConfig.load())
         assignment.save()
+        # Coverage of any kind, our own driver included, ends the need for an affiliate.
+        if reservation.needs_farm_out:
+            reservation.needs_farm_out = False
+            reservation.save(update_fields=["needs_farm_out", "updated_at"])
     if assignment.status == Assignment.Status.CONFIRMED:
         _on_assignment_confirmed(assignment)
     _sync_tasks(reservation)
@@ -112,18 +116,11 @@ def _sync_tasks(reservation: Reservation) -> None:
 
 
 _TS = Reservation.TripStatus
-# Confirmed coverage shows the trip Assigned unless it has already got further (Moe,
-# 2026-11-10): a trip already Dispatched or under way is never moved back.
-_BEFORE_ASSIGNED = frozenset(
-    {
-        "",
-        _TS.UNASSIGNED,
-        _TS.FARM_OUT_UNASSIGNED,
-        _TS.PENDING,
-        _TS.OFFERED,
-        _TS.OFFERED_TO_AFFILIATE,
-    }
-)
+# An offer shows the trip Assigned; acceptance or direct coverage shows it Dispatched
+# (Moe, 2026-11-10). Coverage only moves a trip still in this set: a trip already
+# Dispatched or under way is never moved back. Blank is a row an old dyno wrote during
+# the release window; it still moves.
+_BEFORE_DISPATCHED = frozenset({"", _TS.PENDING, _TS.UNASSIGNED, _TS.ASSIGNED})
 
 
 def _set_status(reservation: Reservation, status: str) -> None:
@@ -138,26 +135,27 @@ def _set_status(reservation: Reservation, status: str) -> None:
 def _reopen(reservation: Reservation) -> None:
     """Coverage was let go: the trip goes back to Unassigned, clearing Dispatched, On The
     Way, Arrived and the rest (Moe, 2026-11-10). A trip that is done or cancelled (No Show
-    included) keeps its status, and one with no status yet stays blank. Unassigned queues
-    no customer message and has no GNet farm-in code, so nothing leaves the building."""
+    included) keeps its status. Unassigned queues no customer message and has no GNet
+    farm-in code, so nothing leaves the building."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
 
     reservation.refresh_from_db(fields=["trip_status"])
     current = reservation.trip_status
-    if current in ("", _TS.UNASSIGNED, _TS.FARM_OUT_UNASSIGNED, _TS.DONE, *CANCELLED_STATUSES):
+    if current in (_TS.UNASSIGNED, _TS.DONE, *CANCELLED_STATUSES):
         return
     _set_status(reservation, _TS.UNASSIGNED)
 
 
 def _on_assignment_confirmed(assignment: Assignment) -> None:
-    """Show the trip Assigned, then queue the T-48h affiliate confirmation for a
+    """Show the trip Dispatched, then queue the T-48h affiliate confirmation for a
     newly-confirmed farm-out (APC-20), and the driver message if the trip is already
     dispatched with details on file."""
     from apps.messaging import events
 
     reservation = assignment.reservation
-    if reservation.trip_status in _BEFORE_ASSIGNED:
-        _set_status(reservation, _TS.ASSIGNED)
+    reservation.refresh_from_db(fields=["trip_status"])
+    if reservation.trip_status in _BEFORE_DISPATCHED:
+        _set_status(reservation, _TS.DISPATCHED)
     events.schedule_dates(reservation.lead, reservation)
     events.sync_waiting(reservation)
 
@@ -233,6 +231,9 @@ def send_offer(
         status=Assignment.Status.OFFERED,
         channel=channel,
     )
+    reservation.refresh_from_db(fields=["trip_status"])
+    if reservation.trip_status in _BEFORE_DISPATCHED and reservation.trip_status != _TS.ASSIGNED:
+        _set_status(reservation, _TS.ASSIGNED)
 
     if channel == Assignment.Channel.GNET:
         gnet_sync.push_assignment(assignment)
@@ -353,9 +354,13 @@ def _resolve(
             f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}."
         )
     was_confirmed = assignment.status == Assignment.Status.CONFIRMED
+    was_offered = assignment.status == Assignment.Status.OFFERED
     assignment.status = status
     assignment.resolved_at = timezone.now()
     fields = ["status", "resolved_at", "updated_at"]
+    if status == Assignment.Status.CONFIRMED and was_offered:
+        assignment.offer_accepted_at = assignment.resolved_at
+        fields.append("offer_accepted_at")
     if note:
         assignment.note = note
         fields.append("note")
@@ -406,6 +411,64 @@ def _confirmed_by(reservation: Reservation, user) -> None:
     ).first()
     if task is not None:
         tasks.complete(task, user)
+
+
+def send_back(assignment: Assignment, *, reason: str, user=None) -> Assignment:
+    """The vendor gave a confirmed trip back. The assignment becomes SENT_BACK (with the
+    reason and who recorded it), the trip returns to Unassigned flagged for farm-out, and
+    the pending T-48h affiliate message is withdrawn. The gateway is never echoed: a GNet
+    cancel has already released the trip on the partner's side. In-house coverage is
+    Unassign, not Sent back. A done or cancelled trip has nothing left to give back.
+
+    The release and the reopen run inside the trip lock, so no other dispatcher can claim
+    the trip in between."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    reason = reason.strip()
+    if assignment.is_in_house:
+        raise AssignmentError(_IN_HOUSE_ONLY_UNASSIGN)
+    if not reason:
+        raise AssignmentError("Say why the trip was sent back.")
+    with transaction.atomic():
+        reservation = Reservation.objects.select_for_update().get(pk=assignment.reservation_id)
+        assignment.refresh_from_db()
+        if reservation.trip_status == _TS.DONE or reservation.trip_status in CANCELLED_STATUSES:
+            raise AssignmentError(
+                f"Trip #{reservation.pk} is {reservation.get_trip_status_display().lower()}; "
+                "it can't be sent back."
+            )
+        if assignment.status != Assignment.Status.CONFIRMED:
+            raise AssignmentError(
+                f"Assignment {assignment.pk} is {assignment.get_status_display().lower()}, "
+                "not confirmed."
+            )
+        assignment.status = Assignment.Status.SENT_BACK
+        assignment.sent_back_reason = reason[:255]
+        assignment.sent_back_by = user
+        assignment.resolved_at = timezone.now()
+        assignment.save(
+            update_fields=[
+                "status",
+                "sent_back_reason",
+                "sent_back_by",
+                "resolved_at",
+                "updated_at",
+            ]
+        )
+        reservation.needs_farm_out = True
+        reservation.save(update_fields=["needs_farm_out", "updated_at"])
+        _on_assignment_released(reservation)
+        _reopen(reservation)
+    _sync_tasks(reservation)
+    return assignment
+
+
+def set_needs_farm_out(reservation: Reservation, *, on: bool) -> None:
+    """Flag (or clear) a trip as needing an affiliate. Any claim clears it (`_claim`)."""
+    if reservation.needs_farm_out == on:
+        return
+    reservation.needs_farm_out = on
+    reservation.save(update_fields=["needs_farm_out", "updated_at"])
 
 
 def decline(assignment: Assignment, *, note: str = "") -> Assignment:

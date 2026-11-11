@@ -534,6 +534,7 @@ function assignPanel(panelUrl = "") {
       this.busy = false;
       if (!data.ok) {
         Alpine.store("toast").push({ type: "danger", title: data.error || "Could not save" });
+        return data;
       } else if (extra && extra.action === "withdraw" && panelUrl) {
         // Reassign means "pick someone else", so stay on this trip: put its now-unassigned
         // panel back in the drawer. The page behind catches up when the drawer closes.
@@ -542,6 +543,7 @@ function assignPanel(panelUrl = "") {
       } else {
         window.location.reload();
       }
+      return data;
     },
     /* The checklist re-fetches itself after Complete / Skip and says `tasks-changed`; the
      * "N open" pill in this panel's header sits outside it, so it is re-read from the
@@ -570,6 +572,38 @@ function assignPanel(panelUrl = "") {
     },
     setStatus(url, status) {
       return this.send(url, { status });
+    },
+    /* The drawer's Trip status select (templates/dispatch/_assign_panel.html). Dispatched
+     * to Done post straight away; Cancelled opens the order's own cancel flow (release the
+     * hold, or cancel and refund with this trip ticked); Late Cancel and No Show ask for
+     * a reason. Anything that doesn't go through puts the select back where it was. */
+    async pickStatus(event, opts) {
+      const el = event.target;
+      if (!el || el.name !== "status" || el.value === opts.current) return;
+      const value = el.value;
+      const revert = () => {
+        if (el.tomselect) el.tomselect.setValue(opts.current, true);
+        else el.value = opts.current;
+      };
+      const cancel = opts.cancel || {};
+      if (value === "cancelled" && cancel.kind === "hold") {
+        return orderConfirmations().cancelOrder(cancel.url, cancel.quote, revert);
+      }
+      if (value === "cancelled" && cancel.kind === "refund") {
+        return cancelRefund({ ...cancel, onCancel: revert });
+      }
+      if (value === "late_cancel" || value === "no_show") {
+        return tripCancelStatus(opts.cancelStatusUrl, value, { onCancel: revert });
+      }
+      if (value === "cancelled") return revert();
+      const data = await this.setStatus(opts.setUrl, value);
+      if (!data || !data.ok) revert();
+    },
+    circling(url, on) {
+      return this.send(url, { on: on ? "1" : "0" });
+    },
+    farmOut(url, on) {
+      return this.send(url, { on: on ? "1" : "0" });
     },
     confirmWithdraw(url, copy = {}) {
       /* On a manual farm-out the affiliate hears nothing unless we tell them, so the
@@ -981,14 +1015,18 @@ async function uploadWorkbook(url) {
 }
 
 /* -------------------------------------------------- cancel & refund (APC-127) */
-/* "Cancel & refund" on the money card: pick the trips to cancel; each shows what comes
-   back to the card for it. A trip whose pickup has passed is greyed unless the row says
-   this user may (an Admin). Posts the picks; the page reloads with the result. */
+/* "Cancel & refund" on the money card, and Cancelled in the dispatch drawer (which ticks
+   its own trip, `preselect`): pick the trips to cancel; each shows what comes back to the
+   card for it. A trip whose pickup has passed is greyed unless the row says this user may
+   (an Admin). Every cancel says why (required) and whether it was COVID-19. Posts the
+   picks; the page reloads with the result. */
 function cancelRefund(opts) {
   const trips = opts.trips || [];
+  const pre = String(opts.preselect || "");
+  const ticked = (t) => t.allowed && String(t.pk) === pre;
   const row = (t) => `
     <label class="flex items-start gap-2.5 rounded-lg px-2.5 py-2 ring-1 ring-inset ring-line ${t.allowed ? "cursor-pointer hover:bg-slate-50" : "opacity-60"}">
-      <input type="checkbox" name="cancel-trip" value="${t.pk}" ${t.allowed ? "" : "disabled"} class="mt-0.5 accent-amber-500">
+      <input type="checkbox" name="cancel-trip" value="${t.pk}" ${t.allowed ? "" : "disabled"} ${ticked(t) ? "checked" : ""} class="mt-0.5 accent-amber-500">
       <span class="min-w-0 flex-1">
         <span class="flex items-baseline justify-between gap-3">
           <span class="text-[12.5px] font-semibold text-ink">${escapeHtml(t.reference)}</span>
@@ -1000,26 +1038,39 @@ function cancelRefund(opts) {
     </label>`;
   const picked = () =>
     Array.from(document.querySelectorAll('input[name="cancel-trip"]:checked')).map((el) => el.value);
-  const total = () =>
-    trips
-      .filter((t) => picked().includes(String(t.pk)))
-      .reduce((sum, t) => sum + Number(t.amount), 0)
-      .toFixed(2);
+  const sum = (rows) => rows.reduce((total, t) => total + Number(t.amount), 0).toFixed(2);
+  const total = () => sum(trips.filter((t) => picked().includes(String(t.pk))));
   window.cancelRefundTotal = total;
   Alpine.store("modal").show({
     title: "Cancel trips and refund?",
     message: `${opts.quote}: tick the trips to cancel. Each one's money goes back to the card; cancelling every trip cancels the order. This cannot be undone.`,
     html: `<div class="mt-3 grid gap-2 text-left" onchange="this.querySelector('[data-total]').textContent = window.cancelRefundTotal()">
         ${trips.length ? trips.map(row).join("") : '<p class="text-[12.5px] text-muted">No live trips on this order.</p>'}
-        <p class="text-[12.5px] text-ink">Refund $<span class="num font-semibold" data-total>0.00</span> to the card.</p>
+        <p class="text-[12.5px] text-ink">Refund $<span class="num font-semibold" data-total>${sum(trips.filter(ticked))}</span> to the card.</p>
+        <label for="cancel-reason" class="mt-1 block text-[12.5px] font-medium text-ink">Reason</label>
+        <input id="cancel-reason" type="text" maxlength="255" class="field" placeholder="e.g. Event postponed">
+        <label class="flex items-center gap-2 text-[12.5px] text-ink cursor-pointer">
+          <input type="checkbox" id="cancel-covid" class="accent-amber-500"> COVID-19
+        </label>
       </div>`,
     confirmText: "Cancel & refund",
     variant: "danger",
+    onCancel: opts.onCancel,
     onConfirm: async () => {
       const chosen = picked();
-      if (!chosen.length) return;
+      if (!chosen.length) {
+        if (opts.onCancel) opts.onCancel();
+        return;
+      }
+      const reason = (document.getElementById("cancel-reason")?.value || "").trim();
+      if (!reason) {
+        Alpine.store("toast").push({ type: "danger", title: "Give a reason." });
+        throw new Error("Give a reason.");
+      }
       const body = new URLSearchParams();
       chosen.forEach((pk) => body.append("trips", pk));
+      body.append("reason", reason);
+      if (document.getElementById("cancel-covid")?.checked) body.append("covid", "1");
       try {
         await postForm(opts.url, body);
       } catch (e) {
@@ -1031,6 +1082,64 @@ function cancelRefund(opts) {
   });
 }
 window.cancelRefund = cancelRefund;
+
+/* Late Cancel / No Show — from the dispatch drawer's status select and the processing
+   pane. Both are chargeable, so they say why; who and when are recorded server-side. */
+function tripCancelStatus(url, status, opts = {}) {
+  const label = status === "no_show" ? "No Show" : "Late Cancel";
+  Alpine.store("modal").show({
+    title: `Mark this trip ${label}?`,
+    message: "The trip is cancelled and stays chargeable. Say why.",
+    html: `<label for="trip-cancel-reason" class="mt-2 block text-[12.5px] font-medium text-ink mb-1">Reason</label>
+      <input id="trip-cancel-reason" type="text" maxlength="255" class="field" placeholder="${status === "no_show" ? "e.g. Waited 45 minutes, no answer" : "e.g. Called off two hours before pickup"}">`,
+    variant: "danger",
+    confirmText: `Mark ${label}`,
+    onCancel: opts.onCancel,
+    onConfirm: async () => {
+      const reason = (document.getElementById("trip-cancel-reason")?.value || "").trim();
+      if (!reason) {
+        Alpine.store("toast").push({ type: "danger", title: "Give a reason." });
+        throw new Error("Give a reason.");
+      }
+      try {
+        await postForm(url, { status, reason });
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+        throw e;
+      }
+      window.location.reload();
+    },
+  });
+}
+window.tripCancelStatus = tripCancelStatus;
+
+/* Sent back — the affiliate gave a confirmed trip back (dispatch coverage controls). The
+   trip returns to Unassigned flagged Needs farm-out; the reason is required. */
+function sendBack(url, who) {
+  Alpine.store("modal").show({
+    title: "Sent back by the affiliate?",
+    message: `${who || "The affiliate"} gave this trip back. It returns to Unassigned, flagged Needs farm-out, and their 48-hour confirmation is withdrawn.`,
+    html: `<label for="sent-back-reason" class="mt-2 block text-[12.5px] font-medium text-ink mb-1">Reason</label>
+      <input id="sent-back-reason" type="text" maxlength="255" class="field" placeholder="e.g. Their vehicle broke down">`,
+    variant: "danger",
+    confirmText: "Mark sent back",
+    onConfirm: async () => {
+      const reason = (document.getElementById("sent-back-reason")?.value || "").trim();
+      if (!reason) {
+        Alpine.store("toast").push({ type: "danger", title: "Give a reason." });
+        throw new Error("Give a reason.");
+      }
+      try {
+        await postForm(url, { reason });
+      } catch (e) {
+        Alpine.store("toast").push({ type: "danger", title: e.message || "That didn't go through." });
+        throw e;
+      }
+      window.location.reload();
+    },
+  });
+}
+window.sendBack = sendBack;
 
 /* -------------------------------------------------- tasks (APC-53 / APC-54) */
 /* The queue page. Each action posts to the shared JSON endpoints; a handled row leaves
@@ -1323,6 +1432,9 @@ function processingPane(opts) {
       });
     },
     setStatus(value, label) {
+      if (value === "late_cancel" || value === "no_show") {
+        return tripCancelStatus(opts.urls.status, value);
+      }
       Alpine.store("modal").confirm({
         title: `Mark this trip ${label}?`,
         message: "No final status arrived from LimoAnywhere. This records what happened.",
@@ -3781,7 +3893,7 @@ function orderConfirmations() {
       });
     },
 
-    cancelOrder(url, quoteNo) {
+    cancelOrder(url, quoteNo, onCancel) {
       Alpine.store("modal").show({
         title: `Cancel ${quoteNo}?`,
         variant: "danger",
@@ -3793,9 +3905,15 @@ function orderConfirmations() {
         confirmText: "Release hold",
         showCancel: true,
         cancelText: "Keep it",
+        onCancel,
         onConfirm: () => {
-          const el = document.getElementById("order-cancel-reason");
-          return this.post(url, { reason: el ? el.value : "" });
+          const reason = (document.getElementById("order-cancel-reason")?.value || "").trim();
+          if (!reason) {
+            Alpine.store("toast").push({ type: "danger", title: "Give a reason." });
+            // A rejected promise keeps the modal open with what was typed.
+            return Promise.reject(new Error("Give a reason."));
+          }
+          return this.post(url, { reason });
         },
       });
     },

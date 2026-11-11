@@ -124,7 +124,6 @@ def _sent(req, status):
 @pytest.mark.parametrize(
     "status,code",
     [
-        ("assigned", "ASSIGNED"),
         ("dispatched", "ASSIGNED"),
         ("on_the_way", "EN_ROUTE"),
         ("arrived", "ON_LOCATION"),
@@ -132,8 +131,6 @@ def _sent(req, status):
         ("done", "COMPLETE"),
         ("cancelled", "CANCEL"),
         ("late_cancel", "CANCEL"),
-        ("cancelled_by_affiliate", "CANCEL"),
-        ("covid_cancellation", "CANCEL"),
         ("no_show", "NO_SHOW"),
     ],
 )
@@ -146,10 +143,32 @@ def test_set_trip_status_enqueues_mapped_code(accepted, status, code):
     ]
 
 
-def test_unmapped_status_enqueues_nothing(accepted):
-    set_trip_status(accepted.reservation, "circling")
+@pytest.mark.parametrize("status", ["unassigned", "assigned"])
+def test_unmapped_status_enqueues_nothing(accepted, status):
+    """Assigned is an offer still unanswered: GNet hears ASSIGNED only once we're Dispatched."""
+    set_trip_status(accepted.reservation, status)
 
     assert not Push.objects.exists()
+
+
+def test_an_offer_on_a_farmed_in_trip_reports_nothing_until_confirmed():
+    from apps.dispatch import services
+    from apps.vendors.factories import VendorFactory
+
+    trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), trip_status=S.UNASSIGNED)
+    req = FarmInRequestFactory(
+        status=FarmInRequest.Status.ACCEPTED, reservation=trip, transaction_id="tx-offer"
+    )
+
+    offer = services.send_offer(trip, VendorFactory(email=""), payout=Decimal("100"))
+    trip.refresh_from_db()
+    assert trip.trip_status == S.ASSIGNED
+    assert _codes(req) == []
+
+    services.confirm(offer)
+    trip.refresh_from_db()
+    assert trip.trip_status == S.DISPATCHED
+    assert _codes(req) == ["ASSIGNED"]
 
 
 def test_unchanged_status_enqueues_nothing(accepted):
@@ -166,7 +185,7 @@ def test_status_on_a_request_not_accepted_enqueues_nothing():
         status=FarmInRequest.Status.PENDING, reservation=ReservationFactory()
     )
 
-    set_trip_status(req.reservation, "assigned")
+    set_trip_status(req.reservation, "dispatched")
 
     assert not Push.objects.exists()
 
@@ -184,9 +203,9 @@ def test_hook_costs_one_query_on_ordinary_trip():
         ]
 
     with CaptureQueriesContext(connection) as mapped:
-        assert farm_in_push.after_trip_status(trip, "assigned") is None
+        assert farm_in_push.after_trip_status(trip, "dispatched") is None
     with CaptureQueriesContext(connection) as unmapped:
-        assert farm_in_push.after_trip_status(trip, "circling") is None
+        assert farm_in_push.after_trip_status(trip, "unassigned") is None
 
     assert len(counted(mapped)) == 1
     assert len(counted(unmapped)) == 0
@@ -252,14 +271,14 @@ def test_cancel_after_close_still_pushes_cancel(accepted):
 
 def test_assigned_twice_pushes_twice_once_first_is_sent(accepted):
     trip = accepted.reservation
-    set_trip_status(trip, "assigned")
+    set_trip_status(trip, "dispatched")
     set_trip_status(trip, "unassigned")
-    set_trip_status(trip, "assigned")
+    set_trip_status(trip, "dispatched")
     assert _codes(accepted) == ["ASSIGNED"]  # the first is still pending
 
     _sent(accepted, "ASSIGNED")
     set_trip_status(trip, "unassigned")
-    set_trip_status(trip, "assigned")
+    set_trip_status(trip, "dispatched")
 
     assert _codes(accepted) == ["ASSIGNED", "ASSIGNED"]
 
@@ -283,7 +302,9 @@ def test_final_reported_reads_sent_close_only():
 def test_cancelling_an_accepted_farm_in_trip_queues_cancel():
     trip = _trip(S.ASSIGNED)
     req = _farmed_in(trip)
-    payments.cancel_trips(trip.lead, [trip], user=UserFactory(role=User.Role.OWNER_ADMIN))
+    payments.cancel_trips(
+        trip.lead, [trip], user=UserFactory(role=User.Role.OWNER_ADMIN), reason="Customer cancelled"
+    )
     trip.refresh_from_db()
     assert trip.trip_status == S.CANCELLED
     assert list(Push.objects.filter(request=req).values_list("status", "state")) == [
