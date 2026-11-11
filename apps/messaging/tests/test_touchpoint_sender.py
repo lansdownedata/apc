@@ -306,6 +306,30 @@ def test_review_request_other_rate_limits_still_fail(settings):
     assert tp.status == TouchPoint.Status.FAILED
 
 
+def test_review_row_is_failed_when_the_text_fails(settings):
+    """Podium made the invite but the text carrying it was refused: the row must not say Sent."""
+    settings.TOUCHPOINTS_ENABLED = True
+    contact = ContactFactory(phone="5551234567")
+    lead = LeadFactory(contact=contact)
+    _due_tp(lead=lead, kind=TouchPoint.Kind.REVIEW_REQUEST)
+
+    with (
+        patch(
+            "apps.messaging.sender.podium.send_message",
+            side_effect=PodiumAPIError("400 POST https://api.podium.com/v4/messages → opted out"),
+        ),
+        patch(
+            "apps.messaging.sender.podium.create_review_invitation",
+            return_value={"uid": "inv-9", "shortUrl": "https://podium.co/9"},
+        ),
+    ):
+        sender.run_touchpoints()
+
+    review = Review.objects.get(lead=lead)
+    assert review.podium_review_invite_uid == "inv-9"
+    assert review.delivery_status == Review.DeliveryStatus.FAILED
+
+
 def test_review_request_invite_failure_marks_failed_no_review_row(settings):
     settings.TOUCHPOINTS_ENABLED = True
     contact = ContactFactory(phone="5551234567")
