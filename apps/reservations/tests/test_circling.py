@@ -168,3 +168,26 @@ def test_drawer_endpoint_refuses_a_wrong_status(admin_client):
     assert resp.json()["ok"] is False
     trip.refresh_from_db()
     assert trip.circling_at is None
+
+
+@pytest.mark.parametrize("status", [TS.DONE, TS.CUSTOMER_IN_CAR, sorted(CANCELLED_STATUSES)[0]])
+def test_a_late_la_circling_event_leaves_a_finished_trip_alone(client, status):
+    lac = LACustomerFactory()
+    trip = ReservationFactory(
+        lead=LeadFactory(contact=lac.contact), la_reservation_id="777", trip_status=status
+    )
+    token = signing.dumps(lac.pk, salt="la-webhook")
+
+    resp = client.post(
+        f"/webhooks/limoanywhere/{token}/",
+        data=json.dumps(
+            {"id": 777, "reservation_event": "reservation.driver_arrived_at_pickup_and_circling"}
+        ),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200
+    trip.refresh_from_db()
+    assert trip.trip_status == status
+    assert trip.circling_at is None
+    assert not TripStatusEvent.objects.filter(reservation=trip).exists()

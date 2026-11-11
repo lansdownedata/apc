@@ -264,8 +264,12 @@ def la_webhook(request, token: str):
             lead = reservation.lead
             if all(r.trip_status in _TERMINAL_STATUSES for r in lead.reservations.all()):
                 events.emit("all_trips_done", lead)
-    if event_name == "reservation.driver_arrived_at_pickup_and_circling":
-        # Circling is a notice on the trip, not a status: the driver is at the pickup.
+    if (
+        event_name == "reservation.driver_arrived_at_pickup_and_circling"
+        and not reservations_services.circling_is_over(reservation)
+    ):
+        # Circling is a notice on the trip, not a status: the driver is at the pickup. A late
+        # event for a trip already past that point (in the car, done, cancelled) is ignored.
         reservations_services.set_trip_status(
             reservation,
             Reservation.TripStatus.ARRIVED,

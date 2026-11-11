@@ -267,6 +267,13 @@ _CIRCLING_CLEARED_BY = (Reservation.TripStatus.CUSTOMER_IN_CAR, Reservation.Trip
 _CIRCLING_ALLOWED_AT = (Reservation.TripStatus.ON_THE_WAY, Reservation.TripStatus.ARRIVED)
 
 
+def circling_is_over(trip: Reservation) -> bool:
+    """True when the trip is past the point where circling can apply (the notice clears here)."""
+    from apps.dispatch.selectors import CANCELLED_STATUSES
+
+    return trip.trip_status in _CIRCLING_CLEARED_BY or trip.trip_status in CANCELLED_STATUSES
+
+
 def set_circling(trip: Reservation, *, on: bool, source: str, user=None) -> None:
     """Raise or clear the circling notice: the driver is at pickup but has to keep moving.
 
