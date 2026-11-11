@@ -13,6 +13,7 @@ from apps.audit.children import track_children
 from .flights import link_flights
 from .models import Reservation, Stop
 from .passengers import parse_passengers, save_passengers
+from .services import sheet_signature
 
 
 class DraftError(ValueError):
@@ -398,6 +399,9 @@ def save_reservation_from_draft(
     link_flights(stops, data.get("pickup_date"))
     is_new = instance is None
     prev_pickup = None if is_new else (instance.pickup_date, instance.pickup_time)
+    # Only a booked order's trips have messages to re-send (below): nothing to read else.
+    booked = lead.status == lead.Status.BOOKED
+    prev_sheet = sheet_signature(instance) if booked and not is_new else None
     prev_overtime = None if is_new else Decimal(instance.overtime_hours or 0)
     if instance is None:
         instance = Reservation(lead=lead)
@@ -440,13 +444,14 @@ def save_reservation_from_draft(
         save_passengers(instance, passenger_list)
 
     # Keep the per-trip service-date messaging (APC-18-22) in step with a booked order:
-    # a new trip gets its rows, a moved pickup reschedules them.
+    # a new trip gets its rows; a moved or changed trip sheet re-sends them and asks the
+    # customer and the affiliate to confirm again (MSG-05).
     if lead.status == lead.Status.BOOKED:
         from apps.messaging import events
 
         if is_new:
             events.schedule_dates(lead)
-        elif prev_pickup != (instance.pickup_date, instance.pickup_time):
+        elif prev_sheet != sheet_signature(instance):
             events.reschedule_trip(instance)
             events.sync_waiting(instance)
 

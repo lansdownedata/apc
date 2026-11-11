@@ -35,22 +35,25 @@ def _schedule_new_members(lead) -> None:
         events.schedule_dates(lead)
 
 
-def _reschedule_if_pickup_moved(reservation, lead, prev_pickup: tuple) -> None:
-    """A sibling's pickup date/time changed under `apply_to_group` — keep its service-date
-    messages (and its now-stale acknowledgement) in step, same as the reservation editor.
+def _reschedule_if_changed(reservation, lead, prev_sheet: tuple | None) -> bool:
+    """A booked order's sibling whose trip sheet changed under `apply_to_group` (its
+    pickup, route, vehicle or head count, `services.sheet_signature`; ``prev_sheet`` is
+    None for an order not booked): re-send its messages and ask both sides to confirm
+    again, same as the reservation editor (MSG-05). True when it did.
 
     Takes `lead` from the caller (the group's anchor reservation, already loaded) rather
     than reading `reservation.lead` — every member of a group shares one lead, and
     `_members()` doesn't select_related it, so that would be a query per sibling.
     """
-    if lead.status == lead.Status.BOOKED and prev_pickup != (
-        reservation.pickup_date,
-        reservation.pickup_time,
-    ):
-        from apps.messaging import events
+    from .services import sheet_signature
 
-        events.reschedule_trip(reservation)
-        events.sync_waiting(reservation)
+    if prev_sheet is None or prev_sheet == sheet_signature(reservation):
+        return False
+    from apps.messaging import events
+
+    events.reschedule_trip(reservation)
+    events.sync_waiting(reservation)
+    return True
 
 
 # A wedding shuttle is the motivating case — four minibuses on one itinerary — but a
@@ -360,17 +363,29 @@ def apply_to_group(reservation: Reservation) -> list[Reservation]:
     """
     if reservation.group_key is None:
         return []
+    from .services import sheet_signature
+
     fields = sorted(propagated_fields())
     values = {name: getattr(reservation, name) for name in fields}
     route = list(reservation.stops.order_by("sequence"))
     siblings = list(_members(reservation.group_key).exclude(pk=reservation.pk))
+    lead = reservation.lead
+    # Only a booked order's trips have messages to re-send: an unbooked one reads nothing.
+    booked = lead.status == lead.Status.BOOKED
+    changed = False
     for sibling in siblings:
-        prev_pickup = (sibling.pickup_date, sibling.pickup_time)
+        prev_sheet = sheet_signature(sibling) if booked else None
         for name, value in values.items():
             setattr(sibling, name, value)
         sibling.save(update_fields=fields)
         _write_stops(sibling, route)
-        _reschedule_if_pickup_moved(sibling, reservation.lead, prev_pickup)
+        changed = _reschedule_if_changed(sibling, lead, prev_sheet) or changed
+    if changed:
+        # A cleared affiliate acknowledgement reopens the "Affiliate confirmed" task the
+        # system closed, as the editor's own save does for the trip it saved.
+        from apps.tasks import services as tasks
+
+        tasks.ensure_tasks(lead)
     return siblings
 
 

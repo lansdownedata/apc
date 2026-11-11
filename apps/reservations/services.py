@@ -246,6 +246,37 @@ def trip_sheet_text(reservation: Reservation) -> str:
     return "\n".join(lines)
 
 
+def sheet_signature(reservation: Reservation) -> tuple:
+    """What the customer and the affiliate confirm about a trip (MSG-05): its pickup, its
+    route (stop addresses in order, the middle stops' times, each stop's flight), its
+    vehicle and its head count. A change to any of it re-sends the trip's messages and asks
+    both to confirm again (`messaging.events.reschedule_trip`). Price, extras, notes and the
+    named passengers are not part of it. The two end stops' times are left out: they mirror
+    the trip's pickup (already here) and its drop-off, and the editor fills them in on a
+    trip saved without them, which is no change. One query."""
+    stops = list(
+        reservation.stops.order_by("sequence").values_list(
+            "address",
+            "scheduled_time",
+            "airport_id",
+            "airline_id",
+            "flight_number",
+            "flight_direction",
+        )
+    )
+    route = tuple(
+        (address, at if 0 < i < len(stops) - 1 else None, *flight)
+        for i, (address, at, *flight) in enumerate(stops)
+    )
+    return (
+        reservation.pickup_date,
+        reservation.pickup_time,
+        reservation.vehicle_id,
+        reservation.passengers,
+        route,
+    )
+
+
 # Trip statuses that are message events of their own (`status_<status>`).
 _STATUS_EVENTS = frozenset(
     {

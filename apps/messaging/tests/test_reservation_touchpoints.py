@@ -722,3 +722,134 @@ def test_message_context_has_tz_for_eastern_trip():
     ctx = build_context(lead, res)
     assert ctx["trip_pickup_tz"] == "EDT"
     assert ctx["trip_pickup_time"].endswith(" EDT")
+
+
+# --- a changed trip sheet re-sends and re-asks (MSG-05) --------------------------------
+
+
+def _confirmed_booked_trip(**kw):
+    """A booked trip both sides have confirmed, its customer confirmation already sent."""
+    from datetime import time
+
+    lead = _booked_lead()
+    res = ReservationFactory(
+        lead=lead,
+        pickup_date=_future(10),
+        pickup_time=time(9, 0),
+        pickup_timezone="America/New_York",
+        customer_confirmed_at=timezone.now(),
+        **kw,
+    )
+    assignment = AssignmentFactory(
+        reservation=res, status=Assignment.Status.CONFIRMED, affiliate_confirmed_at=timezone.now()
+    )
+    events.schedule_dates(lead)
+    sent = TouchPoint.objects.get(reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER)
+    TouchPoint.objects.filter(pk=sent.pk).update(status=TouchPoint.Status.SENT)
+    return res, assignment, sent
+
+
+def _edit(res, change):
+    """Save the trip through the editor exactly as it stands, with ``change`` applied to
+    its draft."""
+    from apps.reservations.drafts import save_reservation_from_draft
+    from apps.reservations.editor import reservation_draft
+    from apps.reservations.models import Reservation
+
+    res = Reservation.objects.get(pk=res.pk)
+    draft = reservation_draft(res)
+    change(draft)
+    return save_reservation_from_draft(res.lead, draft, instance=res)
+
+
+def _flight(draft):
+    from apps.addresses.factories import AirportFactory
+
+    draft["stops"][0]["airport"] = AirportFactory().pk
+
+
+def _new_vehicle(draft):
+    from apps.leads.factories import VehicleTypeFactory
+
+    draft["vehicle"] = VehicleTypeFactory(name="Sprinter Van").pk
+
+
+_SHEET_CHANGES = {
+    "pickup time": lambda d: d.update(time="08:15"),
+    "stop address": lambda d: d["stops"][-1].update(address="Union Station"),
+    "stop order": lambda d: d.update(stops=[d["stops"][1], d["stops"][0], d["stops"][2]]),
+    "stop time": lambda d: d["stops"][1].update(time="10:30"),
+    "vehicle": _new_vehicle,
+    "passenger count": lambda d: d.update(pax=7),
+    "flight": _flight,
+}
+_OFF_SHEET_CHANGES = {
+    "price": lambda d: d.update(rate=999),
+    "passenger names": lambda d: d.update(passengerList=[{"name": "Ann Rider", "mobile": ""}]),
+    "stop note": lambda d: d["stops"][0].update(note="Door 4"),
+    "extras": lambda d: d.update(extras=[{"kind": "tolls", "label": "Tolls", "amount": 12}]),
+}
+
+
+@pytest.mark.parametrize("change", list(_SHEET_CHANGES))
+def test_a_change_to_the_trip_sheet_resends_and_clears_both_acknowledgements(change):
+    res, assignment, sent = _confirmed_booked_trip(stops=["Dulles", "The Willard", "Reagan"])
+    res = _edit(res, lambda d: None)  # the editor's own normalising save changes nothing
+    sent.refresh_from_db()
+    assert sent.status == TouchPoint.Status.SENT
+
+    _edit(res, _SHEET_CHANGES[change])
+
+    sent.refresh_from_db()
+    res.refresh_from_db()
+    assignment.refresh_from_db()
+    assert sent.status == TouchPoint.Status.CANCELLED
+    assert TouchPoint.objects.filter(
+        reservation=res, kind=K.TRIP_CONFIRM_CUSTOMER, status=TouchPoint.Status.SCHEDULED
+    ).exists()
+    assert res.customer_confirmed_at is None
+    assert assignment.affiliate_confirmed_at is None
+
+
+@pytest.mark.parametrize("change", list(_OFF_SHEET_CHANGES))
+def test_a_change_off_the_trip_sheet_leaves_messages_and_acknowledgements(change):
+    res, assignment, sent = _confirmed_booked_trip(stops=["Dulles", "The Willard", "Reagan"])
+
+    _edit(res, _OFF_SHEET_CHANGES[change])
+
+    sent.refresh_from_db()
+    res.refresh_from_db()
+    assignment.refresh_from_db()
+    assert sent.status == TouchPoint.Status.SENT
+    assert res.customer_confirmed_at is not None
+    assert assignment.affiliate_confirmed_at is not None
+
+
+def test_a_vehicle_change_puts_a_dispatched_trip_back_to_assigned():
+    from apps.reservations.models import Reservation, TripStatusEvent
+
+    res, _, _ = _confirmed_booked_trip(trip_status=Reservation.TripStatus.DISPATCHED)
+
+    _edit(res, _new_vehicle)
+
+    res.refresh_from_db()
+    assert res.trip_status == Reservation.TripStatus.ASSIGNED
+    events_ = TripStatusEvent.objects.filter(reservation=res)
+    assert list(events_.values_list("status", "source")) == [
+        (Reservation.TripStatus.ASSIGNED, TripStatusEvent.Source.SYSTEM)
+    ]
+
+
+def test_a_changed_trip_reopens_its_affiliate_confirmed_task():
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    res, _, _ = _confirmed_booked_trip()
+    tasks.ensure_tasks(res.lead)
+    task = Task.objects.get(reservation=res, kind="affiliate_confirmed")
+    assert task.status == Task.Status.DONE
+
+    _edit(res, _new_vehicle)
+
+    task.refresh_from_db()
+    assert task.status in Task.UNRESOLVED

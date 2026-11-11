@@ -7,7 +7,8 @@ TouchPoints, one per row on it that is on and whose service types match
 - `emit(trigger, lead, reservation=None)`: an app event happened now.
 - `schedule_dates(lead, reservation=None)`: make sure every date row (pickup, quote expiry,
   balance due) has its TouchPoint, timed from its anchor.
-- `reschedule_trip(reservation)`: a trip's pickup moved; its pickup rows start over.
+- `reschedule_trip(reservation)`: a trip moved or its sheet changed; its pickup rows and
+  its driver message start over, and confirmed coverage drops back to Assigned.
 - `sync_waiting(reservation)`: rows that wait for a condition (Dispatched with driver
   details) are queued or re-dated once it holds.
 - `cancel(lead, ...)`, `withdraw(row)` and `redate(row, old_offset=...)`: queued sends
@@ -363,21 +364,29 @@ def schedule_dates(
 
 
 def reschedule_trip(reservation) -> None:
-    """A trip's pickup date or time changed.
+    """A trip moved, or changed what its customer and affiliate confirm (its sheet:
+    `reservations.services.sheet_signature`). Moe's rule (MSG-05): its messages go again
+    and it waits for both to confirm again.
 
-    Its pickup rows are withdrawn, sent ones too, so a trip confirmed for the old date gets
-    a fresh confirmation for the new one; the customer's and the affiliate's
-    acknowledgements are for a date that no longer holds, so they are cleared; then the
-    order's trips are rebuilt (as the old `reschedule_service_touchpoints`). Rows that
-    wait for dispatch are re-dated by `sync_waiting`, not here."""
+    Every send of its pickup rows is withdrawn, sent ones and those skipped as covered or
+    failed too, so the trip gets a fresh confirmation for what holds now. Its driver
+    message is withdrawn once it has reached anyone, so it goes again when the trip is
+    Dispatched again with its driver (`sync_waiting`); a driver change notice still queued
+    goes with it, as the fresh message carries the details. The customer's and the
+    affiliate's acknowledgements are for details that no longer hold, so they are cleared,
+    and a trip with confirmed coverage that had got past Assigned (Dispatched, under way)
+    is Assigned again, as a System change. Then the order's trips are rebuilt (as the old
+    `reschedule_service_touchpoints`). A driver message not yet sent is re-dated by
+    `sync_waiting`, not here."""
     lead = reservation.lead
     rows = MessageTemplate.objects.filter(trigger__in=_PICKUP_TRIGGERS)
     keys = list(rows.values_list("key", flat=True))
     TouchPoint.objects.filter(
         Q(message__in=rows) | Q(message__isnull=True, kind__in=keys),
         reservation=reservation,
-        status__in=(_S.SCHEDULED, _S.SENT),
-    ).update(status=_S.CANCELLED)
+    ).exclude(status=_S.CANCELLED).update(status=_S.CANCELLED)
+    _withdraw_driver_message(reservation)
+    cancel(lead, triggers=["driver_changed"], reservation=reservation)
 
     if reservation.customer_confirmed_at is not None:
         reservation.customer_confirmed_at = None
@@ -386,9 +395,44 @@ def reschedule_trip(reservation) -> None:
     if confirmed is not None and confirmed.affiliate_confirmed_at is not None:
         confirmed.affiliate_confirmed_at = None
         confirmed.save(update_fields=["affiliate_confirmed_at", "updated_at"])
+    if confirmed is not None and reservation.trip_status in rules.DRIVER_MESSAGE_STATUSES:
+        _back_to_assigned(reservation)
 
     if _master_on():
         _send_on_commit(_pickup_rows(lead, list(lead.reservations.all())))
+
+
+def _withdraw_driver_message(reservation) -> None:
+    """Cancel the trip's driver message sends that reached anyone (sent, or holding their
+    texts for quiet hours with the email gone) or were closed (skipped, failed); one still
+    waiting that reached nobody stays, for `sync_waiting` to re-date."""
+    rows = MessageTemplate.objects.filter(trigger__in=_WAITING_TRIGGERS)
+    keys = list(rows.values_list("key", flat=True))
+    reached = Delivery.objects.filter(touchpoint=OuterRef("pk"), status=Delivery.Status.SENT)
+    ids = list(
+        TouchPoint.objects.filter(
+            Q(message__in=rows) | Q(message__isnull=True, kind__in=keys),
+            reservation=reservation,
+        )
+        .exclude(status=_S.CANCELLED)
+        .annotate(reached=Exists(reached))
+        .exclude(status=_S.SCHEDULED, reached=False)
+        .values_list("pk", flat=True)
+    )
+    if ids:
+        TouchPoint.objects.filter(pk__in=ids).update(status=_S.CANCELLED)
+
+
+def _back_to_assigned(reservation) -> None:
+    """The trip shows Assigned again, through the one seam every status change takes, as
+    `dispatch.services._set_status` does. Assigned queues no customer message; a farmed-in
+    trip reports ASSIGNED to GNet again."""
+    from apps.reservations.models import Reservation, TripStatusEvent
+    from apps.reservations.services import set_trip_status
+
+    set_trip_status(
+        reservation, Reservation.TripStatus.ASSIGNED, source=TripStatusEvent.Source.SYSTEM
+    )
 
 
 # --- rows that wait --------------------------------------------------------------------

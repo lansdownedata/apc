@@ -608,6 +608,78 @@ def test_apply_to_group_reschedules_a_sibling_whose_pickup_date_moved():
     assert fresh.scheduled_for == sibling.pickup_at - timedelta(hours=72)
 
 
+def _confirmed_sibling(res):
+    """`res`'s sibling, Dispatched with confirmed coverage both sides acknowledged, its
+    customer confirmation already sent."""
+    sibling = _group_of(res)[1]
+    sibling.trip_status = Reservation.TripStatus.DISPATCHED
+    sibling.customer_confirmed_at = timezone.now()
+    sibling.save(update_fields=["trip_status", "customer_confirmed_at", "updated_at"])
+    assignment = AssignmentFactory(
+        reservation=sibling,
+        status=Assignment.Status.CONFIRMED,
+        affiliate_confirmed_at=timezone.now(),
+    )
+    sent = TouchPoint.objects.get(reservation=sibling, kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER)
+    TouchPoint.objects.filter(pk=sent.pk).update(status=TouchPoint.Status.SENT)
+    return sibling, assignment, sent
+
+
+def test_apply_to_group_resends_a_sibling_whose_trip_sheet_changed():
+    """MSG-05: a vehicle change fanned out to the set re-sends each sibling's messages,
+    asks both sides to confirm again, and puts a Dispatched sibling back to Assigned."""
+    from apps.reservations.models import TripStatusEvent
+    from apps.tasks import services as tasks
+    from apps.tasks.models import Task
+
+    lead = _booked()
+    res = TransferReservationFactory(lead=lead, pickup_date=_future())
+    groups.set_group_size(res, 2)
+    sibling, assignment, sent = _confirmed_sibling(res)
+    tasks.ensure_tasks(lead)
+    task = Task.objects.get(reservation=sibling, kind="affiliate_confirmed")
+    assert task.status == Task.Status.DONE
+
+    res.vehicle = VehicleTypeFactory(name="Sprinter Van")
+    res.save(update_fields=["vehicle"])
+    groups.apply_to_group(res)
+
+    sent.refresh_from_db()
+    sibling.refresh_from_db()
+    assignment.refresh_from_db()
+    task.refresh_from_db()
+    assert sent.status == TouchPoint.Status.CANCELLED
+    assert TouchPoint.objects.filter(
+        reservation=sibling,
+        kind=TouchPoint.Kind.TRIP_CONFIRM_CUSTOMER,
+        status=TouchPoint.Status.SCHEDULED,
+    ).exists()
+    assert sibling.customer_confirmed_at is None
+    assert assignment.affiliate_confirmed_at is None
+    assert sibling.trip_status == Reservation.TripStatus.ASSIGNED
+    assert list(
+        TripStatusEvent.objects.filter(reservation=sibling).values_list("status", "source")
+    ) == [(Reservation.TripStatus.ASSIGNED, TripStatusEvent.Source.SYSTEM)]
+    assert task.status in Task.UNRESOLVED
+
+
+def test_apply_to_group_leaves_a_sibling_whose_price_alone_changed():
+    lead = _booked()
+    res = TransferReservationFactory(lead=lead, pickup_date=_future())
+    groups.set_group_size(res, 2)
+    sibling, assignment, sent = _confirmed_sibling(res)
+
+    res.rate = Decimal("999")
+    res.save(update_fields=["rate"])
+    groups.apply_to_group(res)
+
+    sent.refresh_from_db()
+    sibling.refresh_from_db()
+    assert sent.status == TouchPoint.Status.SENT
+    assert sibling.customer_confirmed_at is not None
+    assert sibling.trip_status == Reservation.TripStatus.DISPATCHED
+
+
 def test_a_copy_on_a_booked_order_starts_with_no_overtime_no_extras_and_a_zero_booked_total():
     """Spec 2026-10-25 §4.4: each copy runs its own clock and bill, and a trip added to a
     booked order has no prepaid money behind it."""

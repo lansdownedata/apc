@@ -902,6 +902,216 @@ def test_a_moved_pickup_leaves_the_driver_message_to_sync_waiting(clock):
     assert driver.status == S.SCHEDULED
 
 
+# --- a moved or changed trip starts over (MSG-05) ---------------------------------------
+
+POSTMARK = "apps.notifications.email.deliver_html_email"
+
+
+def _staff_pickup_row() -> MessageTemplate:
+    """A staff email on the combining pickup trigger that lists the day, 72 hours before."""
+    return _added(
+        trigger="pickup",
+        section=MessageTemplate.Section.TRIP_DAY,
+        audience=MessageTemplate.Audience.STAFF,
+        recipients=[],
+        staff_emails=["ops@apc.test"],
+        send_sms=False,
+        send_email=True,
+        subject="Pickups",
+        email_body="{trip_sheet}",
+        timing_amount=72,
+        timing_unit="hours",
+        timing_direction=MessageTemplate.Direction.BEFORE,
+    )
+
+
+def _send_due() -> None:
+    with patch(SEND, side_effect=_ok), patch(POSTMARK, return_value="pm"):
+        sender.run_touchpoints()
+
+
+def test_a_trip_skipped_as_covered_gets_a_fresh_send_after_it_moves(clock, live):
+    """MSG-05: the second trip of a day was skipped as covered by the first trip's notice;
+    moved to the next day it must be told again, the staff row and the seeded customer
+    confirmation alike. A Skipped row used to block the re-queue."""
+    lead = _lead()
+    first = _trip(lead)
+    second = _trip(lead, hours=24 * 10 + 2)
+    staff = _staff_pickup_row()
+    events.schedule_dates(lead)
+    clock.now = second.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+    keys = ("trip_confirm_customer", staff.key)
+    skipped = list(_tps(lead, reservation=second, kind__in=keys))
+    assert {tp.status for tp in skipped} == {S.SKIPPED}
+    sent = set(_tps(lead, reservation=first, kind__in=keys).values_list("status", flat=True))
+    assert sent == {S.SENT}
+
+    second.pickup_date += timedelta(days=1)
+    second.save()
+    events.reschedule_trip(second)
+
+    for tp in skipped:
+        tp.refresh_from_db()
+        assert tp.status == S.CANCELLED
+    queued = _tps(lead, reservation=second, kind__in=keys, status=S.SCHEDULED)
+    fresh = {tp.kind: tp for tp in queued}
+    assert set(fresh) == set(keys)
+    assert {tp.scheduled_for for tp in fresh.values()} == {second.pickup_at - timedelta(hours=72)}
+
+    clock.now = second.pickup_at - timedelta(hours=72) + timedelta(minutes=1)
+    _send_due()
+
+    statuses = _tps(lead, pk__in=[tp.pk for tp in fresh.values()]).values_list("status", flat=True)
+    assert set(statuses) == {S.SENT}
+
+
+def test_a_failed_pickup_row_is_queued_again_after_the_trip_moves(clock):
+    lead = _lead()
+    trip = _trip(lead)
+    events.schedule_dates(lead)
+    failed = _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER).get()
+    TouchPoint.objects.filter(pk=failed.pk).update(status=S.FAILED, error="sms: boom")
+
+    trip.pickup_date += timedelta(days=1)
+    trip.save()
+    events.reschedule_trip(trip)
+
+    failed.refresh_from_db()
+    assert failed.status == S.CANCELLED
+    assert _tps(lead, kind=K.TRIP_CONFIRM_CUSTOMER, status=S.SCHEDULED).count() == 1
+
+
+def _status_events(trip) -> list[tuple]:
+    from apps.reservations.models import TripStatusEvent
+
+    return list(TripStatusEvent.objects.filter(reservation=trip).values_list("status", "source"))
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        Reservation.TripStatus.DISPATCHED,
+        Reservation.TripStatus.ON_THE_WAY,
+        Reservation.TripStatus.CIRCLING,
+        Reservation.TripStatus.ARRIVED,
+        Reservation.TripStatus.CUSTOMER_IN_CAR,
+    ],
+)
+def test_a_changed_trip_with_confirmed_coverage_goes_back_to_assigned(clock, status):
+    """Moe's rule (MSG-05): a moved or changed trip is Assigned again until the customer
+    and the affiliate confirm the new details; the app logs it as a System change."""
+    lead = _lead()
+    trip, assignment = _confirmed_trip(lead)
+    trip.trip_status = status
+    trip.save(update_fields=["trip_status", "updated_at"])
+    events.schedule_dates(lead)
+    asked = _tps(lead, reservation=trip, kind=K.TRIP_CONFIRM_AFFILIATE).get()
+    TouchPoint.objects.filter(pk=asked.pk).update(status=S.SENT)
+
+    events.reschedule_trip(trip)
+
+    trip.refresh_from_db()
+    assignment.refresh_from_db()
+    assert trip.trip_status == Reservation.TripStatus.ASSIGNED
+    assert _status_events(trip) == [(Reservation.TripStatus.ASSIGNED, "system")]
+    assert trip.customer_confirmed_at is None
+    assert assignment.affiliate_confirmed_at is None
+    # The affiliate is asked again by its own confirmation row.
+    asked.refresh_from_db()
+    assert asked.status == S.CANCELLED
+    assert _tps(lead, reservation=trip, kind=K.TRIP_CONFIRM_AFFILIATE, status=S.SCHEDULED).exists()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "",
+        Reservation.TripStatus.UNASSIGNED,
+        Reservation.TripStatus.ASSIGNED,
+        Reservation.TripStatus.DONE,
+        Reservation.TripStatus.CANCELLED,
+        Reservation.TripStatus.NO_SHOW,
+    ],
+)
+def test_a_changed_trip_keeps_any_other_status(clock, status):
+    lead = _lead()
+    trip, _ = _confirmed_trip(lead)
+    trip.trip_status = status
+    trip.save(update_fields=["trip_status", "updated_at"])
+
+    events.reschedule_trip(trip)
+
+    trip.refresh_from_db()
+    assert trip.trip_status == status
+    assert _status_events(trip) == []
+
+
+def test_a_dispatched_trip_without_confirmed_coverage_keeps_its_status(clock):
+    lead = _lead()
+    trip = _trip(lead, trip_status=Reservation.TripStatus.DISPATCHED)
+
+    events.reschedule_trip(trip)
+
+    trip.refresh_from_db()
+    assert trip.trip_status == Reservation.TripStatus.DISPATCHED
+    assert _status_events(trip) == []
+
+
+def test_a_sent_driver_message_goes_again_once_the_moved_trip_is_dispatched_again(clock):
+    """MSG-05: the driver details went for the old pickup. After the move the trip is
+    Assigned again; once it is Dispatched again with its driver, the message is queued
+    afresh, and no "Driver details updated" notice comes with it."""
+    from apps.reservations.services import set_trip_status
+
+    lead = _lead()
+    trip = _trip(lead, hours=72)
+    _dispatched(trip)
+    events.sync_waiting(trip)
+    sent = _tps(lead, kind=K.DRIVER_RELEASED).get()
+    TouchPoint.objects.filter(pk=sent.pk).update(
+        status=S.SENT, sent_at=NOW, driver_details=trip.assignments.get().driver_info
+    )
+
+    trip.pickup_date += timedelta(days=1)
+    trip.save()
+    events.reschedule_trip(trip)
+    events.sync_waiting(trip)
+
+    sent.refresh_from_db()
+    trip.refresh_from_db()
+    assert sent.status == S.CANCELLED
+    assert trip.trip_status == Reservation.TripStatus.ASSIGNED
+    assert not _tps(lead, kind=K.DRIVER_RELEASED, status=S.SCHEDULED).exists()
+
+    set_trip_status(trip, Reservation.TripStatus.DISPATCHED)
+
+    fresh = _tps(lead, kind=K.DRIVER_RELEASED, status=S.SCHEDULED).get()
+    assert fresh.scheduled_for == trip.pickup_at - timedelta(hours=12)
+    assert not _tps(lead, kind="driver_updated").exists()
+
+
+def test_a_queued_driver_change_notice_is_withdrawn_when_the_trip_changes(clock):
+    """The fresh driver details message after the re-dispatch carries the details; a change
+    notice still queued from before the move would say it twice."""
+    lead = _lead()
+    trip = _trip(lead, hours=72)
+    _dispatched(trip)
+    notice = TouchPointFactory(
+        lead=lead,
+        reservation=trip,
+        kind="driver_updated",
+        message=_row("driver_updated"),
+        status=S.SCHEDULED,
+        scheduled_for=NOW,
+    )
+
+    events.reschedule_trip(trip)
+
+    notice.refresh_from_db()
+    assert notice.status == S.CANCELLED
+
+
 # --- parity: rows that wait ------------------------------------------------------------
 
 
