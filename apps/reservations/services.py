@@ -263,6 +263,33 @@ def initial_status(lead) -> str:
     return Reservation.TripStatus.PENDING
 
 
+_CIRCLING_CLEARED_BY = (Reservation.TripStatus.CUSTOMER_IN_CAR, Reservation.TripStatus.DONE)
+_CIRCLING_ALLOWED_AT = (Reservation.TripStatus.ON_THE_WAY, Reservation.TripStatus.ARRIVED)
+
+
+def set_circling(trip: Reservation, *, on: bool, source: str, user=None) -> None:
+    """Raise or clear the circling notice: the driver is at pickup but has to keep moving.
+
+    Turning it on is only legal while the trip is On the way or Arrived, and keeps the
+    original time and source if it is already on. Turning it off blanks all three fields.
+    """
+    if on:
+        if trip.trip_status not in _CIRCLING_ALLOWED_AT:
+            raise ValueError("Circling can only be set while the trip is on the way or arrived.")
+        if trip.circling_at is not None:
+            return
+        trip.circling_at = dj_timezone.now()
+        trip.circling_source = source
+        trip.circling_by = user
+    else:
+        if trip.circling_at is None and not trip.circling_source and trip.circling_by_id is None:
+            return
+        trip.circling_at = None
+        trip.circling_source = ""
+        trip.circling_by = None
+    trip.save(update_fields=["circling_at", "circling_source", "circling_by", "updated_at"])
+
+
 def set_trip_status(
     reservation: Reservation,
     status: str,
@@ -286,6 +313,8 @@ def set_trip_status(
     was_cancelled = reservation.trip_status in CANCELLED_STATUSES
     reservation.trip_status = status
     reservation.save(update_fields=["trip_status", "updated_at"])
+    if status in _CIRCLING_CLEARED_BY or status in CANCELLED_STATUSES:
+        set_circling(reservation, on=False, source="")
     event = TripStatusEvent.objects.create(
         reservation=reservation, status=status, source=source, changed_by=user
     )

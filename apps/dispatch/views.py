@@ -440,6 +440,23 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
 
 @login_required
 @require_POST
+def circling(request: HttpRequest, pk: int) -> JsonResponse:
+    """Raise (`on=1`) or dismiss (`on=0`) the trip's circling notice from the drawer."""
+    trip = get_object_or_404(Reservation, pk=pk)
+    try:
+        reservation_services.set_circling(
+            trip,
+            on=request.POST.get("on") == "1",
+            source=Reservation.CirclingSource.MANUAL,
+            user=request.user,
+        )
+    except ValueError as exc:
+        return _fail(exc)
+    return JsonResponse({"ok": True})
+
+
+@login_required
+@require_POST
 def confirm_customer(request: HttpRequest, pk: int) -> JsonResponse:
     """Record the customer's acknowledgement by hand (APC-19).
 
