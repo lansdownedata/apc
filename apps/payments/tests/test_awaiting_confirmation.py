@@ -167,6 +167,19 @@ def test_cancel_endpoint_releases_the_hold_with_a_reason(money_client):
     assert plan.lead.lost_reason == "No coach available"
 
 
+@pytest.mark.parametrize("reason", ["", "   "])
+def test_cancel_endpoint_needs_a_reason(money_client, reason):
+    plan = _engaged()
+    with patch.object(services.stripe.PaymentIntent, "cancel") as cancel:
+        resp = money_client.post(reverse("order_cancel", args=[plan.lead_id]), {"reason": reason})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"ok": False, "error": "Give a reason."}
+    cancel.assert_not_called()
+    plan.lead.refresh_from_db()
+    assert plan.lead.status == Lead.Status.ENGAGED
+
+
 def test_confirm_refuses_an_order_with_no_authorization(money_client):
     plan = PaymentPlanFactory()
     resp = money_client.post(reverse("order_confirm", args=[plan.lead_id]))

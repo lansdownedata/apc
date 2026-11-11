@@ -66,9 +66,12 @@ def test_done_late_cancel_and_no_show_are_ready(status):
     assert trip in _ready()
 
 
-@pytest.mark.parametrize("status", [S.CANCELLED, S.COVID_CANCELLATION])
-def test_plain_cancelled_and_covid_never_are(status):
-    assert _trip(status) not in _ready()
+@pytest.mark.parametrize("covid", [False, True])
+def test_plain_cancelled_and_covid_never_are(covid):
+    trip = _trip(S.CANCELLED)
+    trip.cancel_covid = covid
+    trip.save(update_fields=["cancel_covid"])
+    assert trip not in _ready()
 
 
 def test_an_ended_trip_with_no_status_is_ready_and_needs_a_status():

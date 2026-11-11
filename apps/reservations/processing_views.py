@@ -372,8 +372,9 @@ def processing_photos(request: HttpRequest, pk: int) -> JsonResponse:
 @login_required
 @require_POST
 def processing_set_status(request: HttpRequest, pk: int) -> JsonResponse:
-    """The parallel-run gap (spec §4.1): LA never sent Done. An agent says what happened."""
-    from .services import set_trip_status
+    """The parallel-run gap (spec §4.1): LA never sent Done. An agent says what happened;
+    a no-show or late cancel also says why."""
+    from .services import record_cancellation, set_trip_status
 
     trip = _trip(pk)
     status = request.POST.get("status", "")
@@ -381,5 +382,11 @@ def processing_set_status(request: HttpRequest, pk: int) -> JsonResponse:
         return _bad("Pick Done, No show or Late cancel.")
     if not processing.workable(trip) or processing.lock_message(trip):
         return _bad("This trip's status can't be set here.")
-    set_trip_status(trip, status, user=request.user)
+    if status == Reservation.TripStatus.DONE:
+        set_trip_status(trip, status, user=request.user)
+        return JsonResponse({"ok": True})
+    try:
+        record_cancellation(trip, status, reason=request.POST.get("reason", ""), user=request.user)
+    except ValueError as exc:
+        return _bad(str(exc))
     return JsonResponse({"ok": True})

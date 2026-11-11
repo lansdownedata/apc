@@ -220,13 +220,22 @@ def order_cancel_refund(request, lead_id):
         messages.error(request, message)
         return redirect("lead_detail", pk=lead_id)
 
+    reason = (request.POST.get("reason") or "").strip()
+    if not reason:
+        return fail("Give a reason.")
     try:
         pks = [int(v) for v in request.POST.getlist("trips")]
     except ValueError:
         return fail("Pick the trips to cancel.")
     trips = list(lead.reservations.filter(pk__in=pks)) if pks else services._live_trips(lead)
     try:
-        result = services.cancel_trips(lead, trips, user=request.user)
+        result = services.cancel_trips(
+            lead,
+            trips,
+            user=request.user,
+            reason=reason,
+            covid=request.POST.get("covid") in ("1", "on", "true"),
+        )
     except services.PaymentError as exc:
         return fail(str(exc))
     except stripe.error.StripeError as exc:
@@ -314,10 +323,11 @@ def order_cancel(request, lead_id):
     # releases a hold, and must not quietly mark a paid order lost with money still taken.
     if lead.status != Lead.Status.ENGAGED:
         return _json_error("Only an engaged order can have its authorization released.")
+    reason = (request.POST.get("reason") or "").strip()
+    if not reason:
+        return _json_error("Give a reason.")
     try:
-        services.cancel_order(
-            lead, user=request.user, reason=(request.POST.get("reason") or "").strip()
-        )
+        services.cancel_order(lead, user=request.user, reason=reason)
     except services.PaymentError as exc:
         return _json_error(str(exc))
     except stripe.error.StripeError as exc:

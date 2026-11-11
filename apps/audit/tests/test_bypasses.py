@@ -35,12 +35,13 @@ def test_cancel_one_of_two_trips_logs_on_that_trip_only():
     before = set(_entries(Reservation).values_list("pk", flat=True))
 
     with _refunds():
-        services.cancel_trips(plan.lead, [t1], user=_agent())
+        services.cancel_trips(plan.lead, [t1], user=_agent(), reason="Customer cancelled")
 
     fresh = _entries(Reservation).exclude(pk__in=before)
-    mine = fresh.filter(trip_id=t1.pk)
-    assert mine.count() == 1
-    assert mine.get().changes["trip_status"][1] == Reservation.TripStatus.CANCELLED
+    # Two saves on the trip: the cancel's reason/who/when, then the status itself.
+    stamp, status = fresh.filter(trip_id=t1.pk).order_by("pk")
+    assert stamp.changes["cancel_reason"][1] == "Customer cancelled"
+    assert status.changes["trip_status"][1] == Reservation.TripStatus.CANCELLED
     assert not fresh.filter(trip_id=t2.pk).exists()
 
 

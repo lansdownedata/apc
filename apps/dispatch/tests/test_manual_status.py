@@ -123,3 +123,59 @@ def test_panel_hides_the_status_buttons_for_an_uncovered_trip(logged_in_client):
     resp = logged_in_client.get(reverse("dispatch_assign_panel", args=[trip.pk]))
 
     assert b"Trip status" not in resp.content
+
+
+# --- cancel statuses: their own endpoint, with a reason ----------------------------------
+
+
+@pytest.mark.parametrize("status", ["no_show", "late_cancel"])
+def test_dispatch_cancel_status_endpoint(logged_in_client, status):
+    trip = _trip(trip_status=TS.UNASSIGNED)  # no coverage needed for a chargeable cancel
+
+    resp = logged_in_client.post(
+        reverse("dispatch_cancel_status", args=[trip.pk]),
+        {"status": status, "reason": "Passenger never appeared"},
+    )
+
+    assert resp.status_code == 200 and resp.json() == {"ok": True}
+    trip.refresh_from_db()
+    assert trip.trip_status == status
+    assert trip.cancel_reason == "Passenger never appeared"
+    assert trip.cancelled_by_id == resp.wsgi_request.user.pk and trip.cancelled_at is not None
+    event = TripStatusEvent.objects.get(reservation=trip)
+    assert (event.status, event.source) == (status, TripStatusEvent.Source.MANUAL)
+
+
+@pytest.mark.parametrize("status", ["cancelled", "covid_cancellation", "done", ""])
+def test_dispatch_cancel_status_refuses_anything_but_late_cancel_and_no_show(
+    logged_in_client, status
+):
+    """A plain cancel moves money, so it goes through the order's cancel flow."""
+    trip = _trip(trip_status=TS.DISPATCHED)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_cancel_status", args=[trip.pk]), {"status": status, "reason": "x"}
+    )
+
+    assert resp.status_code == 400 and resp.json()["ok"] is False
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.DISPATCHED
+
+
+def test_dispatch_cancel_status_needs_a_reason(logged_in_client):
+    trip = _trip(trip_status=TS.DISPATCHED)
+
+    resp = logged_in_client.post(
+        reverse("dispatch_cancel_status", args=[trip.pk]), {"status": "no_show", "reason": "  "}
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"ok": False, "error": "Give a reason."}
+    trip.refresh_from_db()
+    assert trip.trip_status == TS.DISPATCHED
+
+
+def test_dispatch_cancel_status_is_post_only(logged_in_client):
+    trip = _trip()
+    resp = logged_in_client.get(reverse("dispatch_cancel_status", args=[trip.pk]))
+    assert resp.status_code == 405

@@ -10,6 +10,7 @@ urlpatterns = [
     path("<int:pk>/assign/", views.assign, name="dispatch_assign"),
     path("<int:pk>/assign-driver/", views.assign_driver, name="dispatch_assign_driver"),
     path("<int:pk>/status/", views.set_status, name="dispatch_set_status"),
+    path("<int:pk>/cancel-status/", views.cancel_status, name="dispatch_cancel_status"),
     path("<int:pk>/circling/", views.circling, name="dispatch_circling"),
     path(
         "<int:pk>/confirm-customer/",

@@ -76,7 +76,7 @@ def allocation(lead) -> dict[int, Decimal]:
     processing settles (spec §4.1)."""
     from apps.reservations.models import Reservation
 
-    nothing = (Reservation.TripStatus.CANCELLED, Reservation.TripStatus.COVID_CANCELLATION)
+    nothing = (Reservation.TripStatus.CANCELLED,)  # COVID-19 is Cancelled with a flag
     pool = order_prepaid(lead)
     # A processed trip keeps the share it was settled against (APC-102, Moe 2026-10-25): a
     # sibling cancelled or added later moves the other trips' shares, never a settled one.

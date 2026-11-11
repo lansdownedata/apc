@@ -198,10 +198,38 @@ def test_unlock_endpoint_needs_a_reason(accountant):
 def test_set_status_marks_what_happened(staff):
     trip = _trip(S.CUSTOMER_IN_CAR)
 
-    resp = staff.post(reverse("processing_set_status", args=[trip.pk]), {"status": "no_show"})
+    resp = staff.post(
+        reverse("processing_set_status", args=[trip.pk]),
+        {"status": "no_show", "reason": "Never came down"},
+    )
 
     trip.refresh_from_db()
     assert resp.json()["ok"] is True and trip.trip_status == S.NO_SHOW
+    assert (
+        trip.cancel_reason == "Never came down"
+        and trip.cancelled_by_id == resp.wsgi_request.user.pk
+    )
+
+
+@pytest.mark.parametrize("status", ["late_cancel", "no_show"])
+def test_processing_late_cancel_needs_reason(staff, status):
+    trip = _trip(S.CUSTOMER_IN_CAR)
+
+    resp = staff.post(
+        reverse("processing_set_status", args=[trip.pk]), {"status": status, "reason": " "}
+    )
+
+    assert resp.status_code == 400 and resp.json()["error"] == "Give a reason."
+    trip.refresh_from_db()
+    assert trip.trip_status == S.CUSTOMER_IN_CAR
+
+
+def test_processing_done_needs_no_reason(staff):
+    trip = _trip(S.CUSTOMER_IN_CAR)
+    resp = staff.post(reverse("processing_set_status", args=[trip.pk]), {"status": "done"})
+    trip.refresh_from_db()
+    assert resp.json()["ok"] is True and trip.trip_status == S.DONE
+    assert trip.cancelled_at is None
 
 
 def test_set_status_refuses_anything_but_the_three(staff):

@@ -59,7 +59,9 @@ def test_cancel_and_refund_cancels_and_reverses(client):
     res = TransferReservationFactory(lead=plan.lead, rate=Decimal("1335.00"))
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     with patch.object(services.stripe.Refund, "create", return_value=MagicMock(id="re_2")):
-        resp = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        resp = client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
     assert resp.status_code in (200, 302)
     plan.lead.refresh_from_db()
     res.refresh_from_db()
@@ -79,7 +81,9 @@ def test_cancel_and_refund_withdraws_affiliate_coverage(client):
 
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     with patch.object(services.stripe.Refund, "create", return_value=MagicMock(id="re_3")):
-        client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
 
     offer.refresh_from_db()
     assert offer.status == Assignment.Status.WITHDRAWN
@@ -121,7 +125,9 @@ def test_cancel_refund_only_booked(client):
 
     plan = PaymentPlanFactory(quote_total=Decimal("100.00"))  # lead defaults to NEW
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    resp = client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+    resp = client.post(
+        reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+    )
     assert resp.status_code in (200, 302)
     plan.lead.refresh_from_db()
     assert plan.lead.status != Lead.Status.LOST  # not booked → no cancel
@@ -426,7 +432,9 @@ def test_cancel_stops_and_keeps_the_order_when_stripe_refuses(client):
         "create",
         side_effect=stripe.error.InvalidRequestError("charge disputed", param=None),
     ):
-        client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
 
     assert Lead.objects.get(pk=plan.lead_id).status == Lead.Status.BOOKED
 
@@ -437,6 +445,8 @@ def test_cancel_and_refund_returns_the_final_bill_too(client):
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
 
     with _stripe_refunds("re_f", "re_b", "re_d"):
-        client.post(reverse("order_cancel_refund", args=[plan.lead_id]))
+        client.post(
+            reverse("order_cancel_refund", args=[plan.lead_id]), {"reason": "Customer cancelled"}
+        )
 
     assert ledger.order_balances(plan.lead)["collected"] == Decimal("0.00")

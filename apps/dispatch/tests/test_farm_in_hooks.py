@@ -283,7 +283,9 @@ def test_final_reported_reads_sent_close_only():
 def test_cancelling_an_accepted_farm_in_trip_queues_cancel():
     trip = _trip(S.ASSIGNED)
     req = _farmed_in(trip)
-    payments.cancel_trips(trip.lead, [trip], user=UserFactory(role=User.Role.OWNER_ADMIN))
+    payments.cancel_trips(
+        trip.lead, [trip], user=UserFactory(role=User.Role.OWNER_ADMIN), reason="Customer cancelled"
+    )
     trip.refresh_from_db()
     assert trip.trip_status == S.CANCELLED
     assert list(Push.objects.filter(request=req).values_list("status", "state")) == [

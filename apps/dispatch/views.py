@@ -438,6 +438,29 @@ def set_status(request: HttpRequest, pk: int) -> JsonResponse:
     return JsonResponse({"ok": True})
 
 
+# Chargeable cancels the drawer records itself. A plain cancel moves money, so it goes
+# through the order's cancel flow (hold release or refund), never this endpoint.
+_DRAWER_CANCEL_STATUSES = (Reservation.TripStatus.LATE_CANCEL, Reservation.TripStatus.NO_SHOW)
+
+
+@login_required
+@require_POST
+def cancel_status(request: HttpRequest, pk: int) -> JsonResponse:
+    """Mark a trip Late Cancel or No Show with the reason (trip-status cleanup). Coverage
+    is not required: a passenger can fail to appear on a trip nobody was covering yet."""
+    trip = get_object_or_404(Reservation, pk=pk)
+    status = request.POST.get("status", "")
+    if status not in _DRAWER_CANCEL_STATUSES:
+        return _fail(ValueError("Pick Late cancel or No show. Cancel the trip from its order."))
+    try:
+        reservation_services.record_cancellation(
+            trip, status, reason=request.POST.get("reason", ""), user=request.user
+        )
+    except ValueError as exc:
+        return _fail(exc)
+    return JsonResponse({"ok": True})
+
+
 @login_required
 @require_POST
 def circling(request: HttpRequest, pk: int) -> JsonResponse:

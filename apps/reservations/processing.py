@@ -22,8 +22,9 @@ from .models import Reservation, Stop, TripReview
 S = Reservation.TripStatus
 # Statuses processing settles (spec §4.1): the trip ran, or it carries a charge.
 SETTLE_STATUSES = (S.DONE, S.LATE_CANCEL, S.NO_SHOW)
-# Never processed: nothing ran and nothing is owed.
-NEVER = (S.CANCELLED, S.COVID_CANCELLATION)
+# Never processed: nothing ran and nothing is owed. A COVID-19 cancel is Cancelled with
+# `cancel_covid`, so it is here too.
+NEVER = (S.CANCELLED,)
 # A status LA or dispatch sets when the trip is over. Anything else on a trip whose
 # scheduled end has passed means the status never arrived: the trip "needs a status".
 TERMINAL = (*SETTLE_STATUSES, *NEVER)
