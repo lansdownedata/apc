@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # silently rejected).
 CHANNEL_TYPE = PODIUM_CHANNEL
 CHANNEL_MODEL = {"sms": Message.Channel.SMS, "email": Message.Channel.EMAIL}
+# Live leads shown under a thread; older or extra ones sit behind "+N more".
+LEAD_RAIL_LIMIT = 5
 
 FILTERS = ("open", "archived", "all")
 FILTER_TABS = [("open", "Open"), ("archived", "Archived"), ("all", "All")]
@@ -92,6 +94,7 @@ def inbox(request):
     planner_thread = False
     thread_messages: list[Message] = []
     leads: list[Lead] = []
+    more_leads = 0
     conversation_pk = request.GET.get("conversation")
     if conversation_pk:
         # Validate that conversation_pk is numeric to avoid ValueError → 500.
@@ -119,9 +122,18 @@ def inbox(request):
             if planner_thread
             else selected.contact.leads.all()
         )
+        # Only leads still in play: a repeat customer's history would bury the thread.
+        # The rest are one "+N more" link away, on the contact page.
+        live = rail.filter(
+            Q(status__in=[Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED])
+            | Q(status=Lead.Status.BOOKED, reservations__pickup_date__gte=timezone.localdate())
+        ).distinct()
         leads = list(
-            rail.select_related("payment").prefetch_related("reservations").order_by("-id")
+            live.select_related("payment")
+            .prefetch_related("reservations")
+            .order_by("-id")[:LEAD_RAIL_LIMIT]
         )
+        more_leads = rail.count() - len(leads)
 
     return render(
         request,
@@ -133,6 +145,7 @@ def inbox(request):
             "selected": selected,
             "thread_messages": thread_messages,
             "leads": leads,
+            "more_leads": more_leads,
             "planner_thread": planner_thread,
             "conversation_filter": conversation_filter,
             "filter_tabs": FILTER_TABS,

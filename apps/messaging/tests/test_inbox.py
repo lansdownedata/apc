@@ -599,3 +599,79 @@ def test_inbox_search_with_no_match_says_so(client, agent):
 
     assert "No conversations match your search." in body
     assert "No conversations yet." not in body
+
+
+# --- lead rail: live leads only, capped -----------------------------------------------
+
+
+def test_rail_hides_lost_and_finished_leads(client, agent):
+    from datetime import timedelta
+
+    from apps.leads.models import Lead
+    from apps.reservations.factories import ReservationFactory
+
+    contact = ContactFactory()
+    convo = ConversationFactory(contact=contact)
+    MessageFactory(conversation=convo)
+    today = timezone.localdate()
+    new = LeadFactory(contact=contact, status=Lead.Status.NEW)
+    quoted = LeadFactory(contact=contact, status=Lead.Status.QUOTED)
+    engaged = LeadFactory(contact=contact, status=Lead.Status.ENGAGED)
+    upcoming = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
+    ReservationFactory(lead=upcoming, pickup_date=today + timedelta(days=3))
+    ReservationFactory(lead=upcoming, pickup_date=today - timedelta(days=3))
+    today_trip = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
+    ReservationFactory(lead=today_trip, pickup_date=today)
+    done = LeadFactory(contact=contact, status=Lead.Status.BOOKED)
+    ReservationFactory(lead=done, pickup_date=today - timedelta(days=1))
+    LeadFactory(contact=contact, status=Lead.Status.LOST)
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"conversation": convo.pk})
+
+    assert set(resp.context["leads"]) == {new, quoted, engaged, upcoming, today_trip}
+    assert resp.context["more_leads"] == 2
+
+
+def test_rail_caps_at_five_and_links_to_the_contact(client, agent):
+    contact = ContactFactory()
+    convo = ConversationFactory(contact=contact)
+    MessageFactory(conversation=convo)
+    leads = [LeadFactory(contact=contact) for _ in range(7)]
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"conversation": convo.pk})
+
+    assert list(resp.context["leads"]) == leads[::-1][:5]
+    assert resp.context["more_leads"] == 2
+    more_link = reverse("contact_detail", args=[contact.pk])
+    assert f'href="{more_link}"'.encode() in resp.content
+    assert b"+2 more" in resp.content
+
+
+def test_rail_with_only_old_leads_links_to_the_contact(client, agent):
+    from apps.leads.models import Lead
+
+    contact = ContactFactory()
+    convo = ConversationFactory(contact=contact)
+    MessageFactory(conversation=convo)
+    LeadFactory(contact=contact, status=Lead.Status.LOST)
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"conversation": convo.pk})
+
+    assert list(resp.context["leads"]) == []
+    assert b"+1 more" in resp.content
+    assert b"Not qualified yet" not in resp.content
+
+
+def test_long_unbroken_message_wraps_inside_the_bubble(client, agent):
+    convo = ConversationFactory()
+    MessageFactory(conversation=convo, body="http://x/quote/" + "A" * 120 + "/pay/")
+
+    client.force_login(agent)
+    resp = client.get(reverse("inbox"), {"conversation": convo.pk})
+
+    html = resp.content.decode()
+    bubble_start = html.rindex('<div class="', 0, html.index("A" * 120))
+    assert "break-words" in html[bubble_start : html.index("A" * 120)]
