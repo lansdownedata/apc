@@ -79,23 +79,39 @@
         <i class="ti ti-layout-dashboard text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Dashboard</span>
       </a>
+      <a href="{% url 'inbox' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'inbox' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-inbox text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Inbox</span>
+        {% if inbox_unread %}
+        <span x-show="navOpen" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ inbox_unread }}</span>
+        {% endif %}
+      </a>
+      <div class="flex items-end h-10 px-2.5 pb-0.5 text-[9.5px] tracking-[0.18em] text-slate-500 uppercase select-none">
+        <span x-show="navOpen" x-transition.opacity data-nav-group>Sales</span>
+      </div>
       <a href="{% url 'lead_list' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'leads' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-files text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Leads &amp; Quotes</span>
       </a>
+      <a href="{% url 'pipeline' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'pipeline' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-layout-kanban text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Pipeline</span>
+      </a>
+      <a href="{% url 'contact_list' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'contacts' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-address-book text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Contacts</span>
+      </a>
+      <div class="flex items-end h-10 px-2.5 pb-0.5 text-[9.5px] tracking-[0.18em] text-slate-500 uppercase select-none">
+        <span x-show="navOpen" x-transition.opacity data-nav-group>Operations</span>
+      </div>
       <a href="{% url 'orders_list' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'orders' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-receipt-2 text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Orders</span>
-      </a>
-      <a href="{% url 'billing' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'billing' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-file-invoice text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Billing</span>
-        {% if billing_ready %}
-        <span x-show="navOpen" data-billing-badge="{{ billing_ready }}" title="Trips ready to invoice" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ billing_ready }}</span>
-        {% endif %}
       </a>
       <a href="{% url 'dispatch_board' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'dispatch' %}nav-active{% else %}text-slate-400{% endif %}">
@@ -110,26 +126,35 @@
         <span x-show="navOpen" data-task-badge="{{ task_badge }}" title="Overdue or due today" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ task_badge }}</span>
         {% endif %}
       </a>
-      <a href="{% url 'processing' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'processing' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-clipboard-check text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Processing</span>
-      </a>
       <a href="{% url 'exceptions' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'exceptions' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-alert-triangle text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Exceptions</span>
       </a>
-      <a href="{% url 'pipeline' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'pipeline' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-layout-kanban text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Pipeline</span>
+      <div class="flex items-end h-10 px-2.5 pb-0.5 text-[9.5px] tracking-[0.18em] text-slate-500 uppercase select-none">
+        <span x-show="navOpen" x-transition.opacity data-nav-group>Post-trip</span>
+      </div>
+      <a href="{% url 'processing' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'processing' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-clipboard-check text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Processing</span>
       </a>
-      <a href="{% url 'contact_list' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'contacts' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-address-book text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Contacts</span>
+      <a href="{% url 'billing' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'billing' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-file-invoice text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Billing</span>
+        {% if billing_ready %}
+        <span x-show="navOpen" data-billing-badge="{{ billing_ready }}" title="Trips ready to invoice" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ billing_ready }}</span>
+        {% endif %}
       </a>
+      <a href="{% url 'review_list' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'reviews' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-star text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Reviews</span>
+      </a>
+      <div class="flex items-end h-10 px-2.5 pb-0.5 text-[9.5px] tracking-[0.18em] text-slate-500 uppercase select-none">
+        <span x-show="navOpen" x-transition.opacity data-nav-group>Network</span>
+      </div>
       <a href="{% url 'vendor_list' %}"
          class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'vendors' %}nav-active{% else %}text-slate-400{% endif %}">
         <i class="ti ti-truck text-[19px] shrink-0"></i>
@@ -140,26 +165,6 @@
         <i class="ti ti-id-badge text-[18px] shrink-0"></i>
         <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Fleet</span>
       </a>
-      <a href="{% url 'inbox' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'inbox' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-inbox text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Inbox</span>
-        {% if inbox_unread %}
-        <span x-show="navOpen" class="min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-charcoal text-[10px] font-bold grid place-items-center">{{ inbox_unread }}</span>
-        {% endif %}
-      </a>
-      <a href="{% url 'review_list' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'reviews' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-star text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Reviews</span>
-      </a>
-      {% if user.is_owner_admin %}
-      <a href="{% url 'settings_index' %}"
-         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'settings' %}nav-active{% else %}text-slate-400{% endif %}">
-        <i class="ti ti-settings text-[18px] shrink-0"></i>
-        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Settings</span>
-      </a>
-      {% endif %}
 
       {% for label, icon in nav_soon %}
       <span class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-slate-600 cursor-not-allowed select-none"
@@ -171,6 +176,18 @@
       {% endfor %}
       {% endblock %}
     </nav>
+
+    {% block sidebar_pinned %}
+    {% if user.is_owner_admin %}
+    <div class="px-2.5 pt-2 pb-1 text-[13px]">
+      <a href="{% url 'settings_index' %}"
+         class="nav-item group flex items-center gap-3 px-2.5 py-2.5 rounded-lg {% if nav == 'settings' %}nav-active{% else %}text-slate-400{% endif %}">
+        <i class="ti ti-settings text-[18px] shrink-0"></i>
+        <span x-show="navOpen" x-transition.opacity class="flex-1 truncate">Settings</span>
+      </a>
+    </div>
+    {% endif %}
+    {% endblock %}
 
     <!-- integrations status -->
     <div x-show="navOpen" x-transition.opacity class="px-4 py-3 mx-2.5 mb-1 rounded-lg bg-white/[0.03]">

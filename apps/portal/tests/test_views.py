@@ -52,3 +52,36 @@ def test_sidebar_nav_scrolls_inside_itself_so_the_shell_never_overflows(client, 
     assert "flex-1" in nav_classes
     assert "min-h-0" in nav_classes
     assert "overflow-y-auto" in nav_classes
+
+
+def test_sidebar_groups_the_menu_in_the_order_work_happens(client, django_user_model):
+    """The menu follows an order's life: inbox, sales, operations, post-trip, network.
+    Processing sits above Billing because a trip is processed before it can be invoiced."""
+    admin = django_user_model.objects.create_user(
+        username="owner", password="pw", role="owner_admin"
+    )
+    client.force_login(admin)
+    html = client.get(reverse("dashboard")).content.decode()
+    nav = html[html.index("<!-- nav -->") : html.index("<!-- integrations status -->")]
+    found = re.findall(r'data-nav-group>([^<]+)<|class="flex-1 truncate">([^<]+)<', nav)
+    assert [group or item for group, item in found] == [
+        "Dashboard",
+        "Inbox",
+        "Sales",
+        "Leads &amp; Quotes",
+        "Pipeline",
+        "Contacts",
+        "Operations",
+        "Orders",
+        "Dispatch",
+        "Tasks",
+        "Exceptions",
+        "Post-trip",
+        "Processing",
+        "Billing",
+        "Reviews",
+        "Network",
+        "Vendors",
+        "Fleet",
+        "Settings",
+    ]
