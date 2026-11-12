@@ -17,6 +17,10 @@ environ.Env.read_env(BASE_DIR / ".env")
 
 # ---------------------------------------------------------------- core
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="insecure-dev-key-override-me")
+# AES keys for stored secrets (apps/integrations/crypto.py), apart from SECRET_KEY as
+# Intuit requires. Comma-separated Fernet keys: the first encrypts, all decrypt. Required in
+# production (deploy check integrations.E001); blank locally falls back to SECRET_KEY.
+FIELD_ENCRYPTION_KEY = env.list("FIELD_ENCRYPTION_KEY", default=[])
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 

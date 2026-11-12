@@ -1,7 +1,37 @@
 """Deploy-time guards for the integrations app."""
 
+from cryptography.fernet import Fernet
 from django.conf import settings
-from django.core.checks import Tags, Warning, register
+from django.core.checks import Error, Tags, Warning, register
+
+
+@register(Tags.security, deploy=True)
+def field_encryption_key_set(app_configs, **kwargs):
+    """Stored secrets (QuickBooks tokens and company id, LA passwords) are encrypted with
+    FIELD_ENCRYPTION_KEY, kept apart from SECRET_KEY as Intuit requires. An Error, so a
+    release without a usable key never ships."""
+    keys = settings.FIELD_ENCRYPTION_KEY
+    for key in keys:
+        try:
+            Fernet(key)
+        except (ValueError, TypeError):
+            return [
+                Error(
+                    "FIELD_ENCRYPTION_KEY holds a value that is not a Fernet key.",
+                    hint="Generate one with Fernet.generate_key(); separate keys with commas.",
+                    id="integrations.E002",
+                )
+            ]
+    if keys or settings.DEBUG:
+        return []
+    return [
+        Error(
+            "FIELD_ENCRYPTION_KEY is unset — stored secrets would be encrypted with a key "
+            "derived from SECRET_KEY.",
+            hint="Set FIELD_ENCRYPTION_KEY, then run `manage.py reencrypt_fields` once.",
+            id="integrations.E001",
+        )
+    ]
 
 
 @register(Tags.security, deploy=True)

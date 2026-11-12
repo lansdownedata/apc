@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from cryptography.fernet import Fernet
 from django.test import override_settings
 from django.utils import timezone
 
@@ -443,22 +444,27 @@ def test_a_second_rate_limit_raises_rather_than_looping():
 
 
 @override_settings(**QBO)
-def test_unreadable_tokens_after_a_secret_key_change_mark_the_connection_broken():
-    _connected()
+def test_unreadable_tokens_after_an_encryption_key_change_mark_the_connection_broken():
+    with override_settings(FIELD_ENCRYPTION_KEY=[Fernet.generate_key().decode()]):
+        _connected()
 
-    with override_settings(SECRET_KEY="a-different-secret-key-entirely"):
+    with override_settings(FIELD_ENCRYPTION_KEY=[Fernet.generate_key().decode()]):
         with patch(HTTP) as http, pytest.raises(qbo.QboNotConnected):
             qbo.request("GET", "companyinfo/9130")
         http.assert_not_called()
         cred = QboCredential.load()
-        assert cred.broken_at is not None and "secret key" in cred.broken_reason.lower()
+        assert cred.broken_at is not None and "encryption key" in cred.broken_reason.lower()
 
 
 @override_settings(**QBO)
 def test_disconnect_still_works_when_the_tokens_cannot_be_read():
-    _connected()
+    with override_settings(FIELD_ENCRYPTION_KEY=[Fernet.generate_key().decode()]):
+        _connected()
 
-    with override_settings(SECRET_KEY="a-different-secret-key-entirely"), patch(HTTP) as http:
+    with (
+        override_settings(FIELD_ENCRYPTION_KEY=[Fernet.generate_key().decode()]),
+        patch(HTTP) as http,
+    ):
         qbo.disconnect()
 
     http.assert_not_called()  # nothing readable to revoke

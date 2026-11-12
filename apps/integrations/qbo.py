@@ -11,8 +11,9 @@ see docs/superpowers/specs/2026-09-19-billing-accounts/qbo-notes.md before chang
   never spend the same token and a caller's rollback can never lose a rotated one. Calling a
   refresh inside an outer transaction is refused (RuntimeError) on purpose.
 * A refused refresh — expired/revoked grant, rejected app credentials, or tokens the server
-  can no longer decrypt (SECRET_KEY changed) — marks the connection broken and notifies,
-  once. Only a reconnect fixes it. An Intuit outage is an error, not a broken connection.
+  can no longer decrypt (FIELD_ENCRYPTION_KEY dropped the key that wrote them) — marks the
+  connection broken and notifies, once. Only a reconnect fixes it. An Intuit outage is an
+  error, not a broken connection.
 * `request()` refreshes before expiry, retries exactly once on a 401, and waits once (capped)
   on a 429 before raising `QboRateLimited`. Network failures come back as `QboAPIError(0, …)`.
 * Never log or render a token. Errors carry the HTTP status and Intuit's body, but their
@@ -62,8 +63,8 @@ _BROKEN_CLIENT = (
     " then reconnect in Settings."
 )
 _BROKEN_KEY = (
-    "The stored QuickBooks tokens can't be read — the server's secret key changed. Reconnect it"
-    " in Settings."
+    "The stored QuickBooks tokens can't be read — the server's encryption key changed. Reconnect"
+    " it in Settings."
 )
 
 
@@ -341,7 +342,7 @@ def disconnect() -> None:
         try:
             token = cred.refresh_token
         except InvalidToken:
-            token = ""  # unreadable (secret key changed): nothing we can revoke
+            token = ""  # unreadable (encryption key changed): nothing we can revoke
         cred.set_tokens(access="", refresh="", access_expires_at=None, refresh_expires_at=None)
         cred.realm_id = ""
         cred.broken_at = None
