@@ -94,11 +94,12 @@ def test_a_good_field_key_passes_the_deploy_check(field_key):
 @pytest.mark.django_db
 def test_reencrypt_moves_every_stored_secret_to_the_current_key(settings, capsys):
     from apps.integrations.factories import LACustomerFactory
-    from apps.integrations.models import QboCredential
+    from apps.integrations.models import QboCompany, QboCredential
 
     settings.FIELD_ENCRYPTION_KEY = []
     customer = LACustomerFactory()
     cred = QboCredential.load()
+    cred.realm_id = "9130"
     cred.set_tokens(access="at", refresh="rt", access_expires_at=None, refresh_expires_at=None)
     cred.save()
 
@@ -107,11 +108,19 @@ def test_reencrypt_moves_every_stored_secret_to_the_current_key(settings, capsys
 
     customer.refresh_from_db()
     cred.refresh_from_db()
-    for token in (customer.password_encrypted, cred.access_token_enc, cred.refresh_token_enc):
+    company = QboCompany.objects.get()
+    for token in (
+        customer.password_encrypted,
+        cred.access_token_enc,
+        cred.refresh_token_enc,
+        cred.realm_id_enc,
+        company.realm_id_enc,
+    ):
         assert crypto.is_current(token)
-    assert (cred.access_token, cred.refresh_token) == ("at", "rt")
+    assert (cred.access_token, cred.refresh_token, cred.realm_id) == ("at", "rt", "9130")
+    assert company.realm_id == "9130"
     assert customer.password == "factory-pw"
-    assert "3 re-encrypted" in capsys.readouterr().out
+    assert "5 re-encrypted" in capsys.readouterr().out
 
 
 @pytest.mark.django_db

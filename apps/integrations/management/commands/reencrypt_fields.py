@@ -12,11 +12,12 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.integrations import crypto
-from apps.integrations.models import LACustomer, QboCredential
+from apps.integrations.models import LACustomer, QboCompany, QboCredential
 
 ENCRYPTED_FIELDS = (
     (LACustomer, ("password_encrypted",)),
-    (QboCredential, ("access_token_enc", "refresh_token_enc")),
+    (QboCredential, ("access_token_enc", "refresh_token_enc", "realm_id_enc")),
+    (QboCompany, ("realm_id_enc",)),
 )
 
 

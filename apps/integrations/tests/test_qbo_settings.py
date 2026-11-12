@@ -80,7 +80,8 @@ def test_the_screen_shows_the_company_and_who_connected_it(owner):
 
     html = owner.get(reverse("quickbooks_settings")).content.decode()
 
-    assert "9130" in html and "Moe A" in html
+    assert "Moe A" in html
+    assert "9130" not in html  # Intuit: the company id is never shown
     assert "Disconnect" in html and "Reconnect" in html
     assert cred.refresh_token_enc not in html and cred.access_token_enc not in html
 
@@ -278,8 +279,12 @@ def test_a_state_works_only_once(owner):
 # --- APC-74: which accounts affiliate bills post to and pay from ----------------------------
 
 
-def _cached_accounts(realm="9130"):
+def _cached_accounts(realm=None):
+    """Accounts cached for `realm`, a company key; the connected company's by default."""
+    from apps.billing import qbo_sync
     from apps.billing.models import QboAccount
+
+    realm = realm or qbo_sync.current_realm()
 
     expense = QboAccount.objects.create(
         realm_id=realm,
@@ -359,9 +364,11 @@ def test_refreshing_accounts_reads_the_chart_of_accounts(owner):
         resp = owner.post(reverse("quickbooks_refresh_accounts"))
 
     assert resp.status_code == 302
+    from apps.billing import qbo_sync
     from apps.billing.models import QboAccount
 
-    assert QboAccount.objects.filter(realm_id="9130", name="Subs", active=True).exists()
+    key = qbo_sync.current_realm()
+    assert QboAccount.objects.filter(realm_id=key, name="Subs", active=True).exists()
 
 
 @override_settings(**QBO)

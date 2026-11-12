@@ -21,7 +21,6 @@
 
     {% if cred %}
       <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[13px] mb-5">
-        <dt class="text-muted">Company id</dt><dd class="font-medium text-ink num">{{ cred.realm_id }}</dd>
         <dt class="text-muted">Status</dt><dd class="font-medium {% if connected %}text-ink{% else %}text-rose-600{% endif %}">{% if connected %}Connected{% else %}Needs reconnecting{% endif %}</dd>
         <dt class="text-muted">Connected</dt><dd class="text-ink">{{ cred.connected_at|date:"M j, Y g:i A" }}{% if cred.connected_by %} by {{ cred.connected_by.get_full_name|default:cred.connected_by.username }}{% endif %}</dd>
         <dt class="text-muted">Last successful call</dt><dd class="text-ink">{% if cred.last_success_at %}{{ cred.last_success_at|date:"M j, Y g:i A" }}{% else %}None yet{% endif %}</dd>

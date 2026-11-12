@@ -152,22 +152,6 @@ def test_new_rejects_overlong_requester_id(sedan):
     assert FarmInRequest.objects.count() == 0 and Company.objects.count() == 0
 
 
-# transaction=True flushes migration-seeded tables under --reuse-db; _test_serialized_contents
-# is Django-private (set when a collected test asks for serialized_rollback).
-@pytest.fixture(scope="module")
-def restore_seeded_rows(django_db_blocker):
-    """Put the migration-seeded rows back after a transactional test's teardown flush.
-
-    The flush empties every table, fleet and airports included, and with `--reuse-db` that
-    loss would outlive the run. `serialized_rollback=True` makes the test start from the
-    serialized seed and skip post_migrate on flush; this module-scoped teardown runs after
-    the flush and reloads the same snapshot.
-    """
-    yield
-    with django_db_blocker.unblock():
-        connection.creation.deserialize_db_from_string(connection._test_serialized_contents)
-
-
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_concurrent_new_produces_one_row(restore_seeded_rows, sedan):
     results, errors = [], []

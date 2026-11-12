@@ -1091,7 +1091,7 @@ def quickbooks_settings(request: HttpRequest) -> HttpResponse:
         {
             "nav": "settings",
             "page_title": "QuickBooks",
-            "cred": cred if cred and cred.realm_id else None,
+            "cred": cred if cred and cred.realm_id_enc else None,
             "connected": qbo.is_connected(),
             "environment": dj_settings.QBO_ENVIRONMENT,
             # APC-42: the company's terms we match against, and ours that it lacks.

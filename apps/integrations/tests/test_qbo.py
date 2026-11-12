@@ -322,7 +322,8 @@ def test_the_smoke_test_prints_the_connected_company():
         call_command("qbo_smoke_test", stdout=out)
 
     text = out.getvalue()
-    assert "Sandbox Co" in text and "9130" in text and "sandbox" in text
+    assert "Sandbox Co" in text and "sandbox" in text
+    assert "9130" not in text  # Intuit: the company id is never shown
     assert "at-1" not in text and "rt-1" not in text  # never a token
 
 

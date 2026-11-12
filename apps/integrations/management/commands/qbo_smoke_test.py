@@ -2,8 +2,9 @@
 
     python manage.py qbo_smoke_test
 
-The QuickBooks counterpart of `la_smoke_test`. Read-only. Prints the company, its id and the
-environment — never a token. Connect first from /portal/settings/quickbooks/.
+The QuickBooks counterpart of `la_smoke_test`. Read-only. Prints the company and the
+environment, never a token or the company id (Intuit: neither is shown). Connect first from
+/portal/settings/quickbooks/.
 """
 
 from django.conf import settings
@@ -29,10 +30,8 @@ class Command(BaseCommand):
         except qbo.QboAPIError as exc:
             self.stderr.write(self.style.ERROR(str(exc)))
             raise SystemExit(1) from exc
-        realm = qbo.QboCredential.load().realm_id
         self.stdout.write(self.style.SUCCESS("QuickBooks connection OK"))
         self.stdout.write(f"  environment: {settings.QBO_ENVIRONMENT}")
-        self.stdout.write(f"  company id:  {realm}")
         self.stdout.write(f"  company:     {info.get('CompanyName', '?')}")
         if info.get("LegalName") and info.get("LegalName") != info.get("CompanyName"):
             self.stdout.write(f"  legal name:  {info['LegalName']}")
