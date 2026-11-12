@@ -104,7 +104,7 @@
             {% if message.planner_request.lead %}<a href="{% url 'lead_detail' message.planner_request.lead.pk %}" class="num text-goldd hover:underline focus-gold">{{ message.planner_request.lead.quote_no }}{% if message.planner_request.lead.wedding_name %} · {{ message.planner_request.lead.wedding_name }}{% endif %}</a>{% endif %}
           </span>
           {% endif %}
-          <div class="{% if message.channel == "portal" %}whitespace-pre-line {% endif %}max-w-[78%] rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.is_inbound %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% else %}bg-charcoal text-slate-100 rounded-br-sm{% endif %}">{{ message.body }}</div>
+          <div class="{% if message.channel == "portal" %}whitespace-pre-line {% endif %}max-w-[78%] break-words rounded-2xl px-3.5 py-2 text-[12.5px] leading-snug {% if message.is_inbound %}bg-surface text-ink ring-1 ring-line rounded-bl-sm{% else %}bg-charcoal text-slate-100 rounded-br-sm{% endif %}">{{ message.body }}</div>
           <span class="text-[10px] text-muted mt-1 px-1 num">
             {% if message.sender_name %}{{ message.sender_name }} ·
             {% elif message.is_inbound and message.conversation.contact.phone %}{{ message.conversation.contact.phone|phone_display }} ·
@@ -117,9 +117,9 @@
       </div>
 
       {% comment %}
-        Lead rail — every quote this contact has. A conversation may have none (not
-        qualified yet) or several (repeat customer), so a single "open quote" link
-        can't represent it.
+        Lead rail: this contact's live quotes (new, quoted, engaged, booked with a trip
+        ahead), newest first, capped. Lost, finished and overflow leads are counted into
+        "+N more", which opens the contact page.
       {% endcomment %}
       <div class="mx-4 sm:mx-6 mb-3 shrink-0 flex items-center gap-2 flex-wrap">
         {% for lead in leads %}
@@ -130,8 +130,14 @@
           <span class="num text-muted">${{ lead.quote_total|floatformat:2|intcomma }}</span>
         </a>
         {% empty %}
+        {% if not more_leads %}
         <span class="text-[11.5px] text-muted">{% if planner_thread %}No weddings on file for this planner.{% else %}Not qualified yet — no leads from this conversation.{% endif %}</span>
+        {% endif %}
         {% endfor %}
+        {% if more_leads %}
+        <a href="{% url 'contact_detail' selected.contact.pk %}"
+           class="text-[11.5px] font-semibold text-muted px-2 py-1.5 rounded-lg hover:bg-surface2 hover:text-ink focus-gold transition-colors">+{{ more_leads }} more</a>
+        {% endif %}
       </div>
 
       <!-- composer -->
