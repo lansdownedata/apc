@@ -1674,3 +1674,17 @@ def test_deposit_choices_and_ref():
     config.sales_deposit_account = undeposited
     config.save()
     assert qbo_bills.deposit_account_ref() == {"value": "20"}
+
+
+# --- Intuit security requirements: never log QuickBooks data ---------------------------------
+
+
+def test_a_refused_bill_logs_nothing_quickbooks_sent(caplog):
+    _map()
+    payable = _payable(vendor=_linked_vendor())
+
+    with patch(REQ, side_effect=_fault("6000", "Business validation", detail="Vendor Acme Limo")):
+        with caplog.at_level("DEBUG"):
+            qbo_bills.push_bill(payable)
+
+    assert "Acme Limo" not in caplog.text

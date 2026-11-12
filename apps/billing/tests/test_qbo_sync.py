@@ -1078,3 +1078,27 @@ def test_refresh_terms_refuses_without_a_company():
             qbo_sync.refresh_terms()
     req.assert_not_called()
     assert not QboTerm.objects.exists()
+
+
+# --- Intuit security requirements: never log QuickBooks data ---------------------------------
+
+
+def test_a_refusal_logs_nothing_quickbooks_sent(caplog):
+    account = _account()
+
+    with patch(REQ, side_effect=_fault("6000", "Invalid DisplayName: Ridgeline Partners")):
+        with caplog.at_level("DEBUG"):
+            qbo_sync.push(account)
+
+    assert "Ridgeline" not in caplog.text
+    assert "6000" in caplog.text  # the fault code is enough to find it in Intuit's docs
+
+
+def test_an_outage_logs_nothing_quickbooks_sent(caplog):
+    _account()
+
+    with patch(REQ, side_effect=_fault("3200", "Ridgeline Partners", status=503)):
+        with caplog.at_level("DEBUG"):
+            qbo_sync.sync_pending()
+
+    assert "Ridgeline" not in caplog.text

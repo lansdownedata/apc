@@ -15,12 +15,15 @@ see docs/superpowers/specs/2026-09-19-billing-accounts/qbo-notes.md before chang
   once. Only a reconnect fixes it. An Intuit outage is an error, not a broken connection.
 * `request()` refreshes before expiry, retries exactly once on a 401, and waits once (capped)
   on a 429 before raising `QboRateLimited`. Network failures come back as `QboAPIError(0, …)`.
-* Never log or render a token. Errors carry the HTTP status and Intuit's body.
+* Never log or render a token. Errors carry the HTTP status and Intuit's body, but their
+  message (what reaches a log) is only the status and fault codes: Intuit forbids logging
+  QuickBooks data.
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import re
 import time
@@ -64,11 +67,29 @@ _BROKEN_KEY = (
 )
 
 
+def _fault_codes(body: str) -> list[str]:
+    try:
+        errors = json.loads(body).get("Fault", {}).get("Error", [])
+    except (ValueError, AttributeError, TypeError):
+        return []
+    if isinstance(errors, dict):
+        errors = [errors]
+    if not isinstance(errors, list):
+        return []
+    return [str(e["code"]) for e in errors if isinstance(e, dict) and e.get("code")]
+
+
 class QboAPIError(Exception):
-    """A non-2xx answer from Intuit, or no answer at all (`status` 0)."""
+    """A non-2xx answer from Intuit, or no answer at all (`status` 0).
+
+    The message is only the status and Intuit's fault codes, because it ends up in logs and
+    an error's Message or Detail can quote QuickBooks data (a duplicate name quotes the
+    customer). `body` keeps the whole answer for the reason shown to staff on the record."""
 
     def __init__(self, status: int, body: str):
-        super().__init__(f"QuickBooks returned {status}: {body[:300]}")
+        codes = _fault_codes(body)
+        fault = f" (fault {', '.join(codes)})" if codes else ""
+        super().__init__(f"QuickBooks returned {status}{fault}")
         self.status = status
         self.body = body
 

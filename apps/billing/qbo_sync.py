@@ -271,7 +271,7 @@ def push(record) -> bool:
         _fail(record, str(exc))
         return False
     except qbo.QboAPIError as exc:
-        logger.warning("QuickBooks refused %s %s: %s", _kind(record), record.pk, exc.body[:500])
+        logger.warning("QuickBooks refused %s %s: %s", _kind(record), record.pk, exc)
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
         refused_by_quickbooks(record)

@@ -508,3 +508,34 @@ def test_an_upload_is_sent_as_multipart_files_not_json():
     assert http.call_args.kwargs["files"] is parts
     assert http.call_args.kwargs["json"] is None
     assert "Content-Type" not in http.call_args.kwargs["headers"]
+
+
+# --- Intuit security requirements: never log QuickBooks data ---------------------------------
+
+import json  # noqa: E402
+
+
+def test_an_api_error_message_carries_the_status_and_fault_code_but_no_quickbooks_data():
+    body = json.dumps(
+        {
+            "Fault": {
+                "Error": [
+                    {
+                        "code": "6240",
+                        "Message": "Duplicate Name Exists Error",
+                        "Detail": "The name supplied already exists. : Acme Corp",
+                    }
+                ]
+            }
+        }
+    )
+
+    err = qbo.QboAPIError(400, body)
+
+    assert str(err) == "QuickBooks returned 400 (fault 6240)"
+    assert err.body == body  # still there for the reason shown to staff on the record
+
+
+@pytest.mark.parametrize("body", ["", "<html>Acme Corp gateway error</html>", "[1, 2]"])
+def test_an_api_error_without_a_fault_says_only_the_status(body):
+    assert str(qbo.QboAPIError(502, body)) == "QuickBooks returned 502"
