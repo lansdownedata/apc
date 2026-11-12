@@ -22,10 +22,11 @@ def unconfirmed_trip_rows(today: date | None = None) -> list[dict]:
 
     from apps.dispatch.selectors import CANCELLED_STATUSES
     from apps.leads.models import Lead
+    from apps.payments import holds
 
     today = today or timezone.localdate()
     # Whether each trip's order is held (APC-95), in the same query.
-    held = Reservation.objects.filter(lead=OuterRef("lead"), vehicle__cleaning_fee__gt=0).exclude(
+    held = Reservation.objects.filter(holds.HELD, lead=OuterRef("lead")).exclude(
         trip_status__in=CANCELLED_STATUSES
     )
     base = settings.PUBLIC_BASE_URL.rstrip("/")

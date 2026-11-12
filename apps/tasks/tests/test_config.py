@@ -163,15 +163,14 @@ def test_the_settings_menu_links_to_it(client):
 
 def test_hold_settings_are_labelled_fields_not_a_sentence_around_inputs(client):
     """SET-11: the hold sentence wrapped around its inputs ("Place the hold at [03:00 AM]"
-    then the rest on its own line), and the lead-hours input made it worse. Each setting
-    is now a labelled field, side by side at desktop width."""
+    then the rest on its own line). Each setting is a labelled field of its own; since the
+    2026-11-11 redesign, one per row like every other setting on the screen."""
     import re
 
     client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
     body = client.get(reverse("task_settings")).content.decode()
 
-    block = body[body.index("Cleaning hold") : body.index("Vehicle Types")]
-    assert "sm:grid-cols-3" in block
+    block = body[body.index("Cleaning hold") : body.index("Reports")]
     for name in ("hold_place_time", "hold_lead_hours", "hold_release_days"):
         label = re.search(rf'<label for="id_{name}"[^>]*>([^<]*)</label>', block)
         assert label, name
@@ -313,3 +312,74 @@ def test_the_migration_reads_the_old_fee_before_dropping_the_column():
     remove_at = next(i for i, op in enumerate(ops) if isinstance(op, migrations.RemoveField))
     assert copy_at < remove_at
     assert ops[remove_at].name == "cleaning_fee"
+
+
+_POST = {
+    "enabled": "on",
+    "overdue_grace_hours": 24,
+    "post_trip_grace_hours": 2,
+    "grace_large_minutes": 5,
+    "grace_standard_minutes": 15,
+    "transfer_grace_minutes": 15,
+    "airport_domestic_grace_minutes": 25,
+    "airport_international_grace_minutes": 50,
+    "overtime_block_minutes": 60,
+    "hold_place_time": "03:00",
+    "hold_lead_hours": 6,
+    "hold_release_days": 3,
+}
+
+
+def test_the_hold_service_types_are_picked_on_the_tasks_screen(client):
+    """Which service types get a cleaning hold is chosen here and stored on each type."""
+    from apps.leads.factories import ServiceTypeFactory
+
+    wedding = ServiceTypeFactory(name="Hold Wedding")
+    airport = ServiceTypeFactory(name="Hold Airport")
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+
+    body = client.get(reverse("task_settings")).content.decode()
+    picker = body[body.index('name="hold_service_types"') - 200 :]
+    assert "data-tom" in picker and "multiple" in picker
+    assert f'<option value="{wedding.pk}" selected' in body  # every type is held by default
+
+    resp = client.post(reverse("task_settings"), _POST | {"hold_service_types": [wedding.pk]})
+
+    assert resp.status_code == 302
+    wedding.refresh_from_db()
+    airport.refresh_from_db()
+    assert wedding.cleaning_hold is True
+    assert airport.cleaning_hold is False
+
+
+def test_every_setting_on_the_tasks_screen_is_a_labelled_row(client):
+    """One pattern for the whole screen: label and note on the left, control on the right."""
+    import re
+
+    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
+    body = client.get(reverse("task_settings")).content.decode()
+
+    rows = re.findall(r'data-setting-row="([\w]+)"', body)
+    assert rows == [
+        "enabled",
+        "sales_owner",
+        "operations_owner",
+        "affiliate_mgmt_owner",
+        "customer_service_owner",
+        "accounting_owner",
+        "overdue_grace_hours",
+        "post_trip_grace_hours",
+        "grace_large_minutes",
+        "grace_standard_minutes",
+        "transfer_grace_minutes",
+        "airport_domestic_grace_minutes",
+        "airport_international_grace_minutes",
+        "overtime_block_minutes",
+        "hold_enabled",
+        "hold_service_types",
+        "hold_place_time",
+        "hold_lead_hours",
+        "hold_release_days",
+    ]
+    for name in rows:
+        assert re.search(rf'<label for="id_{name}"[^>]*>\s*\S', body), name

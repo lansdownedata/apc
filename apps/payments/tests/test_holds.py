@@ -902,3 +902,50 @@ def test_a_key_still_in_flight_at_stripe_is_transient():
     hold.refresh_from_db()
     assert hold.status == Charge.Status.PENDING
     assert not Task.objects.filter(lead=lead, kind=holds.TASK_KIND).exists()
+
+
+# --- which service types are held (Settings -> Tasks -> Cleaning hold) -----------------------
+
+
+def _excluded():
+    from apps.leads.factories import ServiceTypeFactory
+
+    return ServiceTypeFactory(name=f"Excluded {next(_types)}", cleaning_hold=False)
+
+
+def test_a_trip_whose_service_type_is_switched_off_is_not_held():
+    lead, _plan, (van, coach) = _order("250.00", "500.00")
+    coach.service_type = _excluded()
+    coach.save()
+
+    assert holds.held_trips(lead) == [van]
+    assert holds.hold_amount(lead) == Decimal("250.00")
+    assert holds.eligible(lead) is True
+
+
+def test_an_order_with_only_switched_off_service_types_is_not_held():
+    lead, _plan, (van,) = _order("250.00")
+    van.service_type = _excluded()
+    van.save()
+
+    assert holds.eligible(lead) is False
+    assert holds.hold_amount(lead) == Decimal("0")
+
+
+def test_a_trip_with_no_service_type_is_still_held():
+    lead, _plan, (van,) = _order("250.00")
+    assert van.service_type is None
+    assert holds.held_trips(lead) == [van]
+
+
+def test_the_cron_does_not_place_a_hold_for_a_switched_off_service_type():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    lead, _plan, (van,) = _order("250.00")
+    noon = datetime.combine(van.pickup_date, time(8, 0), tzinfo=ZoneInfo("America/New_York"))
+    assert holds.due_for_placement(noon) == [lead]
+
+    van.service_type = _excluded()
+    van.save()
+    assert holds.due_for_placement(noon) == []

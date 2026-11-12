@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import stripe
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Prefetch
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.utils import timezone
 
 from apps.audit.explicit import record_update
@@ -58,14 +58,29 @@ class HoldUsed(services.PaymentError):
 # --- which orders are held ------------------------------------------------------------------
 
 
+# A held trip: its vehicle type carries a cleaning fee and its service type gets holds
+# (Settings -> Tasks -> Cleaning hold). A trip with no service type is held.
+HELD = Q(vehicle__cleaning_fee__gt=0) & (
+    Q(service_type__isnull=True) | Q(service_type__cleaning_hold=True)
+)
+
+
+def is_held(trip) -> bool:
+    """`HELD` for a trip already in memory (reads its vehicle and service type)."""
+    return bool(
+        trip.vehicle_id
+        and trip.vehicle.cleaning_fee > 0
+        and (trip.service_type_id is None or trip.service_type.cleaning_hold)
+    )
+
+
 def held_trips(lead) -> list:
-    """The order's non-cancelled trips whose vehicle type carries a cleaning fee, in pickup
-    order."""
+    """The order's non-cancelled held trips (`HELD`), in pickup order."""
     from apps.dispatch.selectors import CANCELLED_STATUSES
 
     return list(
         lead.reservations.exclude(trip_status__in=CANCELLED_STATUSES)
-        .filter(vehicle__cleaning_fee__gt=0)
+        .filter(HELD)
         .select_related("vehicle")
         .order_by("pickup_date", "pickup_time", "pk")
     )
@@ -556,9 +571,7 @@ def _live_held(lead) -> list:
     from apps.dispatch.selectors import CANCELLED_STATUSES
 
     return [
-        t
-        for t in lead.reservations.all()
-        if t.trip_status not in CANCELLED_STATUSES and t.vehicle_id and t.vehicle.cleaning_fee > 0
+        t for t in lead.reservations.all() if t.trip_status not in CANCELLED_STATUSES and is_held(t)
     ]
 
 
@@ -589,7 +602,7 @@ def _with_trips(queryset, prefix: str = ""):
     return queryset.prefetch_related(
         Prefetch(
             f"{prefix}reservations",
-            queryset=Reservation.objects.select_related("vehicle", "review"),
+            queryset=Reservation.objects.select_related("vehicle", "service_type", "review"),
         )
     )
 
@@ -605,7 +618,7 @@ def _candidates(now: datetime, lead_hours: int = 0):
     # Local dates sit within a day of UTC's, in every zone.
     latest = (now + timedelta(days=1, hours=lead_hours)).date()
     earliest = (now - timedelta(days=1)).date()
-    held = Reservation.objects.filter(lead=OuterRef("pk"), vehicle__cleaning_fee__gt=0).exclude(
+    held = Reservation.objects.filter(HELD, lead=OuterRef("pk")).exclude(
         trip_status__in=CANCELLED_STATUSES
     )
     # No join here multiplies rows; `distinct()` guards against a MySQL semi-join plan

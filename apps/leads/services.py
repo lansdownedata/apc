@@ -338,7 +338,9 @@ def fee_terms_context(lead: Lead, config=None) -> dict:
         .distinct()
     )
     fees = [(name, Decimal(fee)) for name, fee in rows]
-    hold = fees[0][1] if fees else Decimal("0")
+    # The hold is the highest fee among the trips that are held (a service type can be
+    # switched off for holds); with none held, the top fee, which `hold_on` then hides.
+    hold = holds.hold_amount(lead) or (fees[0][1] if fees else Decimal("0"))
     # The hold is mentioned only while one will be placed: a customer is never told about a
     # hold the switch, or the way the order is paid, keeps from happening.
     hold_on = bool(config.hold_enabled) and holds.eligible(lead)

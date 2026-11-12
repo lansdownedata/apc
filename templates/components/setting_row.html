@@ -1,0 +1,18 @@
+{% comment %}
+One setting as a row: label and note on the left, the control on the right, always in the
+same place. Stacks at phone width.
+Usage: {% include "components/setting_row.html" with field=form.name unit="min" %}
+Optional: unit (text after the control), wide=1 (a wider control, for pickers).
+A checkbox field renders as the control with no unit.
+{% endcomment %}
+<div data-setting-row="{{ field.name }}" class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-8">
+  <div class="min-w-0 sm:pt-2">
+    <label for="{{ field.id_for_label }}" class="block text-[13px] font-medium text-ink">{{ field.label }}</label>
+    {% if field.help_text %}<p class="text-[12px] text-muted mt-0.5">{{ field.help_text }}</p>{% endif %}
+    {% for error in field.errors %}<p class="text-[12px] text-rose-600 mt-0.5">{{ error }}</p>{% endfor %}
+  </div>
+  <div class="flex items-center gap-2 shrink-0 {% if wide %}sm:w-72{% else %}sm:w-40{% endif %} {% if check %}sm:justify-end sm:pt-2{% endif %}">
+    {% if check %}{{ field }}{% else %}<div class="min-w-0 flex-1">{{ field }}</div>{% endif %}
+    {% if unit %}<span class="text-[12px] text-muted w-10 shrink-0">{{ unit }}</span>{% endif %}
+  </div>
+</div>

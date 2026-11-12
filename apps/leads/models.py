@@ -32,6 +32,13 @@ class ServiceType(TimeStampedModel):
     name = models.CharField(max_length=120)
     active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
+    # Whether trips of this type get the cleaning hold (APC-95). Picked on the Tasks
+    # settings screen; a trip with no service type is always held.
+    cleaning_hold = models.BooleanField(
+        "Gets a cleaning hold",
+        default=True,
+        help_text="Trips of this type in a vehicle with a cleaning fee get the card hold.",
+    )
 
     class Meta:
         ordering = ["sort_order", "name"]

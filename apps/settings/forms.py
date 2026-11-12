@@ -200,6 +200,22 @@ _OWNER = {"class": "field w-full", "data-tom": "", "data-placeholder": "No defau
 class TaskConfigForm(forms.ModelForm):
     """The single Tasks settings screen (APC-49) — department owners, escalation, digest."""
 
+    # Stored on each ServiceType (`cleaning_hold`), picked here beside the other hold rules.
+    hold_service_types = forms.ModelMultipleChoiceField(
+        queryset=ServiceType.objects.none(),
+        required=False,
+        label="Service types that get a hold",
+        help_text="Only trips of these service types are held. A trip with no service type "
+        "is always held.",
+        widget=forms.SelectMultiple(
+            attrs={
+                "class": "field w-full",
+                "data-tom": "",
+                "data-placeholder": "Add a service type",
+            }
+        ),
+    )
+
     class Meta:
         from apps.tasks.models import TaskConfig
 
@@ -244,13 +260,25 @@ class TaskConfigForm(forms.ModelForm):
             "hold_lead_hours": forms.NumberInput(attrs=_NUM | {"max": 24}),
             "hold_release_days": forms.NumberInput(attrs=_NUM),
         }
-        # Short, because the three sit side by side as labelled fields (SET-11).
+        # Each setting is one row: this label, the model's help text under it as the note.
         labels = {
+            "enabled": "Tasks are on",
+            "overdue_grace_hours": "Escalate overdue tasks after",
+            "post_trip_grace_hours": "Open the post-trip review after",
+            "grace_large_minutes": "Bus, van or stretch",
+            "grace_standard_minutes": "Sedan or SUV",
+            "transfer_grace_minutes": "Transfer wait at pickup",
+            "airport_domestic_grace_minutes": "Domestic flight arrival",
+            "airport_international_grace_minutes": "International flight arrival",
+            "overtime_block_minutes": "Overtime block",
+            "hold_enabled": "Place cleaning holds",
             "hold_place_time": "Place the hold at",
             "hold_lead_hours": "Or hours before pickup",
-            "hold_release_days": "Release within (days)",
+            "hold_release_days": "Release within",
         }
         help_texts = {
+            "enabled": "Turn task generation and escalation off without losing these settings.",
+            "hold_enabled": "Hold the vehicle's cleaning fee on the card before the trip.",
             "hold_place_time": (
                 "On the day of the order's first held trip, in the trip's local time."
             ),
@@ -266,6 +294,21 @@ class TaskConfigForm(forms.ModelForm):
         for name in self.Meta.model.OWNER_FIELDS.values():
             self.fields[name].queryset = active
             self.fields[name].empty_label = "No default owner"
+        services = ServiceType.objects.filter(active=True)
+        self.fields["hold_service_types"].queryset = services
+        if not self.is_bound:
+            self.fields["hold_service_types"].initial = [s.pk for s in services if s.cleaning_hold]
+
+    def save(self, commit: bool = True):
+        config = super().save(commit=commit)
+        chosen = set(self.cleaned_data["hold_service_types"])
+        # One save per changed type, never a bulk update: the audit log hears saves only.
+        for service in self.fields["hold_service_types"].queryset:
+            held = service in chosen
+            if service.cleaning_hold != held:
+                service.cleaning_hold = held
+                service.save(update_fields=["cleaning_hold", "updated_at"])
+        return config
 
 
 class PricingConfigForm(forms.ModelForm):
