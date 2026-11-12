@@ -29,6 +29,20 @@ def owner(client):
     return client
 
 
+def _bounced(resp, to: str) -> None:
+    """Intuit: an endpoint that gets a code in its URL answers with a bare 302, never a page,
+    and never carries the URL on to the next one (a `?next=` would)."""
+    assert resp.status_code == 302
+    assert resp["Location"] == to
+    assert resp.content == b""
+
+
+def _messages(resp) -> list[str]:
+    from django.contrib.messages import get_messages
+
+    return [str(m) for m in get_messages(resp.wsgi_request)]
+
+
 def _live():
     cred = QboCredential.load()
     cred.realm_id = "9130"
@@ -121,7 +135,8 @@ def test_the_callback_refuses_a_missing_or_wrong_state(owner, state):
             {"code": "c", "state": state, "realmId": "9130"},
         )
 
-    assert resp.status_code == 400
+    _bounced(resp, reverse("quickbooks_settings"))
+    assert any("Start the connection again" in m for m in _messages(resp))
     exchange.assert_not_called()
 
 
@@ -147,9 +162,30 @@ def test_the_callback_reports_a_declined_consent(owner):
 def test_the_callback_is_owner_admin_only(client):
     client.force_login(UserFactory(role=User.Role.AGENT))
 
-    resp = client.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
+    with patch.object(qbo, "exchange_code") as exchange:
+        resp = client.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
 
-    assert resp.status_code in (302, 403)
+    _bounced(resp, reverse("dashboard"))
+    exchange.assert_not_called()
+
+
+@override_settings(**QBO)
+def test_the_callback_signed_out_goes_to_login_without_the_code(client):
+    with patch.object(qbo, "exchange_code") as exchange:
+        resp = client.get(
+            reverse("integrations:quickbooks_callback"),
+            {"code": "c", "state": "s", "realmId": "9130"},
+        )
+
+    _bounced(resp, reverse("login"))
+    exchange.assert_not_called()
+
+
+@override_settings(QBO_CLIENT_ID="", QBO_CLIENT_SECRET="")
+def test_the_callback_without_keys_redirects_instead_of_a_404_page(owner):
+    resp = owner.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
+
+    _bounced(resp, reverse("dashboard"))
 
 
 @override_settings(**QBO)
@@ -202,7 +238,7 @@ def test_the_callback_refuses_a_malformed_company_id(owner, realm):
             {"code": "c", "state": state, "realmId": realm},
         )
 
-    assert resp.status_code == 400
+    _bounced(resp, reverse("quickbooks_settings"))
     exchange.assert_not_called()
 
 
@@ -235,7 +271,7 @@ def test_a_state_works_only_once(owner):
         owner.get(reverse("integrations:quickbooks_callback"), params)
         again = owner.get(reverse("integrations:quickbooks_callback"), params)
 
-    assert again.status_code == 400
+    _bounced(again, reverse("quickbooks_settings"))
     assert exchange.call_count == 1
 
 
