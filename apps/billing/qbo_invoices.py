@@ -116,9 +116,7 @@ def refresh_preferences() -> date | None:
         closed = None
     if not isinstance(info, dict) or (raw is not None and closed is None):
         logger.warning(
-            "QuickBooks preferences carry no readable BookCloseDate; treating the books as "
-            "open: %.500r",
-            prefs,
+            "QuickBooks preferences carry no readable BookCloseDate; treating the books as open"
         )
     config = QboAccountMapping.load()
     config.book_close_date = closed
@@ -458,7 +456,7 @@ def _push_void(invoice: Invoice) -> bool:
     try:
         obj = _void(invoice)
     except qbo.QboAPIError as exc:
-        logger.warning("QuickBooks refused void of invoice %s: %s", invoice.pk, exc.body[:500])
+        logger.warning("QuickBooks refused void of invoice %s: %s", invoice.pk, exc)
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
         _fail(link, _reason(exc, "void"))

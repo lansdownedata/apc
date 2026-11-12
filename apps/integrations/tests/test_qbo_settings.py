@@ -29,6 +29,20 @@ def owner(client):
     return client
 
 
+def _bounced(resp, to: str) -> None:
+    """Intuit: an endpoint that gets a code in its URL answers with a bare 302, never a page,
+    and never carries the URL on to the next one (a `?next=` would)."""
+    assert resp.status_code == 302
+    assert resp["Location"] == to
+    assert resp.content == b""
+
+
+def _messages(resp) -> list[str]:
+    from django.contrib.messages import get_messages
+
+    return [str(m) for m in get_messages(resp.wsgi_request)]
+
+
 def _live():
     cred = QboCredential.load()
     cred.realm_id = "9130"
@@ -66,7 +80,8 @@ def test_the_screen_shows_the_company_and_who_connected_it(owner):
 
     html = owner.get(reverse("quickbooks_settings")).content.decode()
 
-    assert "9130" in html and "Moe A" in html
+    assert "Moe A" in html
+    assert "9130" not in html  # Intuit: the company id is never shown
     assert "Disconnect" in html and "Reconnect" in html
     assert cred.refresh_token_enc not in html and cred.access_token_enc not in html
 
@@ -121,7 +136,8 @@ def test_the_callback_refuses_a_missing_or_wrong_state(owner, state):
             {"code": "c", "state": state, "realmId": "9130"},
         )
 
-    assert resp.status_code == 400
+    _bounced(resp, reverse("quickbooks_settings"))
+    assert any("Start the connection again" in m for m in _messages(resp))
     exchange.assert_not_called()
 
 
@@ -147,9 +163,30 @@ def test_the_callback_reports_a_declined_consent(owner):
 def test_the_callback_is_owner_admin_only(client):
     client.force_login(UserFactory(role=User.Role.AGENT))
 
-    resp = client.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
+    with patch.object(qbo, "exchange_code") as exchange:
+        resp = client.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
 
-    assert resp.status_code in (302, 403)
+    _bounced(resp, reverse("dashboard"))
+    exchange.assert_not_called()
+
+
+@override_settings(**QBO)
+def test_the_callback_signed_out_goes_to_login_without_the_code(client):
+    with patch.object(qbo, "exchange_code") as exchange:
+        resp = client.get(
+            reverse("integrations:quickbooks_callback"),
+            {"code": "c", "state": "s", "realmId": "9130"},
+        )
+
+    _bounced(resp, reverse("login"))
+    exchange.assert_not_called()
+
+
+@override_settings(QBO_CLIENT_ID="", QBO_CLIENT_SECRET="")
+def test_the_callback_without_keys_redirects_instead_of_a_404_page(owner):
+    resp = owner.get(reverse("integrations:quickbooks_callback"), {"code": "c", "state": "s"})
+
+    _bounced(resp, reverse("dashboard"))
 
 
 @override_settings(**QBO)
@@ -202,7 +239,7 @@ def test_the_callback_refuses_a_malformed_company_id(owner, realm):
             {"code": "c", "state": state, "realmId": realm},
         )
 
-    assert resp.status_code == 400
+    _bounced(resp, reverse("quickbooks_settings"))
     exchange.assert_not_called()
 
 
@@ -235,15 +272,19 @@ def test_a_state_works_only_once(owner):
         owner.get(reverse("integrations:quickbooks_callback"), params)
         again = owner.get(reverse("integrations:quickbooks_callback"), params)
 
-    assert again.status_code == 400
+    _bounced(again, reverse("quickbooks_settings"))
     assert exchange.call_count == 1
 
 
 # --- APC-74: which accounts affiliate bills post to and pay from ----------------------------
 
 
-def _cached_accounts(realm="9130"):
+def _cached_accounts(realm=None):
+    """Accounts cached for `realm`, a company key; the connected company's by default."""
+    from apps.billing import qbo_sync
     from apps.billing.models import QboAccount
+
+    realm = realm or qbo_sync.current_realm()
 
     expense = QboAccount.objects.create(
         realm_id=realm,
@@ -323,9 +364,11 @@ def test_refreshing_accounts_reads_the_chart_of_accounts(owner):
         resp = owner.post(reverse("quickbooks_refresh_accounts"))
 
     assert resp.status_code == 302
+    from apps.billing import qbo_sync
     from apps.billing.models import QboAccount
 
-    assert QboAccount.objects.filter(realm_id="9130", name="Subs", active=True).exists()
+    key = qbo_sync.current_realm()
+    assert QboAccount.objects.filter(realm_id=key, name="Subs", active=True).exists()
 
 
 @override_settings(**QBO)

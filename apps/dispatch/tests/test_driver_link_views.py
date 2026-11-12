@@ -70,7 +70,7 @@ def test_page_renders_for_a_live_link(client):
     res = client.get(_url(a))
     assert res.status_code == 200
     assert a.reservation.reference in res.content.decode()
-    assert res["Cache-Control"] == "private, no-store"
+    assert {"private", "no-store", "no-cache"} <= set(res["Cache-Control"].split(", "))
     assert res["Referrer-Policy"] == "no-referrer"
     assert res["X-Robots-Tag"] == "noindex"
 
@@ -99,7 +99,7 @@ def test_dead_link_page_shows_only_the_phone_line(client):
     assert "This trip is no longer assigned to you. Call 555-0100 with questions." in html
     assert "1 Secret Pickup Way" not in html
     assert a.reservation.reference not in html
-    assert res["Cache-Control"] == "private, no-store"
+    assert {"private", "no-store", "no-cache"} <= set(res["Cache-Control"].split(", "))
 
 
 def test_dead_link_page_without_a_company_phone_says_dispatch(client):
@@ -407,7 +407,7 @@ def test_deleted_assignment_is_not_a_404(client):
     page = client.get(reverse("driver_link", args=[token]))
     assert page.status_code == 200
     assert "no longer assigned" in page.content.decode()
-    assert page["Cache-Control"] == "private, no-store"
+    assert {"private", "no-store", "no-cache"} <= set(page["Cache-Control"].split(", "))
     for name in ("driver_link_status", "driver_link_circling", "driver_link_no_show"):
         res = client.post(reverse(name, args=[token]), "{}", content_type="application/json")
         assert res.status_code == 410

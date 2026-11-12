@@ -190,18 +190,64 @@ class LAEvent(TimeStampedModel):
         return f"{self.event} · res {self.reservation_id or '—'}"
 
 
+class QboCompany(models.Model):
+    """A QuickBooks company the portal has been connected to, under an opaque key.
+
+    Intuit requires the company id (realmID) to be stored encrypted. Synced records only need
+    to know which company they were pushed to, so they carry `key` (in their `*realm_id`
+    columns) and the id itself is kept here, encrypted. Reconnecting a company seen before
+    reuses its key, so its records still count as pushed.
+    """
+
+    key = models.CharField(max_length=32, unique=True)
+    realm_id_enc = models.TextField()
+
+    class Meta:
+        verbose_name = "QuickBooks company"
+        verbose_name_plural = "QuickBooks companies"
+
+    def __str__(self) -> str:
+        return f"QuickBooks company {self.key[:8]}"
+
+    @property
+    def realm_id(self) -> str:
+        from .crypto import decrypt
+
+        return decrypt(self.realm_id_enc)
+
+    @classmethod
+    def key_for(cls, realm_id: str) -> str:
+        """The company's key, created on its first connection. Ids are encrypted with a fresh
+        nonce each time, so the match is made after decrypting (a handful of rows at most)."""
+        import uuid
+
+        from cryptography.fernet import InvalidToken
+
+        from .crypto import encrypt
+
+        for company in cls.objects.all():
+            try:
+                if company.realm_id == realm_id:
+                    return company.key
+            except InvalidToken:
+                continue
+        return cls.objects.create(key=uuid.uuid4().hex, realm_id_enc=encrypt(realm_id)).key
+
+
 class QboCredential(TimeStampedModel):
     """The portal's one QuickBooks Online connection (APC-41). A singleton.
 
-    Tokens are Fernet-encrypted at rest (`apps.integrations.crypto`, keyed off SECRET_KEY —
-    rotating the secret key bricks them; the fix is a reconnect). Never log or render them.
+    Tokens and the company id are encrypted at rest (`apps.integrations.crypto`, under
+    FIELD_ENCRYPTION_KEY). Never log or render them. `company_key` is the `QboCompany` key
+    that synced records are stamped with.
     Intuit rotates the refresh token: `set_tokens` is called with the newest one from every
     token response. `broken_at` is set when a refresh is refused (`invalid_grant`) — only a
     reconnect clears it.
     """
 
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
-    realm_id = models.CharField("QuickBooks company id", max_length=32, blank=True)
+    realm_id_enc = models.TextField(blank=True)
+    company_key = models.CharField(max_length=32, blank=True)
     access_token_enc = models.TextField(blank=True)
     refresh_token_enc = models.TextField(blank=True)
     access_expires_at = models.DateTimeField(null=True, blank=True)
@@ -218,7 +264,7 @@ class QboCredential(TimeStampedModel):
         verbose_name = "QuickBooks connection"
 
     def __str__(self) -> str:
-        return f"QuickBooks company {self.realm_id or '(not connected)'}"
+        return "QuickBooks connection" if self.realm_id_enc else "QuickBooks (not connected)"
 
     @classmethod
     def load(cls) -> "QboCredential":
@@ -239,6 +285,18 @@ class QboCredential(TimeStampedModel):
     def refresh_token(self) -> str:
         return self._decrypt(self.refresh_token_enc)
 
+    @property
+    def realm_id(self) -> str:
+        return self._decrypt(self.realm_id_enc)
+
+    @realm_id.setter
+    def realm_id(self, value: str) -> None:
+        """Store the company id encrypted, and the key its records are stamped with."""
+        from .crypto import encrypt
+
+        self.realm_id_enc = encrypt(value) if value else ""
+        self.company_key = QboCompany.key_for(value) if value else ""
+
     def set_tokens(self, *, access: str, refresh: str, access_expires_at, refresh_expires_at):
         from .crypto import encrypt
 
@@ -249,4 +307,4 @@ class QboCredential(TimeStampedModel):
 
     @property
     def is_live(self) -> bool:
-        return bool(self.realm_id and self.refresh_token_enc and self.broken_at is None)
+        return bool(self.realm_id_enc and self.refresh_token_enc and self.broken_at is None)

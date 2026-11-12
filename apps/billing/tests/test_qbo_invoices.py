@@ -1042,3 +1042,13 @@ def test_run_hourly_refreshes_preferences_and_survives_its_failure(mapping):
     assert QboAccountMapping.load().book_close_date == date(2026, 1, 31)
     other.refresh_from_db()
     assert other.qbo_sync_state == SyncState.SYNCED
+
+
+def test_an_unreadable_preferences_answer_is_not_logged(caplog):
+    answer = {"Preferences": {"AccountingInfoPrefs": None, "CompanyName": "Ridgeline Partners"}}
+
+    with patch(REQ, return_value=answer), caplog.at_level("DEBUG"):
+        qbo_invoices.refresh_preferences()
+
+    assert "preferences" in caplog.text
+    assert "Ridgeline" not in caplog.text

@@ -48,6 +48,7 @@ in the daytime, so a text held there means the hold logic is wrong.
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
 
 # Modules that run with real quiet hours, as if each test carried the marker.
 _REAL_QUIET_HOURS = ("apps/messaging/tests/test_golden.py",)
@@ -94,6 +95,23 @@ def _empty_cache():
 def _quiet_hours_off(request, monkeypatch):
     if request.node.get_closest_marker("quiet_hours") is None:
         monkeypatch.setattr("apps.messaging.quiet.hold_until", lambda *_, **__: None)
+
+
+# transaction=True flushes migration-seeded tables under --reuse-db; _test_serialized_contents
+# is Django-private (set when a collected test asks for serialized_rollback).
+@pytest.fixture(scope="module")
+def restore_seeded_rows(django_db_blocker):
+    """Put the migration-seeded rows back after a transactional test's teardown flush.
+
+    The flush empties every table, fleet and airports included, and with `--reuse-db` that
+    loss would outlive the run. Pair it with
+    `@pytest.mark.django_db(transaction=True, serialized_rollback=True)`: that makes the test
+    start from the serialized seed and skip post_migrate on flush; this module-scoped teardown
+    runs after the flush and reloads the same snapshot.
+    """
+    yield
+    with django_db_blocker.unblock():
+        connection.creation.deserialize_db_from_string(connection._test_serialized_contents)
 
 
 @pytest.fixture

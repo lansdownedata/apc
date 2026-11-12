@@ -970,6 +970,7 @@ def test_customer_docs_unset_chips_per_document_type(client):
 
 
 def _set_realm(realm: str) -> None:
+    """Connect company `realm`; records are then stamped with its key, `current_realm()`."""
     from apps.integrations.models import QboCredential
 
     cred = QboCredential.load()
@@ -1027,12 +1028,14 @@ def test_refresh_terms_tolerates_missing_rule_fields(company):
 @patch("apps.billing.qbo_sync.current_realm", REAL_REALM)
 def test_terms_cache_is_scoped_by_realm():
     _set_realm("A")
+    a = qbo_sync.current_realm()
     with patch(REQ, return_value={"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30"}]}}):
         qbo_sync.refresh_terms()
-    assert QboTerm.objects.get(qbo_id="3").realm_id == "A"
+    assert QboTerm.objects.get(qbo_id="3").realm_id == a
     assert qbo_sync.term_ref(Terms.NET_30) == {"value": "3"}
 
     _set_realm("B")
+    b = qbo_sync.current_realm()
     assert qbo_sync.term_ref(Terms.NET_30) is None
     account = services.create_account(
         ContactFactory(), name="X", group_name="G", terms=Terms.NET_30
@@ -1043,14 +1046,14 @@ def test_terms_cache_is_scoped_by_realm():
     # B's refresh neither touches nor retires A's rows, and the same id coexists.
     with patch(REQ, return_value={"QueryResponse": {"Term": [{"Id": "3", "Name": "Net 30 B"}]}}):
         qbo_sync.refresh_terms()
-    assert QboTerm.objects.get(realm_id="A", qbo_id="3").name == "Net 30"
-    assert QboTerm.objects.get(realm_id="A", qbo_id="3").active is True
-    assert QboTerm.objects.get(realm_id="B", qbo_id="3").name == "Net 30 B"
+    assert QboTerm.objects.get(realm_id=a, qbo_id="3").name == "Net 30"
+    assert QboTerm.objects.get(realm_id=a, qbo_id="3").active is True
+    assert QboTerm.objects.get(realm_id=b, qbo_id="3").name == "Net 30 B"
 
     with patch(REQ, return_value={"QueryResponse": {"Term": []}}):
         qbo_sync.refresh_terms()
-    assert QboTerm.objects.get(realm_id="A", qbo_id="3").active is True
-    assert QboTerm.objects.get(realm_id="B", qbo_id="3").active is False
+    assert QboTerm.objects.get(realm_id=a, qbo_id="3").active is True
+    assert QboTerm.objects.get(realm_id=b, qbo_id="3").active is False
 
 
 def test_migration_fills_the_realm_of_existing_terms_from_the_credential():
@@ -1078,3 +1081,27 @@ def test_refresh_terms_refuses_without_a_company():
             qbo_sync.refresh_terms()
     req.assert_not_called()
     assert not QboTerm.objects.exists()
+
+
+# --- Intuit security requirements: never log QuickBooks data ---------------------------------
+
+
+def test_a_refusal_logs_nothing_quickbooks_sent(caplog):
+    account = _account()
+
+    with patch(REQ, side_effect=_fault("6000", "Invalid DisplayName: Ridgeline Partners")):
+        with caplog.at_level("DEBUG"):
+            qbo_sync.push(account)
+
+    assert "Ridgeline" not in caplog.text
+    assert "6000" in caplog.text  # the fault code is enough to find it in Intuit's docs
+
+
+def test_an_outage_logs_nothing_quickbooks_sent(caplog):
+    _account()
+
+    with patch(REQ, side_effect=_fault("3200", "Ridgeline Partners", status=503)):
+        with caplog.at_level("DEBUG"):
+            qbo_sync.sync_pending()
+
+    assert "Ridgeline" not in caplog.text

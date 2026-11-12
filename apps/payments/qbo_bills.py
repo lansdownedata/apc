@@ -397,7 +397,7 @@ def _push(link: _Link, build, *, matches, what: str, on_refusal=None) -> bool:
         _fail(link, str(exc), alert=exc.alert)
         return False
     except qbo.QboAPIError as exc:
-        logger.warning("QuickBooks refused %s %s: %s", link.entity, link.record.pk, exc.body[:500])
+        logger.warning("QuickBooks refused %s %s: %s", link.entity, link.record.pk, exc)
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
         customers.refused_by_quickbooks(link.record, link.prefix)
@@ -780,7 +780,7 @@ def _push_attachment(payable: AffiliatePayable) -> bool:
         _fail(link, str(exc), alert=exc.alert)
         return False
     except qbo.QboAPIError as exc:
-        logger.warning("QuickBooks refused the file for payable %s: %s", payable.pk, exc.body[:500])
+        logger.warning("QuickBooks refused the file for payable %s: %s", payable.pk, exc)
         if _transient(exc):
             raise SyncPaused(str(exc)) from exc
         customers.refused_by_quickbooks(payable, link.prefix)

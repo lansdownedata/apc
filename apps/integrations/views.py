@@ -389,29 +389,33 @@ def geocode_autocomplete(request):
     return JsonResponse({"results": results, "degraded": not settings.LOCATIONIQ_API_KEY})
 
 
-@login_required
-@owner_admin_required
 def quickbooks_callback(request):
     """Intuit's redirect after consent (APC-41): check the state, trade the code for tokens,
-    record the company (`realmId`). Owner-admin only, like the screen that starts it."""
+    record the company (`realmId`). Owner-admin only, like the screen that starts it.
+
+    The URL carries the authorization code, so every outcome is a bare 302 (Intuit's
+    "sensitive information" rule): no page renders while the code is in the address bar,
+    and the sign-in redirect drops the URL instead of carrying it on as `?next=`."""
 
     from apps.integrations import qbo
     from apps.settings.views import QBO_STATE_KEY
 
-    if not qbo.enabled():
-        raise Http404
+    if not request.user.is_authenticated:
+        return redirect(settings.LOGIN_URL)
+    if not request.user.is_owner_admin or not qbo.enabled():
+        return redirect("dashboard")
     expected = request.session.pop(QBO_STATE_KEY, None)
     state = request.GET.get("state") or ""
     if not state or state != expected:
-        return HttpResponseBadRequest(
-            "Invalid OAuth state. Start the connection again from Settings."
-        )
+        messages.error(request, "QuickBooks wasn't connected. Start the connection again.")
+        return redirect("quickbooks_settings")
     if error := request.GET.get("error"):
-        messages.error(request, f"QuickBooks wasn't connected ({error}).")
+        messages.error(request, f"QuickBooks wasn't connected ({error[:60]}).")
         return redirect("quickbooks_settings")
     code, realm_id = request.GET.get("code"), request.GET.get("realmId") or ""
     if not code or not qbo.valid_realm_id(realm_id):
-        return HttpResponseBadRequest("Missing authorization code or a valid company id.")
+        messages.error(request, "QuickBooks sent back an incomplete answer. Try connecting again.")
+        return redirect("quickbooks_settings")
     try:
         qbo.exchange_code(code, realm_id=realm_id, user=request.user)
     except qbo.QboAPIError as exc:

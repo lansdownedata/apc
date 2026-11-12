@@ -175,14 +175,6 @@ def test_retry_push_creates_fresh_pending_only_from_failed(req, agent):
         farm_in_actions.retry_push(sent.pk, user=agent)
 
 
-@pytest.fixture(scope="module")
-def restore_seeded_rows(django_db_blocker):
-    """Put the migration-seeded rows back after a transactional test's teardown flush."""
-    yield
-    with django_db_blocker.unblock():
-        connection.creation.deserialize_db_from_string(connection._test_serialized_contents)
-
-
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_decide_race_second_actor_gets_409(restore_seeded_rows):
     user = UserFactory()
