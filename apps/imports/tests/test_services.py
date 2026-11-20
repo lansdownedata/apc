@@ -633,7 +633,7 @@ def test_template_has_examples_and_accepted_values():
     assert parsed.examples == 2
     assert len(parsed.dataset) == 0
     assert _accepted(contacts) == {
-        "Channel": ["Website", "Wedding Pro", "Phone", "API", "GNet"],
+        "Channel": ["Website", "Wedding Pro", "Phone", "API", "GNet", "Limo Anywhere"],
         "Phone label": ["Mobile", "Work", "Home", "Other"],
         "Rules": RULES,
     }

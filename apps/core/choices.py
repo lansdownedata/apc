@@ -9,6 +9,7 @@ class Channel(models.TextChoices):
     PHONE = "phone", "Phone"
     API = "api", "API"
     GNET = "gnet", "GNet"
+    LIMOANYWHERE = "limoanywhere", "Limo Anywhere"
 
 
 class Account(models.TextChoices):
