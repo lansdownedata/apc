@@ -35,6 +35,7 @@ from apps.public.services import WEDDING_SERVICE_NAME
 from apps.public.wedding import format_clock
 from apps.reservations.models import Flight, FlightDirection, Passenger, Reservation, Stop
 
+from . import receipts
 from .models import CustomerAccount
 
 _S = Reservation.TripStatus
@@ -85,8 +86,8 @@ def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
     """Trips on leads the account's contact booked or is billed for. Never a wedding order
     (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
     (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
-    have their own portals. Stops (with airports) and passengers are prefetched so
-    `trip_row` costs nothing per row."""
+    have their own portals. Stops (with airports) and passengers are prefetched, and the
+    trip review joined, so `trip_row` costs nothing per row."""
     contact_id = account.contact_id
     return (
         Reservation.objects.filter(
@@ -94,7 +95,7 @@ def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
         )
         .exclude(Exists(_wedding_trips().filter(lead_id=OuterRef("lead_id"))))
         .exclude(lead__contact__company__is_affiliate_account=True)
-        .select_related("lead", "lead__payment", "vehicle")
+        .select_related("lead", "lead__payment", "vehicle", "review")
         .prefetch_related(
             Prefetch(
                 "stops", queryset=Stop.objects.select_related("airport").order_by("sequence", "pk")
@@ -290,7 +291,7 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         "tone": tone,
         "total": _total(trip, kept),
         "reference": trip.customer_reference,
-        "has_receipt": False,
+        "has_receipt": receipts.has_receipt(trip, kept.get(trip.pk)),
     }
 
 

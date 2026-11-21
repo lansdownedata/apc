@@ -52,12 +52,13 @@
           <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Trip</th>
           <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Your reference</th>
           <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Status</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface py-2.5 pl-3 pr-6 text-right">Total</th>
+          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5 text-right">Total</th>
+          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface py-2.5 pl-3 pr-6 text-right">Receipt</th>
         </tr>
       </thead>
       {% for group in groups %}
       <tbody>
-        <tr><th scope="colgroup" colspan="6" class="bg-surface2 px-6 py-2 text-[12.5px] font-semibold text-ink">{{ group.title }}</th></tr>
+        <tr><th scope="colgroup" colspan="7" class="bg-surface2 px-6 py-2 text-[12.5px] font-semibold text-ink">{{ group.title }}</th></tr>
         {% for row in group.rows %}
         {% url 'customers:trip' row.pk as trip_url %}
         <tr data-trip="{{ row.pk }}" class="border-b border-line align-top transition-colors" :class="picked['{{ row.pk }}'] !== undefined && 'bg-goldl/40'">
@@ -76,8 +77,11 @@
           </td>
           <td class="max-w-[12rem] px-3 py-3.5">{% include "customers/_reference.html" %}</td>
           <td class="px-3 py-3.5">{% include "customers/_status.html" %}</td>
-          <td class="whitespace-nowrap py-3.5 pl-3 pr-6 text-right text-[13.5px] num">
+          <td class="whitespace-nowrap px-3 py-3.5 text-right text-[13.5px] num">
             {% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}
+          </td>
+          <td class="whitespace-nowrap py-3.5 pl-3 pr-6 text-right text-[13.5px]">
+            {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="rounded font-semibold text-goldd focus-gold hover:underline">PDF</a>{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -95,7 +99,8 @@
         <p class="text-right text-[14px] num">{% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}</p>
         <p class="text-[12.5px] text-muted num">{{ row.date }} · {{ row.time }} {{ row.zone }}</p>
         <span class="justify-self-end">{% include "customers/_status.html" %}</span>
-        <div class="col-span-2 mt-1">{% include "customers/_reference.html" %}</div>
+        <div class="{% if row.has_receipt %}min-w-0{% else %}col-span-2{% endif %} mt-1">{% include "customers/_reference.html" %}</div>
+        {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="mt-1 justify-self-end rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Receipt</a>{% endif %}
       </li>
       {% endfor %}
       {% endfor %}

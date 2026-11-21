@@ -330,8 +330,8 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     `vehicle`; `passengers` (names) and `passenger_count`; `driver` (`{"name", "cell"}`
     or None) and `driver_pending` (the line shown in its place, or blank); `notes`;
     `price_lines` (`{"label", "amount", "abs_amount"}`); `total` (None while unpriced); `paid_line`;
-    `pay_url` and `pay_label`; `can_request`; `pending_request` (None: requests arrive
-    later).
+    `pay_url` and `pay_label`; `receipt_pending` (completed, receipt not yet ready);
+    `can_request`; `pending_request` (None: requests arrive later).
 
     At most 30 queries whatever the trip holds: the scoped trip, the row's money, the
     stops, the status history, the deposit, the driver from Dispatched on, and the pay
@@ -362,6 +362,7 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
         "paid_line": _paid_line(trip, total, paid.get(trip.pk, Decimal("0.00"))),
         "pay_url": pay_url,
         "pay_label": pay_label,
+        "receipt_pending": trip.trip_status == _S.DONE and not row["has_receipt"],
         "can_request": key in REQUESTABLE and (at is None or at > timezone.now()),
         "pending_request": None,
     }

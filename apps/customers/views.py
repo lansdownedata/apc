@@ -16,7 +16,14 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, JsonResponse, QueryDict
+from django.http import (
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseNotAllowed,
+    JsonResponse,
+    QueryDict,
+)
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -28,7 +35,7 @@ from django.views.decorators.http import require_POST
 from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
-from . import exports, requests, selectors, services, trip_detail
+from . import exports, receipts, requests, selectors, services, trip_detail
 from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
@@ -329,6 +336,21 @@ def trip(request: HttpRequest, pk: int) -> HttpResponse:
             "reference_url": reverse("customers:set_reference"),
         },
     )
+
+
+@customer_required
+def receipt(request: HttpRequest, pk: int) -> HttpResponse:
+    """The trip receipt PDF (mockup 4). Outside the account's scope, or before the trip has
+    one (`receipts.has_receipt`): 404."""
+    found = selectors.trip_or_404(request.customer, pk)
+    if not receipts.has_receipt(found):
+        raise Http404
+    response = HttpResponse(
+        receipts.render_pdf(receipts.receipt_context(found)), content_type="application/pdf"
+    )
+    filename = f"All-Pro-Charter-{found.reference}.pdf"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 def _ids(values: list[str], limit: int | None = None) -> list[int]:
