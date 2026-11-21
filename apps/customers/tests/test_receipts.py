@@ -1,25 +1,31 @@
 """The trip receipt PDF, `/account/trips/<pk>/receipt.pdf` (spec §7, mockup 4): when a trip
 has one, what it says, that its money is the trip's own, and that the PDF is one page."""
 
+import csv
+import io
 import re
 import zlib
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
 
+from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AirportFactory
 from apps.billing.factories import AccountGroupFactory
 from apps.contacts.factories import CompanyFactory, ContactFactory
-from apps.customers import receipts, selectors
+from apps.customers import exports, receipts, selectors
 from apps.customers.factories import CustomerAccountFactory
 from apps.customers.selectors import TripFilter
 from apps.leads import services as lead_services
 from apps.leads.factories import VehicleTypeFactory
 from apps.leads.models import Lead
+from apps.payments import trip_money
 from apps.payments.factories import ChargeFactory
 from apps.payments.models import Charge, PaymentPlan
+from apps.reservations import processing
 from apps.reservations.factories import (
     PassengerFactory,
     ReservationFactory,
@@ -176,6 +182,13 @@ def test_cancelled_with_money_kept_has_one_cancellation_line(account, make_trip)
     assert ctx["issued"] == "Nov 18, 2026"
 
 
+def _kept_cancel(account, make_trip) -> Reservation:
+    """A plain cancellation that kept its own $92.50 trip charge."""
+    trip = _booked(account, make_trip)
+    _pay(trip, "92.50", kind=Charge.Kind.TRIP, reservation=trip, at=PROCESSED)
+    return _cancel(trip)
+
+
 def _late_cancel(
     account, make_trip, *, processed: bool, settled: Decimal = Decimal("92.50")
 ) -> Reservation:
@@ -269,6 +282,7 @@ def test_no_receipt_for_nothing(account, make_trip):
         lambda a, m: _no_show(a, m, processed=False),
         lambda a, m: _no_show(a, m, processed=True),
         lambda a, m: _cancel(_booked(a, m)),
+        lambda a, m: _kept_cancel(a, m),
         lambda a, m: _paid_trip(a, m),
         lambda a, m: _finish(_booked(a, m), processed=False),
     ],
@@ -278,6 +292,7 @@ def test_no_receipt_for_nothing(account, make_trip):
         "no-show",
         "no-show-processed",
         "cancelled-nothing-kept",
+        "cancelled-money-kept",
         "completed-processed",
         "completed",
     ],
@@ -664,3 +679,114 @@ def test_trip_row_has_receipt_matches_has_receipt(account, make_trip):
     for trip in (done, kept, refunded):
         scoped = _scoped(account, trip)
         assert selectors.trip_row(scoped)["has_receipt"] is receipts.has_receipt(scoped)
+
+
+# --- the customer's figure for a cancelled trip --------------------------------------------
+
+
+def _figures(account, client_as, trip: Reservation) -> dict[str, Decimal | None]:
+    """The trip's total as the trip page, the Trips row, the spreadsheet and the receipt
+    each show it."""
+    client = client_as(account)
+    page = client.get(reverse("customers:trip", args=[trip.pk])).context["trip"]["total"]
+    listing = client.get("/account/trips/", {"tab": "all"}).context
+    row = next(r for g in listing["groups"] for r in g["rows"] if r["pk"] == trip.pk)
+    table = list(csv.DictReader(io.StringIO(exports.trips_csv(account, trip_ids=[trip.pk]))))
+    scoped = _scoped(account, trip)
+    receipt = receipts.receipt_context(scoped)["total"] if receipts.has_receipt(scoped) else None
+    return {
+        "page": page,
+        "row": row["total"],
+        "foot": listing["total"],
+        "csv": Decimal(table[0]["Total"]),
+        "receipt": receipt,
+    }
+
+
+def _process(trip: Reservation, collect: str, **kw) -> None:
+    """Process the trip through `processing.process` as billing does."""
+    trip.refresh_from_db()
+    expected = trip_money.money_for(trip).difference
+    processing.process(trip, user=UserFactory(), expected=expected, collect=collect, **kw)
+
+
+def _charge_card(trip, amount, **kw) -> Charge:
+    """Stand-in for Stripe's off-session charge: the trip charge succeeds."""
+    return _pay(trip, amount, kind=Charge.Kind.TRIP, reservation=trip, at=PROCESSED)
+
+
+@pytest.mark.parametrize(
+    ("collect", "settled", "balance_label"),
+    [
+        ("card", "120.00", "Balance due"),
+        ("link", "120.00", "Balance due"),
+        ("keep", "50.00", "Credit"),
+        ("invoice", "120.00", None),
+    ],
+)
+def test_a_processed_late_cancel_shows_its_settled_price_everywhere(
+    account, client_as, make_trip, settings, collect, settled, balance_label
+):
+    settings.OUTBOUND_ENABLED = True
+    settings.PUBLIC_BASE_URL = "https://example.test"
+    on_account = collect == "invoice"
+    kw = {"lead__billing_group": AccountGroupFactory()} if on_account else {}
+    trip = _booked(account, make_trip, **kw)
+    if not on_account:
+        _pay(trip, "92.50", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _cancel(trip, S.LATE_CANCEL)
+    kept = _figures(account, client_as, trip)
+    TripExtraFactory(
+        reservation=trip,
+        label="Late cancellation",
+        amount=trip.line_total - Decimal(settled),
+        kind="credit",
+    )
+    trip.refresh_extras_total()
+
+    with (
+        patch.object(trip_money, "charge_trip", side_effect=_charge_card),
+        patch.object(trip_money, "open_trip_intent"),
+        patch("apps.payments.services.send_pay_link"),
+    ):
+        _process(trip, collect, reason="Kept as credit" if collect == "keep" else "")
+
+    shown = _figures(account, client_as, trip)
+    assert set(shown.values()) == {Decimal(settled)}, shown
+    assert kept["page"] == kept["row"] == kept["csv"] == Decimal("0.00" if on_account else "92.50")
+    text = _text(receipts.render_pdf(receipts.receipt_context(_scoped(account, trip))))
+    if balance_label == "Credit":
+        assert "Credit" in text and "$42.50" in text
+        assert "Balance due" not in text
+    elif balance_label:
+        assert "Balance due" in text and "Credit" not in text
+    else:
+        assert "Billed to your account" in text
+
+
+def test_unprocessed_late_cancel_and_plain_cancellation_show_what_was_kept(
+    account, client_as, make_trip
+):
+    late = _late_cancel(account, make_trip, processed=False)
+    plain = _kept_cancel(account, make_trip)
+
+    late_shown = _figures(account, client_as, late)
+    plain_shown = _figures(account, client_as, plain)
+
+    assert late_shown["page"] == late_shown["row"] == late_shown["csv"] == Decimal("92.50")
+    assert late_shown["receipt"] is None
+    assert set(plain_shown.values()) - {plain_shown["foot"]} == {Decimal("92.50")}
+
+
+def test_a_negative_balance_prints_as_credit(account, make_trip):
+    trip = _paid_trip(account, make_trip)
+    TripExtraFactory(reservation=trip, label="Goodwill", amount=25, kind="credit")
+    trip.refresh_extras_total()
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+    text = _text(receipts.render_pdf(ctx))
+
+    assert ctx["balance_due"] == Decimal("-25.00")
+    assert "Credit" in text and "$25.00" in text
+    assert "Balance due" not in text
+    assert text.count("-$25.00") == 1  # the Goodwill price line, never the balance

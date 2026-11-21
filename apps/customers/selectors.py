@@ -180,9 +180,10 @@ def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
 
 
 def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> dict[int, Decimal]:
-    """What the customer paid and we kept, per priced cancelled trip. `paid` is the
-    `paid_amounts` of `trips` when the caller has them already."""
-    cancelled = [t for t in trips if receipts.priced(t) and t.trip_status in receipts.CANCELLED]
+    """What the customer paid and we kept, per priced cancelled trip whose figure is that
+    (`receipts.shows_kept`). `paid` is the `paid_amounts` of `trips` when the caller has
+    them already."""
+    cancelled = [t for t in trips if receipts.priced(t) and receipts.shows_kept(t)]
     if not cancelled:
         return {}
     if paid is None:
@@ -191,16 +192,12 @@ def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> d
 
 
 def _total(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
-    if not receipts.priced(trip):
-        return None
-    if trip.trip_status in receipts.CANCELLED:
-        return kept[trip.pk]
-    return trip.line_total
+    """`receipts.customer_total` with the list's batched kept amounts."""
+    return receipts.customer_total(trip, kept.get(trip.pk))
 
 
 def display_total(trip: Reservation) -> Decimal | None:
-    """None while unpriced; for a cancelled trip what the customer paid and we kept;
-    otherwise the trip's total."""
+    """The customer's figure for one trip (`receipts.customer_total`)."""
     return _total(trip, _kept([trip]))
 
 

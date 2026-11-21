@@ -68,21 +68,39 @@ def awaiting_processing(trip: Reservation) -> bool:
     return trip.trip_status in processing.SETTLE_STATUSES and not _processed(trip)
 
 
+def shows_kept(trip: Reservation) -> bool:
+    """A cancelled trip whose figure is the money kept: a plain cancellation, or a late
+    cancel billing has not processed yet. Once processed, a late cancel is settled to its
+    price like any other trip."""
+    return trip.trip_status in CANCELLED and not _processed(trip)
+
+
+def customer_total(trip: Reservation, kept: Decimal | None = None) -> Decimal | None:
+    """The customer's figure for this trip, wherever it shows (Trips row and foot total,
+    trip page, spreadsheet, receipt): None while unpriced; the money kept on a cancelled
+    trip not settled by processing (`kept`, its `money_for(trip).allocated`, when the
+    caller has it: lists batch it); otherwise the trip's price, `line_total`."""
+    if not priced(trip):
+        return None
+    if shows_kept(trip):
+        return trip_money.money_for(trip).allocated if kept is None else kept
+    return trip.line_total
+
+
 def has_receipt(trip: Reservation, allocated: Decimal | None = None) -> bool:
     """A trip processing settles, once processed; a plain cancellation (never processed)
-    once it keeps money (`money_for(trip).allocated` above zero). Only a priced trip, and
-    never a receipt for $0.00. `allocated` is that kept amount when the caller has it
-    already: lists pass the batched kept amounts and read the review through
-    `visible_trips`' `select_related`, so a row costs no query."""
-    if not priced(trip):
+    as it is. Only for a figure above zero (`customer_total`): a plain cancellation that
+    kept nothing has none, and there is never a receipt for $0.00. `allocated` is the kept
+    amount when the caller has it already: lists pass the batched amounts and read the
+    review through `visible_trips`' `select_related`, so a row costs no query."""
+    status = trip.trip_status
+    if status in processing.SETTLE_STATUSES:
+        if not _processed(trip):
+            return False
+    elif status not in processing.NEVER:
         return False
-    if trip.trip_status in processing.SETTLE_STATUSES:
-        return _processed(trip) and trip.line_total > 0
-    if trip.trip_status in processing.NEVER:
-        if allocated is None:
-            allocated = trip_money.money_for(trip).allocated
-        return allocated > 0
-    return False
+    total = customer_total(trip, allocated)
+    return total is not None and total > 0
 
 
 def passenger_names(trip: Reservation) -> list[str]:
@@ -251,17 +269,13 @@ def receipt_context(trip: Reservation) -> dict:
     lead = trip.lead
     zone = _zone(trip)
     money = trip_money.money_for(trip)
-    if trip.trip_status in processing.NEVER:
-        # Never processed: the money kept is the charge.
-        total = money.allocated
-        lines = [(CANCELLATION, total)]
-    elif trip.trip_status == _S.LATE_CANCEL:
-        # Processing settled it to the trip's price: one line for that amount.
-        total = trip.line_total
+    total = customer_total(trip, money.allocated)
+    if trip.trip_status in CANCELLED:
+        # The money kept (a plain cancellation) or the settled price (a processed late
+        # cancel), as one line.
         lines = [(CANCELLATION, total)]
     else:
         # Completed or no-show: processing settles to the price, itemised as quoted.
-        total = trip.line_total
         lines = [(line.label, line.amount) for line in trip.price_lines()]
     payments = _payments(trip, money, total, zone)
     balance_due = None
@@ -513,8 +527,12 @@ def render_pdf(context: dict) -> bytes:
         pdf.label("Payments")
         for day, method, amount in context["payments"]:
             pdf.row(" · ".join(part for part in (day, method) if part), _money(amount))
-        if context["balance_due"] is not None:
-            pdf.row("Balance due", _money(context["balance_due"]), bold=True, rule=False)
+        balance = context["balance_due"]
+        if balance is not None and balance < 0:
+            # More was paid than the trip came to: the rest is the customer's credit.
+            pdf.row("Credit", _money(-balance), bold=True, rule=False)
+        elif balance is not None:
+            pdf.row("Balance due", _money(balance), bold=True, rule=False)
     company = context["company"]
     thanks = f"Thank you for riding with {company['name']}."
     if company["email"]:
