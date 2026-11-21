@@ -165,6 +165,24 @@
       {% endif %}
     </div>
 
+    {% comment %} Trip status (APC-22) — a small, curated advance, not a full status
+         state machine here: these three are the ones a customer notification can hang
+         off (Settings > Customer notifications, off by default). Everything else on
+         Reservation.TripStatus stays LA-driven. {% endcomment %}
+    {% if assignment.status == 'confirmed' %}
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Trip status</p>
+    <div class="flex flex-wrap gap-2 mb-5 pb-5 border-b border-line/60">
+      {% for value, label in trip_status_options %}
+        <button type="button"
+                class="px-3 py-1.5 rounded-lg text-[12.5px] font-semibold ring-1 transition-colors {% if trip.trip_status == value %}bg-charcoal2 text-gold ring-charcoal2{% else %}btn-ghost ring-line{% endif %}"
+                :disabled="busy"
+                @click="setStatus('{% url 'dispatch_set_status' trip.pk %}', '{{ value }}')">
+          {{ label }}
+        </button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     {% comment %} Driver + vehicle detail (APC-21) — farmed-out only; in-house already
          carries this via Driver/Vehicle. Released to the customer the moment a name is
          on file (touchpoints.trigger_driver_released), so this is the one control that

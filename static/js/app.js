@@ -177,6 +177,9 @@ function assignPanel() {
     resolve(url, action) {
       return this.send(url, { action });
     },
+    setStatus(url, status) {
+      return this.send(url, { status });
+    },
     confirmWithdraw(url, copy = {}) {
       Alpine.store("modal").confirm({
         title: copy.title || "Withdraw this assignment?",
