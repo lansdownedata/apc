@@ -37,7 +37,7 @@ from apps.planners.selectors import dispatch_phone
 
 from . import exports, receipts, requests, selectors, services, trip_detail
 from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
-from .forms import CustomerPasswordForm, SignupForm
+from .forms import RIDERS, CustomerPasswordForm, SignupForm, TripRequestForm
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
 
@@ -369,6 +369,45 @@ def set_reference(request: HttpRequest) -> JsonResponse:
         request.customer, _ids(request.POST.getlist("ids")), request.POST.get("value", "")
     )
     return JsonResponse({"ok": True, "changed": changed})
+
+
+@customer_required
+def request_trip(request: HttpRequest) -> HttpResponse:
+    """Request a trip (mockup 5). A valid post becomes a New lead for staff to price, and
+    the customer lands on the new trip's page; an invalid one comes back with what they
+    typed and the errors beside the fields."""
+    account = request.customer
+    form = TripRequestForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            lead = requests.request_trip(account, form.cleaned_data)
+        except services.CustomerError:
+            form.add_error(
+                None,
+                "You've sent a lot of requests in the last hour. "
+                f"Please call dispatch at {dispatch_phone()['display']}.",
+            )
+        else:
+            trip = lead.reservations.order_by("pk").first()
+            messages.success(request, "Request received. Your quote will arrive by email and text.")
+            return redirect("customers:trip", pk=trip.pk)
+    contact = account.contact
+    return _page(
+        request,
+        "customers/request.html",
+        {
+            "form": form,
+            "occasion_options": form.occasion_options(),
+            "vehicle_options": form.vehicle_options(),
+            "riders": RIDERS,
+            "recent": requests.recent_addresses(account),
+            "requester": {
+                "name": contact.name,
+                "email": account.email,
+                "phone": contact.phone,
+            },
+        },
+    )
 
 
 # Ticked rows are at most the rows a page has loaded; this keeps a hand-built post sane.

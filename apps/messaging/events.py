@@ -30,6 +30,8 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from apps.core.choices import Channel
+
 from . import rules, sender
 from . import triggers as catalog
 from .models import Delivery, MessageTemplate, NotificationConfig, TouchPoint
@@ -169,6 +171,17 @@ def _is_wedding_thank_you(row: MessageTemplate) -> bool:
     return row.key == "thank_you_wedding" and rules.has_built_ins(row)
 
 
+# Seeded rows whose client copy thanks the customer "for taking the time to visit our
+# website": not queued for a lead the customer sent from their own portal account.
+_WEBSITE_WORDED = frozenset({"tp1_welcome"})
+
+
+def _website_worded_for_portal(row: MessageTemplate, lead) -> bool:
+    return (
+        lead.channel == Channel.PORTAL and row.key in _WEBSITE_WORDED and rules.has_built_ins(row)
+    )
+
+
 def _moment(trigger_key: str, lead, now: datetime) -> datetime:
     """When the event happened. A quote's follow-ups count from when it was sent, which a
     reissued quote keeps (as the old `schedule_quote_sent` did)."""
@@ -203,6 +216,8 @@ def emit(trigger_key: str, lead, reservation=None) -> list[TouchPoint]:
         if not rules.matches(row, lead, trip):
             continue
         if _blocked(row, lead, trip, rule) or (thanked and _is_wedding_thank_you(row)):
+            continue
+        if _website_worded_for_portal(row, lead):
             continue
         created.append(_create(row, lead, trip, at + row.offset))
     if trigger_key == "quote_sent":

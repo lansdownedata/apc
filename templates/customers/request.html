@@ -1,0 +1,235 @@
+{% extends "customers/base.html" %}
+{% load json_filters phone_filters %}
+{% comment %}
+  Request a trip (mockup 5): the website booking form's trip fields, without the contact
+  questions. Address search, the airport flight row and extra stops are the website
+  widget's own parts (`components/address_autocomplete.html`, `bookingStops()` and
+  `addressAutocomplete()` in static/js/app.js); the stops markup mirrors
+  `public/_booking_widget.html`, which is not included because it is a whole form posting
+  to the website. `.quote-form` gives the controls the website form's sizing. A "Recent"
+  chip fills the pickup the way choosing a search result does (`addressAutocomplete.choose`).
+{% endcomment %}
+{% block title %}Request a trip{% endblock %}
+{% block content %}
+{% url 'customers:account' as account_url %}
+<div class="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10">
+  <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">Request a trip</h1>
+  <p class="mt-1 text-[13.5px] text-muted">Tell us what you need. We'll send a quote for you to review and pay.</p>
+
+  <div class="mt-6 grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px]">
+    <form method="post" action="{% url 'customers:request_trip' %}" novalidate
+          x-data="{ tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, rider: {{ form.rider.value|default:'me'|json_string }}, recent(r) { Object.assign(Alpine.$data(document.getElementById('rq-pickup')), { value: r.address, display: r.address, lat: r.lat ?? '', lng: r.lng ?? '', airport: r.airport_id ? String(r.airport_id) : '', open: false, results: [], active: -1 }); } }"
+          class="card quote-form flex flex-col gap-4 p-5 sm:p-6">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+      <p role="alert" class="rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">{{ form.non_field_errors|join:" " }}</p>
+      {% endif %}
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <span id="rq-trip-type" class="mb-1 block text-[12px] font-medium text-muted">Type of trip</span>
+          <div class="qf-toggle" role="radiogroup" aria-labelledby="rq-trip-type">
+            <label class="qf-seg">
+              <input type="radio" name="trip_type" value="transfer" x-model="tripType" {% if form.trip_type.value != 'hourly' %}checked{% endif %}>
+              <span class="qf-seg-label">Point to point</span>
+            </label>
+            <label class="qf-seg">
+              <input type="radio" name="trip_type" value="hourly" x-model="tripType" {% if form.trip_type.value == 'hourly' %}checked{% endif %}>
+              <span class="qf-seg-label">Hourly</span>
+            </label>
+          </div>
+        </div>
+        <div x-show="tripType === 'hourly'" {% if form.trip_type.value != 'hourly' %}x-cloak{% endif %}>
+          <label for="rq-hours" class="mb-1 block text-[12px] font-medium text-muted">Hours</label>
+          <input type="number" id="rq-hours" name="hours" min="1" max="24" step="1" value="{{ form.hours.value|default:'' }}" placeholder="4"
+                 class="field w-full{% if form.hours.errors %} field-error{% endif %}">
+          {% for e in form.hours.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="rq-date" class="mb-1 block text-[12px] font-medium text-muted">Date</label>
+          <input type="text" id="rq-date" name="pickup_date" data-flatpickr value="{{ form.pickup_date.value|default:'' }}" placeholder="Select a date"
+                 class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
+          {% for e in form.pickup_date.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="rq-time" class="mb-1 block text-[12px] font-medium text-muted">Pickup time</label>
+          <input type="text" id="rq-time" name="pickup_time" data-flatpickr-time value="{{ form.pickup_time.value|default:'' }}" placeholder="Select a time"
+                 class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
+          {% for e in form.pickup_time.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div>
+        {% include "components/address_autocomplete.html" with name="pickup" field_id="rq-pickup" label="Pickup" value=form.pickup.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value %}
+        {% for e in form.pickup.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.pickup_airport.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.pickup_airline.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.pickup_flight.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% if recent %}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-[12.5px]">
+          <span class="text-muted">Recent</span>
+          {% for r in recent %}
+          <button type="button" @click="recent({{ r|json_attr }})" title="{{ r.address }}"
+                  class="inline-flex h-[26px] max-w-[220px] items-center rounded-full border border-line px-3 font-medium text-ink transition-colors hover:bg-surface2 focus-gold">
+            <span class="truncate">{{ r.address }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      {% comment %} Extra stops: the website widget's repeater (bookingStops), posting `stops_json`. {% endcomment %}
+      <div class="flex flex-col gap-4"
+           x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
+        <template x-for="(stop, i) in stops" :key="i">
+          <div class="aac">
+            <div class="mb-1 flex items-center justify-between gap-3">
+              <label class="!mb-0 block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
+              <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
+                      class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
+                {% icon "x" class="h-[13px] w-[13px]" %}
+              </button>
+            </div>
+            <div class="sa-search" @keydown.escape="closeRow(i)"
+                 @keydown.down.prevent="move(i, 1)" @keydown.up.prevent="move(i, -1)"
+                 @keydown.enter.prevent="chooseActive(i)">
+              <input type="text" x-model="stop.address" placeholder="Search an address…" :aria-label="'Stop ' + (i + 1)"
+                     role="combobox" aria-autocomplete="list" :aria-expanded="rowState(i).open"
+                     autocomplete="off" data-1p-ignore class="field w-full"
+                     @input.debounce.250ms="search(i)" @focus="rowState(i).list.length && (rowState(i).open = true)">
+              <div class="sa-drop" role="listbox" x-show="rowState(i).open" x-cloak @click.outside="closeRow(i)">
+                <template x-for="(r, j) in rowState(i).list" :key="j">
+                  {% include "components/_ac_result_row.html" with idx="j" active_expr="rowState(i).active" choose_expr="choose(i, j)" %}
+                </template>
+              </div>
+            </div>
+            <div x-show="stop.airport" x-cloak class="mt-2 grid grid-cols-[1fr_120px] gap-2">
+              <div x-init="$el.querySelector('select').removeAttribute('id'); initTomSelects($el)"
+                   x-effect="const el = $el.querySelector('select'); if (el && el.tomselect && el.tomselect.getValue() !== String(stop.airline || '')) el.tomselect.setValue(String(stop.airline || ''), true)"
+                   @change="stop.airline = $event.target.value">
+                {% include "components/searchable_select.html" with name="stop_airline_ui" field_id="rq-stop-airline" options=airline_options empty_label="Airline" %}
+              </div>
+              <input type="text" x-model="stop.flight" pattern="[0-9A-Za-z]*" maxlength="6" aria-label="Flight number"
+                     placeholder="Flight # / tail #" class="field w-full">
+            </div>
+            <div x-show="stop.airport" x-cloak class="mt-2 inline-flex overflow-hidden rounded-lg text-[12.5px] ring-1 ring-line">
+              <button type="button" @click="stop.direction = 'arrival'"
+                      :class="stop.direction === 'arrival' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
+                      class="px-3 py-1.5 font-medium">Arriving</button>
+              <button type="button" @click="stop.direction = 'departure'"
+                      :class="stop.direction === 'departure' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
+                      class="px-3 py-1.5 font-medium">Departing</button>
+            </div>
+          </div>
+        </template>
+        <input type="hidden" name="stops_json" :value="json()">
+        {% for e in form.stops_json.errors %}<p class="text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        <div x-show="canAdd()">
+          <button type="button" @click="add()"
+                  class="inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
+            {% icon "plus" class="h-[13px] w-[13px]" %} Add a stop
+          </button>
+        </div>
+      </div>
+
+      <div>
+        {% include "components/address_autocomplete.html" with name="dropoff" field_id="rq-dropoff" label="Drop-off" value=form.dropoff.value flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}
+        {% for e in form.dropoff.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.dropoff_airport.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.dropoff_airline.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        {% for e in form.dropoff_flight.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <span id="rq-rider" class="mb-1 block text-[12px] font-medium text-muted">Who is riding</span>
+          <div class="qf-toggle" role="radiogroup" aria-labelledby="rq-rider">
+            {% for value, label in riders %}
+            <label class="qf-seg">
+              <input type="radio" name="rider" value="{{ value }}" x-model="rider" {% if form.rider.value|default:'me' == value %}checked{% endif %}>
+              <span class="qf-seg-label">{{ label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div>
+          <label for="rq-passengers" class="mb-1 block text-[12px] font-medium text-muted">Passengers</label>
+          <input type="number" id="rq-passengers" name="passengers" min="1" max="100" value="{{ form.passengers.value|default:1 }}"
+                 class="field w-full{% if form.passengers.errors %} field-error{% endif %}">
+          {% for e in form.passengers.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2" x-show="rider === 'other'" {% if form.rider.value != 'other' %}x-cloak{% endif %}>
+        <div>
+          <label for="rq-rider-name" class="mb-1 block text-[12px] font-medium text-muted">Passenger name</label>
+          <input type="text" id="rq-rider-name" name="rider_name" value="{{ form.rider_name.value|default:'' }}" maxlength="120" autocomplete="off"
+                 class="field w-full{% if form.rider_name.errors %} field-error{% endif %}">
+          {% for e in form.rider_name.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+        <div>
+          {% include "components/phone_input.html" with name="rider_mobile" field_id="rq-rider-mobile" label="Passenger mobile" value=form.rider_mobile.value %}
+          {% for e in form.rider_mobile.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="rq-occasion" class="mb-1 block text-[12px] font-medium text-muted">Occasion</label>
+          {% include "components/searchable_select.html" with name="service_type" field_id="rq-occasion" options=occasion_options selected=form.service_type.value empty_label="Select an occasion" search="off" %}
+          {% for e in form.service_type.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+        <div>
+          <label for="rq-vehicle" class="mb-1 block text-[12px] font-medium text-muted">Vehicle preference <span class="font-normal text-muted/70">(optional)</span></label>
+          {% include "components/searchable_select.html" with name="vehicle_preference" field_id="rq-vehicle" options=vehicle_options selected=form.vehicle_preference.value empty_label="No preference" search="off" %}
+          {% for e in form.vehicle_preference.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="rq-reference" class="mb-1 block text-[12px] font-medium text-muted">Your reference <span class="font-normal text-muted/70">(optional)</span></label>
+          <input type="text" id="rq-reference" name="customer_reference" value="{{ form.customer_reference.value|default:'' }}" maxlength="120" placeholder="Client, cost centre or PO"
+                 class="field w-full{% if form.customer_reference.errors %} field-error{% endif %}">
+          {% for e in form.customer_reference.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <div>
+        <label for="rq-notes" class="mb-1 block text-[12px] font-medium text-muted">Notes <span class="font-normal text-muted/70">(optional)</span></label>
+        <textarea id="rq-notes" name="notes" rows="3" data-autogrow placeholder="Luggage, child seats, anything the driver should know"
+                  class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
+        {% for e in form.notes.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 pt-1">
+        <button type="submit" class="btn-gold inline-flex h-10 items-center rounded-lg px-5 text-[13.5px] font-semibold focus-gold">Send request</button>
+        <a href="{% url 'customers:home' %}" class="inline-flex h-10 items-center rounded-lg px-4 text-[13.5px] font-semibold text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">Cancel</a>
+      </div>
+    </form>
+
+    <div class="flex flex-col gap-5">
+      <section class="card p-5" aria-labelledby="rq-as">
+        <h2 id="rq-as" class="text-[15px] font-semibold text-ink">Requesting as</h2>
+        <p class="mt-2 text-[13.5px] font-semibold text-ink [overflow-wrap:anywhere]">{{ requester.name }}</p>
+        <p class="text-[12.5px] text-muted [overflow-wrap:anywhere]">{{ requester.email }}</p>
+        {% if requester.phone %}<p class="text-[12.5px] text-muted num">{{ requester.phone|phone_display }}</p>{% endif %}
+        {% if account_url %}<a href="{{ account_url }}" class="mt-2 inline-block rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Edit in Account</a>{% endif %}
+      </section>
+      <section class="card p-5" aria-labelledby="rq-next">
+        <h2 id="rq-next" class="text-[15px] font-semibold text-ink">What happens next</h2>
+        <ol class="mt-2 list-decimal space-y-1.5 pl-[18px] text-[12.5px] leading-relaxed text-ink">
+          <li>We review your request and price it.</li>
+          <li>Your quote arrives by email and text, and shows here under Trips.</li>
+          <li>You review, accept the terms and pay the deposit to confirm.</li>
+        </ol>
+        <p class="mt-3 text-[12.5px] text-muted">Travelling soon? Call dispatch at <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-ink focus-gold hover:text-goldd num">{{ dispatch.display }}</a>.</p>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}

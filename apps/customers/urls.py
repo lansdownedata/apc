@@ -11,6 +11,7 @@ urlpatterns = [
     path("trips/<int:pk>/receipt.pdf", views.receipt, name="receipt"),
     path("trips/export.csv", views.export, name="export"),
     path("trips/reference/", views.set_reference, name="set_reference"),
+    path("request/", views.request_trip, name="request_trip"),
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("signup/", views.signup, name="signup"),
