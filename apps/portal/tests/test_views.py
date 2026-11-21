@@ -85,3 +85,15 @@ def test_sidebar_groups_the_menu_in_the_order_work_happens(client, django_user_m
         "Fleet",
         "Settings",
     ]
+
+
+@pytest.mark.parametrize("url_name", ["dashboard", "lead_list"])
+def test_no_limoanywhere_or_zapier_in_the_shell_or_stat_cards(client, agent, url_name):
+    """LimoAnywhere is out (2026-11-20): the sidebar lists Podium only, Booked is "confirmed"."""
+    client.force_login(agent)
+    html = client.get(reverse(url_name)).content.decode()
+    assert "Podium API" in html
+    assert "LimoAnywhere" not in html
+    assert "Zapier" not in html
+    assert "synced to" not in html
+    assert re.search(r">\s*confirmed\s*<", html)
