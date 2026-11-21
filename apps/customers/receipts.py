@@ -1,12 +1,15 @@
 """The trip receipt (spec §7, mockup 4): one Letter page per trip that a customer attaches to
 an expense report, titled "Trip receipt" and numbered by the trip reference.
 
-A trip has one once its final price is locked: completed and processed
-(`TripReview.processed_at`), or cancelled with money kept. Its money is the trip's own
+A trip has one once its final price is locked: a trip processing settles (completed, late
+cancel, no-show) once it is processed (`TripReview.processed_at`), or a plain cancellation,
+which is never processed, once it keeps money. Never for $0.00. Its money is the trip's own
 (`payments.trip_money`): the order's prepaid share allocated to it, plus the charges and
 refunds made for it. Another trip's or another order's money never reaches it.
 
-This module never imports `selectors` (which imports it for `has_receipt`). The emailed
+This module never imports `selectors`, `trip_detail` or `exports`: they import it, for
+`has_receipt` and the small rules they share with the receipt (`CANCELLED`, `priced`,
+`passenger_names`, `card_text`). The emailed
 per-charge receipts (`apps/payments/receipts.py`) are a separate thing and stay as they are.
 """
 
@@ -28,13 +31,16 @@ from apps.payments.models import Charge, PaymentPlan
 from apps.payments.services import TRIP_MONEY_KINDS
 from apps.planners.selectors import dispatch_phone
 from apps.public.wedding import format_clock
+from apps.reservations import processing
 from apps.reservations.models import Reservation, Stop
 
 _S = Reservation.TripStatus
 _CENTS = Decimal("0.01")
 ZERO = Decimal("0.00")
-# The statuses a customer reads as "Cancelled": the set `selectors._CANCELLED` holds.
+# The statuses a customer reads as "Cancelled" (a no-show has its own label).
 CANCELLED = frozenset(CANCELLED_STATUSES) - {_S.NO_SHOW}
+# A receipt names this many passengers at most; past it, the first few and "and N more".
+NAMED_PASSENGERS = 5
 ON_ACCOUNT = "Billed to your account"
 CANCELLATION = "Cancellation charge"
 # How a refund paid back outside Stripe reads (`Charge.RefundMethod`).
@@ -46,23 +52,51 @@ _REFUND_BY = {
 }
 
 
-def _priced(trip: Reservation) -> bool:
+def priced(trip: Reservation) -> bool:
+    """The trip has a price: a request nobody has quoted yet does not."""
     return Decimal(trip.rate or 0) > 0
 
 
+def _processed(trip: Reservation) -> bool:
+    review = getattr(trip, "review", None)
+    return review is not None and review.is_processed
+
+
+def awaiting_processing(trip: Reservation) -> bool:
+    """A trip processing settles (completed, late cancel, no-show) that billing has not
+    processed yet: its price can still change, so its receipt waits."""
+    return trip.trip_status in processing.SETTLE_STATUSES and not _processed(trip)
+
+
 def has_receipt(trip: Reservation, allocated: Decimal | None = None) -> bool:
-    """Completed and processed, or cancelled with money kept (`money_for(trip).allocated`
-    above zero; an unpriced trip has no price to put on one). `allocated` is that amount when
-    the caller has it already: lists pass the batched kept amounts, and read the review
-    through `visible_trips`' `select_related`, so a row costs no query."""
-    if trip.trip_status == _S.DONE:
-        review = getattr(trip, "review", None)
-        return review is not None and review.is_processed
-    if trip.trip_status in CANCELLED and _priced(trip):
+    """A trip processing settles, once processed; a plain cancellation (never processed)
+    once it keeps money (`money_for(trip).allocated` above zero). Only a priced trip, and
+    never a receipt for $0.00. `allocated` is that kept amount when the caller has it
+    already: lists pass the batched kept amounts and read the review through
+    `visible_trips`' `select_related`, so a row costs no query."""
+    if not priced(trip):
+        return False
+    if trip.trip_status in processing.SETTLE_STATUSES:
+        return _processed(trip) and trip.line_total > 0
+    if trip.trip_status in processing.NEVER:
         if allocated is None:
             allocated = trip_money.money_for(trip).allocated
         return allocated > 0
     return False
+
+
+def passenger_names(trip: Reservation) -> list[str]:
+    """The named passengers, the lead first; never a mobile."""
+    named = [p for p in trip.named_passengers.all() if p.name.strip()]
+    named.sort(key=lambda p: not p.is_lead)
+    return [p.name.strip() for p in named]
+
+
+def card_text(brand: str, last4: str) -> str:
+    """ "Visa ending 4242"; blank without a last four. Brand and last four only."""
+    if not last4:
+        return ""
+    return f"{brand.strip().capitalize() or 'Card'} ending {last4}"
 
 
 # --- what it says --------------------------------------------------------------------------
@@ -121,29 +155,28 @@ def _vehicle_line(trip: Reservation, stops: list[Stop]) -> str:
 
 
 def _passengers(trip: Reservation) -> str:
-    """The named passengers, the lead first; never a mobile."""
-    named = [p for p in trip.named_passengers.all() if p.name.strip()]
-    named.sort(key=lambda p: not p.is_lead)
-    return ", ".join(p.name.strip() for p in named)
+    """Every named passenger up to `NAMED_PASSENGERS`; past that the first few and how
+    many more ("A, B, C, D and 52 more"), so a coach's list never crowds the page."""
+    names = passenger_names(trip)
+    if len(names) <= NAMED_PASSENGERS:
+        return ", ".join(names)
+    shown = names[: NAMED_PASSENGERS - 1]
+    return f"{', '.join(shown)} and {len(names) - len(shown)} more"
 
 
 def _issued(trip: Reservation) -> datetime:
     """When the final price was locked: processing, or the cancellation."""
     review = getattr(trip, "review", None)
-    if trip.trip_status in CANCELLED:
-        return trip.cancelled_at or (review and review.processed_at) or timezone.now()
+    if trip.trip_status in processing.NEVER:
+        return trip.cancelled_at or timezone.now()
     return (review and review.processed_at) or timezone.now()
 
 
 def _card(charge: Charge, plan: PaymentPlan) -> str:
-    """ "Visa ending 4242": the card that paid this charge, else the order's card on file.
-    Brand and last four only."""
-    brand, last4 = (charge.card_brand, charge.card_last4)
-    if not last4:
-        brand, last4 = plan.card_brand, plan.card_last4
-    if not last4:
-        return ""
-    return f"{brand.strip().capitalize() or 'Card'} ending {last4}"
+    """The card that paid this charge, else the order's card on file."""
+    if charge.card_last4:
+        return card_text(charge.card_brand, charge.card_last4)
+    return card_text(plan.card_brand, plan.card_last4)
 
 
 def _method(charge: Charge, plan: PaymentPlan) -> str:
@@ -218,10 +251,16 @@ def receipt_context(trip: Reservation) -> dict:
     lead = trip.lead
     zone = _zone(trip)
     money = trip_money.money_for(trip)
-    if trip.trip_status in CANCELLED:
+    if trip.trip_status in processing.NEVER:
+        # Never processed: the money kept is the charge.
         total = money.allocated
         lines = [(CANCELLATION, total)]
+    elif trip.trip_status == _S.LATE_CANCEL:
+        # Processing settled it to the trip's price: one line for that amount.
+        total = trip.line_total
+        lines = [(CANCELLATION, total)]
     else:
+        # Completed or no-show: processing settles to the price, itemised as quoted.
         total = trip.line_total
         lines = [(line.label, line.amount) for line in trip.price_lines()]
     payments = _payments(trip, money, total, zone)
@@ -289,8 +328,10 @@ class _Receipt(FPDF):
         self.core_fonts_encoding = ENCODING
         self.set_margins(MARGIN, MARGIN, MARGIN)
         self.c_margin = 0  # text sits flush with the margin and the rules under it
-        # Blocks are kept whole and moved to a new page by `room`, never split by fpdf.
-        self.set_auto_page_break(False)
+        # Nothing is ever drawn below the bottom margin: a long text breaks onto the next
+        # page between lines, and `room` moves a whole block (a row, the side-by-side
+        # columns, a label with its first line) before fpdf would split it.
+        self.set_auto_page_break(True, margin=MARGIN)
         self.add_page()
 
     def header(self) -> None:
@@ -321,7 +362,8 @@ class _Receipt(FPDF):
     def para(
         self, text: str, width: float, size: float, *, x: float | None = None, **style: object
     ) -> None:
-        """Wrapped text at `x` (the left margin by default), leaving y under it."""
+        """Wrapped text at `x` (the left margin by default), leaving y under it. A text
+        longer than the page has room for runs onto the next one, line by line."""
         self.style(size, **style)
         self.set_x(MARGIN if x is None else x)
         self.multi_cell(
@@ -413,6 +455,21 @@ def _parties(pdf: _Receipt, ctx: dict) -> None:
     columns = [(title, [p for p in parts if p[0]]) for title, parts in columns]
     columns = [(title, parts) for title, parts in columns if parts]
     width = (pdf.width - 2 * GUTTER) / 3
+    # The columns sit side by side, so they move to a new page together. Each holds a
+    # bounded amount (`NAMED_PASSENGERS`, the fields' own limits), well under a page.
+    pdf.room(
+        max(
+            (
+                pdf.height_of(title, width, 9)
+                + sum(
+                    pdf.height_of(text, width, 10.5 if color == INK else 9, bold=bold)
+                    for text, bold, color in parts
+                )
+                for title, parts in columns
+            ),
+            default=0,
+        )
+    )
     top = pdf.get_y()
     bottom = top
     for i, (title, parts) in enumerate(columns):
@@ -427,6 +484,7 @@ def _parties(pdf: _Receipt, ctx: dict) -> None:
 
 
 def _trip(pdf: _Receipt, ctx: dict) -> None:
+    pdf.room(9 * 1.4 + 12 * 1.4)  # the label stays with the first line under it
     pdf.label("Trip")
     pdf.para(ctx["when"], pdf.width, 12, bold=True)
     if ctx["route_full"]:

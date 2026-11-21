@@ -23,7 +23,6 @@ from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import QUOTE_PREFIX, Lead
 from apps.leads.services import make_deposit_token
 from apps.leads.views import _pay_state
@@ -65,8 +64,6 @@ _BUCKET_OF = {
     "no_show": "past",
 }
 
-# Every cancelled-type status reads "Cancelled"; a no-show has its own label.
-_CANCELLED = frozenset(CANCELLED_STATUSES) - {_S.NO_SHOW}
 _IN_PROGRESS = frozenset({_S.ON_THE_WAY, _S.ARRIVED, _S.CUSTOMER_IN_CAR})
 _BEFORE_BOOKING = {
     Lead.Status.NEW: "request_received",
@@ -123,7 +120,7 @@ def label_key(trip: Reservation) -> str:
         if status == _S.DONE:
             return "completed"
         return "no_show" if status == _S.NO_SHOW else "cancelled"
-    if status in _CANCELLED:
+    if status in receipts.CANCELLED:
         return "cancelled"
     if lead.status == Lead.Status.QUOTED:
         return "quote_expired" if lead.quote_expired else "quote_ready"
@@ -146,15 +143,11 @@ def bucket(trip: Reservation) -> str:
     return _bucket_for(label_key(trip))
 
 
-def _priced(trip: Reservation) -> bool:
-    return Decimal(trip.rate or 0) > 0
-
-
 def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
     """What the customer has paid for each priced trip: the sum
     `trip_money.money_for(trip).allocated` makes, read with one `allocation` per order and
     one charge query for all the trips, never a set of queries per trip."""
-    priced = [t for t in trips if _priced(t)]
+    priced = [t for t in trips if receipts.priced(t)]
     if not priced:
         return {}
     shares: dict[int, Decimal] = {}
@@ -189,7 +182,7 @@ def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
 def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> dict[int, Decimal]:
     """What the customer paid and we kept, per priced cancelled trip. `paid` is the
     `paid_amounts` of `trips` when the caller has them already."""
-    cancelled = [t for t in trips if _priced(t) and t.trip_status in _CANCELLED]
+    cancelled = [t for t in trips if receipts.priced(t) and t.trip_status in receipts.CANCELLED]
     if not cancelled:
         return {}
     if paid is None:
@@ -198,9 +191,9 @@ def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> d
 
 
 def _total(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
-    if not _priced(trip):
+    if not receipts.priced(trip):
         return None
-    if trip.trip_status in _CANCELLED:
+    if trip.trip_status in receipts.CANCELLED:
         return kept[trip.pk]
     return trip.line_total
 

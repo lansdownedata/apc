@@ -19,7 +19,8 @@ Pillow>=11.0,<13.0           # required by ImageField (vehicle-type photos)
 phonenumbers>=8.13,<10       # E.164 normalization for contact dedupe
 timezonefinder>=8.2,<9       # offline coordinate → IANA; no network in the save path
 django-import-export[xlsx]>=4.4,<4.5   # contacts/vendors .xlsx import + export (APC-141)
-fpdf2==2.9.0                 # customer trip receipt PDF; wheels only (brings fonttools)
+fpdf2==2.9.0                 # customer trip receipt PDF; wheels only
+fonttools>=4.68,<5           # fpdf2's one new dependency (manylinux wheels)
 
 # --- Audit ---
 django-auditlog==3.4.2        # change trail (APC-140); pinned: AuditEntryManager._write copies its log_create

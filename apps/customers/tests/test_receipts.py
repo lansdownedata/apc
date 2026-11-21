@@ -116,6 +116,20 @@ def _text(data: bytes) -> str:
     return text.replace("\\(", "(").replace("\\)", ")").replace("\\\\", "\\")
 
 
+_SHOWN = re.compile(r"BT ([-\d.]+) ([-\d.]+) Td(?: [-\d. ]+ rg)? \(((?:\\.|[^\\)])*)\) Tj ET")
+PAGE_HEIGHT = 792  # Letter, in points
+MARGIN = 54
+
+
+def _placed(data: bytes) -> list[tuple[float, str]]:
+    """(baseline y, text) of every piece of text drawn, page after page (y from the
+    bottom of its page, as PDF counts it)."""
+    out = []
+    for match in _SHOWN.finditer(_text(data).replace("\\(", "(").replace("\\)", ")")):
+        out.append((float(match.group(2)), match.group(3)))
+    return out
+
+
 # --- when a trip has a receipt -----------------------------------------------------------
 
 
@@ -140,9 +154,17 @@ def test_fully_refunded_cancellation_has_no_receipt(account, make_trip):
 
 
 def test_cancelled_with_money_kept_has_one_cancellation_line(account, make_trip):
+    """A plain cancellation is never processed: money kept on it (its own charge) is its
+    receipt as soon as it is cancelled."""
     trip = _booked(account, make_trip)
-    _pay(trip, "92.50", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
-    _cancel(trip, S.LATE_CANCEL)  # a late cancel keeps its share of the deposit
+    _pay(
+        trip,
+        "92.50",
+        kind=Charge.Kind.TRIP,
+        reservation=trip,
+        at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC),
+    )
+    _cancel(trip)
     trip = _scoped(account, trip)
 
     assert receipts.has_receipt(trip)
@@ -152,6 +174,124 @@ def test_cancelled_with_money_kept_has_one_cancellation_line(account, make_trip)
     assert ctx["payments"] == [("Oct 28, 2026", "Visa ending 4242", Decimal("92.50"))]
     assert ctx["balance_due"] == Decimal("0.00")
     assert ctx["issued"] == "Nov 18, 2026"
+
+
+def _late_cancel(
+    account, make_trip, *, processed: bool, settled: Decimal = Decimal("92.50")
+) -> Reservation:
+    """A late cancel that kept its $92.50 deposit share. Processing settles it to the
+    trip's price, here cut to `settled` by a credit."""
+    trip = _booked(account, make_trip)
+    _pay(trip, "92.50", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _cancel(trip, S.LATE_CANCEL)
+    if processed:
+        TripExtraFactory(
+            reservation=trip,
+            label="Late cancellation",
+            amount=trip.line_total - settled,
+            kind="credit",
+        )
+        trip.refresh_extras_total()
+        TripReview.objects.create(reservation=trip, processed_at=PROCESSED)
+    return trip
+
+
+def test_unprocessed_late_cancel_has_no_receipt_yet(account, client_as, make_trip):
+    trip = _late_cancel(account, make_trip, processed=False)
+    client = client_as(account)
+
+    assert not receipts.has_receipt(_scoped(account, trip))
+    assert client.get(_url(trip)).status_code == 404
+    html = client.get(reverse("customers:trip", args=[trip.pk])).content.decode()
+    assert "Receipt available once your trip is finalised." in html
+    assert "Download receipt" not in html
+
+
+def test_processed_late_cancel_prints_the_settled_amount(account, make_trip):
+    """Processing settled the late cancel at $120 (its price after the agent's credit) with
+    a pay link still open for the rest: the receipt shows the settled amount, not the $92.50
+    kept before processing, and what is still owed."""
+    trip = _late_cancel(account, make_trip, processed=True, settled=Decimal("120.00"))
+    trip = _scoped(account, trip)
+
+    assert receipts.has_receipt(trip)
+    ctx = receipts.receipt_context(trip)
+    assert ctx["lines"] == [("Cancellation charge", Decimal("120.00"))]
+    assert ctx["total"] == Decimal("120.00")
+    assert ctx["payments"] == [("Oct 28, 2026", "Visa ending 4242", Decimal("92.50"))]
+    assert ctx["balance_due"] == Decimal("27.50")
+    assert ctx["issued"] == "Nov 18, 2026"
+
+
+def _no_show(account, make_trip, *, processed: bool) -> Reservation:
+    trip = _booked(account, make_trip, gratuity_pct=20)
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    trip.trip_status = S.NO_SHOW
+    trip.save(update_fields=["trip_status"])
+    TripReview.objects.create(reservation=trip, processed_at=PROCESSED if processed else None)
+    return trip
+
+
+def test_processed_no_show_prints_its_price_lines(account, client_as, make_trip):
+    """Processing settles a no-show to the trip's price, so its receipt itemises it."""
+    trip = _scoped(account, _no_show(account, make_trip, processed=True))
+
+    assert receipts.has_receipt(trip)
+    ctx = receipts.receipt_context(trip)
+    assert ctx["lines"] == [(line.label, line.amount) for line in trip.price_lines()]
+    assert [label for label, _ in ctx["lines"]] == ["Base fare", "Gratuity (20%)"]
+    assert ctx["total"] == trip.line_total
+    assert ctx["balance_due"] == Decimal("0.00")
+
+
+def test_unprocessed_no_show_waits_for_processing(account, client_as, make_trip):
+    trip = _no_show(account, make_trip, processed=False)
+    client = client_as(account)
+
+    assert not receipts.has_receipt(_scoped(account, trip))
+    assert client.get(_url(trip)).status_code == 404
+    html = client.get(reverse("customers:trip", args=[trip.pk])).content.decode()
+    assert "Receipt available once your trip is finalised." in html
+
+
+def test_no_receipt_for_nothing(account, make_trip):
+    """No $0.00 receipts: a processed trip priced at nothing has none."""
+    free = _finish(_booked(account, make_trip, rate=0))
+
+    assert not receipts.has_receipt(_scoped(account, free))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda a, m: _late_cancel(a, m, processed=False),
+        lambda a, m: _late_cancel(a, m, processed=True),
+        lambda a, m: _no_show(a, m, processed=False),
+        lambda a, m: _no_show(a, m, processed=True),
+        lambda a, m: _cancel(_booked(a, m)),
+        lambda a, m: _paid_trip(a, m),
+        lambda a, m: _finish(_booked(a, m), processed=False),
+    ],
+    ids=[
+        "late-cancel",
+        "late-cancel-processed",
+        "no-show",
+        "no-show-processed",
+        "cancelled-nothing-kept",
+        "completed-processed",
+        "completed",
+    ],
+)
+def test_list_and_download_agree(account, client_as, make_trip, build):
+    trip = build(account, make_trip)
+    client = client_as(account)
+
+    page = client.get("/account/trips/", {"tab": "all"})
+    row = next(r for g in page.context["groups"] for r in g["rows"] if r["pk"] == trip.pk)
+    status = client.get(_url(trip)).status_code
+
+    assert status == (200 if row["has_receipt"] else 404)
+    assert row["has_receipt"] is receipts.has_receipt(_scoped(account, trip))
 
 
 def test_multi_trip_order_shows_this_trips_share_only(account, make_trip):
@@ -367,6 +507,46 @@ def test_long_text_wraps_and_stays_one_page(account, make_trip):
     assert "McLean" in text
 
 
+def test_nothing_is_drawn_off_the_page(account, make_trip):
+    """A coach full of named passengers, a long multi-stop route and a very long billing
+    email: every line lands inside the page margins, on as many pages as it takes."""
+    billing = ContactFactory(name="Accounts Payable", email="a" * 60 + "@" + "b" * 180 + ".com")
+    trip = _paid_trip(
+        account,
+        make_trip,
+        lead__billing_contact=billing,
+        stops=[
+            f"{100 + i} Very Long Avenue Northwest, Suite {i}, Building {i}, Washington, DC 20001"
+            for i in range(40)
+        ],
+    )
+    for i in range(56):
+        PassengerFactory(reservation=trip, name=f"Passenger Number {i + 1}", is_lead=i == 0)
+
+    data = receipts.render_pdf(receipts.receipt_context(_scoped(account, trip)))
+
+    placed = _placed(data)
+    assert placed
+    for y, text in placed:
+        assert MARGIN - 1 <= y <= PAGE_HEIGHT - MARGIN, (y, text)
+    shown = " ".join(text for _, text in placed)
+    assert "Passenger Number 1, Passenger Number 2" in shown
+    assert "and 52 more" in shown
+    assert "Washington, DC 20001" in shown
+    assert "Balance due" in shown
+    assert "Thank you for riding" in shown
+
+
+def test_a_few_passengers_are_all_named(account, make_trip):
+    trip = _paid_trip(account, make_trip)
+    for i in range(5):
+        PassengerFactory(reservation=trip, name=f"Rider {i + 1}", is_lead=i == 2)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["passenger"] == "Rider 3, Rider 1, Rider 2, Rider 4, Rider 5"
+
+
 def test_reference_with_non_latin_characters_does_not_crash(account, make_trip):
     trip = _paid_trip(account, make_trip, customer_reference="Café – Zoë 東京")
     PassengerFactory(reservation=trip, name="Zoë 李", is_lead=True)
@@ -462,8 +642,8 @@ def test_has_receipt_rows_cost_no_query_per_row(
         _paid_trip(account, make_trip)
     for _ in range(3):
         trip = _booked(account, make_trip)
-        _pay(trip, "50.00", at=PROCESSED)
-        _cancel(trip, S.LATE_CANCEL)
+        _pay(trip, "50.00", kind=Charge.Kind.TRIP, reservation=trip, at=PROCESSED)
+        _cancel(trip)
     client = client_as(account)
 
     # As the Trips page's own budget: 8, plus 4 per order holding a cancelled trip.
@@ -477,8 +657,8 @@ def test_has_receipt_rows_cost_no_query_per_row(
 def test_trip_row_has_receipt_matches_has_receipt(account, make_trip):
     done = _paid_trip(account, make_trip)
     kept = _booked(account, make_trip)
-    _pay(kept, "50.00", at=PROCESSED)
-    _cancel(kept, S.LATE_CANCEL)
+    _pay(kept, "50.00", kind=Charge.Kind.TRIP, reservation=kept, at=PROCESSED)
+    _cancel(kept)
     refunded = _cancel(_booked(account, make_trip))
 
     for trip in (done, kept, refunded):

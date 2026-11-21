@@ -29,7 +29,7 @@ from apps.planners.selectors import _driver as planner_driver
 from apps.public.wedding import format_clock
 from apps.reservations.models import FlightDirection, Reservation, Stop, TripStatusEvent
 
-from . import selectors
+from . import receipts, selectors
 from .models import CustomerAccount
 
 _S = Reservation.TripStatus
@@ -124,7 +124,7 @@ def _stamps(trip: Reservation) -> dict[str, datetime]:
             stamps.setdefault(COMPLETED, at)
         if status == _S.NO_SHOW:
             stamps.setdefault("no_show", at)
-        if status in selectors._CANCELLED:
+        if status in receipts.CANCELLED:
             stamps.setdefault("cancelled", at)
     plan = getattr(lead, "payment", None)
     if CONFIRMED not in stamps and plan is not None and _booked(trip):
@@ -253,13 +253,6 @@ def _notes(stops: list[Stop]) -> str:
     return "\n".join(f"{_title(stop)}: {note}" for stop, note in noted)
 
 
-def _passengers(trip: Reservation) -> list[str]:
-    """The named passengers, the lead first; never a mobile."""
-    named = [p for p in trip.named_passengers.all() if p.name.strip()]
-    named.sort(key=lambda p: not p.is_lead)
-    return [p.name.strip() for p in named]
-
-
 def _driver(trip: Reservation) -> dict | None:
     """Name and cell from Dispatched on (`planners.selectors._driver`): never the
     affiliate, and never the vehicle the affiliate described."""
@@ -280,7 +273,7 @@ def _charges(trip: Reservation, total: Decimal | None) -> list[dict]:
     was kept (spec §7, the receipt's wording); an unpriced trip none."""
     if total is None:
         return []
-    if trip.trip_status in selectors._CANCELLED:
+    if trip.trip_status in receipts.CANCELLED:
         return [_line("Cancellation charge", total)] if total > 0 else []
     return [_line(line.label, line.amount) for line in trip.price_lines()]
 
@@ -289,7 +282,7 @@ def _paid_line(trip: Reservation, total: Decimal | None, paid: Decimal) -> str:
     """From the trip's own money (`selectors.paid_amounts`, the list's figure): paid in
     full, part paid (its share of the deposit), or billed to the account. Blank for an
     unpriced, unpaid or cancelled trip."""
-    if total is None or trip.trip_status in selectors._CANCELLED:
+    if total is None or trip.trip_status in receipts.CANCELLED:
         return ""
     if trip.lead.on_account:
         return "Billed to your account"
@@ -330,7 +323,7 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     `vehicle`; `passengers` (names) and `passenger_count`; `driver` (`{"name", "cell"}`
     or None) and `driver_pending` (the line shown in its place, or blank); `notes`;
     `price_lines` (`{"label", "amount", "abs_amount"}`); `total` (None while unpriced); `paid_line`;
-    `pay_url` and `pay_label`; `receipt_pending` (completed, receipt not yet ready);
+    `pay_url` and `pay_label`; `receipt_pending` (waiting for billing to process it);
     `can_request`; `pending_request` (None: requests arrive later).
 
     At most 30 queries whatever the trip holds: the scoped trip, the row's money, the
@@ -352,7 +345,7 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
         "steps": _steps(trip, key, _stamps(trip)),
         "stops": _itinerary(trip, stops, row["zone"]),
         "vehicle": trip.vehicle.name if trip.vehicle_id else "Vehicle to be confirmed",
-        "passengers": _passengers(trip),
+        "passengers": receipts.passenger_names(trip),
         "passenger_count": trip.passengers,
         "driver": driver,
         "driver_pending": DRIVER_PENDING if driver is None and key in _AWAITING_DRIVER else "",
@@ -362,7 +355,7 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
         "paid_line": _paid_line(trip, total, paid.get(trip.pk, Decimal("0.00"))),
         "pay_url": pay_url,
         "pay_label": pay_label,
-        "receipt_pending": trip.trip_status == _S.DONE and not row["has_receipt"],
+        "receipt_pending": receipts.awaiting_processing(trip),
         "can_request": key in REQUESTABLE and (at is None or at > timezone.now()),
         "pending_request": None,
     }

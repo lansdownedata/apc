@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from apps.reservations.models import Reservation
 
-from . import selectors
+from . import receipts, selectors
 from .models import CustomerAccount
 
 HEADER = (
@@ -45,10 +45,7 @@ def _payment_method(trip: Reservation) -> str:
     if lead.billing_group_id is not None:
         return "Account"
     plan = getattr(lead, "payment", None)
-    if plan is not None and plan.card_last4:
-        brand = plan.card_brand.strip().capitalize() or "Card"
-        return f"{brand} ending {plan.card_last4}"
-    return ""
+    return receipts.card_text(plan.card_brand, plan.card_last4) if plan is not None else ""
 
 
 def _address(stop) -> str:
