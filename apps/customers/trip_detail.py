@@ -27,7 +27,7 @@ from apps.payments.models import Charge
 from apps.planners.selectors import DISPATCHED_STATUSES
 from apps.planners.selectors import _driver as planner_driver
 from apps.public.wedding import format_clock
-from apps.reservations.models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent
+from apps.reservations.models import FlightDirection, Reservation, Stop, TripStatusEvent
 
 from . import selectors
 from .models import CustomerAccount
@@ -65,7 +65,6 @@ _AWAITING_DRIVER = frozenset(
     {"request_received", "quote_ready", "confirming", "confirmed", "driver_assigned"}
 )
 DRIVER_PENDING = "Your driver's name and cell appear here once assigned."
-_FLIGHT_EXPECTED = frozenset({Flight.Status.SCHEDULED, Flight.Status.ACTIVE})
 
 
 def _zone(trip: Reservation) -> ZoneInfo:
@@ -194,12 +193,7 @@ def _flight(stop: Stop, trip: Reservation, first: bool, last: bool) -> str:
     verb = {FlightDirection.ARRIVAL: "arriving", FlightDirection.DEPARTURE: "departing"}.get(
         direction, ""
     )
-    flight = stop.flight
-    at = (
-        flight
-        and flight.status in _FLIGHT_EXPECTED
-        and (flight.estimated_at or flight.scheduled_at)
-    )
+    at = selectors.expected_flight_at(stop.flight)
     if not (verb and at):
         return label
     airport_zone = stop.airport.timezone if stop.airport_id else ""

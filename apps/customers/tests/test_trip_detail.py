@@ -620,3 +620,18 @@ def test_trip_detail_query_count(account, client_as, make_trip, django_assert_ma
     with django_assert_max_num_queries(30):
         response = client.get(_url(trip))
     assert response.status_code == 200
+
+
+def test_expected_flight_at_trusts_only_a_flight_still_expected():
+    from apps.customers.selectors import expected_flight_at
+    from apps.reservations.models import Flight
+
+    scheduled = FlightFactory(status=Flight.Status.SCHEDULED, estimated_at=None)
+    estimated = timezone.now() + timedelta(hours=2)
+    active = FlightFactory(status=Flight.Status.ACTIVE, estimated_at=estimated)
+    cancelled = FlightFactory(status=Flight.Status.CANCELLED)
+
+    assert expected_flight_at(scheduled) == scheduled.scheduled_at
+    assert expected_flight_at(active) == estimated
+    assert expected_flight_at(cancelled) is None
+    assert expected_flight_at(None) is None

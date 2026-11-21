@@ -408,17 +408,21 @@ def _deposits_held(trips: list[Reservation]) -> dict[int, datetime]:
     )
 
 
+def expected_flight_at(flight: Flight | None) -> datetime | None:
+    """The flight's estimated (else scheduled) time while it is still expected (scheduled
+    or active); None for no flight or one whose time no longer holds. Home's meeting line
+    and trip detail's flight line both read this."""
+    if flight is None or flight.status not in _FLIGHT_EXPECTED:
+        return None
+    return flight.estimated_at or flight.scheduled_at
+
+
 def _meeting(trip: Reservation, first: Stop) -> str:
     """ "Meeting flight AA 2114, arriving 8:52 AM." for a pickup at an arriving flight; the
     time only while the cached flight is still expected. One trip, so one query."""
     stop = Stop.objects.select_related("airport", "airline", "flight").get(pk=first.pk)
     text = f"Meeting flight {stop.flight_label if stop.airline_id else stop.flight_number}"
-    flight = stop.flight
-    at = (
-        flight
-        and flight.status in _FLIGHT_EXPECTED
-        and (flight.estimated_at or flight.scheduled_at)
-    )
+    at = expected_flight_at(stop.flight)
     if at:
         zone = ZoneInfo(stop.airport.timezone or trip.pickup_timezone or settings.TIME_ZONE)
         text += f", arriving {format_clock(timezone.localtime(at, zone).time())}"
