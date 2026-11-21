@@ -3,6 +3,7 @@
 import re
 from datetime import timedelta
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
@@ -32,7 +33,7 @@ CSRF = re.compile(rb'name="csrfmiddlewaretoken" value="[^"]*"')
 
 
 def _login(client: Client, email: str, password: str, next_url: str = ""):
-    url = reverse("customers:login") + (f"?next={next_url}" if next_url else "")
+    url = reverse("customers:login") + (f"?{urlencode({'next': next_url})}" if next_url else "")
     return client.post(url, {"email": email, "password": password})
 
 
@@ -126,7 +127,18 @@ def test_a_next_under_account_is_honoured(client, account):
 
 @pytest.mark.parametrize(
     "target",
-    ["https://evil.test", "//evil.test/account/", "/portal/", "/planner/", "/account/../portal/"],
+    [
+        "https://evil.test",
+        "//evil.test/account/",
+        "/portal/",
+        "/planner/",
+        "/account/../portal/",
+        # browsers read %2e as "." and "\\" as "/", so each of these lands outside /account/
+        "/account/%2e%2e/portal/",
+        "/account/.%2E/planner/",
+        "/account/..\\portal/",
+        "/account/\\..\\portal/",
+    ],
 )
 def test_next_outside_account_is_ignored(client, account, target):
     response = _login(client, account.email, PASSWORD, next_url=target)

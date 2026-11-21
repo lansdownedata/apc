@@ -147,6 +147,23 @@ def test_customer_request_has_email_no_actor():
     assert seen["resolved"] == (None, "dana@example.com", "customer portal")
 
 
+@pytest.mark.django_db
+def test_a_staff_login_in_the_same_browser_is_never_the_actor_on_a_customer_page():
+    request = RequestFactory().get("/account/")
+    request.user = UserFactory()
+    request.customer = SimpleNamespace(email="dana@example.com")
+    request.resolver_match = resolve("/account/")
+    seen = {}
+
+    def view(req):
+        seen["resolved"] = resolve_frame()
+        return None
+
+    AuditMiddleware(view)(request)
+
+    assert seen["resolved"] == (None, "dana@example.com", "customer portal")
+
+
 def test_staff_actor_email_defaults_to_user_email():
     user = UserFactory()
     request = RequestFactory().get("/portal/")

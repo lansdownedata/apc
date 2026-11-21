@@ -8,7 +8,7 @@ customer signs in with a password and a verified email.
 from __future__ import annotations
 
 import posixpath
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from django.contrib import messages
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -73,10 +73,13 @@ def _home() -> str:
 
 
 def _safe_next(request: HttpRequest) -> str:
-    """`?next=` when it is a same-host path under `/account/` (after `..` is resolved);
-    Home otherwise."""
+    """`?next=` when it is a same-host path under `/account/`; Home otherwise.
+
+    The path is checked as a browser will resolve it: percent-decoded (`%2e` is `.`), `\\`
+    read as `/`, then `..` applied, so `/account/%2e%2e/portal/` is refused."""
     target = request.POST.get("next") or request.GET.get("next") or ""
-    path = posixpath.normpath(urlsplit(target).path) + "/"
+    path = unquote(urlsplit(target).path).replace("\\", "/")
+    path = posixpath.normpath(path) + "/"
     if (
         target.startswith(_home())
         and path.startswith(_home())

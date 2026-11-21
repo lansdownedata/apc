@@ -66,6 +66,10 @@ def source_for(request: HttpRequest) -> str:
 
 
 def _user(request: HttpRequest) -> User | None:
+    """The signed-in staff user. Never on a customer page: customers never set
+    `request.user`, so a staff login in the same browser is not who made the change."""
+    if request.path.startswith("/account/"):
+        return None
     user = getattr(request, "user", None)
     return user if user is not None and user.is_authenticated else None
 
