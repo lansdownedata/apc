@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import posixpath
 from dataclasses import asdict
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
 from django.contrib import messages
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest, HttpResponse, JsonResponse, QueryDict
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, JsonResponse, QueryDict
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -28,7 +28,7 @@ from django.views.decorators.http import require_POST
 from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
-from . import requests, selectors, services
+from . import exports, requests, selectors, services
 from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
@@ -282,6 +282,18 @@ TABS = (("upcoming", "Upcoming"), ("past", "Past"), ("requests", "Requests"), ("
 GROUPINGS = (("month", "Month"), ("passenger", "Passenger"), ("reference", "Reference"))
 
 
+def _export_query(f: selectors.TripFilter) -> str:
+    """The filter as the export link carries it (no paging, no grouping)."""
+    params = {
+        "tab": f.tab,
+        "start": f.start.isoformat() if f.start else "",
+        "end": f.end.isoformat() if f.end else "",
+        "q": f.q,
+        "passenger": f.passenger,
+    }
+    return urlencode({key: value for key, value in params.items() if value})
+
+
 @customer_required
 def trips(request: HttpRequest) -> HttpResponse:
     """Trips and history. `?fragment=1` returns the table alone: the page fetches it when a
@@ -294,6 +306,7 @@ def trips(request: HttpRequest) -> HttpResponse:
             "start": f.start.isoformat() if f.start else "",
             "end": f.end.isoformat() if f.end else "",
         },
+        "export_query": _export_query(f),
     }
     if request.GET.get("fragment"):
         return _page(request, "customers/_trips_table.html", context)
@@ -304,11 +317,12 @@ def trips(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _ids(values: list[str]) -> list[int]:
+def _ids(values: list[str], limit: int | None = None) -> list[int]:
     """Trip ids from `ids` sent repeated or comma-separated; anything but a plain number of
-    up to 18 digits (a BIGINT) is dropped."""
+    up to 18 digits (a BIGINT) is dropped. At most `limit` are kept."""
     parts = (part.strip() for value in values for part in value.split(","))
-    return [int(part) for part in parts if part.isascii() and part.isdigit() and len(part) <= 18]
+    ids = [int(part) for part in parts if part.isascii() and part.isdigit() and len(part) <= 18]
+    return ids[:limit]
 
 
 @customer_required
@@ -319,3 +333,27 @@ def set_reference(request: HttpRequest) -> JsonResponse:
         request.customer, _ids(request.POST.getlist("ids")), request.POST.get("value", "")
     )
     return JsonResponse({"ok": True, "changed": changed})
+
+
+# Ticked rows are at most the rows a page has loaded; this keeps a hand-built post sane.
+MAX_EXPORT_IDS = 1000
+
+
+@customer_required
+def export(request: HttpRequest) -> HttpResponse:
+    """The Trips spreadsheet: GET with the page's filter, or POST with the ticked `ids`
+    (a plain form post so the browser downloads it). Ids outside the account are dropped."""
+    if request.method == "POST":
+        ids = _ids(request.POST.getlist("ids"), MAX_EXPORT_IDS)
+        text = exports.trips_csv(request.customer, trip_ids=ids)
+    elif request.method == "GET":
+        text = exports.trips_csv(request.customer, f=selectors.TripFilter.from_query(request.GET))
+    else:
+        return HttpResponseNotAllowed(["GET", "POST"])
+    response = HttpResponse(
+        "\ufeff" + text,
+        content_type="text/csv; charset=utf-8",  # BOM: Excel reads UTF-8
+    )
+    filename = f"all-pro-charter-trips-{timezone.localdate():%Y-%m-%d}.csv"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

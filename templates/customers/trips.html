@@ -79,6 +79,12 @@
     <span class="ml-auto"></span>
     <button type="button" @click="setReference()"
             class="inline-flex h-[34px] items-center rounded-lg border border-white/25 px-3 text-[12.5px] font-semibold transition-colors hover:bg-white/10 focus-gold">Set reference</button>
+    <form method="post" action="{% url 'customers:export' %}" class="contents">
+      {% csrf_token %}
+      <input type="hidden" name="ids" :value="Object.keys(picked).join(',')">
+      <button type="submit"
+              class="inline-flex h-[34px] items-center rounded-lg border border-white/25 px-3 text-[12.5px] font-semibold transition-colors hover:bg-white/10 focus-gold">Export spreadsheet</button>
+    </form>
   </div>
 </div>
 {% endblock %}

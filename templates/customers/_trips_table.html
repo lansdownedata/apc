@@ -37,6 +37,8 @@
   <section class="card" aria-labelledby="trips-count">
     <div class="flex items-center justify-between gap-4 px-4 pb-4 pt-5 sm:px-6">
       <p id="trips-count" class="text-[13.5px]"><span class="font-semibold text-ink">{{ count }} trip{{ count|pluralize }}</span>{% if range_label %} <span class="text-muted">{{ range_label }}</span>{% endif %}</p>
+      <a href="{% url 'customers:export' %}{% if export_query %}?{{ export_query }}{% endif %}"
+         class="inline-flex h-[34px] items-center rounded-lg border border-line bg-surface px-3 text-[12.5px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold">Export spreadsheet</a>
     </div>
 
     <table class="hidden w-full border-collapse text-left md:table">

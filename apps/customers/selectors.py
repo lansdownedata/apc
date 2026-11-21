@@ -149,21 +149,21 @@ def _priced(trip: Reservation) -> bool:
     return Decimal(trip.rate or 0) > 0
 
 
-def _kept(trips: list[Reservation]) -> dict[int, Decimal]:
-    """What the customer paid and we kept, per priced cancelled trip: the sum
+def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
+    """What the customer has paid for each priced trip: the sum
     `trip_money.money_for(trip).allocated` makes, read with one `allocation` per order and
     one charge query for all the trips, never a set of queries per trip."""
-    cancelled = [t for t in trips if _priced(t) and t.trip_status in _CANCELLED]
-    if not cancelled:
+    priced = [t for t in trips if _priced(t)]
+    if not priced:
         return {}
     shares: dict[int, Decimal] = {}
-    for lead in {t.lead_id: t.lead for t in cancelled}.values():
+    for lead in {t.lead_id: t.lead for t in priced}.values():
         shares.update(trip_money.allocation(lead))
     charged: defaultdict[int, Decimal] = defaultdict(Decimal)
     refunded: defaultdict[int, Decimal] = defaultdict(Decimal)
     own = (
         Charge.objects.filter(
-            reservation_id__in=[t.pk for t in cancelled],
+            reservation_id__in=[t.pk for t in priced],
             status=Charge.Status.SUCCEEDED,
             kind__in=(*TRIP_MONEY_KINDS, Charge.Kind.REFUND),
         )
@@ -181,8 +181,19 @@ def _kept(trips: list[Reservation]) -> dict[int, Decimal]:
             charged=charged[t.pk],
             refunded=refunded[t.pk],
         ).allocated
-        for t in cancelled
+        for t in priced
     }
+
+
+def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> dict[int, Decimal]:
+    """What the customer paid and we kept, per priced cancelled trip. `paid` is the
+    `paid_amounts` of `trips` when the caller has them already."""
+    cancelled = [t for t in trips if _priced(t) and t.trip_status in _CANCELLED]
+    if not cancelled:
+        return {}
+    if paid is None:
+        paid = paid_amounts(cancelled)
+    return {t.pk: paid[t.pk] for t in cancelled}
 
 
 def _total(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
@@ -240,12 +251,12 @@ def _passenger(trip: Reservation) -> str:
     return (lead or named[0]).name.strip() if named else ""
 
 
-def trip_rows(trips: Iterable[Reservation]) -> list[dict]:
+def trip_rows(trips: Iterable[Reservation], paid: dict[int, Decimal] | None = None) -> list[dict]:
     """The rows for a list of trips. Lists call this, not `trip_row` in a loop: cancelled
     trips' kept amounts are read for the whole list at once. Over `visible_trips` that is
     3 queries, plus 1 when any trip is cancelled and 2 to 4 per order holding one."""
     trips = list(trips)
-    kept = _kept(trips)
+    kept = _kept(trips, paid)
     return [_row(trip, kept) for trip in trips]
 
 
@@ -709,6 +720,17 @@ def _range_texts(f: TripFilter) -> tuple[str, str]:
     if end:
         return f"until {_day_text(end)}", f"Until {_day_text(end)}"
     return "", ""
+
+
+def filtered_trips(account: CustomerAccount, f: TripFilter) -> list[Reservation]:
+    """Every trip the filter shows, unpaged, in the tab's order: the Trips page's set."""
+    found = [t for t in _matching(visible_trips(account), f) if f.tab in ("all", bucket(t))]
+    return _in_tab_order(found, f.tab)
+
+
+def ticked_trips(account: CustomerAccount, ids: list[int]) -> list[Reservation]:
+    """The trips among `ids` the account can see (the rest are dropped), newest first."""
+    return _in_tab_order(list(visible_trips(account).filter(pk__in=ids)), "all")
 
 
 def trips(account: CustomerAccount, f: TripFilter) -> dict:
