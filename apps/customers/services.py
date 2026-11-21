@@ -26,7 +26,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -370,35 +370,45 @@ def complete_signup(data: dict, password: str) -> CustomerAccount:
     phone = (data.get("phone") or "").strip()
     if not email:
         raise CustomerError("This link isn't valid.")
-    with transaction.atomic():
-        contact = Contact.objects.find_match(email=email)
-        account = None
-        if contact is not None:
-            account = CustomerAccount.objects.select_for_update().filter(contact=contact).first()
-        if account is not None and account.status == CustomerAccount.Status.ACTIVE:
-            raise CustomerError("This link has already been used.")
-        if account is not None and account.status == CustomerAccount.Status.REVOKED:
-            raise CustomerError(
-                "This account is closed. "
-                f"Please call us at {phone_display(settings.COMPANY_PHONE)} to reopen it."
-            )
-        if contact is None:
-            contact = Contact.objects.create(
-                name=name or email,
-                email=email,
-                phone=to_e164(phone) or phone,
-                channel=Channel.PORTAL,
-            )
-        elif phone:
-            try:
-                contacts.add_phone(contact, phone)
-            except contacts.PhoneError:
-                pass  # an undiallable extra number is not worth failing a sign-up over
-        account = account or CustomerAccount(contact=contact)
-        account.set_password(password)
-        account.registered_at = timezone.now()
-        account.self_registered = True
-        account.failed_logins = 0
-        account.locked_until = None
-        account.save()
+    try:
+        with transaction.atomic():
+            contact = Contact.objects.find_match(email=email)
+            account = None
+            if contact is not None:
+                account = (
+                    CustomerAccount.objects.select_for_update().filter(contact=contact).first()
+                )
+            if account is not None and account.status == CustomerAccount.Status.ACTIVE:
+                raise CustomerError("This link has already been used.")
+            if account is not None and account.status == CustomerAccount.Status.REVOKED:
+                raise CustomerError(
+                    "This account is closed. "
+                    f"Please call us at {phone_display(settings.COMPANY_PHONE)} to reopen it."
+                )
+            if contact is None:
+                contact = Contact.objects.create(
+                    name=name or email,
+                    email=email,
+                    phone=to_e164(phone) or phone,
+                    channel=Channel.PORTAL,
+                )
+            elif phone:
+                try:
+                    contacts.add_phone(contact, phone)
+                except contacts.PhoneError:
+                    pass  # an undiallable extra number is not worth failing a sign-up over
+            account = account or CustomerAccount(contact=contact)
+            account.set_password(password)
+            account.registered_at = timezone.now()
+            account.self_registered = True
+            account.failed_logins = 0
+            account.locked_until = None
+            account.save()
+    except IntegrityError:
+        # A second submit of the same link, racing the first: it looked before the first
+        # one's contact or account existed, and the database stopped its insert.
+        winner = _account_for(email)
+        if winner is not None and winner.status == CustomerAccount.Status.ACTIVE:
+            raise CustomerError("This link has already been used.") from None
+        raise
     return account

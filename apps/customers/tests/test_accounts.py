@@ -210,6 +210,27 @@ def test_used_signup_link_is_refused():
     assert CustomerAccount.objects.get().check_password(PW)
 
 
+def test_a_double_submitted_link_with_a_new_email_is_refused_not_crashed():
+    """The second request didn't see the first's new contact when it looked."""
+    services.complete_signup(SIGNUP, PW)
+    with patch.object(Contact.objects, "find_match", return_value=None):
+        with pytest.raises(services.CustomerError, match="This link has already been used."):
+            services.complete_signup(SIGNUP, "another-long-phrase-88")
+    assert Contact.objects.count() == 1
+    assert CustomerAccount.objects.get().check_password(PW)
+
+
+def test_a_double_submitted_link_for_a_known_contact_is_refused_not_crashed():
+    """The second request didn't see the first's new account when it looked."""
+    ContactFactory(email="dana@example.com")
+    services.complete_signup(SIGNUP, PW)
+    nothing = CustomerAccount.objects.none()
+    with patch.object(CustomerAccount.objects, "select_for_update", return_value=nothing):
+        with pytest.raises(services.CustomerError, match="This link has already been used."):
+            services.complete_signup(SIGNUP, "another-long-phrase-88")
+    assert CustomerAccount.objects.get().check_password(PW)
+
+
 # --- invite, resend, revoke -----------------------------------------------------------
 
 
