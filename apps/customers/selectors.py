@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -17,12 +18,13 @@ from django.conf import settings
 from django.db.models import Exists, Max, OuterRef, Prefetch, Q, QuerySet, Sum
 from django.db.models.functions import Lower, Trim
 from django.db.models.query import prefetch_related_objects
+from django.http import QueryDict
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.dispatch.selectors import CANCELLED_STATUSES
-from apps.leads.models import Lead
+from apps.leads.models import QUOTE_PREFIX, Lead
 from apps.leads.services import make_deposit_token
 from apps.leads.views import _pay_state
 from apps.payments import trip_money
@@ -271,8 +273,7 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         "label": text,
         "tone": tone,
         "total": _total(trip, kept),
-        # The customer's own reference arrives with `Reservation.customer_reference`.
-        "reference": "",
+        "reference": trip.customer_reference,
         "has_receipt": False,
     }
 
@@ -527,3 +528,244 @@ def home(account: CustomerAccount) -> dict:
         "history_banner": past if past and account.history_banner_seen_at is None else None,
         "has_trips": bool(trips),
     }
+
+
+# --- Trips ---------------------------------------------------------------------------------
+
+PAGE_SIZE = 50
+TABS = (*BUCKETS, "all")
+GROUPINGS = ("month", "passenger", "reference")
+# "Show more" asks for one more page each time; this keeps a hand-typed `page` sane.
+MAX_PAGES = 200
+QUERY_MAX = 100
+# The rows the foot total sums (spec §7): completed trips and what was kept on cancellations.
+TOTALLED_KEYS = frozenset({"completed", "cancelled"})
+_NO_GROUP = {"passenger": "No passenger named", "reference": "No reference"}
+# `Reservation.reference` is "APC-" + (600000 + pk). Up to 18 digits so the pk fits a
+# BIGINT whatever is typed; the prefix is optional ("600412" finds APC-600412 too).
+_TRIP_REFERENCE_BASE = 600_000
+_TRIP_REFERENCE = re.compile(rf"(?:{QUOTE_PREFIX}\s*-?\s*)?(\d{{1,18}})", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class TripFilter:
+    """What the Trips page shows. `page` is how many pages of `PAGE_SIZE` rows are shown:
+    "Show more" asks for page 2 and gets the first 100 rows back, so a group never splits
+    across two fetches."""
+
+    tab: str = "upcoming"
+    start: date | None = None
+    end: date | None = None
+    q: str = ""
+    passenger: str = ""
+    group: str = "month"
+    page: int = 1
+
+    @classmethod
+    def from_query(cls, query: QueryDict) -> TripFilter:
+        """Read `?tab=&start=&end=&q=&passenger=&group=&page=`. A value it cannot use falls
+        back to the default; a range typed backwards is read the right way round."""
+        tab = query.get("tab", "")
+        group = query.get("group", "")
+        start, end = _iso_day(query.get("start", "")), _iso_day(query.get("end", ""))
+        if start and end and start > end:
+            start, end = end, start
+        try:
+            page = min(max(int(query.get("page", "1")), 1), MAX_PAGES)
+        except ValueError:
+            page = 1
+        return cls(
+            tab=tab if tab in TABS else cls.tab,
+            start=start,
+            end=end,
+            q=query.get("q", "").strip()[:QUERY_MAX],
+            passenger=query.get("passenger", "").strip()[:QUERY_MAX],
+            group=group if group in GROUPINGS else cls.group,
+            page=page,
+        )
+
+    @property
+    def narrowed(self) -> bool:
+        """Whether anything but the tab and grouping limits the trips."""
+        return bool(self.start or self.end or self.q or self.passenger)
+
+
+def _iso_day(text: str) -> date | None:
+    try:
+        return date.fromisoformat(text.strip())
+    except ValueError:
+        return None
+
+
+def _reference_pk(term: str) -> int | None:
+    """ "APC-600412", "apc 600412" or "600412" -> 412; anything else -> None."""
+    match = _TRIP_REFERENCE.fullmatch(term.strip())
+    if match is None:
+        return None
+    pk = int(match.group(1)) - _TRIP_REFERENCE_BASE
+    return pk if pk > 0 else None
+
+
+def _matching(trips: QuerySet[Reservation], f: TripFilter) -> QuerySet[Reservation]:
+    """`trips` narrowed by the date range (the trip's own local pickup date), the passenger
+    and the search. Stops and passengers are matched with `Exists`, so a trip with two
+    matching stops is still one row."""
+    if f.start:
+        trips = trips.filter(pickup_date__gte=f.start)
+    if f.end:
+        trips = trips.filter(pickup_date__lte=f.end)
+    if f.passenger:
+        rode = Passenger.objects.alias(clean=Trim("name")).filter(
+            reservation=OuterRef("pk"), clean__iexact=f.passenger
+        )
+        trips = trips.filter(Exists(rode))
+    if f.q:
+        term = f.q
+        stops = Stop.objects.filter(
+            Q(address__icontains=term) | Q(name__icontains=term), reservation=OuterRef("pk")
+        )
+        people = Passenger.objects.filter(reservation=OuterRef("pk"), name__icontains=term)
+        found = (
+            Q(la_confirmation__icontains=term)
+            | Q(customer_reference__icontains=term)
+            | Q(Exists(stops))
+            | Q(Exists(people))
+        )
+        pk = _reference_pk(term)
+        if pk is not None:
+            found |= Q(pk=pk)
+        trips = trips.filter(found)
+    return trips
+
+
+def _passenger_options(account: CustomerAccount) -> list[tuple[str, str]]:
+    """Every named passenger on the account's trips, once each (case aside), A to Z."""
+    names = (
+        Passenger.objects.filter(reservation__in=visible_trips(account).values("pk"))
+        .values_list("name", flat=True)
+        .order_by()
+        .distinct()
+    )
+    unique: dict[str, str] = {}
+    for name in names:
+        name = name.strip()
+        if name:
+            unique.setdefault(name.casefold(), name)
+    return [(name, name) for _, name in sorted(unique.items())]
+
+
+def _in_tab_order(trips: list[Reservation], tab: str) -> list[Reservation]:
+    """Upcoming soonest first; every other tab newest first. Undated trips go last."""
+    by_time = sorted(trips, key=_soonest)
+    if tab == "upcoming":
+        return by_time
+    dated = [t for t in by_time if t.pickup_date is not None]
+    return dated[::-1] + [t for t in by_time if t.pickup_date is None]
+
+
+def _group_title(trip: Reservation, group: str) -> str:
+    """The trip's group heading; blank for no passenger or no reference."""
+    if group == "month":
+        day = trip.pickup_date
+        return f"{day:%B %Y}" if day else "Date to be confirmed"
+    if group == "passenger":
+        return _passenger(trip)
+    return trip.customer_reference.strip()
+
+
+def _grouped(
+    trips: list[Reservation], rows: list[dict], titles: dict[int, str], group: str
+) -> list[dict]:
+    """Consecutive rows under one heading each."""
+    groups: list[dict] = []
+    for trip, row in zip(trips, rows, strict=True):
+        title = titles[trip.pk] or _NO_GROUP[group]
+        if not groups or groups[-1]["title"].casefold() != title.casefold():
+            groups.append({"title": title, "rows": []})
+        groups[-1]["rows"].append(row)
+    return groups
+
+
+def _day_text(day: date, year: bool = True) -> str:
+    return f"{day:%b} {day.day}, {day.year}" if year else f"{day:%b} {day.day}"
+
+
+def _range_texts(f: TripFilter) -> tuple[str, str]:
+    """(header label, date field text): ("from Oct 1 to Nov 20, 2026", "Oct 1 – Nov 20,
+    2026"). The year shows once when both ends share it. Both blank with no range."""
+    start, end = f.start, f.end
+    if start and end:
+        if start == end:
+            return f"on {_day_text(start)}", _day_text(start)
+        first = _day_text(start, year=start.year != end.year)
+        return f"from {first} to {_day_text(end)}", f"{first} – {_day_text(end)}"
+    if start:
+        return f"from {_day_text(start)}", f"From {_day_text(start)}"
+    if end:
+        return f"until {_day_text(end)}", f"Until {_day_text(end)}"
+    return "", ""
+
+
+def trips(account: CustomerAccount, f: TripFilter) -> dict:
+    """The Trips page (spec §6.2). `groups`: `[{"title", "rows"}]` for the first `f.page`
+    pages, in tab order (grouped by passenger or reference: A to Z, the blank group last).
+    `count`: trips in the filtered set. `total`: the sum of `display_total` over its
+    Completed and Cancelled rows, the whole set and not only the rows shown, with `counted`
+    the number of those rows. `passengers`: the passenger filter's options.
+
+    The filtered set is read once with its stops and passengers; tab, order, total and
+    rows are worked out from it. The kept amounts of cancelled trips are read once for the
+    whole set (`_kept`: a few queries per order holding one), never per row."""
+    found = list(_matching(visible_trips(account), f))
+    keys = {t.pk: label_key(t) for t in found}
+    has_trips = bool(found) or (f.narrowed and visible_trips(account).exists())
+    if f.tab != "all":
+        found = [t for t in found if _bucket_for(keys[t.pk]) == f.tab]
+
+    kept = _kept(found)
+    totalled = [t for t in found if keys[t.pk] in TOTALLED_KEYS]
+    total = sum(
+        (amount for t in totalled if (amount := _total(t, kept)) is not None), Decimal("0.00")
+    )
+
+    ordered = _in_tab_order(found, f.tab)
+    titles = {t.pk: _group_title(t, f.group) for t in ordered}
+    if f.group != "month":
+        ordered.sort(key=lambda t: (not titles[t.pk], titles[t.pk].casefold()))
+    shown = ordered[: PAGE_SIZE * f.page]
+    label, text = _range_texts(f)
+    return {
+        "groups": _grouped(shown, [_row(t, kept) for t in shown], titles, f.group),
+        "count": len(found),
+        "total": total,
+        "counted": len(totalled),
+        "has_more": len(ordered) > len(shown),
+        "passengers": _passenger_options(account),
+        "range_label": label,
+        "range_text": text,
+        "has_trips": has_trips,
+        "narrowed": f.narrowed,
+    }
+
+
+def quick_ranges() -> list[dict]:
+    """The quick date ranges, from today in the business zone: this month, last month,
+    this quarter, this year and last year, as ISO dates for the filter."""
+    today = timezone.localdate()
+    month = today.replace(day=1)
+    last = (month - timedelta(days=1)).replace(day=1)
+    quarter = month.replace(month=(today.month - 1) // 3 * 3 + 1)
+
+    def span(label: str, start: date, end: date) -> dict:
+        return {"label": label, "start": start.isoformat(), "end": end.isoformat()}
+
+    def month_end(first: date) -> date:
+        return (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+    return [
+        span("This month", month, month_end(month)),
+        span("Last month", last, month_end(last)),
+        span("This quarter", quarter, month_end(quarter.replace(month=quarter.month + 2))),
+        span(str(today.year), date(today.year, 1, 1), date(today.year, 12, 31)),
+        span(str(today.year - 1), date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)),
+    ]

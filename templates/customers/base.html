@@ -10,6 +10,8 @@
 <title>{% block title %}Your account{% endblock %} · All Pro Charter</title>
 <meta name="robots" content="noindex, nofollow">
 {% endblock %}
+{% comment %} The shared modal and toasts draw Tabler font icons; the public shell does not load the font. {% endcomment %}
+{% block head_extra %}<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">{% endblock %}
 
 {% block header %}
 {% url 'customers:trips' as trips_url %}{% url 'customers:account' as account_url %}{% url 'customers:request_trip' as request_url %}

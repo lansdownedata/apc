@@ -13,7 +13,7 @@
   {% if history_banner %}
   <div role="status" class="flex flex-col gap-2 rounded-2xl bg-onyx px-5 py-4 text-[13.5px] leading-relaxed text-white sm:flex-row sm:items-center sm:gap-4">
     <p>We found your history with All Pro Charter and added <b class="font-semibold text-gold">{{ history_banner }} past trip{{ history_banner|pluralize }}</b> to your account.</p>
-    {% if trips_url %}<a href="{{ trips_url }}" class="shrink-0 rounded font-semibold text-gold focus-gold hover:underline sm:ml-auto">View trips</a>{% endif %}
+    {% if trips_url %}<a href="{{ trips_url }}?tab=past" class="shrink-0 rounded font-semibold text-gold focus-gold hover:underline sm:ml-auto">View trips</a>{% endif %}
   </div>
   {% endif %}
 
@@ -65,7 +65,7 @@
     <p class="mt-3 text-[13.5px] text-muted">No trips coming up.</p>
     {% endif %}
   </section>
-  {% if trips_url %}<p class="text-center text-[12.5px]"><a href="{{ trips_url }}" class="rounded font-semibold text-goldd focus-gold hover:underline">Trip history and receipts</a></p>{% endif %}
+  {% if trips_url %}<p class="text-center text-[12.5px]"><a href="{{ trips_url }}?tab=past" class="rounded font-semibold text-goldd focus-gold hover:underline">Trip history and receipts</a></p>{% endif %}
   {% else %}
   <section class="card px-6 py-12 text-center">
     {% icon "calendar" class="mx-auto h-7 w-7 text-muted/60" %}

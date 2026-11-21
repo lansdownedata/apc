@@ -1,0 +1,84 @@
+{% extends "customers/base.html" %}
+{% comment %}
+  Trips and history (mockup 2): the tabs, the filters and the table. Every filter lives in
+  one GET form; `customerTrips()` (static/js/app.js) refetches the table alone
+  (`?fragment=1`, customers/_trips_table.html) when one changes and for "Show more", and
+  keeps the ticked rows for the bar at the foot. On a phone the table becomes stacked rows
+  and the passenger filter, group-by, quick ranges and ticking step aside, as mocked.
+{% endcomment %}
+{% block title %}Trips{% endblock %}
+{% block content %}
+<div class="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10"
+     x-data="customerTrips({ url: '{% url 'customers:trips' %}', referenceUrl: '{% url 'customers:set_reference' %}' })">
+  <form x-ref="form" method="get" action="{% url 'customers:trips' %}" @submit.prevent="refresh()" @change="refresh()">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">Trips</h1>
+      <fieldset class="inline-flex self-start rounded-lg bg-surface2 p-[3px] sm:self-auto">
+        <legend class="sr-only">Show</legend>
+        {% for value, label in tabs %}
+        <label class="cursor-pointer">
+          <input type="radio" name="tab" value="{{ value }}" class="peer sr-only" {% if filter.tab == value %}checked{% endif %}>
+          <span class="block rounded-md px-3 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink peer-checked:bg-surface peer-checked:text-ink peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-gold sm:px-3.5">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+    </div>
+
+    <div class="mt-5 flex flex-wrap items-center gap-3">
+      <div class="relative w-full sm:w-56">
+        <input type="text" x-ref="range" readonly value="{{ range_text }}" placeholder="All dates" aria-label="Dates"
+               class="field cursor-pointer pr-9 num">
+        <input type="hidden" name="start" value="{{ filter.start }}">
+        <input type="hidden" name="end" value="{{ filter.end }}">
+        <button type="button" x-show="start || end" x-cloak @click="setRange('', '')" aria-label="Clear dates"
+                class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted transition-colors hover:text-ink focus-gold">
+          {% icon "x" class="h-4 w-4" %}
+        </button>
+      </div>
+      <div class="w-full sm:w-72">
+        <input type="search" name="q" value="{{ filter.q }}" maxlength="100" autocomplete="off"
+               placeholder="Search passenger, address or confirmation" aria-label="Search trips"
+               class="field" @input.debounce.400ms="refresh()">
+      </div>
+      {% if passengers %}
+      <div class="hidden w-44 md:block">
+        {% include "components/searchable_select.html" with name="passenger" field_id="trips-passenger" options=passengers selected=filter.passenger empty_label="All passengers" aria_label="Passenger" %}
+      </div>
+      {% endif %}
+      <div class="ml-auto hidden items-center gap-2 md:flex">
+        <span id="trips-group-by" class="text-[12.5px] text-muted">Group by</span>
+        <div role="radiogroup" aria-labelledby="trips-group-by" class="inline-flex rounded-lg bg-surface2 p-[3px]">
+          {% for value, label in groupings %}
+          <label class="cursor-pointer">
+            <input type="radio" name="group" value="{{ value }}" class="peer sr-only" {% if filter.group == value %}checked{% endif %}>
+            <span class="block rounded-md px-3 py-1.5 text-[13px] font-semibold text-muted transition-colors hover:text-ink peer-checked:bg-surface peer-checked:text-ink peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-gold">{{ label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="mt-2.5 hidden flex-wrap items-center gap-2 text-[12.5px] md:flex">
+      <span class="text-muted">Quick ranges</span>
+      {% for r in ranges %}
+      <button type="button" @click="setRange('{{ r.start }}', '{{ r.end }}')"
+              :class="start === '{{ r.start }}' && end === '{{ r.end }}' ? 'border-ink bg-onyx text-white' : 'border-line text-ink hover:bg-surface2'"
+              class="h-[26px] rounded-full border px-3 font-medium transition-colors focus-gold">{{ r.label }}</button>
+      {% endfor %}
+    </div>
+    <button type="submit" class="sr-only">Show trips</button>
+  </form>
+
+  <div x-ref="table" class="mt-5 transition-opacity" :class="loading && 'opacity-60'" :aria-busy="loading">
+    {% include "customers/_trips_table.html" %}
+  </div>
+
+  <div x-show="count" x-cloak role="region" aria-label="Ticked trips"
+       class="sticky bottom-4 z-30 mt-3 hidden items-center gap-4 rounded-xl bg-onyx px-5 py-3 text-[13.5px] text-white shadow-lg md:flex">
+    <span class="font-semibold"><span x-text="count"></span> selected</span>
+    <span class="num" x-text="sum"></span>
+    <span class="ml-auto"></span>
+    <button type="button" @click="setReference()"
+            class="inline-flex h-[34px] items-center rounded-lg border border-white/25 px-3 text-[12.5px] font-semibold transition-colors hover:bg-white/10 focus-gold">Set reference</button>
+  </div>
+</div>
+{% endblock %}

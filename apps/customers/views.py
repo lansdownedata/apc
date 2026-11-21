@@ -8,6 +8,7 @@ customer signs in with a password and a verified email.
 from __future__ import annotations
 
 import posixpath
+from dataclasses import asdict
 from urllib.parse import unquote, urlsplit
 
 from django.contrib import messages
@@ -15,7 +16,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -27,7 +28,7 @@ from django.views.decorators.http import require_POST
 from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
-from . import selectors, services
+from . import requests, selectors, services
 from .auth import customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
@@ -264,3 +265,47 @@ def home(request: HttpRequest) -> HttpResponse:
         account.history_banner_seen_at = timezone.now()
         account.save(update_fields=["history_banner_seen_at"])
     return _page(request, "customers/home.html", context)
+
+
+# The tabs and the group-by switch, in the mockup's order.
+TABS = (("upcoming", "Upcoming"), ("past", "Past"), ("requests", "Requests"), ("all", "All"))
+GROUPINGS = (("month", "Month"), ("passenger", "Passenger"), ("reference", "Reference"))
+
+
+@customer_required
+def trips(request: HttpRequest) -> HttpResponse:
+    """Trips and history. `?fragment=1` returns the table alone: the page fetches it when a
+    filter changes and for "Show more"."""
+    f = selectors.TripFilter.from_query(request.GET)
+    context = {
+        **selectors.trips(request.customer, f),
+        "filter": {
+            **asdict(f),
+            "start": f.start.isoformat() if f.start else "",
+            "end": f.end.isoformat() if f.end else "",
+        },
+    }
+    if request.GET.get("fragment"):
+        return _page(request, "customers/_trips_table.html", context)
+    return _page(
+        request,
+        "customers/trips.html",
+        {**context, "ranges": selectors.quick_ranges(), "tabs": TABS, "groupings": GROUPINGS},
+    )
+
+
+def _ids(values: list[str]) -> list[int]:
+    """Trip ids from `ids` sent repeated or comma-separated; anything but a plain number of
+    up to 18 digits (a BIGINT) is dropped."""
+    parts = (part.strip() for value in values for part in value.split(","))
+    return [int(part) for part in parts if part.isascii() and part.isdigit() and len(part) <= 18]
+
+
+@customer_required
+@require_POST
+def set_reference(request: HttpRequest) -> JsonResponse:
+    """Set "Your reference" on ticked trips (or one). Ids outside the account are ignored."""
+    changed = requests.set_reference(
+        request.customer, _ids(request.POST.getlist("ids")), request.POST.get("value", "")
+    )
+    return JsonResponse({"ok": True, "changed": changed})

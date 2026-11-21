@@ -215,6 +215,9 @@ class Reservation(TimeStampedModel):
 
     la_reservation_id = models.CharField(max_length=64, blank=True)
     la_confirmation = models.CharField("LA confirmation #", max_length=64, blank=True)
+    # The customer's own tag for expensing (a client, cost centre or PO), set in the
+    # customer portal. Theirs, not billing's: separate from `Lead.po_number`.
+    customer_reference = models.CharField(max_length=120, blank=True)
     trip_status = models.CharField(
         max_length=32, choices=TripStatus.choices, blank=True, default=TripStatus.PENDING
     )

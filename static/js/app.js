@@ -6209,3 +6209,183 @@ function openScheduler() {
   window.dispatchEvent(new CustomEvent("open-scheduler"));
 }
 window.openScheduler = openScheduler;
+
+/* ------------------------------------------- customer portal: Trips (mockup 2)
+ * One GET form holds every filter. A change refetches the table alone (`?fragment=1`)
+ * and puts the filters in the address bar; "Show more" asks for one more page and gets
+ * every row so far back, so a group never splits. Ticked rows (id -> cents) survive
+ * "Show more" and clear when a filter changes. The date field is a flatpickr range whose
+ * text comes back from the server ("Oct 1 – Nov 20, 2026"). */
+function customerTrips({ url, referenceUrl }) {
+  const isoDay = (iso) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+  return {
+    loading: false,
+    picked: {},
+    start: "",
+    end: "",
+    page: 1,
+    _last: "",
+    _seq: 0,
+    _fp: null,
+
+    init() {
+      const form = this.$refs.form;
+      this.start = form.elements.start.value;
+      this.end = form.elements.end.value;
+      this.page = Number(new URLSearchParams(window.location.search).get("page")) || 1;
+      this._last = this._query(this.page);
+      if (typeof window.flatpickr === "undefined") return;
+      const text = this.$refs.range.value;
+      this._fp = window.flatpickr(this.$refs.range, {
+        ...FP_BASE,
+        mode: "range",
+        dateFormat: "M j, Y",
+        locale: { rangeSeparator: " – " },
+        defaultDate: [this.start, this.end].filter(Boolean).map(isoDay),
+        onClose: (dates, str, fp) => {
+          FP_BASE.onClose();
+          if (!dates.length) return;
+          const iso = (d) => fp.formatDate(d, "Y-m-d");
+          this.setRange(iso(dates[0]), iso(dates[dates.length - 1]), { picked: true });
+        },
+      });
+      this.$refs.range.value = text;
+    },
+
+    get count() {
+      return Object.keys(this.picked).length;
+    },
+    get sum() {
+      return money.format(Object.values(this.picked).reduce((a, b) => a + b, 0) / 100);
+    },
+
+    _query(page) {
+      const params = new URLSearchParams(new FormData(this.$refs.form));
+      for (const [key, value] of [...params]) if (!value) params.delete(key);
+      if (page > 1) params.set("page", page);
+      return params.toString();
+    },
+
+    async refresh({ page = 1, keep = false, force = false } = {}) {
+      const query = this._query(page);
+      if (query === this._last && !force) return;
+      this._last = query;
+      this.page = page;
+      if (!keep) this.picked = {};
+      const seq = ++this._seq;
+      this.loading = true;
+      try {
+        const resp = await fetch(`${url}?${query ? `${query}&` : ""}fragment=1`, {
+          headers: { Accept: "text/html" },
+        });
+        if (resp.redirected) {
+          window.location.href = resp.url; // signed out meanwhile: the sign-in page
+          return;
+        }
+        if (!resp.ok) throw new Error(resp.statusText);
+        const html = await resp.text();
+        if (seq !== this._seq) return;
+        this.$refs.table.innerHTML = html;
+        this.$refs.range.value = this.$refs.table.firstElementChild?.dataset.rangeText || "";
+        history.replaceState(null, "", query ? `${url}?${query}` : url);
+      } catch (e) {
+        if (seq === this._seq) {
+          this._last = "";
+          Alpine.store("toast").push({ type: "danger", title: "Your trips didn't load. Try again." });
+        }
+      } finally {
+        if (seq === this._seq) this.loading = false;
+      }
+    },
+
+    showMore() {
+      this.refresh({ page: this.page + 1, keep: true });
+    },
+
+    setRange(start, end, { picked = false } = {}) {
+      const form = this.$refs.form;
+      form.elements.start.value = this.start = start;
+      form.elements.end.value = this.end = end;
+      if (this._fp && !picked) {
+        if (start) this._fp.setDate([isoDay(start), isoDay(end || start)], false);
+        else this._fp.clear(false);
+      }
+      this.refresh();
+    },
+
+    clearFilters() {
+      const form = this.$refs.form;
+      form.elements.q.value = "";
+      const passenger = form.elements.passenger;
+      if (passenger) {
+        if (passenger.tomselect) passenger.tomselect.setValue("", true);
+        passenger.value = "";
+      }
+      this.setRange("", "");
+    },
+
+    pick(box) {
+      if (box.checked) this.picked[box.dataset.pick] = Math.round(parseFloat(box.dataset.amount) * 100);
+      else delete this.picked[box.dataset.pick];
+    },
+
+    pickAll(checked) {
+      this.$refs.table.querySelectorAll("input[data-pick]").forEach((box) => {
+        box.checked = checked;
+        this.pick(box);
+      });
+    },
+
+    setReference() {
+      const ids = Object.keys(this.picked);
+      if (ids.length) this._editReference(ids, "", "Set reference");
+    },
+
+    editReference(id, current) {
+      this._editReference([String(id)], current || "", "Your reference");
+    },
+
+    /* The one editor for a ticked set or a single row. The value is typed into a field
+       the modal draws; the current one is set on it afterwards, never put in the HTML. */
+    _editReference(ids, current, title) {
+      const modal = Alpine.store("modal");
+      const many = ids.length > 1;
+      modal.show({
+        title,
+        message: many ? `For the ${ids.length} trips you ticked. Leave it blank to clear it.` : "",
+        html:
+          '<label for="trip-reference" class="block text-[12.5px] font-semibold text-ink">A client, cost centre or PO for your expenses</label>' +
+          '<input id="trip-reference" type="text" maxlength="120" autocomplete="off" class="field mt-1.5">',
+        variant: "gold",
+        confirmText: "Save",
+        onConfirm: async () => {
+          const value = document.getElementById("trip-reference")?.value || "";
+          try {
+            await postForm(referenceUrl, { ids: ids.join(","), value });
+          } catch (e) {
+            Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
+            throw e;
+          }
+          Alpine.store("toast").push({ type: "success", title: many ? `Reference set on ${ids.length} trips.` : "Reference saved." });
+          this.refresh({ page: this.page, force: true });
+        },
+      });
+      Alpine.nextTick(() => {
+        const box = document.getElementById("trip-reference");
+        if (!box) return;
+        box.value = current;
+        box.focus();
+        box.onkeydown = (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (!modal.busy) modal.accept();
+        };
+      });
+    },
+  };
+}
+window.customerTrips = customerTrips;

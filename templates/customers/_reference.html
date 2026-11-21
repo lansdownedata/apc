@@ -1,0 +1,14 @@
+{% comment %}
+  "Your reference" on a Trips row (mockup 2): the customer's tag, or a dashed "Add
+  reference". Either opens the reference editor (`customerTrips().editReference`); the
+  current value rides in `data-value`, never in script.
+{% endcomment %}
+{% if row.reference %}
+<button type="button" data-value="{{ row.reference }}" @click="editReference({{ row.pk }}, $el.dataset.value)"
+        class="inline-flex h-[22px] max-w-full items-center rounded-md bg-surface2 px-2 text-[12px] font-medium text-ink transition-colors hover:bg-line focus-gold">
+  <span class="truncate">{{ row.reference }}</span>
+</button>
+{% else %}
+<button type="button" data-value="" @click="editReference({{ row.pk }}, '')"
+        class="inline-flex h-[22px] items-center whitespace-nowrap rounded-md border border-dashed border-line px-2 text-[12px] text-muted transition-colors hover:border-muted hover:text-ink focus-gold">Add reference</button>
+{% endif %}
