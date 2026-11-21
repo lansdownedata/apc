@@ -43,6 +43,9 @@ SPEC_KEYS = {
     "affiliate_cancel",
     "planner_invite",
     "planner_password_reset",
+    "customer_invite",
+    "customer_signup",
+    "customer_password_reset",
     "user_invite",
     # Schedules
     "deposit_report",

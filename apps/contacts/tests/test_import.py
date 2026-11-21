@@ -238,6 +238,7 @@ def test_blank_never_clears_model_columns():
         ("wedding_pro", Channel.WEDDING_PRO),
         ("PHONE", Channel.PHONE),
         ("Limo Anywhere", Channel.LIMOANYWHERE),
+        ("Customer portal", Channel.PORTAL),
     ],
 )
 def test_channel_by_label_and_value(typed, stored):
@@ -261,7 +262,7 @@ def test_bad_channel_is_an_error():
     assert out["outcome"] == "error"
     assert out["reason"] == (
         "Channel 'Carrier pigeon' isn't one of: "
-        "Website, Wedding Pro, Phone, API, GNet, Limo Anywhere"
+        "Website, Wedding Pro, Phone, API, GNet, Limo Anywhere, Customer portal"
     )
     assert out["values"]["Channel"] == "Carrier pigeon"
     assert not Contact.objects.exists()

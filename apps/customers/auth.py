@@ -79,7 +79,7 @@ def customer_required(view: Callable[..., HttpResponse]) -> Callable[..., HttpRe
     sent to the customer sign-in. Sets `request.customer`; never reads `request.user`."""
 
     @wraps(view)
-    def wrapped(request: HttpRequest, *args, **kwargs) -> HttpResponse:
+    def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         account = current_customer(request)
         if account is None:
             nxt = quote(request.get_full_path(), safe="/")

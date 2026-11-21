@@ -8,7 +8,7 @@ when staff change it). Invite links live `PASSWORD_RESET_TIMEOUT`; password-rese
 their own salt, so one can never stand in for the other, and their own life of 7 days.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.http import base36_to_int
@@ -20,7 +20,7 @@ class CustomerTokenGenerator(PasswordResetTokenGenerator):
     key_salt = "apps.customers.tokens.CustomerTokenGenerator"
 
     def _make_hash_value(self, account: CustomerAccount, timestamp: int) -> str:
-        def stamp(value) -> str:
+        def stamp(value: datetime | None) -> str:
             return "" if value is None else value.isoformat()
 
         return (

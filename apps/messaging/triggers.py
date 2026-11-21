@@ -259,6 +259,32 @@ _ALL: tuple[Trigger, ...] = (
         {PLANNER},
         {"Company", "Account", "Planner account"},
     ),
+    # The customer portal's account emails greet by first name (`Customer`), which the
+    # sender reads off the person it goes to.
+    _t(
+        "customer_invite",
+        "Customer invite",
+        "staff_click",
+        "order",
+        {CUSTOMER},
+        {"Customer", "Company", "Account"},
+    ),
+    _t(
+        "customer_signup",
+        "Customer sign-up",
+        "staff_click",
+        "order",
+        {CUSTOMER},
+        {"Customer", "Company", "Account"},
+    ),
+    _t(
+        "customer_password_reset",
+        "Customer password reset",
+        "staff_click",
+        "order",
+        {CUSTOMER},
+        {"Customer", "Company", "Account"},
+    ),
     _t(
         "user_invite",
         "Staff user invite",

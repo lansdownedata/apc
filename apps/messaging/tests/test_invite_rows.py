@@ -22,6 +22,8 @@ from apps.accounts import services as account_services
 from apps.accounts.factories import UserFactory
 from apps.accounts.models import User
 from apps.contacts.factories import ContactFactory
+from apps.customers import services as customer_services
+from apps.customers.factories import CustomerAccountFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.messaging import defaults, editor, fields, listing, sender, triggers
@@ -36,7 +38,8 @@ pytestmark = pytest.mark.django_db
 
 BASE_URL = "https://portal.example.com"
 DELIVER = "apps.notifications.email.deliver_html_email"
-INVITE_KEYS = ("planner_invite", "planner_password_reset", "user_invite")
+CUSTOMER_KEYS = ("customer_invite", "customer_signup", "customer_password_reset")
+INVITE_KEYS = ("planner_invite", "planner_password_reset", *CUSTOMER_KEYS, "user_invite")
 KEYS = (*INVITE_KEYS, "wedding_details_received")
 PASSWORD = "a-long-pass-phrase-77"
 
@@ -130,6 +133,9 @@ def test_each_row_sends_on_its_own_trigger_to_its_audience():
     assert got == {
         "planner_invite": ("planner_invite", "planner"),
         "planner_password_reset": ("planner_password_reset", "planner"),
+        "customer_invite": ("customer_invite", "customer"),
+        "customer_signup": ("customer_signup", "customer"),
+        "customer_password_reset": ("customer_password_reset", "customer"),
         "user_invite": ("user_invite", "staff"),
         "wedding_details_received": ("wedding_details_received", "customer"),
     }
@@ -204,6 +210,9 @@ def test_each_trigger_offers_what_its_caller_fills():
     [
         ("planner_invite", "account_button"),
         ("planner_password_reset", "account_button"),
+        ("customer_invite", "account_button"),
+        ("customer_signup", "account_button"),
+        ("customer_password_reset", "account_button"),
         ("user_invite", "account_button"),
         ("wedding_details_received", "resume_button"),
     ],
@@ -257,6 +266,9 @@ def test_the_wedding_email_can_be_switched_off_and_then_sends_nothing(client):
 _OTHER_PEOPLE = {
     "planner_invite": {"recipients": ["planner"]},
     "planner_password_reset": {"recipients": ["planner"]},
+    "customer_invite": {"recipients": ["booking_contact"]},
+    "customer_signup": {"recipients": ["booking_contact"]},
+    "customer_password_reset": {"recipients": ["booking_contact"]},
     "user_invite": {"staff_emails": ["ops@apc.test"]},
     "wedding_details_received": {"recipients": ["billing_contact"]},
 }
@@ -496,6 +508,9 @@ def test_the_other_html_parts_keep_their_generated_parts(send, parts):
 _AUDIENCE = {
     "planner_invite": "planner",
     "planner_password_reset": "planner",
+    "customer_invite": "customer",
+    "customer_signup": "customer",
+    "customer_password_reset": "customer",
     "user_invite": "staff",
     "wedding_details_received": "customer",
 }
@@ -522,6 +537,14 @@ def test_the_invite_triggers_offer_exactly_what_their_callers_fill():
         "company_email",
     }
     assert set(_offered_for("planner_password_reset")) == set(_offered_for("planner_invite"))
+    for key in CUSTOMER_KEYS:
+        assert set(_offered_for(key)) == {
+            "first_name",
+            "account_button",
+            "company_name",
+            "company_phone",
+            "company_email",
+        }, key
     assert set(_offered_for("user_invite")) == {
         "account_first_name",
         "account_button",
@@ -556,6 +579,13 @@ def _send(key: str):
         _registered()
         mail.outbox.clear()
         assert planner_services.send_password_reset("dana@example.com") is True
+    elif key == "customer_invite":
+        customer_services.invite(ContactFactory(email="dana@example.com"), actor=UserFactory())
+    elif key == "customer_signup":
+        customer_services.start_signup(name="Dana", email="dana@example.com", phone="")
+    elif key == "customer_password_reset":
+        CustomerAccountFactory(contact=ContactFactory(email="dana@example.com"))
+        assert customer_services.send_password_reset("dana@example.com") is True
     elif key == "user_invite":
         _invite_user()
     else:
@@ -610,6 +640,9 @@ def test_each_invite_preview_links_to_its_own_page():
     pages = {
         "planner_invite": "/planner/register/sample/",
         "planner_password_reset": "/planner/password/sample/",
+        "customer_invite": "/account/register/sample/",
+        "customer_signup": "/account/signup/sample/",
+        "customer_password_reset": "/account/password/sample/",
         "user_invite": "/invite/sample/",
     }
     for key, page in pages.items():

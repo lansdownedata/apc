@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.http import HttpRequest, HttpResponse
 from django.test import Client, RequestFactory
+from pytest_django.fixtures import Settings
 
 from apps.accounts.factories import UserFactory
 from apps.customers import auth
@@ -27,13 +28,13 @@ def rf_with_session(rf: RequestFactory) -> HttpRequest:
 
 
 @pytest.fixture
-def account(db) -> CustomerAccount:
+def account(db: None) -> CustomerAccount:
     """An active account: registered, password `"correct horse battery"`."""
     return CustomerAccountFactory()
 
 
 @pytest.fixture
-def client_as(db) -> Callable[[CustomerAccount], Client]:
+def client_as(db: None) -> Callable[[CustomerAccount], Client]:
     """`client_as(account)` -> a new test client signed in through `auth.sign_in`."""
 
     def _client_as(account: CustomerAccount) -> Client:
@@ -49,24 +50,25 @@ def client_as(db) -> Callable[[CustomerAccount], Client]:
 
 
 @pytest.fixture
-def staff_client(client: Client, two_factor_off) -> Client:
-    """The `client` fixture signed in as an agent."""
+def staff_client(db: None, two_factor_off: None) -> Client:
+    """A test client of its own, signed in as an agent."""
+    client = Client()
     client.force_login(UserFactory())
     return client
 
 
 @pytest.fixture
-def outbound_on(settings) -> None:
+def outbound_on(settings: Settings) -> None:
     settings.OUTBOUND_ENABLED = True
     settings.PUBLIC_BASE_URL = "https://example.test"
 
 
 @pytest.fixture
-def make_trip(db) -> Callable[..., Reservation]:
+def make_trip(db: None) -> Callable[..., Reservation]:
     """`make_trip(account, **kw)` -> a trip on a new lead booked by the account's contact.
     Keyword arguments go to `ReservationFactory`."""
 
-    def _make_trip(account: CustomerAccount, **kw) -> Reservation:
+    def _make_trip(account: CustomerAccount, **kw: object) -> Reservation:
         if "lead" not in kw:
             kw["lead"] = LeadFactory(contact=account.contact)
         return ReservationFactory(**kw)

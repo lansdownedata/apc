@@ -4,8 +4,8 @@
 the client copy in `touchpoint_templates`. `CLICKS` are the staff-click sends (spec C section
 8): their wording is today's button text, kept here, with the parts the caller generates
 (the quote summary, the receipt lines, a trip sheet, a button) as block placeholders.
-`INVITES` are the invites, the planner password reset and the wedding-details email, the
-same way, `REPORTS` the staff reports, their tables as block placeholders, and
+`INVITES` are the invites, the planner and customer account emails and the wedding-details
+email, the same way, `REPORTS` the staff reports, their tables as block placeholders, and
 `DRIVER_LINKS` the two messages that carry the driver's trip link. `ORIGINALS` is all
 five. `seed` creates the rows that are missing (folding in
 what spec B saved for a key) and never overwrites a seeded row; `reset` copies an original
@@ -393,7 +393,7 @@ CLICKS: dict[str, MessageDefault] = {
     )
 }
 
-# --- invites, the planner password reset, the wedding-details email -----------------------
+# --- invites, the account emails, the wedding-details email --------------------------------
 #
 # Today's emails, word for word (`test_invites_golden` holds them). Each caller names the
 # person and hands over the link button (`{account_button}`, `{resume_button}`: in plain
@@ -404,6 +404,14 @@ CLICKS: dict[str, MessageDefault] = {
 _SIGNATURE = "--\n{company_name}\n{company_email} · {company_phone}"
 _SIGNATURE_WITH_LINE = (
     "--\n{company_name}\nLuxury charter & chauffeur service\n{company_email} · {company_phone}"
+)
+# Customer portal draft copy (mockup 12) until the client signs it off. Self sign-up and the
+# password reset share the mockup's second email; only the subject and the button differ.
+_CUSTOMER_SET_PASSWORD = (
+    "Hi {first_name},\n\n"
+    "Use the button below to set your password and sign in.\n\n"
+    "{account_button}\n\n"
+    "This link works for 7 days. If you didn't ask for this, you can ignore this email."
 )
 
 INVITES: dict[str, MessageDefault] = {
@@ -443,6 +451,41 @@ INVITES: dict[str, MessageDefault] = {
                 "This link works once and expires in 7 days. If you didn't ask for this, you "
                 "can ignore this email; your password stays as it is.\n\n" + _SIGNATURE
             ),
+            recipients=(),
+        ),
+        # Customer portal draft copy (mockup 12) until the client signs it off.
+        _click(
+            "customer_invite",
+            "Customer invite",
+            "leads_quotes",
+            channels=("email",),
+            subject="Your {company_name} account",
+            email_body=(
+                "Hi {first_name},\n\n"
+                "You can now request trips, follow your bookings and download receipts "
+                "online.\n\n"
+                "Your past trips with us are already in your account.\n\n"
+                "{account_button}\n\n"
+                "This link works for 7 days. Questions? Call {company_phone}."
+            ),
+            recipients=(),
+        ),
+        _click(
+            "customer_signup",
+            "Customer sign-up",
+            "leads_quotes",
+            channels=("email",),
+            subject="Finish creating your {company_name} account",
+            email_body=_CUSTOMER_SET_PASSWORD,
+            recipients=(),
+        ),
+        _click(
+            "customer_password_reset",
+            "Customer password reset",
+            "leads_quotes",
+            channels=("email",),
+            subject="Reset your {company_name} password",
+            email_body=_CUSTOMER_SET_PASSWORD,
             recipients=(),
         ),
         _click(
