@@ -30,6 +30,19 @@
       {% endif %}
       <span class="flex items-center gap-1"><i class="ti ti-users text-[13px]"></i> {{ trip.passengers }} pax</span>
     </div>
+    {% comment %} T-72h trip confirmation state (APC-19) — the customer's own
+         acknowledgement on the public /trip/<token>/ page. {% endcomment %}
+    {% if trip.customer_confirmed_at %}
+      <p class="flex items-center gap-1 text-[12px] text-emerald-700 mt-1.5">
+        <i class="ti ti-circle-check-filled text-[13px]"></i>
+        Confirmed {{ trip.customer_confirmed_at|date:"M j, g:i A" }}
+      </p>
+    {% else %}
+      <p class="flex items-center gap-1 text-[12px] text-muted mt-1.5">
+        <i class="ti ti-circle-dashed text-[13px]"></i>
+        Not yet confirmed by the customer
+      </p>
+    {% endif %}
   </section>
 
   <section class="mb-4">
