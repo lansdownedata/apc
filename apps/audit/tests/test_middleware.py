@@ -94,6 +94,9 @@ def test_correlation_header_ignored(client):
         ("/trip/affiliate/tok/", "affiliate: trip confirmation"),
         ("/planner/", "planner portal"),
         ("/planner/login/", "planner portal"),
+        ("/account/", "customer portal"),
+        ("/account/login/", "customer portal"),
+        ("/account/signup/tok/", "customer portal"),
         ("/invite/uid/tok/", "invite"),
         ("/", "public site"),
         ("/healthz/", "web: health"),
@@ -126,6 +129,22 @@ def test_planner_request_has_email_no_actor():
     AuditMiddleware(view)(request)
 
     assert seen["resolved"] == (None, "ana@example.com", "planner portal")
+
+
+def test_customer_request_has_email_no_actor():
+    request = RequestFactory().get("/account/")
+    request.user = AnonymousUser()
+    request.customer = SimpleNamespace(email="dana@example.com")
+    request.resolver_match = resolve("/account/")
+    seen = {}
+
+    def view(req):
+        seen["resolved"] = resolve_frame()
+        return None
+
+    AuditMiddleware(view)(request)
+
+    assert seen["resolved"] == (None, "dana@example.com", "customer portal")
 
 
 def test_staff_actor_email_defaults_to_user_email():

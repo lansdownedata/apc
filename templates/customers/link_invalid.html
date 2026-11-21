@@ -1,0 +1,11 @@
+{% extends "customers/_auth.html" %}
+{% block title %}Link no longer works{% endblock %}
+{% block card %}
+<h1 class="mt-6 font-display text-[20px] font-semibold leading-tight text-ink">This link no longer works</h1>
+<p class="mt-2.5 text-[14px] leading-relaxed text-ink">{% if message %}{{ message }}{% else %}A link works once, for 7 days, and stops when a newer one is sent.{% endif %}</p>
+<a href="{% url 'customers:login' %}" class="btn-gold mt-5 flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold">Go to sign in</a>
+<p class="mt-5 text-center text-[12.5px] text-muted">
+  Need a new link? <a href="{% url 'customers:signup' %}" class="rounded font-semibold text-goldd focus-gold hover:underline">Create your account</a>
+  or <a href="{% url 'customers:password_reset' %}" class="rounded font-semibold text-goldd focus-gold hover:underline">reset your password</a>.
+</p>
+{% endblock %}

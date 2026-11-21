@@ -5,8 +5,12 @@ from . import views
 app_name = "customers"
 
 urlpatterns = [
+    path("", views.home, name="home"),
     path("login/", views.login, name="login"),
-    path("register/<uidb64>/<token>/", views.link_page, name="register"),
-    path("signup/<str:token>/", views.link_page, name="signup_confirm"),
-    path("password/<uidb64>/<token>/", views.link_page, name="set_password"),
+    path("logout/", views.logout, name="logout"),
+    path("signup/", views.signup, name="signup"),
+    path("signup/<str:token>/", views.signup_confirm, name="signup_confirm"),
+    path("register/<uidb64>/<token>/", views.set_password, name="register"),
+    path("password/reset/", views.password_reset, name="password_reset"),
+    path("password/<uidb64>/<token>/", views.set_password, name="set_password"),
 ]

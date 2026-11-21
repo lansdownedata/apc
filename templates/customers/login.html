@@ -1,0 +1,30 @@
+{% extends "customers/_auth.html" %}
+{% block title %}Sign in{% endblock %}
+{% block card %}
+<h1 class="mt-6 text-center font-display text-[22px] font-semibold leading-tight text-ink">Sign in to your account</h1>
+{% if throttled %}
+<p role="alert" class="mt-5 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">
+  Too many attempts. Wait a few minutes and try again, or reset your password.
+</p>
+{% elif error %}
+<p role="alert" class="mt-5 rounded-xl bg-rose-50 px-3.5 py-3 text-[13px] leading-relaxed text-rose-700 ring-1 ring-inset ring-rose-600/15">
+  That email and password don't match. Try again, or reset your password.
+</p>
+{% endif %}
+<form method="post" action="{% url 'customers:login' %}" class="mt-6">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <label for="f-email" class="block text-[12.5px] font-semibold text-ink">Email</label>
+  <input id="f-email" type="email" name="email" value="{{ email|default:'' }}" autocomplete="username" required autofocus
+         class="field mt-1.5" placeholder="you@example.com">
+  <div class="mt-4 flex items-baseline justify-between gap-3">
+    <label for="f-password" class="text-[12.5px] font-semibold text-ink">Password</label>
+    <a href="{% url 'customers:password_reset' %}" class="rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Forgot password?</a>
+  </div>
+  <input id="f-password" type="password" name="password" autocomplete="current-password" required class="field mt-1.5">
+  <button type="submit" class="btn-gold mt-5 w-full rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold disabled:cursor-not-allowed disabled:opacity-60">Sign in</button>
+</form>
+<p class="mt-5 text-center text-[12.5px] text-muted">
+  First time here? <a href="{% url 'customers:signup' %}" class="rounded font-semibold text-goldd focus-gold hover:underline">Create your account</a>
+</p>
+{% endblock %}

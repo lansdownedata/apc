@@ -1,0 +1,17 @@
+{% extends "customers/_auth.html" %}
+{% block title %}Check your email{% endblock %}
+{% block card %}
+<p class="mt-6 text-[12.5px] font-semibold text-muted">Step 2</p>
+<h1 class="mt-1.5 font-display text-[20px] font-semibold leading-tight text-ink">Check your email</h1>
+<p class="mt-2.5 text-[14px] leading-relaxed text-ink">
+  We sent a link to <b class="font-semibold [overflow-wrap:anywhere]">{{ email }}</b>. Open it to set your password.
+</p>
+<form method="post" action="{% url 'customers:signup' %}" class="mt-2 text-[12.5px] leading-relaxed text-muted">
+  {% csrf_token %}
+  <input type="hidden" name="name" value="{{ form.name.value }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <input type="hidden" name="phone" value="{{ form.phone.value|default:'' }}">
+  The link works for {{ link_days }} days. Didn't get it?
+  <button type="submit" class="rounded font-semibold text-goldd focus-gold hover:underline">Send it again</button>
+</form>
+{% endblock %}

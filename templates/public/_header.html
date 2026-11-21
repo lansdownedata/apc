@@ -33,6 +33,7 @@ NOT linked here — it is internal-only; staff navigate to it directly.
     </nav>
 
     <div class="ml-auto flex items-center gap-3 sm:gap-4">
+      <a href="{% url 'customers:login' %}" class="hidden rounded text-[13px] font-medium text-muted focus-gold transition-colors hover:text-ink lg:block">Customer login</a>
       {% include "public/_call_cta.html" with class="hidden rounded text-[13px] font-semibold text-ink focus-gold sm:block" %}
       <a href="/bookings/"
          class="btn-gold rounded-full px-4 py-2 text-[13px] font-semibold focus-gold sm:px-5 sm:py-2.5">
@@ -62,6 +63,7 @@ NOT linked here — it is internal-only; staff navigate to it directly.
          class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/about-us/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">About</a>
       <a href="/contact/" {% if '/contact/' in request.path %}aria-current="page"{% endif %}
          class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/contact/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Contact</a>
+      <a href="{% url 'customers:login' %}" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Customer login</a>
     </div>
   </nav>
 </header>

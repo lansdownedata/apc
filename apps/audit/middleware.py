@@ -33,6 +33,8 @@ def source_for(request: HttpRequest) -> str:
         return "portal"
     if request.path.startswith("/admin/"):  # /admin/login/ is a redirect outside the admin
         return "admin"
+    if request.path.startswith("/account/"):
+        return "customer portal"
     match = getattr(request, "resolver_match", None)
     if match is None:
         return f"web: {request.path}"
@@ -68,9 +70,10 @@ def _user(request: HttpRequest) -> User | None:
     return user if user is not None and user.is_authenticated else None
 
 
-def _planner_email(request: HttpRequest) -> str:
-    planner = getattr(request, "planner", None)
-    return planner.email if planner else ""
+def _signed_in_email(request: HttpRequest) -> str:
+    """The planner's or customer's email: neither area sets `request.user`."""
+    person = getattr(request, "planner", None) or getattr(request, "customer", None)
+    return person.email if person else ""
 
 
 class AuditMiddleware:
@@ -81,7 +84,7 @@ class AuditMiddleware:
         with audit_context(
             actor=lambda: _user(request),
             source=lambda: source_for(request),
-            actor_email=lambda: _planner_email(request),
+            actor_email=lambda: _signed_in_email(request),
             cid=f"r-{new_cid()}",
         ):
             return self.get_response(request)
