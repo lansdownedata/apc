@@ -151,6 +151,40 @@
         </p>
       {% endif %}
     </div>
+
+    {% comment %} Driver + vehicle detail (APC-21) — farmed-out only; in-house already
+         carries this via Driver/Vehicle. Released to the customer the moment a name is
+         on file (touchpoints.trigger_driver_released), so this is the one control that
+         fires a customer-facing send. {% endcomment %}
+    {% if assignment.status == 'confirmed' and not assignment.is_in_house %}
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
+      Driver &amp; vehicle
+      {% if not assignment.has_driver_info %}
+        <span class="chip-warn inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ml-1 normal-case tracking-normal">not on file</span>
+      {% endif %}
+    </p>
+    <form @submit.prevent class="mb-5 pb-5 border-b border-line/60 grid grid-cols-2 gap-2">
+      {% csrf_token %}
+      <input type="text" name="driver_name" placeholder="Driver name" class="field text-[13px] col-span-2"
+             value="{{ assignment.driver_name }}">
+      <input type="tel" name="driver_cell" placeholder="Driver cell" class="field text-[13px]"
+             value="{{ assignment.driver_cell }}">
+      <input type="text" name="vehicle_number" placeholder="Vehicle #" class="field text-[13px]"
+             value="{{ assignment.vehicle_number }}">
+      <input type="text" name="vehicle_desc" placeholder="Vehicle description (e.g. black Suburban)"
+             class="field text-[13px] col-span-2" value="{{ assignment.vehicle_desc }}">
+      <button type="button" class="btn-ghost px-3 py-2 rounded-lg text-[12.5px] font-semibold ring-1 ring-line col-span-2"
+              :disabled="busy" @click="post('{% url 'dispatch_driver_info' assignment.pk %}')">
+        Save driver &amp; vehicle
+      </button>
+      {% if not assignment.has_driver_info %}
+      <p class="text-[11px] text-muted col-span-2">
+        Saving a name here sends the customer their driver + vehicle details automatically.
+      </p>
+      {% endif %}
+    </form>
+    {% endif %}
+
     {% comment %} Confirm/Declined are the fallback for a vendor we can't hear back from.
          A GNet offer resolves from the affiliate's own callback, and marking one declined
          by hand would leave a real booking live on the gateway with no way left to cancel

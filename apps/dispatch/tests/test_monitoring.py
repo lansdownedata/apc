@@ -31,7 +31,7 @@ def _cfg(**over):
     return cfg
 
 
-def _trip(delta, *, status="", covered=False, **kw):
+def _trip(delta, *, status="", covered=False, with_driver_info=True, **kw):
     when = timezone.localtime() + delta
     lead = kw.pop("lead", None) or LeadFactory(status=Lead.Status.BOOKED)
     trip = ReservationFactory(
@@ -42,7 +42,15 @@ def _trip(delta, *, status="", covered=False, **kw):
         **kw,
     )
     if covered:
-        services.assign_direct(trip, VendorFactory(), payout=1)
+        a = services.assign_direct(trip, VendorFactory(), payout=1)
+        # Driver info present by default: these fixtures exist to test the *other*
+        # milestones, and every one of them predates the driver-info check — give it a
+        # value here so it doesn't quietly join every assertion. `with_driver_info=False`
+        # opts back into the gap for the tests that are actually about it.
+        if with_driver_info:
+            a.driver_name = "Sam Rivera"
+            a.driver_cell = "+15715551212"
+            a.save(update_fields=["driver_name", "driver_cell", "updated_at"])
     return trip
 
 
@@ -143,6 +151,74 @@ def test_an_arrived_trip_raises_no_arrival_exception():
     assert K.NOT_ARRIVED not in monitoring.evaluate(trip, cfg, timezone.now())
 
 
+# --- driver info missing (APC-21) ------------------------------------------------------
+
+
+def test_covered_farmed_out_trip_with_no_driver_info_warns():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=12), covered=True, with_driver_info=False)
+
+    assert monitoring.evaluate(trip, cfg, timezone.now())[K.NO_DRIVER_INFO] == T.WARNING
+
+
+def test_covered_farmed_out_trip_with_no_driver_info_close_to_pickup_is_critical():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=3), covered=True, with_driver_info=False)
+
+    assert monitoring.evaluate(trip, cfg, timezone.now())[K.NO_DRIVER_INFO] == T.CRITICAL
+
+
+def test_driver_info_on_file_raises_no_exception():
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=3), covered=True)  # with_driver_info=True by default
+
+    assert K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_an_in_house_assignment_always_has_driver_info():
+    """No free-entry fields to be missing — Driver + Vehicle already carry it."""
+    from apps.fleet.factories import DriverFactory
+
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=3))
+    services.assign_in_house(trip, DriverFactory())
+
+    assert K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_an_uncovered_trip_raises_no_driver_info_exception():
+    """An uncovered trip's real problem is UNASSIGNED — not this one too."""
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=3))
+
+    assert K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_a_done_trip_with_no_driver_info_raises_no_exception():
+    """The trip already happened — nagging for driver info to release is pointless, same
+    as NOT_ON_THE_WAY / NOT_ARRIVED not firing once their milestone is moot."""
+    cfg = _cfg()
+    trip = _trip(timedelta(hours=-2), status=TS.DONE, covered=True, with_driver_info=False)
+
+    assert K.NO_DRIVER_INFO not in monitoring.evaluate(trip, cfg, timezone.now())
+
+
+def test_entering_driver_info_resolves_the_open_exception():
+    _cfg()
+    trip = _trip(timedelta(hours=3), covered=True, with_driver_info=False)
+    monitoring.run_dispatch_monitor()
+    exc = DispatchException.objects.get(kind=K.NO_DRIVER_INFO)
+    assert exc.is_open
+
+    a = trip.assignments.get()
+    a.driver_name, a.driver_cell = "Sam Rivera", "+15715551212"
+    a.save(update_fields=["driver_name", "driver_cell", "updated_at"])
+    monitoring.run_dispatch_monitor()
+
+    exc.refresh_from_db()
+    assert not exc.is_open
+
+
 def test_a_trip_with_no_pickup_time_is_skipped():
     cfg = _cfg()
     trip = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), pickup_date=None)
@@ -205,7 +281,10 @@ def test_a_met_milestone_resolves_its_exception():
     services.assign_direct(trip, VendorFactory(), payout=1)
     monitoring.run_dispatch_monitor()
 
-    exc = DispatchException.objects.get()
+    # A freshly-covered farmed-out trip immediately opens its own NO_DRIVER_INFO
+    # exception (no roster to draw from) — this test is about the milestone that just
+    # got met, UNASSIGNED, not that one.
+    exc = DispatchException.objects.get(kind=K.UNASSIGNED)
     assert not exc.is_open
     assert exc.resolved_at is not None
 
@@ -221,7 +300,7 @@ def test_a_resolved_exception_reopens_if_it_breaches_again():
     raised = monitoring.run_dispatch_monitor()
 
     assert raised == 1
-    assert DispatchException.objects.get().is_open
+    assert DispatchException.objects.get(kind=K.UNASSIGNED).is_open
 
 
 # --- alerting ---------------------------------------------------------------------

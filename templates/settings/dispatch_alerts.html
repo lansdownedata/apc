@@ -40,6 +40,13 @@
           {% include "components/form_field.html" with field=form.arrived_critical_minutes %}
         </div>
       </div>
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Driver info missing — hours before pickup</div>
+        <div class="grid grid-cols-2 gap-3">
+          {% include "components/form_field.html" with field=form.driver_info_warn_hours %}
+          {% include "components/form_field.html" with field=form.driver_info_critical_hours %}
+        </div>
+      </div>
 
       {% include "components/form_field.html" with field=form.alert_emails %}
       {% include "components/form_field.html" with field=form.critical_sms %}

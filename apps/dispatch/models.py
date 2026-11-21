@@ -217,6 +217,11 @@ class DispatchAlertConfig(models.Model):
     # "Not arrived" — minutes after pickup without an Arrived status.
     arrived_warn_minutes = models.PositiveIntegerField(default=15)
     arrived_critical_minutes = models.PositiveIntegerField(default=45)
+    # "Driver info missing" (APC-21) — hours before pickup a covered trip still has no
+    # driver name / cell / vehicle on file. Only bites a farmed-out trip — in-house
+    # coverage already carries this via its Driver + Vehicle.
+    driver_info_warn_hours = models.PositiveIntegerField(default=24)
+    driver_info_critical_hours = models.PositiveIntegerField(default=6)
 
     alert_emails = models.TextField(
         blank=True,
@@ -263,6 +268,7 @@ class DispatchException(TimeStampedModel):
         UNASSIGNED = "unassigned", "No coverage"
         NOT_ON_THE_WAY = "not_otw", "Not en route"
         NOT_ARRIVED = "not_arrived", "Not arrived"
+        NO_DRIVER_INFO = "no_driver_info", "Driver info missing"
 
     class Tier(models.TextChoices):
         WARNING = "warning", "Warning"
