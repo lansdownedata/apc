@@ -18,6 +18,7 @@ from django.core.exceptions import ValidationError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.debug import sensitive_post_parameters
@@ -26,7 +27,7 @@ from django.views.decorators.http import require_POST
 from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
-from . import services
+from . import selectors, services
 from .auth import customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
@@ -254,5 +255,11 @@ def password_reset(request: HttpRequest) -> HttpResponse:
 
 @customer_required
 def home(request: HttpRequest) -> HttpResponse:
-    """A stand-in until the Home page is built: the signed-in shell, empty."""
-    return _page(request, "customers/base.html")
+    """Next trip, what is waiting on the customer, what is coming up. The history banner
+    shows once: the first time it has something to say, it is stamped as seen."""
+    account = request.customer
+    context = selectors.home(account)
+    if context["history_banner"] is not None:
+        account.history_banner_seen_at = timezone.now()
+        account.save(update_fields=["history_banner_seen_at"])
+    return _page(request, "customers/home.html", context)

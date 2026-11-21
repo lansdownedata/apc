@@ -1,0 +1,24 @@
+{% load humanize %}
+{% comment %}
+  One trip on Home (mockup 1): when, the route with a line under it, then its status, or for
+  a "Waiting on you" row (`actionable`) the amount and the button. `row` is a `trip_row` dict
+  plus `note`; a waiting row adds `amount`, `action_url` and `action_label`. An upcoming row
+  links to the trip once `customers:trip` exists.
+{% endcomment %}
+{% url 'customers:trip' row.pk as trip_url %}
+<li class="border-t border-line first:border-t-0">
+  {% if trip_url and not actionable %}<a href="{{ trip_url }}" class="group -mx-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-lg px-2 py-3.5 transition-colors hover:bg-surface2 focus-gold sm:grid-cols-[11rem_minmax(0,1fr)_auto_auto]">{% else %}<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 py-3.5 sm:grid-cols-[11rem_minmax(0,1fr)_auto_auto]">{% endif %}
+    <p class="col-span-2 text-[13px] font-semibold text-ink num sm:col-span-1 sm:text-[13.5px]">{{ row.date }} · {{ row.time }} {{ row.zone }}</p>
+    <div class="min-w-0">
+      <p class="text-[14px] font-semibold text-ink [overflow-wrap:anywhere]">{{ row.route }}</p>
+      {% if row.note %}<p class="mt-0.5 text-[12.5px] text-muted">{{ row.note }}</p>{% endif %}
+    </div>
+    {% if actionable %}
+    {% if row.amount %}<p class="text-right text-[14px] font-semibold text-ink num">${{ row.amount|floatformat:2|intcomma }}</p>{% else %}<span></span>{% endif %}
+    <a href="{{ row.action_url }}" class="btn-gold col-span-2 mt-2 inline-flex h-9 items-center justify-center rounded-lg px-3.5 text-[12.5px] font-semibold focus-gold sm:col-span-1 sm:mt-0 sm:h-8">{{ row.action_label }}</a>
+    {% else %}
+    {% include "customers/_status.html" %}
+    <span class="hidden sm:block" aria-hidden="true">{% if trip_url %}{% icon "chevron-right" class="h-4 w-4 text-muted transition-colors group-hover:text-ink" %}{% endif %}</span>
+    {% endif %}
+  {% if trip_url and not actionable %}</a>{% else %}</div>{% endif %}
+</li>

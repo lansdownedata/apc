@@ -1,0 +1,82 @@
+{% extends "customers/base.html" %}
+{% comment %}
+  Home (mockup 1): the one-time history banner, the next confirmed trip, "Waiting on you"
+  only when something is, then Upcoming. No spend figure; the history link stands in for it.
+  Links to pages a later task builds (Trips, trip detail, Request a trip) appear once their
+  route exists: the url tag's `as` form is blank for a missing route.
+{% endcomment %}
+{% block title %}Home{% endblock %}
+{% block content %}
+{% url 'customers:trips' as trips_url %}{% url 'customers:request_trip' as request_url %}
+<div class="mx-auto w-full max-w-5xl space-y-5 px-4 pb-16 pt-6 sm:px-6 sm:pt-10">
+
+  {% if history_banner %}
+  <div role="status" class="flex flex-col gap-2 rounded-2xl bg-onyx px-5 py-4 text-[13.5px] leading-relaxed text-white sm:flex-row sm:items-center sm:gap-4">
+    <p>We found your history with All Pro Charter and added <b class="font-semibold text-gold">{{ history_banner }} past trip{{ history_banner|pluralize }}</b> to your account.</p>
+    {% if trips_url %}<a href="{{ trips_url }}" class="shrink-0 rounded font-semibold text-gold focus-gold hover:underline sm:ml-auto">View trips</a>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if next_trip %}
+  {% url 'customers:trip' next_trip.pk as next_url %}
+  <section class="card p-5 sm:p-6" aria-labelledby="next-trip">
+    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+      <div class="min-w-0">
+        <p id="next-trip" class="text-[12.5px] font-semibold text-muted">Your next trip</p>
+        <h1 class="mt-1.5 font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
+          {{ next_trip.long_date }} at <span class="whitespace-nowrap">{{ next_trip.time }} <span class="font-sans text-[15px] font-medium text-muted sm:text-[16px]">{{ next_trip.zone }}</span></span>
+        </h1>
+        <p class="mt-2.5 text-[15px] font-semibold text-ink [overflow-wrap:anywhere]">{{ next_trip.route }}</p>
+        <p class="mt-1 text-[13.5px] leading-relaxed text-muted">{{ next_trip.summary }}</p>
+      </div>
+      <div class="flex shrink-0 items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
+        {% include "customers/_status.html" with row=next_trip %}
+        {% if next_trip.confirmation %}<span class="text-[12.5px] text-muted num">{{ next_trip.confirmation }}</span>{% endif %}
+      </div>
+    </div>
+    {% if next_url %}
+    <div class="mt-5 flex flex-wrap gap-2">
+      <a href="{{ next_url }}" class="inline-flex h-9 items-center rounded-lg bg-onyx px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 focus-gold">View trip</a>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if waiting %}
+  <section class="card p-5 sm:p-6" aria-labelledby="waiting">
+    <h2 id="waiting" class="text-[15px] font-semibold text-ink">Waiting on you</h2>
+    <ul class="mt-2">
+      {% for row in waiting %}{% include "customers/_trip_line.html" with actionable=True %}{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if has_trips %}
+  <section class="card p-5 sm:p-6" aria-labelledby="upcoming">
+    <div class="flex items-baseline justify-between gap-4">
+      <h2 id="upcoming" class="text-[15px] font-semibold text-ink">Upcoming</h2>
+      {% if trips_url %}<a href="{{ trips_url }}" class="rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">All trips</a>{% endif %}
+    </div>
+    {% if upcoming %}
+    <ul class="mt-2">
+      {% for row in upcoming %}{% include "customers/_trip_line.html" with actionable=False %}{% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-3 text-[13.5px] text-muted">No trips coming up.</p>
+    {% endif %}
+  </section>
+  {% if trips_url %}<p class="text-center text-[12.5px]"><a href="{{ trips_url }}" class="rounded font-semibold text-goldd focus-gold hover:underline">Trip history and receipts</a></p>{% endif %}
+  {% else %}
+  <section class="card px-6 py-12 text-center">
+    {% icon "calendar" class="mx-auto h-7 w-7 text-muted/60" %}
+    <h1 class="mt-3 font-display text-[20px] font-semibold text-ink">No trips yet</h1>
+    <p class="mx-auto mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-muted">Request your first trip and we'll send you a quote.</p>
+    {% if request_url %}
+    <a href="{{ request_url }}" class="btn-gold mt-5 inline-flex h-9 items-center rounded-lg px-4 text-[13px] font-semibold focus-gold">Request a trip</a>
+    {% else %}
+    <a href="tel:{{ dispatch.tel }}" class="btn-gold mt-5 inline-flex h-9 items-center rounded-lg px-4 text-[13px] font-semibold focus-gold">Call <span class="num">{{ dispatch.display }}</span></a>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

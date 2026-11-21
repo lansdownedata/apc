@@ -9,21 +9,29 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
-from django.db.models import Exists, OuterRef, Prefetch, Q, QuerySet, Sum
+from django.conf import settings
+from django.db.models import Exists, Max, OuterRef, Prefetch, Q, QuerySet, Sum
 from django.db.models.functions import Lower, Trim
+from django.db.models.query import prefetch_related_objects
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
+from django.utils import timezone
 
 from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
+from apps.leads.services import make_deposit_token
+from apps.leads.views import _pay_state
 from apps.payments import trip_money
-from apps.payments.models import Charge
+from apps.payments.models import Charge, PaymentPlan
 from apps.payments.services import TRIP_MONEY_KINDS
 from apps.planners.selectors import DISPATCHED_STATUSES
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.public.wedding import format_clock
-from apps.reservations.models import Passenger, Reservation, Stop
+from apps.reservations.models import Flight, FlightDirection, Passenger, Reservation, Stop
 
 from .models import CustomerAccount
 
@@ -127,8 +135,12 @@ def label_key(trip: Reservation) -> str:
     return "confirmed"
 
 
+def _bucket_for(key: str) -> str:
+    return _BUCKET_OF.get(key, "upcoming")
+
+
 def bucket(trip: Reservation) -> str:
-    return _BUCKET_OF.get(label_key(trip), "upcoming")
+    return _bucket_for(label_key(trip))
 
 
 def _priced(trip: Reservation) -> bool:
@@ -262,4 +274,241 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         # The customer's own reference arrives with `Reservation.customer_reference`.
         "reference": "",
         "has_receipt": False,
+    }
+
+
+# --- Home ----------------------------------------------------------------------------------
+
+# "Your next trip" is one we have confirmed: never a request, a quote or a held deposit.
+NEXT_TRIP_KEYS = frozenset({"confirmed", "driver_assigned", "in_progress"})
+_NEVER = datetime.max.replace(tzinfo=UTC)
+_FLIGHT_EXPECTED = frozenset({Flight.Status.SCHEDULED, Flight.Status.ACTIVE})
+
+
+def _soonest(trip: Reservation) -> tuple:
+    """Sort key: by the pickup instant (each trip in its own zone), undated last."""
+    at = trip.pickup_at
+    return (at is None, at or _NEVER, trip.pk)
+
+
+def _on_upcoming(key: str) -> bool:
+    """Home's Upcoming list: the upcoming bucket and unpriced requests (spec §5's "Upcoming,
+    Requests"), but not a quote ready to pay, which sits in "Waiting on you"."""
+    return key == "request_received" or (_bucket_for(key) == "upcoming" and key != "quote_ready")
+
+
+def _is_next(trip: Reservation, key: str) -> bool:
+    """Confirmed or later, and not a day already gone in the trip's own zone (a trip left
+    open after its day is not "next"); one under way always is."""
+    if key == "in_progress":
+        return True
+    if key not in NEXT_TRIP_KEYS:
+        return False
+    zone = ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
+    return trip.pickup_date is None or trip.pickup_date >= timezone.localdate(timezone=zone)
+
+
+def _stops(trip: Reservation) -> list[Stop]:
+    return sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
+
+
+def _long_date(trip: Reservation) -> str:
+    """ "Thursday, December 3" """
+    day = trip.pickup_date
+    return f"{day:%A, %B} {day.day}" if day else "Date to be confirmed"
+
+
+def _short_day(at: datetime, trip: Reservation) -> str:
+    """`at` as a date in the trip's own zone, e.g. "Nov 19"."""
+    day = timezone.localtime(at, ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)).date()
+    return f"{day:%b} {day.day}"
+
+
+def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
+    """{lead id: (Charge.Kind, amount)} for booked orders whose money we will not collect
+    ourselves: an unpaid deposit, an open trip pay link, or a balance the cron will not take
+    (it failed, or it is due with no saved card: `payments.tasks.charge_due_balances`). A
+    balance scheduled on a saved card is not waiting on the customer.
+
+    The kind and amount are the pay page's own answer (`leads.views._pay_state`). That reads
+    the ledger, several queries an order, so only an order whose plan flags or an open trip
+    link say it may owe is asked; every other order costs nothing."""
+    booked = [
+        lead
+        for lead in leads
+        if lead.status == Lead.Status.BOOKED
+        and not lead.on_account
+        and getattr(lead, "payment", None) is not None
+    ]
+    if not booked:
+        return {}
+    linked = set(
+        Charge.objects.filter(
+            plan__lead__in=booked, kind=Charge.Kind.TRIP, status=Charge.Status.PENDING
+        )
+        .exclude(stripe_client_secret="")
+        .exclude(reservation=None)
+        .values_list("plan__lead_id", flat=True)
+    )
+    owing = {}
+    for lead in booked:
+        plan = lead.payment
+        uncollected = plan.balance_status == PaymentPlan.BalanceStatus.FAILED or (
+            plan.balance_due_now
+            and not plan.stripe_payment_method_id
+            and plan.balance_status != PaymentPlan.BalanceStatus.PAID
+        )
+        deposit_open = plan.deposit_status != PaymentPlan.DepositStatus.PAID
+        if not (deposit_open or uncollected or lead.pk in linked):
+            continue
+        kind, amount = _pay_state(lead)
+        if kind in (Charge.Kind.DEPOSIT, Charge.Kind.TRIP) or (
+            kind == Charge.Kind.BALANCE and uncollected
+        ):
+            owing[lead.pk] = (kind, amount)
+    return owing
+
+
+def _deposits_held(trips: list[Reservation]) -> dict[int, datetime]:
+    """{lead id: when its deposit was authorized}, for the trips reading Confirming."""
+    lead_ids = {t.lead_id for t in trips}
+    if not lead_ids:
+        return {}
+    return dict(
+        Charge.objects.filter(
+            plan__lead_id__in=lead_ids, kind=Charge.Kind.DEPOSIT, authorized_at__isnull=False
+        )
+        .values("plan__lead_id")
+        .annotate(at=Max("authorized_at"))
+        .values_list("plan__lead_id", "at")
+        .order_by()
+    )
+
+
+def _meeting(trip: Reservation, first: Stop) -> str:
+    """ "Meeting flight AA 2114, arriving 8:52 AM." for a pickup at an arriving flight; the
+    time only while the cached flight is still expected. One trip, so one query."""
+    stop = Stop.objects.select_related("airport", "airline", "flight").get(pk=first.pk)
+    text = f"Meeting flight {stop.flight_label if stop.airline_id else stop.flight_number}"
+    flight = stop.flight
+    at = (
+        flight
+        and flight.status in _FLIGHT_EXPECTED
+        and (flight.estimated_at or flight.scheduled_at)
+    )
+    if at:
+        zone = ZoneInfo(stop.airport.timezone or trip.pickup_timezone or settings.TIME_ZONE)
+        text += f", arriving {format_clock(timezone.localtime(at, zone).time())}"
+    return f"{text}."
+
+
+def _summary(trip: Reservation) -> str:
+    """ "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM." """
+    people = f"{trip.passengers} passenger{'' if trip.passengers == 1 else 's'}"
+    parts = [f"{trip.vehicle.name}, {people}." if trip.vehicle_id else f"{people.capitalize()}."]
+    stops = _stops(trip)
+    first = stops[0] if stops else None
+    if (
+        first is not None
+        and first.airport_id
+        and first.flight_number
+        and first.flight_direction != FlightDirection.DEPARTURE
+    ):
+        parts.append(_meeting(trip, first))
+    return " ".join(parts)
+
+
+def _waiting_row(
+    row: dict, lead: Lead, trips: list[Reservation], owed: tuple[str, Decimal] | None
+) -> dict:
+    """A "Waiting on you" row: the order's soonest trip, what it asks for and where to go.
+    Both pages are the existing token-keyed ones; a quote is reviewed before it is paid,
+    money owed on a booked order goes straight to the pay page."""
+    token = make_deposit_token(lead)
+    if owed is not None:
+        return {
+            **row,
+            "lead": lead.pk,
+            "amount": owed[1],
+            "note": "Payment due",
+            "action_url": reverse("quote_pay", args=[token]),
+            "action_label": "Pay now",
+        }
+    stops = _stops(trips[0])
+    note = ""
+    if len(trips) > 1:
+        note = f"{len(trips)} trips on this quote"
+    elif trips[0].trip_type == Reservation.TripType.HOURLY and stops:
+        note = f"Starts at {_place(stops[0])}"
+    return {
+        **row,
+        "lead": lead.pk,
+        "amount": lead.quote_total,
+        "note": note,
+        "action_url": reverse("quote_page", args=[token]),
+        "action_label": "Review and pay",
+    }
+
+
+def _note(trip: Reservation, key: str, held: dict[int, datetime]) -> str:
+    """The line under an Upcoming row, while a trip is still on its way to Confirmed."""
+    if key == "request_received":
+        return f"Requested {_short_day(trip.lead.created_at, trip)}. We're preparing your quote."
+    if key == "confirming":
+        at = held.get(trip.lead_id)
+        received = f"Deposit received {_short_day(at, trip)}. " if at else ""
+        return f"{received}We're confirming your vehicle."
+    return ""
+
+
+def home(account: CustomerAccount) -> dict:
+    """Home (spec §6.1). `next_trip`: the soonest confirmed-or-later trip with its long date
+    and `summary` line, or None. `waiting`: one row per order with a quote ready (Review and
+    pay) or money owed (Pay now), soonest first. `upcoming`: every upcoming trip but quotes
+    (they wait above), requests included, soonest first. `history_banner`: the past-trip
+    count, only while the account has never been shown it (the view then stamps
+    `history_banner_seen_at`). `has_trips`: whether the account has any trip at all."""
+    trips = sorted(visible_trips(account), key=_soonest)
+    keys = {t.pk: label_key(t) for t in trips}
+    by_lead: dict[int, list[Reservation]] = defaultdict(list)
+    for trip in trips:
+        by_lead[trip.lead_id].append(trip)
+    leads = [group[0].lead for group in by_lead.values()]
+    quotes = {
+        lead.pk: group
+        for lead in leads
+        if (group := [t for t in by_lead[lead.pk] if keys[t.pk] == "quote_ready"])
+    }
+    asked = [lead for lead in leads if lead.pk in quotes or lead.status == Lead.Status.BOOKED]
+    # `quote_total`, `balance_due_now` and the pay page all read the order's trips.
+    prefetch_related_objects(asked, "reservations")
+    owing = _owing(asked)
+
+    waiting: list[tuple[Lead, list[Reservation]]] = []
+    for lead in asked:
+        if lead.pk in owing:
+            group = by_lead[lead.pk]
+            live = [t for t in group if _bucket_for(keys[t.pk]) != "past"]
+            waiting.append((lead, live or group))
+        elif lead.pk in quotes:
+            waiting.append((lead, quotes[lead.pk]))
+    waiting.sort(key=lambda item: _soonest(item[1][0]))
+    upcoming = [t for t in trips if _on_upcoming(keys[t.pk])]
+
+    shown = {t.pk: t for t in upcoming} | {group[0].pk: group[0] for _, group in waiting}
+    rows = dict(zip(shown, trip_rows(shown.values()), strict=True))
+    held = _deposits_held([t for t in upcoming if keys[t.pk] == "confirming"])
+    nxt = next((t for t in upcoming if _is_next(t, keys[t.pk])), None)
+    past = sum(1 for key in keys.values() if _bucket_for(key) == "past")
+    return {
+        "next_trip": None
+        if nxt is None
+        else {**rows[nxt.pk], "long_date": _long_date(nxt), "summary": _summary(nxt)},
+        "waiting": [
+            _waiting_row(rows[group[0].pk], lead, group, owing.get(lead.pk))
+            for lead, group in waiting
+        ],
+        "upcoming": [{**rows[t.pk], "note": _note(t, keys[t.pk], held)} for t in upcoming],
+        "history_banner": past if past and account.history_banner_seen_at is None else None,
+        "has_trips": bool(trips),
     }
