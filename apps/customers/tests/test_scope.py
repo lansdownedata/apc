@@ -2,18 +2,22 @@
 
 from datetime import date, time, timedelta
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.http import Http404
 from django.utils import timezone
 
+from apps.accounts.factories import UserFactory
+from apps.accounts.models import User
 from apps.addresses.factories import AirportFactory
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.customers import selectors
 from apps.customers.factories import CustomerAccountFactory
+from apps.leads import services as lead_services
 from apps.leads.factories import LeadFactory, ServiceTypeFactory
 from apps.leads.models import Lead
+from apps.payments import services as payment_services
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
 from apps.payments.models import Charge
 from apps.payments.trip_money import money_for
@@ -25,10 +29,16 @@ from apps.reservations.factories import (
     StopFactory,
 )
 from apps.reservations.models import Reservation
+from apps.reservations.services import set_trip_status
 
 pytestmark = pytest.mark.django_db
 
 S = Reservation.TripStatus
+REFUND = "apps.payments.services.stripe.Refund.create"
+
+
+def _admin() -> User:
+    return UserFactory(role=User.Role.OWNER_ADMIN)
 
 
 def _visible(account) -> set[int]:
@@ -153,12 +163,95 @@ def test_labels_are_the_spec_table():
         (Lead.Status.BOOKED, S.CUSTOMER_IN_CAR, "in_progress"),
         (Lead.Status.BOOKED, S.CANCELLED, "cancelled"),
         (Lead.Status.QUOTED, S.CANCELLED, "cancelled"),
-        (Lead.Status.LOST, S.CANCELLED, "closed"),
     ],
 )
 def test_label_key(lead_status, trip_status, expected):
     trip = ReservationFactory(lead__status=lead_status, trip_status=trip_status)
     assert selectors.label_key(trip) == expected
+
+
+@pytest.mark.parametrize(
+    "booked_total,trip_status,expected",
+    [
+        # Never booked: no trip total was ever frozen. Closed, whatever the trip says.
+        (None, S.PENDING, "closed"),
+        (None, S.CANCELLED, "closed"),
+        # Lost after booking (the order was cancelled): the trip's own end shows.
+        (Decimal("185.00"), S.CANCELLED, "cancelled"),
+        (Decimal("185.00"), S.LATE_CANCEL, "cancelled"),
+        (Decimal("185.00"), S.NO_SHOW, "no_show"),
+        (Decimal("185.00"), S.DONE, "completed"),
+        (Decimal("0.00"), S.CANCELLED, "cancelled"),  # added after booking
+    ],
+)
+def test_lost_order_label(booked_total, trip_status, expected):
+    trip = ReservationFactory(
+        lead__status=Lead.Status.LOST, booked_total=booked_total, trip_status=trip_status
+    )
+    assert selectors.label_key(trip) == expected
+
+
+def _booked(account, n: int = 2) -> Lead:
+    """An order booked through the real staff path, with `n` trips ten days out."""
+    when = timezone.now() + timedelta(days=10)
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.QUOTED)
+    ReservationFactory.create_batch(n, lead=lead, pickup_date=when.date(), pickup_time=time(9, 0))
+    lead_services.book_lead(lead)
+    return lead
+
+
+def _labels(account) -> list[tuple[str, str]]:
+    trips = list(selectors.visible_trips(account).order_by("pk"))
+    rows = selectors.trip_rows(trips)
+    return [(row["label"], selectors.bucket(trip)) for row, trip in zip(rows, trips, strict=True)]
+
+
+def test_a_booked_order_cancelled_outright_reads_cancelled_in_past(account):
+    lead = _booked(account)
+    with patch(REFUND, side_effect=lambda **kw: MagicMock(id="re_1")):
+        payment_services.cancel_trips(
+            lead, list(lead.reservations.all()), user=_admin(), reason="Customer cancelled"
+        )
+    lead.refresh_from_db()
+
+    assert lead.status == Lead.Status.LOST
+    assert _labels(account) == [("Cancelled", "past"), ("Cancelled", "past")]
+
+
+def test_a_no_show_on_a_cancelled_order_stays_a_no_show(account):
+    lead = _booked(account)
+    no_show, rest = lead.reservations.order_by("pk")
+    set_trip_status(no_show, S.NO_SHOW)
+    with patch(REFUND, side_effect=lambda **kw: MagicMock(id="re_1")):
+        payment_services.cancel_trips(lead, [rest], user=_admin(), reason="Customer cancelled")
+    lead.refresh_from_db()
+
+    assert lead.status == Lead.Status.LOST  # the last live trip went, so the order did
+    assert _labels(account) == [("No-show", "past"), ("Cancelled", "past")]
+
+
+def test_a_quote_marked_lost_by_staff_is_closed(account):
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.QUOTED)
+    ReservationFactory(lead=lead)
+    lead_services.mark_lost(lead, "")
+
+    assert _labels(account) == [("Closed", "requests")]
+
+
+def test_a_released_deposit_was_never_booked_so_it_is_closed(account):
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.ENGAGED)
+    ReservationFactory(lead=lead)
+    ChargeFactory(
+        plan=PaymentPlanFactory(lead=lead),
+        status=Charge.Status.AUTHORIZED,
+        stripe_payment_intent_id="pi_held",
+    )
+    with patch("apps.payments.services.stripe.PaymentIntent.cancel"):
+        payment_services.cancel_order(lead)
+    lead.refresh_from_db()
+
+    assert lead.status == Lead.Status.LOST
+    assert _labels(account) == [("Closed", "requests")]
 
 
 def test_expired_quote_is_quote_expired():
@@ -310,9 +403,72 @@ def test_rows_cost_a_fixed_number_of_queries(account, make_trip, django_assert_n
 
     # trips (with lead, payment, vehicle), their stops (with airports), their passengers
     with django_assert_num_queries(3):
-        rows = [selectors.trip_row(t) for t in selectors.visible_trips(account)]
+        rows = selectors.trip_rows(selectors.visible_trips(account))
     assert len(rows) == 10
     assert all(r["route"] == "Bethesda, MD to Washington (DCA)" for r in rows)
+
+
+def _order_with_money(account, deposit: str) -> tuple[Lead, Charge]:
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.BOOKED)
+    plan = PaymentPlanFactory(lead=lead)
+    deposit_row = ChargeFactory(plan=plan, amount=Decimal(deposit), status=Charge.Status.SUCCEEDED)
+    return lead, deposit_row
+
+
+def _cancelled(lead, status=S.LATE_CANCEL, days: int = 1) -> Reservation:
+    return ReservationFactory(
+        lead=lead,
+        rate=185,
+        booked_total=Decimal("185.00"),
+        trip_status=status,
+        pickup_date=date(2026, 12, 1) + timedelta(days=days),
+    )
+
+
+def test_cancelled_rows_cost_a_fixed_number_of_queries_per_order(
+    account, make_trip, django_assert_num_queries
+):
+    for _ in range(5):
+        make_trip(account, trip_status=S.DONE, lead__status=Lead.Status.BOOKED)
+    first, _ = _order_with_money(account, "300.00")
+    a = [_cancelled(first, days=1), _cancelled(first, days=2), _cancelled(first, S.CANCELLED)]
+    ReservationFactory(lead=first, booked_total=Decimal("185.00"), trip_status=S.UNASSIGNED)
+    second, deposit = _order_with_money(account, "300.00")
+    charged, refunded = _cancelled(second, days=1), _cancelled(second, days=2)
+    ChargeFactory(
+        plan=deposit.plan,
+        kind=Charge.Kind.TRIP,
+        reservation=charged,
+        amount=Decimal("20.00"),
+        status=Charge.Status.SUCCEEDED,
+    )
+    ChargeFactory(
+        plan=deposit.plan,
+        kind=Charge.Kind.REFUND,
+        reservation=refunded,
+        amount=Decimal("10.00"),
+        status=Charge.Status.SUCCEEDED,
+    )
+
+    # 3 for the rows, 1 for every cancelled trip's own charges, and per order that has a
+    # cancelled trip one allocation: its two prepaid sums, frozen shares, sibling trips.
+    with django_assert_num_queries(3 + 1 + 2 * 4):
+        rows = selectors.trip_rows(selectors.visible_trips(account))
+    totals = {r["pk"]: r["total"] for r in rows}
+    for trip in [*a, charged, refunded]:
+        assert totals[trip.pk] == money_for(trip).allocated
+    assert [totals[t.pk] for t in (*a, charged, refunded)] == [
+        Decimal("185.00"),
+        Decimal("115.00"),
+        Decimal("0.00"),
+        Decimal("205.00"),  # 185 prepaid + its own 20 charge
+        Decimal("105.00"),  # the remaining 115 prepaid less its own 10 refund
+    ]
+
+    a += [_cancelled(first, days=5), _cancelled(first, S.CANCELLED, days=6)]
+    with django_assert_num_queries(3 + 1 + 2 * 4):
+        rows = selectors.trip_rows(selectors.visible_trips(account))
+    assert len(rows) == 5 + 4 + 2 + 2
 
 
 # --- totals --------------------------------------------------------------------------------

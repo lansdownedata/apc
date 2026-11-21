@@ -1,20 +1,25 @@
 """What a customer's pages read. `visible_trips` is the one scope every customer page goes
 through, so a trip outside it does not exist for the customer (404). Templates get plain
-dicts from `trip_row`: a cost, an affiliate or an internal note cannot leak through an
-attribute a template reaches for later, because the fields simply aren't there."""
+dicts from `trip_rows` (a list) or `trip_row` (one trip): a cost, an affiliate or an
+internal note cannot leak through an attribute a template reaches for later, because the
+fields simply aren't there."""
 
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from collections.abc import Iterable
 from decimal import Decimal
 
-from django.db.models import Exists, OuterRef, Prefetch, Q, QuerySet
+from django.db.models import Exists, OuterRef, Prefetch, Q, QuerySet, Sum
 from django.db.models.functions import Lower, Trim
 from django.shortcuts import get_object_or_404
 
 from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
 from apps.payments import trip_money
+from apps.payments.models import Charge
+from apps.payments.services import TRIP_MONEY_KINDS
 from apps.planners.selectors import DISPATCHED_STATUSES
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.public.wedding import format_clock
@@ -94,12 +99,19 @@ def trip_or_404(account: CustomerAccount, pk: int) -> Reservation:
 
 
 def label_key(trip: Reservation) -> str:
-    """Which `LABELS` entry the customer sees (spec §5). A lost order is closed whatever its
-    trips say; otherwise a cancelled trip is cancelled at any stage. Before booking the
-    order's stage speaks; once booked, the trip's own status does."""
+    """Which `LABELS` entry the customer sees (spec §5). A lost order that never booked is
+    closed whatever its trips say; otherwise a cancelled trip is cancelled at any stage.
+    Before booking the order's stage speaks; once booked, the trip's own status does."""
     lead, status = trip.lead, trip.trip_status
     if lead.status == Lead.Status.LOST:
-        return "closed"
+        # A booked order is lost only by cancelling it (`payments.services._cancel`).
+        # Booking freezes `booked_total` on every trip (`leads.services.book_lead`) and a
+        # trip added after booking gets 0, so a blank one means the order never booked.
+        if trip.booked_total is None:
+            return "closed"
+        if status == _S.DONE:
+            return "completed"
+        return "no_show" if status == _S.NO_SHOW else "cancelled"
     if status in _CANCELLED:
         return "cancelled"
     if lead.status == Lead.Status.QUOTED:
@@ -119,14 +131,58 @@ def bucket(trip: Reservation) -> str:
     return _BUCKET_OF.get(label_key(trip), "upcoming")
 
 
+def _priced(trip: Reservation) -> bool:
+    return Decimal(trip.rate or 0) > 0
+
+
+def _kept(trips: list[Reservation]) -> dict[int, Decimal]:
+    """What the customer paid and we kept, per priced cancelled trip: the sum
+    `trip_money.money_for(trip).allocated` makes, read with one `allocation` per order and
+    one charge query for all the trips, never a set of queries per trip."""
+    cancelled = [t for t in trips if _priced(t) and t.trip_status in _CANCELLED]
+    if not cancelled:
+        return {}
+    shares: dict[int, Decimal] = {}
+    for lead in {t.lead_id: t.lead for t in cancelled}.values():
+        shares.update(trip_money.allocation(lead))
+    charged: defaultdict[int, Decimal] = defaultdict(Decimal)
+    refunded: defaultdict[int, Decimal] = defaultdict(Decimal)
+    own = (
+        Charge.objects.filter(
+            reservation_id__in=[t.pk for t in cancelled],
+            status=Charge.Status.SUCCEEDED,
+            kind__in=(*TRIP_MONEY_KINDS, Charge.Kind.REFUND),
+        )
+        .values("reservation_id", "kind")
+        .annotate(total=Sum("amount"))
+        .order_by()
+    )
+    for row in own:
+        sums = refunded if row["kind"] == Charge.Kind.REFUND else charged
+        sums[row["reservation_id"]] += Decimal(row["total"])
+    return {
+        t.pk: trip_money.TripMoney(
+            line_total=t.line_total,
+            prepaid=shares.get(t.pk, trip_money.ZERO),
+            charged=charged[t.pk],
+            refunded=refunded[t.pk],
+        ).allocated
+        for t in cancelled
+    }
+
+
+def _total(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
+    if not _priced(trip):
+        return None
+    if trip.trip_status in _CANCELLED:
+        return kept[trip.pk]
+    return trip.line_total
+
+
 def display_total(trip: Reservation) -> Decimal | None:
     """None while unpriced; for a cancelled trip what the customer paid and we kept;
     otherwise the trip's total."""
-    if Decimal(trip.rate or 0) <= 0:
-        return None
-    if trip.trip_status in _CANCELLED:
-        return trip_money.money_for(trip).allocated
-    return trip.line_total
+    return _total(trip, _kept([trip]))
 
 
 _ZIP = re.compile(r"\s+\d{5}(-\d{4})?$")
@@ -170,10 +226,24 @@ def _passenger(trip: Reservation) -> str:
     return (lead or named[0]).name.strip() if named else ""
 
 
+def trip_rows(trips: Iterable[Reservation]) -> list[dict]:
+    """The rows for a list of trips. Lists call this, not `trip_row` in a loop: cancelled
+    trips' kept amounts are read for the whole list at once. Over `visible_trips` that is
+    3 queries, plus 1 when any trip is cancelled and 2 to 4 per order holding one."""
+    trips = list(trips)
+    kept = _kept(trips)
+    return [_row(trip, kept) for trip in trips]
+
+
 def trip_row(trip: Reservation) -> dict:
-    """One trip as every customer list shows it. Reads stops and passengers through
-    `.all()`, so a trip from `visible_trips` costs no query (never `trip.pickup`, whose
-    `.order_by()` ignores the prefetch); any other trip falls back to a query each."""
+    """One trip's row (a detail page). Works on any trip, prefetched or not."""
+    return trip_rows([trip])[0]
+
+
+def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
+    """Reads stops and passengers through `.all()`, so a trip from `visible_trips` costs no
+    query (never `trip.pickup`, whose `.order_by()` ignores the prefetch); any other trip
+    falls back to a query each."""
     stops = sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
     day = trip.pickup_date
     text, tone = LABELS[label_key(trip)]
@@ -188,7 +258,7 @@ def trip_row(trip: Reservation) -> dict:
         "confirmation": trip.la_confirmation or trip.reference,
         "label": text,
         "tone": tone,
-        "total": display_total(trip),
+        "total": _total(trip, kept),
         # The customer's own reference arrives with `Reservation.customer_reference`.
         "reference": "",
         "has_receipt": False,
