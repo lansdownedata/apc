@@ -1,4 +1,4 @@
-"""Quote workspace layout — the header carries agent + LA state, reservations own a
+"""Quote workspace layout — the header carries the agent, reservations own a
 full-width row, and the payment plan lives inside the ledger card."""
 
 import re
@@ -8,7 +8,6 @@ import pytest
 from django.urls import reverse
 
 from apps.accounts.factories import UserFactory
-from apps.integrations.models import ZapEvent
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments import services as payment_services
@@ -59,63 +58,10 @@ def test_an_unsent_quote_explains_the_deposit_inside_the_ledger_card(page):
     assert html.index("Payments &amp; Ledger") < html.index("No deposit requested yet")
 
 
-def test_la_sync_state_is_hidden_on_a_quote(page):
-    lead = LeadFactory(status=Lead.Status.QUOTED)
-    ReservationFactory(lead=lead)
-    assert "LimoAnywhere sync" not in page(lead)
-
-
-def test_la_sync_state_shows_in_the_header_of_an_order(page):
+def test_reservation_editor_does_not_mention_limoanywhere(page):
     lead = LeadFactory(status=Lead.Status.BOOKED)
     ReservationFactory(lead=lead)
-    html = page(lead)
-    assert html.index("LimoAnywhere sync") < html.index("Add reservation")
-    assert "Not sent" in html
-
-
-# --- the chip summarises every trip's LA state in one word ---
-
-
-def _order_with_trips(n: int):
-    lead = LeadFactory(status=Lead.Status.BOOKED)
-    return lead, [ReservationFactory(lead=lead) for _ in range(n)]
-
-
-def _event(res, result):
-    ZapEvent.objects.create(
-        lead=res.lead,
-        action=ZapEvent.Action.CREATE_RESERVATION,
-        idempotency_key=f"create_reservation-res{res.pk}",
-        result=result,
-    )
-
-
-def test_la_chip_reads_sent_when_every_trip_went_through(page):
-    lead, trips = _order_with_trips(2)
-    for res in trips:
-        _event(res, ZapEvent.Result.SUCCESS)
-    assert "LA · Sent" in page(lead)
-
-
-def test_la_chip_reads_failed_when_any_trip_errored(page):
-    lead, (ok, bad) = _order_with_trips(2)
-    _event(ok, ZapEvent.Result.SUCCESS)
-    _event(bad, ZapEvent.Result.ERROR)
-    assert "LA · Failed" in page(lead)
-
-
-def test_la_chip_reads_preview_when_a_trip_was_only_previewed(page):
-    lead, (res,) = _order_with_trips(1)
-    _event(res, ZapEvent.Result.PREVIEW)
-    assert "LA · Preview" in page(lead)
-
-
-def test_la_chip_reads_not_sent_when_only_some_trips_went_through(page):
-    """One trip sent and one never attempted is not "Sent" — the dispatcher would stop
-    looking for the missing booking."""
-    lead, (sent, _) = _order_with_trips(2)
-    _event(sent, ZapEvent.Result.SUCCESS)
-    assert "LA · Not sent" in page(lead)
+    assert "LimoAnywhere" not in page(lead)
 
 
 # --- pricing block: minimum is locked, hours is the override ---

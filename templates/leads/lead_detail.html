@@ -159,7 +159,6 @@
       </div>
       <div class="flex flex-col items-end gap-2.5">
         {% include "components/status_badge.html" with status=lead.status label=lead.get_status_display %}
-        {% if lead.status == 'booked' %}{% include "leads/_la_sync_chip.html" %}{% endif %}
         <div class="text-right">
           <div class="text-[11px] text-muted">Quote total</div>
           <div class="font-display text-[28px] font-semibold text-ink leading-none num mt-0.5">${{ lead.quote_total|floatformat:2|intcomma }}</div>

@@ -125,6 +125,17 @@ def test_a_payments_user_can_work_the_payable_in_the_pane(client):
     assert "Save invoice" in body
 
 
+def test_the_pane_does_not_send_anyone_to_limoanywhere(client):
+    """LimoAnywhere is out (2026-11-20): no status feed, no second place to record payment."""
+    client.force_login(UserFactory(can_manage_payments=True))
+    _lead, trip = _order()
+
+    body = client.get(_trip_url("trip_review_trip", trip)).content.decode()
+
+    assert "Mark paid" in body
+    assert "LimoAnywhere" not in body
+
+
 def test_a_cancelled_trip_has_nothing_to_review(staff):
     lead, _trip = _order()
     cancelled = ReservationFactory(lead=lead, trip_status=Reservation.TripStatus.CANCELLED)

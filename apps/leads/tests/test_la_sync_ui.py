@@ -1,13 +1,12 @@
-"""Edits after LA push raise an alert; resend endpoint re-pushes (gated)."""
+"""Edits after an LA push raise an alert; no LimoAnywhere state shows in the UI."""
 
 import json
-from unittest.mock import patch
 
 import pytest
-from django.urls import reverse
+from django.conf import settings
+from django.urls import NoReverseMatch, reverse
 
 from apps.accounts.factories import UserFactory
-from apps.accounts.models import User
 from apps.integrations.models import ZapEvent
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
@@ -77,85 +76,34 @@ def test_deleting_unpushed_reservation_raises_no_alert(client):
     assert not Notification.objects.filter(kind=Notification.Kind.LA_CHANGED).exists()
 
 
-def test_resend_requires_payment_access(client):
-    lead = LeadFactory()
-    client.force_login(UserFactory(role=User.Role.AGENT, can_manage_payments=False))
-    resp = client.post(reverse("lead_resend_la", args=[lead.pk]))
-    assert resp.status_code == 403
-
-
-def test_resend_requires_login(client):
-    lead = LeadFactory()
-    resp = client.post(reverse("lead_resend_la", args=[lead.pk]))
-    assert resp.status_code == 302
-    assert "/login" in resp.url
-
-
-def test_resend_pushes_lead(client):
-    lead = LeadFactory()
-    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    with patch("apps.leads.views.la_sync.push_lead_bookings") as push:
-        resp = client.post(reverse("lead_resend_la", args=[lead.pk]))
-    push.assert_called_once()
-    called_lead = push.call_args[0][0]
-    assert called_lead.pk == lead.pk
-    assert resp.status_code in (200, 302)
-
-
-def test_detail_shows_preview_badge_and_payload_script(logged_in_client):
+@pytest.mark.parametrize(
+    "result", [ZapEvent.Result.SUCCESS, ZapEvent.Result.ERROR, ZapEvent.Result.PREVIEW]
+)
+def test_booked_order_shows_no_limoanywhere_state(logged_in_client, result):
+    """LimoAnywhere is out (2026-11-20): old sync rows must not surface on the order."""
     res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
     ZapEvent.objects.create(
         lead=res.lead,
         action=ZapEvent.Action.CREATE_RESERVATION,
         idempotency_key=f"create_reservation-res{res.pk}",
-        result=ZapEvent.Result.PREVIEW,
-        payload={"booking": {"search_result_id": None}},
+        result=result,
+        payload={"booking": {}},
     )
     resp = logged_in_client.get(reverse("lead_detail", args=[res.lead.pk]))
     html = resp.content.decode()
-    assert "LimoAnywhere sync" in html
-    assert "Preview" in html
-    assert f'id="la-payload-{res.pk}"' in html  # json_script for the modal
+    assert resp.status_code == 200
+    assert "LimoAnywhere" not in html
+    assert "LA · " not in html
+    assert "Resend to LA" not in html
 
 
-def test_detail_shows_sent_confirmation(logged_in_client):
-    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED), la_confirmation="ABC123")
-    ZapEvent.objects.create(
-        lead=res.lead,
-        action=ZapEvent.Action.CREATE_RESERVATION,
-        idempotency_key=f"create_reservation-res{res.pk}",
-        result=ZapEvent.Result.SUCCESS,
-    )
-    resp = logged_in_client.get(reverse("lead_detail", args=[res.lead.pk]))
-    assert "ABC123" in resp.content.decode()
+def test_resend_to_la_endpoint_is_gone():
+    with pytest.raises(NoReverseMatch):
+        reverse("lead_resend_la", args=[1])
 
 
-def test_resend_button_hidden_for_preview_when_unconfigured(client):
-    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
-    ZapEvent.objects.create(
-        lead=res.lead,
-        action=ZapEvent.Action.CREATE_RESERVATION,
-        idempotency_key=f"create_reservation-res{res.pk}",
-        result=ZapEvent.Result.PREVIEW,
-    )
-    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    resp = client.get(reverse("lead_detail", args=[res.lead.pk]))
-    assert resp.context["can_resend_la"] is False
-    assert "Resend to LA" not in resp.content.decode()
-
-
-def test_resend_button_shown_for_preview_once_configured(client, settings):
-    settings.LA_CLIENT_ID = "cid"
-    settings.LA_CLIENT_SECRET = "cs"
-    settings.LA_COMPANY_ALIAS = "allpro"
-    res = ReservationFactory(lead=LeadFactory(status=Lead.Status.BOOKED))
-    ZapEvent.objects.create(
-        lead=res.lead,
-        action=ZapEvent.Action.CREATE_RESERVATION,
-        idempotency_key=f"create_reservation-res{res.pk}",
-        result=ZapEvent.Result.PREVIEW,
-    )
-    client.force_login(UserFactory(role=User.Role.OWNER_ADMIN))
-    resp = client.get(reverse("lead_detail", args=[res.lead.pk]))
-    assert resp.context["can_resend_la"] is True
-    assert "Resend to LA" in resp.content.decode()
+def test_app_js_never_mentions_limoanywhere():
+    """Modals built in app.js (payload preview, trip status confirm) are staff-visible copy."""
+    js = (settings.BASE_DIR / "static" / "js" / "app.js").read_text()
+    assert "LimoAnywhere" not in js
+    assert "showLaPayload" not in js

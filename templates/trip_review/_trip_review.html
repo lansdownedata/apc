@@ -89,7 +89,7 @@
             </div>
           </div>
         </div>
-        <p class="text-[11.5px] text-muted mt-2">Type what the affiliate or chauffeur reported. LimoAnywhere statuses fill these in when they arrive. A drop-off past midnight takes the next day's date.</p>
+        <p class="text-[11.5px] text-muted mt-2">Type what the affiliate or chauffeur reported. A drop-off past midnight takes the next day's date.</p>
       </div>
       <div>
         <p class="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">Time on the job</p>
@@ -221,7 +221,7 @@
                 <input type="text" class="field" x-model="paidReference" placeholder="Check # or transfer ID"></label>
               <div class="col-span-2 flex justify-end"><button type="button" class="btn-gold text-[12.5px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50" :disabled="saving" @click="markPaid()">Mark paid</button></div>
             </div>
-            <p class="text-[11.5px] text-muted mt-2">We record it here; the money goes out the usual way. Record the payment in LimoAnywhere too (Payables → Pay Affiliates).</p>
+            <p class="text-[11.5px] text-muted mt-2">We record it here; the money goes out the usual way.</p>
             {% else %}
             <p class="text-[11.5px] text-muted mt-2">Approving and marking paid need payments access.</p>
             {% endif %}

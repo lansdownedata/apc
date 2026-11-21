@@ -1472,7 +1472,7 @@ function processingPane(opts) {
       }
       Alpine.store("modal").confirm({
         title: `Mark this trip ${label}?`,
-        message: "No final status arrived from LimoAnywhere. This records what happened.",
+        message: "No final status was recorded for this trip. This records what happened.",
         variant: "gold",
         confirmText: `Mark ${label}`,
         onConfirm: () => this._post(opts.urls.status, { status: value }, `Marked ${label}`).catch(() => {}),
@@ -2670,23 +2670,6 @@ function messageEditor(state = {}) {
   };
 }
 window.messageEditor = messageEditor;
-
-/* -------------------------------------------------- LA sync payload preview */
-// LA sync: show a recorded payload (json_script element) in the shared modal.
-window.showLaPayload = function (elementId, title) {
-  const el = document.getElementById(elementId);
-  if (!el) return;
-  const pre = document.createElement("pre");
-  pre.className = "text-xs leading-relaxed overflow-auto max-h-96 p-3 rounded bg-slate-900/90 text-slate-100";
-  pre.textContent = JSON.stringify(JSON.parse(el.textContent), null, 2);
-  Alpine.store("modal").show({
-    title,
-    html: `<p class="text-xs text-muted mb-2">Preview — nothing sent to LimoAnywhere.</p>${pre.outerHTML}`,
-    variant: "info",
-    confirmText: "Close",
-    showCancel: false,
-  });
-};
 
 /* -------------------------------------------------- quoteWorkspace */
 /* -------------------------------------------------- quoteWorkspace

@@ -160,7 +160,7 @@
                 @click="$store.modal.confirm({
                   variant: 'danger',
                   title: 'Reverse this route',
-                  message: 'Flips the pickup and drop-off{% if line.is_group %} on all {{ line.size }} trips{% endif %}, reverses the stops in between and clears their times.{% if res.la_reservation_id %} This trip is already in LimoAnywhere — update it there afterwards.{% endif %} This cannot be undone.',
+                  message: 'Flips the pickup and drop-off{% if line.is_group %} on all {{ line.size }} trips{% endif %}, reverses the stops in between and clears their times. This cannot be undone.',
                   confirmText: 'Reverse route',
                   onConfirm: () => document.getElementById('form-rev-{{ res.pk }}').submit()
                 })">
