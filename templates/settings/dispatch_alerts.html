@@ -47,6 +47,10 @@
           {% include "components/form_field.html" with field=form.driver_info_critical_hours %}
         </div>
       </div>
+      <div>
+        <div class="text-[12px] font-semibold text-muted uppercase tracking-wide mb-2">Affiliate unacknowledged — hours before pickup</div>
+        {% include "components/form_field.html" with field=form.affiliate_unacked_warn_hours %}
+      </div>
 
       {% include "components/form_field.html" with field=form.alert_emails %}
       {% include "components/form_field.html" with field=form.critical_sms %}

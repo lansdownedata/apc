@@ -46,6 +46,7 @@ def test_saving_updates_the_singleton(client):
             "arrived_critical_minutes": 45,
             "driver_info_warn_hours": 24,
             "driver_info_critical_hours": 6,
+            "affiliate_unacked_warn_hours": 24,
             "alert_emails": "ops@allprocharter.com",
             "critical_sms": "",
         },

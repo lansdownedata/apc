@@ -105,6 +105,7 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "arrived_critical_minutes",
             "driver_info_warn_hours",
             "driver_info_critical_hours",
+            "affiliate_unacked_warn_hours",
             "alert_emails",
             "critical_sms",
         ]
@@ -117,6 +118,7 @@ class DispatchAlertConfigForm(forms.ModelForm):
             "arrived_critical_minutes": forms.NumberInput(attrs=_NUM),
             "driver_info_warn_hours": forms.NumberInput(attrs=_NUM),
             "driver_info_critical_hours": forms.NumberInput(attrs=_NUM),
+            "affiliate_unacked_warn_hours": forms.NumberInput(attrs=_NUM),
             "alert_emails": forms.Textarea(attrs=_AREA),
             "critical_sms": forms.Textarea(attrs=_AREA),
         }

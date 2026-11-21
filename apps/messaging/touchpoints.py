@@ -197,9 +197,21 @@ def reschedule_service_touchpoints(reservation) -> None:
 
 
 def schedule_affiliate_confirmation(assignment) -> None:
-    """T-48h affiliate confirmation, scheduled when an affiliate confirms coverage (APC-20)."""
+    """T-48h affiliate confirmation, scheduled when an affiliate confirms coverage (APC-20).
+
+    Manual-channel only. A GNet vendor's acceptance *is* its acknowledgement — the offer
+    and its answer already travel the gateway, with no email/ack-link flow to fire (GNet
+    affiliates often have no email on file at all) and nothing that would ever stamp
+    `affiliate_confirmed_at` for one, which is exactly what `monitoring.evaluate`'s
+    AFFILIATE_UNACKED check keys off — so scheduling one here would flag every GNet trip
+    as unacknowledged forever with no way to clear it.
+    """
+    from apps.dispatch.models import Assignment
+
     res = assignment.reservation
-    if assignment.is_in_house or res.pickup_at is None:
+    if assignment.is_in_house or assignment.channel == Assignment.Channel.GNET:
+        return
+    if res.pickup_at is None:
         return
     _ensure(res, TouchPoint.Kind.TRIP_CONFIRM_AFFILIATE, res.pickup_at)
 

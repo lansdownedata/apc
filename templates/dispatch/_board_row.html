@@ -44,7 +44,7 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
        other cells use for an absent state rather than a second warning glyph. #}
   <td class="min-w-[124px] px-3 text-ink">
     {{ trip.lead.contact.name }}
-    {% if trip.customer_confirmed_at %}<i class="ti ti-circle-check-filled text-[13px] text-emerald-600 align-middle ml-0.5" title="Confirmed {{ trip.customer_confirmed_at|date:'M j, g:i A' }}"></i>{% endif %}
+    {% if trip.customer_confirmed_at %}<i class="ti ti-circle-check-filled text-[13px] text-emerald-600 align-middle ml-0.5" title="Confirmed {{ trip.customer_confirmed_at|trip_clock:trip }}"></i>{% endif %}
   </td>
 
   {# PAX #}
@@ -84,9 +84,11 @@ Column widths are kept in sync with `_COLUMNS` in apps/dispatch/views.py by hand
     {% if a.is_in_house %}<i class="ti ti-home text-[12px] text-muted/70" title="In-house"></i> {{ a.driver.name }}{% else %}<span class="text-muted/40">—</span>{% endif %}
   </td>
 
-  {# AFFILIATE — company we farmed the trip to, with a handoff glyph #}
+  {# AFFILIATE — company we farmed the trip to, with a handoff glyph. A filled check once
+       they've acknowledged the T-48h confirmation (APC-20); nothing before that, same
+       sparse-absence convention as the customer check in PASSENGER. #}
   <td class="min-w-[138px] px-3 text-muted">
-    {% if a and not a.is_in_house %}<i class="ti ti-arrow-ramp-right-2 text-[13px] text-goldd"></i> {{ a.vendor.name }}{% else %}<span class="text-muted/40">—</span>{% endif %}
+    {% if a and not a.is_in_house %}<i class="ti ti-arrow-ramp-right-2 text-[13px] text-goldd"></i> {{ a.vendor.name }}{% if a.affiliate_confirmed_at %} <i class="ti ti-circle-check-filled text-[13px] text-emerald-600 align-middle" title="Confirmed {{ a.affiliate_confirmed_at|trip_clock:trip }}"></i>{% endif %}{% else %}<span class="text-muted/40">—</span>{% endif %}
   </td>
 
   {# TOTAL — sticky right #}

@@ -1,0 +1,15 @@
+{% load time_filters %}
+{# One acknowledgement-state line: a filled check + timestamp once acknowledged, a dashed
+   circle + "not yet" copy before that. Shared by the customer (APC-19) and affiliate
+   (APC-20) confirmation states in _assign_panel.html — same shape, different `who`. #}
+{% if confirmed_at %}
+  <p class="flex items-center gap-1 text-[12px] text-emerald-700 mt-1.5">
+    <i class="ti ti-circle-check-filled text-[13px]"></i>
+    Confirmed {{ confirmed_at|trip_clock:trip }}
+  </p>
+{% else %}
+  <p class="flex items-center gap-1 text-[12px] text-muted mt-1.5">
+    <i class="ti ti-circle-dashed text-[13px]"></i>
+    Not yet confirmed by {{ who }}
+  </p>
+{% endif %}
