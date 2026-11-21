@@ -66,11 +66,17 @@ def outbound_on(settings: Settings) -> None:
 @pytest.fixture
 def make_trip(db: None) -> Callable[..., Reservation]:
     """`make_trip(account, **kw)` -> a trip on a new lead booked by the account's contact.
-    Keyword arguments go to `ReservationFactory`."""
+    `lead__<field>` keywords go to that new lead, `factory` picks a `ReservationFactory`
+    subclass, and the rest go to the trip's factory."""
 
-    def _make_trip(account: CustomerAccount, **kw: object) -> Reservation:
+    def _make_trip(
+        account: CustomerAccount,
+        factory: type[ReservationFactory] = ReservationFactory,
+        **kw: object,
+    ) -> Reservation:
+        lead_kw = {k.removeprefix("lead__"): kw.pop(k) for k in list(kw) if k.startswith("lead__")}
         if "lead" not in kw:
-            kw["lead"] = LeadFactory(contact=account.contact)
-        return ReservationFactory(**kw)
+            kw["lead"] = LeadFactory(**{"contact": account.contact, **lead_kw})
+        return factory(**kw)
 
     return _make_trip
