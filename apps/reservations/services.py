@@ -1,13 +1,23 @@
 """Reservation-level services — trip-sheet rendering + trip-status transitions.
 
-The trip sheet is one shared shape (`trip_sheet_context`) rendered three ways: the public
-acknowledgement pages (`components/trip_sheet.html`), the plain-text `{trip_sheet}` /
-`{trip_routing}` touch-point vars (`trip_sheet_text`), and the affiliate offer email.
+The trip sheet is one shared shape (`trip_sheet_context`) rendered two ways: the public
+acknowledgement pages (`components/trip_sheet.html`) and the plain-text `{trip_sheet}` /
+`{trip_routing}` touch-point vars (`trip_sheet_text`).
+
+`templates/email/vendor_offer.{txt,html}` deliberately stays on its own shape and is NOT
+built on this (the 2026-09-04 spec assumed it would be — it shouldn't). Two reasons, both
+regressions if it were forced onto this: its payout is the *offer's* (`assignment.payout`
+on an OFFERED row), where this helper reads the *confirmed* assignment and would render
+blank mid-offer; and it carries per-stop verified-flight detail — scheduled/actual time,
+zone, terminal — that an offer needs and a summary sheet doesn't reduce to. What the two
+do share is that detail's shape, so `flight_line()` below is the seam, not the template.
+The offer templates still assemble that detail inline (they interleave it with each stop's
+address, which this flat list can't express) — change one and change the other.
 """
 
 from __future__ import annotations
 
-from .models import Reservation, TripStatusEvent
+from .models import Flight, FlightDirection, Reservation, Stop, TripStatusEvent
 
 
 def is_wedding_trip(reservation: Reservation) -> bool:
@@ -23,6 +33,40 @@ def is_wedding_trip(reservation: Reservation) -> bool:
         return True
     st = reservation.service_type
     return bool(st and st.name.strip().lower() == WEDDING_SERVICE_NAME.lower())
+
+
+def flight_line(stop: Stop) -> str:
+    """One stop's flight detail, as far as it's verified: `"UA 123 · arr 7:30 PM EDT ·
+    Terminal C"`, falling back to just the label when nothing has been looked up yet.
+    Blank for a stop with no flight at all.
+
+    A cancelled / diverted / incident flight says so *instead of* a time: its
+    `scheduled_at` survives the cancellation, so rendering the time would tell an
+    affiliate to go meet a plane that isn't coming. Same rule the pill follows.
+
+    The shape the affiliate offer email has carried since the flight-verification work
+    (2026-08-29) — an affiliate meeting a plane needs the time and terminal, not just a
+    flight number. Shared so the T-48h confirmation sheet says the same thing the offer
+    did; the offer email's own templates render it inline and stay as they are.
+
+    Times come from the *airport's* zone via `Flight.time_local` / `tz_abbr`, never the
+    trip's and never the viewer's — a DCA→LAX leg's flight clock is LA's, not the trip's.
+    """
+    label = stop.flight_label
+    if not label:
+        return ""
+    flight = stop.flight if stop.flight_id else None
+    if flight is None:
+        return label
+    parts = [label]
+    if flight.pill_state == "cancelled":
+        parts.append("Diverted" if flight.status == Flight.Status.DIVERTED else "Cancelled")
+    elif flight.best_at:
+        verb = "dep" if stop.flight_direction == FlightDirection.DEPARTURE else "arr"
+        parts.append(f"{verb} {flight.time_local} {flight.tz_abbr}".strip())
+        if flight.terminal:
+            parts.append(f"Terminal {flight.terminal}")
+    return " · ".join(parts)
 
 
 def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> dict:
@@ -46,8 +90,9 @@ def trip_sheet_context(reservation: Reservation, *, affiliate: bool = False) -> 
             (reservation.vehicle.name if reservation.vehicle else "")
             or (reservation.service_type.name if reservation.service_type else "")
         ),
-        "flight": reservation.flight_summary,
-        "stops": stops,
+        # Pre-rendered per stop so the HTML partial and the plain-text build read the
+        # same strings rather than each assembling flight detail their own way.
+        "flight_lines": [line for s in stops if (line := flight_line(s))],
     }
     if affiliate:
         from apps.dispatch.selectors import confirmed_assignment
@@ -71,10 +116,8 @@ def trip_sheet_text(reservation: Reservation) -> str:
     lines.append(f"  Passengers: {ctx['passengers']}")
     if ctx["vehicle"]:
         lines.append(f"  Vehicle: {ctx['vehicle']}")
-    for stop in ctx["stops"]:
-        label = stop.flight_label
-        if label:
-            lines.append(f"  Flight: {label}")
+    for line in ctx["flight_lines"]:
+        lines.append(f"  Flight: {line}")
     return "\n".join(lines)
 
 
