@@ -31,7 +31,7 @@
       </div>
       <div class="flex shrink-0 items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
         {% include "customers/_status.html" with row=next_trip %}
-        {% if next_trip.confirmation %}<span class="text-[12.5px] text-muted num">{{ next_trip.confirmation }}</span>{% endif %}
+        {% if next_trip.confirmation %}<span class="text-[12.5px] text-muted num">{{ next_trip.confirmation_label }}</span>{% endif %}
       </div>
     </div>
     {% if next_url %}

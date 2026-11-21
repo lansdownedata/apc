@@ -16,7 +16,7 @@ from collections.abc import Callable
 from functools import wraps
 from urllib.parse import quote
 
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -74,15 +74,39 @@ def _log_view(account: CustomerAccount) -> None:
     account.last_seen_at = now
 
 
+# A page asks for a piece of itself with `?fragment=1` (the Trips table); it is never a
+# place to come back to after signing in.
+FRAGMENT_PARAM = "fragment"
+
+
+def _wants_json(request: HttpRequest) -> bool:
+    """A page's own script asking (fetch with `X-Requested-With` or `Accept: application/json`)
+    rather than the browser navigating."""
+    return request.headers.get(
+        "X-Requested-With"
+    ) == "XMLHttpRequest" or "application/json" in request.headers.get("Accept", "")
+
+
+def return_path(request: HttpRequest) -> str:
+    """The request's path and query without `fragment`: the whole page to come back to."""
+    query = request.GET.copy()
+    query.pop(FRAGMENT_PARAM, None)
+    return f"{request.path}?{query.urlencode()}" if query else request.path
+
+
 def customer_required(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
     """Only a signed-in customer gets through; everyone else (a staff session included) is
-    sent to the customer sign-in. Sets `request.customer`; never reads `request.user`."""
+    sent to the customer sign-in, or, when the page's own script asked, answered 401 so it
+    can reload the whole page instead of following a redirect into a piece of one. Sets
+    `request.customer`; never reads `request.user`."""
 
     @wraps(view)
     def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         account = current_customer(request)
         if account is None:
-            nxt = quote(request.get_full_path(), safe="/")
+            if _wants_json(request):
+                return JsonResponse({"ok": False, "error": "signed_out"}, status=401)
+            nxt = quote(return_path(request), safe="/")
             return redirect(f"{reverse('customers:login')}?next={nxt}")
         request.customer = account
         if request.method == "GET":

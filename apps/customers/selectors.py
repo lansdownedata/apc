@@ -269,7 +269,12 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         "zone": trip.pickup_tz_label,
         "route": _route(trip, stops),
         "passenger": _passenger(trip),
+        # Raw, for search and export; the label says which kind it is (mockup 2: an
+        # imported LimoAnywhere trip reads "Conf. 48213", ours "APC-600412").
         "confirmation": trip.la_confirmation or trip.reference,
+        "confirmation_label": f"Conf. {trip.la_confirmation}"
+        if trip.la_confirmation
+        else trip.reference,
         "label": text,
         "tone": tone,
         "total": _total(trip, kept),

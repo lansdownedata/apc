@@ -297,6 +297,7 @@ ROW_KEYS = {
     "route",
     "passenger",
     "confirmation",
+    "confirmation_label",
     "label",
     "tone",
     "total",
@@ -335,6 +336,7 @@ def test_trip_row(account, make_trip):
         "route": "Arlington, VA to Dulles (IAD)",
         "passenger": "Dana Whitfield",
         "confirmation": trip.reference,
+        "confirmation_label": trip.reference,
         "label": "Confirmed",
         "tone": "ok",
         "total": trip.line_total,
@@ -353,6 +355,7 @@ def test_trip_row_shows_the_limoanywhere_confirmation_and_the_trip_zone(account,
     )
     row = selectors.trip_row(trip)
     assert row["confirmation"] == "48213"
+    assert row["confirmation_label"] == "Conf. 48213"
     assert (row["date"], row["time"], row["zone"]) == ("Sat, Jul 4", "3:05 PM", "PDT")
 
 

@@ -6222,6 +6222,12 @@ function customerTrips({ url, referenceUrl }) {
     return new Date(y, m - 1, d);
   };
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+  /* `customer_required` answers this page's own requests with a 401 once the session has
+     ended. Reload the whole page then, so sign-in brings the customer back to it, never to
+     the table fragment (and never a redirect followed into the sign-in page's HTML). */
+  const AJAX = { "X-Requested-With": "XMLHttpRequest" };
+  const signedOut = (resp) => resp.status === 401 || resp.redirected;
+  const reload = () => window.location.reload();
   return {
     loading: false,
     picked: {},
@@ -6280,12 +6286,9 @@ function customerTrips({ url, referenceUrl }) {
       this.loading = true;
       try {
         const resp = await fetch(`${url}?${query ? `${query}&` : ""}fragment=1`, {
-          headers: { Accept: "text/html" },
+          headers: { ...AJAX, Accept: "text/html" },
         });
-        if (resp.redirected) {
-          window.location.href = resp.url; // signed out meanwhile: the sign-in page
-          return;
-        }
+        if (signedOut(resp)) return reload();
         if (!resp.ok) throw new Error(resp.statusText);
         const html = await resp.text();
         if (seq !== this._seq) return;
@@ -6364,11 +6367,24 @@ function customerTrips({ url, referenceUrl }) {
         confirmText: "Save",
         onConfirm: async () => {
           const value = document.getElementById("trip-reference")?.value || "";
-          try {
-            await postForm(referenceUrl, { ids: ids.join(","), value });
-          } catch (e) {
+          const resp = await fetch(referenceUrl, {
+            method: "POST",
+            headers: {
+              ...AJAX,
+              Accept: "application/json",
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-CSRFToken": getCookie("csrftoken"),
+            },
+            body: new URLSearchParams({ ids: ids.join(","), value }),
+          }).catch(() => null);
+          const json = resp && !signedOut(resp) ? await resp.json().catch(() => null) : null;
+          if (resp && (signedOut(resp) || (resp.ok && json === null))) {
+            reload(); // signed out, or answered by something other than this endpoint
+            throw new Error("signed out");
+          }
+          if (!resp || !resp.ok || !json.ok) {
             Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
-            throw e;
+            throw new Error("not saved");
           }
           Alpine.store("toast").push({ type: "success", title: many ? `Reference set on ${ids.length} trips.` : "Reference saved." });
           this.refresh({ page: this.page, force: true });

@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import patch
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -538,3 +539,74 @@ def test_home_and_nav_link_to_trips(account, client_as, make_trip):
     assert "Trip history and receipts" in home
     trips = _get(client)
     assert re.search(rf'href="{TRIPS}"\s+aria-current="page"', trips)
+
+
+# --- a session that ended mid-page (review fix round 1) ------------------------------------
+
+AJAX = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
+
+
+@pytest.mark.parametrize(
+    "headers", [AJAX, {"HTTP_ACCEPT": "application/json"}], ids=["xhr", "accept-json"]
+)
+def test_signed_out_reference_save_is_401_and_writes_nothing(client, make_trip, account, headers):
+    trip = _done(account, make_trip, _day(-3))
+
+    response = client.post(
+        reverse("customers:set_reference"),
+        {"ids": str(trip.pk), "value": "Board offsite"},
+        **headers,
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.content) == {"ok": False, "error": "signed_out"}
+    trip.refresh_from_db()
+    assert trip.customer_reference == ""
+
+
+def test_signed_out_fragment_fetch_is_401(client):
+    response = client.get(TRIPS, {"tab": "past", "fragment": "1"}, **AJAX)
+    assert response.status_code == 401
+
+
+def test_signed_out_page_load_returns_to_the_page_never_the_fragment(client):
+    response = client.get(TRIPS, {"tab": "past", "q": "Board", "fragment": "1"})
+
+    assert response.status_code == 302
+    sent_to = urlsplit(response.url)
+    assert sent_to.path == reverse("customers:login")
+    nxt = QueryDict(sent_to.query)["next"]
+    assert urlsplit(nxt).path == TRIPS
+    assert QueryDict(urlsplit(nxt).query).dict() == {"tab": "past", "q": "Board"}
+
+
+def test_sign_in_never_lands_on_a_fragment(client, account):
+    response = client.post(
+        reverse("customers:login") + "?" + urlencode({"next": f"{TRIPS}?tab=past&fragment=1"}),
+        {"email": account.email, "password": "correct horse battery"},
+    )
+    assert response.status_code == 302
+    assert response.url == f"{TRIPS}?tab=past"
+
+
+# --- confirmation numbers (review fix round 1) ---------------------------------------------
+
+
+def test_an_imported_trip_reads_conf_and_ours_reads_its_reference(account, client_as, make_trip):
+    imported = _done(account, make_trip, _day(-3), la_confirmation="48213")
+    ours = _done(account, make_trip, _day(-4))
+
+    rows = {r["pk"]: r for r in pks_rows(_trips(account, tab="past"))}
+    assert rows[imported.pk]["confirmation"] == "48213"  # raw, for search and export
+    assert rows[imported.pk]["confirmation_label"] == "Conf. 48213"
+    assert rows[ours.pk]["confirmation_label"] == ours.reference
+
+    body = _get(client_as(account), tab="past")
+    row = re.search(rf'data-trip="{imported.pk}".*?</tr>', body, re.S).group(0)
+    assert "Conf. 48213" in row
+    row = re.search(rf'data-trip="{ours.pk}".*?</tr>', body, re.S).group(0)
+    assert ours.reference in row and "Conf." not in row
+
+
+def pks_rows(result: dict) -> list[dict]:
+    return [row for group in result["groups"] for row in group["rows"]]

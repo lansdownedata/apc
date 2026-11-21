@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import posixpath
 from dataclasses import asdict
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from django.contrib import messages
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -29,7 +29,7 @@ from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
 from . import requests, selectors, services
-from .auth import customer_required, sign_in, sign_out
+from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
@@ -78,8 +78,9 @@ def _safe_next(request: HttpRequest) -> str:
     """`?next=` when it is a same-host path under `/account/`; Home otherwise.
 
     The path is checked as a browser will resolve it: percent-decoded (`%2e` is `.`), `\\`
-    read as `/`, then `..` applied, so `/account/%2e%2e/portal/` is refused."""
-    target = request.POST.get("next") or request.GET.get("next") or ""
+    read as `/`, then `..` applied, so `/account/%2e%2e/portal/` is refused. A `fragment`
+    parameter is dropped: that is a piece of a page, never somewhere to land."""
+    target = _without_fragment(request.POST.get("next") or request.GET.get("next") or "")
     path = unquote(urlsplit(target).path).replace("\\", "/")
     path = posixpath.normpath(path) + "/"
     if (
@@ -91,6 +92,15 @@ def _safe_next(request: HttpRequest) -> str:
     ):
         return target
     return _home()
+
+
+def _without_fragment(target: str) -> str:
+    parts = urlsplit(target)
+    query = QueryDict(parts.query, mutable=True)
+    if FRAGMENT_PARAM not in query:
+        return target
+    query.pop(FRAGMENT_PARAM)
+    return urlunsplit(parts._replace(query=query.urlencode()))
 
 
 def _link_invalid(request: HttpRequest, message: str = "") -> HttpResponse:
