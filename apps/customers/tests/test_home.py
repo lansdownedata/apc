@@ -3,6 +3,7 @@
 import re
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -296,12 +297,19 @@ def test_history_banner_shows_once(account, client_as, make_trip):
     assert selectors.home(account)["history_banner"] is None
 
 
-def test_no_history_banner_without_past_trips(account, client_as, make_trip):
-    _confirmed(account, make_trip)
+def test_no_history_banner_for_a_trip_completed_after_the_first_visit(
+    account, client_as, make_trip
+):
+    trip = _confirmed(account, make_trip, days=1)
+    client = client_as(account)
 
-    assert "added" not in _page(client_as(account))
+    assert "added" not in _page(client)
     account.refresh_from_db()
-    assert account.history_banner_seen_at is None
+    assert account.history_banner_seen_at is not None  # first visit: nothing was found
+    trip.trip_status = S.DONE
+    trip.save(update_fields=["trip_status"])
+
+    assert "added" not in _page(client)  # a portal trip, not history we found
 
 
 def test_home_has_no_dollar_total(account, client_as, make_trip):
@@ -358,3 +366,35 @@ def test_home_query_count(account, client_as, make_trips, django_assert_max_num_
         response = client.get(HOME)
     assert response.status_code == 200
     assert len(response.context["upcoming"]) > 5
+
+
+# `leads.views._pay_state` reads the ledger: about 11 queries for each order it is asked.
+PAY_CHECK_QUERIES = 11
+
+
+def test_home_query_count_with_owing_orders(
+    account, client_as, make_trips, make_trip, django_assert_max_num_queries
+):
+    make_trips(account, 25)
+    owing = [_direct_booking(account, make_trip, days=10 + i) for i in range(3)]
+    client = client_as(account)
+
+    with django_assert_max_num_queries(12 + 3 * PAY_CHECK_QUERIES):
+        response = client.get(HOME)
+    assert {row["lead"] for row in response.context["waiting"]} >= {lead.pk for lead in owing}
+
+
+def test_only_the_soonest_orders_that_may_owe_are_priced(
+    account, client_as, make_trip, django_assert_max_num_queries
+):
+    leads = [_direct_booking(account, make_trip, days=70 - 10 * i) for i in range(7)]
+    soonest = {lead.pk for lead in leads[-selectors.WAITING_PAY_CHECKS :]}
+    client = client_as(account)
+
+    with patch.object(selectors, "_pay_state", wraps=selectors._pay_state) as pay_state:
+        with django_assert_max_num_queries(12 + selectors.WAITING_PAY_CHECKS * PAY_CHECK_QUERIES):
+            response = client.get(HOME)
+
+    assert selectors.WAITING_PAY_CHECKS == 5
+    assert {call.args[0].pk for call in pay_state.call_args_list} == soonest
+    assert {row["lead"] for row in response.context["waiting"]} == soonest

@@ -281,6 +281,9 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
 
 # "Your next trip" is one we have confirmed: never a request, a quote or a held deposit.
 NEXT_TRIP_KEYS = frozenset({"confirmed", "driver_assigned", "in_progress"})
+# At most this many orders that may owe money are priced per Home load (`_owing`), the ones
+# with the soonest trip ahead: each costs the pay page's ledger reads.
+WAITING_PAY_CHECKS = 5
 _NEVER = datetime.max.replace(tzinfo=UTC)
 _FLIGHT_EXPECTED = frozenset({Flight.Status.SCHEDULED, Flight.Status.ACTIVE})
 
@@ -331,8 +334,9 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
     balance scheduled on a saved card is not waiting on the customer.
 
     The kind and amount are the pay page's own answer (`leads.views._pay_state`). That reads
-    the ledger, several queries an order, so only an order whose plan flags or an open trip
-    link say it may owe is asked; every other order costs nothing."""
+    the ledger, about 11 queries an order, so only an order whose plan flags or an open trip
+    link say it may owe is asked, and only the first `WAITING_PAY_CHECKS` of those in the
+    order given (Home passes soonest trip ahead first); every other order costs nothing."""
     booked = [
         lead
         for lead in leads
@@ -350,7 +354,7 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
         .exclude(reservation=None)
         .values_list("plan__lead_id", flat=True)
     )
-    owing = {}
+    candidates: list[tuple[Lead, bool]] = []
     for lead in booked:
         plan = lead.payment
         uncollected = plan.balance_status == PaymentPlan.BalanceStatus.FAILED or (
@@ -359,8 +363,10 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
             and plan.balance_status != PaymentPlan.BalanceStatus.PAID
         )
         deposit_open = plan.deposit_status != PaymentPlan.DepositStatus.PAID
-        if not (deposit_open or uncollected or lead.pk in linked):
-            continue
+        if deposit_open or uncollected or lead.pk in linked:
+            candidates.append((lead, uncollected))
+    owing = {}
+    for lead, uncollected in candidates[:WAITING_PAY_CHECKS]:
         kind, amount = _pay_state(lead)
         if kind in (Charge.Kind.DEPOSIT, Charge.Kind.TRIP) or (
             kind == Charge.Kind.BALANCE and uncollected
@@ -466,8 +472,8 @@ def home(account: CustomerAccount) -> dict:
     and `summary` line, or None. `waiting`: one row per order with a quote ready (Review and
     pay) or money owed (Pay now), soonest first. `upcoming`: every upcoming trip but quotes
     (they wait above), requests included, soonest first. `history_banner`: the past-trip
-    count, only while the account has never been shown it (the view then stamps
-    `history_banner_seen_at`). `has_trips`: whether the account has any trip at all."""
+    count, only before the account's first Home visit (the view stamps
+    `history_banner_seen_at` on it). `has_trips`: whether the account has any trip at all."""
     trips = sorted(visible_trips(account), key=_soonest)
     keys = {t.pk: label_key(t) for t in trips}
     by_lead: dict[int, list[Reservation]] = defaultdict(list)
@@ -479,7 +485,18 @@ def home(account: CustomerAccount) -> dict:
         for lead in leads
         if (group := [t for t in by_lead[lead.pk] if keys[t.pk] == "quote_ready"])
     }
-    asked = [lead for lead in leads if lead.pk in quotes or lead.status == Lead.Status.BOOKED]
+    # Each order's trips still ahead (all of them when every one is past), soonest first.
+    ahead = {
+        pk: [t for t in group if _bucket_for(keys[t.pk]) != "past"] or group
+        for pk, group in by_lead.items()
+    }
+    asked = sorted(
+        (lead for lead in leads if lead.pk in quotes or lead.status == Lead.Status.BOOKED),
+        key=lambda lead: (
+            _bucket_for(keys[ahead[lead.pk][0].pk]) == "past",
+            _soonest(ahead[lead.pk][0]),
+        ),
+    )
     # `quote_total`, `balance_due_now` and the pay page all read the order's trips.
     prefetch_related_objects(asked, "reservations")
     owing = _owing(asked)
@@ -487,9 +504,7 @@ def home(account: CustomerAccount) -> dict:
     waiting: list[tuple[Lead, list[Reservation]]] = []
     for lead in asked:
         if lead.pk in owing:
-            group = by_lead[lead.pk]
-            live = [t for t in group if _bucket_for(keys[t.pk]) != "past"]
-            waiting.append((lead, live or group))
+            waiting.append((lead, ahead[lead.pk]))
         elif lead.pk in quotes:
             waiting.append((lead, quotes[lead.pk]))
     waiting.sort(key=lambda item: _soonest(item[1][0]))

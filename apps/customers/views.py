@@ -256,10 +256,11 @@ def password_reset(request: HttpRequest) -> HttpResponse:
 @customer_required
 def home(request: HttpRequest) -> HttpResponse:
     """Next trip, what is waiting on the customer, what is coming up. The history banner
-    shows once: the first time it has something to say, it is stamped as seen."""
+    is decided on the first Home visit only: shown then if history was found, and stamped
+    seen either way, so a trip completed in the portal later is never announced as found."""
     account = request.customer
     context = selectors.home(account)
-    if context["history_banner"] is not None:
+    if account.history_banner_seen_at is None:
         account.history_banner_seen_at = timezone.now()
         account.save(update_fields=["history_banner_seen_at"])
     return _page(request, "customers/home.html", context)
