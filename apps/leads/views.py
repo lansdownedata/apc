@@ -33,6 +33,7 @@ from apps.notifications.models import Notification
 from apps.payments import ledger
 from apps.payments import services as payment_services
 from apps.reservations import groups
+from apps.reservations import services as reservation_services
 from apps.reservations.models import Stop
 
 from . import services
@@ -246,6 +247,7 @@ def lead_detail(request, pk):
     lead = get_object_or_404(
         Lead.objects.select_related("contact", "assigned_agent").prefetch_related(
             "reservations__vehicle",
+            "reservations__service_type",
             Prefetch(
                 "reservations__stops",
                 queryset=Stop.objects.select_related(
@@ -296,6 +298,7 @@ def lead_detail(request, pk):
         "lead": lead,
         "booking_intent": request.GET.get("booking") == "1",
         "wedding_state": _wedding_state(lead),
+        "is_wedding": any(reservation_services.is_wedding_trip(r) for r in reservations),
         "wedding_open": request.GET.get("wedding") == "1",
         # ?edit=<pk> reopens the editor on one trip after a redirect (APC-15 return trip).
         "open_editor_id": _open_editor_id(request, reservations),
@@ -363,6 +366,21 @@ def lead_update(request, pk: int) -> JsonResponse:
         else:
             normalized_phone = ""
 
+    # Day-of wedding details (APC-18) — usually filled by the couple on the T-7d link's
+    # own form, but staff can key in what a couple calls in with the same field.
+    normalized_day_of_phone = None  # tri-state, same convention as the contact phone above
+    if "day_of_contact_phone" in request.POST:
+        phone_val = request.POST.get("day_of_contact_phone", "").strip()
+        if phone_val:
+            normalized_day_of_phone = to_e164(phone_val)
+            if normalized_day_of_phone is None:
+                return JsonResponse(
+                    {"ok": False, "error": "Enter a valid day-of contact phone number."},
+                    status=400,
+                )
+        else:
+            normalized_day_of_phone = ""
+
     contact = lead.contact
     contact_fields = []
     for field in ("name", "email"):
@@ -395,6 +413,15 @@ def lead_update(request, pk: int) -> JsonResponse:
         agent_id = request.POST.get("agent") or None
         lead.assigned_agent_id = int(agent_id) if agent_id else None
         lead_fields.append("assigned_agent")
+    if "wedding_name" in request.POST:
+        lead.wedding_name = request.POST.get("wedding_name", "").strip()[:200]
+        lead_fields.append("wedding_name")
+    if "day_of_contact_name" in request.POST:
+        lead.day_of_contact_name = request.POST.get("day_of_contact_name", "").strip()[:200]
+        lead_fields.append("day_of_contact_name")
+    if normalized_day_of_phone is not None:
+        lead.day_of_contact_phone = normalized_day_of_phone
+        lead_fields.append("day_of_contact_phone")
     if lead_fields:
         lead.save(update_fields=lead_fields + ["updated_at"])
     return JsonResponse({"ok": True})

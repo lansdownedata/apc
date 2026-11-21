@@ -28,7 +28,10 @@
          email: {{ lead.contact.email|json_string }},
          company: {{ lead.contact.company.name|default_if_none:''|json_string }},
          channel: '{{ lead.channel }}',
-         agent: '{{ lead.assigned_agent_id|default_if_none:'' }}'
+         agent: '{{ lead.assigned_agent_id|default_if_none:'' }}',
+         wedding_name: {{ lead.wedding_name|json_string }},
+         day_of_contact_name: {{ lead.day_of_contact_name|json_string }},
+         day_of_contact_phone: {{ lead.day_of_contact_phone|json_string }}
        }
      })">
 
@@ -52,6 +55,7 @@
   {% endif %}
 
   {% include "leads/_wedding_summary.html" %}
+  {% include "leads/_wedding_day_of_details.html" %}
 
   {% if booking_intent and lead.status == 'new' %}
   <div class="flex items-center gap-2.5 rounded-xl bg-goldl ring-1 ring-gold/25 px-4 py-3 mb-4 text-[13px] text-goldd">

@@ -1,0 +1,39 @@
+{% comment %}
+  leads/_wedding_day_of_details.html — the T-7d wedding message's captured POC + wedding
+  name (APC-18). Shown whenever at least one of this order's trips is a wedding, whether
+  or not the wedding builder was used (requires `is_wedding` from apps.leads.views).
+  Sits inside quoteWorkspace()'s x-data — the inputs are extra keys on `header`, saved
+  through the same saveHeader() as the rest of the header fields.
+{% endcomment %}
+{% if is_wedding %}
+<div class="card p-4 sm:p-5 mb-4">
+  <div class="flex items-center gap-2 mb-3">
+    <i class="ti ti-heart text-[16px] text-gold"></i>
+    <h2 class="font-display text-[13.5px] font-semibold text-ink">Day-of wedding details</h2>
+    {% if not lead.wedding_name or not lead.day_of_contact_name %}
+    <span class="chip-warn inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold">not yet provided</span>
+    {% endif %}
+  </div>
+  <div class="grid sm:grid-cols-3 gap-3">
+    <label class="block">
+      <span class="block text-[11px] font-medium text-muted mb-1">Wedding name</span>
+      <input type="text" x-model="header.wedding_name" @blur="saveHeader()"
+             class="field w-full" placeholder="e.g. Boyne–Ellis Wedding">
+    </label>
+    <label class="block">
+      <span class="block text-[11px] font-medium text-muted mb-1">Day-of contact — name</span>
+      <input type="text" x-model="header.day_of_contact_name" @blur="saveHeader()"
+             class="field w-full" placeholder="Planner or wedding-party contact">
+    </label>
+    <label class="block">
+      <span class="block text-[11px] font-medium text-muted mb-1">Day-of contact — cell</span>
+      <input type="tel" x-model="header.day_of_contact_phone" @blur="saveHeader()"
+             class="field w-full" placeholder="(703) 555-0148">
+    </label>
+  </div>
+  <p class="text-[11.5px] text-muted mt-2">
+    Requested automatically 7 days before the trip — the couple can also submit it themselves
+    from the link in that message.
+  </p>
+</div>
+{% endif %}

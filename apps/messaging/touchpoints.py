@@ -146,14 +146,9 @@ def _ensure(reservation, kind: str, anchor_dt) -> TouchPoint | None:
 
 
 def _is_wedding(reservation) -> bool:
-    """A leg the wedding builder generated, or a trip whose service type is the wedding one.
-    Same test the wedding builder uses (`apps.public.services.WEDDING_SERVICE_NAME`)."""
-    from apps.public.services import WEDDING_SERVICE_NAME
+    from apps.reservations.services import is_wedding_trip
 
-    if reservation.source_leg_id:
-        return True
-    st = reservation.service_type
-    return bool(st and st.name.strip().lower() == WEDDING_SERVICE_NAME.lower())
+    return is_wedding_trip(reservation)
 
 
 def schedule_service_touchpoints(lead) -> None:
