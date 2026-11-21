@@ -441,21 +441,30 @@ def _summary(trip: Reservation) -> str:
     return " ".join(parts)
 
 
+def pay_action(lead: Lead, owed: tuple[str, Decimal] | None) -> tuple[str, str]:
+    """(url, button label) for an order waiting on the customer. Both pages are the
+    existing token-keyed ones; a quote is reviewed before it is paid, money owed on a
+    booked order (`owed`, from `_owing`) goes straight to the pay page."""
+    token = make_deposit_token(lead)
+    if owed is not None:
+        return reverse("quote_pay", args=[token]), "Pay now"
+    return reverse("quote_page", args=[token]), "Review and pay"
+
+
 def _waiting_row(
     row: dict, lead: Lead, trips: list[Reservation], owed: tuple[str, Decimal] | None
 ) -> dict:
-    """A "Waiting on you" row: the order's soonest trip, what it asks for and where to go.
-    Both pages are the existing token-keyed ones; a quote is reviewed before it is paid,
-    money owed on a booked order goes straight to the pay page."""
-    token = make_deposit_token(lead)
+    """A "Waiting on you" row: the order's soonest trip, what it asks for and where to go
+    (`pay_action`)."""
+    url, label = pay_action(lead, owed)
     if owed is not None:
         return {
             **row,
             "lead": lead.pk,
             "amount": owed[1],
             "note": "Payment due",
-            "action_url": reverse("quote_pay", args=[token]),
-            "action_label": "Pay now",
+            "action_url": url,
+            "action_label": label,
         }
     stops = _stops(trips[0])
     note = ""
@@ -468,8 +477,8 @@ def _waiting_row(
         "lead": lead.pk,
         "amount": lead.quote_total,
         "note": note,
-        "action_url": reverse("quote_page", args=[token]),
-        "action_label": "Review and pay",
+        "action_url": url,
+        "action_label": label,
     }
 
 

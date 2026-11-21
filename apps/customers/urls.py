@@ -7,6 +7,7 @@ app_name = "customers"
 urlpatterns = [
     path("", views.home, name="home"),
     path("trips/", views.trips, name="trips"),
+    path("trips/<int:pk>/", views.trip, name="trip"),
     path("trips/export.csv", views.export, name="export"),
     path("trips/reference/", views.set_reference, name="set_reference"),
     path("login/", views.login, name="login"),

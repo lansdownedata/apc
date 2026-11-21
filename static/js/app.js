@@ -6216,18 +6216,40 @@ window.openScheduler = openScheduler;
  * every row so far back, so a group never splits. Ticked rows (id -> cents) survive
  * "Show more" and clear when a filter changes. The date field is a flatpickr range whose
  * text comes back from the server ("Oct 1 – Nov 20, 2026"). */
+/* `customer_required` answers a customer page's own requests with a 401 once the session
+   has ended. Reload the whole page then, so sign-in brings the customer back to it, never to
+   a fragment of it (and never a redirect followed into the sign-in page's HTML). */
+const CUSTOMER_AJAX = { "X-Requested-With": "XMLHttpRequest" };
+const customerSignedOut = (resp) => resp.status === 401 || resp.redirected;
+
+/* Save "Your reference" on trips `ids` through `customers:set_reference`. Resolves once
+   saved. Rejects with "signed out" after reloading the page when the session has ended (or
+   something other than the endpoint answered), and with "not saved" otherwise. */
+async function saveCustomerReference(referenceUrl, ids, value) {
+  const resp = await fetch(referenceUrl, {
+    method: "POST",
+    headers: {
+      ...CUSTOMER_AJAX,
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-CSRFToken": getCookie("csrftoken"),
+    },
+    body: new URLSearchParams({ ids: ids.join(","), value }),
+  }).catch(() => null);
+  const json = resp && !customerSignedOut(resp) ? await resp.json().catch(() => null) : null;
+  if (resp && (customerSignedOut(resp) || (resp.ok && json === null))) {
+    window.location.reload();
+    throw new Error("signed out");
+  }
+  if (!resp || !resp.ok || !json.ok) throw new Error("not saved");
+}
+
 function customerTrips({ url, referenceUrl }) {
   const isoDay = (iso) => {
     const [y, m, d] = iso.split("-").map(Number);
     return new Date(y, m - 1, d);
   };
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-  /* `customer_required` answers this page's own requests with a 401 once the session has
-     ended. Reload the whole page then, so sign-in brings the customer back to it, never to
-     the table fragment (and never a redirect followed into the sign-in page's HTML). */
-  const AJAX = { "X-Requested-With": "XMLHttpRequest" };
-  const signedOut = (resp) => resp.status === 401 || resp.redirected;
-  const reload = () => window.location.reload();
   return {
     loading: false,
     picked: {},
@@ -6286,9 +6308,9 @@ function customerTrips({ url, referenceUrl }) {
       this.loading = true;
       try {
         const resp = await fetch(`${url}?${query ? `${query}&` : ""}fragment=1`, {
-          headers: { ...AJAX, Accept: "text/html" },
+          headers: { ...CUSTOMER_AJAX, Accept: "text/html" },
         });
-        if (signedOut(resp)) return reload();
+        if (customerSignedOut(resp)) return window.location.reload();
         if (!resp.ok) throw new Error(resp.statusText);
         const html = await resp.text();
         if (seq !== this._seq) return;
@@ -6367,24 +6389,13 @@ function customerTrips({ url, referenceUrl }) {
         confirmText: "Save",
         onConfirm: async () => {
           const value = document.getElementById("trip-reference")?.value || "";
-          const resp = await fetch(referenceUrl, {
-            method: "POST",
-            headers: {
-              ...AJAX,
-              Accept: "application/json",
-              "Content-Type": "application/x-www-form-urlencoded",
-              "X-CSRFToken": getCookie("csrftoken"),
-            },
-            body: new URLSearchParams({ ids: ids.join(","), value }),
-          }).catch(() => null);
-          const json = resp && !signedOut(resp) ? await resp.json().catch(() => null) : null;
-          if (resp && (signedOut(resp) || (resp.ok && json === null))) {
-            reload(); // signed out, or answered by something other than this endpoint
-            throw new Error("signed out");
-          }
-          if (!resp || !resp.ok || !json.ok) {
-            Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
-            throw new Error("not saved");
+          try {
+            await saveCustomerReference(referenceUrl, ids, value);
+          } catch (e) {
+            if (e.message !== "signed out") {
+              Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
+            }
+            throw e;
           }
           Alpine.store("toast").push({ type: "success", title: many ? `Reference set on ${ids.length} trips.` : "Reference saved." });
           this.refresh({ page: this.page, force: true });
@@ -6405,3 +6416,35 @@ function customerTrips({ url, referenceUrl }) {
   };
 }
 window.customerTrips = customerTrips;
+
+/* ------------------------------------------- customer portal: Trip detail (mockup 3)
+ * "Your reference" edited in place: saved when the field changes (on blur or Enter),
+ * through the same endpoint the Trips page uses. A failed save keeps what was typed. */
+function customerReference({ url, id }) {
+  return {
+    saving: false,
+    saved: "",
+
+    init() {
+      this.saved = this.$refs.input.value;
+    },
+
+    async save() {
+      const value = this.$refs.input.value.trim();
+      if (this.saving || value === this.saved) return;
+      this.saving = true;
+      try {
+        await saveCustomerReference(url, [String(id)], value);
+        this.saved = this.$refs.input.value = value;
+        Alpine.store("toast").push({ type: "success", title: value ? "Reference saved." : "Reference cleared." });
+      } catch (e) {
+        if (e.message !== "signed out") {
+          Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
+        }
+      } finally {
+        this.saving = false;
+      }
+    },
+  };
+}
+window.customerReference = customerReference;

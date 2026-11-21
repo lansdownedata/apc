@@ -28,7 +28,7 @@ from django.views.decorators.http import require_POST
 from apps.core.net import client_ip
 from apps.planners.selectors import dispatch_phone
 
-from . import exports, requests, selectors, services
+from . import exports, requests, selectors, services, trip_detail
 from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
 from .forms import CustomerPasswordForm, SignupForm
 from .models import CustomerAccount
@@ -314,6 +314,20 @@ def trips(request: HttpRequest) -> HttpResponse:
         request,
         "customers/trips.html",
         {**context, "ranges": selectors.quick_ranges(), "tabs": TABS, "groupings": GROUPINGS},
+    )
+
+
+@customer_required
+def trip(request: HttpRequest, pk: int) -> HttpResponse:
+    """One trip (mockup 3). Outside the account's scope it does not exist: 404."""
+    found = selectors.trip_or_404(request.customer, pk)
+    return _page(
+        request,
+        "customers/trip.html",
+        {
+            "trip": trip_detail.trip_detail(request.customer, found),
+            "reference_url": reverse("customers:set_reference"),
+        },
     )
 
 
