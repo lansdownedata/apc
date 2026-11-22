@@ -56,7 +56,7 @@ def current_customer(request: HttpRequest) -> CustomerAccount | None:
     pk = request.session.get(SESSION_KEY)
     if pk is None:
         return None
-    account = CustomerAccount.objects.select_related("contact").filter(pk=pk).first()
+    account = CustomerAccount.objects.select_related("contact__company").filter(pk=pk).first()
     stored = request.session.get(HASH_SESSION_KEY, "")
     if (
         account is None

@@ -13,7 +13,7 @@
     {% icon "calendar" class="mx-auto h-7 w-7 text-muted/60" %}
     <h2 class="mt-3 font-display text-[20px] font-semibold text-ink">No trips yet</h2>
     <p class="mx-auto mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-muted">Request your first trip and we'll send you a quote.</p>
-    {% if request_url %}
+    {% if request_url and can_request %}
     <a href="{{ request_url }}" class="btn-gold mt-5 inline-flex h-9 items-center rounded-lg px-4 text-[13px] font-semibold focus-gold">Request a trip</a>
     {% else %}
     <a href="tel:{{ dispatch.tel }}" class="btn-gold mt-5 inline-flex h-9 items-center rounded-lg px-4 text-[13px] font-semibold focus-gold">Call <span class="num">{{ dispatch.display }}</span></a>

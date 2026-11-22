@@ -63,6 +63,7 @@ def _page(
     context = {
         "dispatch": dispatch_phone(),
         "signed_in": hasattr(request, "customer"),
+        "can_request": hasattr(request, "customer") and requests.can_request(request.customer),
         **(context or {}),
     }
     return render(request, template, context, status=status)
@@ -377,6 +378,8 @@ def request_trip(request: HttpRequest) -> HttpResponse:
     the customer lands on the new trip's page; an invalid one comes back with what they
     typed and the errors beside the fields."""
     account = request.customer
+    if not requests.can_request(account):
+        return _page(request, "customers/request.html", {"refused": True})
     form = TripRequestForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         try:
@@ -400,6 +403,7 @@ def request_trip(request: HttpRequest) -> HttpResponse:
             "occasion_options": form.occasion_options(),
             "vehicle_options": form.vehicle_options(),
             "riders": RIDERS,
+            "stops": form.posted_stops() if form.is_bound else [],
             "recent": requests.recent_addresses(account),
             "requester": {
                 "name": contact.name,

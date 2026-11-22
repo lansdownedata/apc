@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 from django import forms
@@ -19,7 +20,7 @@ from django.utils import timezone
 from apps.accounts.forms import FIELD_CLASS, INVALID_PHONE
 from apps.core.phone import to_e164
 from apps.leads.models import ServiceType, VehicleType
-from apps.public.forms import ADDRESS_MAXLEN, BookingRequestForm
+from apps.public.forms import ADDRESS_MAXLEN, MAX_STOPS, BookingRequestForm
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.reservations.models import Passenger, Reservation
 
@@ -84,6 +85,8 @@ def request_occasions() -> QuerySet[ServiceType]:
 
 
 RIDERS = (("me", "Me"), ("other", "Someone else"))
+# The fields of one row of the website's stops repeater (`bookingStops()` in app.js).
+STOP_ROW_FIELDS = ("address", "lat", "lng", "display", "airport", "airline", "flight", "direction")
 
 
 class TripRequestForm(BookingRequestForm):
@@ -130,6 +133,22 @@ class TripRequestForm(BookingRequestForm):
     def vehicle_options(self) -> list[tuple[str, str]]:
         rows = self.fields["vehicle_preference"].queryset.values_list("pk", "name")
         return [(str(pk), name) for pk, name in rows]
+
+    def posted_stops(self) -> list[dict[str, str]]:
+        """The extra stops as posted, in the repeater's own row shape (every value text),
+        so a re-rendered form puts them back as the customer left them. Anything that
+        isn't a list of rows is dropped; the form's errors already say so."""
+        try:
+            rows = json.loads(self.data.get("stops_json") or "[]")
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(rows, list):
+            return []
+        return [
+            {key: "" if row.get(key) is None else str(row[key]) for key in STOP_ROW_FIELDS}
+            for row in rows[:MAX_STOPS]
+            if isinstance(row, dict)
+        ]
 
     def clean_pickup_date(self) -> date | None:
         day = self.cleaned_data.get("pickup_date")

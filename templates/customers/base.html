@@ -38,7 +38,7 @@
       {% icon "phone" class="h-4 w-4 text-goldd" %}<span class="hidden md:inline">Dispatch</span><span class="num {% if signed_in %}hidden sm:inline{% endif %}">{{ dispatch.display }}</span>
     </a>
     {% if signed_in %}
-    {% if request_url %}<a href="{{ request_url }}" class="btn-gold inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[12.5px] font-semibold focus-gold">Request a trip</a>{% endif %}
+    {% if request_url and can_request %}<a href="{{ request_url }}" class="btn-gold inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[12.5px] font-semibold focus-gold">Request a trip</a>{% endif %}
     <form method="post" action="{% url 'customers:logout' %}">
       {% csrf_token %}
       <button type="submit" aria-label="Sign out"

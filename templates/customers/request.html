@@ -8,12 +8,20 @@
   `public/_booking_widget.html`, which is not included because it is a whole form posting
   to the website. `.quote-form` gives the controls the website form's sizing. A "Recent"
   chip fills the pickup the way choosing a search result does (`addressAutocomplete.choose`).
+  After a server-side error the posted stops, coordinates, flights and rider come back as
+  sent. `refused` (an affiliate company's customer, `requests.can_request`) shows only the
+  dispatch number.
 {% endcomment %}
 {% block title %}Request a trip{% endblock %}
 {% block content %}
 {% url 'customers:account' as account_url %}
 <div class="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10">
   <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">Request a trip</h1>
+  {% if refused %}
+  <section class="card mt-6 max-w-xl p-5 sm:p-6">
+    <p class="text-[13.5px] leading-relaxed text-ink">Trips for your company are arranged with dispatch. Please call <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
+  </section>
+  {% else %}
   <p class="mt-1 text-[13.5px] text-muted">Tell us what you need. We'll send a quote for you to review and pay.</p>
 
   <div class="mt-6 grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -64,7 +72,7 @@
       </div>
 
       <div>
-        {% include "components/address_autocomplete.html" with name="pickup" field_id="rq-pickup" label="Pickup" value=form.pickup.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value %}
+        {% include "components/address_autocomplete.html" with name="pickup" field_id="rq-pickup" label="Pickup" value=form.pickup.value lat=form.pickup_lat.value lng=form.pickup_lng.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value %}
         {% for e in form.pickup.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         {% for e in form.pickup_airport.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         {% for e in form.pickup_airline.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
@@ -84,7 +92,8 @@
 
       {% comment %} Extra stops: the website widget's repeater (bookingStops), posting `stops_json`. {% endcomment %}
       <div class="flex flex-col gap-4"
-           x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })">
+           x-data="bookingStops({ acUrl: '{% url 'public:geocode' %}', fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }} })"
+           {% if stops %}x-init="stops = {{ stops|json_attr }}"{% endif %}>
         <template x-for="(stop, i) in stops" :key="i">
           <div class="aac">
             <div class="mb-1 flex items-center justify-between gap-3">
@@ -137,7 +146,7 @@
       </div>
 
       <div>
-        {% include "components/address_autocomplete.html" with name="dropoff" field_id="rq-dropoff" label="Drop-off" value=form.dropoff.value flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}
+        {% include "components/address_autocomplete.html" with name="dropoff" field_id="rq-dropoff" label="Drop-off" value=form.dropoff.value lat=form.dropoff_lat.value lng=form.dropoff_lng.value flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}
         {% for e in form.dropoff.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         {% for e in form.dropoff_airport.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         {% for e in form.dropoff_airline.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
@@ -231,5 +240,6 @@
       </section>
     </div>
   </div>
+  {% endif %}
 </div>
 {% endblock %}

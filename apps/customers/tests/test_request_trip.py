@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from apps.addresses.models import Airline, Airport
 from apps.audit.models import AuditEntry
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.core.choices import Channel
 from apps.customers import requests
 from apps.customers.factories import CustomerAccountFactory
@@ -25,7 +25,7 @@ from apps.notifications.models import Notification
 from apps.public.forms import BookingRequestForm
 from apps.public.services import WEDDING_SERVICE_NAME, wedding_service_type
 from apps.reservations.factories import FlightFactory, ReservationFactory, StopFactory
-from apps.reservations.models import Reservation
+from apps.reservations.models import Passenger, Reservation
 
 pytestmark = pytest.mark.django_db
 
@@ -64,7 +64,7 @@ def _cleaned(**overrides: object) -> dict:
 
 def _account(**contact: object):
     return CustomerAccountFactory(
-        contact=ContactFactory(name="Dana Whitfield", phone="+17035550188", **contact)
+        contact=ContactFactory(**{"name": "Dana Whitfield", "phone": "+17035550188", **contact})
     )
 
 
@@ -398,3 +398,96 @@ def test_public_booking_form_still_requires_name_and_email():
     assert not form.is_valid()
     assert {"name", "email"} <= set(form.errors)
     assert "company" in BookingRequestForm.base_fields  # the honeypot is still there
+
+
+# --- fix round 1 ------------------------------------------------------------------------
+
+
+def _affiliate():
+    company = CompanyFactory(is_affiliate_account=True)
+    return CustomerAccountFactory(contact=ContactFactory(company=company))
+
+
+def test_an_affiliate_customer_sees_a_message_not_the_form(client_as, settings):
+    settings.COMPANY_PHONE = "(703) 555-0142"
+    response = client_as(_affiliate()).get(URL)
+
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert "(703) 555-0142" in html
+    assert "Send request" not in html and 'name="pickup"' not in html
+
+
+def test_an_affiliate_customer_cannot_post_a_request(client_as):
+    account = _affiliate()
+    response = client_as(account).post(URL, _post())
+
+    assert response.status_code == 200
+    assert Lead.objects.count() == 0
+    with pytest.raises(CustomerError):
+        requests.request_trip(account, _cleaned())
+    assert Lead.objects.count() == 0
+
+
+def test_the_request_button_is_hidden_for_an_affiliate_customer(client_as):
+    nav = f'href="{URL}" class="btn-gold'
+    assert nav not in client_as(_affiliate()).get(reverse("customers:home")).content.decode()
+    assert nav in client_as(_account()).get(reverse("customers:home")).content.decode()
+
+
+def test_an_error_rerender_keeps_stops_coordinates_flight_and_rider(client_as):
+    iad = Airport.objects.get(iata="IAD")
+    united = Airline.objects.get(iata="UA")
+    payload = _post(
+        pickup_date=_day(-1).isoformat(),
+        pickup="Washington Dulles International Airport (IAD)",
+        pickup_lat="38.9531",
+        pickup_lng="-77.4565",
+        pickup_airport=str(iad.pk),
+        pickup_airline=str(united.pk),
+        pickup_flight="915",
+        stops_json=(
+            '[{"address": "Reston Town Center", "lat": "38.9586", "lng": "-77.3570",'
+            ' "display": "Reston Town Center", "airport": null, "airline": null,'
+            ' "flight": "", "direction": ""}]'
+        ),
+        rider="other",
+        rider_name="Sam Exec",
+        rider_mobile="+12025550142",
+    )
+    client = client_as(_account())
+    response = client.post(URL, payload)
+
+    html = response.content.decode()
+    assert response.status_code == 200 and Lead.objects.count() == 0
+    assert "&quot;address&quot;: &quot;Reston Town Center&quot;" in html  # the extra stop
+    assert "lat: &quot;38.9531&quot;, lng: &quot;-77.4565&quot;" in html  # pickup coordinates
+    assert "lat: &quot;38.8941&quot;, lng: &quot;-77.0280&quot;" in html  # drop-off coordinates
+    assert f'<option value="{united.pk}" selected>' in html
+    assert 'name="pickup_flight"' in html and 'value="915"' in html
+    assert 'value="other" x-model="rider" checked' in html
+    assert 'value="Sam Exec"' in html
+
+    payload["pickup_date"] = _day().isoformat()
+    client.post(URL, payload)
+    trip = Lead.objects.get().reservations.get()
+    assert [s.address for s in trip.stops.order_by("sequence")] == [
+        "Washington Dulles International Airport (IAD)",
+        "Reston Town Center",
+        "1100 Pennsylvania Ave NW, Washington, DC",
+    ]
+    assert trip.pickup_timezone == "America/New_York"
+
+
+def test_the_public_widget_posts_no_coordinates_it_was_not_given(client):
+    html = client.get("/bookings/").content.decode()
+    assert 'x-data="addressAutocomplete(' in html
+    assert "lat: &quot;&quot;, lng: &quot;&quot;" in html
+
+
+def test_a_long_contact_name_is_cut_to_the_passenger_name_length():
+    account = _account(name="N" * 150)
+    lead = requests.request_trip(account, _cleaned())
+
+    limit = Passenger._meta.get_field("name").max_length
+    assert lead.reservations.get().named_passengers.get().name == "N" * limit

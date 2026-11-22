@@ -23,6 +23,7 @@ from apps.leads.models import Lead
 from apps.notifications.models import Notification
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Passenger, Reservation, Stop
+from apps.reservations.passengers import NAME_MAX
 
 from .models import CustomerAccount
 from .selectors import visible_trips
@@ -55,6 +56,7 @@ REQUEST_WINDOW = timedelta(hours=1)
 # The same date, time and pickup from the same account inside this window is a double
 # click on Send, not a second request.
 DUPLICATE_WINDOW = timedelta(seconds=30)
+NOTIFICATION_TITLE_MAX = Notification._meta.get_field("title").max_length
 # How many of the account's latest stops `recent_addresses` reads to find its few.
 RECENT_SCAN = 200
 
@@ -90,11 +92,21 @@ def _notes(data: dict) -> str:
 
 
 def _rider(account: CustomerAccount, data: dict) -> tuple[str, str]:
-    """(name, mobile) of the trip's lead passenger: who trip-day texts go to."""
+    """(name, mobile) of the trip's lead passenger: who trip-day texts go to. A contact's
+    name can be longer than a passenger's, so it is cut as `reservations.passengers` cuts
+    names."""
     if data.get("rider") == "other":
         return data["rider_name"], data["rider_mobile"]
     contact = account.contact
-    return contact.name, to_e164(contact.phone) or ""
+    return contact.name.strip()[:NAME_MAX], to_e164(contact.phone) or ""
+
+
+def can_request(account: CustomerAccount) -> bool:
+    """Whether the account may request trips here. Not when its contact's company is an
+    affiliate account: the lead would be a farm-in (`Lead.is_farm_in`), which the portal
+    never shows (`selectors.visible_trips`) and which skips holds, tasks and messages."""
+    company = account.contact.company
+    return not (company is not None and company.is_affiliate_account)
 
 
 def _with_directions(stops: list[dict]) -> list[dict]:
@@ -122,7 +134,10 @@ def request_trip(account: CustomerAccount, data: dict) -> Lead:
     The same request again inside `DUPLICATE_WINDOW` returns the first lead. Past
     `REQUEST_LIMIT` requests in the rolling hour, raises `CustomerError("limited")`. Both
     checks and the create run under a lock on the account, so a double click can't slip
-    two leads past either."""
+    two leads past either. Refused with `CustomerError("affiliate")`, before anything is
+    written, when the account may not request trips (`can_request`)."""
+    if not can_request(account):
+        raise CustomerError("affiliate")
     contact = account.contact
     with transaction.atomic():
         CustomerAccount.objects.select_for_update().filter(pk=account.pk).first()
@@ -176,7 +191,7 @@ def request_trip(account: CustomerAccount, data: dict) -> Lead:
         Notification.notify(
             lead,
             Notification.Kind.NEW_LEAD,
-            title=f"New portal request: {contact.name}",
+            title=f"New portal request: {contact.name}"[:NOTIFICATION_TITLE_MAX],
             detail=service_type.name if service_type else "",
         )
     return lead
