@@ -32,7 +32,7 @@ from apps.audit.children import track_address
 from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.core.templatetags.phone_filters import phone_display
-from apps.customers import selectors as customer_selectors
+from apps.customers import staff_access as customer_access
 from apps.leads.models import Lead
 from apps.messaging.models import Message
 from apps.payments.models import PaymentPlan
@@ -251,7 +251,7 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             # billing screen (Phase 6) can never disagree about what a customer owes.
             **billing_selectors.billing_context(contact),
             "planner_access": planner_selectors.access_for(contact),
-            "customer_access": customer_selectors.access_for(contact),
+            "customer_access": customer_access.access_for(contact),
         },
     )
 

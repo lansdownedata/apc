@@ -16,9 +16,9 @@ from apps.accounts.factories import UserFactory
 from apps.addresses.factories import AirportFactory
 from apps.billing.factories import AccountGroupFactory
 from apps.contacts.factories import CompanyFactory, ContactFactory
-from apps.customers import exports, receipts, selectors
+from apps.customers import exports, receipts, selectors, trip_list
 from apps.customers.factories import CustomerAccountFactory
-from apps.customers.selectors import TripFilter
+from apps.customers.trip_list import TripFilter
 from apps.leads import services as lead_services
 from apps.leads.factories import VehicleTypeFactory
 from apps.leads.models import Lead
@@ -639,7 +639,7 @@ def test_trips_list_links_the_pdf_or_shows_a_dash(account, client_as, make_trip)
     ready = _paid_trip(account, make_trip)
     waiting = _finish(_booked(account, make_trip), processed=False)
 
-    result = selectors.trips(account, TripFilter(tab="past"))
+    result = trip_list.trips(account, TripFilter(tab="past"))
     rows = {row["pk"]: row for group in result["groups"] for row in group["rows"]}
     assert rows[ready.pk]["has_receipt"] is True
     assert rows[waiting.pk]["has_receipt"] is False
@@ -661,8 +661,8 @@ def test_has_receipt_rows_cost_no_query_per_row(
         _cancel(trip)
     client = client_as(account)
 
-    # As the Trips page's own budget: 8, plus 3 once any trip is cancelled.
-    with django_assert_max_num_queries(8 + 3):
+    # As the Trips page's own budget: 9, plus 4 once any trip is cancelled.
+    with django_assert_max_num_queries(9 + 4):
         response = client.get("/account/trips/", {"tab": "past"})
     rows = [row for group in response.context["groups"] for row in group["rows"]]
     assert len(rows) == 8
@@ -678,7 +678,7 @@ def test_trip_row_has_receipt_matches_has_receipt(account, make_trip):
 
     for trip in (done, kept, refunded):
         scoped = _scoped(account, trip)
-        assert selectors.trip_row(scoped)["has_receipt"] is receipts.has_receipt(scoped)
+        assert selectors.trip_rows([scoped])[0]["has_receipt"] is receipts.has_receipt(scoped)
 
 
 # --- the customer's figure for a cancelled trip --------------------------------------------

@@ -2,9 +2,10 @@
 {% comment %}
   Trips and history (mockup 2): the tabs, the filters and the table. Every filter lives in
   one GET form; `customerTrips()` (static/js/app.js) refetches the table alone
-  (`?fragment=1`, customers/_trips_table.html) when one changes and for "Show more", and
-  keeps the ticked rows for the bar at the foot. On a phone the table becomes stacked rows
-  and the passenger filter, group-by, quick ranges and ticking step aside, as mocked.
+  (`?fragment=1`, customers/_trips_table.html) when one changes, appends the next page of
+  rows for "Show more" (`&page=N`, customers/_trips_more.html), and keeps the ticked rows
+  for the bar at the foot. On a phone the table becomes stacked rows and the passenger
+  filter, group-by, quick ranges and ticking step aside, as mocked.
 {% endcomment %}
 {% block title %}Trips{% endblock %}
 {% block content %}

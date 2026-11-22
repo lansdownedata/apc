@@ -1,0 +1,13 @@
+{% comment %}
+  Rows of the Trips table on their own, never a page: the next page "Show more" appends
+  (`?fragment=1&page=N`), or the rows a saved reference redraws. `customerTrips()` moves the
+  `<tbody>`s and the items into the table and the list already on the page; `data-has-more`
+  says whether "Show more" stays.
+{% endcomment %}
+<table data-rows="table">
+{% include "customers/_trips_rows.html" %}
+</table>
+<ul data-rows="cards">
+{% include "customers/_trips_cards.html" %}
+</ul>
+{% if has_more %}<span data-has-more></span>{% endif %}

@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from apps.reservations.models import Reservation
 
-from . import receipts, selectors
+from . import receipts, selectors, trip_list
 from .models import CustomerAccount
 
 HEADER = (
@@ -55,15 +55,16 @@ def _address(stop) -> str:
 def trips_csv(
     account: CustomerAccount,
     *,
-    f: selectors.TripFilter | None = None,
+    f: trip_list.TripFilter | None = None,
     trip_ids: list[int] | None = None,
 ) -> str:
     """The ticked trips (those inside the account's scope) when `trip_ids` is given, else
-    every trip the filter shows, unpaged. Paid is read once per order, never per trip."""
+    every trip the filter shows (`trip_list.filtered`, the Trips page's own set), unpaged.
+    Paid is read once for all of them, never per trip or per order."""
     if trip_ids is not None:
-        trips = selectors.ticked_trips(account, trip_ids)
+        trips = trip_list.ticked_trips(account, trip_ids)
     else:
-        trips = selectors.filtered_trips(account, f or selectors.TripFilter(tab="all"))
+        trips = trip_list.export_trips(account, f or trip_list.TripFilter(tab="all"))
     paid = selectors.paid_amounts(trips)
     rows = selectors.trip_rows(trips, paid)
 
@@ -71,7 +72,7 @@ def trips_csv(
     writer = csv.writer(out, lineterminator="\r\n")
     writer.writerow(HEADER)
     for trip, row in zip(trips, rows, strict=True):
-        stops = sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
+        stops = selectors.stops_of(trip)
         pickup = _address(stops[0]) if stops else ""
         dropoff = _address(stops[-1]) if len(stops) > 1 else ""
         text = [

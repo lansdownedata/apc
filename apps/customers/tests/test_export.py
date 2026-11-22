@@ -10,9 +10,9 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.billing.factories import AccountGroupFactory
-from apps.customers import exports
+from apps.customers import exports, trip_list
 from apps.customers.factories import CustomerAccountFactory
-from apps.customers.selectors import TripFilter
+from apps.customers.trip_list import TripFilter
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
@@ -154,6 +154,20 @@ def test_export_respects_filter_and_is_not_paged(account, make_trip):
     assert len(past) == 2
 
 
+@pytest.mark.parametrize("tab", ["upcoming", "past", "requests", "all"])
+def test_export_is_the_set_the_page_counts_in_the_pages_order(account, make_trips, make_trip, tab):
+    make_trips(account, 21)
+    _booked(account, make_trip, days=-2)  # left open after its day: Past on the page
+    f = TripFilter(tab=tab, start=_day(-40))
+
+    page = trip_list.trips(account, f)
+    exported = _rows(exports.trips_csv(account, f=f))[1:]
+
+    assert len(exported) == page["count"] > 0
+    shown = [row["confirmation"] for group in page["groups"] for row in group["rows"]]
+    assert [row[HEADER.index("Confirmation")] for row in exported] == shown
+
+
 def test_export_of_ticked_ids_drops_other_customers(account, make_trip):
     mine = _booked(account, make_trip, customer_reference="mine")
     other = CustomerAccountFactory()
@@ -215,7 +229,7 @@ def test_post_with_ids_drops_what_is_not_theirs(account, client_as, make_trip):
 def test_ids_accepted_are_capped(account, client_as, make_trip, monkeypatch):
     from apps.customers import views
 
-    monkeypatch.setattr(views, "MAX_EXPORT_IDS", 2)
+    monkeypatch.setattr(views, "MAX_TICKED_IDS", 2)
     trips = [_booked(account, make_trip, days=10 + i) for i in range(4)]
     response = client_as(account).post(URL, {"ids": ",".join(str(t.pk) for t in trips)})
     assert len(_rows(response.content.decode("utf-8-sig"))) == 3

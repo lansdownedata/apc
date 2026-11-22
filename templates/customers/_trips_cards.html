@@ -1,0 +1,19 @@
+{% load humanize %}
+{% comment %}
+  The stacked rows of the Trips list, below `md`: a heading item per group, then its trips.
+  A group that carries on from the page above (`continued`) has no heading of its own.
+{% endcomment %}
+{% for group in groups %}
+{% if not group.continued %}<li class="bg-surface2 px-4 py-2.5 text-[12.5px] font-semibold text-ink">{{ group.title }}</li>{% endif %}
+{% for row in group.rows %}
+{% url 'customers:trip' row.pk as trip_url %}
+<li data-trip="{{ row.pk }}" class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-line px-4 py-3.5">
+  <p class="text-[14px] font-semibold [overflow-wrap:anywhere] {% if row.tone == 'danger' %}text-muted{% else %}text-ink{% endif %}">{% if trip_url %}<a href="{{ trip_url }}" class="rounded focus-gold">{{ row.route }}</a>{% else %}{{ row.route }}{% endif %}</p>
+  <p class="text-right text-[14px] num">{% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}</p>
+  <p class="text-[12.5px] text-muted num">{{ row.date }} · {{ row.time }} {{ row.zone }}</p>
+  <span class="justify-self-end">{% include "customers/_status.html" %}</span>
+  <div class="{% if row.has_receipt %}min-w-0{% else %}col-span-2{% endif %} mt-1">{% include "customers/_reference.html" %}</div>
+  {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="mt-1 justify-self-end rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Receipt</a>{% endif %}
+</li>
+{% endfor %}
+{% endfor %}

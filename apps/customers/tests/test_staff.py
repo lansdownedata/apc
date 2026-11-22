@@ -13,7 +13,7 @@ from apps.accounts.factories import UserFactory
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.core import outbound
 from apps.core.choices import Channel
-from apps.customers import selectors, services
+from apps.customers import services, staff_access
 from apps.customers.factories import CustomerAccountFactory
 from apps.customers.models import CustomerAccount
 from apps.leads.factories import LeadFactory
@@ -94,14 +94,14 @@ def test_card_states_none_invited_active_revoked(staff_client, outbound_on):
 
 def test_access_for_reports_status_and_what_applies(outbound_on):
     contact = ContactFactory()
-    assert selectors.access_for(contact)["status"] == "none"
-    assert selectors.access_for(contact)["can_invite"] is True
-    assert selectors.access_for(contact)["blocked_reason"] == ""
+    assert staff_access.access_for(contact)["status"] == "none"
+    assert staff_access.access_for(contact)["can_invite"] is True
+    assert staff_access.access_for(contact)["blocked_reason"] == ""
     account = CustomerAccountFactory(invited=True)
-    access = selectors.access_for(account.contact)
+    access = staff_access.access_for(account.contact)
     assert (access["status"], access["can_invite"]) == ("invited", False)
-    assert selectors.access_for(CustomerAccountFactory().contact)["status"] == "active"
-    revoked = selectors.access_for(CustomerAccountFactory(revoked=True).contact)
+    assert staff_access.access_for(CustomerAccountFactory().contact)["status"] == "active"
+    revoked = staff_access.access_for(CustomerAccountFactory(revoked=True).contact)
     assert (revoked["status"], revoked["can_invite"]) == ("revoked", True)
 
 
@@ -177,7 +177,7 @@ def test_a_revoked_contact_can_be_invited_again(staff_client, outbound_on):
 
 def test_affiliate_company_contact_is_blocked_and_refused(staff_client, outbound_on):
     contact = ContactFactory(company=CompanyFactory(is_affiliate_account=True))
-    access = selectors.access_for(contact)
+    access = staff_access.access_for(contact)
     assert (access["can_invite"], access["blocked_reason"]) == (False, AFFILIATE)
     assert AFFILIATE in _card(_profile(staff_client, contact))
     with pytest.raises(services.CustomerError, match=AFFILIATE):

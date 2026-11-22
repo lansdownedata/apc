@@ -30,7 +30,7 @@ from apps.reservations.passengers import NAME_MAX
 from apps.tasks.models import Task
 
 from .models import CustomerAccount, CustomerRequest
-from .selectors import _short_day, label_key, visible_trips
+from .selectors import label_key, short_day, visible_trips
 from .services import CustomerError
 
 REFERENCE_MAX = Reservation._meta.get_field("customer_reference").max_length
@@ -385,4 +385,4 @@ def pending(account: CustomerAccount, trip: Reservation) -> list[dict]:
         .order_by("-created_at", "-pk")
         .values_list("kind", "created_at")
     )
-    return [{"kind": kind, "date": _short_day(at, trip)} for kind, at in rows]
+    return [{"kind": kind, "date": short_day(at, trip)} for kind, at in rows]

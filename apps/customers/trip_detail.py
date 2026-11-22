@@ -139,7 +139,7 @@ def _booked(trip: Reservation) -> bool:
 
 
 def _step(trip: Reservation, name: str, at: datetime | None, state: str) -> dict:
-    date = selectors._short_day(at, trip) if at and state != "todo" else ""
+    date = selectors.short_day(at, trip) if at and state != "todo" else ""
     return {"name": name, "date": date, "state": state}
 
 
@@ -290,27 +290,13 @@ def _paid_line(trip: Reservation, total: Decimal | None, paid: Decimal) -> str:
 
 
 def _pay(trip: Reservation, key: str) -> tuple[str | None, str]:
-    """Home's pay link for this trip's order (`selectors._owing`, `selectors.pay_action`):
+    """Home's pay link for this trip's order (`selectors.owing`, `selectors.pay_action`):
     a quote ready to review, or money a booked order owes."""
     lead = trip.lead
-    owed = selectors._owing([lead]).get(lead.pk) if lead.status == Lead.Status.BOOKED else None
+    owed = selectors.owing([lead]).get(lead.pk) if lead.status == Lead.Status.BOOKED else None
     if key != "quote_ready" and owed is None:
         return None, ""
     return selectors.pay_action(lead, owed)
-
-
-def _heading(trip: Reservation, row: dict) -> dict:
-    """`heading` "Thursday, December 3 at 9:10 AM" with `heading_zone` beside it, or, while
-    the day or the time is open, the part we know and `when_note` for the rest."""
-    day = selectors._long_date(trip)
-    if trip.pickup_date and trip.pickup_time:
-        return {"heading": f"{day} at {row['time']}", "heading_zone": row["zone"], "when_note": ""}
-    note = ""
-    if trip.pickup_date:
-        note = row["time"]
-    elif trip.pickup_time:
-        note = f"{row['time']} {row['zone']}"
-    return {"heading": day, "heading_zone": "", "when_note": note}
 
 
 def _until_pickup(trip: Reservation) -> str:
@@ -367,8 +353,9 @@ def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str)
 def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     """The trip page (spec §6.3). `trip` comes from `selectors.trip_or_404(account, pk)`.
 
-    The `trip_row` keys, plus: `heading`, `heading_zone` and `when_note`; `steps` (`{"name", "date",
-    "state"}`, state `done|now|todo`); `stops` (`{"title", "address", "detail"}`);
+    The `selectors.trip_rows` row's keys, plus: `heading`, `heading_zone` and `when_note`
+    (`selectors.heading`); `steps` (`{"name", "date", "state"}`, state `done|now|todo`);
+    `stops` (`{"title", "address", "detail"}`);
     `vehicle`; `passengers` (names) and `passenger_count`; `driver` (`{"name", "cell"}`
     or None) and `driver_pending` (the line shown in its place, or blank); `notes`;
     `price_lines` (`{"label", "amount", "abs_amount"}`); `total` (None while unpriced); `paid_line`;
@@ -389,7 +376,7 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     pay_url, pay_label = _pay(trip, key)
     return {
         **row,
-        **_heading(trip, row),
+        **selectors.heading(trip, row),
         "steps": _steps(trip, key, _stamps(trip)),
         "stops": _itinerary(trip, stops, row["zone"]),
         "vehicle": trip.vehicle.name if trip.vehicle_id else "Vehicle to be confirmed",

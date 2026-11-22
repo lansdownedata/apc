@@ -1,32 +1,45 @@
-"""What a customer's pages read. `visible_trips` is the one scope every customer page goes
-through, so a trip outside it does not exist for the customer (404). Templates get plain
-dicts from `trip_rows` (a list) or `trip_row` (one trip): a cost, an affiliate or an
-internal note cannot leak through an attribute a template reaches for later, because the
-fields simply aren't there."""
+"""What every customer page reads from: the one scope, the labels, the money and the row.
+
+`visible_trips` is the one scope every customer page goes through, so a trip outside it does
+not exist for the customer (404). Templates get plain dicts from `trip_rows`: a cost, an
+affiliate or an internal note cannot leak through an attribute a template reaches for later,
+because the fields simply aren't there.
+
+The pages built on this live beside it: `home` (Home), `trip_list` (Trips and the
+spreadsheet's set), `trip_detail` (one trip) and `staff_access` (the staff card). They
+import this module; it imports none of them.
+"""
 
 from __future__ import annotations
 
 import re
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
+from functools import lru_cache
+from zoneinfo import ZoneInfo, available_timezones
 
 from django.conf import settings
-from django.db.models import Exists, Max, OuterRef, Prefetch, Q, QuerySet, Sum
+from django.db.models import (
+    Case,
+    CharField,
+    Exists,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Sum,
+    Value,
+    When,
+)
 from django.db.models.functions import Lower, Trim
 from django.db.models.query import prefetch_related_objects
-from django.http import QueryDict
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
-from django.utils import dateformat, timezone
+from django.utils import timezone
 
-from apps.contacts.models import Contact
-from apps.core import outbound
-from apps.leads.models import QUOTE_PREFIX, Lead
+from apps.leads.models import Lead
 from apps.leads.services import make_deposit_token
 from apps.payments import trip_money
 from apps.payments.models import Charge, PaymentPlan
@@ -34,15 +47,80 @@ from apps.payments.services import TRIP_MONEY_KINDS, pay_state
 from apps.planners.selectors import DISPATCHED_STATUSES
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.public.wedding import format_clock
-from apps.reservations.models import Flight, FlightDirection, Passenger, Reservation, Stop
+from apps.reservations.models import Flight, Passenger, Reservation, Stop
 
-from . import receipts, services
+from . import receipts
 from .models import CustomerAccount
 
-if TYPE_CHECKING:
-    from apps.accounts.models import User
-
 _S = Reservation.TripStatus
+
+# --- scope ---------------------------------------------------------------------------------
+
+
+def _wedding_trips() -> QuerySet[Reservation]:
+    """`reservations.services.is_wedding_trip` as a filter: a legacy builder leg, or the
+    wedding service type (name compared trimmed and case-folded, as the property does)."""
+    return Reservation.objects.alias(service=Lower(Trim("service_type__name"))).filter(
+        ~Q(source_leg_id="") | Q(service=WEDDING_SERVICE_NAME.lower())
+    )
+
+
+_DETAILS = (
+    Prefetch("stops", queryset=Stop.objects.select_related("airport").order_by("sequence", "pk")),
+    Prefetch("named_passengers", queryset=Passenger.objects.order_by("sort", "pk")),
+)
+
+
+def _in_scope(account: CustomerAccount, lead: str) -> Q:
+    """The scope, as a filter on `Lead` (`lead=""`) or on a trip through its order
+    (`lead="lead__"`): orders the account's contact booked or is billed for. Never a
+    wedding order (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
+    (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
+    have their own portals."""
+    contact_id = account.contact_id
+    order_pk = OuterRef("lead_id" if lead else "pk")
+    return (
+        (Q(**{f"{lead}contact_id": contact_id}) | Q(**{f"{lead}billing_contact_id": contact_id}))
+        & ~Exists(_wedding_trips().filter(lead_id=order_pk))
+        & ~Q(**{f"{lead}contact__company__is_affiliate_account": True})
+    )
+
+
+def trips_in_scope(account: CustomerAccount) -> QuerySet[Reservation]:
+    """The scope and nothing else (`_in_scope`), for counting, `exists()` and subqueries."""
+    return Reservation.objects.filter(_in_scope(account, "lead__"))
+
+
+def orders_in_scope(account: CustomerAccount) -> QuerySet[Lead]:
+    """The orders whose trips are `trips_in_scope`, for a question about the order itself
+    (does it owe?) that should not walk its trips."""
+    return Lead.objects.filter(_in_scope(account, ""))
+
+
+def lean_trips(account: CustomerAccount) -> QuerySet[Reservation]:
+    """The scope with what a row's label and money read (the order, its plan, the vehicle,
+    the trip review) but no stops or passengers: what a page reads to pick, sort and total
+    trips, before `load_details` on the few it shows."""
+    return trips_in_scope(account).select_related("lead", "lead__payment", "vehicle", "review")
+
+
+def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
+    """`lean_trips` with stops (and their airports) and passengers prefetched, so
+    `trip_rows` costs nothing per row."""
+    return lean_trips(account).prefetch_related(*_DETAILS)
+
+
+def load_details(trips: Iterable[Reservation]) -> None:
+    """Stops and passengers for trips read through `lean_trips`, in two queries: a page over
+    a long history loads them for the rows it shows, not for every trip it counted."""
+    prefetch_related_objects(list(trips), *_DETAILS)
+
+
+def trip_or_404(account: CustomerAccount, pk: int) -> Reservation:
+    return get_object_or_404(visible_trips(account), pk=pk)
+
+
+# --- labels and buckets --------------------------------------------------------------------
 
 # (text, tone). Texts are the spec's table (2026-11-20 §5) word for word.
 LABELS: dict[str, tuple[str, str]] = {
@@ -68,6 +146,10 @@ _BUCKET_OF = {
     "cancelled": "past",
     "no_show": "past",
 }
+# A booked trip nobody closed stops being "upcoming" once its pickup day is over in its own
+# zone: it keeps its label (we do not know how it ended) and moves to Past. One under way
+# stays where it is, whatever the date.
+PAST_ONCE_DAY_GONE = frozenset({"confirmed", "driver_assigned"})
 
 _IN_PROGRESS = frozenset({_S.ON_THE_WAY, _S.ARRIVED, _S.CUSTOMER_IN_CAR})
 _BEFORE_BOOKING = {
@@ -76,57 +158,11 @@ _BEFORE_BOOKING = {
 }
 
 
-def _wedding_trips() -> QuerySet[Reservation]:
-    """`reservations.services.is_wedding_trip` as a filter: a legacy builder leg, or the
-    wedding service type (name compared trimmed and case-folded, as the property does)."""
-    return Reservation.objects.alias(service=Lower(Trim("service_type__name"))).filter(
-        ~Q(source_leg_id="") | Q(service=WEDDING_SERVICE_NAME.lower())
-    )
-
-
-_DETAILS = (
-    Prefetch("stops", queryset=Stop.objects.select_related("airport").order_by("sequence", "pk")),
-    Prefetch("named_passengers", queryset=Passenger.objects.order_by("sort", "pk")),
-)
-
-
-def _scope(account: CustomerAccount) -> QuerySet[Reservation]:
-    """`visible_trips` without its stops and passengers: what a page reads to sort, count
-    and total a whole history, before `_load_details` on the few rows it shows."""
-    contact_id = account.contact_id
-    return (
-        Reservation.objects.filter(
-            Q(lead__contact_id=contact_id) | Q(lead__billing_contact_id=contact_id)
-        )
-        .exclude(Exists(_wedding_trips().filter(lead_id=OuterRef("lead_id"))))
-        .exclude(lead__contact__company__is_affiliate_account=True)
-        .select_related("lead", "lead__payment", "vehicle", "review")
-    )
-
-
-def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
-    """Trips on leads the account's contact booked or is billed for. Never a wedding order
-    (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
-    (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
-    have their own portals. Stops (with airports) and passengers are prefetched, and the
-    trip review joined, so `trip_row` costs nothing per row."""
-    return _scope(account).prefetch_related(*_DETAILS)
-
-
-def _load_details(trips: Iterable[Reservation]) -> None:
-    """Stops and passengers for trips read through `_scope`, in two queries: a page over a
-    long history loads them for the rows it shows, not for every trip it counted."""
-    prefetch_related_objects(list(trips), *_DETAILS)
-
-
-def trip_or_404(account: CustomerAccount, pk: int) -> Reservation:
-    return get_object_or_404(visible_trips(account), pk=pk)
-
-
 def label_key(trip: Reservation) -> str:
     """Which `LABELS` entry the customer sees (spec §5). A lost order that never booked is
     closed whatever its trips say; otherwise a cancelled trip is cancelled at any stage.
-    Before booking the order's stage speaks; once booked, the trip's own status does."""
+    Before booking the order's stage speaks; once booked, the trip's own status does.
+    `_label_case` is this, clause for clause, for the database."""
     lead, status = trip.lead, trip.trip_status
     if lead.status == Lead.Status.LOST:
         # A booked order is lost only by cancelling it (`payments.services._cancel`).
@@ -145,19 +181,107 @@ def label_key(trip: Reservation) -> str:
         return _BEFORE_BOOKING[lead.status]
     if status == _S.NO_SHOW:
         return "no_show"
-    if status in DISPATCHED_STATUSES:
-        if status == _S.DONE:
-            return "completed"
-        return "in_progress" if status in _IN_PROGRESS else "driver_assigned"
-    return "confirmed"
+    if status == _S.DONE:
+        return "completed"
+    if status in _IN_PROGRESS:
+        return "in_progress"
+    return "driver_assigned" if status in DISPATCHED_STATUSES else "confirmed"
 
 
-def _bucket_for(key: str) -> str:
+def _label_case() -> Case:
+    """`label_key` for the database, in the same order: the first clause that holds wins."""
+    lost = Q(lead__status=Lead.Status.LOST)
+    quoted = Q(lead__status=Lead.Status.QUOTED)
+    # `Lead.quote_expired` for a Quoted order; a blank expiry never matches.
+    expired = Q(lead__quote_expires_at__lte=timezone.now())
+    return Case(
+        When(lost & Q(booked_total__isnull=True), then=Value("closed")),
+        When(lost & Q(trip_status=_S.DONE), then=Value("completed")),
+        When(lost & Q(trip_status=_S.NO_SHOW), then=Value("no_show")),
+        When(lost, then=Value("cancelled")),
+        When(trip_status__in=receipts.CANCELLED, then=Value("cancelled")),
+        When(quoted & expired, then=Value("quote_expired")),
+        When(quoted, then=Value("quote_ready")),
+        *(When(lead__status=status, then=Value(key)) for status, key in _BEFORE_BOOKING.items()),
+        When(trip_status=_S.NO_SHOW, then=Value("no_show")),
+        When(trip_status=_S.DONE, then=Value("completed")),
+        When(trip_status__in=_IN_PROGRESS, then=Value("in_progress")),
+        When(trip_status__in=DISPATCHED_STATUSES, then=Value("driver_assigned")),
+        default=Value("confirmed"),
+        output_field=CharField(),
+    )
+
+
+def trip_zone(trip: Reservation) -> ZoneInfo:
+    """The trip's own zone: its pickup's, or the business zone while that is blank."""
+    return ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
+
+
+def day_gone(trip: Reservation) -> bool:
+    """Whether the trip's pickup day is over in its own zone. An undated trip's never is."""
+    day = trip.pickup_date
+    return day is not None and day < timezone.localdate(timezone=trip_zone(trip))
+
+
+@lru_cache(maxsize=4)
+def _today_by_zone(quarter_hour: int) -> dict[date, tuple[str, ...]]:
+    """{today's date: the zones where it is that date} at one instant, for every zone a trip
+    can carry. Every UTC offset in use is a multiple of 15 minutes, so the answer holds for
+    a whole quarter hour and is kept for it (keyed on the instant, so never stale)."""
+    now = datetime.fromtimestamp(quarter_hour * 900, tz=UTC)
+    by_day: defaultdict[date, list[str]] = defaultdict(list)
+    for name in sorted(available_timezones()):
+        by_day[now.astimezone(ZoneInfo(name)).date()].append(name)
+    return {day: tuple(names) for day, names in by_day.items()}
+
+
+def _day_gone_q() -> Q:
+    """`day_gone` for the database. A date before today everywhere on earth is gone; where
+    the date is already later than that, the zones are listed. A blank zone is the
+    business zone, as in `trip_zone`."""
+    now = timezone.now()
+    by_day = _today_by_zone(int(now.timestamp()) // 900)
+    earliest = min(by_day)
+    gone = Q(pickup_date__lt=earliest)
+    for day, zones in by_day.items():
+        if day > earliest:
+            gone |= Q(pickup_date__lt=day, pickup_timezone__in=zones)
+    home = timezone.localdate(now, ZoneInfo(settings.TIME_ZONE))
+    if home > earliest:
+        gone |= Q(pickup_date__lt=home, pickup_timezone="")
+    return gone
+
+
+def bucket(trip: Reservation, key: str | None = None) -> str:
+    """Which of `BUCKETS` the trip sits in: its label's, except that a booked trip left open
+    after its day (`PAST_ONCE_DAY_GONE`) is past. `key` is its `label_key` when the caller
+    has it."""
+    key = label_key(trip) if key is None else key
+    if key in PAST_ONCE_DAY_GONE and day_gone(trip):
+        return "past"
     return _BUCKET_OF.get(key, "upcoming")
 
 
-def bucket(trip: Reservation) -> str:
-    return _bucket_for(label_key(trip))
+def with_labels(trips: QuerySet[Reservation]) -> QuerySet[Reservation]:
+    """`trips` with `label` (`label_key`) and `bucket` (`bucket`) to filter on, so a page
+    asks the database for the trips it shows instead of reading a whole history to sort it
+    in Python. Aliases, not columns: a row's label is still `label_key(trip)`.
+    `test_label_and_bucket_filters_agree_with_python` pins the two together."""
+    by_bucket: defaultdict[str, list[str]] = defaultdict(list)
+    for key, name in _BUCKET_OF.items():
+        by_bucket[name].append(key)
+    return trips.alias(label=_label_case()).alias(
+        bucket=Case(
+            When(label__in=by_bucket["past"], then=Value("past")),
+            When(Q(label__in=PAST_ONCE_DAY_GONE) & _day_gone_q(), then=Value("past")),
+            When(label__in=by_bucket["requests"], then=Value("requests")),
+            default=Value("upcoming"),
+            output_field=CharField(),
+        )
+    )
+
+
+# --- money ---------------------------------------------------------------------------------
 
 
 def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
@@ -197,10 +321,12 @@ def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
     }
 
 
-def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> dict[int, Decimal]:
+def kept_amounts(
+    trips: Iterable[Reservation], paid: dict[int, Decimal] | None = None
+) -> dict[int, Decimal]:
     """What the customer paid and we kept, per priced cancelled trip whose figure is that
-    (`receipts.shows_kept`). `paid` is the `paid_amounts` of `trips` when the caller has
-    them already."""
+    (`receipts.shows_kept`): four queries when there is one, none otherwise. `paid` is the
+    `paid_amounts` of `trips` when the caller has them already."""
     cancelled = [t for t in trips if receipts.priced(t) and receipts.shows_kept(t)]
     if not cancelled:
         return {}
@@ -209,21 +335,68 @@ def _kept(trips: list[Reservation], paid: dict[int, Decimal] | None = None) -> d
     return {t.pk: paid[t.pk] for t in cancelled}
 
 
-def _total(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
-    """`receipts.customer_total` with the list's batched kept amounts."""
+def total_for(trip: Reservation, kept: dict[int, Decimal]) -> Decimal | None:
+    """`receipts.customer_total` with a list's batched `kept_amounts`."""
     return receipts.customer_total(trip, kept.get(trip.pk))
 
 
-def display_total(trip: Reservation) -> Decimal | None:
-    """The customer's figure for one trip (`receipts.customer_total`)."""
-    return _total(trip, _kept([trip]))
+# --- dates ---------------------------------------------------------------------------------
 
+_NEVER = datetime.max.replace(tzinfo=UTC)
+
+
+def soonest(trip: Reservation) -> tuple:
+    """Sort key: by the pickup instant (each trip in its own zone), undated last."""
+    at = trip.pickup_at
+    return (at is None, at or _NEVER, trip.pk)
+
+
+def long_date(trip: Reservation) -> str:
+    """ "Thursday, December 3" """
+    day = trip.pickup_date
+    return f"{day:%A, %B} {day.day}" if day else "Date to be confirmed"
+
+
+def short_day(at: datetime, trip: Reservation) -> str:
+    """`at` as a date in the trip's own zone, e.g. "Nov 19"."""
+    day = timezone.localtime(at, trip_zone(trip)).date()
+    return f"{day:%b} {day.day}"
+
+
+def heading(trip: Reservation, row: dict) -> dict:
+    """A trip's page heading, from its `trip_rows` row: `heading` "Thursday, December 3 at
+    9:10 AM" with `heading_zone` beside it, or, while the day or the time is open, the part
+    we know and `when_note` for the rest."""
+    day = long_date(trip)
+    if trip.pickup_date and trip.pickup_time:
+        return {"heading": f"{day} at {row['time']}", "heading_zone": row["zone"], "when_note": ""}
+    note = ""
+    if trip.pickup_date:
+        note = row["time"]
+    elif trip.pickup_time:
+        note = f"{row['time']} {row['zone']}"
+    return {"heading": day, "heading_zone": "", "when_note": note}
+
+
+_FLIGHT_EXPECTED = frozenset({Flight.Status.SCHEDULED, Flight.Status.ACTIVE})
+
+
+def expected_flight_at(flight: Flight | None) -> datetime | None:
+    """The flight's estimated (else scheduled) time while it is still expected (scheduled
+    or active); None for no flight or one whose time no longer holds. Home's meeting line
+    and trip detail's flight line both read this."""
+    if flight is None or flight.status not in _FLIGHT_EXPECTED:
+        return None
+    return flight.estimated_at or flight.scheduled_at
+
+
+# --- the row -------------------------------------------------------------------------------
 
 _ZIP = re.compile(r"\s+\d{5}(-\d{4})?$")
 _COUNTRIES = {"usa", "us", "united states", "united states of america"}
 
 
-def _place(stop: Stop) -> str:
+def place(stop: Stop) -> str:
     """An airport as "Dulles (IAD)", a named place by its name, else the address's town
     ("2200 Clarendon Blvd, Arlington, VA 22201" -> "Arlington, VA")."""
     if stop.airport_id:
@@ -240,6 +413,12 @@ def _place(stop: Stop) -> str:
     return parts[0] if parts else "Location to be confirmed"
 
 
+def stops_of(trip: Reservation) -> list[Stop]:
+    """The trip's stops in order, through `.all()`: no query for a trip whose details are
+    loaded (never `trip.pickup`, whose `.order_by()` ignores the prefetch)."""
+    return sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
+
+
 def _route(trip: Reservation, stops: list[Stop]) -> str:
     if trip.trip_type == Reservation.TripType.HOURLY:
         hours = trip.billed_hours
@@ -249,36 +428,38 @@ def _route(trip: Reservation, stops: list[Stop]) -> str:
     if not stops:
         return "Route to be confirmed"
     if len(stops) == 1:
-        return _place(stops[0])
-    return f"{_place(stops[0])} to {_place(stops[-1])}"
+        return place(stops[0])
+    return f"{place(stops[0])} to {place(stops[-1])}"
 
 
-def _passenger(trip: Reservation) -> str:
+def lead_passenger(trip: Reservation) -> str:
     """The lead passenger's name, else the first named one's. Never a mobile."""
     named = [p for p in trip.named_passengers.all() if p.name.strip()]
     lead = next((p for p in named if p.is_lead), None)
     return (lead or named[0]).name.strip() if named else ""
 
 
-def trip_rows(trips: Iterable[Reservation], paid: dict[int, Decimal] | None = None) -> list[dict]:
-    """The rows for a list of trips. Lists call this, not `trip_row` in a loop: cancelled
-    trips' kept amounts are read for the whole list at once. Over `visible_trips` that is
-    3 queries, plus 4 when any trip is cancelled, whatever the number of orders."""
+def trip_rows(
+    trips: Iterable[Reservation],
+    paid: dict[int, Decimal] | None = None,
+    *,
+    kept: dict[int, Decimal] | None = None,
+) -> list[dict]:
+    """The rows for a list of trips (or one: `trip_rows([trip])[0]`), prefetched or not.
+    Cancelled trips' kept amounts are read for the whole list at once (`kept_amounts`, from
+    `paid` when the caller has the trips' `paid_amounts`), unless the caller hands them in
+    as `kept`. Over `visible_trips` that is 3 queries, plus 4 when any trip is cancelled,
+    whatever the number of orders."""
     trips = list(trips)
-    kept = _kept(trips, paid)
+    if kept is None:
+        kept = kept_amounts(trips, paid)
     return [_row(trip, kept) for trip in trips]
 
 
-def trip_row(trip: Reservation) -> dict:
-    """One trip's row (a detail page). Works on any trip, prefetched or not."""
-    return trip_rows([trip])[0]
-
-
 def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
-    """Reads stops and passengers through `.all()`, so a trip from `visible_trips` costs no
-    query (never `trip.pickup`, whose `.order_by()` ignores the prefetch); any other trip
-    falls back to a query each."""
-    stops = sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
+    """A trip whose details are loaded costs no query; any other falls back to one each
+    for its stops and passengers."""
+    stops = stops_of(trip)
     day = trip.pickup_date
     text, tone = LABELS[label_key(trip)]
     return {
@@ -288,7 +469,7 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         # The pickup zone on the trip's own day; blank zone -> the business zone.
         "zone": trip.pickup_tz_label,
         "route": _route(trip, stops),
-        "passenger": _passenger(trip),
+        "passenger": lead_passenger(trip),
         # Raw, for search and export; the label says which kind it is (mockup 2: an
         # imported LimoAnywhere trip reads "Conf. 48213", ours "APC-600412").
         "confirmation": trip.la_confirmation or trip.reference,
@@ -297,72 +478,54 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
         else trip.reference,
         "label": text,
         "tone": tone,
-        "total": _total(trip, kept),
+        "total": total_for(trip, kept),
         "reference": trip.customer_reference,
         "has_receipt": receipts.has_receipt(trip, kept.get(trip.pk)),
     }
 
 
-# --- Home ----------------------------------------------------------------------------------
+# --- money an order owes -------------------------------------------------------------------
 
-# "Your next trip" is one we have confirmed: never a request, a quote or a held deposit.
-NEXT_TRIP_KEYS = frozenset({"confirmed", "driver_assigned", "in_progress"})
-# At most this many orders that may owe money are priced per Home load (`_owing`), the ones
-# with the soonest trip ahead: each costs the pay page's ledger reads.
+# At most this many orders that may owe money are priced per page load (`owing`): each
+# costs the pay page's ledger reads.
 WAITING_PAY_CHECKS = 5
-_NEVER = datetime.max.replace(tzinfo=UTC)
-_FLIGHT_EXPECTED = frozenset({Flight.Status.SCHEDULED, Flight.Status.ACTIVE})
 
 
-def _soonest(trip: Reservation) -> tuple:
-    """Sort key: by the pickup instant (each trip in its own zone), undated last."""
-    at = trip.pickup_at
-    return (at is None, at or _NEVER, trip.pk)
+def _open_trip_links() -> QuerySet[Charge]:
+    """Pay links sent for one trip and not yet paid (`payments.services.open_trip_link`)."""
+    return (
+        Charge.objects.filter(kind=Charge.Kind.TRIP, status=Charge.Status.PENDING)
+        .exclude(stripe_client_secret="")
+        .exclude(reservation=None)
+    )
 
 
-def _on_upcoming(key: str) -> bool:
-    """Home's Upcoming list: the upcoming bucket and unpriced requests (spec §5's "Upcoming,
-    Requests"), but not a quote ready to pay, which sits in "Waiting on you"."""
-    return key == "request_received" or (_bucket_for(key) == "upcoming" and key != "quote_ready")
+def may_owe() -> Q:
+    """A filter on `Lead` for the orders `owing` would look at: booked, paid by card, with
+    a plan whose flags (or an open trip pay link) say money may be waiting on the customer.
+    A little wider than `owing`'s own check: a card-less balance passes before it is due."""
+    return Q(status=Lead.Status.BOOKED, billing_group__isnull=True, payment__isnull=False) & (
+        ~Q(payment__deposit_status=PaymentPlan.DepositStatus.PAID)
+        | Q(payment__balance_status=PaymentPlan.BalanceStatus.FAILED)
+        | (
+            Q(payment__stripe_payment_method_id="")
+            & ~Q(payment__balance_status=PaymentPlan.BalanceStatus.PAID)
+        )
+        | Exists(_open_trip_links().filter(plan__lead_id=OuterRef("pk")))
+    )
 
 
-def _is_next(trip: Reservation, key: str) -> bool:
-    """Confirmed or later, and not a day already gone in the trip's own zone (a trip left
-    open after its day is not "next"); one under way always is."""
-    if key == "in_progress":
-        return True
-    if key not in NEXT_TRIP_KEYS:
-        return False
-    zone = ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)
-    return trip.pickup_date is None or trip.pickup_date >= timezone.localdate(timezone=zone)
-
-
-def _stops(trip: Reservation) -> list[Stop]:
-    return sorted(trip.stops.all(), key=lambda s: (s.sequence, s.pk))
-
-
-def _long_date(trip: Reservation) -> str:
-    """ "Thursday, December 3" """
-    day = trip.pickup_date
-    return f"{day:%A, %B} {day.day}" if day else "Date to be confirmed"
-
-
-def _short_day(at: datetime, trip: Reservation) -> str:
-    """`at` as a date in the trip's own zone, e.g. "Nov 19"."""
-    day = timezone.localtime(at, ZoneInfo(trip.pickup_timezone or settings.TIME_ZONE)).date()
-    return f"{day:%b} {day.day}"
-
-
-def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
+def owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
     """{lead id: (Charge.Kind, amount)} for booked orders whose money we will not collect
     ourselves: an unpaid deposit, an open trip pay link, or a balance the cron will not take
     (it failed, or it is due with no saved card: `payments.tasks.charge_due_balances`). A
     balance scheduled on a saved card is not waiting on the customer.
 
-    The kind and amount are the pay page's own answer (`payments.services.pay_state`). That reads
-    the ledger, about 11 queries an order, so only an order whose plan flags or an open trip
-    link say it may owe is asked, and only the first `WAITING_PAY_CHECKS` of those in the
-    order given (Home passes soonest trip ahead first); every other order costs nothing."""
+    The kind and amount are the pay page's own answer (`payments.services.pay_state`). That
+    reads the ledger, about 11 queries an order, so only an order whose plan flags or an
+    open trip link say it may owe is asked, and only the first `WAITING_PAY_CHECKS` of those
+    in the order given (Home passes soonest trip ahead first); every other order costs
+    nothing. Prefetch each lead's `reservations`: the plan and the pay page read them."""
     booked = [
         lead
         for lead in leads
@@ -373,12 +536,7 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
     if not booked:
         return {}
     linked = set(
-        Charge.objects.filter(
-            plan__lead__in=booked, kind=Charge.Kind.TRIP, status=Charge.Status.PENDING
-        )
-        .exclude(stripe_client_secret="")
-        .exclude(reservation=None)
-        .values_list("plan__lead_id", flat=True)
+        _open_trip_links().filter(plan__lead__in=booked).values_list("plan__lead_id", flat=True)
     )
     candidates: list[tuple[Lead, bool]] = []
     for lead in booked:
@@ -391,524 +549,21 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
         deposit_open = plan.deposit_status != PaymentPlan.DepositStatus.PAID
         if deposit_open or uncollected or lead.pk in linked:
             candidates.append((lead, uncollected))
-    owing = {}
+    owed = {}
     for lead, uncollected in candidates[:WAITING_PAY_CHECKS]:
         kind, amount = pay_state(lead)
         if kind in (Charge.Kind.DEPOSIT, Charge.Kind.TRIP) or (
             kind == Charge.Kind.BALANCE and uncollected
         ):
-            owing[lead.pk] = (kind, amount)
-    return owing
-
-
-def _deposits_held(trips: list[Reservation]) -> dict[int, datetime]:
-    """{lead id: when its deposit was authorized}, for the trips reading Confirming."""
-    lead_ids = {t.lead_id for t in trips}
-    if not lead_ids:
-        return {}
-    return dict(
-        Charge.objects.filter(
-            plan__lead_id__in=lead_ids, kind=Charge.Kind.DEPOSIT, authorized_at__isnull=False
-        )
-        .values("plan__lead_id")
-        .annotate(at=Max("authorized_at"))
-        .values_list("plan__lead_id", "at")
-        .order_by()
-    )
-
-
-def expected_flight_at(flight: Flight | None) -> datetime | None:
-    """The flight's estimated (else scheduled) time while it is still expected (scheduled
-    or active); None for no flight or one whose time no longer holds. Home's meeting line
-    and trip detail's flight line both read this."""
-    if flight is None or flight.status not in _FLIGHT_EXPECTED:
-        return None
-    return flight.estimated_at or flight.scheduled_at
-
-
-def _meeting(trip: Reservation, first: Stop) -> str:
-    """ "Meeting flight AA 2114, arriving 8:52 AM." for a pickup at an arriving flight; the
-    time only while the cached flight is still expected. One trip, so one query."""
-    stop = Stop.objects.select_related("airport", "airline", "flight").get(pk=first.pk)
-    text = f"Meeting flight {stop.flight_label if stop.airline_id else stop.flight_number}"
-    at = expected_flight_at(stop.flight)
-    if at:
-        zone = ZoneInfo(stop.airport.timezone or trip.pickup_timezone or settings.TIME_ZONE)
-        text += f", arriving {format_clock(timezone.localtime(at, zone).time())}"
-    return f"{text}."
-
-
-def _summary(trip: Reservation) -> str:
-    """ "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM." """
-    people = f"{trip.passengers} passenger{'' if trip.passengers == 1 else 's'}"
-    parts = [f"{trip.vehicle.name}, {people}." if trip.vehicle_id else f"{people.capitalize()}."]
-    stops = _stops(trip)
-    first = stops[0] if stops else None
-    if (
-        first is not None
-        and first.airport_id
-        and first.flight_number
-        and first.flight_direction != FlightDirection.DEPARTURE
-    ):
-        parts.append(_meeting(trip, first))
-    return " ".join(parts)
+            owed[lead.pk] = (kind, amount)
+    return owed
 
 
 def pay_action(lead: Lead, owed: tuple[str, Decimal] | None) -> tuple[str, str]:
     """(url, button label) for an order waiting on the customer. Both pages are the
     existing token-keyed ones; a quote is reviewed before it is paid, money owed on a
-    booked order (`owed`, from `_owing`) goes straight to the pay page."""
+    booked order (`owed`, from `owing`) goes straight to the pay page."""
     token = make_deposit_token(lead)
     if owed is not None:
         return reverse("quote_pay", args=[token]), "Pay now"
     return reverse("quote_page", args=[token]), "Review and pay"
-
-
-def _waiting_row(
-    row: dict, lead: Lead, trips: list[Reservation], owed: tuple[str, Decimal] | None
-) -> dict:
-    """A "Waiting on you" row: the order's soonest trip, what it asks for and where to go
-    (`pay_action`)."""
-    url, label = pay_action(lead, owed)
-    if owed is not None:
-        return {
-            **row,
-            "lead": lead.pk,
-            "amount": owed[1],
-            "note": "Payment due",
-            "action_url": url,
-            "action_label": label,
-        }
-    stops = _stops(trips[0])
-    note = ""
-    if len(trips) > 1:
-        note = f"{len(trips)} trips on this quote"
-    elif trips[0].trip_type == Reservation.TripType.HOURLY and stops:
-        note = f"Starts at {_place(stops[0])}"
-    return {
-        **row,
-        "lead": lead.pk,
-        "amount": lead.quote_total,
-        "note": note,
-        "action_url": url,
-        "action_label": label,
-    }
-
-
-def _note(trip: Reservation, key: str, held: dict[int, datetime]) -> str:
-    """The line under an Upcoming row, while a trip is still on its way to Confirmed."""
-    if key == "request_received":
-        return f"Requested {_short_day(trip.lead.created_at, trip)}. We're preparing your quote."
-    if key == "confirming":
-        at = held.get(trip.lead_id)
-        received = f"Deposit received {_short_day(at, trip)}. " if at else ""
-        return f"{received}We're confirming your vehicle."
-    return ""
-
-
-def home(account: CustomerAccount) -> dict:
-    """Home (spec §6.1). `next_trip`: the soonest confirmed-or-later trip with its long date
-    and `summary` line, or None. `waiting`: one row per order with a quote ready (Review and
-    pay) or money owed (Pay now), soonest first. `upcoming`: every upcoming trip but quotes
-    (they wait above), requests included, soonest first. `history_banner`: the past-trip
-    count, only before the account's first Home visit (the view stamps
-    `history_banner_seen_at` on it). `has_trips`: whether the account has any trip at all.
-    The next trip's `can_ask_change`: it takes a change request (`requests.can_ask`) and
-    none of the account's is waiting on staff (one query, only then)."""
-    from .requests import can_ask, pending
-
-    trips = sorted(_scope(account), key=_soonest)
-    keys = {t.pk: label_key(t) for t in trips}
-    by_lead: dict[int, list[Reservation]] = defaultdict(list)
-    for trip in trips:
-        by_lead[trip.lead_id].append(trip)
-    leads = [group[0].lead for group in by_lead.values()]
-    quotes = {
-        lead.pk: group
-        for lead in leads
-        if (group := [t for t in by_lead[lead.pk] if keys[t.pk] == "quote_ready"])
-    }
-    # Each order's trips still ahead (all of them when every one is past), soonest first.
-    ahead = {
-        pk: [t for t in group if _bucket_for(keys[t.pk]) != "past"] or group
-        for pk, group in by_lead.items()
-    }
-    asked = sorted(
-        (lead for lead in leads if lead.pk in quotes or lead.status == Lead.Status.BOOKED),
-        key=lambda lead: (
-            _bucket_for(keys[ahead[lead.pk][0].pk]) == "past",
-            _soonest(ahead[lead.pk][0]),
-        ),
-    )
-    # `quote_total`, `balance_due_now` and the pay page all read the order's trips.
-    prefetch_related_objects(asked, "reservations")
-    owing = _owing(asked)
-
-    waiting: list[tuple[Lead, list[Reservation]]] = []
-    for lead in asked:
-        if lead.pk in owing:
-            waiting.append((lead, ahead[lead.pk]))
-        elif lead.pk in quotes:
-            waiting.append((lead, quotes[lead.pk]))
-    waiting.sort(key=lambda item: _soonest(item[1][0]))
-    upcoming = [t for t in trips if _on_upcoming(keys[t.pk])]
-
-    shown = {t.pk: t for t in upcoming} | {group[0].pk: group[0] for _, group in waiting}
-    _load_details(shown.values())
-    rows = dict(zip(shown, trip_rows(shown.values()), strict=True))
-    held = _deposits_held([t for t in upcoming if keys[t.pk] == "confirming"])
-    nxt = next((t for t in upcoming if _is_next(t, keys[t.pk])), None)
-    past = sum(1 for key in keys.values() if _bucket_for(key) == "past")
-    return {
-        "next_trip": None
-        if nxt is None
-        else {
-            **rows[nxt.pk],
-            "long_date": _long_date(nxt),
-            "summary": _summary(nxt),
-            "can_ask_change": can_ask(nxt, keys[nxt.pk])
-            and not any(row["kind"] == "change" for row in pending(account, nxt)),
-        },
-        "waiting": [
-            _waiting_row(rows[group[0].pk], lead, group, owing.get(lead.pk))
-            for lead, group in waiting
-        ],
-        "upcoming": [{**rows[t.pk], "note": _note(t, keys[t.pk], held)} for t in upcoming],
-        "history_banner": past if past and account.history_banner_seen_at is None else None,
-        "has_trips": bool(trips),
-    }
-
-
-# --- Trips ---------------------------------------------------------------------------------
-
-PAGE_SIZE = 50
-TABS = (*BUCKETS, "all")
-GROUPINGS = ("month", "passenger", "reference")
-# "Show more" asks for one more page each time; this keeps a hand-typed `page` sane.
-MAX_PAGES = 200
-QUERY_MAX = 100
-# The rows the foot total sums (spec §7): completed trips and what was kept on cancellations.
-TOTALLED_KEYS = frozenset({"completed", "cancelled"})
-_NO_GROUP = {"passenger": "No passenger named", "reference": "No reference"}
-# `Reservation.reference` is "APC-" + (600000 + pk). Up to 18 digits so the pk fits a
-# BIGINT whatever is typed; the prefix is optional ("600412" finds APC-600412 too).
-_TRIP_REFERENCE_BASE = 600_000
-_TRIP_REFERENCE = re.compile(rf"(?:{QUOTE_PREFIX}\s*-?\s*)?(\d{{1,18}})", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class TripFilter:
-    """What the Trips page shows. `page` is how many pages of `PAGE_SIZE` rows are shown:
-    "Show more" asks for page 2 and gets the first 100 rows back, so a group never splits
-    across two fetches."""
-
-    tab: str = "upcoming"
-    start: date | None = None
-    end: date | None = None
-    q: str = ""
-    passenger: str = ""
-    group: str = "month"
-    page: int = 1
-
-    @classmethod
-    def from_query(cls, query: QueryDict) -> TripFilter:
-        """Read `?tab=&start=&end=&q=&passenger=&group=&page=`. A value it cannot use falls
-        back to the default; a range typed backwards is read the right way round."""
-        tab = query.get("tab", "")
-        group = query.get("group", "")
-        start, end = _iso_day(query.get("start", "")), _iso_day(query.get("end", ""))
-        if start and end and start > end:
-            start, end = end, start
-        try:
-            page = min(max(int(query.get("page", "1")), 1), MAX_PAGES)
-        except ValueError:
-            page = 1
-        return cls(
-            tab=tab if tab in TABS else cls.tab,
-            start=start,
-            end=end,
-            q=query.get("q", "").strip()[:QUERY_MAX],
-            passenger=query.get("passenger", "").strip()[:QUERY_MAX],
-            group=group if group in GROUPINGS else cls.group,
-            page=page,
-        )
-
-    @property
-    def narrowed(self) -> bool:
-        """Whether anything but the tab and grouping limits the trips."""
-        return bool(self.start or self.end or self.q or self.passenger)
-
-
-def _iso_day(text: str) -> date | None:
-    try:
-        return date.fromisoformat(text.strip())
-    except ValueError:
-        return None
-
-
-def _reference_pk(term: str) -> int | None:
-    """ "APC-600412", "apc 600412" or "600412" -> 412; anything else -> None."""
-    match = _TRIP_REFERENCE.fullmatch(term.strip())
-    if match is None:
-        return None
-    pk = int(match.group(1)) - _TRIP_REFERENCE_BASE
-    return pk if pk > 0 else None
-
-
-def _matching(trips: QuerySet[Reservation], f: TripFilter) -> QuerySet[Reservation]:
-    """`trips` narrowed by the date range (the trip's own local pickup date), the passenger
-    and the search. Stops and passengers are matched with `Exists`, so a trip with two
-    matching stops is still one row."""
-    if f.start:
-        trips = trips.filter(pickup_date__gte=f.start)
-    if f.end:
-        trips = trips.filter(pickup_date__lte=f.end)
-    if f.passenger:
-        rode = Passenger.objects.alias(clean=Trim("name")).filter(
-            reservation=OuterRef("pk"), clean__iexact=f.passenger
-        )
-        trips = trips.filter(Exists(rode))
-    if f.q:
-        term = f.q
-        stops = Stop.objects.filter(
-            Q(address__icontains=term) | Q(name__icontains=term), reservation=OuterRef("pk")
-        )
-        people = Passenger.objects.filter(reservation=OuterRef("pk"), name__icontains=term)
-        found = (
-            Q(la_confirmation__icontains=term)
-            | Q(customer_reference__icontains=term)
-            | Q(Exists(stops))
-            | Q(Exists(people))
-        )
-        pk = _reference_pk(term)
-        if pk is not None:
-            found |= Q(pk=pk)
-        trips = trips.filter(found)
-    return trips
-
-
-def _passenger_options(account: CustomerAccount) -> list[tuple[str, str]]:
-    """Every named passenger on the account's trips, once each (case aside), A to Z."""
-    names = (
-        Passenger.objects.filter(reservation__in=visible_trips(account).values("pk"))
-        .values_list("name", flat=True)
-        .order_by()
-        .distinct()
-    )
-    unique: dict[str, str] = {}
-    for name in names:
-        name = name.strip()
-        if name:
-            unique.setdefault(name.casefold(), name)
-    return [(name, name) for _, name in sorted(unique.items())]
-
-
-def _in_tab_order(trips: list[Reservation], tab: str) -> list[Reservation]:
-    """Upcoming soonest first; every other tab newest first. Undated trips go last."""
-    by_time = sorted(trips, key=_soonest)
-    if tab == "upcoming":
-        return by_time
-    dated = [t for t in by_time if t.pickup_date is not None]
-    return dated[::-1] + [t for t in by_time if t.pickup_date is None]
-
-
-def _group_title(trip: Reservation, group: str) -> str:
-    """The trip's group heading; blank for no passenger or no reference."""
-    if group == "month":
-        day = trip.pickup_date
-        return f"{day:%B %Y}" if day else "Date to be confirmed"
-    if group == "passenger":
-        return _passenger(trip)
-    return trip.customer_reference.strip()
-
-
-def _grouped(
-    trips: list[Reservation], rows: list[dict], titles: dict[int, str], group: str
-) -> list[dict]:
-    """Consecutive rows under one heading each."""
-    groups: list[dict] = []
-    for trip, row in zip(trips, rows, strict=True):
-        title = titles[trip.pk] or _NO_GROUP[group]
-        if not groups or groups[-1]["title"].casefold() != title.casefold():
-            groups.append({"title": title, "rows": []})
-        groups[-1]["rows"].append(row)
-    return groups
-
-
-def _day_text(day: date, year: bool = True) -> str:
-    return f"{day:%b} {day.day}, {day.year}" if year else f"{day:%b} {day.day}"
-
-
-def _range_texts(f: TripFilter) -> tuple[str, str]:
-    """(header label, date field text): ("from Oct 1 to Nov 20, 2026", "Oct 1 – Nov 20,
-    2026"). The year shows once when both ends share it. Both blank with no range."""
-    start, end = f.start, f.end
-    if start and end:
-        if start == end:
-            return f"on {_day_text(start)}", _day_text(start)
-        first = _day_text(start, year=start.year != end.year)
-        return f"from {first} to {_day_text(end)}", f"{first} – {_day_text(end)}"
-    if start:
-        return f"from {_day_text(start)}", f"From {_day_text(start)}"
-    if end:
-        return f"until {_day_text(end)}", f"Until {_day_text(end)}"
-    return "", ""
-
-
-def filtered_trips(account: CustomerAccount, f: TripFilter) -> list[Reservation]:
-    """Every trip the filter shows, unpaged, in the tab's order: the Trips page's set."""
-    found = [t for t in _matching(visible_trips(account), f) if f.tab in ("all", bucket(t))]
-    return _in_tab_order(found, f.tab)
-
-
-def ticked_trips(account: CustomerAccount, ids: list[int]) -> list[Reservation]:
-    """The trips among `ids` the account can see (the rest are dropped), newest first."""
-    return _in_tab_order(list(visible_trips(account).filter(pk__in=ids)), "all")
-
-
-def trips(account: CustomerAccount, f: TripFilter) -> dict:
-    """The Trips page (spec §6.2). `groups`: `[{"title", "rows"}]` for the first `f.page`
-    pages, in tab order (grouped by passenger or reference: A to Z, the blank group last).
-    `count`: trips in the filtered set. `total`: the sum of `display_total` over its
-    Completed and Cancelled rows, the whole set and not only the rows shown, with `counted`
-    the number of those rows. `passengers`: the passenger filter's options.
-
-    The filtered set is read once without stops or passengers; tab, order and total are
-    worked out from it, and only the rows shown load theirs (`_load_details`), so a long
-    history costs one lean read however far back it goes. The kept amounts of cancelled
-    trips are read once for the whole set (`_kept`: four queries when any trip is
-    cancelled), never per row."""
-    found = list(_matching(_scope(account), f))
-    keys = {t.pk: label_key(t) for t in found}
-    has_trips = bool(found) or (f.narrowed and _scope(account).exists())
-    if f.tab != "all":
-        found = [t for t in found if _bucket_for(keys[t.pk]) == f.tab]
-
-    kept = _kept(found)
-    totalled = [t for t in found if keys[t.pk] in TOTALLED_KEYS]
-    total = sum(
-        (amount for t in totalled if (amount := _total(t, kept)) is not None), Decimal("0.00")
-    )
-
-    ordered = _in_tab_order(found, f.tab)
-    if f.group == "passenger":
-        _load_details(ordered)  # the headings are the passengers' names
-    titles = {t.pk: _group_title(t, f.group) for t in ordered}
-    if f.group != "month":
-        ordered.sort(key=lambda t: (not titles[t.pk], titles[t.pk].casefold()))
-    shown = ordered[: PAGE_SIZE * f.page]
-    if f.group != "passenger":
-        _load_details(shown)
-    label, text = _range_texts(f)
-    return {
-        "groups": _grouped(shown, [_row(t, kept) for t in shown], titles, f.group),
-        "count": len(found),
-        "total": total,
-        "counted": len(totalled),
-        "has_more": len(ordered) > len(shown),
-        "passengers": _passenger_options(account),
-        "range_label": label,
-        "range_text": text,
-        "has_trips": has_trips,
-        "narrowed": f.narrowed,
-    }
-
-
-def quick_ranges() -> list[dict]:
-    """The quick date ranges, from today in the business zone: this month, last month,
-    this quarter, this year and last year, as ISO dates for the filter."""
-    today = timezone.localdate()
-    month = today.replace(day=1)
-    last = (month - timedelta(days=1)).replace(day=1)
-    quarter = month.replace(month=(today.month - 1) // 3 * 3 + 1)
-
-    def span(label: str, start: date, end: date) -> dict:
-        return {"label": label, "start": start.isoformat(), "end": end.isoformat()}
-
-    def month_end(first: date) -> date:
-        return (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-
-    return [
-        span("This month", month, month_end(month)),
-        span("Last month", last, month_end(last)),
-        span("This quarter", quarter, month_end(quarter.replace(month=quarter.month + 2))),
-        span(str(today.year), date(today.year, 1, 1), date(today.year, 12, 31)),
-        span(str(today.year - 1), date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)),
-    ]
-
-
-# --- the staff side: the contact profile's access card -------------------------------------
-
-_ACCESS_LABELS = {
-    "none": "Not invited",
-    "invited": "Invited",
-    "active": "Active",
-    "revoked": "Revoked",
-}
-
-
-def access_for(contact: Contact) -> dict:
-    """The contact profile's Customer portal card (staff side): the state, one line saying
-    who did what when, and which actions apply. No query when the contact was loaded with
-    `customer_account__invited_by` and `customer_account__revoked_by` selected (the profile
-    does); one otherwise.
-
-    `blocked_reason` is why the sending actions can't run now (an affiliate company, which
-    only stops an invite; no email on the contact; the go-live switch off). The card shows
-    it beside the disabled buttons. Revoke is never blocked."""
-    try:
-        account = contact.customer_account
-    except CustomerAccount.DoesNotExist:
-        account = None
-    status = account.status if account else "none"
-    zone = ZoneInfo(settings.TIME_ZONE)
-
-    def day(moment: datetime) -> str:
-        return dateformat.format(moment.astimezone(zone), "M j, Y")
-
-    def by(user: User | None) -> str:
-        return f" by {user}" if user else ""
-
-    if account is None:
-        first = contact.name.split(" ")[0]
-        line = f"{first} can sign in to request trips, see history and download receipts."
-    elif status == CustomerAccount.Status.REVOKED:
-        line = f"Access revoked {day(account.revoked_at)}{by(account.revoked_by)}."
-    elif status == CustomerAccount.Status.INVITED:
-        line = (
-            f"Invite emailed {day(account.invited_at)}{by(account.invited_by)}."
-            if account.invited_at
-            else "Invite pending."
-        )
-    elif account.self_registered or account.invited_at is None:
-        line = f"Signed up on their own {day(account.registered_at)}."
-    else:
-        line = (
-            f"Invited {day(account.invited_at)}{by(account.invited_by)}. "
-            f"Signed up {day(account.registered_at)}."
-        )
-    if status == CustomerAccount.Status.ACTIVE and account.last_login:
-        seen = account.last_login.astimezone(zone)
-        clock = dateformat.format(seen, "M j \\a\\t g:i A")
-        line += f" Last signed in {clock} {seen.tzname()}."
-
-    inviting = status in ("none", CustomerAccount.Status.REVOKED)
-    if inviting and services.is_affiliate(contact):
-        blocked = services.AFFILIATE_REFUSED
-    elif not (contact.email or "").strip():
-        blocked = services.no_email_message(contact, inviting=inviting)
-    elif not outbound.enabled():
-        blocked = outbound.OFF_MESSAGE
-    else:
-        blocked = ""
-    return {
-        "status": status,
-        "label": _ACCESS_LABELS[status],
-        "line": line,
-        "blocked_reason": blocked,
-        "can_invite": inviting and not blocked,
-        "show_invite": inviting,
-        "show_resend": status == CustomerAccount.Status.INVITED,
-        "show_reset": status == CustomerAccount.Status.ACTIVE,
-        "can_revoke": status in (CustomerAccount.Status.INVITED, CustomerAccount.Status.ACTIVE),
-    }

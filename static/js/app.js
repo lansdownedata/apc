@@ -6194,21 +6194,25 @@ function openScheduler() {
 window.openScheduler = openScheduler;
 
 /* ------------------------------------------- customer portal: Trips (mockup 2)
- * One GET form holds every filter. A change refetches the table alone (`?fragment=1`)
- * and puts the filters in the address bar; "Show more" asks for one more page and gets
- * every row so far back, so a group never splits. Ticked rows (id -> cents) survive
- * "Show more" and clear when a filter changes. The date field is a flatpickr range whose
- * text comes back from the server ("Oct 1 – Nov 20, 2026"). */
+ * One GET form holds every filter. A change refetches the table alone (`?fragment=1`,
+ * its first page of rows) and puts the filters in the address bar. "Show more" fetches the
+ * next page only (`&page=N`) and appends its rows; the server leaves the heading off a
+ * group that carries on from the page above, so a group never splits or repeats. The count
+ * and the foot total are the whole filtered set's and stay as the first page drew them.
+ * Ticked rows (id -> cents) survive "Show more" and clear when a filter changes; the box
+ * in the header is ticked when every row on the page is. The date field is a flatpickr
+ * range whose text comes back from the server ("Oct 1 – Nov 20, 2026"). */
 /* `customer_required` answers a customer page's own requests with a 401 once the session
    has ended. Reload the whole page then, so sign-in brings the customer back to it, never to
    a fragment of it (and never a redirect followed into the sign-in page's HTML). */
 const CUSTOMER_AJAX = { "X-Requested-With": "XMLHttpRequest" };
 const customerSignedOut = (resp) => resp.status === 401 || resp.redirected;
 
-/* Save "Your reference" on trips `ids` through `customers:set_reference`. Resolves once
-   saved. Rejects with "signed out" after reloading the page when the session has ended (or
-   something other than the endpoint answered), and with "not saved" otherwise. */
-async function saveCustomerReference(referenceUrl, ids, value) {
+/* Save "Your reference" on trips `ids` through `customers:set_reference`. Resolves with
+   the answer once saved (with `rows`, it carries those trips' table rows redrawn). Rejects
+   with "signed out" after reloading the page when the session has ended (or something
+   other than the endpoint answered), and with "not saved" otherwise. */
+async function saveCustomerReference(referenceUrl, ids, value, { rows = false } = {}) {
   const resp = await fetch(referenceUrl, {
     method: "POST",
     headers: {
@@ -6217,7 +6221,7 @@ async function saveCustomerReference(referenceUrl, ids, value) {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-CSRFToken": getCookie("csrftoken"),
     },
-    body: new URLSearchParams({ ids: ids.join(","), value }),
+    body: new URLSearchParams({ ids: ids.join(","), value, ...(rows ? { rows: "1" } : {}) }),
   }).catch(() => null);
   const json = resp && !customerSignedOut(resp) ? await resp.json().catch(() => null) : null;
   if (resp && (customerSignedOut(resp) || (resp.ok && json === null))) {
@@ -6225,6 +6229,7 @@ async function saveCustomerReference(referenceUrl, ids, value) {
     throw new Error("signed out");
   }
   if (!resp || !resp.ok || !json.ok) throw new Error("not saved");
+  return json;
 }
 
 function customerTrips({ url, referenceUrl }) {
@@ -6236,10 +6241,12 @@ function customerTrips({ url, referenceUrl }) {
   return {
     loading: false,
     picked: {},
+    rows: 0,
     start: "",
     end: "",
     page: 1,
     _last: "",
+    _shown: "",
     _seq: 0,
     _fp: null,
 
@@ -6247,8 +6254,8 @@ function customerTrips({ url, referenceUrl }) {
       const form = this.$refs.form;
       this.start = form.elements.start.value;
       this.end = form.elements.end.value;
-      this.page = Number(new URLSearchParams(window.location.search).get("page")) || 1;
-      this._last = this._query(this.page);
+      this._last = this._shown = this._query();
+      this._countRows();
       if (typeof window.flatpickr === "undefined") return;
       const text = this.$refs.range.value;
       this._fp = window.flatpickr(this.$refs.range, {
@@ -6273,45 +6280,107 @@ function customerTrips({ url, referenceUrl }) {
     get sum() {
       return money.format(Object.values(this.picked).reduce((a, b) => a + b, 0) / 100);
     },
+    /* Every row on the page is ticked (the header box; some but not all draws it half). */
+    get allPicked() {
+      return this.rows > 0 && this.count === this.rows;
+    },
 
-    _query(page) {
+    _query() {
       const params = new URLSearchParams(new FormData(this.$refs.form));
       for (const [key, value] of [...params]) if (!value) params.delete(key);
-      if (page > 1) params.set("page", page);
       return params.toString();
     },
 
-    async refresh({ page = 1, keep = false, force = false } = {}) {
-      const query = this._query(page);
+    _countRows() {
+      this.rows = this.$refs.table.querySelectorAll("input[data-pick]").length;
+    },
+
+    /* The table alone for `query`, at `page`. Resolves with its HTML, or with null when
+       the session has ended (the page reloads) or a newer fetch has started since. */
+    async _fetch(query, page, seq) {
+      const params = [query, page > 1 ? `page=${page}` : "", "fragment=1"].filter(Boolean);
+      const resp = await fetch(`${url}?${params.join("&")}`, {
+        headers: { ...CUSTOMER_AJAX, Accept: "text/html" },
+      });
+      if (customerSignedOut(resp)) {
+        window.location.reload();
+        return null;
+      }
+      if (!resp.ok) throw new Error(resp.statusText);
+      const html = await resp.text();
+      return seq === this._seq ? html : null;
+    },
+
+    _failed(seq) {
+      if (seq !== this._seq) return;
+      Alpine.store("toast").push({ type: "danger", title: "Your trips didn't load. Try again." });
+    },
+
+    /* A filter changed (or `force`): draw the first page again and forget the ticks. */
+    async refresh({ force = false } = {}) {
+      const query = this._query();
       if (query === this._last && !force) return;
       this._last = query;
-      this.page = page;
-      if (!keep) this.picked = {};
+      this.picked = {};
       const seq = ++this._seq;
       this.loading = true;
       try {
-        const resp = await fetch(`${url}?${query ? `${query}&` : ""}fragment=1`, {
-          headers: { ...CUSTOMER_AJAX, Accept: "text/html" },
-        });
-        if (customerSignedOut(resp)) return window.location.reload();
-        if (!resp.ok) throw new Error(resp.statusText);
-        const html = await resp.text();
-        if (seq !== this._seq) return;
+        const html = await this._fetch(query, 1, seq);
+        if (html === null) return;
+        this.page = 1;
+        this._shown = query;
         this.$refs.table.innerHTML = html;
+        this._countRows();
         this.$refs.range.value = this.$refs.table.firstElementChild?.dataset.rangeText || "";
         history.replaceState(null, "", query ? `${url}?${query}` : url);
       } catch (e) {
-        if (seq === this._seq) {
-          this._last = "";
-          Alpine.store("toast").push({ type: "danger", title: "Your trips didn't load. Try again." });
-        }
+        if (seq === this._seq) this._last = "";
+        this._failed(seq);
       } finally {
         if (seq === this._seq) this.loading = false;
       }
     },
 
-    showMore() {
-      this.refresh({ page: this.page + 1, keep: true });
+    /* Fetch the next page and append its rows to the table and to the stacked list. */
+    async showMore() {
+      if (this.loading) return;
+      const seq = ++this._seq;
+      this.loading = true;
+      try {
+        const html = await this._fetch(this._shown, this.page + 1, seq);
+        if (html === null) return;
+        const more = this._parse(html);
+        for (const kind of ["table", "cards"]) {
+          const from = more.querySelector(`[data-rows="${kind}"]`);
+          const into = this.$refs.table.querySelector(`[data-rows="${kind}"]`);
+          if (from && into) into.append(...from.children);
+        }
+        this.page += 1;
+        this._countRows();
+        if (!more.querySelector("[data-has-more]")) {
+          this.$refs.table.querySelector("[data-more]")?.remove();
+        }
+      } catch (e) {
+        this._failed(seq);
+      } finally {
+        if (seq === this._seq) this.loading = false;
+      }
+    },
+
+    _parse(html) {
+      const holder = document.createElement("template");
+      holder.innerHTML = html;
+      return holder.content;
+    },
+
+    /* Rows the server redrew (customers/_trips_more.html): each takes the place of the row
+       or stacked item on the page for the same trip. */
+    _swapRows(html) {
+      this._parse(html).querySelectorAll("[data-trip]").forEach((fresh) => {
+        const tag = fresh.tagName.toLowerCase();
+        const stale = this.$refs.table.querySelector(`${tag}[data-trip="${fresh.dataset.trip}"]`);
+        if (stale) stale.replaceWith(fresh);
+      });
     },
 
     setRange(start, end, { picked = false } = {}) {
@@ -6372,8 +6441,9 @@ function customerTrips({ url, referenceUrl }) {
         confirmText: "Save",
         onConfirm: async () => {
           const value = document.getElementById("trip-reference")?.value || "";
+          let saved;
           try {
-            await saveCustomerReference(referenceUrl, ids, value);
+            saved = await saveCustomerReference(referenceUrl, ids, value, { rows: true });
           } catch (e) {
             if (e.message !== "signed out") {
               Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
@@ -6381,7 +6451,15 @@ function customerTrips({ url, referenceUrl }) {
             throw e;
           }
           Alpine.store("toast").push({ type: "success", title: many ? `Reference set on ${ids.length} trips.` : "Reference saved." });
-          this.refresh({ page: this.page, force: true });
+          /* Grouped by reference, or searching (a reference matches the search), the
+             trips may belong somewhere else now: draw the list again. Otherwise the rows
+             change where they stand, however many pages are loaded. */
+          const form = this.$refs.form;
+          if (form.elements.group.value === "reference" || form.elements.q.value.trim()) {
+            this.refresh({ force: true });
+          } else {
+            this._swapRows(saved.rows || "");
+          }
         },
       });
       Alpine.nextTick(() => {

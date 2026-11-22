@@ -26,6 +26,7 @@ from django.http import (
     QueryDict,
 )
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_str
@@ -37,7 +38,8 @@ from apps.core.net import client_ip
 from apps.core.templatetags.phone_filters import phone_display
 from apps.planners.selectors import dispatch_phone
 
-from . import exports, receipts, requests, selectors, services, trip_detail
+from . import exports, receipts, requests, selectors, services, trip_detail, trip_list
+from . import home as home_page
 from .auth import FRAGMENT_PARAM, current_customer, customer_required, sign_in, sign_out
 from .forms import (
     RIDERS,
@@ -294,19 +296,14 @@ def home(request: HttpRequest) -> HttpResponse:
     is decided on the first Home visit only: shown then if history was found, and stamped
     seen either way, so a trip completed in the portal later is never announced as found."""
     account = request.customer
-    context = selectors.home(account)
+    context = home_page.home(account)
     if account.history_banner_seen_at is None:
         account.history_banner_seen_at = timezone.now()
         account.save(update_fields=["history_banner_seen_at"])
     return _page(request, "customers/home.html", context)
 
 
-# The tabs and the group-by switch, in the mockup's order.
-TABS = (("upcoming", "Upcoming"), ("past", "Past"), ("requests", "Requests"), ("all", "All"))
-GROUPINGS = (("month", "Month"), ("passenger", "Passenger"), ("reference", "Reference"))
-
-
-def _export_query(f: selectors.TripFilter) -> str:
+def _export_query(f: trip_list.TripFilter) -> str:
     """The filter as the export link carries it (no paging, no grouping)."""
     params = {
         "tab": f.tab,
@@ -320,11 +317,17 @@ def _export_query(f: selectors.TripFilter) -> str:
 
 @customer_required
 def trips(request: HttpRequest) -> HttpResponse:
-    """Trips and history. `?fragment=1` returns the table alone: the page fetches it when a
-    filter changes and for "Show more"."""
-    f = selectors.TripFilter.from_query(request.GET)
+    """Trips and history. The page is always the first page of rows. `?fragment=1` returns
+    the table alone, which the page fetches when a filter changes; with `page` past 1 it
+    returns that page's rows only, which "Show more" appends."""
+    f = trip_list.TripFilter.from_query(request.GET)
+    fragment = bool(request.GET.get("fragment"))
+    if fragment and f.page > 1:
+        context = trip_list.page_of(request.customer, f)
+        return _page(request, "customers/_trips_more.html", context)
+    f = f.first_page()
     context = {
-        **selectors.trips(request.customer, f),
+        **trip_list.trips(request.customer, f),
         "filter": {
             **asdict(f),
             "start": f.start.isoformat() if f.start else "",
@@ -332,12 +335,18 @@ def trips(request: HttpRequest) -> HttpResponse:
         },
         "export_query": _export_query(f),
     }
-    if request.GET.get("fragment"):
+    if fragment:
         return _page(request, "customers/_trips_table.html", context)
     return _page(
         request,
         "customers/trips.html",
-        {**context, "ranges": selectors.quick_ranges(), "tabs": TABS, "groupings": GROUPINGS},
+        {
+            **context,
+            "passengers": trip_list.passenger_options(request.customer),
+            "ranges": trip_list.quick_ranges(),
+            "tabs": trip_list.TABS,
+            "groupings": trip_list.GROUPINGS,
+        },
     )
 
 
@@ -424,22 +433,31 @@ def receipt(request: HttpRequest, pk: int) -> HttpResponse:
     return response
 
 
-def _ids(values: list[str], limit: int | None = None) -> list[int]:
+# Ticked rows are at most the rows a page has loaded; this keeps a hand-built post sane.
+MAX_TICKED_IDS = 1000
+
+
+def _ids(values: list[str]) -> list[int]:
     """Trip ids from `ids` sent repeated or comma-separated; anything but a plain number of
-    up to 18 digits (a BIGINT) is dropped. At most `limit` are kept."""
+    up to 18 digits (a BIGINT) is dropped. At most `MAX_TICKED_IDS` are kept."""
     parts = (part.strip() for value in values for part in value.split(","))
     ids = [int(part) for part in parts if part.isascii() and part.isdigit() and len(part) <= 18]
-    return ids[:limit]
+    return ids[:MAX_TICKED_IDS]
 
 
 @customer_required
 @require_POST
 def set_reference(request: HttpRequest) -> JsonResponse:
-    """Set "Your reference" on ticked trips (or one). Ids outside the account are ignored."""
-    changed = requests.set_reference(
-        request.customer, _ids(request.POST.getlist("ids")), request.POST.get("value", "")
-    )
-    return JsonResponse({"ok": True, "changed": changed})
+    """Set "Your reference" on ticked trips (or one). Ids outside the account are ignored.
+    With `rows`, the answer carries those trips' table rows redrawn (`rows`, as
+    customers/_trips_more.html), for the Trips page to swap in without refetching."""
+    ids = _ids(request.POST.getlist("ids"))
+    changed = requests.set_reference(request.customer, ids, request.POST.get("value", ""))
+    answer = {"ok": True, "changed": changed}
+    if request.POST.get("rows"):
+        context = {"groups": trip_list.rows_for(request.customer, ids), "has_more": False}
+        answer["rows"] = render_to_string("customers/_trips_more.html", context, request)
+    return JsonResponse(answer)
 
 
 @customer_required
@@ -484,19 +502,15 @@ def request_trip(request: HttpRequest) -> HttpResponse:
     )
 
 
-# Ticked rows are at most the rows a page has loaded; this keeps a hand-built post sane.
-MAX_EXPORT_IDS = 1000
-
-
 @customer_required
 def export(request: HttpRequest) -> HttpResponse:
     """The Trips spreadsheet: GET with the page's filter, or POST with the ticked `ids`
     (a plain form post so the browser downloads it). Ids outside the account are dropped."""
     if request.method == "POST":
-        ids = _ids(request.POST.getlist("ids"), MAX_EXPORT_IDS)
+        ids = _ids(request.POST.getlist("ids"))
         text = exports.trips_csv(request.customer, trip_ids=ids)
     elif request.method == "GET":
-        text = exports.trips_csv(request.customer, f=selectors.TripFilter.from_query(request.GET))
+        text = exports.trips_csv(request.customer, f=trip_list.TripFilter.from_query(request.GET))
     else:
         return HttpResponseNotAllowed(["GET", "POST"])
     response = HttpResponse(

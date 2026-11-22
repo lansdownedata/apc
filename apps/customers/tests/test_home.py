@@ -7,12 +7,12 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from django.urls import NoReverseMatch, reverse
+from django.urls import NoReverseMatch, resolve, reverse
 from django.utils import timezone
 
 from apps.addresses.factories import AirlineFactory, AirportFactory
 from apps.billing.factories import AccountGroupFactory
-from apps.customers import selectors
+from apps.customers import home, selectors
 from apps.customers.factories import CustomerAccountFactory
 from apps.leads import services as lead_services
 from apps.leads.factories import VehicleTypeFactory
@@ -93,6 +93,13 @@ def _page(client) -> str:
     return response.content.decode()
 
 
+def _pay_target(url: str) -> tuple[str, int]:
+    """(route name, lead pk) of a pay link. The token is timestamped, so a second one made
+    in the test can differ from the page's by a second; read it back instead."""
+    match = resolve(url)
+    return match.url_name, lead_services.read_deposit_token(match.kwargs["token"]).pk
+
+
 def _trips_route() -> str | None:
     try:
         return reverse("customers:trips")
@@ -108,7 +115,7 @@ def test_home_shows_next_trip_then_waiting_then_upcoming(account, client_as, mak
     quote = _quote(account, make_trip, days=20)
     request = make_trip(account, lead__status=Lead.Status.NEW, pickup_date=_day(50))
 
-    data = selectors.home(account)
+    data = home.home(account)
     assert data["next_trip"]["pk"] == confirmed.pk
     assert [row["pk"] for row in data["waiting"]] == [quote.pk]
     assert [row["pk"] for row in data["upcoming"]] == [confirmed.pk, request.pk]
@@ -123,7 +130,7 @@ def test_home_shows_next_trip_then_waiting_then_upcoming(account, client_as, mak
 def test_waiting_section_absent_when_empty(account, client_as, make_trip):
     _confirmed(account, make_trip)
 
-    assert selectors.home(account)["waiting"] == []
+    assert home.home(account)["waiting"] == []
     assert "Waiting on you" not in _page(client_as(account))
 
 
@@ -134,12 +141,11 @@ def test_quote_ready_links_to_quote_page_for_that_lead(account, client_as, make_
     _quote(account, make_trip, lead__quote_expires_at=timezone.now() - timedelta(days=1))
     make_trip(account, lead__status=Lead.Status.ENGAGED)  # their deposit is already held
 
-    waiting = selectors.home(account)["waiting"]
+    waiting = home.home(account)["waiting"]
 
     assert [row["pk"] for row in waiting] == [two.pk, one.pk]  # one row per quote
     for row, trip in zip(waiting, (two, one), strict=True):
-        token = lead_services.make_deposit_token(trip.lead)
-        assert row["action_url"] == reverse("quote_page", args=[token])
+        assert _pay_target(row["action_url"]) == ("quote_page", trip.lead_id)
         assert row["action_label"] == "Review and pay"
         assert row["amount"] == trip.lead.quote_total
     client = client_as(account)
@@ -156,7 +162,7 @@ def test_booked_order_with_money_owed_waits_with_pay_now(account, client_as, mak
     failed.payment.save(update_fields=["balance_status"])
     _collect(failed, failed.payment.deposit_amount)
 
-    waiting = selectors.home(account)["waiting"]
+    waiting = home.home(account)["waiting"]
 
     assert [row["lead"] for row in waiting] == [failed.pk, unpaid_deposit.pk]
     assert [row["amount"] for row in waiting] == [
@@ -167,9 +173,7 @@ def test_booked_order_with_money_owed_waits_with_pay_now(account, client_as, mak
     assert "Pay now" in _page(client)
     for row, lead in zip(waiting, (failed, unpaid_deposit), strict=True):
         assert row["action_label"] == "Pay now"
-        assert row["action_url"] == reverse(
-            "quote_pay", args=[lead_services.make_deposit_token(lead)]
-        )
+        assert _pay_target(row["action_url"]) == ("quote_pay", lead.pk)
         assert client.get(row["action_url"]).status_code == 200
 
 
@@ -186,7 +190,7 @@ def test_a_trip_pay_link_waits_with_pay_now(account, client_as, make_trip):
         stripe_client_secret="pi_1_secret",
     )
 
-    [row] = selectors.home(account)["waiting"]
+    [row] = home.home(account)["waiting"]
 
     assert (row["lead"], row["action_label"], row["amount"]) == (trip.lead_id, "Pay now", owed)
     assert client_as(account).get(row["action_url"]).status_code == 200
@@ -200,7 +204,7 @@ def test_orders_the_cron_will_collect_are_not_waiting(account, make_trip):
     paid_up = _direct_booking(account, make_trip)
     _collect(paid_up, paid_up.quote_total)
 
-    assert selectors.home(account)["waiting"] == []
+    assert home.home(account)["waiting"] == []
 
 
 # --- the next trip ---------------------------------------------------------------------
@@ -213,26 +217,42 @@ def test_next_trip_is_the_soonest_confirmed_or_later(account, make_trip):
     later = _confirmed(account, make_trip, days=30)
     sooner = _confirmed(account, make_trip, days=9, trip_status=S.DISPATCHED)
 
-    assert selectors.home(account)["next_trip"]["pk"] == sooner.pk
-    assert selectors.home(account)["next_trip"]["label"] == "Driver assigned"
+    assert home.home(account)["next_trip"]["pk"] == sooner.pk
+    assert home.home(account)["next_trip"]["label"] == "Driver assigned"
     sooner.trip_status = S.DONE
     sooner.save(update_fields=["trip_status"])
-    assert selectors.home(account)["next_trip"]["pk"] == later.pk
+    assert home.home(account)["next_trip"]["pk"] == later.pk
 
 
-def test_a_confirmed_trip_left_open_after_its_day_is_not_next(account, make_trip):
+def test_a_confirmed_trip_left_open_after_its_day_is_past_not_upcoming(
+    account, client_as, make_trip
+):
     stale = _confirmed(account, make_trip, days=-1)
     ahead = _confirmed(account, make_trip, days=5)
 
-    data = selectors.home(account)
+    data = home.home(account)
     assert data["next_trip"]["pk"] == ahead.pk
-    assert [row["pk"] for row in data["upcoming"]] == [stale.pk, ahead.pk]
+    assert [row["pk"] for row in data["upcoming"]] == [ahead.pk]
+    assert data["history_banner"] == 1
+
+    client = client_as(account)
+    upcoming = client.get("/account/trips/", {"tab": "upcoming"}).context["groups"]
+    assert [row["pk"] for group in upcoming for row in group["rows"]] == [ahead.pk]
+    [past] = client.get("/account/trips/", {"tab": "past"}).context["groups"]
+    assert [(row["pk"], row["label"]) for row in past["rows"]] == [(stale.pk, "Confirmed")]
+
+
+def test_a_trip_under_way_stays_next_after_midnight(account, make_trip):
+    running = _confirmed(account, make_trip, days=-1, trip_status=S.CUSTOMER_IN_CAR)
+    _confirmed(account, make_trip, days=5)
+
+    assert home.home(account)["next_trip"]["pk"] == running.pk
 
 
 def test_no_next_trip_before_anything_is_confirmed(account, client_as, make_trip):
     make_trip(account, lead__status=Lead.Status.ENGAGED, pickup_date=_day(2))
 
-    assert selectors.home(account)["next_trip"] is None
+    assert home.home(account)["next_trip"] is None
     body = _page(client_as(account))
     assert "Your next trip" not in body
     assert "Confirming" in body
@@ -268,7 +288,7 @@ def test_next_trip_summary_and_its_own_zone(account, client_as, make_trip):
     )
     Stop.objects.create(reservation=trip, sequence=1, address="1 Main St, Santa Monica, CA")
 
-    next_trip = selectors.home(account)["next_trip"]
+    next_trip = home.home(account)["next_trip"]
 
     assert next_trip["summary"] == (
         "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM."
@@ -288,13 +308,13 @@ def test_history_banner_shows_once(account, client_as, make_trip):
         )
     client = client_as(account)
 
-    assert selectors.home(account)["history_banner"] == 2
+    assert home.home(account)["history_banner"] == 2
     first = _page(client)
     assert "added" in first and "2 past trips" in first
     assert "added" not in _page(client)
     account.refresh_from_db()
     assert account.history_banner_seen_at is not None
-    assert selectors.home(account)["history_banner"] is None
+    assert home.home(account)["history_banner"] is None
 
 
 def test_no_history_banner_for_a_trip_completed_after_the_first_visit(
@@ -341,7 +361,7 @@ def test_only_past_trips_says_nothing_is_coming_up(account, client_as, make_trip
 def test_another_customers_trips_never_show(account, client_as, make_trip):
     theirs = _quote(CustomerAccountFactory(), make_trip)
 
-    data = selectors.home(account)
+    data = home.home(account)
     assert data["waiting"] == [] and data["upcoming"] == [] and data["next_trip"] is None
     assert theirs.lead.quote_no not in _page(client_as(account))
 
@@ -358,18 +378,80 @@ def test_nav_shows_home_and_history_link_only_with_a_trips_route(account, client
 # --- cost --------------------------------------------------------------------------------
 
 
+# Session, account, last seen; the trips ahead; finished orders that may owe; the asked
+# orders' trips; open trip pay links; the shown rows' stops and passengers; deposits held;
+# the next trip's open requests (measured: 11).
+HOME_QUERIES = 11
+# The first visit also counts the past trips for the banner and stamps it seen.
+FIRST_VISIT_QUERIES = 2
+# `payments.services.pay_state` reads the ledger: about 11 queries for each order it is asked.
+PAY_CHECK_QUERIES = 11
+
+
 def test_home_query_count(account, client_as, make_trips, django_assert_max_num_queries):
     make_trips(account, 25)
     client = client_as(account)
 
-    with django_assert_max_num_queries(12):
+    with django_assert_max_num_queries(HOME_QUERIES + FIRST_VISIT_QUERIES):
         response = client.get(HOME)
     assert response.status_code == 200
     assert len(response.context["upcoming"]) > 5
+    with django_assert_max_num_queries(HOME_QUERIES):
+        assert client.get(HOME).status_code == 200
 
 
-# `payments.services.pay_state` reads the ledger: about 11 queries for each order it is asked.
-PAY_CHECK_QUERIES = 11
+def _finished(account, make_trip, n: int, **kw) -> list[Reservation]:
+    """`n` completed trips, each on its own booked order paid in full."""
+    trips = []
+    for i in range(n):
+        trip = make_trip(
+            account,
+            lead__status=Lead.Status.BOOKED,
+            trip_status=S.DONE,
+            pickup_date=_day(-10 - i),
+            pickup_time=time(9, 0),
+            **kw,
+        )
+        PaymentPlanFactory(
+            lead=trip.lead,
+            quote_total=trip.line_total,
+            deposit_status=PaymentPlan.DepositStatus.PAID,
+            balance_status=PaymentPlan.BalanceStatus.PAID,
+            stripe_payment_method_id="pm_saved",
+        )
+        trips.append(trip)
+    return trips
+
+
+def _reads(queries: list[dict], table: str) -> list[str]:
+    return [q["sql"] for q in queries if f"FROM `{table}`" in q["sql"]]
+
+
+def test_home_never_loads_a_finished_history(
+    account, client_as, make_trip, django_assert_max_num_queries
+):
+    ahead = _confirmed(account, make_trip, days=5)
+    past = _finished(account, make_trip, 6)
+    client = client_as(account)
+    client.get(HOME)  # the first visit: the banner is behind us
+
+    with django_assert_max_num_queries(HOME_QUERIES) as few:
+        client.get(HOME)
+    past += _finished(account, make_trip, 30)
+    with django_assert_max_num_queries(HOME_QUERIES) as many:
+        response = client.get(HOME)
+
+    assert len(many.captured_queries) == len(few.captured_queries)
+    assert [row["pk"] for row in response.context["upcoming"]] == [ahead.pk]
+    for captured in (few, many):
+        sql = " ".join(
+            q["sql"]
+            for q in captured.captured_queries
+            if "FROM `reservations_reservation`" in q["sql"] or "FROM `leads_lead`" in q["sql"]
+        )
+        asked = {int(n) for ids in re.findall(r"IN \(([\d, ]+)\)", sql) for n in ids.split(",")}
+        # No query asks for a finished trip or its order by id: they were never loaded.
+        assert asked and asked.isdisjoint({t.pk for t in past} | {t.lead_id for t in past})
 
 
 def test_home_query_count_with_owing_orders(
@@ -379,7 +461,7 @@ def test_home_query_count_with_owing_orders(
     owing = [_direct_booking(account, make_trip, days=10 + i) for i in range(3)]
     client = client_as(account)
 
-    with django_assert_max_num_queries(12 + 3 * PAY_CHECK_QUERIES):
+    with django_assert_max_num_queries(HOME_QUERIES + FIRST_VISIT_QUERIES + 3 * PAY_CHECK_QUERIES):
         response = client.get(HOME)
     assert {row["lead"] for row in response.context["waiting"]} >= {lead.pk for lead in owing}
 
@@ -392,7 +474,9 @@ def test_only_the_soonest_orders_that_may_owe_are_priced(
     client = client_as(account)
 
     with patch.object(selectors, "pay_state", wraps=selectors.pay_state) as pay_state:
-        with django_assert_max_num_queries(12 + selectors.WAITING_PAY_CHECKS * PAY_CHECK_QUERIES):
+        with django_assert_max_num_queries(
+            HOME_QUERIES + FIRST_VISIT_QUERIES + selectors.WAITING_PAY_CHECKS * PAY_CHECK_QUERIES
+        ):
             response = client.get(HOME)
 
     assert selectors.WAITING_PAY_CHECKS == 5
@@ -421,8 +505,8 @@ def test_home_loads_stops_for_the_rows_it_shows_not_the_history(
         pickup_time=time(9, 0),
     )
 
-    with django_assert_max_num_queries(12) as captured:
-        data = selectors.home(account)
+    with django_assert_max_num_queries(HOME_QUERIES) as captured:
+        data = home.home(account)
 
     assert data["next_trip"]["pk"] == ahead.pk
     reads = [q["sql"] for q in captured.captured_queries if "FROM `reservations_stop`" in q["sql"]]
@@ -430,3 +514,102 @@ def test_home_loads_stops_for_the_rows_it_shows_not_the_history(
     asked = {int(pk) for sql in reads for pk in re.findall(r"\d+", sql.split(" IN (")[1])}
     assert ahead.pk in asked
     assert asked.isdisjoint(trip.pk for trip in past)
+
+
+# --- an order with nothing ahead that still owes -------------------------------------------
+
+
+def _finished_order(account, make_trip, days: int = -20) -> Lead:
+    """A direct booking whose only trip is done: nothing ahead, the deposit never paid."""
+    trip = make_trip(
+        account, lead__status=Lead.Status.NEW, pickup_date=_day(days), pickup_time=time(9, 0)
+    )
+    lead_services.book_lead(trip.lead)
+    trip.trip_status = S.DONE
+    trip.save(update_fields=["trip_status"])
+    return trip.lead
+
+
+def test_a_finished_order_with_an_unpaid_deposit_still_waits(account, client_as, make_trip):
+    owing = _finished_order(account, make_trip)
+    _confirmed(account, make_trip, days=5)
+    _finished(account, make_trip, 3)
+
+    [row] = home.home(account)["waiting"]
+
+    assert (row["lead"], row["action_label"], row["note"]) == (owing.pk, "Pay now", "Payment due")
+    assert row["amount"] == owing.payment.deposit_amount
+    assert row["pk"] == owing.reservations.get().pk
+    assert "Pay now" in _page(client_as(account))
+
+
+def test_a_finished_order_with_a_failed_balance_still_waits(account, make_trip):
+    lead = _finished_order(account, make_trip)
+    _collect(lead, lead.payment.deposit_amount)
+    plan = lead.payment
+    plan.deposit_status = PaymentPlan.DepositStatus.PAID
+    plan.balance_status = PaymentPlan.BalanceStatus.FAILED
+    plan.stripe_payment_method_id = "pm_saved"
+    plan.save(update_fields=["deposit_status", "balance_status", "stripe_payment_method_id"])
+
+    [row] = home.home(account)["waiting"]
+
+    assert (row["lead"], row["action_label"]) == (lead.pk, "Pay now")
+    assert row["amount"] == lead.quote_total - plan.deposit_amount
+
+
+def test_a_finished_order_with_a_due_balance_and_no_saved_card_still_waits(account, make_trip):
+    lead = _finished_order(account, make_trip)
+    _collect(lead, lead.payment.deposit_amount)
+    plan = lead.payment
+    plan.deposit_status = PaymentPlan.DepositStatus.PAID
+    plan.save(update_fields=["deposit_status"])
+    assert plan.stripe_payment_method_id == "" and plan.balance_due_now
+
+    [row] = home.home(account)["waiting"]
+
+    assert (row["lead"], row["action_label"]) == (lead.pk, "Pay now")
+
+
+def test_a_finished_order_with_an_open_trip_pay_link_still_waits(account, make_trip):
+    [trip] = _finished(account, make_trip, 1)
+    _collect(trip.lead, trip.lead.payment.deposit_amount)
+    owed = money_for(trip).difference
+    ChargeFactory(
+        plan=trip.lead.payment,
+        kind=Charge.Kind.TRIP,
+        status=Charge.Status.PENDING,
+        amount=owed,
+        reservation=trip,
+        stripe_client_secret="pi_1_secret",
+    )
+
+    [row] = home.home(account)["waiting"]
+
+    assert (row["lead"], row["action_label"], row["amount"]) == (trip.lead_id, "Pay now", owed)
+
+
+def test_finished_orders_that_owe_nothing_do_not_wait(account, make_trip):
+    _finished(account, make_trip, 4)  # paid in full
+    on_account = _finished_order(account, make_trip)
+    on_account.billing_group = AccountGroupFactory()
+    on_account.save(update_fields=["billing_group"])
+    theirs = _finished_order(CustomerAccountFactory(), make_trip)
+
+    data = home.home(account)
+
+    assert data["waiting"] == [] and data["has_trips"] is True
+    assert theirs.pk not in {row.get("lead") for row in data["waiting"]}
+
+
+def test_orders_ahead_are_priced_before_finished_ones(account, make_trip):
+    behind = [_finished_order(account, make_trip, days=-30 - i) for i in range(3)]
+    ahead = [_direct_booking(account, make_trip, days=10 + i) for i in range(4)]
+
+    with patch.object(selectors, "pay_state", wraps=selectors.pay_state) as pay_state:
+        waiting = home.home(account)["waiting"]
+
+    asked = [call.args[0].pk for call in pay_state.call_args_list]
+    assert asked == [lead.pk for lead in ahead] + [behind[-1].pk]  # the oldest finished one
+    # Shown soonest first, so the finished order's old trip leads.
+    assert [row["lead"] for row in waiting] == [behind[-1].pk, *(lead.pk for lead in ahead)]
