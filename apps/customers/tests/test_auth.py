@@ -150,7 +150,11 @@ def test_cleared_contact_email_ends_the_session(client_as, account):
 
 
 @with_probe
-def test_a_staff_email_change_ends_the_session_and_the_password_carries_over(client_as, account):
+def test_a_staff_email_change_ends_the_session_and_the_old_password_stops_working(
+    client_as, account
+):
+    """Whoever holds the new address has proved nothing yet: the password that went with
+    the old one opens nothing until a link sent to the new one is used."""
     client = client_as(account)
     assert client.get(PROBE).status_code == 200
     account.contact.email = "new.booker@example.com"
@@ -163,7 +167,39 @@ def test_a_staff_email_change_ends_the_session_and_the_password_carries_over(cli
         reverse("customers:login"),
         {"email": "new.booker@example.com", "password": "correct horse battery"},
     )
-    assert fresh.get(PROBE).status_code == 200
+    assert fresh.get(PROBE).status_code == 302
+    account = CustomerAccount.objects.get(pk=account.pk)
+    assert account.email_unproved and not account.can_sign_in
+    assert account.failed_logins == 0
+
+
+def test_a_reset_link_to_the_new_address_proves_it(outbound_on, account):
+    from django.core import mail
+
+    from apps.customers import services
+
+    account.contact.email = "new.booker@example.com"
+    account.contact.save(update_fields=["email"])
+    account = CustomerAccount.objects.get(pk=account.pk)
+
+    assert services.send_password_reset("new.booker@example.com") is True
+    assert mail.outbox[-1].to == ["new.booker@example.com"]
+    services.register(account, "a brand new passphrase")
+
+    account = CustomerAccount.objects.get(pk=account.pk)
+    assert account.verified_email == "new.booker@example.com"
+    assert account.can_sign_in and not account.email_unproved
+    assert services.authenticate("new.booker@example.com", "a brand new passphrase") == account
+
+
+def test_an_email_changed_back_needs_no_new_proof(account):
+    was = account.contact.email
+    account.contact.email = "typo@example.com"
+    account.contact.save(update_fields=["email"])
+    assert not CustomerAccount.objects.get(pk=account.pk).can_sign_in
+    account.contact.email = was.upper()
+    account.contact.save(update_fields=["email"])
+    assert CustomerAccount.objects.get(pk=account.pk).can_sign_in
 
 
 @with_probe

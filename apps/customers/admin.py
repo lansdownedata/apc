@@ -18,6 +18,7 @@ class CustomerAccountAdmin(admin.ModelAdmin):
         "invited_at",
         "invited_by",
         "registered_at",
+        "verified_email",
         "self_registered",
         "revoked_at",
         "revoked_by",

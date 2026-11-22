@@ -8,8 +8,8 @@ import pytest
 from django.core.cache import cache
 from django.utils import timezone
 
-from apps.customers import throttle
-from apps.customers.models import Throttle
+from apps.core import throttle
+from apps.core.models import Throttle
 
 pytestmark = pytest.mark.django_db
 

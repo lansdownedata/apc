@@ -1,9 +1,10 @@
-"""Brakes on password guessing and on account mail, counted in the database.
+"""Brakes on password guessing and on account mail, counted in the database: the customer
+portal's and the planner portal's sign-in, sign-up and reset limits.
 
 No shared cache is configured (the default is `LocMemCache`, one per web worker), so a
 count kept in the cache is really one count per worker and every limit multiplies by the
 number of workers. These counts are rows instead: every worker reads the same one. The
-per-account sign-in lock is separate and already on `CustomerAccount`.
+per-account sign-in lock is separate, on the account itself.
 
 A counter is a fixed window: it opens on the first hit and starts again once the window
 has run out. Who is counted (an IP address, an email address) is stored only as a hash.

@@ -414,13 +414,17 @@ def test_authenticate_accepts_the_password_only(account):
     assert services.authenticate(CustomerAccountFactory(invited=True).email, "x") is None
 
 
-def test_authenticate_uses_new_email_after_staff_edit(account):
+def test_authenticate_uses_new_email_after_staff_edit_once_it_is_proved(account):
     old = account.email
     contact = account.contact
     contact.email = "Dana.New@Example.com"
     contact.save(update_fields=["email", "updated_at"])
-    assert services.authenticate("dana.new@example.com", "correct horse battery") == account
+    assert services.authenticate("dana.new@example.com", "correct horse battery") is None
     assert services.authenticate(old, "correct horse battery") is None
+
+    services.register(CustomerAccount.objects.get(pk=account.pk), PW)
+    assert services.authenticate("dana.new@example.com", PW) == account
+    assert services.authenticate(old, PW) is None
 
 
 def test_a_right_password_clears_the_failed_count(account):

@@ -13,6 +13,7 @@
       <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset {% if ca.status == 'active' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% elif ca.status == 'invited' %}bg-goldl text-goldd ring-gold/25{% elif ca.status == 'revoked' %}bg-rose-50 text-rose-700 ring-rose-600/20{% else %}bg-slate-100 text-slate-500 ring-slate-500/20{% endif %}">{{ ca.label }}</span>
     </div>
     <p class="mt-0.5 text-[12.5px] text-muted">{{ ca.line }}</p>
+    {% if ca.note %}<p class="mt-1 text-[12px] text-amber-700">{{ ca.note }}</p>{% endif %}
     {% if ca.blocked_reason %}<p class="mt-1 text-[12px] text-amber-700">{{ ca.blocked_reason }}</p>{% endif %}
   </div>
   <div class="flex flex-wrap items-center gap-2">

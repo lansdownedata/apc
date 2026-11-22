@@ -36,12 +36,13 @@ from django.views.decorators.http import require_POST
 
 from apps.audit.context import audit_context, current_cid
 from apps.audit.middleware import source_for
+from apps.core import throttle
 from apps.core.net import client_ip
 from apps.core.phone import to_e164
 from apps.core.templatetags.phone_filters import phone_display
 from apps.planners.selectors import dispatch_phone
 
-from . import exports, receipts, requests, selectors, services, throttle, trip_detail, trip_list
+from . import exports, receipts, requests, selectors, services, trip_detail, trip_list
 from . import home as home_page
 from .auth import FRAGMENT_PARAM, current_customer, customer_required, sign_in, sign_out
 from .forms import (
@@ -324,8 +325,12 @@ def home(request: HttpRequest) -> HttpResponse:
     account = request.customer
     context = home_page.home(account)
     if account.history_banner_seen_at is None:
+        # A queryset update, as `auth._log_view`: the stamp is housekeeping the trail
+        # leaves out, so a save would only cost History's read of the row before it.
         account.history_banner_seen_at = timezone.now()
-        account.save(update_fields=["history_banner_seen_at"])
+        CustomerAccount.objects.filter(pk=account.pk).update(
+            history_banner_seen_at=account.history_banner_seen_at
+        )
     return _page(request, "customers/home.html", context)
 
 

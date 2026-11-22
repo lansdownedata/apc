@@ -4,13 +4,16 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings as django_settings
 from django.contrib.auth.hashers import get_hasher
+from django.core.cache import cache
+from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
 from apps.contacts.factories import ContactFactory
-from apps.planners import services
+from apps.planners import services, views
 from apps.planners.auth import SESSION_KEY
 from apps.planners.models import PlannerAccount
 
@@ -98,3 +101,59 @@ def test_setting_a_new_password_clears_a_lock(registered):
         services.authenticate("dana@example.com", "wrong-password-1")
     services.register(registered, "a-brand-new-phrase-31")
     assert services.authenticate("dana@example.com", "a-brand-new-phrase-31") == registered
+
+
+# --- the same three fixes the customer sign-in got ---------------------------------------
+
+
+def test_wrong_guesses_sent_side_by_side_are_each_counted(registered):
+    """Ten requests in flight together each read the account before any of them counted.
+    Counting from that copy, all ten would write "1" and the lock would never come."""
+    copies = [
+        PlannerAccount.objects.get(pk=registered.pk) for _ in range(services.LOCKOUT_FAILURES)
+    ]
+    now = timezone.now()
+    for copy in copies:
+        services._record_failure(copy, now)
+    registered.refresh_from_db()
+    assert registered.locked_until == now + services.LOCKOUT_FOR
+
+
+def test_signing_in_replaces_the_session_key_and_the_csrf_token(registered, two_factor_off):
+    client = Client(enforce_csrf_checks=True)
+    client.get(reverse("planners:login"))
+    before_token = client.cookies["csrftoken"].value
+    session = client.session
+    session["seen"] = True
+    session.save()
+    before_key = client.cookies[django_settings.SESSION_COOKIE_NAME].value
+
+    response = client.post(
+        reverse("planners:login"),
+        {"email": "dana@example.com", "password": PASSWORD, "csrfmiddlewaretoken": before_token},
+    )
+
+    assert response.status_code == 302 and client.session[SESSION_KEY] == registered.pk
+    assert client.cookies[django_settings.SESSION_COOKIE_NAME].value != before_key
+    assert client.cookies["csrftoken"].value != before_token
+
+
+def test_the_sign_in_brake_is_one_count_for_every_web_worker(client, registered):
+    """The default cache is one per process: a count kept there is a count per worker.
+    Emptying it stands in for the next request landing on another worker."""
+    wrong = {"email": "dana@example.com", "password": "wrong-password-1"}
+    for _ in range(views.LOGIN_FAILURE_LIMIT):
+        cache.clear()
+        assert client.post(reverse("planners:login"), wrong).status_code == 200
+    cache.clear()
+    assert client.post(reverse("planners:login"), wrong).status_code == 429
+
+
+def test_the_reset_cap_per_address_is_one_count_for_every_web_worker(registered, settings):
+    settings.OUTBOUND_ENABLED = True
+    settings.PUBLIC_BASE_URL = "https://portal.test"
+    with patch("apps.notifications.email.deliver_html_email", return_value="pm-1") as deliver:
+        for _ in range(services.RESET_PER_EMAIL + 2):
+            cache.clear()
+            services.send_password_reset("dana@example.com")
+    assert deliver.call_count == services.RESET_PER_EMAIL

@@ -7,9 +7,9 @@ with this one — see `apps.planners.auth`.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from django.contrib import messages
-from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
@@ -22,6 +22,7 @@ from django.views.decorators.http import require_POST
 
 from apps.accounts import two_factor
 from apps.accounts.forms import AcceptInviteForm
+from apps.core import throttle
 from apps.core.net import client_ip
 
 from . import selectors, services
@@ -29,14 +30,15 @@ from .auth import current_planner, planner_required, planner_subject, sign_in, s
 from .models import PlannerAccount
 from .tokens import planner_reset_token, planner_token
 
-# Failed sign-ins per IP before the form stops answering for a while. Per-process cache
-# (LocMem), like the public site's other throttles — a brake on guessing, not a lock.
+# Failed sign-ins per IP before the form stops answering for a while: a brake on guessing,
+# not a lock. Counted in the database (`core.throttle`), so each limit is one count for
+# every web worker, not one per worker.
 LOGIN_FAILURE_LIMIT = 10
-LOGIN_FAILURE_WINDOW = 15 * 60
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
 RESET_LIMIT = 5
-RESET_WINDOW = 60 * 60
+RESET_WINDOW = timedelta(hours=1)
 CODE_LIMIT = 10  # sign-in codes typed per IP, right or wrong, before the code page rests
-CODE_WINDOW = 15 * 60
+CODE_WINDOW = timedelta(minutes=15)
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +50,11 @@ def _page(request, template: str, context: dict | None = None, status: int = 200
 
 
 def _over(request, scope: str, limit: int) -> bool:
-    return cache.get(f"planner-{scope}:{client_ip(request)}", 0) >= limit
+    return throttle.over(f"planner-{scope}", client_ip(request), limit)
 
 
-def _count(request, scope: str, window: int) -> None:
-    key = f"planner-{scope}:{client_ip(request)}"
-    cache.set(key, cache.get(key, 0) + 1, window)
+def _count(request, scope: str, window: timedelta) -> None:
+    throttle.hit(f"planner-{scope}", client_ip(request), window)
 
 
 def _safe_next(request) -> str:

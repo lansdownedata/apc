@@ -42,12 +42,11 @@ from django.utils.http import urlsafe_base64_encode
 from apps.accounts.forms import INVALID_PHONE
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact
-from apps.core import outbound
+from apps.core import outbound, throttle
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.planners.selectors import dispatch_phone
 
-from . import throttle
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
 
@@ -258,6 +257,7 @@ def invite(contact: Contact, *, actor: User | None) -> tuple[CustomerAccount, bo
         raise CustomerError(f"{contact.name} is already invited. Use Resend to send a new link.")
     account = account or CustomerAccount(contact=contact)
     account.set_unusable_password()
+    account.verified_email = ""
     account.invited_at = timezone.now()
     account.invited_by = actor
     account.registered_at = None
@@ -313,11 +313,13 @@ LOCKOUT_FOR = timedelta(minutes=15)
 
 def register(account: CustomerAccount, password: str) -> CustomerAccount:
     """Set the password from an invite or reset link. The first time, this is registration.
-    Clears any sign-in lock: whoever holds a valid link has proved they own the address."""
+    Clears any sign-in lock, and records the address as proved: the link's token covers the
+    contact's email, so whoever holds a valid one received it there."""
     account.set_password(password)
     account.failed_logins = 0
     account.locked_until = None
-    fields = ["password", "failed_logins", "locked_until", "updated_at"]
+    account.verified_email = account.email
+    fields = ["password", "failed_logins", "locked_until", "verified_email", "updated_at"]
     if account.registered_at is None:
         account.registered_at = timezone.now()
         fields.append("registered_at")
@@ -421,8 +423,10 @@ def _mail_allowed(email: str) -> bool:
 
 
 def send_password_reset(email: str) -> bool:
-    """Email a set-password link to a customer who can sign in. Silent otherwise: the page
-    says the same thing either way, so it never confirms who has an account.
+    """Email a set-password link to a signed-up customer: one who can sign in, or one whose
+    email staff changed and who must prove the new address (`email_unproved`). Silent
+    otherwise: the page says the same thing either way, so it never confirms who has an
+    account.
 
     An address with no account still renders the reset's message row, its button and its
     preview line, as `planners.services.send_password_reset` does, so the template work
@@ -433,7 +437,7 @@ def send_password_reset(email: str) -> bool:
     if not email or not _mail_allowed(email):
         return False
     account = _account_for(email)
-    if account is None or not account.can_sign_in:
+    if account is None or not account.can_reset:
         _render_reset_for_no_one()
         return False
     if not settings.PUBLIC_BASE_URL:
@@ -570,6 +574,7 @@ def complete_signup(data: dict, password: str) -> CustomerAccount:
                     pass  # an undiallable extra number is not worth failing a sign-up over
             account = account or CustomerAccount(contact=contact)
             account.set_password(password)
+            account.verified_email = email
             account.registered_at = timezone.now()
             account.self_registered = True
             account.failed_logins = 0

@@ -18,6 +18,11 @@ from .models import CustomerAccount
 if TYPE_CHECKING:
     from apps.accounts.models import User
 
+EMAIL_UNPROVED = (
+    "The email changed since they last set a password, so the old password no longer "
+    "signs them in. Send a password reset to the new address."
+)
+
 _ACCESS_LABELS = {
     "none": "Not invited",
     "invited": "Invited",
@@ -35,7 +40,9 @@ def access_for(contact: Contact) -> dict:
     the same order the action itself refuses by (`services.send_blocked`), so the card and
     the click never name different reasons. The card shows it beside the disabled button.
     Revoke is never blocked. `never_signed_in` is a pending invite: there is no session to
-    end, which the revoke confirmation says differently."""
+    end, which the revoke confirmation says differently. `note` is `EMAIL_UNPROVED` when
+    staff changed the email of a signed-up customer who has not yet used a link sent to
+    the new address, else ""."""
     try:
         account = contact.customer_account
     except CustomerAccount.DoesNotExist:
@@ -85,6 +92,7 @@ def access_for(contact: Contact) -> dict:
         "label": _ACCESS_LABELS[status],
         "line": line,
         "blocked_reason": blocked,
+        "note": EMAIL_UNPROVED if account is not None and account.email_unproved else "",
         "can_invite": inviting and not blocked,
         "show_invite": inviting,
         "show_resend": status == CustomerAccount.Status.INVITED,
