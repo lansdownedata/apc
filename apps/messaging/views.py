@@ -74,10 +74,16 @@ def _conversations(q: str = "", conversation_filter: str = "open") -> QuerySet[C
 
 
 def _is_planner_thread(conversation: Conversation, thread: list[Message]) -> bool:
-    """The contact signs in to the planner portal, or the latest message came from it."""
+    """The contact signs in to the planner portal, or the latest message came from it. A
+    customer portal request (`customer_request`) shares the channel but is a customer's."""
     from apps.planners.models import PlannerAccount
 
-    if thread and thread[-1].channel == Message.Channel.PORTAL:
+    last = thread[-1] if thread else None
+    if (
+        last is not None
+        and last.channel == Message.Channel.PORTAL
+        and not hasattr(last, "customer_request")
+    ):
         return True
     return PlannerAccount.objects.filter(contact_id=conversation.contact_id).exists()
 
@@ -110,8 +116,13 @@ def inbox(request):
         Message.objects.filter(
             conversation=selected, direction=Message.Direction.IN, read_at__isnull=True
         ).update(read_at=timezone.now())
-        # A planner's request (APC-68) carries its order, for the bubble's marker.
-        thread_messages = list(selected.messages.select_related("planner_request__lead"))
+        # A planner's (APC-68) or a customer's portal request carries its order, for the
+        # bubble's marker.
+        thread_messages = list(
+            selected.messages.select_related(
+                "planner_request__lead", "customer_request__reservation"
+            )
+        )
         # One conversation can spawn several quotes — the rail shows them all, so an
         # agent sees "2 quotes already" instead of creating a third by accident.
         # A planner's thread (APC-68) isn't a lead to qualify: the rail shows the weddings

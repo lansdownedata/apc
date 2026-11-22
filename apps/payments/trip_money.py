@@ -13,13 +13,15 @@ booked totals, never the processing sequence.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import date, time
 from decimal import Decimal
 
 import stripe
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from apps.notifications.models import Notification
 from apps.reservations.models import TripExtra, TripReview
@@ -56,16 +58,76 @@ def _sum(qs) -> Decimal:
     return Decimal(qs.aggregate(s=Sum("amount"))["s"] or 0).quantize(_CENTS)
 
 
+def _prepaid(lead_ids: Collection[int]) -> dict[int, Decimal]:
+    """`order_prepaid` for many orders in one query; an order with no money is absent."""
+    rows = (
+        Charge.objects.filter(plan__lead_id__in=lead_ids, status=Charge.Status.SUCCEEDED)
+        .filter(Q(kind__in=PREPAID_KINDS) | Q(kind=Charge.Kind.REFUND, reservation__isnull=True))
+        .values("plan__lead_id", "kind")
+        .annotate(total=Sum("amount"))
+        .order_by()
+    )
+    net: defaultdict[int, Decimal] = defaultdict(Decimal)
+    for row in rows:
+        amount = Decimal(row["total"]).quantize(_CENTS)
+        net[row["plan__lead_id"]] += -amount if row["kind"] == Charge.Kind.REFUND else amount
+    return {pk: max(amount, ZERO) for pk, amount in net.items()}
+
+
 def order_prepaid(lead) -> Decimal:
     """Cash collected on the order that belongs to no trip: succeeded deposit, balance and
     historical final-bill charges, less refunds made at order level (no trip)."""
-    plan = getattr(lead, "payment", None)
-    if plan is None:
-        return ZERO
-    succeeded = plan.charges.filter(status=Charge.Status.SUCCEEDED)
-    collected = _sum(succeeded.filter(kind__in=PREPAID_KINDS))
-    refunded = _sum(succeeded.filter(kind=Charge.Kind.REFUND, reservation__isnull=True))
-    return max(collected - refunded, ZERO)
+    return _prepaid([lead.pk]).get(lead.pk, ZERO)
+
+
+def allocations(leads: Iterable) -> dict[int, dict[int, Decimal]]:
+    """`allocation` for many orders at once: {lead pk: {reservation pk: prepaid share}}, in
+    three queries however many orders there are (a customer's whole history in one export).
+    The rule lives here; `allocation` is this for one order."""
+    from apps.reservations.models import Reservation
+
+    lead_ids = {lead.pk for lead in leads}
+    if not lead_ids:
+        return {}
+    nothing = (Reservation.TripStatus.CANCELLED,)  # COVID-19 is Cancelled with a flag
+    pools = _prepaid(lead_ids)
+    # A processed trip keeps the share it was settled against (APC-102, Moe 2026-10-25): a
+    # sibling cancelled or added later moves the other trips' shares, never a settled one.
+    frozen = dict(
+        TripReview.objects.filter(
+            reservation__lead_id__in=lead_ids,
+            processed_at__isnull=False,
+            prepaid_share__isnull=False,
+        ).values_list("reservation_id", "prepaid_share")
+    )
+    by_lead: dict[int, list[tuple]] = {pk: [] for pk in lead_ids}
+    for lead_id, pk, day, clock, status, booked in Reservation.objects.filter(
+        lead_id__in=lead_ids
+    ).values_list("lead_id", "pk", "pickup_date", "pickup_time", "trip_status", "booked_total"):
+        # An undated trip (a quote still being built) sorts last; it has no booked total.
+        by_lead[lead_id].append((day or date.max, clock or time.max, pk, status, booked))
+
+    out: dict[int, dict[int, Decimal]] = {}
+    for lead_id, trips in by_lead.items():
+        trips.sort(key=lambda t: t[:3])
+        pool = pools.get(lead_id, ZERO)
+        shares: dict[int, Decimal] = {}
+        for _, _, pk, _, _ in trips:
+            if pk in frozen:
+                take = min(pool, Decimal(frozen[pk]))
+                shares[pk] = take.quantize(_CENTS)
+                pool -= take
+        for _, _, pk, status, booked in trips:
+            if pk in shares:
+                continue
+            if status in nothing:
+                shares[pk] = ZERO
+                continue
+            take = min(pool, Decimal(booked or 0))
+            shares[pk] = take.quantize(_CENTS)
+            pool -= take
+        out[lead_id] = shares
+    return out
 
 
 def allocation(lead) -> dict[int, Decimal]:
@@ -74,38 +136,7 @@ def allocation(lead) -> dict[int, Decimal]:
     cancellation takes nothing — its money is the next trip's, or a refund's. A no-show, a
     late cancel or a trip the affiliate dropped keeps its share: that is exactly the money
     processing settles (spec §4.1)."""
-    from apps.reservations.models import Reservation
-
-    nothing = (Reservation.TripStatus.CANCELLED,)  # COVID-19 is Cancelled with a flag
-    pool = order_prepaid(lead)
-    # A processed trip keeps the share it was settled against (APC-102, Moe 2026-10-25): a
-    # sibling cancelled or added later moves the other trips' shares, never a settled one.
-    frozen = dict(
-        TripReview.objects.filter(
-            reservation__lead=lead, processed_at__isnull=False, prepaid_share__isnull=False
-        ).values_list("reservation_id", "prepaid_share")
-    )
-    # An undated trip (a quote still being built) sorts last; it has no booked total anyway.
-    trips = sorted(
-        lead.reservations.all(),
-        key=lambda r: (r.pickup_date or date.max, r.pickup_time or time.max, r.pk),
-    )
-    shares: dict[int, Decimal] = {}
-    for trip in trips:
-        if trip.pk in frozen:
-            take = min(pool, Decimal(frozen[trip.pk]))
-            shares[trip.pk] = take.quantize(_CENTS)
-            pool -= take
-    for trip in trips:
-        if trip.pk in shares:
-            continue
-        if trip.trip_status in nothing:
-            shares[trip.pk] = ZERO
-            continue
-        take = min(pool, Decimal(trip.booked_total or 0))
-        shares[trip.pk] = take.quantize(_CENTS)
-        pool -= take
-    return shares
+    return allocations([lead])[lead.pk]
 
 
 def money_for(trip) -> TripMoney:

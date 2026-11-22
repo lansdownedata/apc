@@ -87,6 +87,16 @@ INVITE_WHO = {
         "Goes to the planner who asked for a new password, by email — set by the button "
         "on the sign-in page."
     ),
+    "customer_invite": (
+        "Goes to the customer by email when staff click Invite or Resend — set by the button."
+    ),
+    "customer_signup": (
+        "Goes to the person who filled in the customer sign-up form, by email — set by the form."
+    ),
+    "customer_password_reset": (
+        "Goes to the customer who asked for a new password, or signed up again with an "
+        "email that already has an account, by email — set by the form."
+    ),
     "user_invite": (
         "Goes to the new user by email when an admin clicks Invite or Resend — set by the button."
     ),
@@ -628,6 +638,9 @@ def preview_trip(trigger_key: str, lead, service_types=()):
 _ACCOUNT_PAGES = {
     "planner_invite": "/planner/register/sample/",
     "planner_password_reset": "/planner/password/sample/",
+    "customer_invite": "/account/register/sample/",
+    "customer_signup": "/account/signup/sample/",
+    "customer_password_reset": "/account/password/sample/",
     "user_invite": "/invite/sample/",
 }
 

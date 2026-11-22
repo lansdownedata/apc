@@ -1,0 +1,19 @@
+{% extends "customers/base.html" %}
+{% load static %}
+{% comment %}
+  The centred card every signed-out customer page sits in (mockups 9 and 10): sign in,
+  sign up, check your email, set a password, reset, and a dead link. No header, as in the
+  mockup; the logo sits in the card and the footer keeps the dispatch number. Block: card.
+{% endcomment %}
+{% block header %}{% endblock %}
+{% block content %}
+<div class="mx-auto w-full max-w-sm px-4 py-12 sm:py-16">
+  <div class="card p-6 sm:p-8">
+    <a href="/" class="flex items-center justify-center gap-2.5 rounded-lg focus-gold" aria-label="All Pro Charter home">
+      <img src="{% static 'brand/apc-logo-color.svg' %}" alt="" class="h-8 w-auto">
+      <span class="font-display text-[18px] font-semibold leading-none tracking-tight text-ink">All Pro Charter</span>
+    </a>
+    {% block card %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

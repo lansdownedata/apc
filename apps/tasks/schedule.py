@@ -142,7 +142,13 @@ def _build_rows() -> tuple[ScheduleRow, ...]:
         ),
         (
             "Requests & affiliates",
-            ("complaint_followup", "planner_change_request", "insurance_renewal"),
+            (
+                "complaint_followup",
+                "planner_change_request",
+                "customer_change_request",
+                "customer_cancel_request",
+                "insurance_renewal",
+            ),
         ),
     )
     notes = {

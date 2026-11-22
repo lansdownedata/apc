@@ -6192,3 +6192,314 @@ function openScheduler() {
   window.dispatchEvent(new CustomEvent("open-scheduler"));
 }
 window.openScheduler = openScheduler;
+
+/* ------------------------------------------- customer portal: Trips (mockup 2)
+ * One GET form holds every filter. A change refetches the table alone (`?fragment=1`)
+ * and puts the filters in the address bar; "Show more" asks for one more page and gets
+ * every row so far back, so a group never splits. Ticked rows (id -> cents) survive
+ * "Show more" and clear when a filter changes. The date field is a flatpickr range whose
+ * text comes back from the server ("Oct 1 – Nov 20, 2026"). */
+/* `customer_required` answers a customer page's own requests with a 401 once the session
+   has ended. Reload the whole page then, so sign-in brings the customer back to it, never to
+   a fragment of it (and never a redirect followed into the sign-in page's HTML). */
+const CUSTOMER_AJAX = { "X-Requested-With": "XMLHttpRequest" };
+const customerSignedOut = (resp) => resp.status === 401 || resp.redirected;
+
+/* Save "Your reference" on trips `ids` through `customers:set_reference`. Resolves once
+   saved. Rejects with "signed out" after reloading the page when the session has ended (or
+   something other than the endpoint answered), and with "not saved" otherwise. */
+async function saveCustomerReference(referenceUrl, ids, value) {
+  const resp = await fetch(referenceUrl, {
+    method: "POST",
+    headers: {
+      ...CUSTOMER_AJAX,
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-CSRFToken": getCookie("csrftoken"),
+    },
+    body: new URLSearchParams({ ids: ids.join(","), value }),
+  }).catch(() => null);
+  const json = resp && !customerSignedOut(resp) ? await resp.json().catch(() => null) : null;
+  if (resp && (customerSignedOut(resp) || (resp.ok && json === null))) {
+    window.location.reload();
+    throw new Error("signed out");
+  }
+  if (!resp || !resp.ok || !json.ok) throw new Error("not saved");
+}
+
+function customerTrips({ url, referenceUrl }) {
+  const isoDay = (iso) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+  return {
+    loading: false,
+    picked: {},
+    start: "",
+    end: "",
+    page: 1,
+    _last: "",
+    _seq: 0,
+    _fp: null,
+
+    init() {
+      const form = this.$refs.form;
+      this.start = form.elements.start.value;
+      this.end = form.elements.end.value;
+      this.page = Number(new URLSearchParams(window.location.search).get("page")) || 1;
+      this._last = this._query(this.page);
+      if (typeof window.flatpickr === "undefined") return;
+      const text = this.$refs.range.value;
+      this._fp = window.flatpickr(this.$refs.range, {
+        ...FP_BASE,
+        mode: "range",
+        dateFormat: "M j, Y",
+        locale: { rangeSeparator: " – " },
+        defaultDate: [this.start, this.end].filter(Boolean).map(isoDay),
+        onClose: (dates, str, fp) => {
+          FP_BASE.onClose();
+          if (!dates.length) return;
+          const iso = (d) => fp.formatDate(d, "Y-m-d");
+          this.setRange(iso(dates[0]), iso(dates[dates.length - 1]), { picked: true });
+        },
+      });
+      this.$refs.range.value = text;
+    },
+
+    get count() {
+      return Object.keys(this.picked).length;
+    },
+    get sum() {
+      return money.format(Object.values(this.picked).reduce((a, b) => a + b, 0) / 100);
+    },
+
+    _query(page) {
+      const params = new URLSearchParams(new FormData(this.$refs.form));
+      for (const [key, value] of [...params]) if (!value) params.delete(key);
+      if (page > 1) params.set("page", page);
+      return params.toString();
+    },
+
+    async refresh({ page = 1, keep = false, force = false } = {}) {
+      const query = this._query(page);
+      if (query === this._last && !force) return;
+      this._last = query;
+      this.page = page;
+      if (!keep) this.picked = {};
+      const seq = ++this._seq;
+      this.loading = true;
+      try {
+        const resp = await fetch(`${url}?${query ? `${query}&` : ""}fragment=1`, {
+          headers: { ...CUSTOMER_AJAX, Accept: "text/html" },
+        });
+        if (customerSignedOut(resp)) return window.location.reload();
+        if (!resp.ok) throw new Error(resp.statusText);
+        const html = await resp.text();
+        if (seq !== this._seq) return;
+        this.$refs.table.innerHTML = html;
+        this.$refs.range.value = this.$refs.table.firstElementChild?.dataset.rangeText || "";
+        history.replaceState(null, "", query ? `${url}?${query}` : url);
+      } catch (e) {
+        if (seq === this._seq) {
+          this._last = "";
+          Alpine.store("toast").push({ type: "danger", title: "Your trips didn't load. Try again." });
+        }
+      } finally {
+        if (seq === this._seq) this.loading = false;
+      }
+    },
+
+    showMore() {
+      this.refresh({ page: this.page + 1, keep: true });
+    },
+
+    setRange(start, end, { picked = false } = {}) {
+      const form = this.$refs.form;
+      form.elements.start.value = this.start = start;
+      form.elements.end.value = this.end = end;
+      if (this._fp && !picked) {
+        if (start) this._fp.setDate([isoDay(start), isoDay(end || start)], false);
+        else this._fp.clear(false);
+      }
+      this.refresh();
+    },
+
+    clearFilters() {
+      const form = this.$refs.form;
+      form.elements.q.value = "";
+      const passenger = form.elements.passenger;
+      if (passenger) {
+        if (passenger.tomselect) passenger.tomselect.setValue("", true);
+        passenger.value = "";
+      }
+      this.setRange("", "");
+    },
+
+    pick(box) {
+      if (box.checked) this.picked[box.dataset.pick] = Math.round(parseFloat(box.dataset.amount) * 100);
+      else delete this.picked[box.dataset.pick];
+    },
+
+    pickAll(checked) {
+      this.$refs.table.querySelectorAll("input[data-pick]").forEach((box) => {
+        box.checked = checked;
+        this.pick(box);
+      });
+    },
+
+    setReference() {
+      const ids = Object.keys(this.picked);
+      if (ids.length) this._editReference(ids, "", "Set reference");
+    },
+
+    editReference(id, current) {
+      this._editReference([String(id)], current || "", "Your reference");
+    },
+
+    /* The one editor for a ticked set or a single row. The value is typed into a field
+       the modal draws; the current one is set on it afterwards, never put in the HTML. */
+    _editReference(ids, current, title) {
+      const modal = Alpine.store("modal");
+      const many = ids.length > 1;
+      modal.show({
+        title,
+        message: many ? `For the ${ids.length} trips you ticked. Leave it blank to clear it.` : "",
+        html:
+          '<label for="trip-reference" class="block text-[12.5px] font-semibold text-ink">A client, cost centre or PO for your expenses</label>' +
+          '<input id="trip-reference" type="text" maxlength="120" autocomplete="off" class="field mt-1.5">',
+        variant: "gold",
+        confirmText: "Save",
+        onConfirm: async () => {
+          const value = document.getElementById("trip-reference")?.value || "";
+          try {
+            await saveCustomerReference(referenceUrl, ids, value);
+          } catch (e) {
+            if (e.message !== "signed out") {
+              Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
+            }
+            throw e;
+          }
+          Alpine.store("toast").push({ type: "success", title: many ? `Reference set on ${ids.length} trips.` : "Reference saved." });
+          this.refresh({ page: this.page, force: true });
+        },
+      });
+      Alpine.nextTick(() => {
+        const box = document.getElementById("trip-reference");
+        if (!box) return;
+        box.value = current;
+        box.focus();
+        box.onkeydown = (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (!modal.busy) modal.accept();
+        };
+      });
+    },
+  };
+}
+window.customerTrips = customerTrips;
+
+/* ------------------------------------------- customer portal: Trip detail (mockup 3)
+ * "Your reference" edited in place: saved when the field changes (on blur or Enter),
+ * through the same endpoint the Trips page uses. A failed save keeps what was typed. */
+function customerReference({ url, id }) {
+  return {
+    saving: false,
+    saved: "",
+
+    init() {
+      this.saved = this.$refs.input.value;
+    },
+
+    async save() {
+      const value = this.$refs.input.value.trim();
+      if (this.saving || value === this.saved) return;
+      this.saving = true;
+      try {
+        await saveCustomerReference(url, [String(id)], value);
+        this.saved = this.$refs.input.value = value;
+        Alpine.store("toast").push({ type: "success", title: value ? "Reference saved." : "Reference cleared." });
+      } catch (e) {
+        if (e.message !== "signed out") {
+          Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
+        }
+      } finally {
+        this.saving = false;
+      }
+    },
+  };
+}
+window.customerReference = customerReference;
+
+/* ------------------------------------------- customer portal: change and cancel requests
+ * (mockups 6 and 7). The form lives in a <template> on the trip page (#ask-change,
+ * #ask-cancel) and opens in the shared modal; Send posts it with fetch. On `{ok: true}` the
+ * page reloads to show the pending state and the toast the server queued. A refusal is
+ * written inside the dialog, which stays open with what was typed; a lapsed session reloads
+ * the page, as the reference save does. `?ask=change` (Home's "Request a change") opens the
+ * change dialog on load. */
+function customerAsk() {
+  return {
+    init() {
+      const params = new URLSearchParams(window.location.search);
+      const kind = params.get("ask");
+      if (!kind) return;
+      params.delete("ask");
+      const query = params.toString();
+      history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+      this.open(kind);
+    },
+
+    open(kind) {
+      const tpl = document.getElementById(`ask-${kind}`);
+      if (!tpl) return;
+      const modal = Alpine.store("modal");
+      const { url, title, confirm, cancel, variant } = tpl.dataset;
+      modal.show({
+        title,
+        // The comment makes each opening a new value, so the modal draws a fresh form
+        // rather than keeping the last one's ticks, text and error.
+        html: `${tpl.innerHTML}<!-- ${Date.now()} -->`,
+        variant,
+        confirmText: confirm,
+        cancelText: cancel,
+        onConfirm: () => this._send(url),
+      });
+      Alpine.nextTick(() => {
+        const form = document.getElementById("ask-form");
+        if (!form) return;
+        initTomSelects(form);
+        form.onsubmit = (e) => {
+          e.preventDefault();
+          if (!modal.busy) modal.accept();
+        };
+        (form.querySelector("input[type=checkbox]") || document.getElementById("ask-body"))?.focus();
+      });
+    },
+
+    async _send(url) {
+      const form = document.getElementById("ask-form");
+      const error = document.getElementById("ask-error");
+      if (error) error.textContent = "";
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { ...CUSTOMER_AJAX, Accept: "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: new FormData(form),
+      }).catch(() => null);
+      const json = resp && !customerSignedOut(resp) ? await resp.json().catch(() => null) : null;
+      if (resp && (customerSignedOut(resp) || (resp.ok && json === null))) {
+        window.location.reload();
+        throw new Error("signed out");
+      }
+      if (json && json.ok) {
+        window.location.reload();
+        // Keep the spinner until the page has gone.
+        return new Promise(() => {});
+      }
+      if (error) error.textContent = (json && json.error) || "Your request didn't send. Try again.";
+      throw new Error("not sent");
+    },
+  };
+}
+window.customerAsk = customerAsk;

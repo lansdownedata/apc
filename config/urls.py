@@ -91,6 +91,8 @@ urlpatterns = [
     path("invite/<str:uidb64>/<str:token>/", accept_invite, name="accept_invite"),
     # wedding planner area (APC-66) — its own sign-in, never a staff session
     path("planner/", include("apps.planners.urls")),
+    # customer portal: its own sign-in, never a staff session
+    path("account/", include("apps.customers.urls")),
     path("quote/<str:token>/", quote_page, name="quote_page"),
     path("quote/<str:token>/pay/", quote_pay, name="quote_pay"),
     path("quote/<str:token>/terms/", quote_terms, name="quote_terms"),

@@ -45,7 +45,7 @@
               <span class="ml-auto font-display text-[13px] font-semibold text-ink num">${{ lead.quote_total|floatformat:2|intcomma }}</span>
             </div>
             <div class="flex items-center gap-1.5 mt-2 text-[10px] text-muted">
-              <span class="inline-flex items-center gap-1"><i class="ti ti-route text-[12px]"></i>{{ lead.get_channel_display }}</span>
+              {% if lead.channel == "portal" %}<span data-chip="portal" class="inline-flex items-center rounded px-1.5 py-0.5 text-[9.5px] font-medium bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20">{{ lead.get_channel_display }}</span>{% else %}<span class="inline-flex items-center gap-1"><i class="ti ti-route text-[12px]"></i>{{ lead.get_channel_display }}</span>{% endif %}
               <span class="inline-flex items-center gap-1"><i class="ti ti-car text-[12px]"></i><span class="num">{{ lead.reservation_count }}</span></span>
               {% if res.pickup_date %}<span class="ml-auto num">{{ res.pickup_date|date:"M j, Y" }}</span>{% endif %}
             </div>

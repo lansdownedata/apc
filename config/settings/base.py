@@ -61,6 +61,7 @@ LOCAL_APPS = [
     "apps.settings",
     "apps.tasks",
     "apps.planners",
+    "apps.customers",
     "apps.public",
     "apps.imports",
     "apps.audit",

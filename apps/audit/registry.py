@@ -208,6 +208,7 @@ SPECS: list[ModelSpec] = [
             "circling_at": "Circling",
             "cancel_reason": "Cancel reason",
             "cancel_covid": "COVID-19",
+            "customer_reference": "Customer reference",
         },
         parents=_reservation_parents,
         label=_reservation_label,

@@ -1,0 +1,35 @@
+{% extends "customers/_auth.html" %}
+{% block title %}Create your account{% endblock %}
+{% block card %}
+<p class="mt-6 text-[12.5px] font-semibold text-muted">Step 1</p>
+<h1 class="mt-1.5 font-display text-[20px] font-semibold leading-tight text-ink">Create your account</h1>
+<p class="mt-1 text-[12.5px] leading-relaxed text-muted">Use the email you book with and we'll bring in your past trips.</p>
+{% if error %}
+<p role="alert" class="mt-4 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">{{ error }}</p>
+{% endif %}
+<form method="post" action="{% url 'customers:signup' %}" class="mt-4 space-y-3" novalidate>
+  {% csrf_token %}
+  <div>
+    <label for="f-name" class="block text-[12.5px] font-semibold text-ink">Name</label>
+    <input id="f-name" type="text" name="name" value="{{ form.name.value|default:'' }}" autocomplete="name" required maxlength="200"
+           class="field mt-1.5{% if form.name.errors %} field-error{% endif %}">
+    {% for e in form.name.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+  </div>
+  <div>
+    <label for="f-email" class="block text-[12.5px] font-semibold text-ink">Email</label>
+    <input id="f-email" type="email" name="email" value="{{ form.email.value|default:'' }}" autocomplete="email" required maxlength="254"
+           class="field mt-1.5{% if form.email.errors %} field-error{% endif %}" placeholder="you@example.com">
+    {% for e in form.email.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+  </div>
+  <div>
+    <label for="f-phone" class="block text-[12.5px] font-semibold text-ink">Mobile</label>
+    <input id="f-phone" type="tel" name="phone" value="{{ form.phone.value|default:'' }}" autocomplete="tel" maxlength="40"
+           class="field mt-1.5{% if form.phone.errors %} field-error{% endif %}">
+    {% for e in form.phone.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+  </div>
+  <button type="submit" class="btn-gold !mt-4 w-full rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold">Continue</button>
+</form>
+<p class="mt-5 text-center text-[12.5px] text-muted">
+  Already have an account? <a href="{% url 'customers:login' %}" class="rounded font-semibold text-goldd focus-gold hover:underline">Sign in</a>
+</p>
+{% endblock %}

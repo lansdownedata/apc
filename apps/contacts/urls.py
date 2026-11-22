@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.customers import staff_views as customer_views
 from apps.planners import staff_views as planner_views
 
 from . import views
@@ -36,6 +37,11 @@ urlpatterns = [
     path("<int:pk>/planner/resend/", planner_views.resend, name="planner_resend"),
     path("<int:pk>/planner/revoke/", planner_views.revoke, name="planner_revoke"),
     path("<int:pk>/planner/phone/", planner_views.update_phone, name="planner_update_phone"),
+    # customer portal access (spec 2026-11-20 §12)
+    path("<int:pk>/customer/invite/", customer_views.invite, name="customer_invite"),
+    path("<int:pk>/customer/resend/", customer_views.resend, name="customer_resend"),
+    path("<int:pk>/customer/revoke/", customer_views.revoke, name="customer_revoke"),
+    path("<int:pk>/customer/reset/", customer_views.reset, name="customer_reset"),
     path("companies/<int:pk>/", views.company_detail, name="company_detail"),
     path("companies/<int:pk>/update/", views.company_update, name="company_update"),
 ]

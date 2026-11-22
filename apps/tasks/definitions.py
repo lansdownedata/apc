@@ -520,6 +520,26 @@ REGISTRY: tuple[TaskKind, ...] = (
         applies=_never,
     ),
     TaskKind(
+        # A customer used "Request a change" on a trip in the customer portal; the request
+        # is in the Inbox (the customer's conversation). One per request, opened only by
+        # `open_request_task` (`customers.requests.ask`).
+        key="customer_change_request",
+        label="Customer change request",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpenBusinessDays(days=1),
+        applies=_never,
+    ),
+    TaskKind(
+        # The same for "Request to cancel": staff run the cancellation and any refund.
+        key="customer_cancel_request",
+        label="Customer cancellation request",
+        department=_D.CUSTOMER_SERVICE,
+        level=Level.ORDER,
+        due=AfterOpenBusinessDays(days=1),
+        applies=_never,
+    ),
+    TaskKind(
         # APC-95. The cleaning hold could not be placed (no card on file, or declined); the
         # note says which. Opened only by `payments.holds`, once per order; the trip runs.
         key="cleaning_hold_failed",

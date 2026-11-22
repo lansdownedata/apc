@@ -79,6 +79,9 @@ _PER_COPY_FIELDS = frozenset(
         "source_leg_id",
         "la_reservation_id",
         "la_confirmation",
+        # The customer tags each trip themselves; an agent's edit to one must not
+        # overwrite what they typed on its siblings.
+        "customer_reference",
         "trip_status",
         "customer_confirmed_at",
         # Per-trip dispatch and cancellation state, never shared across a set.

@@ -10,6 +10,7 @@ class Channel(models.TextChoices):
     API = "api", "API"
     GNET = "gnet", "GNet"
     LIMOANYWHERE = "limoanywhere", "Limo Anywhere"
+    PORTAL = "portal", "Customer portal"
 
 
 class Account(models.TextChoices):
