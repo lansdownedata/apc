@@ -24,6 +24,7 @@ from apps.audit.factories import AuditEntryFactory
 from apps.audit.models import AuditEntry
 from apps.billing.models import InvoiceLine
 from apps.contacts.models import Company, Contact, ContactPhone
+from apps.customers.models import CustomerAccount
 from apps.dispatch.models import Assignment
 from apps.leads.factories import ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
@@ -343,6 +344,42 @@ def test_fees_acknowledged():
 def test_affiliate_confirmed_the_trip():
     line = _one({"affiliate_confirmed_at": ["None", "2026-01-15 03:30:00"]}, model=Assignment)
     assert line.sentence == "Confirmed the trip"
+
+
+@pytest.mark.parametrize(
+    ("action", "changes", "sentence"),
+    [
+        (CREATE, {"invited_at": ["None", "2026-01-15 03:30:00"]}, "Invited to the customer portal"),
+        (
+            CREATE,
+            {"registered_at": ["None", "2026-01-15 03:30:00"], "self_registered": ["None", "True"]},
+            "Signed up to the customer portal",
+        ),
+        (
+            UPDATE,
+            {"registered_at": ["None", "2026-01-15 03:30:00"]},
+            "Signed up to the customer portal",
+        ),
+        (
+            UPDATE,
+            {"revoked_at": ["None", "2026-01-15 03:30:00"]},
+            "Revoked customer portal access",
+        ),
+    ],
+)
+def test_customer_portal_access_reads_as_what_happened(action, changes, sentence):
+    line = _one(changes, model=CustomerAccount, action=action, object_repr="dana@example.com")
+    assert line.sentence == sentence
+
+
+def test_a_resent_customer_invite_reads_as_a_dated_change():
+    line = _one(
+        {"invited_at": ["2026-01-15 03:30:00", "2026-01-16 03:30:00"]},
+        model=CustomerAccount,
+        action=UPDATE,
+        object_repr="dana@example.com",
+    )
+    assert line.label == "dana@example.com · Invite sent"
 
 
 def test_planner_request_create_reads_its_question():

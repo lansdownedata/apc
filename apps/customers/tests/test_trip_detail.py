@@ -383,7 +383,7 @@ def test_quote_ready_trip_offers_review_and_pay(account, client_as, make_trip):
 
     detail = _detail(account, trip)
     assert _pay_target(detail["pay_url"]) == ("quote_page", trip.lead_id)
-    assert detail["can_request"] is False and detail["call_dispatch"] is True
+    assert detail["can_request"] is False and detail["call_dispatch"].startswith("Need to")
     response = client_as(account).get(_url(trip))
     body = response.content.decode()
     assert "Review and pay" in body and f'href="{response.context["trip"]["pay_url"]}"' in body

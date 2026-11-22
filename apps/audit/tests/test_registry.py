@@ -27,7 +27,7 @@ from apps.billing.models import AccountGroup, BillingAccount, Invoice, InvoiceLi
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.contacts.models import Company, Contact, ContactPhone
 from apps.customers.factories import CustomerAccountFactory
-from apps.customers.models import CustomerRequest
+from apps.customers.models import CustomerAccount, CustomerRequest
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
@@ -146,6 +146,9 @@ CASES: dict[str, Case] = {
     ),
     "planners.PlannerRequest": Case(_planner_request, ("about", "Sunday run"), None),
     "customers.CustomerRequest": Case(_customer_request, ("topics", "Flight, Vehicle"), None),
+    "customers.CustomerAccount": Case(
+        CustomerAccountFactory, ("revoked_at", timezone.now), ("failed_logins", 3)
+    ),
 }
 
 
@@ -370,6 +373,7 @@ MINIMAL: dict[str, Callable[[], Model]] = {
     "planners.PlannerAccount": PlannerAccount,
     "planners.PlannerRequest": PlannerRequest,
     "customers.CustomerRequest": CustomerRequest,
+    "customers.CustomerAccount": CustomerAccount,
 }
 
 

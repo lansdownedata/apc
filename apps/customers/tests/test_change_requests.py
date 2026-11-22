@@ -27,6 +27,7 @@ from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.messaging import services as messaging
 from apps.messaging.models import Conversation, Message
+from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.reservations.services import set_trip_status
 from apps.tasks import services as task_services
@@ -105,6 +106,30 @@ def test_change_request_records_inbox_message_and_task(account, booked):
     task = req.task
     assert task.lead == trip.lead and task.status == Task.Status.OPEN
     assert task.department == "customer_service"
+
+
+def _bells(trip: Reservation):
+    kind = Notification.Kind.CUSTOMER_REQUEST
+    return Notification.objects.filter(lead=trip.lead, kind=kind).order_by("pk")
+
+
+def test_a_request_rings_the_bell_for_all_staff(account, booked):
+    """A cancellation for tomorrow must not wait for someone to open the Inbox."""
+    trip = booked()
+    _ask(account, trip, kind="cancel", topics=(), reason="Plans changed", body="")
+    _ask(account, trip)
+    cancel, change = _bells(trip)
+    assert cancel.user is None and change.user is None
+    assert cancel.title == f"Cancellation request: {account.contact.name}"
+    assert change.title == f"Change request: {account.contact.name}"
+    assert cancel.detail == f"{trip.reference} · {_when(trip)}"
+
+
+def test_a_double_tap_rings_the_bell_once(account, booked):
+    trip = booked()
+    _ask(account, trip)
+    _ask(account, trip)
+    assert _bells(trip).count() == 1
 
 
 def test_cancel_request_does_not_cancel_the_trip(account, booked):
@@ -668,9 +693,10 @@ def test_an_expired_quote_still_has_a_way_forward(account, client_as, make_trip)
     )
     body = client_as(account).get(_url("trip", trip)).content.decode()
     assert "Quote expired" in body
-    assert f'Call dispatch at <a href="tel:{dispatch_phone()["tel"]}"' in body
+    tel = dispatch_phone()["tel"]
+    assert f'This quote has expired. For a new one, call dispatch at <a href="tel:{tel}"' in body
+    assert "Need to change or cancel" not in body
     assert "Request a change" not in body and "Request to cancel" not in body
-    assert _detail(account, trip)["call_dispatch"] is True
 
 
 def test_a_booked_trip_shows_no_dispatch_line(account, client_as, booked):

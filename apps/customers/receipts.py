@@ -31,6 +31,7 @@ from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
 from apps.payments import trip_money
 from apps.payments.models import Charge, JournalEntry, PaymentPlan
+from apps.payments.receipts import card_brand
 from apps.payments.services import TRIP_MONEY_KINDS
 from apps.planners.selectors import dispatch_phone
 from apps.public.wedding import format_clock
@@ -138,34 +139,11 @@ def passenger_names(trip: Reservation) -> list[str]:
     return [p.name.strip() for p in named]
 
 
-# Stripe's `card.brand` values, as the customer knows the card.
-_CARD_BRANDS = {
-    "amex": "American Express",
-    "american express": "American Express",
-    "cartes_bancaires": "Cartes Bancaires",
-    "diners": "Diners Club",
-    "diners club": "Diners Club",
-    "discover": "Discover",
-    "eftpos_au": "Eftpos Australia",
-    "jcb": "JCB",
-    "mastercard": "Mastercard",
-    "unionpay": "UnionPay",
-    "visa": "Visa",
-}
-
-
 def card_text(brand: str, last4: str) -> str:
-    """ "Visa ending 4242"; blank without a last four. Brand and last four only. The brand
-    reads as its own name (`_CARD_BRANDS`); one Stripe adds later reads as its words
-    ("some_brand" -> "Some Brand"), and none, or Stripe's "unknown", as "Card". The one
-    rule for the receipt and the spreadsheet's payment method."""
-    if not last4:
-        return ""
-    key = brand.strip().lower()
-    name = _CARD_BRANDS.get(key)
-    if name is None:
-        name = "" if key == "unknown" else key.replace("_", " ").title()
-    return f"{name or 'Card'} ending {last4}"
+    """ "Visa ending 4242"; blank without a last four. Brand and last four only, the brand
+    as `payments.receipts.card_brand` names it. The one rule for the receipt and the
+    spreadsheet's payment method."""
+    return f"{card_brand(brand)} ending {last4}" if last4 else ""
 
 
 def posted_at(charge_ids: Iterable[int]) -> dict[int, datetime]:

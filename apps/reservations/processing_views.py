@@ -15,6 +15,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.accounts.permissions import payment_access_required
 from apps.payments import trip_money
 from apps.payments.models import Charge
+from apps.payments.receipts import card_label
 
 from . import editor as reservation_editor
 from . import processing, review_views
@@ -229,8 +230,8 @@ def _pane(request, trip) -> dict:
         # APC-105: billed to an account, so processing never touches the card.
         "invoice_note": processing.invoice_note(trip.lead) if trip.lead.on_account else "",
         "card_label": (
-            f"{plan.card_brand.title()} ••{plan.card_last4}"
-            if plan and plan.stripe_payment_method_id and plan.card_last4
+            card_label(plan.card_brand, plan.card_last4)
+            if plan and plan.stripe_payment_method_id
             else ""
         ),
         "trip_charges": charges,

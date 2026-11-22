@@ -459,3 +459,31 @@ def test_contact_detail_query_count_unchanged(
     plain = ContactFactory()
     with django_assert_max_num_queries(24):
         assert staff_client.get(reverse("contact_detail", args=[plain.pk])).status_code == 200
+
+
+def test_the_card_says_when_a_changed_email_needs_a_new_password(staff_client, outbound_on):
+    account = CustomerAccountFactory(contact__name="Dana Reyes")
+    assert staff_access.access_for(account.contact)["note"] == ""
+    account.contact.email = "dana.new@example.com"
+    account.contact.save(update_fields=["email"])
+    contact = Contact.objects.get(pk=account.contact_id)
+
+    card = staff_access.access_for(contact)
+    assert card["status"] == "active" and card["show_reset"]
+    assert card["note"] == staff_access.EMAIL_UNPROVED
+    body = staff_client.get(reverse("contact_detail", args=[contact.pk])).content.decode()
+    assert escape(staff_access.EMAIL_UNPROVED) in body
+
+
+def test_invite_and_revoke_show_in_the_contacts_history(staff_client, outbound_on):
+    from apps.audit.models import AuditEntry
+
+    contact = ContactFactory(name="Dana Reyes", email="dana@example.com")
+    staff_client.post(reverse("customer_invite", args=[contact.pk]))
+    staff_client.post(reverse("customer_revoke", args=[contact.pk]))
+
+    entries = AuditEntry.objects.filter(profile=f"contact:{contact.pk}").order_by("pk")
+    account = [e for e in entries if e.object_repr == "dana@example.com"]
+    assert [sorted(e.changes) for e in account][1] == ["revoked_at"]
+    assert all(e.actor is not None for e in account)
+    assert not any("password" in e.changes for e in account)

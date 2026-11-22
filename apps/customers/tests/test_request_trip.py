@@ -122,7 +122,7 @@ def test_me_without_a_usable_mobile_is_asked_for_one(client_as, on_file):
     account = _account(phone=on_file)
     client = client_as(account)
     page = client.get(URL).content.decode()
-    assert 'name="my_mobile"' in page and "We don't have a mobile for you yet." in page
+    assert 'name="my_mobile"' in page and "We need a mobile number we can reach you on." in page
 
     response = client.post(URL, _post())
 

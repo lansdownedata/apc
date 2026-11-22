@@ -108,7 +108,7 @@
       {% endif %}
     </div>
     {% elif trip.call_dispatch %}
-    <p class="text-[13.5px] text-muted">Need to change or cancel this? Call dispatch at <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
+    <p class="text-[13.5px] text-muted">{{ trip.call_dispatch }} <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
     {% endif %}
     </div>
 

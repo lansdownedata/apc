@@ -474,6 +474,9 @@ def _created(entry: AuditEntry, model: type[models.Model], fk_names: dict) -> Li
             model, "amount", _side(changes, "amount", 1), zone="", fk_names={}, entry_pk=entry.pk
         )
         return _say(f"Invoiced on {_invoice(entry, model, 1, fk_names)} {amount}")
+    if label == "customers.customeraccount":
+        invited = _side(changes, "invited_at", 1) not in BLANK
+        return _say(f"{'Invited' if invited else 'Signed up'} to the customer portal")
     spec = registry.spec_for(model)
     if spec and "create" in spec.sentences:
         return _say(spec.sentences["create"].format_map(_new_values(changes)))

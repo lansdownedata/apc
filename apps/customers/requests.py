@@ -5,7 +5,8 @@ an id from another account is skipped, never written. `Reservation` is audited: 
 changed trip is saved on its own with `update_fields`, so the trail records it under the
 request's source (`customer portal`, `apps.audit.middleware`). A requested trip is a new
 lead on the account's own contact (`request_trip`). A change or cancellation is only asked
-for (`ask`): a message in the Inbox and a task for staff, and the trip stays as it is.
+for (`ask`): a message in the Inbox, a task and a notification for staff, and the trip
+stays as it is.
 """
 
 from __future__ import annotations
@@ -336,9 +337,10 @@ def ask(
     body: str,
 ) -> CustomerRequest:
     """Record a customer's change (`kind="change"`) or cancellation (`"cancel"`) request
-    about `trip` as an inbound message on the account's own conversation, and open a
-    Customer Service task on the trip's order. The caller resolved `trip` through
-    `selectors.visible_trips(account)`. Nothing on the trip or its order is changed.
+    about `trip` as an inbound message on the account's own conversation, open a
+    Customer Service task on the trip's order, and ring the bell for all staff. The caller
+    resolved `trip` through `selectors.visible_trips(account)`. Nothing on the trip or its
+    order is changed.
 
     `topics` keeps only `CHANGE_TOPICS` (in their order); a reason outside
     `CANCEL_REASONS` is "Other". The body is required for a change and optional for a
@@ -393,6 +395,13 @@ def ask(
             sender_name=account.contact.name,
         )
         task = tasks.open_request_task(trip.lead, _TASK_KIND[kind])
+        asked = "Change" if kind == CustomerRequest.Kind.CHANGE else "Cancellation"
+        Notification.notify(
+            trip.lead,
+            Notification.Kind.CUSTOMER_REQUEST,
+            title=f"{asked} request: {account.contact.name}"[:NOTIFICATION_TITLE_MAX],
+            detail=f"{trip.reference} · {when(trip)}",
+        )
         return CustomerRequest.objects.create(
             account=account,
             reservation=trip,

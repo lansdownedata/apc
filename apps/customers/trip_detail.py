@@ -388,10 +388,21 @@ def _until_pickup(trip: Reservation) -> str:
     return "Your pickup is tomorrow." if days == 1 else f"Your pickup is {days} days away."
 
 
+CALL_TO_CHANGE = "Need to change or cancel this? Call dispatch at"
+CALL_FOR_NEW_QUOTE = "This quote has expired. For a new one, call dispatch at"
+
+
+def _call_dispatch(key: str) -> str:
+    if key not in requests.CALL_TO_ASK:
+        return ""
+    return CALL_FOR_NEW_QUOTE if key == "quote_expired" else CALL_TO_CHANGE
+
+
 def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str) -> dict:
     """What the change and cancel dialogs need (`can_request`, `ask_when`, `pickup_in`),
-    `call_dispatch` (a Quote ready or Confirming trip still ahead: it shows "Need to change
-    or cancel this? Call dispatch" in place of the buttons), and
+    `call_dispatch` (a trip still ahead that is not booked yet: the sentence shown before
+    the dispatch number in place of the buttons, `CALL_FOR_NEW_QUOTE` for an expired quote
+    and `CALL_TO_CHANGE` for a Quote ready or Confirming trip; "" otherwise), and
     the open requests: `pending_request`, the newest (`{"kind", "date"}` or None), and
     `pending_change` / `pending_cancel`, the date each kind was last asked for while its
     task is open, so one pending kind never hides the other's button. One query, only
@@ -400,7 +411,7 @@ def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str)
         at = trip.pickup_at
         return {
             "can_request": False,
-            "call_dispatch": key in requests.CALL_TO_ASK and (at is None or at > timezone.now()),
+            "call_dispatch": _call_dispatch(key) if at is None or at > timezone.now() else "",
             "ask_when": "",
             "pickup_in": "",
             "pending_request": None,
