@@ -58,7 +58,8 @@
   {% include "components/flash_messages.html" %}
   {% include "components/toasts.html" %}
   {% block marketing_embeds %}{% if calendly_url %}{% include "public/_calendly.html" %}
-                       {% include "public/_schedule_form.html" %}{% endif %}{% endblock %}
+                       {% include "public/_schedule_form.html" %}{% endif %}
+                       {% if podium_widget_token %}{% include "public/_podium_widget.html" %}{% endif %}{% endblock %}
   {% block body_extra %}{% endblock %}
 </body>
 </html>

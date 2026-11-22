@@ -7,10 +7,14 @@ def test_sitemap_lists_key_public_urls(client):
         b"/fleet/",
         b"/services/airport/",
         b"/blogs/",
-        b"/all-pro-charter-rates/",
         b"/2025/03/the-ultimate-guide-to-selecting-the-right-wedding-transportation-for-2025/",
     ]:
         assert path in body
+
+
+def test_sitemap_drops_the_retired_rates_page(client):
+    """The client quotes every request; published hourly rates are gone."""
+    assert b"/all-pro-charter-rates/" not in client.get("/sitemap.xml").content
 
 
 def test_robots_points_at_sitemap(client):

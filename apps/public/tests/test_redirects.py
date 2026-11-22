@@ -6,6 +6,8 @@ CASES = [
     ("/allprocharter-register/", "/bookings/"),
     ("/category/press-release/", "/blogs/"),
     ("/category/uncategorized/", "/blogs/"),
+    # Retired 2026-11-22: the client quotes every request, so no published rates.
+    ("/all-pro-charter-rates/", "/bookings/"),
 ]
 
 

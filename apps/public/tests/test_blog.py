@@ -66,3 +66,25 @@ def test_covid_post_preserved_not_redirected(client):
     resp = client.get("/2021/01/covid-19-update-all-pro-charter-is-cdc-compliant/")
     assert resp.status_code == 200
     assert b"COVID-19" in resp.content
+
+
+# The two 2025 posts carried a "Call Us: (202) 424-2600" line from WordPress. The
+# client's 2026-08-31 call is that the marketing site offers a call booking instead
+# of the number (test_public_shell.test_phone_ctas_are_replaced_by_schedule_a_call).
+CALL_US_POSTS = POSTS[:2]
+
+
+@pytest.mark.parametrize("url", CALL_US_POSTS)
+def test_post_offers_a_call_booking_instead_of_a_bare_number(client, settings, url):
+    settings.CALENDLY_URL = "https://calendly.com/allprocharter/quick-chat"
+    html = client.get(url).content.decode()
+    assert "(202) 424-2600" not in html
+
+
+@pytest.mark.parametrize("url", CALL_US_POSTS)
+def test_post_number_is_tappable_when_calendly_is_off(client, settings, url):
+    settings.CALENDLY_URL = ""
+    html = client.get(url).content.decode()
+    shown = html.count("(202) 424-2600")
+    tappable = len(re.findall(r'href="tel:\+12024242600"[^>]*>[^<]*\(202\) 424-2600', html))
+    assert shown and shown == tappable

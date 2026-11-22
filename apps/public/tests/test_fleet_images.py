@@ -1,6 +1,6 @@
 """Regression guards for vehicle photos on the public marketing pages.
 
-The fleet/rates/home cards frame each vehicle photo in a fixed-height box. Sizing
+The fleet/home cards frame each vehicle photo in a fixed-height box. Sizing
 the `<img>` with `h-full w-full` inside that box makes the browser ignore the
 percentage height and lay the image out from its intrinsic aspect ratio at the
 full content width — so the image box ends up TALLER than its `h-44`/`h-28`
@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-PAGES = ["/fleet/", "/all-pro-charter-rates/", "/"]
+PAGES = ["/fleet/", "/"]
 
 # Contained (letterboxed) photos stretched to 100% in both axes. `object-cover`
 # heroes legitimately use `h-full w-full` — they are meant to fill and crop.

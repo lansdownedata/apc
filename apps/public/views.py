@@ -285,10 +285,6 @@ def reviews(request):
     return render(request, "public/reviews.html")
 
 
-def rates(request):
-    return render(request, "public/rates.html")
-
-
 def blog_index(request):
     return render(request, "public/blog_index.html")
 

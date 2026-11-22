@@ -229,10 +229,11 @@ def test_the_window_is_padded_past_the_month_edges():
     with patch("apps.public.views.calendly.available_times", return_value=[]) as times:
         with patch("apps.public.views.calendly.event_type_questions", return_value=[]):
             Client().get(f"{URL}?month={MONTH}")
-    first_start = times.call_args_list[0].kwargs["start"]
-    last_end = times.call_args_list[-1].kwargs["end"]
-    assert first_start < datetime(YEAR, 1, 1, tzinfo=UTC)
-    assert last_end > datetime(YEAR, 1, 31, tzinfo=UTC)
+    # The chunks are fetched on a thread pool, so the mock records them in whatever
+    # order the threads finish. Compare the window's edges, not the first/last call.
+    calls = [c.kwargs for c in times.call_args_list]
+    assert min(c["start"] for c in calls) < datetime(YEAR, 1, 1, tzinfo=UTC)
+    assert max(c["end"] for c in calls) > datetime(YEAR, 1, 31, tzinfo=UTC)
 
 
 def test_the_current_month_starts_from_now_not_the_first():

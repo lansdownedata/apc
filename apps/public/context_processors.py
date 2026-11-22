@@ -50,10 +50,11 @@ BOOKING_TIMEZONES = (
 
 
 def site_settings(request):
-    """Client-provided public embeds (Calendly link, WeddingWire widget snippet)."""
+    """Client-provided public embeds (Calendly link, WeddingWire widget, Podium chat)."""
     return {
         "calendly_url": settings.CALENDLY_URL,
         "weddingwire_widget": settings.WEDDINGWIRE_WIDGET,
+        "podium_widget_token": settings.PODIUM_WIDGET_TOKEN,
         # Rendered server-side on purpose: an Alpine x-for inside a <select> is invalid
         # HTML, the parser hoists it out, and Tom Select initialises with no options.
         "timezone_options": BOOKING_TIMEZONES,

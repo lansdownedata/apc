@@ -301,7 +301,8 @@
 
 {% comment %}
   CLOSING CTA — "MOVE FURTHER TOGETHER" from the WP footer strip, re-flowed
-  into a final conversion band that jumps back to the hero widget.
+  into a final conversion band. Book Now goes to /bookings/ like every other page:
+  the hero is the occasion picker now, not a form, so jumping back to it dead-ends.
 {% endcomment %}
 <section class="bg-gradient-to-br from-charcoal2 to-charcoal">
   <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-20 lg:px-8">
@@ -313,7 +314,7 @@
       free quote in 24 hours.
     </p>
     <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-      <a href="#quote" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
+      <a href="/bookings/" class="btn-gold focus-gold w-full rounded-full px-6 py-3 text-[14px] font-semibold sm:w-auto">
         Book Now
       </a>
       {% include "public/_call_cta.html" with class="w-full rounded-full px-6 py-3 text-center text-[14px] font-semibold text-white ring-1 ring-white/20 transition-colors focus-gold hover:bg-white/5 sm:w-auto" fallback_label="Call (202) 424-2600" %}

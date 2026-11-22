@@ -21,7 +21,6 @@ class StaticViewSitemap(Sitemap):
             "public:service_weddings",
             "public:service_personal",
             "public:reviews",
-            "public:rates",
             "public:blog_index",
             "public:post_wedding_guide",
             "public:post_knot_2025",

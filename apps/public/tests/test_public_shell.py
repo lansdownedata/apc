@@ -1,3 +1,6 @@
+import json
+import re
+
 from django.test import Client, override_settings
 
 
@@ -64,7 +67,6 @@ CAL = "https://calendly.com/allprocharter/quick-chat"
 # "Call (202) 424-2600" CTA before the Calendly swap.
 MARKETING_PAGES = (
     "/",
-    "/all-pro-charter-rates/",
     "/about-us/",
     "/fleet/",
     "/reviews/",
@@ -237,3 +239,72 @@ def test_favicon_ico_redirects_to_the_crest(db):
     resp = Client().get("/favicon.ico")
     assert resp.status_code == 301
     assert resp["Location"] == "/static/brand/favicon-32.png"
+
+
+# --- calls to action, footer, chat widget ------------------------------------------
+
+
+def _hrefs_for(html: str, text: str) -> list[str]:
+    """href of every <a> whose visible text is exactly `text`."""
+    return [
+        href
+        for href, label in re.findall(r'<a\b[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.S)
+        if re.sub(r"<[^>]+>|\s+", " ", label).strip() == text
+    ]
+
+
+def test_every_book_now_on_home_opens_the_booking_form(db):
+    """The closing band used to jump to #quote, which is the occasion picker now, not a
+    form. Every other page sends Book Now to /bookings/."""
+    hrefs = _hrefs_for(Client().get("/").content.decode(), "Book Now")
+    assert hrefs
+    assert set(hrefs) == {"/bookings/"}
+
+
+SOCIAL = {
+    "Facebook": "https://www.facebook.com/AllProCharter/",
+    "Instagram": "https://www.instagram.com/allprocharter/",
+    "LinkedIn": "https://www.linkedin.com/company/all-pro-charter/",
+}
+
+
+def test_footer_social_icons_link_to_the_real_profiles(db):
+    html = Client().get("/").content.decode()
+    for network, url in SOCIAL.items():
+        assert re.search(rf'<a href="{re.escape(url)}"[^>]*aria-label="{network}"', html), network
+    assert 'href="#"' not in html.split("<footer", 1)[1]
+
+
+def test_schema_org_lists_the_social_profiles(db):
+    html = Client().get("/").content.decode()
+    business = re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S)
+    assert sorted(json.loads(business.group(1))["sameAs"]) == sorted(SOCIAL.values())
+
+
+def test_footer_links_to_the_blog(db):
+    footer = Client().get("/").content.decode().split("<footer", 1)[1]
+    assert 'href="/blogs/"' in footer
+
+
+PODIUM_TOKEN = "00000000-1111-2222-3333-444444444444"
+
+
+@override_settings(PODIUM_WIDGET_TOKEN=PODIUM_TOKEN)
+def test_podium_chat_widget_loads_on_every_marketing_page(db):
+    for path in (*MARKETING_PAGES, "/bookings/", "/weddings/plan/"):
+        html = Client().get(path).content.decode()
+        assert html.count("connect.podium.com/widget.js") == 1, path
+        assert f'data-organization-api-token="{PODIUM_TOKEN}"' in html, path
+
+
+@override_settings(PODIUM_WIDGET_TOKEN="")
+def test_no_podium_chat_widget_when_the_token_is_blank(db):
+    """Dev and tests must never open the client's live chat."""
+    assert "connect.podium.com" not in Client().get("/").content.decode()
+
+
+@override_settings(PODIUM_WIDGET_TOKEN=PODIUM_TOKEN)
+def test_no_podium_chat_widget_inside_the_customer_portal(db):
+    """The portals switch the marketing embeds off; the chat goes with them."""
+    html = Client().get("/account/login/").content.decode()
+    assert "connect.podium.com" not in html

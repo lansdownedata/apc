@@ -30,8 +30,6 @@ urlpatterns = [
     path("services/weddings/", views.service_weddings, name="service_weddings"),
     path("services/personal/", views.service_personal, name="service_personal"),
     path("reviews/", views.reviews, name="reviews"),
-    # Exact legacy WordPress slug kept for SEO link-equity — do not shorten to /rates/.
-    path("all-pro-charter-rates/", views.rates, name="rates"),
     path("blogs/", views.blog_index, name="blog_index"),
     # Exact legacy WordPress date-based post URLs kept for SEO link-equity —
     # one explicit route per post, do not collapse into a slug-based catch-all.
@@ -71,4 +69,6 @@ urlpatterns = [
     path("allprocharter-register/", perma("public:bookings")),
     path("category/press-release/", perma("public:blog_index")),
     path("category/uncategorized/", perma("public:blog_index")),
+    # Published hourly rates retired 2026-11-22: the client quotes every request.
+    path("all-pro-charter-rates/", perma("public:bookings")),
 ]

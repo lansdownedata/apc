@@ -1,0 +1,11 @@
+{% comment %}
+  Podium webchat bubble, the same snippet the client's WordPress site carries. Visitors
+  give a mobile number in the bubble and the conversation continues by text, so replies
+  reach the portal inbox through the existing Podium webhook like any other text.
+
+  Lives in base_public.html's marketing_embeds block, which the driver page and the
+  customer and planner portals override to nothing. Rendered only when
+  PODIUM_WIDGET_TOKEN is set.
+{% endcomment %}
+<script defer src="https://connect.podium.com/widget.js#ORG_TOKEN={{ podium_widget_token|urlencode }}"
+        id="podium-widget" data-organization-api-token="{{ podium_widget_token }}"></script>
