@@ -550,11 +550,20 @@ def _built_in_skip(tp: TouchPoint, row: MessageTemplate) -> str:
     return ""
 
 
+def has_switch(row: MessageTemplate) -> bool:
+    """Whether the row's stored switch decides if it sends. A seeded account email (an
+    invite, a sign-up link, a password reset: `fields.set_by_caller`) has none. Settings
+    shows no switch for it, so a flag turned off in the database could not be turned back
+    on there, and people would stop getting into their accounts with nothing to say why."""
+    return not (row.seeded and fields.set_by_caller(row.key))
+
+
 def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -> Check:
     """Whether `tp` may go out now. Skips and cancels are final; a wait leaves it SCHEDULED.
 
     A send with no order (an invite, a staff report) and a staff click answer only to the
-    row's own switch, and a staff click to its service types.
+    row's own switch (an account email has none: `has_switch`), and a staff click to its
+    service types.
 
     ``master`` is the master switch, so a batch reads `NotificationConfig` once. A held
     review request also brings its complaint follow-up task up to date (`tasks.sync`).
@@ -565,7 +574,8 @@ def check(tp: TouchPoint, row: MessageTemplate, *, master: bool | None = None) -
 
     if master is None:
         master = NotificationConfig.load().enabled
-    if not master or not row.enabled or row.archived_at is not None:
+    off = has_switch(row) and not row.enabled
+    if not master or off or row.archived_at is not None:
         return "skip", DISABLED
     if tp.lead_id is None:
         # An invite or a staff report: there is no order to be lost, cancelled or run.

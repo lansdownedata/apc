@@ -6,25 +6,32 @@ sender as customer mail, so the go-live switch (APC-90) gates them like any othe
 Staff actions are refused outright while the switch is off, with the same sentence every
 other agent send uses, rather than creating an account nobody was told about.
 
-Self sign-up writes nothing until the email is proved: `start_signup` only mails a signed
-link carrying the form, and `complete_signup` creates or attaches the account when the link
-is used. Nothing either returns or raises says whether an email already has an account.
+Self sign-up creates no contact and no account until the email is proved: `start_signup`
+only mails a signed link carrying the form (the mail itself is logged like any other send),
+and `complete_signup` creates or attaches the account when the link is used. Nothing either
+returns or raises says whether an email already has an account.
+
+This module also holds the rules the forms share: what a customer's name, mobile and
+password must be (`clean_name`, `clean_mobile`, `password_validators`).
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
+import unicodedata
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
-from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.password_validation import (
+    MinimumLengthValidator,
+    get_default_password_validators,
+    validate_password,
+)
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.urls import reverse
@@ -38,8 +45,9 @@ from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
-from apps.core.templatetags.phone_filters import phone_display
+from apps.planners.selectors import dispatch_phone
 
+from . import throttle
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
 
@@ -51,7 +59,50 @@ logger = logging.getLogger(__name__)
 
 
 class CustomerError(Exception):
-    """A refused customer-account action; the message is safe to show."""
+    """A refused customer-account action; the message is safe to show. `field` names the
+    form field the refusal is about, when it is about one."""
+
+    def __init__(self, message: str, *, field: str | None = None) -> None:
+        super().__init__(message)
+        self.field = field
+
+
+# --- what a name, a mobile and a password must be ---------------------------------------
+
+# The set-password screen promises "At least 10 characters."; the site-wide minimum is 8.
+MIN_PASSWORD_LENGTH = 10
+
+
+def password_validators() -> list:
+    """The site's password validators, with the customer screen's longer minimum."""
+    rest = [
+        v for v in get_default_password_validators() if not isinstance(v, MinimumLengthValidator)
+    ]
+    return [MinimumLengthValidator(MIN_PASSWORD_LENGTH), *rest]
+
+
+def clean_name(raw: str | None) -> str:
+    """A name as typed, made safe to store and print: control characters (a pasted line
+    break, a tab, an escape) become spaces, and runs of spaces become one."""
+    text = "".join(" " if unicodedata.category(ch) == "Cc" else ch for ch in raw or "")
+    return " ".join(text.split())
+
+
+def clean_mobile(raw: str | None) -> str:
+    """A mobile as typed, in E.164, or "" when none was typed. Raises `CustomerError` for a
+    number that can't be dialled."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    number = to_e164(raw)
+    if number is None:
+        raise CustomerError(INVALID_PHONE, field="mobile")
+    return number
+
+
+def _call_us() -> str:
+    """The number every portal page shows (`planners.selectors.dispatch_phone`)."""
+    return dispatch_phone()["display"]
 
 
 # --- links + mail ---------------------------------------------------------------------
@@ -111,7 +162,9 @@ def _customer(name: str, email: str, contact_id: int | None) -> Recipient:
 def _send(message: tuple[str, str], person: Recipient, url: str) -> bool:
     from apps.messaging import sender
 
-    return sender.send_now(message[0], to=[person], **_mail(message, url)).sent
+    # `{company_phone}` is the dispatch number the portal's own pages show, formatted.
+    extra = {"company_phone": _call_us()}
+    return sender.send_now(message[0], to=[person], extra_ctx=extra, **_mail(message, url)).sent
 
 
 def _send_to_account(message: tuple[str, str], account: CustomerAccount, url: str) -> bool:
@@ -129,16 +182,11 @@ def _send_reset(account: CustomerAccount) -> bool:
     return _send_to_account(_RESET, account, url)
 
 
-def _assert_outbound() -> None:
-    """Refuse a staff send before anything changes: while the go-live switch is off, or
-    while PUBLIC_BASE_URL is blank (the link in the mail would be relative, and dead)."""
-    if not outbound.enabled():
-        raise CustomerError(outbound.OFF_MESSAGE)
-    if not settings.PUBLIC_BASE_URL:
-        raise CustomerError(
-            "PUBLIC_BASE_URL isn't set, so the invite link wouldn't work. "
-            "Set it in the app's config, then send the invite."
-        )
+def _assert_can_send(contact: Contact, action: str) -> None:
+    """Refuse a staff send before anything changes, with the reason the card shows."""
+    reason = send_blocked(contact, action=action)
+    if reason:
+        raise CustomerError(reason)
 
 
 def _account_for(email: str) -> CustomerAccount | None:
@@ -157,6 +205,11 @@ def _account_for(email: str) -> CustomerAccount | None:
 
 AFFILIATE_REFUSED = "Portal access is not available for affiliate companies."
 NOT_ACTIVE_FOR_RESET = "Only a customer who has signed up can get a password reset."
+NO_BASE_URL = (
+    "PUBLIC_BASE_URL isn't set, so the link in the email wouldn't work. "
+    "Set it in the app's config, then try again."
+)
+INVITE, RESEND, RESET = "invite", "resend", "reset"
 
 
 def is_affiliate(contact: Contact) -> bool:
@@ -172,6 +225,24 @@ def no_email_message(contact: Contact, *, inviting: bool = True) -> str:
     return f"Add an email address for {contact.name} first."
 
 
+def send_blocked(contact: Contact, *, action: str) -> str:
+    """Why staff can't send this contact an account email now (`action` is `INVITE`,
+    `RESEND` or `RESET`), or "". One list in one order, read by the contact profile's card
+    and by the actions themselves, so the card never names a different reason than the
+    click gets: an affiliate company (an invite or a resend only: an account that already
+    exists may still be sent a reset, and revoked), no email on the contact, the go-live
+    switch off, then PUBLIC_BASE_URL blank (the link in the mail would be dead)."""
+    if action != RESET and is_affiliate(contact):
+        return AFFILIATE_REFUSED
+    if not (contact.email or "").strip():
+        return no_email_message(contact, inviting=action == INVITE)
+    if not outbound.enabled():
+        return outbound.OFF_MESSAGE
+    if not settings.PUBLIC_BASE_URL:
+        return NO_BASE_URL
+    return ""
+
+
 def invite(contact: Contact, *, actor: User | None) -> tuple[CustomerAccount, bool]:
     """Give `contact` a pending customer account and email the set-password link.
 
@@ -179,11 +250,7 @@ def invite(contact: Contact, *, actor: User | None) -> tuple[CustomerAccount, bo
     Refused for a contact of an affiliate company. Returns (account, email_sent); the
     account is kept when delivery fails so staff can use Resend.
     """
-    _assert_outbound()
-    if not (contact.email or "").strip():
-        raise CustomerError(no_email_message(contact))
-    if is_affiliate(contact):
-        raise CustomerError(AFFILIATE_REFUSED)
+    _assert_can_send(contact, INVITE)
     account = CustomerAccount.objects.filter(contact=contact).first()
     if account is not None and account.status == CustomerAccount.Status.ACTIVE:
         raise CustomerError(f"{contact.name} already has a customer account.")
@@ -203,10 +270,11 @@ def invite(contact: Contact, *, actor: User | None) -> tuple[CustomerAccount, bo
 
 def resend(account: CustomerAccount) -> bool:
     """A new set-password link. The previous one stops working (the token covers
-    `invited_at`)."""
-    _assert_outbound()
+    `invited_at`). Refused, like a first invite, once the contact's company is an
+    affiliate."""
     if account.status != CustomerAccount.Status.INVITED:
         raise CustomerError("Only a pending invite can be resent.")
+    _assert_can_send(account.contact, RESEND)
     account.invited_at = timezone.now()
     account.save(update_fields=["invited_at", "updated_at"])
     return _send_invite(account)
@@ -223,17 +291,17 @@ def revoke(account: CustomerAccount, *, actor: User | None) -> None:
 
 
 def staff_password_reset(account: CustomerAccount) -> bool:
-    """A reset link sent by staff from the contact profile. Refused, with a reason, while
-    the go-live switch is off or before the customer has signed up; otherwise it is the
-    customer's own reset (`send_password_reset`), under the same hourly cap. Returns
-    whether an email went: False past the cap, so staff are never told one went when it
-    did not."""
-    _assert_outbound()
+    """A reset link sent by staff from the contact profile: the customer's own reset
+    email, under the same hourly cap per address. Refused, with the reason, before the
+    customer has signed up, while a send is blocked (`send_blocked`), or past the cap.
+    Returns whether the email went: False only when delivery itself failed, so staff are
+    never told one went when it did not, nor told the cap is why when it is not."""
     if account.status != CustomerAccount.Status.ACTIVE:
         raise CustomerError(NOT_ACTIVE_FOR_RESET)
-    if not account.email:
-        raise CustomerError(no_email_message(account.contact, inviting=False))
-    return send_password_reset(account.email)
+    _assert_can_send(account.contact, RESET)
+    if not _mail_allowed(account.email):
+        raise CustomerError(RESET_CAPPED)
+    return _send_reset(account)
 
 
 # --- the customer's own actions --------------------------------------------------------
@@ -266,19 +334,18 @@ def change_password(account: CustomerAccount, current: str, new: str) -> None:
 
     A wrong current password is a failed attempt like a wrong sign-in one: it counts toward
     the lockout, and a locked account is refused with the same sentence. The new password
-    meets the customer rules (`forms.password_validators`), judged against the account."""
-    from .forms import password_validators  # forms imports the public site; keep it lazy
-
+    meets the customer rules (`password_validators`), judged against the account. Each
+    refusal names its field: the current password, or the new one."""
     now = timezone.now()
     locked = account.locked_until is not None and account.locked_until > now
     if locked or not account.check_password(current):
         if current and not locked:
             _record_failure(account, now)
-        raise CustomerError(WRONG_CURRENT)
+        raise CustomerError(WRONG_CURRENT, field="current_password")
     try:
         validate_password(new, account, password_validators=password_validators())
     except ValidationError as exc:
-        raise CustomerError(" ".join(exc.messages)) from None
+        raise CustomerError(" ".join(exc.messages), field="new_password1") from None
     account.set_password(new)
     account.failed_logins, account.locked_until = 0, None
     account.save(update_fields=["password", "failed_logins", "locked_until", "updated_at"])
@@ -289,13 +356,13 @@ def update_details(account: CustomerAccount, *, name: str, mobile: str) -> None:
     (`contacts.apply_booking_edits`, so the change is audited and the number is validated
     and stored as a contact phone). Email and company are never passed: they are the link
     to the customer's history and billing. A blank mobile leaves the number on file, as it
-    does for staff; clearing one is done on the staff contact profile."""
-    name, mobile = (name or "").strip(), (mobile or "").strip()
+    does for staff; clearing one is done on the staff contact profile. So a number already
+    on file that can't be dialled (old, imported data) never stands in the way of a name
+    edit: the Account form sends a mobile only when the customer changed it."""
+    name = clean_name(name)
     if not name:
-        raise CustomerError("Enter your name.")
-    number = to_e164(mobile) if mobile else ""
-    if mobile and number is None:
-        raise CustomerError(INVALID_PHONE)
+        raise CustomerError("Enter your name.", field="name")
+    number = clean_mobile(mobile)
     contact = account.contact
     with transaction.atomic():
         contacts.apply_booking_edits(contact, name=name, phone=number or "")
@@ -305,13 +372,16 @@ def update_details(account: CustomerAccount, *, name: str, mobile: str) -> None:
 
 
 def _record_failure(account: CustomerAccount, now: datetime) -> None:
-    failures = account.failed_logins + 1
-    if failures >= LOCKOUT_FAILURES:
-        CustomerAccount.objects.filter(pk=account.pk).update(
-            failed_logins=0, locked_until=now + LOCKOUT_FOR
-        )
-    else:
-        CustomerAccount.objects.filter(pk=account.pk).update(failed_logins=failures)
+    """Count one wrong password, and lock the account at the tenth. The count is read
+    under a row lock, not off `account`: wrong guesses sent side by side each hold a copy
+    read before the others were counted, and would otherwise all write the same number."""
+    with transaction.atomic():
+        row = CustomerAccount.objects.select_for_update().get(pk=account.pk)
+        row.failed_logins += 1
+        if row.failed_logins >= LOCKOUT_FAILURES:
+            row.failed_logins, row.locked_until = 0, now + LOCKOUT_FOR
+        row.save(update_fields=["failed_logins", "locked_until"])
+    account.failed_logins, account.locked_until = row.failed_logins, row.locked_until
 
 
 def authenticate(email: str, password: str) -> CustomerAccount | None:
@@ -338,14 +408,16 @@ def authenticate(email: str, password: str) -> CustomerAccount | None:
 
 
 MAILS_PER_EMAIL = 3  # sign-up and reset mails per address per hour, refused silently past it
-MAIL_WINDOW = 60 * 60
+MAIL_WINDOW = timedelta(hours=1)
+RESET_CAPPED = (
+    f"One address gets at most {MAILS_PER_EMAIL} sign-up or reset emails an hour. Try again later."
+)
 
 
 def _mail_allowed(email: str) -> bool:
-    key = "customer-account-email:" + hashlib.sha256(email.encode()).hexdigest()
-    count = cache.get(key, 0)
-    cache.set(key, count + 1, MAIL_WINDOW)
-    return count < MAILS_PER_EMAIL
+    """Count one more account mail to `email`; False past `MAILS_PER_EMAIL` in the hour.
+    Counted in the database (`throttle`), so the cap is the same on every web worker."""
+    return throttle.hit("account-email", email, MAIL_WINDOW) <= MAILS_PER_EMAIL
 
 
 def send_password_reset(email: str) -> bool:
@@ -392,13 +464,32 @@ def _render_reset_for_no_one() -> None:
 
 def _signup_refused() -> CustomerError:
     return CustomerError(
-        "We can't set up accounts online right now. "
-        f"Please call us at {phone_display(settings.COMPANY_PHONE)}."
+        f"We can't set up accounts online right now. Please call us at {_call_us()}."
     )
 
 
+USED_LINK = "This link has already been used."
+
+
+def _closed() -> CustomerError:
+    return CustomerError(f"This account is closed. Please call us at {_call_us()} to reopen it.")
+
+
+def _refuse_finished(account: CustomerAccount | None) -> None:
+    """A sign-up link is spent once its email has an active account, and stays closed for
+    a revoked one."""
+    if account is None:
+        return
+    if account.status == CustomerAccount.Status.ACTIVE:
+        raise CustomerError(USED_LINK)
+    if account.status == CustomerAccount.Status.REVOKED:
+        raise _closed()
+
+
 def start_signup(*, name: str, email: str, phone: str) -> None:
-    """Mail a signed link carrying the sign-up form, and write nothing.
+    """Mail a signed link carrying the sign-up form. No contact and no account is created;
+    the mail leaves the same trail as every other send (a TouchPoint and a Delivery holding
+    the typed address), and the hourly cap counts it.
 
     An email with an active account gets the password-reset email instead; every other
     email gets the sign-up one. Either way the caller hears nothing back, so the form can't
@@ -408,7 +499,7 @@ def start_signup(*, name: str, email: str, phone: str) -> None:
     """
     if not outbound.enabled() or not settings.PUBLIC_BASE_URL:
         raise _signup_refused()
-    name, email, phone = (name or "").strip(), (email or "").strip().lower(), (phone or "").strip()
+    name, email, phone = clean_name(name), (email or "").strip().lower(), (phone or "").strip()
     if not email or not _mail_allowed(email):
         return
     account = _account_for(email)
@@ -424,6 +515,24 @@ def read_signup(token: str) -> dict:
     return signing.loads(token, salt=SIGNUP_SALT, max_age=SIGNUP_MAX_AGE)
 
 
+def check_signup(data: dict) -> None:
+    """Refuse a sign-up link that can no longer make an account, before its holder is
+    asked for a password: raises `CustomerError` with why (already used, or the account
+    was closed). The holder proved the address by opening the link, so saying so tells
+    them nothing they could not already see."""
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        raise CustomerError("This link isn't valid.")
+    _refuse_finished(_account_for(email))
+
+
+def signup_stand_in(data: dict) -> CustomerAccount:
+    """An unsaved account carrying a sign-up link's email, for the password rules to judge
+    the new password against (a password that is the email address is refused, as it is on
+    every other screen)."""
+    return CustomerAccount(contact=Contact(name=data.get("name") or "", email=data.get("email")))
+
+
 def complete_signup(data: dict, password: str) -> CustomerAccount:
     """Create the account a sign-up link was for, now that its holder has proved the email.
 
@@ -433,7 +542,7 @@ def complete_signup(data: dict, password: str) -> CustomerAccount:
     pending invite for that contact is completed, not duplicated. An active account means
     the link was already used; a revoked one stays closed.
     """
-    name = (data.get("name") or "").strip()
+    name = clean_name(data.get("name"))
     email = (data.get("email") or "").strip().lower()
     phone = (data.get("phone") or "").strip()
     if not email:
@@ -446,13 +555,7 @@ def complete_signup(data: dict, password: str) -> CustomerAccount:
                 account = (
                     CustomerAccount.objects.select_for_update().filter(contact=contact).first()
                 )
-            if account is not None and account.status == CustomerAccount.Status.ACTIVE:
-                raise CustomerError("This link has already been used.")
-            if account is not None and account.status == CustomerAccount.Status.REVOKED:
-                raise CustomerError(
-                    "This account is closed. "
-                    f"Please call us at {phone_display(settings.COMPANY_PHONE)} to reopen it."
-                )
+            _refuse_finished(account)
             if contact is None:
                 contact = Contact.objects.create(
                     name=name or email,
@@ -477,6 +580,6 @@ def complete_signup(data: dict, password: str) -> CustomerAccount:
         # one's contact or account existed, and the database stopped its insert.
         winner = _account_for(email)
         if winner is not None and winner.status == CustomerAccount.Status.ACTIVE:
-            raise CustomerError("This link has already been used.") from None
+            raise CustomerError(USED_LINK) from None
         raise
     return account

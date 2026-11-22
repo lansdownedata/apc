@@ -168,6 +168,8 @@ def _source_words(source: str, email: str) -> str:
         return f"Command · {rest}"
     if source == "planner portal":
         return f"Planner · {email}" if email else "Planner"
+    if source == "customer portal":
+        return f"Customer · {email}" if email else "Customer"
     return email or capfirst(source) or "System"
 
 

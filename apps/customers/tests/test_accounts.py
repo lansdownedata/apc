@@ -6,11 +6,12 @@ from unittest.mock import patch
 
 import pytest
 from django.core import mail, signing
+from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
-from apps.contacts.factories import ContactFactory
+from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.core.choices import Channel
@@ -19,7 +20,8 @@ from apps.customers.factories import CustomerAccountFactory
 from apps.customers.models import CustomerAccount
 from apps.customers.tokens import customer_reset_token, customer_token
 from apps.messaging import defaults
-from apps.messaging.models import MessageTemplate, TouchPoint
+from apps.messaging.models import Delivery, MessageTemplate, TouchPoint
+from apps.planners.selectors import dispatch_phone
 
 pytestmark = pytest.mark.django_db
 
@@ -75,10 +77,21 @@ def test_the_link_pages_resolve():
 # --- self sign-up ---------------------------------------------------------------------
 
 
-def test_start_signup_writes_nothing(outbound_on):
+def test_start_signup_makes_no_contact_or_account_and_logs_only_the_mail(outbound_on):
     services.start_signup(name="Dana", email="dana@example.com", phone="7035550188")
     assert Contact.objects.count() == 0 and CustomerAccount.objects.count() == 0
     assert len(mail.outbox) == 1
+    # the mail leaves the trail every send leaves, holding the address that was typed
+    (delivery,) = Delivery.objects.filter(touchpoint__kind="customer_signup")
+    assert (delivery.address, delivery.status) == ("dana@example.com", Delivery.Status.SENT)
+
+
+def test_a_name_reaches_the_link_without_control_characters(outbound_on):
+    services.start_signup(name="Dana\r\nBcc: x@evil.test", email="dana@example.com", phone="")
+    data = services.read_signup(_signup_token(mail.outbox[0]))
+    assert data["name"] == "Dana Bcc: x@evil.test"
+    account = services.complete_signup({**data, "name": "Dana\x00\x1b Whitfield"}, PW)
+    assert account.contact.name == "Dana Whitfield"
 
 
 def test_start_signup_emails_a_signed_link_carrying_the_form(outbound_on):
@@ -130,7 +143,11 @@ def test_start_signup_is_refused_while_outbound_is_off(settings):
 def test_start_signup_goes_quiet_after_three_mails_an_hour(outbound_on):
     for _ in range(4):
         services.start_signup(**SIGNUP)
+        cache.clear()  # the cap is not kept per web worker: each one reads the same count
     assert len(mail.outbox) == 3
+    with patch("django.utils.timezone.now", return_value=timezone.now() + timedelta(minutes=61)):
+        services.start_signup(**SIGNUP)
+    assert len(mail.outbox) == 4
 
 
 def test_signup_link_expires_after_seven_days(outbound_on):
@@ -266,6 +283,69 @@ def test_invite_refused_while_public_base_url_is_blank(settings):
     assert not CustomerAccount.objects.exists()
 
 
+@pytest.mark.parametrize("send", ["resend", "reset"])
+def test_a_blank_public_address_refuses_every_send_in_words_that_fit_it(settings, send):
+    settings.OUTBOUND_ENABLED = True
+    settings.PUBLIC_BASE_URL = ""
+    account = CustomerAccountFactory(invited=True) if send == "resend" else CustomerAccountFactory()
+    action = services.resend if send == "resend" else services.staff_password_reset
+    with pytest.raises(services.CustomerError) as refused:
+        action(account)
+    assert str(refused.value) == services.NO_BASE_URL
+    assert "invite" not in services.NO_BASE_URL
+    assert mail.outbox == []
+
+
+def test_resend_is_refused_once_the_company_became_an_affiliate(outbound_on):
+    account, _ = services.invite(ContactFactory(company=CompanyFactory()), actor=UserFactory())
+    invited_at = account.invited_at
+    account.contact.company.is_affiliate_account = True
+    account.contact.company.save(update_fields=["is_affiliate_account"])
+    mail.outbox.clear()
+    with pytest.raises(services.CustomerError, match=services.AFFILIATE_REFUSED):
+        services.resend(account)
+    account.refresh_from_db()
+    assert account.invited_at == invited_at  # the old link was not killed for nothing
+    assert mail.outbox == []
+
+
+@pytest.mark.parametrize(
+    ("contact", "action", "reason"),
+    [
+        # affiliate first (it will not change), then no email, then the switch, then config
+        ({"email": None, "affiliate": True}, "invite", services.AFFILIATE_REFUSED),
+        ({"email": None, "affiliate": True}, "resend", services.AFFILIATE_REFUSED),
+        ({"email": None, "affiliate": True}, "reset", "Add an email address for Dana first."),
+        ({"email": None}, "invite", "Add an email address for Dana before inviting them."),
+        ({}, "invite", outbound.OFF_MESSAGE),
+    ],
+)
+def test_send_blocked_names_one_reason_in_one_order(settings, contact, action, reason):
+    settings.OUTBOUND_ENABLED = False
+    settings.PUBLIC_BASE_URL = ""
+    company = CompanyFactory(is_affiliate_account=bool(contact.pop("affiliate", False)))
+    person = ContactFactory(name="Dana", company=company, **contact)
+    assert services.send_blocked(person, action=action) == reason
+
+
+def test_the_invite_claims_no_history_and_gives_the_dispatch_number(outbound_on, settings):
+    settings.COMPANY_PHONE = "7035550142"
+    services.invite(ContactFactory(name="Dana Whitfield"), actor=UserFactory())
+    body = mail.outbox[0].body
+    assert "Any past trips with us are already in your account." in body
+    assert "Your past trips" not in body
+    # the number the portal's own pages show, written the way they write it
+    assert "Questions? Call (703) 555-0142." in body
+    assert dispatch_phone()["display"] == "(703) 555-0142"
+
+
+def test_account_mail_never_prints_a_number_nobody_can_call(outbound_on, settings):
+    settings.COMPANY_PHONE = "5555555555"  # not a real number: the pages fall back, so does mail
+    services.invite(ContactFactory(), actor=UserFactory())
+    assert "5555555555" not in mail.outbox[0].body
+    assert f"Questions? Call {dispatch_phone()['display']}." in mail.outbox[0].body
+
+
 def test_invite_needs_contact_email(outbound_on):
     with pytest.raises(services.CustomerError, match="email"):
         services.invite(ContactFactory(email=None), actor=UserFactory())
@@ -343,6 +423,27 @@ def test_authenticate_uses_new_email_after_staff_edit(account):
     assert services.authenticate(old, "correct horse battery") is None
 
 
+def test_a_right_password_clears_the_failed_count(account):
+    for _ in range(3):
+        services.authenticate(account.email, "wrong-password-1")
+    account.refresh_from_db()
+    assert account.failed_logins == 3
+    assert services.authenticate(account.email, "correct horse battery") == account
+    account.refresh_from_db()
+    assert (account.failed_logins, account.locked_until) == (0, None)
+
+
+def test_wrong_guesses_sent_side_by_side_are_each_counted(account):
+    """Ten requests in flight together each read the account before any of them counted.
+    Counting from that copy, all ten would write "1" and the lock would never come."""
+    copies = [CustomerAccount.objects.get(pk=account.pk) for _ in range(services.LOCKOUT_FAILURES)]
+    now = timezone.now()
+    for copy in copies:
+        services._record_failure(copy, now)
+    account.refresh_from_db()
+    assert account.locked_until == now + services.LOCKOUT_FOR
+
+
 def test_ten_wrong_passwords_lock_for_fifteen_minutes(account):
     for _ in range(services.LOCKOUT_FAILURES):
         assert services.authenticate(account.email, "wrong-password-1") is None
@@ -380,6 +481,20 @@ def test_password_reset_goes_quiet_after_three_an_hour(outbound_on, account):
     assert len(mail.outbox) == 3
 
 
+def test_a_staff_reset_past_the_cap_says_the_cap_is_why(outbound_on, account):
+    for _ in range(services.MAILS_PER_EMAIL):
+        assert services.staff_password_reset(account) is True
+    with pytest.raises(services.CustomerError) as refused:
+        services.staff_password_reset(account)
+    assert str(refused.value) == services.RESET_CAPPED
+    assert len(mail.outbox) == services.MAILS_PER_EMAIL
+
+
+def test_a_staff_reset_that_fails_to_deliver_does_not_blame_the_cap(outbound_on, account):
+    with patch("apps.notifications.email.deliver_html_email", side_effect=RuntimeError("down")):
+        assert services.staff_password_reset(account) is False
+
+
 def test_password_reset_link_is_the_reset_token(outbound_on, account):
     services.send_password_reset(account.email)
     token = mail.outbox[0].body.split("/account/password/")[1].split("/")[1]
@@ -388,15 +503,17 @@ def test_password_reset_link_is_the_reset_token(outbound_on, account):
 
 
 def test_change_password_needs_the_current_one(account):
-    with pytest.raises(services.CustomerError):
+    with pytest.raises(services.CustomerError, match=services.WRONG_CURRENT) as refused:
         services.change_password(account, "wrong", PW)
+    assert refused.value.field == "current_password"
     services.change_password(account, "correct horse battery", PW)
     account.refresh_from_db()
     assert account.check_password(PW)
 
 
 def test_change_password_runs_the_password_validators(account):
-    with pytest.raises(services.CustomerError):
+    with pytest.raises(services.CustomerError, match="at least 10 characters") as refused:
         services.change_password(account, "correct horse battery", "short")
+    assert refused.value.field == "new_password1"
     account.refresh_from_db()
     assert account.check_password("correct horse battery")

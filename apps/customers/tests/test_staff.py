@@ -2,15 +2,18 @@
 card on the contact profile, its four actions, and the chip on portal leads."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core import mail
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import escape
 
 from apps.accounts.factories import UserFactory
 from apps.contacts.factories import CompanyFactory, ContactFactory
+from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.core.choices import Channel
 from apps.customers import services, staff_access
@@ -253,8 +256,94 @@ def test_reset_past_the_hourly_limit_does_not_claim_a_send(staff_client, outboun
     response = staff_client.post(reverse("customer_reset", args=[account.contact.pk]), follow=True)
     html = response.content.decode()
     assert "Password reset sent" not in html
-    assert "The reset email was not sent." in html
+    assert escape(services.RESET_CAPPED) in html
     assert len(mail.outbox) == services.MAILS_PER_EMAIL
+
+
+def test_a_reset_that_fails_to_deliver_says_so_and_does_not_blame_the_limit(
+    staff_client, outbound_on
+):
+    account = CustomerAccountFactory()
+    with patch("apps.notifications.email.deliver_html_email", side_effect=RuntimeError("down")):
+        response = staff_client.post(
+            reverse("customer_reset", args=[account.contact.pk]), follow=True
+        )
+    html = response.content.decode()
+    assert "The reset email could not be sent. Try again in a minute." in html
+    assert "an hour" not in html and "Password reset sent" not in html
+
+
+def test_resend_is_blocked_on_the_card_and_refused_once_the_company_is_an_affiliate(
+    staff_client, outbound_on
+):
+    account = CustomerAccountFactory(
+        invited=True, contact__company=CompanyFactory(is_affiliate_account=True)
+    )
+    card = _card(_profile(staff_client, account.contact))
+    assert AFFILIATE in card and 'aria-disabled="true"' in card
+    assert reverse("customer_revoke", args=[account.contact.pk]) in card  # never blocked
+    response = staff_client.post(reverse("customer_resend", args=[account.contact.pk]), follow=True)
+    assert AFFILIATE in response.content.decode()
+    assert mail.outbox == []
+
+
+@pytest.mark.parametrize("state", ["none", "invited", "active"])
+def test_a_blank_public_address_shows_as_blocked_and_the_click_says_the_same(
+    staff_client, settings, state
+):
+    settings.OUTBOUND_ENABLED = True
+    settings.PUBLIC_BASE_URL = ""
+    if state == "none":
+        contact, name = ContactFactory(), "customer_invite"
+    else:
+        contact = CustomerAccountFactory(invited=state == "invited").contact
+        name = "customer_resend" if state == "invited" else "customer_reset"
+    card = _card(_profile(staff_client, contact))
+    assert escape(services.NO_BASE_URL) in card and 'aria-disabled="true"' in card
+    response = staff_client.post(reverse(name, args=[contact.pk]), follow=True)
+    assert escape(services.NO_BASE_URL) in response.content.decode()
+    assert mail.outbox == []
+
+
+@pytest.mark.parametrize(
+    ("contact", "state"),
+    [
+        ({"email": None, "affiliate": True}, "none"),
+        ({"email": None, "affiliate": True}, "invited"),
+        ({"email": None, "affiliate": True}, "active"),
+        ({"email": None}, "none"),
+        ({}, "none"),
+    ],
+)
+def test_the_card_and_the_click_always_name_the_same_reason(staff_client, settings, contact, state):
+    """Several things can block a send at once; the card and the action read one list."""
+    settings.OUTBOUND_ENABLED = False
+    affiliate = contact.pop("affiliate", False)
+    person = ContactFactory(company=CompanyFactory(is_affiliate_account=affiliate), **contact)
+    name = "customer_invite"
+    if state != "none":
+        CustomerAccountFactory(contact=person, invited=state == "invited")
+        name = "customer_resend" if state == "invited" else "customer_reset"
+    reason = staff_access.access_for(Contact.objects.get(pk=person.pk))["blocked_reason"]
+    assert reason
+    response = staff_client.post(reverse(name, args=[person.pk]), follow=True)
+    flashed = [str(message) for message in response.context["messages"]]
+    assert flashed == [reason]
+
+
+def test_the_card_reads_properly_for_a_name_with_a_leading_space_or_none(outbound_on):
+    spaced = staff_access.access_for(ContactFactory(name="  Dana Whitfield"))
+    assert spaced["line"].startswith("Dana can sign in to request trips")
+    blank = staff_access.access_for(ContactFactory(name="   "))
+    assert blank["line"].startswith("This contact can sign in to request trips")
+
+
+def test_revoking_a_pending_invite_does_not_say_signed_out(staff_client, outbound_on):
+    invited = _card(_profile(staff_client, CustomerAccountFactory(invited=True).contact))
+    assert "has not signed up yet. Their invite link stops working." in invited
+    assert "is signed out" not in invited
+    active = _card(_profile(staff_client, CustomerAccountFactory().contact))
+    assert "is signed out and can no longer sign in to the customer portal." in active
 
 
 def test_reset_while_outbound_is_off_is_refused(staff_client, settings):

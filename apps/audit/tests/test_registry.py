@@ -26,6 +26,8 @@ from apps.billing.factories import (
 from apps.billing.models import AccountGroup, BillingAccount, Invoice, InvoiceLine, SyncState
 from apps.contacts.factories import CompanyFactory, ContactFactory
 from apps.contacts.models import Company, Contact, ContactPhone
+from apps.customers.factories import CustomerAccountFactory
+from apps.customers.models import CustomerRequest
 from apps.dispatch.factories import AssignmentFactory
 from apps.dispatch.models import Assignment
 from apps.leads.factories import LeadFactory, VehicleTypeFactory
@@ -68,6 +70,15 @@ def _planner_request() -> PlannerRequest:
         account=PlannerAccount.objects.create(contact=ContactFactory(), email="w@plans.test"),
         lead=LeadFactory(),
         about="Saturday run",
+    )
+
+
+def _customer_request() -> CustomerRequest:
+    return CustomerRequest.objects.create(
+        account=CustomerAccountFactory(),
+        reservation=ReservationFactory(),
+        kind=CustomerRequest.Kind.CHANGE,
+        topics="Flight",
     )
 
 
@@ -134,6 +145,7 @@ CASES: dict[str, Case] = {
         _planner_account, ("phone", "+15715550142"), ("failed_logins", 3)
     ),
     "planners.PlannerRequest": Case(_planner_request, ("about", "Sunday run"), None),
+    "customers.CustomerRequest": Case(_customer_request, ("topics", "Flight, Vehicle"), None),
 }
 
 
@@ -357,6 +369,7 @@ MINIMAL: dict[str, Callable[[], Model]] = {
     "billing.InvoiceLine": InvoiceLine,
     "planners.PlannerAccount": PlannerAccount,
     "planners.PlannerRequest": PlannerRequest,
+    "customers.CustomerRequest": CustomerRequest,
 }
 
 
@@ -532,3 +545,15 @@ def test_owner_address_foreign_keys_are_not_tracked():
     through the Address's current text, contradicting those lines after a later edit."""
     assert {"primary_address", "billing_address"} <= set(registry.effective_exclude(Contact))
     assert "address" in registry.effective_exclude(Vendor)
+
+
+def test_customer_request_is_filed_under_its_trip_and_order_and_labelled_by_what_was_asked():
+    request = _customer_request()
+    assert registry.parents(request) == {
+        "trip_id": request.reservation_id,
+        "order_id": request.reservation.lead_id,
+    }
+    assert registry.label(request) == "Change request: Flight"
+    cancel = CustomerRequest(kind=CustomerRequest.Kind.CANCEL, reason="Plans changed")
+    assert registry.label(cancel) == "Cancellation request: Plans changed"
+    assert registry.label(CustomerRequest(kind=CustomerRequest.Kind.CHANGE)) == "Change request"

@@ -6479,27 +6479,37 @@ function customerTrips({ url, referenceUrl }) {
 window.customerTrips = customerTrips;
 
 /* ------------------------------------------- customer portal: Trip detail (mockup 3)
- * "Your reference" edited in place: saved when the field changes (on blur or Enter),
- * through the same endpoint the Trips page uses. A failed save keeps what was typed. */
+ * "Your reference" edited in place, through the same endpoint the Trips page uses, with
+ * the Trips editor's behaviour: a failed save keeps what was typed and trying again needs
+ * no retyping. The field saves each time it is left (blur, or Enter) while its text differs
+ * from the last saved value, so after a failure the next blur sends it again (`change`
+ * would not: it only fires when the text differs from what it was at focus). */
 function customerReference({ url, id }) {
   return {
     saving: false,
+    failed: false,
     saved: "",
 
     init() {
-      this.saved = this.$refs.input.value;
+      this.saved = this.$refs.input.value.trim();
     },
 
     async save() {
       const value = this.$refs.input.value.trim();
-      if (this.saving || value === this.saved) return;
+      if (this.saving) return;
+      if (value === this.saved) {
+        this.failed = false;
+        return;
+      }
       this.saving = true;
       try {
         await saveCustomerReference(url, [String(id)], value);
         this.saved = this.$refs.input.value = value;
+        this.failed = false;
         Alpine.store("toast").push({ type: "success", title: value ? "Reference saved." : "Reference cleared." });
       } catch (e) {
         if (e.message !== "signed out") {
+          this.failed = true;
           Alpine.store("toast").push({ type: "danger", title: "Your reference didn't save. Try again." });
         }
       } finally {

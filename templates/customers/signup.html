@@ -11,21 +11,24 @@
   {% csrf_token %}
   <div>
     <label for="f-name" class="block text-[12.5px] font-semibold text-ink">Name</label>
-    <input id="f-name" type="text" name="name" value="{{ form.name.value|default:'' }}" autocomplete="name" required maxlength="200"
+    <input id="f-name" type="text" name="name" value="{{ form.name.value|default:'' }}" autocomplete="name" required maxlength="{{ form.name.field.max_length }}"
+           {% if form.name.errors %}aria-invalid="true" aria-describedby="f-name-error"{% endif %}
            class="field mt-1.5{% if form.name.errors %} field-error{% endif %}">
-    {% for e in form.name.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+    {% if form.name.errors %}<span id="f-name-error" class="mt-1 block text-[12px] text-rose-700">{{ form.name.errors|join:" " }}</span>{% endif %}
   </div>
   <div>
     <label for="f-email" class="block text-[12.5px] font-semibold text-ink">Email</label>
-    <input id="f-email" type="email" name="email" value="{{ form.email.value|default:'' }}" autocomplete="email" required maxlength="254"
+    <input id="f-email" type="email" name="email" value="{{ form.email.value|default:'' }}" autocomplete="email" required maxlength="{{ form.email.field.max_length }}"
+           {% if form.email.errors %}aria-invalid="true" aria-describedby="f-email-error"{% endif %}
            class="field mt-1.5{% if form.email.errors %} field-error{% endif %}" placeholder="you@example.com">
-    {% for e in form.email.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+    {% if form.email.errors %}<span id="f-email-error" class="mt-1 block text-[12px] text-rose-700">{{ form.email.errors|join:" " }}</span>{% endif %}
   </div>
   <div>
     <label for="f-phone" class="block text-[12.5px] font-semibold text-ink">Mobile</label>
-    <input id="f-phone" type="tel" name="phone" value="{{ form.phone.value|default:'' }}" autocomplete="tel" maxlength="40"
+    <input id="f-phone" type="tel" name="phone" value="{{ form.phone.value|default:'' }}" autocomplete="tel" maxlength="{{ form.phone.field.max_length }}"
+           {% if form.phone.errors %}aria-invalid="true" aria-describedby="f-phone-error"{% endif %}
            class="field mt-1.5{% if form.phone.errors %} field-error{% endif %}">
-    {% for e in form.phone.errors %}<span class="mt-1 block text-[12px] text-rose-700">{{ e }}</span>{% endfor %}
+    {% if form.phone.errors %}<span id="f-phone-error" class="mt-1 block text-[12px] text-rose-700">{{ form.phone.errors|join:" " }}</span>{% endif %}
   </div>
   <button type="submit" class="btn-gold !mt-4 w-full rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold">Continue</button>
 </form>

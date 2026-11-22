@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import posixpath
 from dataclasses import asdict
+from datetime import timedelta
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
 from django.contrib import messages
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import signing
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.http import (
     Http404,
@@ -27,18 +27,21 @@ from django.http import (
 )
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
-from django.urls import reverse
+from django.urls import Resolver404, resolve, reverse
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
+from apps.audit.context import audit_context, current_cid
+from apps.audit.middleware import source_for
 from apps.core.net import client_ip
+from apps.core.phone import to_e164
 from apps.core.templatetags.phone_filters import phone_display
 from apps.planners.selectors import dispatch_phone
 
-from . import exports, receipts, requests, selectors, services, trip_detail, trip_list
+from . import exports, receipts, requests, selectors, services, throttle, trip_detail, trip_list
 from . import home as home_page
 from .auth import FRAGMENT_PARAM, current_customer, customer_required, sign_in, sign_out
 from .forms import (
@@ -52,12 +55,13 @@ from .forms import (
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
 
-# Per-IP brakes, as on the planner sign-in (`apps/planners/views.py`). Per-process cache
-# (LocMem): a brake on guessing, not a lock. Sign-up mails count against the reset limit.
+# Per-IP brakes: a brake on guessing, not a lock. Counted in the database (`throttle`), so
+# each limit is one limit however many web workers answer. Sign-up mails count against the
+# reset limit.
 LOGIN_FAILURE_LIMIT = 10
-LOGIN_FAILURE_WINDOW = 15 * 60
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
 RESET_LIMIT = 5
-RESET_WINDOW = 60 * 60
+RESET_WINDOW = timedelta(hours=1)
 
 # Like Django's PasswordResetConfirmView: a link's token is moved into the session and the
 # address bar shows this placeholder instead, so it never sits in history or a Referer.
@@ -81,20 +85,34 @@ def _page(
 
 
 def _over(request: HttpRequest, scope: str, limit: int) -> bool:
-    return cache.get(f"customer-{scope}:{client_ip(request)}", 0) >= limit
+    return throttle.over(scope, client_ip(request), limit)
 
 
-def _count(request: HttpRequest, scope: str, window: int) -> None:
-    key = f"customer-{scope}:{client_ip(request)}"
-    cache.set(key, cache.get(key, 0) + 1, window)
+def _count(request: HttpRequest, scope: str, window: timedelta) -> None:
+    throttle.hit(scope, client_ip(request), window)
 
 
 def _home() -> str:
     return reverse("customers:home")
 
 
+# The signed-in pages: the only places `?next=` may land. Every other route under
+# `/account/` is a form's target (it answers 405 to the GET a redirect makes), a download,
+# or a signed-out page. `test_next_lands_only_on_pages` holds this list to the routes.
+LANDING_PAGES = frozenset({"home", "trips", "trip", "account", "request_trip"})
+
+
+def _is_landing_page(target: str) -> bool:
+    try:
+        match = resolve(unquote(urlsplit(target).path))
+    except Resolver404:
+        return False
+    return match.namespace == "customers" and match.url_name in LANDING_PAGES
+
+
 def _safe_next(request: HttpRequest) -> str:
-    """`?next=` when it is a same-host path under `/account/`; Home otherwise.
+    """`?next=` when it is a same-host path to one of the portal's own pages
+    (`LANDING_PAGES`), with its query string; Home otherwise.
 
     The path is checked as a browser will resolve it: percent-decoded (`%2e` is `.`), `\\`
     read as `/`, then `..` applied, so `/account/%2e%2e/portal/` is refused. A `fragment`
@@ -108,6 +126,7 @@ def _safe_next(request: HttpRequest) -> str:
         and url_has_allowed_host_and_scheme(
             target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
         )
+        and _is_landing_page(target)
     ):
         return target
     return _home()
@@ -195,21 +214,28 @@ def _hop(request: HttpRequest, session_key: str, token: str, url: str) -> HttpRe
 def signup_confirm(request: HttpRequest, token: str) -> HttpResponse:
     """Step 3 from a sign-up link: choose a password, then the account exists and the
     customer is signed in."""
-    if token != TOKEN_PLACEHOLDER:
-        try:
-            services.read_signup(token)
-        except signing.BadSignature:
-            return _link_invalid(request)
-        url = reverse("customers:signup_confirm", args=[TOKEN_PLACEHOLDER])
-        return _hop(request, SIGNUP_SESSION_KEY, token, url)
     try:
-        data = services.read_signup(request.session.get(SIGNUP_SESSION_KEY, ""))
+        data = services.read_signup(
+            request.session.get(SIGNUP_SESSION_KEY, "") if token == TOKEN_PLACEHOLDER else token
+        )
+        # A used link, or a closed account's, is refused before it asks for a password.
+        services.check_signup(data)
     except signing.BadSignature:
         return _link_invalid(request)
-    form = CustomerPasswordForm(None, request.POST or None)
+    except services.CustomerError as exc:
+        return _link_invalid(request, str(exc))
+    if token != TOKEN_PLACEHOLDER:
+        url = reverse("customers:signup_confirm", args=[TOKEN_PLACEHOLDER])
+        return _hop(request, SIGNUP_SESSION_KEY, token, url)
+    form = CustomerPasswordForm(services.signup_stand_in(data), request.POST or None)
     if request.method == "POST" and form.is_valid():
         try:
-            account = services.complete_signup(data, form.cleaned_data["new_password1"])
+            # History names the person signing up: nobody is signed in yet, but the link
+            # proved the address.
+            with audit_context(
+                source=source_for(request), actor_email=data.get("email", ""), cid=current_cid()
+            ):
+                account = services.complete_signup(data, form.cleaned_data["new_password1"])
         except services.CustomerError as exc:
             return _link_invalid(request, str(exc))
         request.session.pop(SIGNUP_SESSION_KEY, None)
@@ -460,6 +486,12 @@ def set_reference(request: HttpRequest) -> JsonResponse:
     return JsonResponse(answer)
 
 
+def _quote_by(account: CustomerAccount) -> str:
+    """How the quote will reach the customer: a text goes only to a mobile on file that can
+    be dialled, so nobody without one is promised a text."""
+    return "email and text" if to_e164(account.contact.phone) else "email"
+
+
 @customer_required
 def request_trip(request: HttpRequest) -> HttpResponse:
     """Request a trip (mockup 5). A valid post becomes a New lead for staff to price, and
@@ -468,7 +500,8 @@ def request_trip(request: HttpRequest) -> HttpResponse:
     account = request.customer
     if not requests.can_request(account):
         return _page(request, "customers/request.html", {"refused": True})
-    form = TripRequestForm(request.POST or None)
+    needs_mobile = requests.needs_mobile(account)
+    form = TripRequestForm(request.POST or None, needs_mobile=needs_mobile)
     if request.method == "POST" and form.is_valid():
         try:
             lead = requests.request_trip(account, form.cleaned_data)
@@ -480,7 +513,9 @@ def request_trip(request: HttpRequest) -> HttpResponse:
             )
         else:
             trip = lead.reservations.order_by("pk").first()
-            messages.success(request, "Request received. Your quote will arrive by email and text.")
+            account.contact.refresh_from_db(fields=["phone"])
+            by = _quote_by(account)
+            messages.success(request, f"Request received. Your quote will arrive by {by}.")
             return redirect("customers:trip", pk=trip.pk)
     contact = account.contact
     return _page(
@@ -493,6 +528,8 @@ def request_trip(request: HttpRequest) -> HttpResponse:
             "riders": RIDERS,
             "stops": form.posted_stops() if form.is_bound else [],
             "recent": requests.recent_addresses(account),
+            "needs_mobile": needs_mobile,
+            "quote_by": _quote_by(account),
             "requester": {
                 "name": contact.name,
                 "email": account.email,
@@ -531,21 +568,21 @@ def account(request: HttpRequest) -> HttpResponse:
     toast. Changing the password ends every session, so this one is signed in again."""
     customer = request.customer
     contact = customer.contact
-    details = DetailsForm(
-        initial={
-            "name": contact.name,
-            "mobile": phone_display(contact.phone) if contact.phone else "",
-        }
-    )
+    on_file = phone_display(contact.phone) if contact.phone else ""
+    details = DetailsForm(initial={"name": contact.name, "mobile": on_file}, on_file=on_file)
     password = ChangePasswordForm(customer)
     if request.method == "POST":
         action = request.POST.get("action")
         if action == "details":
-            details = DetailsForm(request.POST)
+            details = DetailsForm(request.POST, on_file=on_file)
             if details.is_valid():
-                services.update_details(customer, **details.cleaned_data)
-                messages.success(request, "Details saved.")
-                return redirect("customers:account")
+                try:
+                    services.update_details(customer, **details.cleaned_data)
+                except services.CustomerError as error:
+                    details.add_error(error.field, str(error))
+                else:
+                    messages.success(request, "Details saved.")
+                    return redirect("customers:account")
         elif action == "password":
             password = ChangePasswordForm(customer, request.POST)
             if password.is_valid():
@@ -556,7 +593,8 @@ def account(request: HttpRequest) -> HttpResponse:
                         password.cleaned_data["new_password1"],
                     )
                 except services.CustomerError as error:
-                    password.add_error("current_password", str(error))
+                    # Under the field it is about, or above the form when it names none.
+                    password.add_error(error.field, str(error))
                 else:
                     sign_in(request, customer)
                     messages.success(request, "Password changed.")

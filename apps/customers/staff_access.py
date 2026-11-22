@@ -11,7 +11,6 @@ from django.conf import settings
 from django.utils import dateformat
 
 from apps.contacts.models import Contact
-from apps.core import outbound
 
 from . import services
 from .models import CustomerAccount
@@ -32,9 +31,11 @@ def access_for(contact: Contact) -> dict:
     query when the contact was loaded with `customer_account__invited_by` and
     `customer_account__revoked_by` selected (the profile does); one otherwise.
 
-    `blocked_reason` is why the sending actions can't run now (an affiliate company, which
-    only stops an invite; no email on the contact; the go-live switch off). The card shows
-    it beside the disabled buttons. Revoke is never blocked."""
+    `blocked_reason` is why the card's sending action can't run now, from the same list in
+    the same order the action itself refuses by (`services.send_blocked`), so the card and
+    the click never name different reasons. The card shows it beside the disabled button.
+    Revoke is never blocked. `never_signed_in` is a pending invite: there is no session to
+    end, which the revoke confirmation says differently."""
     try:
         account = contact.customer_account
     except CustomerAccount.DoesNotExist:
@@ -49,7 +50,7 @@ def access_for(contact: Contact) -> dict:
         return f" by {user}" if user else ""
 
     if account is None:
-        first = contact.name.split(" ")[0]
+        first = (contact.name.split() or ["This contact"])[0]
         line = f"{first} can sign in to request trips, see history and download receipts."
     elif status == CustomerAccount.Status.REVOKED:
         line = f"Access revoked {day(account.revoked_at)}{by(account.revoked_by)}."
@@ -72,14 +73,13 @@ def access_for(contact: Contact) -> dict:
         line += f" Last signed in {clock} {seen.tzname()}."
 
     inviting = status in ("none", CustomerAccount.Status.REVOKED)
-    if inviting and services.is_affiliate(contact):
-        blocked = services.AFFILIATE_REFUSED
-    elif not (contact.email or "").strip():
-        blocked = services.no_email_message(contact, inviting=inviting)
-    elif not outbound.enabled():
-        blocked = outbound.OFF_MESSAGE
+    if inviting:
+        action = services.INVITE
+    elif status == CustomerAccount.Status.INVITED:
+        action = services.RESEND
     else:
-        blocked = ""
+        action = services.RESET
+    blocked = services.send_blocked(contact, action=action)
     return {
         "status": status,
         "label": _ACCESS_LABELS[status],
@@ -90,4 +90,5 @@ def access_for(contact: Contact) -> dict:
         "show_resend": status == CustomerAccount.Status.INVITED,
         "show_reset": status == CustomerAccount.Status.ACTIVE,
         "can_revoke": status in (CustomerAccount.Status.INVITED, CustomerAccount.Status.ACTIVE),
+        "never_signed_in": status == CustomerAccount.Status.INVITED,
     }

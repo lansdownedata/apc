@@ -464,7 +464,7 @@ INVITES: dict[str, MessageDefault] = {
                 "Hi {first_name},\n\n"
                 "You can now request trips, follow your bookings and download receipts "
                 "online.\n\n"
-                "Your past trips with us are already in your account.\n\n"
+                "Any past trips with us are already in your account.\n\n"
                 "{account_button}\n\n"
                 "This link works for 7 days. Questions? Call {company_phone}."
             ),

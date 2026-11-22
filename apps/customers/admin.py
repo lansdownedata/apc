@@ -1,6 +1,7 @@
 from django.contrib import admin
+from django.http import HttpRequest
 
-from .models import CustomerAccount
+from .models import CustomerAccount, CustomerRequest
 
 
 @admin.register(CustomerAccount)
@@ -24,3 +25,24 @@ class CustomerAccountAdmin(admin.ModelAdmin):
         "last_seen_at",
         "history_banner_seen_at",
     )
+
+
+@admin.register(CustomerRequest)
+class CustomerRequestAdmin(admin.ModelAdmin):
+    """Read-only, for support: which customer asked for what about which trip, and the
+    Inbox message and task it became. Staff act on the task, never here."""
+
+    list_display = ("created_at", "kind", "account", "reservation", "topics", "reason", "task")
+    list_filter = ("kind",)
+    list_select_related = ("account__contact", "reservation", "task")
+    search_fields = ("account__contact__email", "account__contact__name", "topics", "reason")
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: object = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: object = None) -> bool:
+        return False

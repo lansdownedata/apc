@@ -8,13 +8,17 @@
   `public/_booking_widget.html`, which is not included because it is a whole form posting
   to the website. `.quote-form` gives the controls the website form's sizing. A "Recent"
   chip fills the pickup the way choosing a search result does (`addressAutocomplete.choose`).
+  A chip is a different place from whatever was there, so it also empties the pickup's
+  airline and flight number, as typing a new address does (`addressAutocomplete.search`):
+  a flight left over from another airport must never ride along. A customer with no mobile
+  on file that can be dialled is asked for theirs when they are the one riding
+  (`needs_mobile`): the lead passenger is who the driver reaches.
   After a server-side error the posted stops, coordinates, flights and rider come back as
   sent. `refused` (an affiliate company's customer, `requests.can_request`) shows only the
   dispatch number.
 {% endcomment %}
 {% block title %}Request a trip{% endblock %}
 {% block content %}
-{% url 'customers:account' as account_url %}
 <div class="mx-auto w-full max-w-5xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10">
   <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">Request a trip</h1>
   {% if refused %}
@@ -26,7 +30,7 @@
 
   <div class="mt-6 grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px]">
     <form method="post" action="{% url 'customers:request_trip' %}" novalidate
-          x-data="{ tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, rider: {{ form.rider.value|default:'me'|json_string }}, recent(r) { Object.assign(Alpine.$data(document.getElementById('rq-pickup')), { value: r.address, display: r.address, lat: r.lat ?? '', lng: r.lng ?? '', airport: r.airport_id ? String(r.airport_id) : '', open: false, results: [], active: -1 }); } }"
+          x-data="{ tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, rider: {{ form.rider.value|default:'me'|json_string }}, recent(r) { const box = document.getElementById('rq-pickup').closest('.aac'); const flight = box.querySelector('input[name=pickup_flight]'); if (flight) flight.value = ''; const airline = box.querySelector('select[name=pickup_airline]'); if (airline && airline.tomselect) airline.tomselect.clear(true); Object.assign(Alpine.$data(document.getElementById('rq-pickup')), { value: r.address, display: r.address, lat: r.lat ?? '', lng: r.lng ?? '', airport: r.airport_id ? String(r.airport_id) : '', open: false, results: [], active: -1 }); } }"
           class="card quote-form flex flex-col gap-4 p-5 sm:p-6">
       {% csrf_token %}
 
@@ -82,7 +86,7 @@
           <span class="text-muted">Recent</span>
           {% for r in recent %}
           <button type="button" @click="recent({{ r|json_attr }})" title="{{ r.address }}"
-                  class="inline-flex h-[26px] max-w-[220px] items-center rounded-full border border-line px-3 font-medium text-ink transition-colors hover:bg-surface2 focus-gold">
+                  class="inline-flex h-7 max-w-56 items-center rounded-full border border-line px-3 font-medium text-ink transition-colors hover:bg-surface2 focus-gold">
             <span class="truncate">{{ r.address }}</span>
           </button>
           {% endfor %}
@@ -100,7 +104,7 @@
               <label class="!mb-0 block text-[12px] font-medium text-muted" x-text="'Stop ' + (i + 1)"></label>
               <button type="button" @click="remove(i)" :aria-label="'Remove stop ' + (i + 1)"
                       class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface2 hover:text-rose-600 focus-gold">
-                {% icon "x" class="h-[13px] w-[13px]" %}
+                {% icon "x" class="h-3.5 w-3.5" %}
               </button>
             </div>
             <div class="sa-search" @keydown.escape="closeRow(i)"
@@ -125,13 +129,13 @@
               <input type="text" x-model="stop.flight" pattern="[0-9A-Za-z]*" maxlength="6" aria-label="Flight number"
                      placeholder="Flight # / tail #" class="field w-full">
             </div>
-            <div x-show="stop.airport" x-cloak class="mt-2 inline-flex overflow-hidden rounded-lg text-[12.5px] ring-1 ring-line">
-              <button type="button" @click="stop.direction = 'arrival'"
-                      :class="stop.direction === 'arrival' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
-                      class="px-3 py-1.5 font-medium">Arriving</button>
-              <button type="button" @click="stop.direction = 'departure'"
-                      :class="stop.direction === 'departure' ? 'bg-goldl text-goldd font-semibold' : 'text-muted'"
-                      class="px-3 py-1.5 font-medium">Departing</button>
+            <div x-show="stop.airport" x-cloak role="group" :aria-label="'Stop ' + (i + 1) + ' flight'" class="mt-2 inline-flex gap-1 rounded-lg p-0.5 text-[12.5px] ring-1 ring-line">
+              <button type="button" @click="stop.direction = 'arrival'" :aria-pressed="stop.direction === 'arrival'"
+                      :class="stop.direction === 'arrival' ? 'bg-goldl text-goldd font-semibold' : 'text-muted hover:bg-surface2 hover:text-ink'"
+                      class="rounded-md px-3 py-1 font-medium transition-colors focus-gold">Arriving</button>
+              <button type="button" @click="stop.direction = 'departure'" :aria-pressed="stop.direction === 'departure'"
+                      :class="stop.direction === 'departure' ? 'bg-goldl text-goldd font-semibold' : 'text-muted hover:bg-surface2 hover:text-ink'"
+                      class="rounded-md px-3 py-1 font-medium transition-colors focus-gold">Departing</button>
             </div>
           </div>
         </template>
@@ -140,7 +144,7 @@
         <div x-show="canAdd()">
           <button type="button" @click="add()"
                   class="inline-flex items-center gap-1 rounded text-[12.5px] font-semibold text-goldd transition-colors hover:text-gold focus-gold">
-            {% icon "plus" class="h-[13px] w-[13px]" %} Add a stop
+            {% icon "plus" class="h-3.5 w-3.5" %} Add a stop
           </button>
         </div>
       </div>
@@ -176,7 +180,7 @@
       <div class="grid gap-4 sm:grid-cols-2" x-show="rider === 'other'" {% if form.rider.value != 'other' %}x-cloak{% endif %}>
         <div>
           <label for="rq-rider-name" class="mb-1 block text-[12px] font-medium text-muted">Passenger name</label>
-          <input type="text" id="rq-rider-name" name="rider_name" value="{{ form.rider_name.value|default:'' }}" maxlength="120" autocomplete="off"
+          <input type="text" id="rq-rider-name" name="rider_name" value="{{ form.rider_name.value|default:'' }}" maxlength="{{ form.rider_name.field.max_length }}" autocomplete="off"
                  class="field w-full{% if form.rider_name.errors %} field-error{% endif %}">
           {% for e in form.rider_name.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         </div>
@@ -185,6 +189,16 @@
           {% for e in form.rider_mobile.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         </div>
       </div>
+
+      {% if needs_mobile %}
+      <div class="grid gap-4 sm:grid-cols-2" x-show="rider === 'me'" {% if form.rider.value == 'other' %}x-cloak{% endif %}>
+        <div>
+          {% include "components/phone_input.html" with name="my_mobile" field_id="rq-my-mobile" label="Your mobile" value=form.my_mobile.value %}
+          {% for e in form.my_mobile.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+          <p class="mt-1 text-[12px] text-muted">We don't have a mobile for you yet. Your driver and trip updates reach you on this number, and we'll keep it on your account.</p>
+        </div>
+      </div>
+      {% endif %}
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
@@ -202,7 +216,7 @@
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label for="rq-reference" class="mb-1 block text-[12px] font-medium text-muted">Your reference <span class="font-normal text-muted/70">(optional)</span></label>
-          <input type="text" id="rq-reference" name="customer_reference" value="{{ form.customer_reference.value|default:'' }}" maxlength="120" placeholder="Client, cost centre or PO"
+          <input type="text" id="rq-reference" name="customer_reference" value="{{ form.customer_reference.value|default:'' }}" maxlength="{{ form.customer_reference.field.max_length }}" placeholder="Client, cost centre or PO"
                  class="field w-full{% if form.customer_reference.errors %} field-error{% endif %}">
           {% for e in form.customer_reference.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
         </div>
@@ -227,13 +241,13 @@
         <p class="mt-2 text-[13.5px] font-semibold text-ink [overflow-wrap:anywhere]">{{ requester.name }}</p>
         <p class="text-[12.5px] text-muted [overflow-wrap:anywhere]">{{ requester.email }}</p>
         {% if requester.phone %}<p class="text-[12.5px] text-muted num">{{ requester.phone|phone_display }}</p>{% endif %}
-        {% if account_url %}<a href="{{ account_url }}" class="mt-2 inline-block rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Edit in Account</a>{% endif %}
+        <a href="{% url 'customers:account' %}" class="mt-2 inline-block rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Edit in Account</a>
       </section>
       <section class="card p-5" aria-labelledby="rq-next">
         <h2 id="rq-next" class="text-[15px] font-semibold text-ink">What happens next</h2>
-        <ol class="mt-2 list-decimal space-y-1.5 pl-[18px] text-[12.5px] leading-relaxed text-ink">
+        <ol class="mt-2 list-decimal space-y-1.5 pl-5 text-[12.5px] leading-relaxed text-ink">
           <li>We review your request and price it.</li>
-          <li>Your quote arrives by email and text, and shows here under Trips.</li>
+          <li>Your quote arrives by {{ quote_by }}, and shows here under Trips.</li>
           <li>You review, accept the terms and pay the deposit to confirm.</li>
         </ol>
         <p class="mt-3 text-[12.5px] text-muted">Travelling soon? Call dispatch at <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-ink focus-gold hover:text-goldd num">{{ dispatch.display }}</a>.</p>

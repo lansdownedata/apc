@@ -355,6 +355,25 @@ def test_planner_request_create_reads_its_question():
     assert line.sentence == 'Planner request: "Can we add a second Sprinter?"'
 
 
+@pytest.mark.parametrize(
+    ("kind", "sentence"),
+    [
+        ("change", "Customer asked to change this trip"),
+        ("cancel", "Customer asked to cancel this trip"),
+    ],
+)
+def test_customer_request_create_reads_what_was_asked(kind, sentence):
+    from apps.customers.models import CustomerRequest
+
+    line = _one(
+        {"kind": ["None", kind], "reservation": ["None", "3"], "account": ["None", "1"]},
+        model=CustomerRequest,
+        action=CREATE,
+        object_repr="Change request: Flight",
+    )
+    assert line.sentence == sentence
+
+
 def test_a_stamp_moving_between_two_times_is_an_ordinary_line():
     line = _one({"customer_confirmed_at": ["2026-01-14 03:30:00", "2026-01-15 03:30:00"]})
     assert not line.sentence
@@ -377,6 +396,9 @@ def test_a_stamp_moving_between_two_times_is_an_ordinary_line():
         ("customer: wedding details", "", "Customer · wedding details"),
         ("affiliate: trip confirmation", "", "Affiliate · trip confirmation"),
         ("planner portal", "ana@example.com", "Planner · ana@example.com"),
+        ("planner portal", "", "Planner"),
+        ("customer portal", "dana@example.com", "Customer · dana@example.com"),
+        ("customer portal", "", "Customer"),
         ("cron: charge-due-balances", "", "Scheduled job · charge-due-balances"),
         ("command: shell", "", "Command · shell"),
         ("public site", "", "Public site"),
